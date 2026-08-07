@@ -387,6 +387,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // synchronously check whether the conversation changed before it fires.
   const conversationIdRef = useRef<string | null>(null);
   conversationIdRef.current = conversationId;
+  // True while the open conversation exists only in this client and holds no
+  // turns: an id minted by handleNewChat (or at startup) that has never been
+  // sent. Tracked explicitly rather than inferred from an empty `messages`,
+  // which also reads empty while a real conversation's history is loading.
+  const conversationIsUnsentDraftRef = useRef(true);
   // Set to a conversation id while it has a turn that gave up but is still running
   // server-side, to drive the fallback reconcile poll. Cleared once the turn
   // resolves (reply lands or it finishes with none).
@@ -1837,6 +1842,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       // Cancel any active streaming before switching conversations
       cancelStream();
 
+      conversationIsUnsentDraftRef.current = false;
       setConversationId(convId);
       setMobileShowList(false);
       localStorage.setItem('lastConversationId', convId);
@@ -1976,6 +1982,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     setCurrentProfileId(preferredProfileId);
 
     const newConvId = `web_conv_${generateUUID()}`;
+    conversationIsUnsentDraftRef.current = true;
     setConversationId(newConvId);
     setMobileShowList(false);
     setMessages([]);
@@ -2000,14 +2007,21 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       // Persist selection to localStorage
       localStorage.setItem('selectedProfileId', newProfileId);
 
-      // Start a new conversation when switching profiles to maintain clear
-      // context separation. The user is mid-composing the same message they'll
+      if (currentProfileId === newProfileId || !conversationId) {
+        return;
+      }
+      // An unsent draft has no turns to separate from, so switching in place is
+      // enough — minting a new conversation would only churn the id (and reset
+      // the composer's surroundings) for no gain.
+      if (conversationIsUnsentDraftRef.current) {
+        return;
+      }
+      // Otherwise start a new conversation to keep each profile's context
+      // clearly separated. The user is mid-composing the same message they'll
       // send under the new profile, so this switch must not wipe the composer
       // the way a real conversation switch does.
-      if (currentProfileId !== newProfileId && conversationId) {
-        preserveComposerOnConversationSwitchRef.current = true;
-        handleNewChat();
-      }
+      preserveComposerOnConversationSwitchRef.current = true;
+      handleNewChat();
     },
     [currentProfileId, conversationId, handleNewChat]
   );
@@ -2087,6 +2101,10 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       };
 
       setMessages((prev) => [...prev, userMessage, loadingAssistantMessage]);
+
+      // The conversation now holds a turn, so it is no longer a switch-in-place
+      // draft: a later profile change has real context to separate from.
+      conversationIsUnsentDraftRef.current = false;
 
       const targetConversationId = conversationId || `web_conv_${generateUUID()}`;
 
@@ -2355,9 +2373,11 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       setMessages([]);
       localStorage.setItem('lastConversationId', newConvId);
     } else if (urlConversationId) {
+      conversationIsUnsentDraftRef.current = false;
       setConversationId(urlConversationId);
       loadConversationMessages(urlConversationId);
     } else if (lastConversationId) {
+      conversationIsUnsentDraftRef.current = false;
       setConversationId(lastConversationId);
       loadConversationMessages(lastConversationId);
       window.history.replaceState({}, '', `/chat?conversation_id=${lastConversationId}`);

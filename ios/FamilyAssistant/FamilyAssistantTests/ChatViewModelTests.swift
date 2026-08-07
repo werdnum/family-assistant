@@ -626,6 +626,63 @@ final class ChatViewModelTests: XCTestCase {
         )
     }
 
+    func testProfileSwitchOnUnsentConversationKeepsSameConversation() {
+        // A launch draft: client-generated, nothing sent.
+        let model = makeViewModel(conversationID: nil)
+        let originalConversationID = model.conversationID
+        model.draftText = "half-written question"
+
+        model.changeProfile(to: "research")
+
+        XCTAssertEqual(model.selectedProfileID, "research")
+        XCTAssertEqual(
+            model.conversationID,
+            originalConversationID,
+            "An unsent conversation has no context to separate, so the profile switches in place."
+        )
+        XCTAssertEqual(model.draftText, "half-written question")
+    }
+
+    func testProfileSwitchOnLoadedConversationStartsNewConversation() async throws {
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            if request.httpMethod == "GET", path.hasSuffix("/messages") {
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_loaded",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Plan my trip","timestamp":"2026-06-08T12:00:00Z","processing_profile_id":"default_assistant"}
+                      ],
+                      "count":1,
+                      "total_messages":1,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            }
+            if request.httpMethod == "GET", path == "/api/v1/chat/conversations" {
+                return .json(#"{"conversations":[],"count":0}"#)
+            }
+            return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+        }
+
+        let model = makeViewModel(conversationID: nil)
+        await model.selectConversation("web_conv_loaded")
+        XCTAssertFalse(model.messages.isEmpty)
+        model.draftText = "half-written question"
+
+        model.changeProfile(to: "research")
+
+        XCTAssertNotEqual(
+            model.conversationID,
+            "web_conv_loaded",
+            "A conversation holding turns still gets a fresh thread on a profile switch."
+        )
+        XCTAssertEqual(model.draftText, "half-written question")
+    }
+
     func testStartNewConversationClearsDraft() {
         let model = makeViewModel(conversationID: "web_conv_existing")
         model.draftText = "text meant for the old thread"

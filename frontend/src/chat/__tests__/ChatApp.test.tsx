@@ -108,34 +108,65 @@ describe('ChatApp', () => {
     // This tests the basic profile switching functionality
   });
 
-  it('preserves the composer draft when switching profile', async () => {
-    // Radix Select relies on pointer-capture and scroll APIs jsdom lacks.
+  // Radix Select relies on pointer-capture and scroll APIs jsdom lacks.
+  const setupProfilePickerUser = () => {
     window.HTMLElement.prototype.hasPointerCapture = vi.fn();
     window.HTMLElement.prototype.releasePointerCapture = vi.fn();
     window.HTMLElement.prototype.scrollIntoView = vi.fn();
-    const user = userEvent.setup({ pointerEventsCheck: 0 });
+    return userEvent.setup({ pointerEventsCheck: 0 });
+  };
 
+  // handleNewChat is the only path that writes a conversation id to localStorage
+  // after startup, so a new write is the signal that a fresh conversation began.
+  const conversationIdWrites = () =>
+    mockLocalStorage.setItem.mock.calls.filter(([key]) => key === 'lastConversationId').length;
+
+  const switchProfileToResearch = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByRole('combobox'));
+    await user.click(await screen.findByRole('option', { name: /research/i }));
+    await waitFor(() => {
+      expect(mockLocalStorage.setItem).toHaveBeenCalledWith('selectedProfileId', 'research');
+    });
+  };
+
+  it('switches profile in place on an unsent conversation, keeping the draft', async () => {
+    const user = setupProfilePickerUser();
     await renderChatApp({ waitForReady: true });
 
     const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
     await user.type(messageInput, 'Draft in progress');
 
-    const conversationWrites = () =>
-      mockLocalStorage.setItem.mock.calls.filter(([key]) => key === 'lastConversationId').length;
-    const writesBeforeSwitch = conversationWrites();
+    const writesBeforeSwitch = conversationIdWrites();
+    await switchProfileToResearch(user);
 
-    await user.click(screen.getByRole('combobox'));
-    await user.click(await screen.findByRole('option', { name: /research/i }));
-
-    // The switch starts a fresh conversation for the new profile...
-    await waitFor(() => {
-      expect(mockLocalStorage.setItem).toHaveBeenCalledWith('selectedProfileId', 'research');
-      expect(conversationWrites()).toBeGreaterThan(writesBeforeSwitch);
-    });
-
-    // ...but must not discard the message the user was composing.
+    // Nothing has been sent, so there is no context to separate: the switch must
+    // not mint a new conversation, and the draft is untouched.
+    expect(conversationIdWrites()).toBe(writesBeforeSwitch);
     expect(screen.getByTestId('chat-input')).toHaveValue('Draft in progress');
   });
+
+  it('starts a new conversation but preserves the draft when switching profile mid-thread', async () => {
+    const user = setupProfilePickerUser();
+    await renderChatApp({ waitForReady: true });
+
+    // Send a message so the conversation holds a real turn.
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+    await user.type(messageInput, 'First message');
+    await user.keyboard('{Enter}');
+    await waitForMessageSent(screen.getByTestId('chat-input'));
+
+    await user.type(screen.getByTestId('chat-input'), 'Draft in progress');
+
+    const writesBeforeSwitch = conversationIdWrites();
+    await switchProfileToResearch(user);
+
+    // The thread has context now, so the switch starts a fresh conversation...
+    await waitFor(() => {
+      expect(conversationIdWrites()).toBeGreaterThan(writesBeforeSwitch);
+    });
+    // ...but must not discard the message the user was composing.
+    expect(screen.getByTestId('chat-input')).toHaveValue('Draft in progress');
+  }, 30000);
 
   it('handles multiple messages in a conversation', async () => {
     const user = userEvent.setup();
