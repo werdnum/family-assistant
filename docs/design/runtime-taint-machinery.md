@@ -118,7 +118,7 @@ A `TaintSource` explains why taint changed:
 | `home_local`                  | Acts inside the household trust boundary without arbitrary destination selection.                   | Home Assistant action, MQTT to configured broker.                                                                               |
 | `artifact_write`              | Persists content into the assistant's own stores.                                                   | Note write, task/ticket write, automation write, attachment registration.                                                       |
 | `low_bandwidth_external`      | External communication with fixed recipient or fixed template.                                      | Fixed-template push notification, owner-addressed durable confirmation, image/video generation against a fixed vendor endpoint. |
-| `known_user_message`          | Free-form message to a server-validated configured user; destination is not attacker-selectable.    | Future server-validated known-user messaging.                                                                                   |
+| `known_user_message`          | Free-form message to a server-validated configured user; destination is not attacker-selectable.    | `send_message_to_user`, whose target must be an existing conversation owned by an authorized user.                              |
 | `arbitrary_external_message`  | Free-form external communication where destination is model-controlled or outside configured users. | Email sending, shared tracker body, calendar invite with guests.                                                                |
 | `attacker_addressable_egress` | High-bandwidth outbound data to attacker-selectable destinations.                                   | URL fetch, browser navigation, browser form submit, arbitrary webhook call.                                                     |
 | `sandbox_network`             | Code or CLI with network access.                                                                    | Worker agent network, Monty extension command, future skills-plus-CLI egress.                                                   |
@@ -526,15 +526,20 @@ choose stricter policy.
 `redact` is reserved for sink-specific adapters, not a default matrix cell. Browser snapshot
 redaction and server-side ticket templating are the intended first users.
 
-The distinction between `known_user_message` and `arbitrary_external_message` matters, but it
-requires server-side recipient validation. The current `send_message_to_user` schema tells the model
-to use chat ids from the Known Users prompt section, but the tool does not enforce that the supplied
-chat id is in the configured list. Until that validation exists, classify `send_message_to_user` as
-`arbitrary_external_message`. After validation, it can move to `known_user_message`: still
-free-form, but no longer attacker-addressable by destination. Fixed-template notifications are lower
-bandwidth and should remain audit only even for unknown-external context, otherwise non-interactive
-digesters could not send routine "new item available" notices without turning confirmation into
-denial.
+The distinction between `known_user_message` and `arbitrary_external_message` matters, and it
+requires server-side recipient validation. `send_message_to_user` now performs it: the target must
+be an existing conversation in which an authorized user has already messaged the assistant, and any
+other id is rejected before the message is sent. Every interface refuses to persist user messages
+from identities it cannot authorize, so a conversation carrying a user message is one the assistant
+is allowed to reply into.
+
+The tool is therefore classified `known_user_message`: still free-form, but no longer
+attacker-addressable by destination. It carries `KNOWN_USER_COMM` alongside `EXTERNAL_COMM` rather
+than instead of it, so tool policies matching the broader tag are unaffected while the sink resolver
+takes the refinement — the pattern to follow for any future tool that validates its recipient.
+Fixed-template notifications are lower bandwidth and should remain audit only even for
+unknown-external context, otherwise non-interactive digesters could not send routine "new item
+available" notices without turning confirmation into denial.
 
 This means the mailbox-digester acceptance scenario uses two unattended delivery paths: a confined
 note write for the summary, and optional fixed-template notification for "new digest available" or

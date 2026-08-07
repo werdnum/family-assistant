@@ -994,8 +994,13 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.SENSITIVE_DATA,
         ToolTag.OUTPUT_TRUSTED,
     ),
+    # The target must be an existing conversation owned by an authorized user,
+    # rejected server-side otherwise, so the model cannot name a destination of
+    # its own choosing. EXTERNAL_COMM is kept so tool policies matching it are
+    # unaffected; KNOWN_USER_COMM refines the taint sink class.
     "send_message_to_user": _metadata(
         ToolTag.EXTERNAL_COMM,
+        ToolTag.KNOWN_USER_COMM,
         ToolTag.SENSITIVE_DATA,
         ToolTag.OUTPUT_TRUSTED,
     ),
