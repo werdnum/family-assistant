@@ -79,7 +79,11 @@ describe('FileAttachmentAdapter', () => {
   });
 
   describe('add method', () => {
-    test('successfully adds valid image file', async () => {
+    // The composer refuses to send while an attachment is 'running', so an
+    // attachment reporting an upload it does not finish here locks the
+    // composer: the file reads "Uploading..." forever and the message can
+    // never be sent. Pending until send is the state the composer can leave.
+    test('adds a valid image file, pending the send that uploads it', async () => {
       const file = createMockFile('test.png', 'image/png', 1024 * 1024); // 1MB
 
       const result = await adapter.add({ file });
@@ -88,7 +92,22 @@ describe('FileAttachmentAdapter', () => {
       expect(result.type).toBe('image');
       expect(result.name).toBe('test.png');
       expect(result.file).toBe(file);
-      expect(result.status.type).toBe('running');
+      expect(result.status).toEqual({ type: 'requires-action', reason: 'composer-send' });
+    });
+
+    test('does not upload the file when it is added', async () => {
+      const uploads = [];
+      server.use(
+        http.post('/api/attachments/upload', () => {
+          uploads.push('upload');
+          return HttpResponse.json({ attachment_id: 'x', url: '/api/attachments/x' });
+        })
+      );
+      const file = createMockFile('test.png', 'image/png', 1024);
+
+      await adapter.add({ file });
+
+      expect(uploads).toEqual([]);
     });
 
     // The backend processes image, video, audio and document and ignores
@@ -121,7 +140,7 @@ describe('FileAttachmentAdapter', () => {
       expect(result.type).toBe('document');
       expect(result.name).toBe('document.txt');
       expect(result.file).toBe(file);
-      expect(result.status.type).toBe('running');
+      expect(result.status.type).toBe('requires-action');
     });
 
     test('successfully adds valid PDF file', async () => {
@@ -133,7 +152,7 @@ describe('FileAttachmentAdapter', () => {
       expect(result.type).toBe('document');
       expect(result.name).toBe('document.pdf');
       expect(result.file).toBe(file);
-      expect(result.status.type).toBe('running');
+      expect(result.status.type).toBe('requires-action');
     });
 
     test('returns error for oversized file', async () => {
@@ -143,8 +162,8 @@ describe('FileAttachmentAdapter', () => {
 
       expect(result.type).toBe('file');
       expect(result.name).toBe('large.png');
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('size exceeds');
+      expect(result.status.type).toBe('incomplete');
+      expect(result.status.message).toContain('size exceeds');
     });
 
     test('returns error for invalid file type', async () => {
@@ -158,8 +177,8 @@ describe('FileAttachmentAdapter', () => {
 
       expect(result.type).toBe('file');
       expect(result.name).toBe('document.docx');
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('Unsupported file type');
+      expect(result.status.type).toBe('incomplete');
+      expect(result.status.message).toContain('Unsupported file type');
     });
 
     test('returns error for file with empty name', async () => {
@@ -167,12 +186,32 @@ describe('FileAttachmentAdapter', () => {
 
       const result = await adapter.add({ file });
 
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('valid name');
+      expect(result.status.type).toBe('incomplete');
+      expect(result.status.message).toContain('valid name');
     });
   });
 
   describe('send method', () => {
+    // An attachment add() rejected stays in the composer, and the composer does
+    // not block sending on it, so send() is reached with a file the client has
+    // already refused to upload.
+    test('refuses to upload a file that fails validation', async () => {
+      const uploads = [];
+      server.use(
+        http.post('/api/attachments/upload', () => {
+          uploads.push('upload');
+          return HttpResponse.json({ attachment_id: 'x', url: '/api/attachments/x' });
+        })
+      );
+      const file = createMockFile('large.png', 'image/png', 150 * 1024 * 1024);
+
+      const result = await adapter.send({ id: 'test-id', type: 'file', name: 'large.png', file });
+
+      expect(uploads).toEqual([]);
+      expect(result.status.type).toBe('incomplete');
+      expect(result.status.message).toContain('size exceeds');
+    });
+
     test('successfully processes attachment', async () => {
       const file = createMockFile('test.png', 'image/png', 1024);
       const attachment = {
@@ -180,7 +219,7 @@ describe('FileAttachmentAdapter', () => {
         type: 'image',
         name: 'test.png',
         file,
-        status: { type: 'running' },
+        status: { type: 'incomplete', reason: 'error', message: 'Failed to upload file' },
       };
 
       // MSW will handle the API call
@@ -214,14 +253,14 @@ describe('FileAttachmentAdapter', () => {
         type: 'image',
         name: 'test.png',
         file,
-        status: { type: 'running' },
+        status: { type: 'incomplete', reason: 'error', message: 'Failed to upload file' },
       };
 
       const result = await adapter.send(attachment);
 
       expect(result.id).toBe('test-id');
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('Failed to upload file');
+      expect(result.status.type).toBe('incomplete');
+      expect(result.status.message).toContain('Failed to upload file');
     });
 
     test('handles network error gracefully', async () => {
@@ -238,61 +277,38 @@ describe('FileAttachmentAdapter', () => {
         type: 'image',
         name: 'test.png',
         file,
-        status: { type: 'running' },
+        status: { type: 'incomplete', reason: 'error', message: 'Failed to upload file' },
       };
 
       const result = await adapter.send(attachment);
 
       expect(result.id).toBe('test-id');
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('Failed to upload file');
+      expect(result.status.type).toBe('incomplete');
+      expect(result.status.message).toContain('Failed to upload file');
     });
   });
 
+  // Uploads happen at send time, so an attachment the composer hands back has
+  // nothing on the server to clean up.
   describe('remove method', () => {
-    test('successfully removes uploaded attachment', async () => {
+    test('makes no server call for a pending attachment', async () => {
+      const deleted = [];
+      server.use(
+        http.delete('/api/attachments/:attachmentId', ({ params }) => {
+          deleted.push(params.attachmentId);
+          return HttpResponse.json({ success: true });
+        })
+      );
       const attachment = {
         id: 'test-id',
         type: 'image',
         name: 'test.png',
-        uploadedId: 'server-uuid-456',
-        status: { type: 'complete' },
+        status: { type: 'requires-action', reason: 'composer-send' },
       };
 
-      // MSW will handle the API call
-
-      await adapter.remove(attachment);
-
-      // MSW handled the DELETE request
-    });
-
-    test('handles server deletion failure gracefully', async () => {
-      const attachment = {
-        id: 'test-id',
-        type: 'image',
-        name: 'test.png',
-        uploadedId: 'server-uuid-456',
-        status: { type: 'complete' },
-      };
-
-      // MSW will handle the API call (default success, this tests error handling)
-
-      // Should not throw - just logs warning
       await expect(adapter.remove(attachment)).resolves.toBeUndefined();
-    });
 
-    test('skips server deletion for non-uploaded attachment', async () => {
-      const attachment = {
-        id: 'test-id',
-        type: 'image',
-        name: 'test.png',
-        status: { type: 'error' },
-      };
-
-      await adapter.remove(attachment);
-
-      // Should not call fetch
-      // Attachment was not uploaded, so no server call should be made
+      expect(deleted).toEqual([]);
     });
   });
 });
@@ -354,8 +370,8 @@ describe('CompositeAttachmentAdapter', () => {
 
       expect(result.type).toBe('file');
       expect(result.name).toBe('document.docx');
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('Unsupported file type');
+      expect(result.status.type).toBe('incomplete');
+      expect(result.status.message).toContain('Unsupported file type');
     });
   });
 
@@ -389,8 +405,8 @@ describe('CompositeAttachmentAdapter', () => {
       const result = await compositeAdapter.send(attachment);
 
       expect(result.id).toBe('test');
-      expect(result.status.type).toBe('error');
-      expect(result.status.error).toContain('No adapter available');
+      expect(result.status.type).toBe('incomplete');
+      expect(result.status.message).toContain('No adapter available');
     });
   });
 });
@@ -408,7 +424,7 @@ describe('defaultAttachmentAdapter', () => {
     const result = await defaultAttachmentAdapter.add({ file });
 
     expect(result.type).toBe('image');
-    expect(result.status.type).toBe('running');
+    expect(result.status.type).toBe('requires-action');
   });
 
   test('supports text files', async () => {
@@ -417,7 +433,7 @@ describe('defaultAttachmentAdapter', () => {
     const result = await defaultAttachmentAdapter.add({ file });
 
     expect(result.type).toBe('document');
-    expect(result.status.type).toBe('running');
+    expect(result.status.type).toBe('requires-action');
   });
 
   test('supports PDF files', async () => {
@@ -426,6 +442,6 @@ describe('defaultAttachmentAdapter', () => {
     const result = await defaultAttachmentAdapter.add({ file });
 
     expect(result.type).toBe('document');
-    expect(result.status.type).toBe('running');
+    expect(result.status.type).toBe('requires-action');
   });
 });

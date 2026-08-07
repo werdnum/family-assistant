@@ -105,6 +105,52 @@ async def test_image_upload_basic_functionality(
 
 @pytest.mark.playwright
 @pytest.mark.asyncio
+async def test_send_button_usable_after_attaching_a_file(
+    web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
+) -> None:
+    """The send button sends the turn after a file is attached.
+
+    The composer disables sending while an attachment is still uploading, so an
+    attachment that never finishes uploading leaves the send button greyed out
+    with no way for the user to send at all. Other tests here send with Enter,
+    which the composer allows regardless, so only clicking the button covers it.
+    """
+    page = web_test_fixture.page
+    chat_page = ChatPage(page, web_test_fixture.base_url)
+
+    mock_llm_client.default_response = LLMOutput(content="Got your file.")
+
+    await chat_page.navigate_to_chat()
+
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_file:
+        Image.new("RGB", (50, 50), color="blue").save(temp_file.name, "PNG")
+        temp_path = temp_file.name
+
+    try:
+        attachment_button = page.locator('[data-testid="add-attachment-button"]').first
+        await attachment_button.wait_for(state="visible", timeout=10000)
+
+        async with page.expect_file_chooser() as fc_info:
+            await attachment_button.click()
+        file_chooser = await fc_info.value
+        await file_chooser.set_files(temp_path)
+
+        chat_input = page.locator('[data-testid="chat-input"]')
+        await chat_input.click()
+        await chat_input.type("What do you see?")
+
+        # Playwright waits for the button to be enabled, so the upload finishing
+        # is what this asserts; it times out on an attachment stuck uploading.
+        await page.locator('[data-testid="send-button"]').click(timeout=15000)
+
+        await chat_page.wait_for_message_content("Got your file.", timeout=30000)
+
+    finally:
+        await anyio.Path(temp_path).unlink(missing_ok=True)
+
+
+@pytest.mark.playwright
+@pytest.mark.asyncio
 async def test_image_upload_validation_file_type(
     web_test_fixture: WebTestFixture, mock_llm_client: RuleBasedMockLLMClient
 ) -> None:
