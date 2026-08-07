@@ -346,11 +346,10 @@ interface ComposerActionProps {
 }
 
 const ComposerAction: React.FC<ComposerActionProps> = ({ steering, onSteer }) => {
-  // Check if any attachments are currently uploading
-  const hasUploadingAttachments = useComposer((state) => {
-    const attachments = state.attachments || [];
-    return attachments.some((att) => att.status?.type === 'running');
-  });
+  // The composer refuses to send while it is already sending, which is the
+  // window in which attachments upload. Reading that rather than attachment
+  // status keeps the button honest whatever an attachment adapter reports.
+  const isSending = useComposer((state) => !state.canSend && !state.isEmpty);
   // While running, the single action button steers when there's text to send
   // and stops the turn when the composer is empty.
   const hasText = useComposer((state) => state.text.trim().length > 0);
@@ -361,14 +360,14 @@ const ComposerAction: React.FC<ComposerActionProps> = ({ steering, onSteer }) =>
         <ComposerPrimitive.Send asChild>
           {/* @ts-expect-error - TooltipIconButton JSX component */}
           <TooltipIconButton
-            tooltip={hasUploadingAttachments ? 'Uploading attachments...' : 'Send message'}
+            tooltip={isSending ? 'Sending...' : 'Send message'}
             variant="default"
             side="top"
             className="h-11 w-11 shrink-0 rounded-full"
             data-testid="send-button"
-            disabled={hasUploadingAttachments}
+            disabled={isSending}
           >
-            {hasUploadingAttachments ? (
+            {isSending ? (
               <Loader2Icon size={16} className="animate-spin" />
             ) : (
               <ArrowUpIcon size={16} />

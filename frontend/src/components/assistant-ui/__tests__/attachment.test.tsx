@@ -66,10 +66,10 @@ describe('AttachmentUI Loading States', () => {
     );
   }, 20000);
 
-  // The composer disables sending while an attachment is still uploading, so an
-  // attachment that never leaves the uploading state locks the composer: the
-  // file reads "Uploading..." forever and the message can never be sent.
-  it('finishes uploading an attached file and re-enables sending', async () => {
+  // The composer disables sending while an attachment reports itself pending an
+  // upload, so an attachment left in that state locks the composer: the file
+  // reads "Uploading..." forever and the message can never be sent.
+  it('leaves the composer able to send once a file is attached', async () => {
     await renderChatApp({ waitForReady: true });
 
     const fileInput = (await screen.findByTestId('file-input')) as HTMLInputElement;
@@ -77,16 +77,11 @@ describe('AttachmentUI Loading States', () => {
       target: { files: [new File(['test content'], 'test.png', { type: 'image/png' })] },
     });
 
-    // Wait for the file to reach the composer before asserting it leaves the
-    // uploading state, so the assertion can't pass before the upload starts.
+    // Wait for the file to reach the composer, so the assertions below can't
+    // pass before it is there to block anything.
     await screen.findByTestId('remove-attachment-button', {}, { timeout: 15000 });
 
-    await waitFor(
-      () => {
-        expect(screen.queryByText('Uploading...')).not.toBeInTheDocument();
-      },
-      { timeout: 15000 }
-    );
+    expect(screen.queryByText('Uploading...')).not.toBeInTheDocument();
     expect(screen.getByTestId('send-button')).toBeEnabled();
   }, 20000);
 
@@ -96,7 +91,6 @@ describe('AttachmentUI Loading States', () => {
     await renderChatApp({ waitForReady: true });
 
     // Verify the attachment UI structure is in place
-    // This ensures our changes to add data-testid="attachment-loading" are correct
     const fileInput = screen.getByTestId('file-input');
     expect(fileInput).toBeInTheDocument();
 

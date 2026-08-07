@@ -46,21 +46,6 @@ function createMockFile(name, type, size, content = 'test content') {
   return file;
 }
 
-// add() reports the upload through a series of attachment states, exactly as
-// the composer runtime consumes them.
-async function collectAddStates(adapter, file) {
-  const states = [];
-  for await (const state of adapter.add({ file })) {
-    states.push(state);
-  }
-  return states;
-}
-
-async function finalAddState(adapter, file) {
-  const states = await collectAddStates(adapter, file);
-  return states[states.length - 1];
-}
-
 describe('FileAttachmentAdapter', () => {
   let adapter;
 
@@ -94,101 +79,35 @@ describe('FileAttachmentAdapter', () => {
   });
 
   describe('add method', () => {
-    test('successfully adds valid image file', async () => {
+    // The composer refuses to send while an attachment is 'running', so an
+    // attachment reporting an upload it does not finish here locks the
+    // composer: the file reads "Uploading..." forever and the message can
+    // never be sent. Pending until send is the state the composer can leave.
+    test('adds a valid image file, pending the send that uploads it', async () => {
       const file = createMockFile('test.png', 'image/png', 1024 * 1024); // 1MB
 
-      const result = await finalAddState(adapter, file);
+      const result = await adapter.add({ file });
 
       expect(result.id).toBe('test-uuid-123');
       expect(result.type).toBe('image');
       expect(result.name).toBe('test.png');
       expect(result.file).toBe(file);
-      expect(result.status.type).toBe('complete');
+      expect(result.status).toEqual({ type: 'requires-action', reason: 'composer-send' });
     });
 
-    // The composer refuses to send while an attachment is uploading, so an
-    // attachment that never reaches 'complete' locks the composer: the file
-    // reads "Uploading..." forever and the message can never be sent.
-    test('uploads on add, ending in a complete attachment', async () => {
-      const file = createMockFile('test.png', 'image/png', 1024);
-
-      const states = await collectAddStates(adapter, file);
-
-      expect(states.map((state) => state.status.type)).toEqual(['running', 'complete']);
-      expect(states[0].status.reason).toBe('uploading');
-      expect(states[1].content).toEqual([
-        { type: 'image', image: '/api/attachments/server-uuid-456' },
-      ]);
-      expect(states[1].uploadedId).toBe('server-uuid-456');
-    });
-
-    test('sends non-image attachments as a url data part', async () => {
-      const file = createMockFile('document.pdf', 'application/pdf', 1024);
-
-      const result = await finalAddState(adapter, file);
-
-      expect(result.content).toEqual([
-        { type: 'data', name: 'url', data: '/api/attachments/server-uuid-456' },
-      ]);
-    });
-
-    test('reports an upload failure on the attachment', async () => {
+    test('does not upload the file when it is added', async () => {
+      const uploads = [];
       server.use(
-        http.post('/api/attachments/upload', () =>
-          HttpResponse.json({ error: 'Upload failed' }, { status: 500 })
-        )
-      );
-      const file = createMockFile('test.png', 'image/png', 1024);
-
-      const result = await finalAddState(adapter, file);
-
-      expect(result.status.type).toBe('incomplete');
-      expect(result.status.reason).toBe('error');
-      expect(result.status.message).toContain('Failed to upload file');
-    });
-
-    // The upload can't be recalled once it's in flight, so a file the user
-    // removed mid-upload has to be deleted rather than left on the server --
-    // and it must not reappear in the composer when the upload lands.
-    test('deletes an upload the user cancelled while it was in flight', async () => {
-      const deleted = [];
-      server.use(
-        http.delete('/api/attachments/:attachmentId', ({ params }) => {
-          deleted.push(params.attachmentId);
-          return HttpResponse.json({ success: true });
+        http.post('/api/attachments/upload', () => {
+          uploads.push('upload');
+          return HttpResponse.json({ attachment_id: 'x', url: '/api/attachments/x' });
         })
       );
       const file = createMockFile('test.png', 'image/png', 1024);
 
-      const states = [];
-      for await (const state of adapter.add({ file })) {
-        states.push(state);
-        if (state.status.type === 'running') {
-          await adapter.remove(state);
-        }
-      }
+      await adapter.add({ file });
 
-      expect(states.map((state) => state.status.type)).toEqual(['running']);
-      expect(deleted).toEqual(['server-uuid-456']);
-    });
-
-    test('reports nothing for an upload that failed after being cancelled', async () => {
-      server.use(
-        http.post('/api/attachments/upload', () =>
-          HttpResponse.json({ error: 'Upload failed' }, { status: 500 })
-        )
-      );
-      const file = createMockFile('test.png', 'image/png', 1024);
-
-      const states = [];
-      for await (const state of adapter.add({ file })) {
-        states.push(state);
-        if (state.status.type === 'running') {
-          await adapter.remove(state);
-        }
-      }
-
-      expect(states.map((state) => state.status.type)).toEqual(['running']);
+      expect(uploads).toEqual([]);
     });
 
     // The backend processes image, video, audio and document and ignores
@@ -206,7 +125,7 @@ describe('FileAttachmentAdapter', () => {
       ]) {
         const file = createMockFile(`clip.${expected}`, mimeType, 1024);
 
-        const result = await finalAddState(adapter, file);
+        const result = await adapter.add({ file });
 
         expect(result.type).toBe(expected);
       }
@@ -215,31 +134,31 @@ describe('FileAttachmentAdapter', () => {
     test('successfully adds valid text file', async () => {
       const file = createMockFile('document.txt', 'text/plain', 1024);
 
-      const result = await finalAddState(adapter, file);
+      const result = await adapter.add({ file });
 
       expect(result.id).toBe('test-uuid-123');
       expect(result.type).toBe('document');
       expect(result.name).toBe('document.txt');
       expect(result.file).toBe(file);
-      expect(result.status.type).toBe('complete');
+      expect(result.status.type).toBe('requires-action');
     });
 
     test('successfully adds valid PDF file', async () => {
       const file = createMockFile('document.pdf', 'application/pdf', 1024);
 
-      const result = await finalAddState(adapter, file);
+      const result = await adapter.add({ file });
 
       expect(result.id).toBe('test-uuid-123');
       expect(result.type).toBe('document');
       expect(result.name).toBe('document.pdf');
       expect(result.file).toBe(file);
-      expect(result.status.type).toBe('complete');
+      expect(result.status.type).toBe('requires-action');
     });
 
     test('returns error for oversized file', async () => {
       const file = createMockFile('large.png', 'image/png', 150 * 1024 * 1024); // 150MB (exceeds 100MB limit)
 
-      const result = await finalAddState(adapter, file);
+      const result = await adapter.add({ file });
 
       expect(result.type).toBe('file');
       expect(result.name).toBe('large.png');
@@ -254,7 +173,7 @@ describe('FileAttachmentAdapter', () => {
         1024
       );
 
-      const result = await finalAddState(adapter, file);
+      const result = await adapter.add({ file });
 
       expect(result.type).toBe('file');
       expect(result.name).toBe('document.docx');
@@ -265,13 +184,18 @@ describe('FileAttachmentAdapter', () => {
     test('returns error for file with empty name', async () => {
       const file = createMockFile('', 'image/png', 1024);
 
-      const result = await finalAddState(adapter, file);
+      const result = await adapter.add({ file });
 
       expect(result.status.type).toBe('incomplete');
       expect(result.status.message).toContain('valid name');
     });
+  });
 
-    test('does not upload a file it rejects', async () => {
+  describe('send method', () => {
+    // An attachment add() rejected stays in the composer, and the composer does
+    // not block sending on it, so send() is reached with a file the client has
+    // already refused to upload.
+    test('refuses to upload a file that fails validation', async () => {
       const uploads = [];
       server.use(
         http.post('/api/attachments/upload', () => {
@@ -281,15 +205,13 @@ describe('FileAttachmentAdapter', () => {
       );
       const file = createMockFile('large.png', 'image/png', 150 * 1024 * 1024);
 
-      await finalAddState(adapter, file);
+      const result = await adapter.send({ id: 'test-id', type: 'file', name: 'large.png', file });
 
       expect(uploads).toEqual([]);
+      expect(result.status.type).toBe('incomplete');
+      expect(result.status.message).toContain('size exceeds');
     });
-  });
 
-  // The runtime only calls send() for an attachment that isn't already
-  // complete, which after add() means one whose upload failed: sending retries.
-  describe('send method', () => {
     test('successfully processes attachment', async () => {
       const file = createMockFile('test.png', 'image/png', 1024);
       const attachment = {
@@ -366,39 +288,10 @@ describe('FileAttachmentAdapter', () => {
     });
   });
 
+  // Uploads happen at send time, so an attachment the composer hands back has
+  // nothing on the server to clean up.
   describe('remove method', () => {
-    test('successfully removes uploaded attachment', async () => {
-      const attachment = {
-        id: 'test-id',
-        type: 'image',
-        name: 'test.png',
-        uploadedId: 'server-uuid-456',
-        status: { type: 'complete' },
-      };
-
-      // MSW will handle the API call
-
-      await adapter.remove(attachment);
-
-      // MSW handled the DELETE request
-    });
-
-    test('handles server deletion failure gracefully', async () => {
-      const attachment = {
-        id: 'test-id',
-        type: 'image',
-        name: 'test.png',
-        uploadedId: 'server-uuid-456',
-        status: { type: 'complete' },
-      };
-
-      // MSW will handle the API call (default success, this tests error handling)
-
-      // Should not throw - just logs warning
-      await expect(adapter.remove(attachment)).resolves.toBeUndefined();
-    });
-
-    test('skips server deletion for non-uploaded attachment', async () => {
+    test('makes no server call for a pending attachment', async () => {
       const deleted = [];
       server.use(
         http.delete('/api/attachments/:attachmentId', ({ params }) => {
@@ -410,10 +303,10 @@ describe('FileAttachmentAdapter', () => {
         id: 'test-id',
         type: 'image',
         name: 'test.png',
-        status: { type: 'incomplete', reason: 'error', message: 'Unsupported file type' },
+        status: { type: 'requires-action', reason: 'composer-send' },
       };
 
-      await adapter.remove(attachment);
+      await expect(adapter.remove(attachment)).resolves.toBeUndefined();
 
       expect(deleted).toEqual([]);
     });
@@ -460,28 +353,10 @@ describe('CompositeAttachmentAdapter', () => {
       const expectedResult = { id: 'test', type: 'image' };
       mockImageAdapter.add.mockResolvedValue(expectedResult);
 
-      const states = await collectAddStates(compositeAdapter, file);
+      const result = await compositeAdapter.add({ file });
 
-      expect(states).toEqual([expectedResult]);
+      expect(result).toBe(expectedResult);
       expect(mockImageAdapter.add).toHaveBeenCalledWith({ file });
-    });
-
-    // Our own adapter reports the upload through several states; each has to
-    // reach the runtime as it arrives, or the composer never learns the upload
-    // finished.
-    test('passes through every state of a progress-reporting adapter', async () => {
-      const file = createMockFile('test.png', 'image/png', 1024);
-      const progressStates = [
-        { id: 'test', type: 'image', status: { type: 'running' } },
-        { id: 'test', type: 'image', status: { type: 'complete' } },
-      ];
-      mockImageAdapter.add.mockImplementation(async function* () {
-        yield* progressStates;
-      });
-
-      const states = await collectAddStates(compositeAdapter, file);
-
-      expect(states).toEqual(progressStates);
     });
 
     test('returns error for unsupported file type', async () => {
@@ -491,7 +366,7 @@ describe('CompositeAttachmentAdapter', () => {
         1024
       );
 
-      const result = await finalAddState(compositeAdapter, file);
+      const result = await compositeAdapter.add({ file });
 
       expect(result.type).toBe('file');
       expect(result.name).toBe('document.docx');
@@ -546,27 +421,27 @@ describe('defaultAttachmentAdapter', () => {
   test('supports image files', async () => {
     const file = createMockFile('test.jpg', 'image/jpeg', 1024);
 
-    const result = await finalAddState(defaultAttachmentAdapter, file);
+    const result = await defaultAttachmentAdapter.add({ file });
 
     expect(result.type).toBe('image');
-    expect(result.status.type).toBe('complete');
+    expect(result.status.type).toBe('requires-action');
   });
 
   test('supports text files', async () => {
     const file = createMockFile('readme.txt', 'text/plain', 1024);
 
-    const result = await finalAddState(defaultAttachmentAdapter, file);
+    const result = await defaultAttachmentAdapter.add({ file });
 
     expect(result.type).toBe('document');
-    expect(result.status.type).toBe('complete');
+    expect(result.status.type).toBe('requires-action');
   });
 
   test('supports PDF files', async () => {
     const file = createMockFile('document.pdf', 'application/pdf', 1024);
 
-    const result = await finalAddState(defaultAttachmentAdapter, file);
+    const result = await defaultAttachmentAdapter.add({ file });
 
     expect(result.type).toBe('document');
-    expect(result.status.type).toBe('complete');
+    expect(result.status.type).toBe('requires-action');
   });
 });

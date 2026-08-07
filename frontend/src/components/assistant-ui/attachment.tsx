@@ -8,7 +8,7 @@ import {
   useComposerRuntime,
 } from '@assistant-ui/react';
 import { DialogContent as DialogPrimitiveContent } from '@radix-ui/react-dialog';
-import { CircleXIcon, ClockIcon, FileIcon, PaperclipIcon } from 'lucide-react';
+import { CircleXIcon, FileIcon, PaperclipIcon } from 'lucide-react';
 import { type FC, PropsWithChildren, useEffect, useState } from 'react';
 import { useShallow } from 'zustand/shallow';
 import { TooltipIconButton } from '@/components/assistant-ui/tooltip-icon-button';
@@ -147,36 +147,10 @@ const AttachmentUI: FC = () => {
   const hasError = status?.type === 'incomplete' && status.reason === 'error';
   const errorMessage = hasError ? status.message : undefined;
 
-  // Check if attachment is currently uploading
-  const isLoading = status?.type === 'running';
-
   return (
     <Tooltip>
       <AttachmentPrimitive.Root className="relative mt-3" data-testid="attachment-preview">
-        {isLoading ? (
-          // Show loading state during upload - still clickable for preview
-          <AttachmentPreviewDialog>
-            <TooltipTrigger asChild>
-              <div className="flex flex-col gap-1">
-                <div
-                  className="flex h-12 w-40 items-center justify-center gap-2 rounded-lg border-2 border-blue-500 bg-blue-50 p-1 animate-pulse cursor-pointer hover:bg-blue-100 transition-colors"
-                  data-testid="attachment-preview attachment-loading"
-                >
-                  <AttachmentThumb />
-                  <div className="flex-grow basis-0">
-                    <p className="text-muted-foreground line-clamp-1 text-ellipsis break-all text-xs font-bold">
-                      <AttachmentPrimitive.Name />
-                    </p>
-                    <div className="flex items-center gap-1">
-                      <ClockIcon size={12} className="animate-spin text-blue-600" />
-                      <p className="text-blue-600 text-xs font-medium">Uploading...</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </TooltipTrigger>
-          </AttachmentPreviewDialog>
-        ) : hasError ? (
+        {hasError ? (
           // Show error state prominently
           <div className="flex flex-col gap-1">
             <div
@@ -213,7 +187,7 @@ const AttachmentUI: FC = () => {
         {canRemove && <AttachmentRemove />}
       </AttachmentPrimitive.Root>
       <TooltipContent side="top">
-        {isLoading ? 'Uploading file...' : hasError ? errorMessage : <AttachmentPrimitive.Name />}
+        {hasError ? errorMessage : <AttachmentPrimitive.Name />}
       </TooltipContent>
     </Tooltip>
   );

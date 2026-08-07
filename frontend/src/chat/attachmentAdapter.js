@@ -58,19 +58,6 @@ const uploadFileToService = async (file) => {
 };
 
 /**
- * Deletes a previously uploaded file from the attachment service
- * @param {string} attachmentId - Server-side attachment id
- * @returns {Promise<void>}
- */
-const deleteUploadedFile = async (attachmentId) => {
-  const response = await fetch(`/api/attachments/${attachmentId}`, { method: 'DELETE' });
-
-  if (!response.ok) {
-    console.error(`Failed to delete attachment ${attachmentId} from server`);
-  }
-};
-
-/**
  * Validates a file against size and type constraints
  * @param {File} file - The file to validate
  * @throws {Error} If validation fails
@@ -166,85 +153,49 @@ export class FileAttachmentAdapter {
   constructor() {
     // Accept all supported file types
     this.accept = SUPPORTED_FILE_TYPES.join(',');
-    // Attachments removed from the composer while their upload was still in
-    // flight. The upload can't be recalled, so the finished file is deleted
-    // server-side instead of reappearing in the composer.
-    this.cancelledUploads = new Set();
   }
 
   /**
-   * Upload a file as soon as it is added to the composer, reporting progress
-   * through the attachment's status.
+   * Accept a file into the composer, pending the send that uploads it.
    *
-   * The composer refuses to send while an attachment is 'running', so the
-   * upload has to finish here: an attachment that stays pending until send
-   * time locks the composer open with nothing able to clear it.
+   * The attachment must land in a state the composer can leave: it refuses to
+   * send while an attachment is 'running', so reporting an upload here would
+   * lock the composer unless that upload also finished here -- and an upload
+   * running alongside the composer can be sent or dropped midway, which the
+   * runtime handles by uploading the file a second time or by re-adding an
+   * attachment it has already sent. Uploading in send() has no such window.
    *
    * @param {Object} params - The parameters object
    * @param {File} params.file - The file being added
-   * @yields {Object} Attachment object, first pending and then complete
+   * @returns {Promise<Object>} Attachment object awaiting send
    */
-  async *add({ file }) {
-    const id = generateUUID();
-
+  async add({ file }) {
     try {
       validateFile(file);
     } catch (error) {
-      yield errorAttachment({ id, type: 'file', file, message: error.message });
-      return;
+      return errorAttachment({ id: generateUUID(), type: 'file', file, message: error.message });
     }
 
-    const type = classifyAttachment(file);
-    yield {
-      id,
-      type,
+    return {
+      id: generateUUID(),
+      type: classifyAttachment(file),
       name: file.name,
       file,
-      status: { type: 'running', reason: 'uploading', progress: 0 },
+      status: { type: 'requires-action', reason: 'composer-send' },
     };
-
-    let uploadResponse;
-    let uploadError;
-    try {
-      uploadResponse = await uploadFileToService(file);
-    } catch (error) {
-      uploadError = error;
-    }
-
-    // Checked before reporting either outcome: an attachment the runtime has
-    // already dropped would be re-added by yielding anything for it now.
-    if (this.cancelledUploads.delete(id)) {
-      if (uploadResponse) {
-        await deleteUploadedFile(uploadResponse.attachment_id);
-      }
-      return;
-    }
-
-    if (uploadError) {
-      console.error('Error uploading attachment:', uploadError);
-      yield errorAttachment({
-        id,
-        type,
-        file,
-        message: `Failed to upload file: ${uploadError.message}`,
-      });
-      return;
-    }
-
-    yield completeAttachment({ id, type, file, uploadResponse });
   }
 
   /**
-   * Process an attachment for sending.
-   *
-   * The runtime only calls this for attachments that aren't already complete,
-   * which after add() means one whose upload failed -- so sending retries it.
-   *
+   * Upload an attachment as the message carrying it is sent
    * @param {Object} attachment - The attachment to process
    * @returns {Promise<Object>} Processed attachment with content parts array
    */
   async send(attachment) {
     try {
+      // Re-checked because send() is also reached by an attachment add()
+      // rejected: the composer renders the error but does not block sending.
+      validateFile(attachment.file);
+
       const uploadResponse = await uploadFileToService(attachment.file);
 
       return completeAttachment({
@@ -266,24 +217,17 @@ export class FileAttachmentAdapter {
   }
 
   /**
-   * Remove an attachment
-   * @param {Object} attachment - The attachment to remove
+   * Remove an attachment.
+   *
+   * Nothing is on the server to clean up: the runtime only routes an
+   * attachment here while it is still pending, and a pending attachment has
+   * not been uploaded yet.
+   *
+   * @param {Object} _attachment - The attachment to remove
    * @returns {Promise<void>}
    */
-  async remove(attachment) {
-    try {
-      // If the attachment was successfully uploaded, clean it up from the server
-      if (attachment.uploadedId && attachment.status?.type === 'complete') {
-        await deleteUploadedFile(attachment.uploadedId);
-      } else if (attachment.status?.type === 'running') {
-        // Its upload is still in flight; add() deletes the file once it lands.
-        this.cancelledUploads.add(attachment.id);
-      }
-    } catch (error) {
-      console.error(`Error removing attachment from server: ${error.message}`);
-    }
-
-    // The runtime will remove the attachment from its internal state
+  async remove(_attachment) {
+    // The runtime removes the attachment from its own state.
   }
 }
 
@@ -335,35 +279,24 @@ export class CompositeAttachmentAdapter {
   }
 
   /**
-   * Add a file using the appropriate adapter.
-   *
-   * Yields rather than returns so an adapter that reports upload progress
-   * through several attachment states reaches the runtime as those states
-   * arrive; an adapter that resolves once is yielded once.
-   *
+   * Add a file using the appropriate adapter
    * @param {Object} params - The parameters object
    * @param {File} params.file - The file being added
-   * @yields {Object} Attachment object
+   * @returns {Promise<Object>} Attachment object
    */
-  async *add({ file }) {
+  async add({ file }) {
     const adapter = this.getAdapterForType(file.type);
 
     if (!adapter) {
-      yield errorAttachment({
+      return errorAttachment({
         id: generateUUID(),
         type: 'file',
         file,
         message: `Unsupported file type: ${file.type}`,
       });
-      return;
     }
 
-    const added = adapter.add({ file });
-    if (added && Symbol.asyncIterator in added) {
-      yield* added;
-    } else {
-      yield await added;
-    }
+    return adapter.add({ file });
   }
 
   /**
