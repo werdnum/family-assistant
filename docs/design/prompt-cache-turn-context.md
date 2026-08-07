@@ -146,17 +146,41 @@ shared renderer. One renderer, so the two paths cannot drift.
   is `len(content)`, so `_VOLATILE_PROBE` and `_common_prefix_len` go away. `stable_prefix_len`
   itself stays: text appended later (attachment metadata, on-demand tool additions) must land
   *after* the breakpoint, and the field is what records where that is.
-- **Turn scaffolding gets a marker.** A trailing synthetic user message would be picked up by
-  `llm_loop.py:575-597`, which scans backwards for "the original user query" to select attachments,
-  and would be treated as a turn boundary by `prune_messages_for_context`. `llm_loop` already solves
-  this for the final-iteration instruction with an object-identity check, which does not survive the
-  list being rebuilt by pruning and cannot cross the `service.py` → `llm_loop.py` boundary. Both
-  messages now carry `UserMessage.is_turn_scaffolding`, excluded from serialization so it can never
-  be persisted, and the identity checks are replaced by it.
+
+- **Turn scaffolding gets a marker.** A trailing synthetic user message is picked up by anything
+  that scans backwards for what the user said. `llm_loop` already solved this for the
+  final-iteration instruction with an object-identity check, which does not survive the list being
+  rebuilt by pruning and cannot cross the `service.py` → `llm_loop.py` boundary. Both messages now
+  carry `UserMessage.is_turn_scaffolding` and the identity checks are replaced by it. The predicate
+  lives in `llm/messages.py`, beside the field, because the provider layer needs it and `processing`
+  imports `llm` rather than the reverse. Four scans had to learn about it:
+
+  - attachment selection (`llm_loop`), which would otherwise match boilerplate rather than the
+    request;
+  - `prune_messages_for_context`, which would count each block as a turn — at `min_turns=1` keeping
+    *only* the block and discarding the user's request;
+  - `BaseLLMClient._validate_user_input`, which checks the last user message for emptiness. The
+    block is never empty, so without the skip the guard becomes unreachable and an empty trigger (a
+    sticker, an unsupported media type) reaches the provider as a generic 400 instead of a typed
+    error;
+  - `_build_deep_research_create_kwargs`, which collapses the trailing run of user messages into a
+    single `input` string — appending the block verbatim to the question being researched.
+
+  The flag is `exclude`d from serialization because it is per-request state with no meaning in a
+  stored row. That is *not* what keeps these messages out of the database:
+  `MessageHistoryRepository.add_message` reads fields off the model rather than serializing it. What
+  keeps them out is that the loop never yields them as messages to save.
+
 - **Ordering constraint.** The block is appended *after* `_inject_trigger_attachment_metadata`,
   which scans backwards for the last `UserMessage`; appending earlier would attach the trigger's
   attachment metadata to the context block instead.
+
 - The `SystemMessage` stays at index 0, which `llm_loop.py:373` and `llm/__init__.py:322` depend on.
+
+- **The block's description is gated on actually sending one.**
+  `ProcessingService.sends_turn_context_block` is false for `DeepResearchProcessingService`, whose
+  transport drops the block on both its paths, so its system prompt does not promise the model
+  something that never arrives.
 
 ## Expected impact
 

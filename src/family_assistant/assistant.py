@@ -1363,7 +1363,7 @@ class Assistant:
             # error the first time somebody talks to this profile.
             try:
                 processing_service_instance.validate_system_prompt_renders()
-            except ValueError as exc:
+            except (ValueError, TypeError) as exc:
                 raise SystemExit(
                     f"Profile '{profile_id}' has an invalid system_prompt: {exc}"
                 ) from exc

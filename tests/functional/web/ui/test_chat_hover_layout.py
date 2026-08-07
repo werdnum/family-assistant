@@ -14,7 +14,7 @@ from playwright.async_api import expect
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from tests.functional.web.conftest import WebTestFixture
 from tests.functional.web.pages.chat_page import ChatPage
-from tests.mocks.mock_llm import RuleBasedMockLLMClient
+from tests.mocks.mock_llm import RuleBasedMockLLMClient, last_real_message
 
 
 def _last_message(args: object) -> object | None:
@@ -23,7 +23,7 @@ def _last_message(args: object) -> object | None:
     messages = args.get("messages")
     if not isinstance(messages, list) or not messages:
         return None
-    return messages[-1]
+    return last_real_message(messages)
 
 
 def _last_is_user_containing(text: str) -> Callable[[object], bool]:

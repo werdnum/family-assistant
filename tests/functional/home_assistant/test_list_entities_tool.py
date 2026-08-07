@@ -17,8 +17,8 @@ from family_assistant.llm import (
     ToolCallFunction,
     ToolCallItem,
 )
+from family_assistant.llm.messages import is_turn_scaffolding
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.processing.utils import is_turn_scaffolding
 from family_assistant.storage.database import Database
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,

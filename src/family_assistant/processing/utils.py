@@ -94,17 +94,6 @@ def _normalize_error_type(error_type: str) -> str:
     return "".join(char for char in error_type.lower() if char.isalnum())
 
 
-def is_turn_scaffolding(message: LLMMessage) -> bool:
-    """Whether *message* is machinery for the current request, not conversation content.
-
-    True for the synthetic user messages the system appends to steer a single
-    request: the ``<turn_context>`` block and the final-iteration instruction.
-    Code that reasons about what the user actually said, or that splits the
-    history into turns, has to skip them.
-    """
-    return isinstance(message, UserMessage) and message.is_turn_scaffolding
-
-
 def prune_messages_for_context(
     messages: Sequence[LLMMessage],
     *,

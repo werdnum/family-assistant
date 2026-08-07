@@ -53,6 +53,11 @@ class DeepResearchProcessingService(ProcessingService):
     ordinary local delegation targets on the existing inline path.
     """
 
+    # Deep Research collapses the prompt into a single `input` string and the
+    # client drops scaffolding on the way, so the block never reaches the model
+    # on either the interactive or the submit-then-poll path.
+    sends_turn_context_block: bool = False
+
     def _google_client(self) -> GoogleGenAIClient:
         client = self.llm_client
         if not isinstance(client, GoogleGenAIClient):

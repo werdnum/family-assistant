@@ -145,6 +145,30 @@
         overflow-x: auto;
     }
     
+    .turn-context-section {
+        background-color: #eef6ff;
+        border: 1px solid #7fb0e8;
+        border-radius: 6px;
+        padding: 1rem;
+        margin-bottom: 1.5rem;
+    }
+
+    .section-note {
+        color: var(--text-light);
+        font-size: 0.9rem;
+        margin: 0 0 0.75rem 0;
+    }
+
+    .exclusion-notice {
+        background-color: #fff4e5;
+        border: 1px solid #e0a458;
+        border-radius: 4px;
+        padding: 0.75rem;
+        margin-bottom: 0.75rem;
+        font-size: 0.9rem;
+        color: #7a4a00;
+    }
+
     .format-args {
         background-color: var(--accent-bg);
         border: 1px solid var(--border);
@@ -242,6 +266,10 @@
         <div class="stat-item"><strong>Providers with Errors:</strong> {{ providers_with_errors|length }}</div>
         {% endif %}
         <div class="stat-item"><strong>Aggregated Context Length:</strong> {{ aggregated_context|length }} characters</div>
+        <div class="stat-item">
+            <strong>Aggregated Context Sent to This Profile:</strong>
+            {% if include_aggregated_context %}yes{% else %}no (<code>include_aggregated_context</code> is off){% endif %}
+        </div>
     </div>
 
     <!-- System Prompt Section -->
@@ -259,12 +287,43 @@
         </div>
     </div>
 
+    <!-- Turn Context Block Section -->
+    <div class="turn-context-section">
+        <h3 class="toggle-section" onclick="toggleSection('turn-context-content')">
+            ⏱️ Turn Context Block <span id="turn-context-toggle">[−]</span>
+        </h3>
+        <div id="turn-context-content" class="collapsible-content expanded">
+            <p class="section-note">
+                Appended as a user message to the <strong>end</strong> of the conversation on every
+                request — it is not part of the system prompt. It always carries the current time,
+                and carries the aggregated context below only when the profile opts in with
+                <code>include_aggregated_context</code>.
+            </p>
+            {% if not include_aggregated_context %}
+            <div class="exclusion-notice">
+                <strong>This profile does not receive the aggregated context.</strong>
+                <code>include_aggregated_context</code> is off for <code>{{ profile_id }}</code>, so the
+                notes, calendar and other provider context shown further down this page are
+                <em>not</em> sent to it. Only the current time is.
+            </div>
+            {% endif %}
+            <div class="fragment">{{ turn_context_block }}</div>
+        </div>
+    </div>
+
     <!-- Aggregated Context Section -->
     <div class="context-section">
         <h3 class="toggle-section" onclick="toggleSection('aggregated-content')">
             📋 Final Aggregated Context <span id="aggregated-toggle">[−]</span>
         </h3>
         <div id="aggregated-content" class="collapsible-content expanded">
+            {% if not include_aggregated_context %}
+            <div class="exclusion-notice">
+                Not sent to <code>{{ profile_id }}</code> — this is what the context providers
+                produced, but the profile has <code>include_aggregated_context</code> off, so none
+                of it reaches the model.
+            </div>
+            {% endif %}
             {% if aggregated_context %}
             <div class="fragment">{{ aggregated_context }}</div>
             {% else %}

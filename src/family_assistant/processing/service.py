@@ -150,6 +150,13 @@ class ProcessingService:
 
     kind: Literal["local"] = "local"
 
+    sends_turn_context_block: bool = True
+    """Whether this service's requests actually carry a ``<turn_context>`` block.
+
+    Gates the system-prompt sentence describing the block, so a subclass whose
+    transport drops it does not promise the model something that never arrives.
+    """
+
     def __init__(
         self,
         llm_client: LLMInterface,
@@ -644,11 +651,12 @@ class ProcessingService:
             else:
                 final_system_prompt = system_prompt_docs.strip()
 
-        # Appended here rather than written into each profile's template: every
-        # profile receives the block, so every profile needs to be told what it is.
-        final_system_prompt = (
-            f"{final_system_prompt}\n\n{SYSTEM_PROMPT_GUIDANCE}".strip()
-        )
+        # Appended here rather than written into each profile's template, since
+        # every profile that receives the block needs to be told what it is.
+        if self.sends_turn_context_block:
+            final_system_prompt = (
+                f"{final_system_prompt}\n\n{SYSTEM_PROMPT_GUIDANCE}".strip()
+            )
 
         return self.context_preparer.prepend_profile_preamble(final_system_prompt)
 

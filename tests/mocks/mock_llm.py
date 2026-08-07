@@ -26,8 +26,11 @@ from family_assistant.llm import (
     UserMessageContentPart,
     UserMessageDict,
 )
-from family_assistant.llm.messages import UserMessage, message_to_json_dict
-from family_assistant.processing.utils import is_turn_scaffolding
+from family_assistant.llm.messages import (
+    UserMessage,
+    is_turn_scaffolding,
+    message_to_json_dict,
+)
 from family_assistant.storage.database import in_transaction
 from family_assistant.tools.types import ToolDefinition
 

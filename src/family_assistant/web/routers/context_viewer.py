@@ -63,21 +63,46 @@ async def view_context_page(
             "You are a helpful assistant.",
         )
 
+        service_config = processing_service.service_config
+        user = get_user_from_request(request)
+        format_args = {
+            "user_name": user.get("name") if user else "[user_name]",
+            "server_url": processing_service.server_url,
+            "profile_id": service_config.id,
+        }
+
+        # The time and the aggregated context no longer sit inside the system
+        # prompt, so reporting only the prompt would show half of what the model
+        # gets. The block below is the other half, delivered at the end of the turn.
+        include_aggregated_context = service_config.include_aggregated_context
+        turn_context_block = render_turn_context_block(
+            current_time_str=datetime
+            .now(UTC)
+            .astimezone(service_config.timezone)
+            .strftime("%Y-%m-%d %H:%M:%S %Z"),
+            aggregated_context=(
+                aggregated_context if include_aggregated_context else ""
+            ),
+        )
+
         return templates.TemplateResponse(
             request,
             "context_viewer.html.j2",
             context={
                 "aggregated_context": aggregated_context,
+                "include_aggregated_context": include_aggregated_context,
+                "turn_context_block": turn_context_block,
                 "context_fragments": context_fragments,
                 "system_prompt_template": system_prompt_template,
-                "profile_id": processing_service.service_config.id,
+                "format_args": format_args,
+                "profile_id": service_config.id,
                 "total_fragments": sum(
                     len(cf["fragments"]) for cf in context_fragments
                 ),
                 "providers_with_errors": [
                     cf for cf in context_fragments if cf["error"]
                 ],
-                "user": get_user_from_request(request),
+                "user": user,
                 "AUTH_ENABLED": AUTH_ENABLED,
                 "now_utc": datetime.now(UTC),
             },

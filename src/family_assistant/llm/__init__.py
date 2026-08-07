@@ -30,6 +30,7 @@ from .messages import (
     TextContentPart,
     ToolMessage,
     UserMessage,
+    is_turn_scaffolding,
     message_to_json_dict,
     tool_result_to_llm_message,
 )
@@ -104,11 +105,16 @@ class BaseLLMClient:
         Raises InvalidRequestError if the last user message is empty.
         This prevents sending empty requests to the LLM which would
         typically result in errors anyway.
+
+        Turn scaffolding is skipped. The prompt now ends with the generated
+        ``<turn_context>`` block, which is never empty, so checking the literal
+        last user message would make this guard unreachable and let an empty
+        trigger (a sticker, an unsupported media type) reach the provider as a
+        generic 400 instead of a typed error naming the real problem.
         """
-        # Find the last UserMessage
         last_user_message = None
         for msg in reversed(messages):
-            if isinstance(msg, UserMessage):
+            if isinstance(msg, UserMessage) and not is_turn_scaffolding(msg):
                 last_user_message = msg
                 break
 

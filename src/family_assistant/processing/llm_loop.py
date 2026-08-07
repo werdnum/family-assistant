@@ -15,6 +15,7 @@ from family_assistant.llm.messages import (
     SystemMessage,
     ToolMessage,
     UserMessage,
+    is_turn_scaffolding,
 )
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
@@ -30,7 +31,6 @@ from family_assistant.tools import (
 from .attachments import AttachmentSelectionError
 from .utils import (
     _map_stream_error_to_exception,
-    is_turn_scaffolding,
     messages_have_thought_signatures,
     prune_messages_for_context,
 )

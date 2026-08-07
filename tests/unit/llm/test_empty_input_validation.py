@@ -167,3 +167,42 @@ class TestEmptyInputValidation:
         error = exc_info.value
         assert error.provider == "openai"
         assert error.model == "openai/gpt-4"
+
+
+@pytest.mark.no_db
+class TestValidationSeesPastTurnScaffolding:
+    """The prompt ends with generated scaffolding, not with what the user sent.
+
+    Every request now carries a trailing ``<turn_context>`` block, and it is
+    never empty. Validating the literal last user message would therefore always
+    pass, letting an empty trigger -- a sticker, an unsupported media type --
+    reach the provider as a generic 400 instead of a typed error naming the
+    actual problem.
+    """
+
+    def test_empty_trigger_still_raises_behind_a_context_block(self) -> None:
+        client = MockBaseLLMClient()
+        messages = [
+            UserMessage(content=""),
+            UserMessage(
+                content="<turn_context>\nCurrent time: 2026-07-25 10:00:00 UTC\n</turn_context>",
+                is_turn_scaffolding=True,
+            ),
+        ]
+
+        with pytest.raises(InvalidRequestError) as exc_info:
+            client._validate_user_input(messages)
+
+        assert "User message cannot be empty" in str(exc_info.value)
+
+    def test_real_trigger_behind_a_context_block_is_accepted(self) -> None:
+        client = MockBaseLLMClient()
+        messages = [
+            UserMessage(content="What is on my calendar?"),
+            UserMessage(
+                content="<turn_context>\nCurrent time: 2026-07-25 10:00:00 UTC\n</turn_context>",
+                is_turn_scaffolding=True,
+            ),
+        ]
+
+        client._validate_user_input(messages)
