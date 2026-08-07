@@ -2491,7 +2491,7 @@ describe('Web turn control (Stop / Steer)', () => {
       const proto = window.HTMLElement.prototype as unknown as Record<string, unknown>;
       const restores: Array<() => void> = [];
       for (const method of ['hasPointerCapture', 'releasePointerCapture', 'scrollIntoView']) {
-        const hadOwn = Object.hasOwn(proto, method);
+        const hadOwn = Object.prototype.hasOwnProperty.call(proto, method);
         const original = proto[method];
         proto[method] = vi.fn();
         restores.push(() => {
