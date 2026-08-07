@@ -108,13 +108,33 @@ describe('ChatApp', () => {
     // This tests the basic profile switching functionality
   });
 
-  // Radix Select relies on pointer-capture and scroll APIs jsdom lacks.
+  // Radix Select relies on pointer-capture and scroll APIs jsdom lacks. Stub them
+  // per-test and restore afterwards: leaving them installed would give every
+  // later test a defined no-op where jsdom has nothing, silently changing the
+  // branch taken by code that feature-detects them.
+  const profilePickerStubs: Array<() => void> = [];
   const setupProfilePickerUser = () => {
-    window.HTMLElement.prototype.hasPointerCapture = vi.fn();
-    window.HTMLElement.prototype.releasePointerCapture = vi.fn();
-    window.HTMLElement.prototype.scrollIntoView = vi.fn();
+    const proto = window.HTMLElement.prototype as unknown as Record<string, unknown>;
+    for (const method of ['hasPointerCapture', 'releasePointerCapture', 'scrollIntoView']) {
+      const hadOwn = Object.hasOwn(proto, method);
+      const original = proto[method];
+      proto[method] = vi.fn();
+      profilePickerStubs.push(() => {
+        if (hadOwn) {
+          proto[method] = original;
+        } else {
+          delete proto[method];
+        }
+      });
+    }
     return userEvent.setup({ pointerEventsCheck: 0 });
   };
+
+  afterEach(() => {
+    while (profilePickerStubs.length > 0) {
+      profilePickerStubs.pop()?.();
+    }
+  });
 
   // handleNewChat is the only path that writes a conversation id to localStorage
   // after startup, so a new write is the signal that a fresh conversation began.
@@ -149,11 +169,23 @@ describe('ChatApp', () => {
     const user = setupProfilePickerUser();
     await renderChatApp({ waitForReady: true });
 
-    // Send a message so the conversation holds a real turn.
+    // Send a message so the conversation holds a real turn, and let it finish:
+    // while a turn runs the composer is the steer box, which is deliberately
+    // NOT carried over (see the TurnControl steer-leak test).
     const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
     await user.type(messageInput, 'First message');
     await user.keyboard('{Enter}');
     await waitForMessageSent(screen.getByTestId('chat-input'));
+    await waitFor(
+      () => {
+        expect(screen.queryAllByTestId('assistant-message').length).toBeGreaterThan(0);
+        expect(screen.getByTestId('chat-input')).toHaveAttribute(
+          'placeholder',
+          'Message Family Assistant...'
+        );
+      },
+      { timeout: 10000 }
+    );
 
     await user.type(screen.getByTestId('chat-input'), 'Draft in progress');
 

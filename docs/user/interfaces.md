@@ -42,6 +42,11 @@ calls stay collapsed while keeping the details available*
 Reopening an existing conversation resumes it under the profile it started in, so follow-ups keep
 their context. Starting a new chat uses whichever profile you last picked.
 
+Switching profile part-way through a conversation starts a fresh chat in the new profile, so each
+profile's context stays separate — but anything you have already typed comes with you, so you can
+draft a message and then decide who should handle it. If the chat is still empty, switching just
+changes the profile and keeps you where you are.
+
 **Stop or steer a running reply.** While the assistant is generating, the chat box doubles as a
 steering box:
 
@@ -113,8 +118,9 @@ The native app signs you in securely and opens on five tabs: **Chat**, **Voice**
 under More open the corresponding pages in-app. Each tab remembers where you were.
 
 **Chat** shares the same conversation history as the browser. It streams replies, supports stopping
-and steering, switches profiles (picking a profile starts a fresh conversation in it; reopening an
-older conversation resumes its original profile), renders Markdown and tool calls, handles
+and steering, switches profiles (picking a profile starts a fresh conversation in it, carrying over
+anything you have typed and attached; on a chat that is still empty it switches in place; reopening
+an older conversation resumes its original profile), renders Markdown and tool calls, handles
 approve/reject confirmations, and uploads images, PDFs, plain text, and Markdown up to 100 MB. Very
 long messages render a section at a time behind a **Show more** control.
 

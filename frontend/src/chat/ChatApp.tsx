@@ -2000,6 +2000,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // draft the user is composing must survive into the fresh conversation.
   const preserveComposerOnConversationSwitchRef = useRef(false);
 
+  // Always-current mirror of "a turn is in flight", so callbacks can read it
+  // without taking it as a dependency. Same value the runtime reports as
+  // isRunning below.
+  const turnIsRunningRef = useRef(false);
+  turnIsRunningRef.current = isLoading || isStreaming;
+
   // Handle profile changes
   const handleProfileChange = useCallback(
     (newProfileId: string) => {
@@ -2019,8 +2025,17 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       // Otherwise start a new conversation to keep each profile's context
       // clearly separated. The user is mid-composing the same message they'll
       // send under the new profile, so this switch must not wipe the composer
-      // the way a real conversation switch does.
-      preserveComposerOnConversationSwitchRef.current = true;
+      // the way a real conversation switch does — UNLESS a turn is running, in
+      // which case the composer holds steer text aimed at THAT turn (which
+      // handleNewChat is about to cancel). Carrying it over would drop it into
+      // an empty thread under a different profile, ready to send as a
+      // standalone message: exactly the leak the clear exists to prevent.
+      //
+      // Read the running state from a ref, NOT from the deps: ProfileSelector
+      // re-runs its profile fetch whenever onProfileChange changes identity, so
+      // depending on state that flips every turn would refetch profiles mid-turn
+      // and blank the picker.
+      preserveComposerOnConversationSwitchRef.current = !turnIsRunningRef.current;
       handleNewChat();
     },
     [currentProfileId, conversationId, handleNewChat]

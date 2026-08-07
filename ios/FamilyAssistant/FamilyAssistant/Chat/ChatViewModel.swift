@@ -473,6 +473,12 @@ final class ChatViewModel {
             self.conversationID = Self.generateConversationID()
             conversationSelection = self.conversationID
             composerFocusRequestID = UUID()
+            // Same client-minted, server-less thread as the fresh-launch branch
+            // below: without the sentinel, `bootstrap` would load messages and
+            // open a follow stream against an id that has no server row, which
+            // 404-loops the reconnect backoff and pins the connection indicator
+            // to `.degraded`.
+            opensGeneratedLaunchDraft = true
         } else if let initialPrompt, !initialPrompt.isEmpty {
             // Launched to start a brand-new chat (share extension / App Intent).
             self.conversationID = Self.generateConversationID()
