@@ -885,7 +885,7 @@ final class ChatViewModel {
         selectedProfileID = conversationProfile ?? preferredProfileID
     }
 
-    func startNewConversation() {
+    func startNewConversation(preservingDraft: Bool = false) {
         cancelStream()
         syncCoordinator.cancelFollowStream(reason: .newConversation)
         highestAppliedSeq = nil
@@ -897,9 +897,11 @@ final class ChatViewModel {
         conversationID = Self.generateConversationID()
         conversationSelection = conversationID
         messages = []
-        draftText = ""
-        cleanupTemporaryImports(for: draftAttachments)
-        draftAttachments = []
+        if !preservingDraft {
+            draftText = ""
+            cleanupTemporaryImports(for: draftAttachments)
+            draftAttachments = []
+        }
         composerFocusRequestID = UUID()
         mobileShowsConversationList = false
         // A brand-new conversation has no history to load, so it is never in a
@@ -958,7 +960,9 @@ final class ChatViewModel {
         preferredProfileID = profileID
         UserDefaults.standard.set(profileID, forKey: Keys.selectedProfileID)
         // startNewConversation sets `selectedProfileID` to the preferred profile.
-        startNewConversation()
+        // The user is mid-composing the message they'll send under the new
+        // profile, so the draft (text and attachments) carries over.
+        startNewConversation(preservingDraft: true)
     }
 
     func loadMessages(conversationID: String? = nil, userInitiated: Bool = true) async {

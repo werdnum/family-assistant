@@ -612,6 +612,33 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertTrue(model.conversationID?.hasPrefix("web_conv_") == true)
     }
 
+    func testProfileSwitchPreservesDraft() {
+        let model = makeViewModel(conversationID: "web_conv_existing")
+        model.draftText = "half-written question"
+
+        model.changeProfile(to: "research")
+
+        XCTAssertNotEqual(model.conversationID, "web_conv_existing")
+        XCTAssertEqual(
+            model.draftText,
+            "half-written question",
+            "Switching profile must not discard the message the user is composing."
+        )
+    }
+
+    func testStartNewConversationClearsDraft() {
+        let model = makeViewModel(conversationID: "web_conv_existing")
+        model.draftText = "text meant for the old thread"
+
+        model.startNewConversation()
+
+        XCTAssertEqual(
+            model.draftText,
+            "",
+            "Explicitly starting a new chat discards the previous thread's draft."
+        )
+    }
+
     func testOpeningConversationAdoptsItsProfile() async throws {
         ChatMockBackendURLProtocol.respond { request in
             let path = request.url?.path ?? ""
