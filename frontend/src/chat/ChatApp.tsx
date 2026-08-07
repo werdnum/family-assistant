@@ -1989,6 +1989,10 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     setMobileShowList(true);
   }, [cancelStream]);
 
+  // Set when a conversation switch is triggered by a profile change, where the
+  // draft the user is composing must survive into the fresh conversation.
+  const preserveComposerOnConversationSwitchRef = useRef(false);
+
   // Handle profile changes
   const handleProfileChange = useCallback(
     (newProfileId: string) => {
@@ -1996,9 +2000,12 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       // Persist selection to localStorage
       localStorage.setItem('selectedProfileId', newProfileId);
 
-      // Optionally start a new conversation when switching profiles
-      // to maintain clear context separation
+      // Start a new conversation when switching profiles to maintain clear
+      // context separation. The user is mid-composing the same message they'll
+      // send under the new profile, so this switch must not wipe the composer
+      // the way a real conversation switch does.
       if (currentProfileId !== newProfileId && conversationId) {
+        preserveComposerOnConversationSwitchRef.current = true;
         handleNewChat();
       }
     },
@@ -2226,12 +2233,18 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   // across conversation changes. On a real conversation switch, clear it so
   // steer text typed for the previous turn can't leak into — and be sent in —
   // the newly selected thread. Guarded on an actual id change so an unrelated
-  // runtime re-render never wipes text the user is typing.
+  // runtime re-render never wipes text the user is typing. A switch caused by
+  // a profile change is exempt: the user keeps composing the same draft, just
+  // under a different profile.
   const prevConversationIdRef = useRef(conversationId);
   useEffect(() => {
     if (prevConversationIdRef.current !== conversationId) {
       prevConversationIdRef.current = conversationId;
-      runtime.thread.composer.setText('');
+      if (preserveComposerOnConversationSwitchRef.current) {
+        preserveComposerOnConversationSwitchRef.current = false;
+      } else {
+        runtime.thread.composer.setText('');
+      }
     }
   }, [conversationId, runtime]);
 

@@ -108,6 +108,35 @@ describe('ChatApp', () => {
     // This tests the basic profile switching functionality
   });
 
+  it('preserves the composer draft when switching profile', async () => {
+    // Radix Select relies on pointer-capture and scroll APIs jsdom lacks.
+    window.HTMLElement.prototype.hasPointerCapture = vi.fn();
+    window.HTMLElement.prototype.releasePointerCapture = vi.fn();
+    window.HTMLElement.prototype.scrollIntoView = vi.fn();
+    const user = userEvent.setup({ pointerEventsCheck: 0 });
+
+    await renderChatApp({ waitForReady: true });
+
+    const messageInput = screen.getByPlaceholderText('Message Family Assistant...');
+    await user.type(messageInput, 'Draft in progress');
+
+    const conversationWrites = () =>
+      mockLocalStorage.setItem.mock.calls.filter(([key]) => key === 'lastConversationId').length;
+    const writesBeforeSwitch = conversationWrites();
+
+    await user.click(screen.getByRole('combobox'));
+    await user.click(await screen.findByRole('option', { name: /research/i }));
+
+    // The switch starts a fresh conversation for the new profile...
+    await waitFor(() => {
+      expect(mockLocalStorage.setItem).toHaveBeenCalledWith('selectedProfileId', 'research');
+      expect(conversationWrites()).toBeGreaterThan(writesBeforeSwitch);
+    });
+
+    // ...but must not discard the message the user was composing.
+    expect(screen.getByTestId('chat-input')).toHaveValue('Draft in progress');
+  });
+
   it('handles multiple messages in a conversation', async () => {
     const user = userEvent.setup();
     await renderChatApp({ waitForReady: true });
