@@ -61,16 +61,11 @@ After the change:
 The cacheable prefix becomes the entire system prompt plus the entire history. Only the
 `<turn_context>` block itself, plus genuinely new messages, are uncached.
 
-**This lands on OpenAI and Gemini, which cache implicitly by prefix. It does not yet reach
-Anthropic**, which caches only up to an explicit `cache_control` breakpoint, and the only breakpoint
-we set is on the system block (`anthropic_client.py:_build_system_blocks`). An Anthropic profile
-therefore still re-reads the whole history every request; making the history prefix-stable is a
-precondition for fixing that, not the fix. `engineer` is the only Anthropic profile, and with
-`max_iterations: 100` it has the longest histories in the system, so the follow-up is worth doing:
-add a second breakpoint on the last message before the block, which
-[prompt-caching.md](prompt-caching.md) already tracks as deferred. It is deliberately not in this
-change — it would help equally without it, so bundling it would only make both harder to review and
-to revert.
+On OpenAI and Gemini that is the whole story: they cache implicitly by prefix, so a stable prefix is
+a cached prefix. Anthropic caches only up to an explicit `cache_control` breakpoint, and the only
+one we set was on the system block — so a stable history bought it nothing on its own. Anthropic
+therefore gets two more breakpoints (see below), which is what turns the same prefix stability into
+an actual cache hit there.
 
 ### Why a user message and not a system message
 
@@ -104,6 +99,42 @@ when the block holds only a clock invites it to answer "nothing scheduled" from 
 rather than saying it has no calendar access — the opposite of the deny the flag exists to express.
 It also takes a `placement`, since a Live API session has no message list and inlines the block into
 its system instruction instead of appending it.
+
+### Anthropic needs the breakpoints spelled out
+
+Implicit prefix caching means OpenAI and Gemini pick up the stable prefix for free. Anthropic caches
+only as far as an explicit `cache_control` marker, so it gets two, placed in
+`_convert_messages_to_anthropic_format`:
+
+- **Ending the replayable history**, just ahead of the turn-context block. Everything before the
+  block is what the next turn will send again, byte for byte. A breakpoint *past* the block would
+  cache a prefix containing content the next turn does not have — cache writes that can never be
+  read.
+- **At the very end of the message list.** Within a turn the tool loop appends after the block, so
+  this is what lets iteration *n+1* read what iteration *n* accumulated. Without it, a long tool
+  loop re-reads its entire accumulated output every iteration, which is worst exactly where it
+  matters most: `engineer` is the only Anthropic profile and runs at `max_iterations: 100`.
+
+Two details are load-bearing, both about keeping a message's bytes identical from one turn to the
+next:
+
+- The history breakpoint **skips back over the whole run of user messages before the block**, rather
+  than landing on the one immediately preceding it. Anthropic requires alternating roles, so those
+  messages get merged into the block's turn — and merging rewrites plain string content into a
+  one-element block list. The same historical message would then go out as a bare string on the turn
+  it is ordinary history and as a list on the turn it sits next to the block. Anchoring on the
+  newest message that does *not* merge with the block avoids that. The cost is the current turn's
+  own user message falling outside the cached prefix: a message or two of text.
+- Marking **never reshapes string content** for the same reason, and **never annotates a thinking
+  block**, whose signature the API validates against exactly what it returned.
+
+Three breakpoints including the system block, inside Anthropic's limit of four. Both conversation
+breakpoints move as the conversation grows, so each request writes only the delta past the previous
+one.
+
+`cache_control` cannot change a response, so the VCR body matcher strips it before comparing.
+Otherwise every future adjustment to breakpoint placement would invalidate unrelated recordings and
+demand API keys to re-record them.
 
 ### Why it is placed once per turn, not repositioned per iteration
 

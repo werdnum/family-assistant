@@ -569,6 +569,10 @@ class AnthropicClient(BaseLLMClient):
         # profile's system prompt, and anything hoisted after it (mid-conversation
         # system triggers) is per-turn material that belongs past the breakpoint.
         stable_prefix_len: int | None = None
+        # Index of the api_message carrying the first turn-scaffolding message.
+        # It marks the boundary between replayed history and regenerated
+        # material, which is where the conversation's cache breakpoint goes.
+        first_scaffolding_index: int | None = None
         # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with dynamic content merging in _merge_consecutive_roles
         api_messages: list[dict[str, Any]] = []
 
@@ -580,6 +584,8 @@ class AnthropicClient(BaseLLMClient):
 
             elif isinstance(msg, UserMessage):
                 content = self._convert_user_content(msg)
+                if first_scaffolding_index is None and msg.is_turn_scaffolding:
+                    first_scaffolding_index = len(api_messages)
                 api_messages.append({"role": "user", "content": content})
 
             elif isinstance(msg, AssistantMessage):
@@ -632,11 +638,98 @@ class AnthropicClient(BaseLLMClient):
                 )
                 api_messages.append({"role": "user", "content": [tool_result_block]})
 
+        # The history breakpoint goes on before merging, while each typed message
+        # still maps to one api_message and the scaffolding index means something.
+        self._mark_history_breakpoint(api_messages, first_scaffolding_index)
+
         # Merge consecutive same-role messages (Anthropic requires alternating roles)
         api_messages = self._merge_consecutive_roles(api_messages)
 
+        # The trailing breakpoint goes on after, because merging is what turns the
+        # turn's last user messages into the block list that can carry one.
+        if api_messages:
+            self._mark_cache_breakpoint(api_messages[-1])
+
         system_blocks = self._build_system_blocks(system_parts, stable_prefix_len)
         return system_blocks, api_messages
+
+    @classmethod
+    def _mark_history_breakpoint(
+        cls,
+        # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with the dynamic content this inspects
+        api_messages: list[dict[str, Any]],
+        first_scaffolding_index: int | None,
+    ) -> None:
+        """Mark the cache breakpoint that ends the replayable history.
+
+        Anthropic caches only up to an explicit breakpoint, so the system-prompt
+        breakpoint alone leaves the whole conversation re-read on every request.
+        A conversation needs two more, because the two things worth caching end in
+        different places. This is the first: everything ahead of the turn-context
+        block is history the next turn replays byte-identically. The block itself
+        is regenerated each turn and never persisted, so a breakpoint past it
+        caches a prefix the next turn cannot match -- cache writes that are never
+        read. (The second is placed at the very end, after merging, so a tool loop
+        can read the results it has already accumulated.)
+
+        It deliberately skips back over the whole run of user messages preceding
+        the block rather than landing on the one just before it. Those messages
+        merge with the block, and merging rewrites string content into a block
+        list -- so the same historical message would go out as a bare string on
+        the turn it is plain history and as a one-element list on the turn it sits
+        next to the block, which is not the byte-identical prefix a cache read
+        needs. Anchoring on the newest message that does *not* merge with the
+        block keeps its serialization stable across turns. The cost is that the
+        current turn's own user message falls outside the cached prefix, which is
+        a message or two of text.
+
+        Both breakpoints move as the conversation grows, which is the intended
+        incremental pattern: each request writes only the delta past the previous
+        one. Three in total including the system block, inside Anthropic's limit
+        of four.
+        """
+        if first_scaffolding_index is None:
+            return
+
+        index = first_scaffolding_index - 1
+        while index >= 0 and api_messages[index]["role"] == "user":
+            index -= 1
+        if index >= 0:
+            cls._mark_cache_breakpoint(api_messages[index])
+
+    @staticmethod
+    def _mark_cache_breakpoint(
+        # ast-grep-ignore: no-dict-any - MessageParam TypedDict incompatible with the dynamic content this inspects
+        api_message: dict[str, Any],
+    ) -> None:
+        """Put a breakpoint at the end of *api_message*, if it can carry one.
+
+        String content is left alone rather than wrapped into a one-element block
+        list. Rewriting it would change the shape of a message on the wire, and a
+        message that goes out as a bare string on one turn and a list on another
+        is not the byte-identical prefix a cache read needs. Nothing is lost: in a
+        real turn both breakpoints land on block lists anyway -- the trailing one
+        on the user turn the context block merged into or on a tool result, and
+        the other on an assistant turn.
+
+        Thinking blocks are skipped: they are replayed as opaque dicts and their
+        signatures are validated against exactly what came back, so adding a key
+        to one risks rejecting the turn. They lead an assistant turn rather than
+        ending it, but a merge of two assistant turns can interleave them, so the
+        scan walks back to the newest block that is safe to annotate.
+        """
+        content = api_message["content"]
+        if not isinstance(content, list):
+            return
+
+        for block in reversed(content):
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") in _THINKING_BLOCK_TYPES:
+                continue
+            # ast-grep-ignore: no-dict-any - block is a provider TypedDict at type level, a plain dict at runtime
+            cast("dict[str, Any]", block)["cache_control"] = {"type": "ephemeral"}
+            return
 
     @staticmethod
     def _reasoning_info_from_usage(

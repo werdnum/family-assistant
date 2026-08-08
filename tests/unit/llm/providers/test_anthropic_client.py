@@ -8,8 +8,15 @@ from types import SimpleNamespace
 import pytest
 from anthropic.types import TextBlockParam
 
-from family_assistant.llm.messages import LLMMessage, SystemMessage, UserMessage
+from family_assistant.llm.messages import (
+    AssistantMessage,
+    LLMMessage,
+    SystemMessage,
+    ToolMessage,
+    UserMessage,
+)
 from family_assistant.llm.providers.anthropic_client import AnthropicClient
+from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 
 
 @pytest.mark.no_db
@@ -314,3 +321,216 @@ class TestAnthropicCacheUsageReporting:
         assert info.get("cached_prompt_tokens") == 0
         assert info.get("cache_write_tokens") == 0
         assert info.get("total_tokens") == 120
+
+
+def _without_markers(
+    api_messages: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    """The same messages with every cache_control directive removed."""
+    stripped: list[dict[str, object]] = []
+    for message in api_messages:
+        content = message["content"]
+        if isinstance(content, list):
+            content = [
+                {k: v for k, v in block.items() if k != "cache_control"}
+                if isinstance(block, dict)
+                else block
+                for block in content
+            ]
+        stripped.append({**message, "content": content})
+    return stripped
+
+
+def _breakpoint_positions(
+    api_messages: list[dict[str, object]],
+) -> list[tuple[int, int]]:
+    """(message index, block index) of every cache_control marker."""
+    found: list[tuple[int, int]] = []
+    for message_index, message in enumerate(api_messages):
+        content = message["content"]
+        if not isinstance(content, list):
+            continue
+        for block_index, block in enumerate(content):
+            if isinstance(block, dict) and "cache_control" in block:
+                found.append((message_index, block_index))
+    return found
+
+
+@pytest.mark.no_db
+class TestConversationCacheBreakpoints:
+    """Anthropic caches only to an explicit breakpoint.
+
+    Without these the history stays uncached no matter how prefix-stable it is,
+    which is what the turn-context move made it.
+    """
+
+    def _client(self) -> AnthropicClient:
+        return AnthropicClient(api_key="test", model="claude-sonnet-5")
+
+    def test_breakpoint_skips_back_past_messages_that_merge_with_the_block(
+        self,
+    ) -> None:
+        """It must land on a message whose serialization does not depend on the
+        block, so the same history goes out identically on the next turn."""
+        client = self._client()
+        messages: list[LLMMessage] = [
+            SystemMessage(content="You are helpful.", stable_prefix_len=16),
+            UserMessage(content="Earlier question"),
+            AssistantMessage(content="Earlier answer"),
+            UserMessage(content="What is on my calendar?"),
+            UserMessage(
+                content="<turn_context>\nCurrent time: now\n</turn_context>",
+                is_turn_scaffolding=True,
+            ),
+        ]
+
+        _, api_messages = client._convert_messages_to_anthropic_format(messages)
+
+        # api_messages: [user earlier][assistant][user trigger + block merged].
+        # The breakpoint is on the assistant turn, not on the merged user turn.
+        assert [index for index, _ in _breakpoint_positions(api_messages)] == [1, 2]
+
+    def test_cached_prefix_is_byte_identical_on_the_next_turn(self) -> None:
+        """The property the whole change exists for, at the API boundary."""
+        client = self._client()
+        history: list[LLMMessage] = [
+            SystemMessage(content="You are helpful.", stable_prefix_len=16),
+            UserMessage(content="Earlier question"),
+            AssistantMessage(content="Earlier answer"),
+        ]
+
+        def block(text: str) -> UserMessage:
+            return UserMessage(content=text, is_turn_scaffolding=True)
+
+        _, turn_one = client._convert_messages_to_anthropic_format([
+            *history,
+            UserMessage(content="What is on my calendar?"),
+            block("<turn_context>\nCurrent time: 10:00\n</turn_context>"),
+        ])
+        _, turn_two = client._convert_messages_to_anthropic_format([
+            *history,
+            UserMessage(content="What is on my calendar?"),
+            AssistantMessage(content="Nothing today."),
+            UserMessage(content="Thanks"),
+            block("<turn_context>\nCurrent time: 10:05\n</turn_context>"),
+        ])
+
+        # Everything up to and including turn one's first breakpoint must be
+        # reproduced exactly, or turn two writes a fresh entry instead of
+        # reading it. The marker itself is a directive rather than cached
+        # content, and sits at a different place on each turn, so it is stripped
+        # before comparing.
+        cut = _breakpoint_positions(turn_one)[0][0]
+        assert _without_markers(turn_one[: cut + 1]) == _without_markers(
+            turn_two[: cut + 1]
+        )
+
+    def test_trailing_breakpoint_follows_the_tool_loop(self) -> None:
+        """Without it each iteration re-reads every result accumulated so far."""
+        client = self._client()
+        messages: list[LLMMessage] = [
+            SystemMessage(content="You are helpful.", stable_prefix_len=16),
+            UserMessage(content="Check the weather"),
+            UserMessage(
+                content="<turn_context>\nnow\n</turn_context>", is_turn_scaffolding=True
+            ),
+            AssistantMessage(
+                content=None,
+                tool_calls=[
+                    ToolCallItem(
+                        id="call_1",
+                        type="function",
+                        function=ToolCallFunction(name="weather", arguments="{}"),
+                    )
+                ],
+            ),
+            ToolMessage(content="sunny", tool_call_id="call_1", name="weather"),
+        ]
+
+        _, api_messages = client._convert_messages_to_anthropic_format(messages)
+
+        positions = _breakpoint_positions(api_messages)
+        last_message_index = len(api_messages) - 1
+        assert any(index == last_message_index for index, _ in positions)
+
+    def test_plain_string_content_is_left_unshaped(self) -> None:
+        """One-shot callers build message lists by hand and carry no block.
+
+        Wrapping their string content into a block list to carry a breakpoint
+        would change the request shape for no gain -- there is no conversation
+        here to cache -- and a message that goes out as a string on one turn and
+        a list on another cannot be prefix-matched.
+        """
+        client = self._client()
+        messages: list[LLMMessage] = [
+            SystemMessage(content="You are helpful."),
+            UserMessage(content="Summarize this."),
+        ]
+
+        _, api_messages = client._convert_messages_to_anthropic_format(messages)
+
+        assert api_messages == [{"role": "user", "content": "Summarize this."}]
+
+    def test_thinking_blocks_are_never_annotated(self) -> None:
+        """Their signatures are validated against exactly what came back."""
+        client = self._client()
+        messages: list[LLMMessage] = [
+            SystemMessage(content="You are helpful."),
+            UserMessage(content="Think about it"),
+            AssistantMessage(
+                content=None,
+                provider_metadata={
+                    "thinking_blocks": [
+                        {
+                            "type": "thinking",
+                            "thinking": "reasoning",
+                            "signature": "sig",
+                        }
+                    ]
+                },
+                tool_calls=[
+                    ToolCallItem(
+                        id="call_1",
+                        type="function",
+                        function=ToolCallFunction(name="noop", arguments="{}"),
+                    )
+                ],
+            ),
+        ]
+
+        _, api_messages = client._convert_messages_to_anthropic_format(messages)
+
+        for message in api_messages:
+            content = message["content"]
+            if not isinstance(content, list):
+                continue
+            for blk in content:
+                if isinstance(blk, dict) and blk.get("type") in {
+                    "thinking",
+                    "redacted_thinking",
+                }:
+                    assert "cache_control" not in blk
+
+    def test_total_breakpoints_stay_within_anthropic_limit(self) -> None:
+        """System block plus the two conversation ones must not exceed four."""
+        client = self._client()
+        messages: list[LLMMessage] = [
+            SystemMessage(content="You are helpful.", stable_prefix_len=8),
+            UserMessage(content="Do a thing"),
+            UserMessage(
+                content="<turn_context>\nnow\n</turn_context>", is_turn_scaffolding=True
+            ),
+            AssistantMessage(content="Working"),
+            UserMessage(content="[SYSTEM: final iteration]", is_turn_scaffolding=True),
+        ]
+
+        system_value, api_messages = client._convert_messages_to_anthropic_format(
+            messages
+        )
+
+        system_breakpoints = (
+            sum(1 for blk in system_value if "cache_control" in blk)
+            if isinstance(system_value, list)
+            else 0
+        )
+        assert system_breakpoints + len(_breakpoint_positions(api_messages)) <= 4
