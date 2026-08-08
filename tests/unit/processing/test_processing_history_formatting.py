@@ -21,10 +21,12 @@ if TYPE_CHECKING:
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import ToolCallFunction, ToolCallItem
+from family_assistant.llm.content_parts import attachment_content
 from family_assistant.llm.messages import (
     AssistantMessage,
     LLMMessage,
     SystemMessage,
+    TextContentPart,
     ToolMessage,
     UserMessage,
 )
@@ -446,6 +448,92 @@ async def test_format_history_handles_empty_tool_calls(
         history_messages
     )
     assert actual_output == expected_output
+
+
+async def test_delegated_attachments_are_named_to_the_model(
+    db_engine: "AsyncEngine", tmp_path: Path
+) -> None:
+    """Attachments handed over by delegation reach the model with their ids.
+
+    A delegated profile is given the bytes as an injection message. Without the
+    id alongside them it can look at the image but cannot pass it to any
+    attachment-taking tool, so it invents a substitute instead.
+    """
+    seen_messages: list[LLMMessage] = []
+
+    def response_generator(args: MatcherArgs) -> LLMOutput:
+        seen_messages.extend(args["messages"])
+        return LLMOutput(content="Transformed the image.", tool_calls=None)
+
+    service = ProcessingService(
+        llm_client=RuleBasedMockLLMClient(
+            rules=[(lambda _args: True, response_generator)]
+        ),
+        tools_provider=MockToolsProvider(),
+        service_config=ProcessingServiceConfig(
+            prompts={},
+            timezone=ZoneInfo("UTC"),
+            max_history_messages=10,
+            history_max_age_hours=1,
+            tools_config=ToolsConfig(),
+            delegation_security_level=DelegationSecurityLevel.CONFIRM,
+            id="artist_profile",
+        ),
+        context_providers=[],
+        server_url="http://test.com",
+        app_config=AppConfig(),
+    )
+    service.attachment_registry = AttachmentRegistry(
+        storage_path=str(tmp_path / "attachments"),
+        db_engine=db_engine,
+        config=None,
+    )
+
+    image_buffer = BytesIO()
+    Image.new("RGB", (1, 1), color="red").save(image_buffer, format="JPEG")
+    db_context = Database(engine=db_engine)
+    attachment = await service.attachment_registry.register_user_attachment(
+        db_context=db_context,
+        content=image_buffer.getvalue(),
+        filename="backyard.jpeg",
+        mime_type="image/jpeg",
+        conversation_id="delegated-conversation",
+        user_id="user-1",
+    )
+
+    await service.handle_chat_interaction(
+        db_context=db_context,
+        interface_type="web",
+        conversation_id="delegated-conversation",
+        trigger_content_parts=[
+            {"type": "text", "text": "Mock up the hill with the proposed plants"},
+            attachment_content(attachment.attachment_id),
+        ],
+        trigger_interface_message_id=None,
+        user_name="Test User",
+        user_id="user-1",
+    )
+
+    metadata_blocks = [
+        message
+        for message in seen_messages
+        if isinstance(message, UserMessage)
+        and "<attachment_metadata>" in _message_text(message)
+    ]
+    assert len(metadata_blocks) == 1
+    block_text = _message_text(metadata_blocks[0])
+    assert attachment.attachment_id in block_text
+    assert "backyard.jpeg" in block_text
+    assert "image/jpeg" in block_text
+
+
+def _message_text(message: UserMessage) -> str:
+    """Flatten a user message's text, whether it is a string or content parts."""
+    if isinstance(message.content, str):
+        return message.content
+    return "\n".join(
+        part.text for part in message.content if isinstance(part, TextContentPart)
+    )
 
 
 async def test_format_history_converts_attachment_urls(

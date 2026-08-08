@@ -41,6 +41,7 @@ from .utils import (
     _user_friendly_error_message,
     format_attachment_metadata_block,
     inject_metadata_into_user_message,
+    merge_attachment_metadata,
 )
 
 if TYPE_CHECKING:
@@ -947,18 +948,22 @@ class ProcessingService:
         if final_system_prompt:
             messages_for_llm.insert(0, self._build_system_message(final_system_prompt))
 
-        attachment_injection_messages = (
-            await self.attachment_processor.process_content_parts(
-                db_context,
-                conversation_id,
-                trigger_content_parts,
-                acting_user_id=user_id,
-            )
+        processed_content_parts = await self.attachment_processor.process_content_parts(
+            db_context,
+            conversation_id,
+            trigger_content_parts,
+            acting_user_id=user_id,
         )
-        messages_for_llm.extend(attachment_injection_messages)
+        messages_for_llm.extend(processed_content_parts.messages)
+        # Injected attachments are listed alongside the trigger's own: a
+        # delegated profile receives its attachments only as injections, and
+        # without their ids in the block it can see the image but cannot name
+        # it to transform_image or any other attachment-taking tool.
         self._inject_trigger_attachment_metadata(
             messages_for_llm=messages_for_llm,
-            trigger_attachments=trigger_attachments,
+            trigger_attachments=merge_attachment_metadata(
+                trigger_attachments, processed_content_parts.attachments
+            ),
         )
         # Last, and after the attachment-metadata injection above: that scans back
         # for the newest user message, and would fasten the trigger's attachment
