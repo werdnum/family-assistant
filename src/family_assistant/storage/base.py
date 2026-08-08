@@ -44,6 +44,16 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///family_assistant.d
 POSTGRES_POOL_SIZE = 5
 POSTGRES_MAX_OVERFLOW = 10
 
+# Server-side ceiling on any single statement, as a backstop rather than a
+# latency target: nothing this application runs should come close to it. It
+# exists because a statement with no deadline has none even after the client
+# that asked for it is gone -- a cancelled request left two conversation-list
+# queries running for 41 minutes, holding pooled connections and starving the
+# retries that the same client then issued. ``0`` disables it, PostgreSQL's own
+# semantics for the setting. Alembic builds its own engine, so migrations
+# (where a long index build is legitimate) are unaffected.
+POSTGRES_STATEMENT_TIMEOUT_MS = int(os.getenv("POSTGRES_STATEMENT_TIMEOUT_MS", "60000"))
+
 
 def create_engine_with_sqlite_optimizations(
     database_url: str,
@@ -82,6 +92,15 @@ def create_engine_with_sqlite_optimizations(
     # these bounds bound the deployment rather than a single worker.
     is_sqlite = database_url.startswith("sqlite")
 
+    postgres_connect_args: dict[str, dict[str, str]] = {}
+    if not is_sqlite and POSTGRES_STATEMENT_TIMEOUT_MS > 0:
+        # asyncpg passes server_settings in the startup packet, so every
+        # connection the pool hands out carries the ceiling without a per-
+        # checkout round trip.
+        postgres_connect_args["server_settings"] = {
+            "statement_timeout": str(POSTGRES_STATEMENT_TIMEOUT_MS)
+        }
+
     engine = create_async_engine(
         database_url,
         echo=False,
@@ -90,7 +109,7 @@ def create_engine_with_sqlite_optimizations(
             "check_same_thread": False,
         }
         if is_sqlite
-        else {},
+        else postgres_connect_args,
         # Pre-ping guards against a pooled connection the server dropped;
         # SQLite's single in-process connection cannot go stale that way.
         pool_pre_ping=not is_sqlite,

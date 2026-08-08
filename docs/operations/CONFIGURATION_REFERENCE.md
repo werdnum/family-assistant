@@ -34,6 +34,27 @@ production use with pgvector extension for vector search.
 
 ______________________________________________________________________
 
+### POSTGRES_STATEMENT_TIMEOUT_MS
+
+Server-side ceiling, in milliseconds, on any single PostgreSQL statement the application runs.
+
+| Property  | Value         |
+| --------- | ------------- |
+| Required  | No            |
+| Default   | `60000` (60s) |
+| Sensitive | No            |
+| Example   | `30000`       |
+
+A backstop, not a latency target — nothing the application runs should come close to it. It exists
+so that a statement whose caller has gone away cannot keep consuming database capacity indefinitely;
+without it, a request cancelled after 2.9 seconds left its query running for 41 minutes. Set `0` to
+disable, which is PostgreSQL's own meaning for the setting.
+
+Applies only to the application's connection pool. Alembic builds its own engine, so migrations —
+where a long index build is legitimate — are unaffected. Ignored on SQLite.
+
+______________________________________________________________________
+
 ### SERVER_URL
 
 Base URL of the running server, used for generating links and webhooks.

@@ -1148,3 +1148,193 @@ def _build_exec_context(
         credential_resolvers=None,
         api_backend=None,
     )
+
+
+async def _seed_conversation(
+    db: Database,
+    conversation_id: str,
+    *,
+    timestamp: datetime,
+    owner: str,
+    extra_owner: str | None = None,
+    message_pairs: int = 1,
+) -> None:
+    """Write ``message_pairs`` user/assistant pairs, all sharing one timestamp.
+
+    A shared timestamp is the interesting case for the summaries query: it is
+    what forces the latest-message choice onto the ``internal_id`` tie-break.
+    """
+    for pair in range(message_pairs):
+        await db.message_history.add_message(
+            UserMessage(content=f"user {pair} in {conversation_id}"),
+            interface_type="web",
+            conversation_id=conversation_id,
+            timestamp=timestamp,
+            turn_id=f"{conversation_id}-{pair}",
+            processing_profile_id="default",
+            user_id=owner,
+        )
+        await db.message_history.add_message(
+            AssistantMessage(content=f"assistant {pair} in {conversation_id}"),
+            interface_type="web",
+            conversation_id=conversation_id,
+            timestamp=timestamp,
+            turn_id=f"{conversation_id}-{pair}",
+            processing_profile_id="default",
+            user_id=None,
+        )
+    if extra_owner is not None:
+        await db.message_history.add_message(
+            UserMessage(content=f"foreign user in {conversation_id}"),
+            interface_type="web",
+            conversation_id=conversation_id,
+            timestamp=timestamp,
+            turn_id=f"{conversation_id}-foreign",
+            processing_profile_id="default",
+            user_id=extra_owner,
+        )
+
+
+@pytest.mark.asyncio
+async def test_conversation_summaries_paginate_without_gaps_or_repeats(
+    db_engine: AsyncEngine,
+) -> None:
+    """Paging the whole list yields every conversation exactly once.
+
+    The iOS resync walks this endpoint page by page, so an order that is not
+    total between two pages shows up as a conversation the client saw twice and
+    another it never saw at all.
+    """
+    db = Database(engine=db_engine)
+    owner = "pagination_owner"
+    base = datetime(2026, 3, 1, 9, 0, 0, tzinfo=UTC)
+
+    expected = []
+    for i in range(12):
+        conv_id = f"page_conv_{i:02d}"
+        expected.append(conv_id)
+        # Deliberately coarse: conversations 0-2, 3-5, ... share a latest
+        # timestamp, so ordering by timestamp alone leaves ties to break.
+        await _seed_conversation(
+            db, conv_id, timestamp=base + timedelta(minutes=i // 3), owner=owner
+        )
+
+    seen: list[str] = []
+    for offset in range(0, 12, 5):
+        summaries, total = await db.message_history.get_conversation_summaries(
+            limit=5,
+            offset=offset,
+            include_subconversations=False,
+            owner_user_ids={owner},
+        )
+        assert total == 12
+        seen.extend(s["conversation_id"] for s in summaries)
+
+    assert len(seen) == len(set(seen)), f"conversation returned on two pages: {seen}"
+    assert sorted(seen) == sorted(expected)
+
+
+@pytest.mark.asyncio
+async def test_conversation_summaries_page_matches_unpaged_slice(
+    db_engine: AsyncEngine,
+) -> None:
+    """A page is the corresponding slice of the full ordered list."""
+    db = Database(engine=db_engine)
+    owner = "slice_owner"
+    base = datetime(2026, 3, 2, 9, 0, 0, tzinfo=UTC)
+
+    for i in range(9):
+        await _seed_conversation(
+            db,
+            f"slice_conv_{i:02d}",
+            timestamp=base + timedelta(minutes=i // 3),
+            owner=owner,
+        )
+
+    full, _ = await db.message_history.get_conversation_summaries(
+        limit=100, offset=0, include_subconversations=False, owner_user_ids={owner}
+    )
+    full_ids = [s["conversation_id"] for s in full]
+
+    page, _ = await db.message_history.get_conversation_summaries(
+        limit=4, offset=3, include_subconversations=False, owner_user_ids={owner}
+    )
+
+    assert [s["conversation_id"] for s in page] == full_ids[3:7]
+
+
+@pytest.mark.asyncio
+async def test_conversation_summaries_counts_and_ownership_survive_paging(
+    db_engine: AsyncEngine,
+) -> None:
+    """Per-conversation counts and the sole-owner filter hold on a later page.
+
+    The count is joined to the page rather than computed for every
+    conversation, so it has to stay a property of the conversation and not of
+    the slice it happened to land in.
+    """
+    db = Database(engine=db_engine)
+    owner = "count_owner"
+    base = datetime(2026, 3, 3, 9, 0, 0, tzinfo=UTC)
+
+    await _seed_conversation(
+        db, "count_conv_a", timestamp=base, owner=owner, message_pairs=1
+    )
+    await _seed_conversation(
+        db,
+        "count_conv_b",
+        timestamp=base + timedelta(minutes=1),
+        owner=owner,
+        message_pairs=3,
+    )
+    await _seed_conversation(
+        db,
+        "count_conv_c",
+        timestamp=base + timedelta(minutes=2),
+        owner=owner,
+        message_pairs=2,
+    )
+    # A second person posted here, so the caller does not solely own it.
+    await _seed_conversation(
+        db,
+        "count_conv_shared",
+        timestamp=base + timedelta(minutes=3),
+        owner=owner,
+        extra_owner="somebody_else",
+    )
+
+    first_page, total = await db.message_history.get_conversation_summaries(
+        limit=2, offset=0, include_subconversations=False, owner_user_ids={owner}
+    )
+    second_page, second_total = await db.message_history.get_conversation_summaries(
+        limit=2, offset=2, include_subconversations=False, owner_user_ids={owner}
+    )
+
+    counts = {
+        s["conversation_id"]: s["message_count"] for s in (*first_page, *second_page)
+    }
+    assert "count_conv_shared" not in counts
+    assert total == 3
+    assert second_total == 3
+    assert counts == {"count_conv_a": 2, "count_conv_b": 6, "count_conv_c": 4}
+
+
+@pytest.mark.asyncio
+async def test_conversation_summaries_preview_is_latest_message(
+    db_engine: AsyncEngine,
+) -> None:
+    """The preview is the newest message even when every timestamp ties."""
+    db = Database(engine=db_engine)
+    owner = "preview_owner"
+    stamp = datetime(2026, 3, 4, 9, 0, 0, tzinfo=UTC)
+
+    await _seed_conversation(
+        db, "preview_conv", timestamp=stamp, owner=owner, message_pairs=3
+    )
+
+    summaries, _ = await db.message_history.get_conversation_summaries(
+        limit=10, offset=0, include_subconversations=False, owner_user_ids={owner}
+    )
+
+    assert len(summaries) == 1
+    assert summaries[0]["last_message"] == "assistant 2 in preview_conv"
