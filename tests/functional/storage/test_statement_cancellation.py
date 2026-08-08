@@ -8,12 +8,15 @@ running: cancelling the awaiting task tears the statement down immediately, and
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
 import sqlalchemy as sa
 from sqlalchemy.exc import DBAPIError
 
+from family_assistant.llm.messages import UserMessage
+from family_assistant.request_side_effects import begin_tracking, state_changed
 from family_assistant.storage import init_db
 from family_assistant.storage.base import (
     POSTGRES_STATEMENT_TIMEOUT_MS,
@@ -37,6 +40,46 @@ async def _active_marked_statements(db: Database) -> int:
         ).bindparams(marker=f"%{_MARKER}%")
     )
     return int(rows[0]["c"])
+
+
+@pytest.mark.asyncio
+async def test_repository_writes_report_a_state_change(
+    db_engine: AsyncEngine,
+) -> None:
+    """A real write through the repositories trips the side-effect tracker.
+
+    This is the link the disconnect middleware relies on to tell a request that
+    has only read from one it would be destructive to abandon.
+    """
+    db = Database(db_engine)
+    begin_tracking()
+
+    await db.message_history.add_message(
+        UserMessage(content="a write"),
+        interface_type="web",
+        conversation_id="side_effect_conv",
+        timestamp=datetime(2026, 4, 1, tzinfo=UTC),
+        turn_id="side-effect-turn",
+        processing_profile_id="default",
+        user_id="side_effect_user",
+    )
+
+    assert state_changed() is True
+
+
+@pytest.mark.asyncio
+async def test_reads_do_not_report_a_state_change(
+    db_engine: AsyncEngine,
+) -> None:
+    """A read-only request stays cancellable."""
+    db = Database(db_engine)
+    begin_tracking()
+
+    await db.message_history.get_conversation_summaries(
+        limit=10, offset=0, owner_user_ids={"nobody"}
+    )
+
+    assert state_changed() is False
 
 
 @pytest.mark.postgres

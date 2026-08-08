@@ -6,6 +6,7 @@ import contextlib
 import pytest
 from starlette.types import Message, Receive, Scope, Send
 
+from family_assistant.request_side_effects import mark_state_changed
 from family_assistant.web.cancel_on_disconnect import (
     CancelOnClientDisconnectMiddleware,
 )
@@ -198,12 +199,82 @@ async def test_disconnect_after_the_response_is_not_treated_as_abandonment() -> 
 
 
 @pytest.mark.asyncio
-async def test_state_changing_get_routes_are_exempt() -> None:
-    """The OAuth callback consumes a single-use flow, so it must not be cut off."""
+async def test_a_get_that_has_written_is_not_cancelled() -> None:
+    """Once a request has changed state, abandoning it could lose the write.
+
+    The OAuth callback shape: claim a single-use flow, then do slow work. It is
+    the claim -- not the route's name -- that makes cancelling it destructive.
+    """
+    spy = _HandlerSpy()
+
+    class _WritesThenWorks:
+        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+            mark_state_changed()
+            await spy(scope, receive, send)
+
+    async def receive() -> Message:
+        return {"type": "http.disconnect"}
+
+    async def send(message: Message) -> None:
+        pass
+
+    middleware = CancelOnClientDisconnectMiddleware(_WritesThenWorks())
+    task = asyncio.create_task(middleware(_scope("GET"), receive, send))
+
+    await spy.started.wait()
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(asyncio.shield(task), timeout=2.0)
+    assert spy.cancelled is False, "a request that had written was cut off"
+
+    spy.release.set()
+    await asyncio.wait_for(task, timeout=5)
+
+    assert spy.completed is True
+
+
+@pytest.mark.asyncio
+async def test_a_write_does_not_carry_over_to_the_next_request() -> None:
+    """Each request gets its own tracker, so one write cannot protect the next."""
+    written = CancelOnClientDisconnectMiddleware(_HandlerSpy())
+
+    async def writing_handler(scope: Scope, receive: Receive, send: Send) -> None:
+        mark_state_changed()
+
+    async def receive() -> Message:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    async def send(message: Message) -> None:
+        pass
+
+    written.app = writing_handler
+    await asyncio.wait_for(written(_scope("GET"), receive, send), timeout=5)
+
+    # A second request through the same middleware instance must start clean.
+    spy = _HandlerSpy()
+
+    async def disconnecting_receive() -> Message:
+        return {"type": "http.disconnect"}
+
+    second = CancelOnClientDisconnectMiddleware(spy)
+    await asyncio.wait_for(
+        second(_scope("GET"), disconnecting_receive, send), timeout=5
+    )
+
+    assert spy.cancelled is True
+
+
+@pytest.mark.asyncio
+async def test_auth_routes_are_exempt_by_path() -> None:
+    """The OIDC routes change state where the write tracker cannot see it.
+
+    They exchange tokens with the provider and write a session cookie without
+    touching the database, so nothing marks them and only the path can.
+    """
     spy = _HandlerSpy()
 
     scope = _scope("GET")
-    scope["path"] = "/api/integrations/google/callback"
+    scope["path"] = "/auth"
 
     async def receive() -> Message:
         # The client is already gone before the handler gets anywhere.
@@ -220,7 +291,7 @@ async def test_state_changing_get_routes_are_exempt() -> None:
     # middleware reads that disconnect, well inside this window.
     with contextlib.suppress(TimeoutError):
         await asyncio.wait_for(asyncio.shield(task), timeout=2.0)
-    assert spy.cancelled is False, "the OAuth callback was cut off mid-flight"
+    assert spy.cancelled is False, "an OIDC route was cut off mid-flight"
 
     spy.release.set()
     await asyncio.wait_for(task, timeout=5)

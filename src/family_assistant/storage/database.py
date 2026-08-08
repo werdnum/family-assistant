@@ -43,6 +43,9 @@ from sqlalchemy.exc import (
     MultipleResultsFound,
     NoResultFound,
 )
+from sqlalchemy.sql import Delete, Insert, Update
+
+from family_assistant.request_side_effects import mark_state_changed
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Coroutine
@@ -52,7 +55,7 @@ if TYPE_CHECKING:
     from sqlalchemy import TextClause
     from sqlalchemy.engine import CursorResult
     from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
-    from sqlalchemy.sql import Delete, Insert, Select, Update
+    from sqlalchemy.sql import Select
 
     from family_assistant.storage.repositories import (
         AutomationsRepository,
@@ -780,6 +783,12 @@ class DatabaseTransaction(DatabaseExecutor):
         params: dict[str, Any] | None = None,
     ) -> ExecuteResult:
         """Execute a statement on this transaction's connection."""
+        if isinstance(query, Insert | Update | Delete):
+            # Reported as the write is issued rather than on commit, so a
+            # caller deciding whether to abandon this request sees it even if
+            # the surrounding transaction has not finished. Raw TextClause
+            # writes go unreported; this project queries symbolically.
+            mark_state_changed()
         connection = self.connection
         result = (
             await connection.execute(query, params)

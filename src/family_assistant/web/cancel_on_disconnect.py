@@ -23,10 +23,20 @@ reply -- and cancelling it mid-flight would drop the turn instead.
 Two exceptions to "GET is safe", both of which this module has to encode
 because this application does not honour that part of HTTP everywhere:
 
-* A handful of GET routes really do change state, and are exempted by path.
-  The OAuth integration callback is the sharp one: it single-use-claims the
-  pending flow and then redeems the authorization code over the network, so a
-  disconnect during that round trip would consume both and store nothing.
+* A GET that has already written is no longer safe to drop, so the decision
+  waits until the disconnect arrives and asks what the request has actually
+  done (``request_side_effects``). The OAuth integration callback is the case
+  that matters: it single-use-claims the pending flow and only then redeems
+  the authorization code over the network, so cancelling in between consumes
+  both and stores nothing -- but the claim is a write, so by that point the
+  request has stopped being cancellable. Deciding from observed writes rather
+  than from a list of paths means a route added later is covered without
+  anyone remembering to add it.
+
+  Writes are the only side effect visible this way. ``EXEMPT_PATHS`` covers the
+  few routes whose side effect is something else -- the OIDC login, callback
+  and logout, which exchange tokens with the provider and write a session
+  cookie without touching the database.
 * ``receive()`` reports ``http.disconnect`` once the response is complete,
   whether or not the client actually went away (uvicorn returns it
   unconditionally on ``response_complete``). Treating that as a disconnect
@@ -42,24 +52,23 @@ import logging
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from family_assistant.request_side_effects import begin_tracking
+
 logger = logging.getLogger(__name__)
 
 # HTTP's safe methods: no side effect worth preserving once the client is gone.
 CANCELLABLE_METHODS = frozenset({"GET", "HEAD"})
 
-# GET routes that change state, and so must run to completion even for a client
-# that has gone. Keep in step with the auth and OAuth-integration routers.
+# GET routes whose side effect is something the write tracker cannot see: these
+# exchange tokens with the OIDC provider and write a session cookie without
+# touching the database.
 EXEMPT_PATHS = frozenset({"/login", "/logout", "/auth"})
-EXEMPT_PATH_PREFIXES = ("/api/integrations/",)
 
 
 def _is_cancellable(scope: Scope) -> bool:
     if scope["type"] != "http" or scope.get("method") not in CANCELLABLE_METHODS:
         return False
-    path = scope.get("path", "")
-    if path in EXEMPT_PATHS:
-        return False
-    return not path.startswith(EXEMPT_PATH_PREFIXES)
+    return scope.get("path", "") not in EXEMPT_PATHS
 
 
 class CancelOnClientDisconnectMiddleware:
@@ -72,6 +81,10 @@ class CancelOnClientDisconnectMiddleware:
         if not _is_cancellable(scope):
             await self.app(scope, receive, send)
             return
+
+        # Installed here, before the handler's task exists, so that task
+        # inherits this same tracker and its writes are visible below.
+        side_effects = begin_tracking()
 
         # Set before the message reaches the server, so this can never lag
         # uvicorn's own ``response_complete`` and mistake the disconnect it
@@ -123,6 +136,19 @@ class CancelOnClientDisconnectMiddleware:
             if handler in done:
                 # Re-raise whatever the handler raised, exactly as if this
                 # middleware were not here.
+                await handler
+                return
+
+            if side_effects.state_changed:
+                # It has written something. Finishing costs a little database
+                # time; abandoning it half-done could cost the write's whole
+                # point, so let it run.
+                logger.info(
+                    "Client disconnected from %s %s, but it has already written; "
+                    "letting it finish",
+                    scope.get("method"),
+                    scope.get("path"),
+                )
                 await handler
                 return
 
