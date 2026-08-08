@@ -2,12 +2,15 @@
 
 import asyncio
 import contextlib
+import inspect
 
 import pytest
 from starlette.types import Message, Receive, Scope, Send
 
 from family_assistant.request_side_effects import mark_state_changed
+from family_assistant.web.app_creator import create_app
 from family_assistant.web.cancel_on_disconnect import (
+    EXEMPT_PATHS,
     CancelOnClientDisconnectMiddleware,
 )
 
@@ -262,6 +265,43 @@ async def test_a_write_does_not_carry_over_to_the_next_request() -> None:
     )
 
     assert spy.cancelled is True
+
+
+def test_get_routes_with_untracked_side_effects_are_exempt() -> None:
+    """No GET route may mutate the session without being exempt.
+
+    The write tracker only sees the database, so a route whose side effect is a
+    session cookie or process memory is invisible to it and has to be listed by
+    path. A list nobody checks goes stale -- this walks the built application so
+    the next such route fails here instead of being cancelled mid-flight in
+    production.
+
+    Only each endpoint's own source is read, so a route that mutates the session
+    inside a helper it calls is not caught; those still need adding by hand.
+    """
+    app = create_app()
+    unexempt = []
+
+    for route in app.routes:
+        methods = getattr(route, "methods", None) or set()
+        endpoint = getattr(route, "endpoint", None)
+        path = getattr(route, "path", None)
+        if "GET" not in methods or endpoint is None or path is None:
+            continue
+        try:
+            source = inspect.getsource(endpoint)
+        except (OSError, TypeError):
+            continue
+        mutates_session = (
+            "request.session[" in source or "request.session.pop(" in source
+        )
+        if mutates_session and path not in EXEMPT_PATHS:
+            unexempt.append(path)
+
+    assert not unexempt, (
+        f"GET routes mutate the session but are still cancellable: {unexempt}. "
+        f"Add them to EXEMPT_PATHS in cancel_on_disconnect.py."
+    )
 
 
 @pytest.mark.asyncio

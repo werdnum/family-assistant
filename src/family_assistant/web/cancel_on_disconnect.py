@@ -34,9 +34,13 @@ because this application does not honour that part of HTTP everywhere:
   anyone remembering to add it.
 
   Writes are the only side effect visible this way. ``EXEMPT_PATHS`` covers the
-  few routes whose side effect is something else -- the OIDC login, callback
-  and logout, which exchange tokens with the provider and write a session
-  cookie without touching the database.
+  routes whose side effect is something else: the OIDC and app-auth flows
+  redeem a one-time credential with the provider and then record the result in
+  the session cookie or in process memory, so nothing marks them. The app-auth
+  callback is the one that hurts -- it is how the iOS client logs in, and the
+  provider's code is spent whether or not the handler survives to mint the
+  app's own. A test walks the built application and fails if a session-mutating
+  GET route is missing from that list.
 * ``receive()`` reports ``http.disconnect`` once the response is complete,
   whether or not the client actually went away (uvicorn returns it
   unconditionally on ``response_complete``). Treating that as a disconnect
@@ -59,10 +63,24 @@ logger = logging.getLogger(__name__)
 # HTTP's safe methods: no side effect worth preserving once the client is gone.
 CANCELLABLE_METHODS = frozenset({"GET", "HEAD"})
 
-# GET routes whose side effect is something the write tracker cannot see: these
-# exchange tokens with the OIDC provider and write a session cookie without
-# touching the database.
-EXEMPT_PATHS = frozenset({"/login", "/logout", "/auth"})
+# GET routes whose side effect is something the write tracker cannot see. All of
+# them redeem a one-time credential with the OIDC provider and then record the
+# result in the session cookie or in process memory, so no database write ever
+# reports them -- and the provider's code is spent either way, which is what
+# makes cancelling one unrecoverable rather than merely retryable.
+#
+# ``test_get_routes_with_untracked_side_effects_are_exempt`` walks the built
+# application and fails if a GET route mutates the session without appearing
+# here, so this list is checked rather than remembered. That check reads each
+# endpoint's own source, so a route that mutates the session inside a helper it
+# calls -- as the ``/auth`` family does -- still has to be added by hand.
+EXEMPT_PATHS = frozenset({
+    "/login",
+    "/logout",
+    "/auth",
+    "/app-auth",
+    "/app-auth-callback",
+})
 
 
 def _is_cancellable(scope: Scope) -> bool:
