@@ -7607,6 +7607,39 @@ final class ChatViewModelTests: XCTestCase {
         )
     }
 
+    func testFinalResyncListSnapshotUsesOneBoundedRecentPage() async {
+        let requestCount = AtomicCounter()
+        let nonInitialPageCount = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            guard request.httpMethod == "GET",
+                  request.url?.path == "/api/v1/chat/conversations"
+            else {
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+
+            requestCount.increment()
+            let offset = Self.queryItems(from: request)["offset"]
+            if offset != "0" {
+                nonInitialPageCount.increment()
+                return .json(#"{"conversations":[],"count":2}"#)
+            }
+            return .json(
+                #"{"conversations":[{"conversation_id":"web_conv_recent","last_message":"Recent","last_timestamp":"2026-08-08T07:00:00Z","message_count":1}],"count":2}"#
+            )
+        }
+
+        let model = makeViewModel(conversationID: nil)
+
+        await model.applyRecentListSnapshot()
+
+        XCTAssertEqual(requestCount.value, 1)
+        XCTAssertEqual(
+            nonInitialPageCount.value, 0,
+            "The post-handoff fallback must not continue into full-history pagination."
+        )
+        XCTAssertEqual(model.conversations.map(\.conversationID), ["web_conv_recent"])
+    }
+
     func testReachabilityRecoveryRunsFullCoalescedResync() async throws {
         // §4.4: an unsatisfied→satisfied recovery runs the SAME coalesced resync as
         // foreground — a full list snapshot fetch — not just a bare loop restart.

@@ -5239,6 +5239,13 @@ extension ChatViewModel: ResyncHost {
         await refreshConversations()
     }
 
+    func applyRecentListSnapshot() async {
+        // The first resync snapshot already applied full-replacement semantics.
+        // This post-handoff fallback only closes the activity no-replay window, so
+        // merge the bounded recent page instead of paginating the full history again.
+        await refreshRecentConversations()
+    }
+
     func applyMessagesSnapshot(conversationID: String) async {
         // A send actively streaming owns its own rendering and reconciles its
         // history when the turn finishes; merging a persisted delta here would drop

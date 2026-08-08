@@ -15,9 +15,14 @@ final class ResyncOrchestratorTests: XCTestCase {
         XCTAssertEqual(host.authGateCount, 1)
         XCTAssertEqual(host.messagesSnapshotConversationIDs, ["conv-1"])
         XCTAssertEqual(host.restartStreamsCount, 1)
-        // Two list snapshots: the authoritative one, plus the final refetch that
-        // closes the no-replay activity window on handover.
-        XCTAssertEqual(host.listSnapshotCount, 2)
+        XCTAssertEqual(
+            host.listSnapshotCount, 1,
+            "Resync performs one authoritative full replacement."
+        )
+        XCTAssertEqual(
+            host.recentListSnapshotCount, 1,
+            "The post-handoff fallback must use the bounded recent-page refresh."
+        )
         XCTAssertEqual(host.phaseStartCount, 1)
         XCTAssertEqual(host.phaseFinishCount, 1)
     }
@@ -245,8 +250,8 @@ final class ResyncOrchestratorTests: XCTestCase {
         await second.value
 
         XCTAssertEqual(host.authGateCount, 1, "The joined request does no duplicate work.")
-        // One completed resync: authoritative list snapshot + final refetch.
-        XCTAssertEqual(host.listSnapshotCount, 2)
+        XCTAssertEqual(host.listSnapshotCount, 1)
+        XCTAssertEqual(host.recentListSnapshotCount, 1)
         XCTAssertEqual(host.restartStreamsCount, 1)
     }
 
@@ -370,7 +375,8 @@ final class ResyncOrchestratorTests: XCTestCase {
 
         XCTAssertEqual(host.awaitTerminationCount, 1)
         XCTAssertEqual(host.restartStreamsCount, 1, "The resync still completes past a wedged old consumer.")
-        XCTAssertEqual(host.listSnapshotCount, 2)
+        XCTAssertEqual(host.listSnapshotCount, 1)
+        XCTAssertEqual(host.recentListSnapshotCount, 1)
     }
 
     func testOverallDeadlineFinishesWedgedFollowEstablishmentAndRestartsStreams() async {
@@ -759,6 +765,7 @@ private final class FakeResyncHost: ResyncHost {
     private(set) var awaitTerminationCount = 0
     private(set) var authGateCount = 0
     private(set) var listSnapshotCount = 0
+    private(set) var recentListSnapshotCount = 0
 
     /// Ordered log of the resync steps, so a test can assert the old-consumer
     /// termination completes before the new follow stream is established.
@@ -838,6 +845,10 @@ private final class FakeResyncHost: ResyncHost {
         onListSnapshot?(self)
         await onListSnapshotAsync?(self)
         localConversationIDs = serverConversationIDs
+    }
+
+    func applyRecentListSnapshot() async {
+        recentListSnapshotCount += 1
     }
 
     func applyMessagesSnapshot(conversationID: String) async {
