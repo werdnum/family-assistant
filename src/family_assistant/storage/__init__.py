@@ -192,6 +192,16 @@ async def _run_alembic_command(
         def sync_command_wrapper(sync_conn: Connection) -> None:
             """Wrapper to run alembic commands with an existing connection."""
             logger.info(f"[sync] Setting connection for Alembic: {sync_conn!r}")
+            if sync_conn.dialect.name == "postgresql":
+                # Migrations run on a connection from the application's own
+                # pool, which carries POSTGRES_STATEMENT_TIMEOUT_MS. That
+                # ceiling is sized for application queries and a migration is
+                # exactly the legitimate exception -- a large CREATE INDEX or a
+                # backfill can outrun it, and the resulting 57014 aborts the
+                # whole (transactional) upgrade and then gets retried as a
+                # transient error. Lift it for the migration; the connection is
+                # discarded below rather than returned to the pool.
+                sync_conn.exec_driver_sql("SET statement_timeout = 0")
             config.attributes["connection"] = sync_conn
             logger.info(f"[sync] Executing: {command_name}({args_repr})")
             try:
@@ -207,6 +217,15 @@ async def _run_alembic_command(
         except Exception as e:
             logger.exception(f"Failed to run Alembic command {command_name}: {e!r}")
             raise
+        finally:
+            # Belt and braces for the lifted timeout above. Whether that SET
+            # survives depends on the transaction boundaries Alembic chooses --
+            # rolled back with the transaction it landed in, it reverts by
+            # itself; committed, it would stay on the session and hand a later
+            # application query no ceiling at all. Discarding the connection
+            # removes the question. Startup runs this a handful of times, so
+            # the reconnect costs nothing.
+            await conn.invalidate()
 
 
 async def _create_initial_schema(engine: AsyncEngine) -> None:

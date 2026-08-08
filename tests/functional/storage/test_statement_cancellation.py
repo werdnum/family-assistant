@@ -14,6 +14,7 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.exc import DBAPIError
 
+from family_assistant.storage import init_db
 from family_assistant.storage.base import (
     POSTGRES_STATEMENT_TIMEOUT_MS,
     create_engine_with_sqlite_optimizations,
@@ -113,6 +114,40 @@ async def test_connections_carry_a_statement_timeout(
     assert int(timeout_ms[0]["ms"]) == POSTGRES_STATEMENT_TIMEOUT_MS, (
         f"statement_timeout reported as {rows[0]['statement_timeout']}"
     )
+
+
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_migrations_still_run_under_a_ceiling_that_aborts_queries(
+    db_engine: AsyncEngine,
+) -> None:
+    """Startup migrations keep working on an engine whose ceiling is tight.
+
+    ``init_db`` hands Alembic a connection from the application's own pool, so
+    migrations would otherwise inherit ``POSTGRES_STATEMENT_TIMEOUT_MS`` -- and
+    a long index build or backfill is the one place that ceiling is wrong.
+
+    A guard against gross regressions rather than a proof: the schema offers no
+    migration statement slow enough to outrun the ceiling on demand, so this
+    cannot distinguish "exempt" from "fast enough". The exemption itself is one
+    ``SET`` in ``_run_alembic_command``.
+    """
+    url = db_engine.url.render_as_string(hide_password=False)
+    # Well above connection setup: below roughly 25ms the abort lands outside
+    # SQLAlchemy's cursor wrapper and surfaces as a raw asyncpg error.
+    tight_engine = create_engine_with_sqlite_optimizations(
+        url, statement_timeout_ms=100
+    )
+    try:
+        # Establish that this ceiling really does abort ordinary work, rather
+        # than assuming it.
+        with pytest.raises(DBAPIError) as exc_info:
+            await Database(tight_engine).fetch_all(sa.text("SELECT pg_sleep(0.5)"))
+        assert getattr(exc_info.value.orig, "pgcode", None) == "57014"
+
+        await init_db(tight_engine)
+    finally:
+        await tight_engine.dispose()
 
 
 @pytest.mark.postgres

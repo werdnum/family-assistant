@@ -1,6 +1,7 @@
 """The disconnect middleware stops abandoned safe requests, and only those."""
 
 import asyncio
+import contextlib
 
 import pytest
 from starlette.types import Message, Receive, Scope, Send
@@ -140,6 +141,94 @@ async def test_handler_exceptions_propagate_unchanged() -> None:
 
 
 @pytest.mark.asyncio
+async def test_disconnect_after_the_response_is_not_treated_as_abandonment() -> None:
+    """Post-response work survives the disconnect the server always reports.
+
+    uvicorn returns ``http.disconnect`` from ``receive()`` once the response is
+    complete, whether or not the client went anywhere. Acting on that would
+    cancel background tasks and ``yield``-dependency teardown on healthy
+    requests.
+    """
+    response_sent = asyncio.Event()
+    resume = asyncio.Event()
+    after_response = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    class _WorksAfterResponding:
+        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+            await send(
+                {"type": "http.response.start", "status": 200, "headers": []},
+            )
+            await send({"type": "http.response.body", "body": b"done"})
+            # Stand-in for a BackgroundTask or a yield-dependency teardown:
+            # work the handler still owes after its last body chunk.
+            try:
+                await resume.wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            after_response.set()
+
+    async def receive() -> Message:
+        # Exactly what uvicorn does: report a disconnect once the response is
+        # complete, whether or not the client actually went away.
+        await response_sent.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: Message) -> None:
+        if message["type"] == "http.response.body" and not message.get(
+            "more_body", False
+        ):
+            response_sent.set()
+
+    middleware = CancelOnClientDisconnectMiddleware(_WorksAfterResponding())
+    task = asyncio.create_task(middleware(_scope("GET"), receive, send))
+
+    await response_sent.wait()
+    # Bounded negative wait: if the middleware is going to act on that
+    # disconnect it does so as soon as it reads it, far inside this window.
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(cancelled.wait(), timeout=2.0)
+    assert cancelled.is_set() is False, "post-response work was cancelled"
+
+    resume.set()
+    await asyncio.wait_for(task, timeout=5)
+
+    assert after_response.is_set() is True
+
+
+@pytest.mark.asyncio
+async def test_state_changing_get_routes_are_exempt() -> None:
+    """The OAuth callback consumes a single-use flow, so it must not be cut off."""
+    spy = _HandlerSpy()
+
+    scope = _scope("GET")
+    scope["path"] = "/api/integrations/google/callback"
+
+    async def receive() -> Message:
+        # The client is already gone before the handler gets anywhere.
+        return {"type": "http.disconnect"}
+
+    async def send(message: Message) -> None:
+        pass
+
+    middleware = CancelOnClientDisconnectMiddleware(spy)
+    task = asyncio.create_task(middleware(scope, receive, send))
+
+    await spy.started.wait()
+    # Bounded negative wait: an unexempted path is cancelled as soon as the
+    # middleware reads that disconnect, well inside this window.
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(asyncio.shield(task), timeout=2.0)
+    assert spy.cancelled is False, "the OAuth callback was cut off mid-flight"
+
+    spy.release.set()
+    await asyncio.wait_for(task, timeout=5)
+
+    assert spy.completed is True
+
+
+@pytest.mark.asyncio
 async def test_cancelling_the_middleware_does_not_orphan_the_handler() -> None:
     """A server shutdown must take the handler down with it.
 
@@ -195,8 +284,8 @@ async def test_body_still_reaches_the_handler() -> None:
     async def send(message: Message) -> None:
         pass
 
-    # POST so the middleware passes through; the body path is method-independent
-    # but this is the shape that actually carries one.
-    await asyncio.wait_for(middleware(_scope("POST"), receive, send), timeout=5)
+    # GET, so the request actually goes through the queue. A POST would take
+    # the pass-through branch and prove nothing about the forwarding.
+    await asyncio.wait_for(middleware(_scope("GET"), receive, send), timeout=5)
 
     assert [m["body"] for m in seen] == [b"part-1", b"part-2"]

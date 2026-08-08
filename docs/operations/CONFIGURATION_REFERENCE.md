@@ -50,8 +50,9 @@ so that a statement whose caller has gone away cannot keep consuming database ca
 without it, a request cancelled after 2.9 seconds left its query running for 41 minutes. Set `0` to
 disable, which is PostgreSQL's own meaning for the setting.
 
-Applies only to the application's connection pool. Alembic builds its own engine, so migrations —
-where a long index build is legitimate — are unaffected. Ignored on SQLite.
+Startup migrations are exempt: they run on a connection from this same pool, so the migration runner
+lifts the ceiling for their duration (a large index build or backfill is the one place a long
+statement is legitimate) and then discards the connection. Ignored on SQLite.
 
 ______________________________________________________________________
 

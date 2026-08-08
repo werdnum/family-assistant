@@ -50,8 +50,12 @@ POSTGRES_MAX_OVERFLOW = 10
 # that asked for it is gone -- a cancelled request left two conversation-list
 # queries running for 41 minutes, holding pooled connections and starving the
 # retries that the same client then issued. ``0`` disables it, PostgreSQL's own
-# semantics for the setting. Alembic builds its own engine, so migrations
-# (where a long index build is legitimate) are unaffected.
+# semantics for the setting.
+#
+# Startup migrations run on a connection from this same pool (``init_db`` hands
+# one to Alembic), so they would inherit this ceiling; a migration is the one
+# place a long statement is legitimate, and ``_run_alembic_command`` lifts it
+# for the duration and then discards the connection.
 POSTGRES_STATEMENT_TIMEOUT_MS = int(os.getenv("POSTGRES_STATEMENT_TIMEOUT_MS", "60000"))
 
 
@@ -59,6 +63,7 @@ def create_engine_with_sqlite_optimizations(
     database_url: str,
     *,
     instrument: bool = False,
+    statement_timeout_ms: int | None = None,
 ) -> AsyncEngine:
     """Create engine with SQLite optimizations if applicable.
 
@@ -68,6 +73,9 @@ def create_engine_with_sqlite_optimizations(
             instrumentation (see ``storage.instrumentation``). Enabled by the
             test fixtures; off in production, where the listeners would add
             per-transaction stack capture for no benefit.
+        statement_timeout_ms: Override the PostgreSQL per-statement ceiling for
+            this engine. Defaults to ``POSTGRES_STATEMENT_TIMEOUT_MS``; ``0``
+            disables it. Ignored on SQLite.
     """
     # SQLAlchemy's async engine needs an async driver. A bare "postgresql://"
     # URL (e.g. Render's connectionString, or a standard libpq URL) resolves to
@@ -92,13 +100,18 @@ def create_engine_with_sqlite_optimizations(
     # these bounds bound the deployment rather than a single worker.
     is_sqlite = database_url.startswith("sqlite")
 
+    timeout_ms = (
+        POSTGRES_STATEMENT_TIMEOUT_MS
+        if statement_timeout_ms is None
+        else statement_timeout_ms
+    )
     postgres_connect_args: dict[str, dict[str, str]] = {}
-    if not is_sqlite and POSTGRES_STATEMENT_TIMEOUT_MS > 0:
+    if not is_sqlite and timeout_ms > 0:
         # asyncpg passes server_settings in the startup packet, so every
         # connection the pool hands out carries the ceiling without a per-
         # checkout round trip.
         postgres_connect_args["server_settings"] = {
-            "statement_timeout": str(POSTGRES_STATEMENT_TIMEOUT_MS)
+            "statement_timeout": str(timeout_ms)
         }
 
     engine = create_async_engine(
