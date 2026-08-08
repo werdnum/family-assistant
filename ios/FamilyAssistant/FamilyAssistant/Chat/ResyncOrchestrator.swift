@@ -65,8 +65,9 @@ protocol ResyncHost: AnyObject {
 
     /// Snapshot the full conversation list with full-replacement semantics, so a
     /// conversation deleted server-side while backgrounded converges (disappears)
-    /// on resume rather than lingering from the held list.
-    func applyListSnapshot() async
+    /// on resume rather than lingering from the held list. Returns whether the
+    /// authoritative snapshot succeeded.
+    func applyListSnapshot() async -> Bool
 
     /// Refresh only the bounded recent-conversation page after stream handoff.
     /// The authoritative full replacement above already reconciled deletions; this
@@ -538,7 +539,7 @@ final class ResyncOrchestrator {
         // Step 5: authoritative snapshots (full-replacement list + selected
         // conversation messages/active_turns).
         reportStep("listSnapshot", edge: "enter", attempt: attempt, runID: runID)
-        await host.applyListSnapshot()
+        let fullListSnapshotSucceeded = await host.applyListSnapshot()
         guard activeRunID == runID else {
             return .aborted
         }
@@ -617,13 +618,17 @@ final class ResyncOrchestrator {
         restartStreams(host: host, attempt: attempt, runID: runID)
 
         // Fallback mitigation: the activity stream has no replay, so close the
-        // residual window between the drain and the loop's activity reconnect with
-        // one bounded recent-page merge. The full-replacement snapshot above already
-        // reconciled deletions; repeating its complete pagination here makes every
-        // foreground resync pay the expensive history scan twice. Keep the existing
-        // breadcrumb step name so production before/after timings remain comparable.
+        // residual window between the drain and the loop's activity reconnect. A
+        // successful authoritative snapshot needs only one bounded recent-page merge.
+        // If it failed, retry the full replacement so an offset-zero success cannot
+        // hide stale older rows or clear the list failure state prematurely. Keep the
+        // existing breadcrumb step name for before/after timing comparison.
         reportStep("finalListSnapshot", edge: "enter", attempt: attempt, runID: runID)
-        await host.applyRecentListSnapshot()
+        if fullListSnapshotSucceeded {
+            await host.applyRecentListSnapshot()
+        } else {
+            _ = await host.applyListSnapshot()
+        }
         guard activeRunID == runID else {
             return .aborted
         }

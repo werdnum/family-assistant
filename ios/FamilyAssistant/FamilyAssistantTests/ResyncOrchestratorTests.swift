@@ -27,6 +27,21 @@ final class ResyncOrchestratorTests: XCTestCase {
         XCTAssertEqual(host.phaseFinishCount, 1)
     }
 
+    func testFailedAuthoritativeListSnapshotRetriesFullReplacementAfterHandoff() async {
+        let host = FakeResyncHost(generation: 3, selectedConversationID: "conv-1")
+        host.listSnapshotResults = [false, true]
+        let orchestrator = ResyncOrchestrator(host: host)
+
+        await orchestrator.request().value
+
+        XCTAssertEqual(host.listSnapshotCount, 2)
+        XCTAssertEqual(
+            host.recentListSnapshotCount, 0,
+            "A bounded merge must not conceal a failed authoritative replacement."
+        )
+        XCTAssertEqual(host.restartStreamsCount, 1)
+    }
+
     func testHappyPathEmitsEnterAndExitBreadcrumbsForEveryAwaitedStep() async {
         let host = FakeResyncHost(generation: 1, selectedConversationID: "conv-1")
         var steps: [String] = []
@@ -793,6 +808,7 @@ private final class FakeResyncHost: ResyncHost {
     /// Full-replacement list model: the server snapshot replaces the local set.
     var localConversationIDs: [String] = []
     var serverConversationIDs: [String] = []
+    var listSnapshotResults: [Bool] = []
 
     var followStreamSource: ControllableFollowStream?
     var activityStreamSource: ControllableActivityStream?
@@ -840,11 +856,16 @@ private final class FakeResyncHost: ResyncHost {
         return activityStreamSource?.makeStream()
     }
 
-    func applyListSnapshot() async {
+    func applyListSnapshot() async -> Bool {
         listSnapshotCount += 1
         onListSnapshot?(self)
         await onListSnapshotAsync?(self)
+        let succeeded = listSnapshotResults.isEmpty ? true : listSnapshotResults.removeFirst()
+        guard succeeded else {
+            return false
+        }
         localConversationIDs = serverConversationIDs
+        return true
     }
 
     func applyRecentListSnapshot() async {

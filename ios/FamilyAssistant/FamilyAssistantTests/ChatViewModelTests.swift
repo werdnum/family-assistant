@@ -10258,7 +10258,8 @@ final class ChatViewModelTests: XCTestCase {
             spoolDirectory: spoolDirectory
         )
 
-        await model.refreshConversations()
+        let initialSnapshotSucceeded = await model.applyListSnapshot()
+        XCTAssertFalse(initialSnapshotSucceeded, "The rate-limited authoritative snapshot failed.")
         XCTAssertNil(model.errorMessage, "a 429 advisory read must not modal")
 
         try await waitUntil(timeout: 4) {
