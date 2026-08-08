@@ -18,11 +18,12 @@ from family_assistant.calendar_integration import (
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.context_providers import CalendarContextProvider
 from family_assistant.delegation_security import DelegationSecurityLevel
-from family_assistant.llm import LLMInterface, ToolCallFunction, ToolCallItem
+from family_assistant.llm import ToolCallFunction, ToolCallItem, UserMessage
 from family_assistant.processing import (
     ProcessingService,
     ProcessingServiceConfig,
 )
+from family_assistant.processing.turn_context import TURN_CONTEXT_TAG
 from family_assistant.storage.database import Database
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
@@ -54,6 +55,24 @@ logger = logging.getLogger(__name__)
 TEST_CHAT_ID = "cal_test_chat_123"
 TEST_USER_NAME = "CalendarTestUser"
 TEST_TIMEZONE_STR = "Europe/Berlin"
+
+
+def latest_turn_context(llm_client: RuleBasedMockLLMClient) -> str:
+    """The ``<turn_context>`` block from the most recent request to the LLM.
+
+    This is where the context providers' output is delivered now, so it is what
+    the model actually sees of the household's calendar.
+    """
+    for call in reversed(llm_client.get_calls()):
+        for message in reversed(call["kwargs"]["messages"]):
+            if (
+                isinstance(message, UserMessage)
+                and message.is_turn_scaffolding
+                and isinstance(message.content, str)
+                and message.content.startswith(f"<{TURN_CONTEXT_TAG}>")
+            ):
+                return message.content
+    raise AssertionError("No <turn_context> block was sent to the LLM")
 
 
 @pytest.mark.asyncio
@@ -154,7 +173,7 @@ async def wait_for_radicale_indexing(
 
 
 @pytest.mark.asyncio
-async def test_add_event_and_verify_in_system_prompt(
+async def test_add_event_and_verify_in_turn_context(
     db_engine: AsyncEngine,
     radicale_server: tuple[str, str, str, str],
 ) -> None:
@@ -163,11 +182,11 @@ async def test_add_event_and_verify_in_system_prompt(
     1. LLM decides to add a calendar event.
     2. ProcessingService executes add_calendar_event_tool.
     3. Verify event exists in Radicale.
-    4. Verify event appears in the system prompt context.
+    4. Verify event reaches the model in the next turn's <turn_context> block.
     """
     radicale_base_url, r_user, r_pass, test_calendar_direct_url = radicale_server
     logger.info(
-        f"\n--- Test: Add Event & Verify in System Prompt (Radicale URL: {test_calendar_direct_url}) ---"
+        f"\n--- Test: Add Event & Verify in Turn Context (Radicale URL: {test_calendar_direct_url}) ---"
     )
 
     event_summary = f"Test Meeting {uuid.uuid4()}"
@@ -226,7 +245,7 @@ async def test_add_event_and_verify_in_system_prompt(
         content=final_llm_response_content, tool_calls=None
     )
 
-    llm_client_for_add_test: LLMInterface = RuleBasedMockLLMClient(
+    llm_client_for_add_test = RuleBasedMockLLMClient(
         rules=[
             (add_event_matcher, add_event_response),
             (final_response_matcher, final_response_llm_output),
@@ -245,9 +264,7 @@ async def test_add_event_and_verify_in_system_prompt(
             "ical": {"urls": []},
         },
     )
-    dummy_prompts = {
-        "system_prompt": "System Time: {current_time}\nAggregated Context:\n{aggregated_other_context}"
-    }
+    dummy_prompts = {"system_prompt": "You are a helpful assistant."}
 
     local_provider = LocalToolsProvider(
         definitions=local_tools_definition,
@@ -273,6 +290,7 @@ async def test_add_event_and_verify_in_system_prompt(
         history_max_age_hours=24,
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
+        include_aggregated_context=True,
     )
     processing_service = ProcessingService(
         llm_client=llm_client_for_add_test,
@@ -314,20 +332,30 @@ async def test_add_event_and_verify_in_system_prompt(
     # ast-grep-ignore: no-asyncio-sleep-in-tests - Waiting for calendar sync to context providers
     await asyncio.sleep(0.5)
 
-    aggregated_context_str = (
-        await processing_service.context_preparer.aggregate_context()
+    # The context block is built once per turn, so the turn that created the
+    # event predates it. Take another turn and read what the model was given.
+    follow_up = await processing_service.handle_chat_interaction(
+        db_context=db_context,
+        chat_interface=MagicMock(),
+        interface_type="test",
+        conversation_id=TEST_CHAT_ID,
+        trigger_content_parts=[{"type": "text", "text": "What is on my calendar?"}],
+        trigger_interface_message_id="msg_add_event_context_check",
+        user_name=TEST_USER_NAME,
+    )
+    assert follow_up.error_traceback is None, (
+        f"Error during follow-up interaction: {follow_up.error_traceback}"
     )
 
-    logger.info(
-        f"Generated aggregated context for verification:\n{aggregated_context_str}"
-    )
+    turn_context_block = latest_turn_context(llm_client_for_add_test)
+    logger.info(f"Turn context block sent to the LLM:\n{turn_context_block}")
 
     expected_time_str_in_prompt = f"Tomorrow ({start_dt_local.strftime('%b %d')}) 10:00"
-    assert event_summary in aggregated_context_str, (
-        "Event summary not found in aggregated context string."
+    assert event_summary in turn_context_block, (
+        "Event summary not found in the turn context block."
     )
-    assert expected_time_str_in_prompt in aggregated_context_str, (
-        f"Expected time '{expected_time_str_in_prompt}' not found in aggregated context string."
+    assert expected_time_str_in_prompt in turn_context_block, (
+        f"Expected time '{expected_time_str_in_prompt}' not found in the turn context block."
     )
 
-    logger.info("Test Add Event & Verify in System Prompt PASSED.")
+    logger.info("Test Add Event & Verify in Turn Context PASSED.")

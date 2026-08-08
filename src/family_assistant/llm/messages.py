@@ -201,7 +201,38 @@ class UserMessage(BaseModel):
     # Excluded from serialization as it's only used during provider conversion
     parts: list[Any] | None = Field(default=None, exclude=True)
 
+    is_turn_scaffolding: bool = Field(default=False, exclude=True)
+    """Whether this message is machinery for the current request, not conversation content.
+
+    Set on synthetic user messages the system appends to steer a single request --
+    the per-turn ``<turn_context>`` block and the final-iteration instruction.
+    Code that reasons about what the *user* said has to skip them: scanning back
+    for "the original user query" would otherwise match the scaffolding, empty-input
+    validation would never fire, and turn-based context pruning would count each as
+    a turn.
+
+    ``exclude`` keeps the flag out of serialized forms, since it is per-request
+    state with no meaning in a stored row. It is not what keeps these messages out
+    of the database -- ``MessageHistoryRepository.add_message`` reads fields off
+    the model rather than serializing it. What keeps them out is that the loop
+    never yields them as messages to save.
+    """
+
     model_config = ConfigDict(extra="forbid")
+
+
+def is_turn_scaffolding(message: LLMMessage) -> bool:
+    """Whether *message* is machinery for the current request, not conversation content.
+
+    True for the synthetic user messages the system appends to steer a single
+    request: the ``<turn_context>`` block and the final-iteration instruction.
+    Code that reasons about what the user actually said, that splits the history
+    into turns, or that validates the user's input has to skip them.
+
+    Lives here rather than beside its callers so the provider layer can reach it:
+    ``processing`` imports ``llm``, not the other way round.
+    """
+    return isinstance(message, UserMessage) and message.is_turn_scaffolding
 
 
 class AssistantMessage(BaseModel):

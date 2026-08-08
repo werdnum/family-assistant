@@ -36,7 +36,7 @@ from family_assistant.tools import (
 from family_assistant.tools import AVAILABLE_FUNCTIONS as local_tool_implementations
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
 from tests.helpers import seed_known_conversation, wait_for_tasks_to_complete
-from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
+from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient, last_real_message
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -510,8 +510,8 @@ else:
         def security_matcher(args: dict) -> bool:
             messages = args.get("messages", [])
             if messages:
-                last_msg = messages[-1]
-                content = str(last_msg.content or "")
+                last_msg = last_real_message(messages)
+                content = str(getattr(last_msg, "content", "") or "")
                 return (
                     "Script wake_llm call" in content
                     and "motion_detection" in content

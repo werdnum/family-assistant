@@ -1354,8 +1354,16 @@ async def api_chat_create_turn(
             initial_history_messages
         ).to_metadata()
         initial_context_taint_state = TurnTaintState.empty()
-        for source in await selected_processing_service.context_preparer.aggregate_context_taint_sources():
-            initial_context_taint_state = initial_context_taint_state.add_source(source)
+        # Gated exactly as the turn itself gates the context (see
+        # ProcessingService._prepare_turn_messages_for_llm): a profile that never
+        # receives the aggregated context was never exposed to its taint, and
+        # stamping it here anyway would make a web turn dirtier than the same
+        # profile's Telegram turn.
+        if selected_processing_service.service_config.include_aggregated_context:
+            for source in await selected_processing_service.context_preparer.aggregate_context_taint_sources():
+                initial_context_taint_state = initial_context_taint_state.add_source(
+                    source
+                )
         initial_context_taint_metadata = initial_context_taint_state.to_metadata()
         initial_live_taint_state = TurnTaintState.from_metadata(
             initial_history_taint_metadata

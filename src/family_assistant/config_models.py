@@ -160,6 +160,13 @@ class ProcessingConfig(BaseModel):
     # any of it, and injecting it hands private data to a prompt built around
     # untrusted content. Listing a provider name here drops it for this profile.
     excluded_context_providers: list[str] = Field(default_factory=list)
+    # Master switch for the same data, above excluded_context_providers: false
+    # means the profile receives no aggregated context at all. Defaults to false
+    # so a profile nobody thought about is denied rather than granted -- most
+    # shipped profiles want none of it, and two of them (media_analyst,
+    # telephone_external) must not have it. The current time is injected either
+    # way; it is not what this gates.
+    include_aggregated_context: bool = False
 
     @field_validator("excluded_context_providers")
     @classmethod

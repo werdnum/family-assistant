@@ -59,7 +59,8 @@ class ContextProvider(Protocol):
         """
         Asynchronously retrieves and formats context fragments relevant to this provider.
         Each string in the list represents a distinct piece of formatted information
-        ready to be included in a larger context block (e.g., the system prompt).
+        ready to be included in a larger context block (e.g., the per-turn
+        ``<turn_context>`` block).
 
         Returns:
             A list of strings, where each string is a formatted context fragment.
@@ -256,7 +257,7 @@ class NotesContextProvider(ContextProvider):
         return fragments
 
     async def get_context_taint_sources(self) -> tuple[TaintSource, ...]:
-        """Return provenance taint for notes auto-included in the system prompt."""
+        """Return provenance taint for notes auto-included in the per-turn context."""
         sources: list[TaintSource] = []
         db_context = self._get_db_context_func()
         prompt_notes = await db_context.notes.get_prompt_notes(

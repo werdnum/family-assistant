@@ -7,6 +7,7 @@ user journey via the HTTP API using Gemini SDK record/replay.
 import os
 import uuid
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
@@ -36,6 +37,7 @@ from family_assistant.tools import (
     ToolPolicyConfig,
     ToolPolicyDecision,
 )
+from family_assistant.utils.clock import MockClock
 from family_assistant.web.app_creator import app
 from family_assistant.web.web_chat_interface import WebChatInterface
 
@@ -154,6 +156,11 @@ async def llm_integration_processing_service(
         context_providers=context_providers,
         server_url="http://test",
         app_config=AppConfig(),
+        # Record/replay matches on the request body, and every request carries a
+        # <turn_context> block stamping the current time. A real clock makes the
+        # body differ from the recording on every run, so no cassette can ever
+        # replay.
+        clock=MockClock(datetime(2026, 8, 7, 12, 0, 0, tzinfo=UTC)),
     )
 
     try:

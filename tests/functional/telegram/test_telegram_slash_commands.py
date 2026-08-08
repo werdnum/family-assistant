@@ -110,10 +110,9 @@ async def test_slash_command_routes_to_specific_profile(
     command_args: list[str] = [str(s) for s in query_text.split()]
 
     focused_profile_id = "focused_assistant_profile"
-    # Define a system prompt template for the focused profile.
-    # The {current_time} placeholder will be filled by ProcessingService.
-    # The matcher will check for the static part.
-    focused_system_prompt_template = "You are a highly focused assistant. Your sole task is to answer questions concisely. Current time is {current_time}."
+    # Define a system prompt template for the focused profile. The matcher
+    # checks for it to confirm the command routed to this profile's service.
+    focused_system_prompt_template = "You are a highly focused assistant. Your sole task is to answer questions concisely."
     focused_system_prompt_check_substr = "You are a highly focused assistant."
 
     llm_response_text = "The capital of France is Paris."

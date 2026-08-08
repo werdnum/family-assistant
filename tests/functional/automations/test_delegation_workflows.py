@@ -39,6 +39,8 @@ from tests.mocks.mock_llm import (
 from tests.mocks.mock_llm import (
     MatcherArgs,
     RuleBasedMockLLMClient,
+    get_last_message_text,
+    last_real_message,
 )
 
 logger = logging.getLogger(__name__)
@@ -91,8 +93,8 @@ async def test_delegate_to_service_with_attachments(
             return False
 
         # Check if this is the delegated request containing attachment reference
-        last_message = messages[-1]
-        content = last_message.content or ""
+        last_message = last_real_message(messages)
+        content = getattr(last_message, "content", "") or ""
         return "DELEGATED_TASK_DESCRIPTION" in content and "test_image.png" in content
 
     llm_client = RuleBasedMockLLMClient(
@@ -284,9 +286,11 @@ async def test_delegate_to_service_cross_conversation_attachment_allowed(
         messages = kwargs.get("messages", [])
         if not messages:
             return False
-        last_message = messages[-1]
-        return last_message.role == "user" and DELEGATED_TASK_DESCRIPTION in (
-            last_message.content or ""
+        last_message = last_real_message(messages)
+        return (
+            last_message is not None
+            and last_message.role == "user"
+            and DELEGATED_TASK_DESCRIPTION in (last_message.content or "")
         )
 
     def tool_result_matcher(kwargs: MatcherArgs) -> bool:
@@ -452,9 +456,11 @@ async def test_delegate_to_service_propagates_generated_attachments(
         messages = kwargs.get("messages", [])
         if not messages:
             return False
-        last_message = messages[-1]
-        return last_message.role == "user" and DELEGATED_TASK_DESCRIPTION in (
-            last_message.content or ""
+        last_message = last_real_message(messages)
+        return (
+            last_message is not None
+            and last_message.role == "user"
+            and DELEGATED_TASK_DESCRIPTION in (last_message.content or "")
         )
 
     # The delegated service will call mock_camera_snapshot which returns a ToolResult with attachment
@@ -494,10 +500,11 @@ async def test_delegate_to_service_propagates_generated_attachments(
         messages = kwargs.get("messages", [])
         if not messages:
             return False
-        last_message = messages[-1]
+        last_message = last_real_message(messages)
         return (
-            last_message.role == "user"
-            and "delegate" in (last_message.content or "").lower()
+            last_message is not None
+            and last_message.role == "user"
+            and "delegate" in get_last_message_text(messages).lower()
         )
 
     primary_llm_client = RuleBasedMockLLMClient(

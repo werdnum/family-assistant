@@ -17,6 +17,28 @@ def _normalize_json_value(value: Any) -> Any:  # noqa: ANN401
     return value
 
 
+def _strip_cache_control(value: Any) -> Any:  # noqa: ANN401
+    """Drop every ``cache_control`` directive from a request body.
+
+    Prompt-cache breakpoints tell the provider what to keep; they cannot change
+    the response, so a cassette recorded before a breakpoint moved still answers
+    the same request. Matching on them instead makes every caching change
+    invalidate unrelated recordings and demand API keys to re-record.
+
+    Stripping is safe in both directions: recordings made while the directive was
+    being sent lose it here too, so old cassettes keep matching.
+    """
+    if isinstance(value, dict):
+        return {
+            key: _strip_cache_control(item)
+            for key, item in value.items()
+            if key != "cache_control"
+        }
+    if isinstance(value, list):
+        return [_strip_cache_control(item) for item in value]
+    return value
+
+
 # ast-grep-ignore: no-dict-any - VCR cassette body matches external LLM API JSON format
 # ast-grep-ignore: no-dict-any - VCR cassette body matches external LLM API JSON format
 def normalize_llm_request_body(body: dict[str, Any]) -> dict[str, Any]:
@@ -27,7 +49,9 @@ def normalize_llm_request_body(body: dict[str, Any]) -> dict[str, Any]:
     - Sorting keys for consistent ordering
     - Normalizing dynamic values like timestamps
     - Ensuring consistent formatting of nested structures
+    - Dropping prompt-cache breakpoints, which cannot affect the response
     """
+    body = _strip_cache_control(body)
     normalized = {}
 
     # Handle messages array

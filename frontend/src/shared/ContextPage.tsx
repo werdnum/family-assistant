@@ -21,11 +21,13 @@ interface ContextProvider {
 interface ContextData {
   profile_id: string;
   aggregated_context: string;
+  include_aggregated_context: boolean;
   context_providers: ContextProvider[];
   total_fragments: number;
   providers_with_errors: string[];
   system_prompt_template: string;
   formatted_system_prompt: string;
+  turn_context_block: string;
 }
 
 const ContextPage: React.FC = () => {
@@ -77,8 +79,8 @@ const ContextPage: React.FC = () => {
         if (response.ok) {
           const data = await response.json();
           setContextData(data);
-          // Only expand the formatted system prompt by default
-          setExpandedSections(new Set(['formatted-system-prompt']));
+          // Expand the two halves of what the model actually receives by default
+          setExpandedSections(new Set(['formatted-system-prompt', 'turn-context']));
         } else {
           setError(`Failed to load context: ${response.status}`);
         }
@@ -186,6 +188,12 @@ const ContextPage: React.FC = () => {
                   <p>
                     <strong>Total Context Fragments:</strong> {contextData.total_fragments}
                   </p>
+                  <p>
+                    <strong>Receives Aggregated Context:</strong>{' '}
+                    {contextData.include_aggregated_context
+                      ? 'Yes'
+                      : 'No (include_aggregated_context is off)'}
+                  </p>
                   {contextData.providers_with_errors.length > 0 && (
                     <p className={styles['error-info']}>
                       <strong>Providers with Errors:</strong>{' '}
@@ -212,6 +220,46 @@ const ContextPage: React.FC = () => {
               <div className={styles['section-content']}>
                 <div className={styles['system-prompt']}>
                   <MarkdownText text={contextData.formatted_system_prompt} />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Turn Context Block Section */}
+          <div className={styles['context-section']}>
+            <button
+              className={styles['section-header']}
+              onClick={() => toggleSection('turn-context')}
+            >
+              <span className={styles['toggle-icon']}>
+                {expandedSections.has('turn-context') ? '▼' : '▶'}
+              </span>
+              Turn Context Block (Appended to End of Conversation)
+            </button>
+            {expandedSections.has('turn-context') && (
+              <div className={styles['section-content']}>
+                <div className={styles['provider-fragments']}>
+                  <p className={styles['no-context']}>
+                    Sent as a user message at the <strong>end</strong> of the conversation on every
+                    request — it is not part of the system prompt. It always carries the current
+                    time, and carries the aggregated context only when the profile opts in with
+                    include_aggregated_context.
+                  </p>
+                  {!contextData.include_aggregated_context && (
+                    <div className={styles['provider-error']}>
+                      <p>
+                        <strong>This profile does not receive the aggregated context.</strong>{' '}
+                        include_aggregated_context is off for {contextData.profile_id}, so the
+                        notes, calendar and other provider context shown below are <em>not</em> sent
+                        to it. Only the current time is.
+                      </p>
+                    </div>
+                  )}
+                  <div className={styles['system-prompt']}>
+                    <code className={styles['system-prompt-code']}>
+                      {contextData.turn_context_block}
+                    </code>
+                  </div>
                 </div>
               </div>
             )}
@@ -249,15 +297,29 @@ const ContextPage: React.FC = () => {
                 {expandedSections.has('aggregated-context') ? '▼' : '▶'}
               </span>
               Aggregated Context
+              {!contextData.include_aggregated_context && (
+                <span className={styles['fragment-count']}>(not sent to this profile)</span>
+              )}
             </button>
             {expandedSections.has('aggregated-context') && (
               <div className={styles['section-content']}>
-                <div className={styles['aggregated-context']}>
-                  {contextData.aggregated_context ? (
-                    <MarkdownText text={contextData.aggregated_context} />
-                  ) : (
-                    <p className={styles['no-context']}>No aggregated context available</p>
+                <div className={styles['provider-fragments']}>
+                  {!contextData.include_aggregated_context && (
+                    <div className={styles['provider-error']}>
+                      <p>
+                        Not sent to {contextData.profile_id} — this is what the context providers
+                        produced, but the profile has include_aggregated_context off, so none of it
+                        reaches the model.
+                      </p>
+                    </div>
                   )}
+                  <div className={styles['aggregated-context']}>
+                    {contextData.aggregated_context ? (
+                      <MarkdownText text={contextData.aggregated_context} />
+                    ) : (
+                      <p className={styles['no-context']}>No aggregated context available</p>
+                    )}
+                  </div>
                 </div>
               </div>
             )}

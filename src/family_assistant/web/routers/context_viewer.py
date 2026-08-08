@@ -1,7 +1,5 @@
 import logging
-import re
 from datetime import UTC, datetime
-from string import Formatter
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -9,6 +7,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from family_assistant.processing import ProcessingService
+from family_assistant.processing.turn_context import render_turn_context_block
 from family_assistant.web.auth import AUTH_ENABLED, get_user_from_request
 from family_assistant.web.dependencies import get_processing_service
 
@@ -59,7 +58,26 @@ async def view_context_page(
         # Get the system prompt template and format arguments
         system_prompt_template = processing_service.service_config.prompts.get(
             "system_prompt",
-            "You are a helpful assistant. Current time is {current_time}.",
+            "You are a helpful assistant.",
+        )
+
+        service_config = processing_service.service_config
+        user = get_user_from_request(request)
+        format_args = {
+            "user_name": user.get("name") if user else "[user_name]",
+            "server_url": processing_service.server_url,
+            "profile_id": service_config.id,
+        }
+
+        # The time and the aggregated context no longer sit inside the system
+        # prompt, so reporting only the prompt would show half of what the model
+        # gets. The block below is the other half, delivered at the end of the turn.
+        include_aggregated_context = service_config.include_aggregated_context
+        turn_context_block = render_turn_context_block(
+            current_time_str=processing_service.current_time_str(),
+            aggregated_context=(
+                aggregated_context if include_aggregated_context else ""
+            ),
         )
 
         return templates.TemplateResponse(
@@ -67,16 +85,19 @@ async def view_context_page(
             "context_viewer.html.j2",
             context={
                 "aggregated_context": aggregated_context,
+                "include_aggregated_context": include_aggregated_context,
+                "turn_context_block": turn_context_block,
                 "context_fragments": context_fragments,
                 "system_prompt_template": system_prompt_template,
-                "profile_id": processing_service.service_config.id,
+                "format_args": format_args,
+                "profile_id": service_config.id,
                 "total_fragments": sum(
                     len(cf["fragments"]) for cf in context_fragments
                 ),
                 "providers_with_errors": [
                     cf for cf in context_fragments if cf["error"]
                 ],
-                "user": get_user_from_request(request),
+                "user": user,
                 "AUTH_ENABLED": AUTH_ENABLED,
                 "now_utc": datetime.now(UTC),
             },
@@ -151,75 +172,47 @@ async def _get_context_data(
 
         # Get formatted system prompt with actual values
         user = get_user_from_request(request)
-        user_name = user.get("name") if user else "[user_name]"
+        user_name = str((user.get("name") if user else None) or "[user_name]")
 
-        format_args = {
-            "user_name": user_name,
-            "current_time": datetime
-            .now(UTC)
-            .astimezone(target_service.service_config.timezone)
-            .strftime("%Y-%m-%d %H:%M:%S %Z"),
-            "aggregated_other_context": aggregated_context,
-            "server_url": target_service.server_url,
-            "profile_id": target_service.service_config.id,
-        }
-
-        # Add any missing placeholders to avoid KeyErrors
-        # Only match simple variable names (letters, numbers, underscores)
-        placeholder_pattern = r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}"
-        template_placeholders = set(
-            re.findall(placeholder_pattern, system_prompt_template)
-        )
-        for placeholder in template_placeholders:
-            if placeholder not in format_args:
-                format_args[placeholder] = f"[{placeholder}]"
-
-        # Format the system prompt safely
-        try:
-            # Use a safer approach that only formats valid variable placeholders
-            formatter = Formatter()
-
-            # Parse the template to find all field names
-            parsed_fields = set()
-            for _literal_text, field_name, _format_spec, _conversion in formatter.parse(
-                system_prompt_template
-            ):
-                if field_name is not None:
-                    parsed_fields.add(field_name)
-
-            # Only try to format fields that are valid variable names
-            safe_format_args = {}
-            for field in parsed_fields:
-                if re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", field):
-                    safe_format_args[field] = format_args.get(field, f"[{field}]")
-
-            # Format only the safe placeholders using regex for non-overlapping replacement
-            def replace_placeholder(match: re.Match[str]) -> str:
-                field_name = match.group(1)
-                return safe_format_args.get(field_name, match.group(0))
-
-            formatted_system_prompt = re.sub(
-                r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}",
-                replace_placeholder,
-                system_prompt_template,
-            ).strip()
-
-        except Exception as e:
-            logger.error(
-                f"Error formatting system prompt: {e}, format_args: {format_args}"
-            )
-            formatted_system_prompt = system_prompt_template.strip()
-
+        # Rendered by the service itself rather than by a second implementation
+        # here. This surface exists to report what the model is handed, and the
+        # local re-render this replaces silently dropped system_prompt_docs, the
+        # turn-context guidance and the profile preamble -- none of which come
+        # from the template, so no amount of substituting into it can show them.
         if isinstance(target_service, ProcessingService):
-            addition = await target_service.delegation_catalog_addition()
-            if addition:
+            include_aggregated_context = (
+                target_service.service_config.include_aggregated_context
+            )
+            formatted_system_prompt = target_service.format_system_prompt(
+                user_name=user_name
+            )
+            delegation_addition = await target_service.delegation_catalog_addition()
+            if delegation_addition:
                 formatted_system_prompt = (
-                    f"{formatted_system_prompt}\n\n{addition}".strip()
+                    f"{formatted_system_prompt}\n\n{delegation_addition}".strip()
                 )
+            # The time and the aggregated context no longer sit inside the system
+            # prompt, so reporting only the prompt would show half of what the
+            # model gets. This block is the other half, delivered at the end of
+            # the turn.
+            turn_context_block = render_turn_context_block(
+                current_time_str=target_service.current_time_str(),
+                aggregated_context=(
+                    aggregated_context if include_aggregated_context else ""
+                ),
+            )
+        else:
+            # A remote A2A profile builds its prompt on the far side, so there is
+            # no local rendering to report. Reporting a locally invented one
+            # would be exactly the divergence this endpoint exists to avoid.
+            include_aggregated_context = False
+            formatted_system_prompt = ""
+            turn_context_block = ""
 
         return {
             "profile_id": target_service.service_config.id,
             "aggregated_context": aggregated_context,
+            "include_aggregated_context": include_aggregated_context,
             "context_providers": context_data,
             "total_fragments": sum(cd["fragment_count"] for cd in context_data),
             "providers_with_errors": [
@@ -227,6 +220,7 @@ async def _get_context_data(
             ],
             "system_prompt_template": system_prompt_template,
             "formatted_system_prompt": formatted_system_prompt,
+            "turn_context_block": turn_context_block,
         }
     except Exception as e:
         logger.exception(f"Error in context API: {e}")

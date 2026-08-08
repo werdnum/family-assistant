@@ -99,11 +99,7 @@ def mock_processing_service_config() -> ProcessingServiceConfig:
     """Provides a mock ProcessingServiceConfig for tests."""
     return ProcessingServiceConfig(
         prompts={
-            "system_prompt": (
-                "You are a test assistant. Current time: {current_time}. "
-                "Server URL: {server_url}. "
-                "Context: {aggregated_other_context}"
-            )
+            "system_prompt": "You are a test assistant. Server URL: {server_url}."
         },
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
@@ -111,6 +107,10 @@ def mock_processing_service_config() -> ProcessingServiceConfig:
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="chat_api_test_profile",
+        # Matches default_assistant, the profile these tests stand in for. The
+        # retryable-turn test needs it: the setup step it fails is the context
+        # taint aggregation, which only runs for a profile granted the context.
+        include_aggregated_context=True,
     )
 
 
@@ -887,7 +887,8 @@ async def test_setup_failure_before_the_prompt_write_leaves_the_turn_retryable(
         ),
     ))
 
-    preparer = app_fixture.state.processing_service.context_preparer
+    service = app_fixture.state.processing_service
+    preparer = service.context_preparer
     real_aggregate = preparer.aggregate_context_taint_sources
     calls = {"n": 0}
 

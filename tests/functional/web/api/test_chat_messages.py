@@ -50,7 +50,11 @@ from family_assistant.tools import (
 from family_assistant.web.app_creator import app as actual_app
 from family_assistant.web.models import ChatMessageResponse
 from family_assistant.web.web_chat_interface import WebChatInterface
-from tests.mocks.mock_llm import MatcherArgs, RuleBasedMockLLMClient
+from tests.mocks.mock_llm import (
+    MatcherArgs,
+    RuleBasedMockLLMClient,
+    get_last_message_text,
+)
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import CalendarConfig
@@ -75,11 +79,7 @@ def mock_processing_service_config() -> ProcessingServiceConfig:
     """Provides a mock ProcessingServiceConfig for tests."""
     return ProcessingServiceConfig(
         prompts={
-            "system_prompt": (
-                "You are a test assistant. Current time: {current_time}. "
-                "Server URL: {server_url}. "
-                "Context: {aggregated_other_context}"
-            )
+            "system_prompt": "You are a test assistant. Server URL: {server_url}."
         },
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
@@ -235,11 +235,7 @@ def mock_processing_service_config_no_tools() -> ProcessingServiceConfig:
     """Provides a mock ProcessingServiceConfig for tests with no tools."""
     return ProcessingServiceConfig(
         prompts={
-            "system_prompt": (
-                "You are a test assistant. Current time: {current_time}. "
-                "Server URL: {server_url}. "
-                "Context: {aggregated_other_context}"
-            )
+            "system_prompt": "You are a test assistant. Server URL: {server_url}."
         },
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,
@@ -365,12 +361,10 @@ async def test_api_chat_add_note_tool(
     # Configure mock LLM rules
     # Rule 1: User prompt -> LLM requests add_or_update_note tool
     def rule1_matcher(kwargs: MatcherArgs) -> bool:
-        messages = kwargs.get("messages", [])
-        last_msg_content = messages[-1].content if messages else ""
-        return (
-            isinstance(last_msg_content, str)
-            and "Please add a note" in last_msg_content
-        )
+        # get_last_message_text skips the trailing <turn_context> block, so
+        # "the last message" still means the newest real one -- the user prompt
+        # on the first call, the tool result on the second.
+        return "Please add a note" in get_last_message_text(kwargs.get("messages", []))
 
     rule1_output = LLMOutput(
         content=llm_intermediate_reply,

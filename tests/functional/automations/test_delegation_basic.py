@@ -51,6 +51,7 @@ from tests.mocks.mock_llm import (
     MatcherArgs,
     RuleBasedMockLLMClient,
     get_last_message_text,
+    last_real_message,
 )
 
 logger = logging.getLogger(__name__)
@@ -221,7 +222,8 @@ def primary_llm_mock_factory() -> Callable[[bool | None], RuleBasedMockLLMClient
                 logger.debug("delegate_request_matcher: no messages, returning False")
                 return False
 
-            last_message_role = messages[-1].role
+            last_message = last_real_message(messages)
+            last_message_role = last_message.role if last_message else None
             if last_message_role != "user":
                 logger.debug(
                     f"delegate_request_matcher: last message role is '{last_message_role}', not 'user'. Returning False."

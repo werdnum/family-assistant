@@ -52,6 +52,7 @@ from family_assistant.llm.messages import (
     TextContentPart,
     ToolMessage,
     UserMessage,
+    is_turn_scaffolding,
     message_to_json_dict,
 )
 from family_assistant.llm.request_buffer import LLMRequestRecord, get_request_buffer
@@ -1491,6 +1492,12 @@ class GoogleGenAIClient(BaseLLMClient):
         # This handles cases where user sends multiple messages in a row
         user_input_parts = []
         for msg in reversed(messages):
+            # Scaffolding is prompt machinery, not part of the research question.
+            # Deep Research collapses these messages into a single `input` string,
+            # so letting the turn-context block through would append it verbatim
+            # to the query the model is asked to research.
+            if is_turn_scaffolding(msg):
+                continue
             if msg.role == "user":
                 # Extract text content from message
                 msg_text = ""

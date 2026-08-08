@@ -111,9 +111,7 @@ async def test_render_home_assistant_template_success(
     )
 
     # --- Setup ProcessingService ---
-    dummy_prompts = {
-        "system_prompt": "You are a helpful assistant. Current time: {current_time}"
-    }
+    dummy_prompts = {"system_prompt": "You are a helpful assistant."}
 
     # Filter tools to only include our HA template tool
     enabled_tools = ["render_home_assistant_template"]

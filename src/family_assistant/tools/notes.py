@@ -70,7 +70,8 @@ async def add_or_update_note_tool(
         exec_context: The execution context
         title: The title of the note
         content: The content of the note
-        include_in_prompt: Whether to include the note in system prompts
+        include_in_prompt: Whether to auto-load the note into the assistant's
+            per-turn context
         append: Whether to append to existing content instead of replacing it
         attachment_ids: Optional list of attachment UUIDs to associate with this note
         visibility_labels: Optional list of visibility labels for access control.
@@ -171,7 +172,7 @@ NOTE_TOOLS_DEFINITION: list[ToolDefinition] = [
                     },
                     "include_in_prompt": {
                         "type": "boolean",
-                        "description": "Whether to auto-load the full note into every system prompt. Default is false — the note is still stored, searchable, and its title is listed in the system prompt so you can load it on demand via `get_note`. Set to true ONLY for short evergreen context (durable user preferences, household policies, persistent identity facts) that you want present every turn.",
+                        "description": "Whether to auto-load the full note into your context on every turn. Default is false — the note is still stored, searchable, and its title is listed in the `<turn_context>` block so you can load it on demand via `get_note`. Set to true ONLY for short evergreen context (durable user preferences, household policies, persistent identity facts) that you want present every turn.",
                         "default": False,
                     },
                     "append": {
@@ -200,7 +201,7 @@ NOTE_TOOLS_DEFINITION: list[ToolDefinition] = [
             "name": "get_note",
             "description": (
                 "Retrieve a specific note by its title to check its content, prompt inclusion status, and attachments. "
-                "Returns the note's title, content, whether it's included in the system prompt, and any associated attachments.\n\n"
+                "Returns the note's title, content, whether it's auto-loaded into your context every turn, and any associated attachments.\n\n"
                 "Returns: A JSON string containing a dict with the note information. "
                 "If note exists, returns {'exists': true, 'title': [title], 'content': [full content], 'include_in_prompt': [boolean], 'attachment_count': [integer], 'provenance_labels': [labels]}. "
                 "If note not found, returns {'exists': false, 'title': [title], 'content': null, 'include_in_prompt': null, 'attachment_count': 0}. "
@@ -225,7 +226,7 @@ NOTE_TOOLS_DEFINITION: list[ToolDefinition] = [
             "name": "list_notes",
             "description": (
                 "List all notes with their titles, prompt inclusion status, and attachment counts. "
-                "Can optionally filter to show only notes that are included or excluded from the system prompt.\n\n"
+                "Can optionally filter to show only notes that are auto-loaded into your context every turn, or only those that are not.\n\n"
                 "Returns: A JSON string containing a list of note summaries. "
                 "Returns an array where each item is {'title': [title], 'include_in_prompt': [boolean], 'content_preview': [first 100 chars], 'attachment_count': [integer]}. "
                 "If no notes exist or match the filter, returns an empty array '[]'."

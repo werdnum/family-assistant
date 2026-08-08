@@ -76,7 +76,7 @@ def _make_service(
     max_iterations: int = 5,
 ) -> ProcessingService:
     config = ProcessingServiceConfig(
-        prompts={"system_prompt": "You are a helper. {current_time}"},
+        prompts={"system_prompt": "You are a helper."},
         timezone=ZoneInfo("UTC"),
         max_history_messages=10,
         history_max_age_hours=24,
@@ -524,7 +524,7 @@ def test_render_system_prompt_raises_on_unknown_placeholder() -> None:
         ValueError,
         match="System prompt template contains unknown placeholders: automation_id",
     ):
-        service._render_system_prompt("tester", "")
+        service.format_system_prompt(user_name="tester")
 
 
 @pytest.mark.no_db
@@ -534,7 +534,7 @@ def test_render_system_prompt_allows_escaped_literal_braces() -> None:
         "Link: {server_url}/automations/{{automation_id}}"
     )
 
-    rendered_prompt, _ = service._render_system_prompt("tester", "")
+    rendered_prompt = service.format_system_prompt(user_name="tester")
 
     assert "http://testserver/automations/{automation_id}" in rendered_prompt
 
@@ -544,13 +544,14 @@ def test_render_system_prompt_supports_placeholder_adjacent_to_escaped_braces() 
     service = _make_service()
     service.service_config.prompts["system_prompt"] = "Wrapped: {{{server_url}}}"
 
-    rendered_prompt, _ = service._render_system_prompt("tester", "")
+    rendered_prompt = service.format_system_prompt(user_name="tester")
 
     assert "{http://testserver}" in rendered_prompt
 
 
 @pytest.mark.no_db
 def test_all_processing_profile_system_prompts_can_be_rendered() -> None:
+    """What startup validation checks, over every shipped profile."""
     app_config = load_config(load_dotenv_file=False)
 
     profile_processing_configs = [
@@ -569,11 +570,9 @@ def test_all_processing_profile_system_prompts_can_be_rendered() -> None:
         service.service_config.id = profile_id
         service.service_config.prompts = processing_config.prompts
 
-        rendered_prompt, _ = service._render_system_prompt(
-            "tester", "Context with literal braces: {name}"
-        )
+        service.validate_system_prompt_renders()
 
-        assert rendered_prompt, profile_id
+        assert service.format_system_prompt(user_name="tester"), profile_id
 
 
 @pytest.mark.no_db
@@ -582,9 +581,11 @@ def test_default_system_prompt_templates_only_use_supported_placeholders() -> No
     with defaults_path.open(encoding="utf-8") as defaults_file:
         config = yaml.safe_load(defaults_file)
 
+    # current_time and aggregated_other_context are deliberately absent: they
+    # moved into the trailing turn-context block, and a template that reaches for
+    # either would put volatile text back ahead of the conversation history and
+    # silently cost the prompt cache. See docs/design/prompt-cache-turn-context.md.
     allowed_placeholders = {
-        "aggregated_other_context",
-        "current_time",
         "profile_id",
         "server_url",
         "user_name",

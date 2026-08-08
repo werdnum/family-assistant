@@ -47,6 +47,7 @@ from tests.mocks.mock_llm import (
 from tests.mocks.mock_llm import (
     MatcherArgs,
     RuleBasedMockLLMClient,
+    last_real_message,
 )
 
 if TYPE_CHECKING:
@@ -83,7 +84,8 @@ def _make_llm_mock(
         messages = kwargs.get("messages", [])
         if not messages:
             return False
-        return messages[-1].role == "user"
+        last = last_real_message(messages)
+        return last is not None and last.role == "user"
 
     def _user_query_response(kwargs: MatcherArgs) -> MockLLMOutput:
         # ast-grep-ignore: no-dict-any - tool call arguments match external LLM API format

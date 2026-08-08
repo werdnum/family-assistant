@@ -7,7 +7,7 @@ import pytest
 from telegram import Chat, Message, Update, User
 from telegram.ext import Application, ContextTypes
 
-from family_assistant.llm.messages import TextContentPart
+from family_assistant.llm.messages import TextContentPart, is_turn_scaffolding
 from tests.mocks.mock_llm import LLMOutput
 
 from .conftest import TelegramHandlerTestFixture
@@ -79,7 +79,11 @@ async def test_message_history_includes_most_recent_when_limited(
     # We'll use a single rule that responds differently based on the conversation state
     def dynamic_response(messages: Any) -> LLMOutput | bool:  # noqa: ANN401 - LLM message list has complex nested types
         # Get the last user message
-        user_messages = [msg for msg in messages if msg.role == "user"]
+        user_messages = [
+            msg
+            for msg in messages
+            if msg.role == "user" and not is_turn_scaffolding(msg)
+        ]
         if not user_messages:
             return False
 
@@ -199,7 +203,11 @@ async def test_reminder_after_completed_conversation(
 
     # Set up dynamic LLM response
     def dynamic_response(messages: Any) -> LLMOutput | bool:  # noqa: ANN401
-        user_messages = [msg for msg in messages if msg.role == "user"]
+        user_messages = [
+            msg
+            for msg in messages
+            if msg.role == "user" and not is_turn_scaffolding(msg)
+        ]
         if not user_messages:
             return False
 

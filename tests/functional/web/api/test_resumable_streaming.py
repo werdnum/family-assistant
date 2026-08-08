@@ -161,11 +161,7 @@ async def db_context(
 def mock_processing_service_config() -> ProcessingServiceConfig:
     return ProcessingServiceConfig(
         prompts={
-            "system_prompt": (
-                "You are a test assistant. Time: {current_time}. "
-                "Server URL: {server_url}. "
-                "Context: {aggregated_other_context}"
-            )
+            "system_prompt": "You are a test assistant. Server URL: {server_url}."
         },
         timezone=ZoneInfo("UTC"),
         max_history_messages=5,

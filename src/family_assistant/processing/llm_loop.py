@@ -15,6 +15,7 @@ from family_assistant.llm.messages import (
     SystemMessage,
     ToolMessage,
     UserMessage,
+    is_turn_scaffolding,
 )
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
@@ -272,8 +273,6 @@ class LLMStreamingLoop:
         # The addition currently baked into messages[0], so the system prompt is
         # rebuilt only when it actually changes rather than on every iteration.
         applied_system_prompt_addition: str | None = None
-        # The synthetic final-iteration instruction, once appended.
-        final_iteration_instruction: UserMessage | None = None
 
         can_confirm = request_confirmation_callback is not None
 
@@ -393,16 +392,18 @@ class LLMStreamingLoop:
             if is_final_iteration:
                 # Delivered as a trailing user message rather than a system-prompt
                 # edit so the cached prefix survives the final iteration too.
-                # Kept on hand so downstream scans for the user's actual request
-                # can skip it -- it is scaffolding, not something the user said.
-                final_iteration_instruction = UserMessage(
-                    content=(
-                        "[SYSTEM: This is the final processing iteration. Tools are no longer available. "
-                        "You MUST now provide your final response summarizing your findings and conclusions. "
-                        "Do NOT output raw JSON or tool call arguments - provide a natural language response to the user.]"
+                # Flagged as scaffolding so downstream scans for the user's actual
+                # request skip it -- it is not something the user said.
+                messages.append(
+                    UserMessage(
+                        content=(
+                            "[SYSTEM: This is the final processing iteration. Tools are no longer available. "
+                            "You MUST now provide your final response summarizing your findings and conclusions. "
+                            "Do NOT output raw JSON or tool call arguments - provide a natural language response to the user.]"
+                        ),
+                        is_turn_scaffolding=True,
                     )
                 )
-                messages.append(final_iteration_instruction)
                 logger.info("Added final iteration instruction as user message")
 
             # On final iteration, don't offer any tools to ensure we get a response
@@ -489,21 +490,20 @@ class LLMStreamingLoop:
                     logger.warning(
                         f"Context length exceeded, pruning messages and retrying: {e}"
                     )
-                    # Prune without the synthetic final-iteration instruction.
-                    # The turn splitter starts a new turn at every UserMessage, so
-                    # leaving it in costs a real turn out of min_turns -- and at
-                    # min_turns=1 it is the *only* turn kept, discarding the
-                    # user's request and every accumulated tool result.
+                    # Prune without the synthetic scaffolding messages -- the
+                    # turn-context block and the final-iteration instruction. The
+                    # turn splitter starts a new turn at every UserMessage, so
+                    # leaving them in costs real turns out of min_turns -- and at
+                    # min_turns=1 the newest of them is the *only* turn kept,
+                    # discarding the user's request and every accumulated tool
+                    # result. They are re-appended in their original order, which
+                    # keeps the final-iteration instruction last.
+                    scaffolding = [msg for msg in messages if is_turn_scaffolding(msg)]
                     messages = prune_messages_for_context(
-                        [
-                            msg
-                            for msg in messages
-                            if msg is not final_iteration_instruction
-                        ],
+                        [msg for msg in messages if not is_turn_scaffolding(msg)],
                         min_turns=self.config.context_pruning_min_turns,
                     )
-                    if final_iteration_instruction is not None:
-                        messages.append(final_iteration_instruction)
+                    messages.extend(scaffolding)
                     context_retry_attempted = True
                     continue
 
@@ -575,11 +575,11 @@ class LLMStreamingLoop:
                 # Extract original user query from messages (most recent first)
                 original_query = ""
                 for msg in reversed(messages):
-                    # Skip our own final-iteration scaffolding: it is the newest
-                    # user message on the last iteration, and selecting
-                    # attachments against it would match the boilerplate rather
-                    # than what the user actually asked for.
-                    if msg is final_iteration_instruction:
+                    # Skip our own scaffolding: the turn-context block and the
+                    # final-iteration instruction are both newer than the user's
+                    # message, and selecting attachments against either would
+                    # match boilerplate rather than what the user actually asked.
+                    if is_turn_scaffolding(msg):
                         continue
                     if isinstance(msg, UserMessage):
                         if isinstance(msg.content, str):

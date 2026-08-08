@@ -432,9 +432,7 @@ async def test_call_home_assistant_action_via_llm_flow(
         ]
     )
 
-    dummy_prompts = {
-        "system_prompt": "You are a helpful assistant. Current time: {current_time}"
-    }
+    dummy_prompts = {"system_prompt": "You are a helpful assistant."}
 
     enabled_tools = ["call_home_assistant_action"]
     filtered_definitions = [

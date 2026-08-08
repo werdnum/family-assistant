@@ -11,6 +11,7 @@ import pytest
 
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
+from family_assistant.llm.messages import UserMessage
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.processing.deep_research_service import (
     DeepResearchProcessingService,
@@ -270,3 +271,43 @@ async def test_google_client_type_guard_rejects_non_google_llm_client() -> None:
 
     with pytest.raises(TypeError, match="GoogleGenAIClient"):
         await service.poll_async("inter_x", None)
+
+
+@pytest.mark.no_db
+def test_turn_context_block_is_kept_out_of_the_research_query() -> None:
+    """Deep Research collapses the prompt into one `input` string.
+
+    The interactive /research path goes through the normal turn assembly, so the
+    trailing context block is present in the message list. Letting it through
+    would append the block verbatim to the question the model is asked to
+    research.
+    """
+    client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
+
+    kwargs = client._build_deep_research_create_kwargs([
+        UserMessage(content="Compare heat pump models for a cold climate."),
+        UserMessage(
+            content="<turn_context>\nCurrent time: 2026-07-25 10:00:00 UTC\n</turn_context>",
+            is_turn_scaffolding=True,
+        ),
+    ])
+
+    assert "Compare heat pump models" in str(kwargs["input"])
+    assert "turn_context" not in str(kwargs["input"])
+
+
+@pytest.mark.no_db
+def test_deep_research_prompt_carries_the_clock() -> None:
+    """No turn-context block survives to Deep Research, so the prompt must.
+
+    Research grounded on live web results is the case that most needs a date;
+    dropping the block without folding the time in would leave "the latest on X
+    this week" unanswerable.
+    """
+    service = _make_service(
+        GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
+    )
+
+    prompt = service.format_system_prompt(user_name="tester")
+
+    assert "Current time:" in prompt

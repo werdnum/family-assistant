@@ -132,7 +132,7 @@ COMMUNICATION_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "Sends a textual message to another known user. Use this tool ONLY when explicitly requested to message a specific person (e.g., 'Tell Alice...'). "
                 "Do NOT use this tool for reminders or notifications unless specifically asked to notify another person. "
                 "For normal reminders, simply write the text in your response and it will be delivered to the current user automatically. "
-                "You MUST use the recipient's Chat ID as the target, which is provided in the 'Known users' section of the system prompt. "
+                "You MUST use the recipient's Chat ID as the target, which is provided in the 'Known users' section of the `<turn_context>` block at the end of the conversation. "
                 "Optionally, you can include attachments with the message.\n\n"
                 "The target must be an existing conversation that an authorized user has already used to talk to the assistant; invented or guessed IDs are rejected.\n\n"
                 "Returns: A string indicating the result. "
@@ -557,8 +557,8 @@ async def _resolve_send_message_target(
         raise UnknownMessageTargetError(
             f"Error: Chat ID {target_chat_id} is not a known conversation with an "
             "authorized user of this assistant. Only use IDs from the 'Known users' "
-            "section of your context, and only for users who have already messaged "
-            "the assistant."
+            "section of the `<turn_context>` block, and only for users who have "
+            "already messaged the assistant."
         )
     return target_interface_type
 

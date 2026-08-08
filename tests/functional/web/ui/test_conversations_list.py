@@ -12,7 +12,11 @@ from family_assistant.assistant import Assistant
 from family_assistant.llm.messages import AssistantMessage, UserMessage
 from family_assistant.storage.database import Database
 from tests.helpers import wait_for_condition
-from tests.mocks.mock_llm import LLMOutput, RuleBasedMockLLMClient
+from tests.mocks.mock_llm import (
+    LLMOutput,
+    RuleBasedMockLLMClient,
+    get_last_message_text,
+)
 
 
 @pytest.mark.asyncio
@@ -43,10 +47,7 @@ async def test_get_conversations_with_data(
     def matches_conv(i: int) -> Callable[[dict], bool]:
         def matcher(kwargs: dict) -> bool:
             messages = kwargs.get("messages", [])
-            if messages:
-                last_message = messages[-1].content or ""
-                return f"conversation {i}" in last_message
-            return False
+            return f"conversation {i}" in get_last_message_text(messages)
 
         return matcher
 
