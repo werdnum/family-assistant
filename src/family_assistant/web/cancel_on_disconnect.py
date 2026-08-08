@@ -91,6 +91,10 @@ class CancelOnClientDisconnectMiddleware:
                 scope.get("path"),
             )
         finally:
-            for task in (watcher, disconnect):
+            # ``handler`` is already finished on both paths above, but not when
+            # this middleware's own task is cancelled -- a server shutdown, say.
+            # Leaving it to run detached there would recreate exactly the orphan
+            # this class exists to prevent.
+            for task in (handler, watcher, disconnect):
                 task.cancel()
-            await asyncio.gather(watcher, disconnect, return_exceptions=True)
+            await asyncio.gather(handler, watcher, disconnect, return_exceptions=True)

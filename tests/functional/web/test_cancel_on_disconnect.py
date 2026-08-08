@@ -140,6 +140,34 @@ async def test_handler_exceptions_propagate_unchanged() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancelling_the_middleware_does_not_orphan_the_handler() -> None:
+    """A server shutdown must take the handler down with it.
+
+    Leaving it running detached would recreate the orphan this middleware
+    exists to prevent, just by a different route.
+    """
+    spy = _HandlerSpy()
+
+    async def receive() -> Message:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    async def send(message: Message) -> None:
+        pass
+
+    middleware = CancelOnClientDisconnectMiddleware(spy)
+    outer = asyncio.create_task(middleware(_scope("GET"), receive, send))
+    await spy.started.wait()
+
+    outer.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await outer
+
+    assert spy.cancelled is True
+    assert spy.completed is False
+
+
+@pytest.mark.asyncio
 async def test_body_still_reaches_the_handler() -> None:
     """Consuming ``receive`` to watch for disconnects must not eat the body."""
     seen: list[Message] = []
