@@ -2747,33 +2747,56 @@ class MessageHistoryRepository(BaseRepository):
         if not include_subconversations:
             base_conditions.append(message_history_table.c.subconversation_id.is_(None))
 
-        # Subquery to get the latest message id and count per conversation
-        # We get the max internal_id within the max timestamp to handle timestamp collisions
-        latest_msg_subq = (
+        # Select the requested page of *conversations* before computing anything
+        # per-conversation. Ordering by each conversation's latest timestamp is
+        # the same order as ordering by the latest message's timestamp, so this
+        # picks exactly the page the final select returns -- but it lets the
+        # latest-message and message-count lookups below run against `limit`
+        # conversations instead of every conversation the caller owns. Doing
+        # those aggregations first and paginating afterwards made the cost grow
+        # with total history rather than page size, and stacking the resulting
+        # group-by joins collapsed the planner's row estimates to 1 (against
+        # thousands actual), which on PostgreSQL flipped the whole statement
+        # into a nested-loop plan orders of magnitude slower than the hash-join
+        # one.
+        #
+        # A CTE rather than a subquery: it is referenced twice below, and
+        # inlining would evaluate this pagination scan once per reference.
+        max_timestamp = func.max(message_history_table.c.timestamp).label(
+            "max_timestamp"
+        )
+        page_cte = (
             select(
                 message_history_table.c.conversation_id,
-                func.max(message_history_table.c.timestamp).label("max_timestamp"),
+                max_timestamp,
             )
             .where(*base_conditions)
             .group_by(message_history_table.c.conversation_id)
-            .subquery()
+            # conversation_id breaks ties on identical latest timestamps. Without
+            # it the order within a tie is whatever the plan happens to produce,
+            # which lets a client paging through the list see one conversation
+            # twice and miss another.
+            .order_by(
+                max_timestamp.desc(),
+                message_history_table.c.conversation_id.desc(),
+            )
+            .limit(limit)
+            .offset(offset)
+            .cte("conversation_page")
         )
 
-        # Get the max internal_id for messages with the latest timestamp
+        # Get the max internal_id for messages with the latest timestamp, to
+        # break ties when several messages share that conversation's latest
+        # timestamp.
         latest_id_subq = (
             select(
                 message_history_table.c.conversation_id,
                 func.max(message_history_table.c.internal_id).label("max_id"),
             )
             .join(
-                latest_msg_subq,
-                (
-                    message_history_table.c.conversation_id
-                    == latest_msg_subq.c.conversation_id
-                )
-                & (
-                    message_history_table.c.timestamp == latest_msg_subq.c.max_timestamp
-                ),
+                page_cte,
+                (message_history_table.c.conversation_id == page_cte.c.conversation_id)
+                & (message_history_table.c.timestamp == page_cte.c.max_timestamp),
             )
             .where(*base_conditions)
             .group_by(message_history_table.c.conversation_id)
@@ -2784,8 +2807,11 @@ class MessageHistoryRepository(BaseRepository):
         count_conditions = []
         count_conditions.append(_visible_message_condition())
         count_conditions.append(message_history_table.c.role.in_(["user", "assistant"]))
-        if ownership_condition is not None:
-            count_conditions.append(ownership_condition)
+        # No ownership condition here: this count is joined to the page, and
+        # ownership is a property of the conversation, not of the row. Every
+        # conversation on the page already satisfied it, so re-checking it would
+        # re-run the correlated NOT EXISTS per counted row for no change in
+        # result.
 
         if interface_type:
             count_conditions.append(
@@ -2813,12 +2839,18 @@ class MessageHistoryRepository(BaseRepository):
                 message_history_table.c.conversation_id,
                 func.count(message_history_table.c.internal_id).label("msg_count"),
             )
+            .join(
+                page_cte,
+                message_history_table.c.conversation_id == page_cte.c.conversation_id,
+            )
             .where(*count_conditions)
             .group_by(message_history_table.c.conversation_id)
             .subquery()
         )
 
-        # Main query to get conversation summaries with the latest message content
+        # Main query to get conversation summaries with the latest message
+        # content. No LIMIT/OFFSET: ``page_cte`` already applied them, and both
+        # joins below are restricted to that page.
         summaries_query = (
             select(
                 message_history_table.c.conversation_id,
@@ -2839,9 +2871,12 @@ class MessageHistoryRepository(BaseRepository):
             .where(
                 message_history_table.c.content.isnot(None),
             )
-            .order_by(message_history_table.c.timestamp.desc())
-            .limit(limit)
-            .offset(offset)
+            # Same key as ``page_cte``: the selected row is its conversation's
+            # latest, so its timestamp is that conversation's max_timestamp.
+            .order_by(
+                message_history_table.c.timestamp.desc(),
+                message_history_table.c.conversation_id.desc(),
+            )
         )
 
         # Count query - count conversations that have messages with content

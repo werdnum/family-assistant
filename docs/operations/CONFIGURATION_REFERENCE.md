@@ -34,6 +34,28 @@ production use with pgvector extension for vector search.
 
 ______________________________________________________________________
 
+### POSTGRES_STATEMENT_TIMEOUT_MS
+
+Server-side ceiling, in milliseconds, on any single PostgreSQL statement the application runs.
+
+| Property  | Value         |
+| --------- | ------------- |
+| Required  | No            |
+| Default   | `60000` (60s) |
+| Sensitive | No            |
+| Example   | `30000`       |
+
+A backstop, not a latency target — nothing the application runs should come close to it. It exists
+so that a statement whose caller has gone away cannot keep consuming database capacity indefinitely;
+without it, a request cancelled after 2.9 seconds left its query running for 41 minutes. Set `0` to
+disable, which is PostgreSQL's own meaning for the setting.
+
+Startup migrations are exempt: they run on a connection from this same pool, so the migration runner
+lifts the ceiling for their duration (a large index build or backfill is the one place a long
+statement is legitimate) and then discards the connection. Ignored on SQLite.
+
+______________________________________________________________________
+
 ### SERVER_URL
 
 Base URL of the running server, used for generating links and webhooks.

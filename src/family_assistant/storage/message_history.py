@@ -13,6 +13,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Index,
     Integer,  # Import Integer
     Select,  # Used in cast() for type checking
     String,
@@ -20,6 +21,7 @@ from sqlalchemy import (
     Text,
     insert,
     select,
+    text,
     update,  # Add update import
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -95,6 +97,19 @@ message_history_table = Table(
     Column("taint_metadata_version", String(64), nullable=True),
     Column(
         "is_internal", Boolean, nullable=False, default=False, server_default="false"
+    ),
+    # Backs the sole-owner predicate behind the conversation list, which asks
+    # "does this conversation carry a user message owned by anyone other than
+    # the caller?" as a correlated NOT EXISTS. Without it PostgreSQL answers
+    # from ix_message_history_user_id and discards every non-user row it reads.
+    # Partial on the rows the predicate can match, which keeps it a fraction of
+    # the size of the equivalent full index on a table this write-heavy.
+    Index(
+        "ix_message_history_conversation_owner",
+        "conversation_id",
+        "user_id",
+        sqlite_where=text("role = 'user' AND user_id IS NOT NULL"),
+        postgresql_where=text("role = 'user' AND user_id IS NOT NULL"),
     ),
 )
 

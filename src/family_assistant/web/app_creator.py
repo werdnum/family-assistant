@@ -31,6 +31,9 @@ from family_assistant.web.auth import (
     AuthService,
     create_auth_router,
 )
+from family_assistant.web.cancel_on_disconnect import (
+    CancelOnClientDisconnectMiddleware,
+)
 from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 from family_assistant.web.routers.a2a_api import a2a_wellknown_router
 from family_assistant.web.routers.api import api_router
@@ -89,7 +92,9 @@ templates.env.filters["tojson"] = json.dumps
 templates.env.globals["AUTH_ENABLED"] = AUTH_ENABLED
 
 
-middleware = []
+# Outermost, so a disconnect stops the whole stack -- auth, routing, handler and
+# the database work underneath -- rather than only the innermost part of it.
+middleware = [Middleware(CancelOnClientDisconnectMiddleware)]
 
 if SESSION_SECRET_KEY:
     middleware.append(Middleware(SessionMiddleware, secret_key=SESSION_SECRET_KEY))

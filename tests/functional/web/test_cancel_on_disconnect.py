@@ -1,0 +1,402 @@
+"""The disconnect middleware stops abandoned safe requests, and only those."""
+
+import asyncio
+import contextlib
+import inspect
+
+import pytest
+from starlette.types import Message, Receive, Scope, Send
+
+from family_assistant.request_side_effects import mark_state_changed
+from family_assistant.web.app_creator import create_app
+from family_assistant.web.cancel_on_disconnect import (
+    EXEMPT_PATHS,
+    CancelOnClientDisconnectMiddleware,
+)
+
+
+class _HandlerSpy:
+    """An ASGI app that blocks until released, recording whether it finished."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.completed = False
+        self.cancelled = False
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        self.started.set()
+        try:
+            await self.release.wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        self.completed = True
+        await send(
+            {"type": "http.response.start", "status": 200, "headers": []},
+        )
+        await send({"type": "http.response.body", "body": b"done"})
+
+
+def _scope(method: str) -> Scope:
+    return {
+        "type": "http",
+        "method": method,
+        "path": "/api/v1/chat/conversations",
+        "headers": [],
+    }
+
+
+async def _run(method: str, spy: _HandlerSpy, messages: list[Message]) -> list[Message]:
+    """Drive the middleware, feeding ``messages`` as the client's input."""
+    sent: list[Message] = []
+    pending = list(messages)
+
+    async def receive() -> Message:
+        if pending:
+            return pending.pop(0)
+        # Nothing further from this client; block rather than signalling EOF.
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    async def send(message: Message) -> None:
+        sent.append(message)
+
+    middleware = CancelOnClientDisconnectMiddleware(spy)
+    await asyncio.wait_for(middleware(_scope(method), receive, send), timeout=5)
+    return sent
+
+
+@pytest.mark.asyncio
+async def test_get_is_cancelled_when_client_disconnects() -> None:
+    """An abandoned GET stops instead of running to completion."""
+    spy = _HandlerSpy()
+
+    sent = await _run("GET", spy, [{"type": "http.disconnect"}])
+
+    assert spy.cancelled is True
+    assert spy.completed is False
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_post_runs_to_completion_after_disconnect() -> None:
+    """A state-changing request survives its client leaving.
+
+    A chat turn is expected to outlive the request that started it -- the
+    client reconnects and follows the reservation to the reply -- so
+    cancelling on disconnect would drop the turn.
+    """
+    spy = _HandlerSpy()
+
+    async def release_once_started() -> None:
+        await spy.started.wait()
+        spy.release.set()
+
+    releaser = asyncio.create_task(release_once_started())
+    sent = await _run("POST", spy, [{"type": "http.disconnect"}])
+    await releaser
+
+    assert spy.completed is True
+    assert spy.cancelled is False
+    assert sent[0]["type"] == "http.response.start"
+
+
+@pytest.mark.asyncio
+async def test_connected_get_completes_normally() -> None:
+    """Without a disconnect the middleware is transparent."""
+    spy = _HandlerSpy()
+
+    async def release_once_started() -> None:
+        await spy.started.wait()
+        spy.release.set()
+
+    releaser = asyncio.create_task(release_once_started())
+    sent = await _run("GET", spy, [])
+    await releaser
+
+    assert spy.completed is True
+    assert spy.cancelled is False
+    assert [m["type"] for m in sent] == [
+        "http.response.start",
+        "http.response.body",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_handler_exceptions_propagate_unchanged() -> None:
+    """The middleware must not swallow a handler's own failure."""
+
+    class _Failing:
+        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+            raise RuntimeError("handler blew up")
+
+    middleware = CancelOnClientDisconnectMiddleware(_Failing())
+
+    async def receive() -> Message:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    async def send(message: Message) -> None:
+        pass
+
+    with pytest.raises(RuntimeError, match="handler blew up"):
+        await asyncio.wait_for(middleware(_scope("GET"), receive, send), timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_disconnect_after_the_response_is_not_treated_as_abandonment() -> None:
+    """Post-response work survives the disconnect the server always reports.
+
+    uvicorn returns ``http.disconnect`` from ``receive()`` once the response is
+    complete, whether or not the client went anywhere. Acting on that would
+    cancel background tasks and ``yield``-dependency teardown on healthy
+    requests.
+    """
+    response_sent = asyncio.Event()
+    resume = asyncio.Event()
+    after_response = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    class _WorksAfterResponding:
+        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+            await send(
+                {"type": "http.response.start", "status": 200, "headers": []},
+            )
+            await send({"type": "http.response.body", "body": b"done"})
+            # Stand-in for a BackgroundTask or a yield-dependency teardown:
+            # work the handler still owes after its last body chunk.
+            try:
+                await resume.wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            after_response.set()
+
+    async def receive() -> Message:
+        # Exactly what uvicorn does: report a disconnect once the response is
+        # complete, whether or not the client actually went away.
+        await response_sent.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: Message) -> None:
+        if message["type"] == "http.response.body" and not message.get(
+            "more_body", False
+        ):
+            response_sent.set()
+
+    middleware = CancelOnClientDisconnectMiddleware(_WorksAfterResponding())
+    task = asyncio.create_task(middleware(_scope("GET"), receive, send))
+
+    await response_sent.wait()
+    # Bounded negative wait: if the middleware is going to act on that
+    # disconnect it does so as soon as it reads it, far inside this window.
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(cancelled.wait(), timeout=2.0)
+    assert cancelled.is_set() is False, "post-response work was cancelled"
+
+    resume.set()
+    await asyncio.wait_for(task, timeout=5)
+
+    assert after_response.is_set() is True
+
+
+@pytest.mark.asyncio
+async def test_a_get_that_has_written_is_not_cancelled() -> None:
+    """Once a request has changed state, abandoning it could lose the write.
+
+    The OAuth callback shape: claim a single-use flow, then do slow work. It is
+    the claim -- not the route's name -- that makes cancelling it destructive.
+    """
+    spy = _HandlerSpy()
+
+    class _WritesThenWorks:
+        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+            mark_state_changed()
+            await spy(scope, receive, send)
+
+    async def receive() -> Message:
+        return {"type": "http.disconnect"}
+
+    async def send(message: Message) -> None:
+        pass
+
+    middleware = CancelOnClientDisconnectMiddleware(_WritesThenWorks())
+    task = asyncio.create_task(middleware(_scope("GET"), receive, send))
+
+    await spy.started.wait()
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(asyncio.shield(task), timeout=2.0)
+    assert spy.cancelled is False, "a request that had written was cut off"
+
+    spy.release.set()
+    await asyncio.wait_for(task, timeout=5)
+
+    assert spy.completed is True
+
+
+@pytest.mark.asyncio
+async def test_a_write_does_not_carry_over_to_the_next_request() -> None:
+    """Each request gets its own tracker, so one write cannot protect the next."""
+    written = CancelOnClientDisconnectMiddleware(_HandlerSpy())
+
+    async def writing_handler(scope: Scope, receive: Receive, send: Send) -> None:
+        mark_state_changed()
+
+    async def receive() -> Message:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    async def send(message: Message) -> None:
+        pass
+
+    written.app = writing_handler
+    await asyncio.wait_for(written(_scope("GET"), receive, send), timeout=5)
+
+    # A second request through the same middleware instance must start clean.
+    spy = _HandlerSpy()
+
+    async def disconnecting_receive() -> Message:
+        return {"type": "http.disconnect"}
+
+    second = CancelOnClientDisconnectMiddleware(spy)
+    await asyncio.wait_for(
+        second(_scope("GET"), disconnecting_receive, send), timeout=5
+    )
+
+    assert spy.cancelled is True
+
+
+def test_get_routes_with_untracked_side_effects_are_exempt() -> None:
+    """No GET route may mutate the session without being exempt.
+
+    The write tracker only sees the database, so a route whose side effect is a
+    session cookie or process memory is invisible to it and has to be listed by
+    path. A list nobody checks goes stale -- this walks the built application so
+    the next such route fails here instead of being cancelled mid-flight in
+    production.
+
+    Only each endpoint's own source is read, so a route that mutates the session
+    inside a helper it calls is not caught; those still need adding by hand.
+    """
+    app = create_app()
+    unexempt = []
+
+    for route in app.routes:
+        methods = getattr(route, "methods", None) or set()
+        endpoint = getattr(route, "endpoint", None)
+        path = getattr(route, "path", None)
+        if "GET" not in methods or endpoint is None or path is None:
+            continue
+        try:
+            source = inspect.getsource(endpoint)
+        except (OSError, TypeError):
+            continue
+        mutates_session = (
+            "request.session[" in source or "request.session.pop(" in source
+        )
+        if mutates_session and path not in EXEMPT_PATHS:
+            unexempt.append(path)
+
+    assert not unexempt, (
+        f"GET routes mutate the session but are still cancellable: {unexempt}. "
+        f"Add them to EXEMPT_PATHS in cancel_on_disconnect.py."
+    )
+
+
+@pytest.mark.asyncio
+async def test_auth_routes_are_exempt_by_path() -> None:
+    """The OIDC routes change state where the write tracker cannot see it.
+
+    They exchange tokens with the provider and write a session cookie without
+    touching the database, so nothing marks them and only the path can.
+    """
+    spy = _HandlerSpy()
+
+    scope = _scope("GET")
+    scope["path"] = "/auth"
+
+    async def receive() -> Message:
+        # The client is already gone before the handler gets anywhere.
+        return {"type": "http.disconnect"}
+
+    async def send(message: Message) -> None:
+        pass
+
+    middleware = CancelOnClientDisconnectMiddleware(spy)
+    task = asyncio.create_task(middleware(scope, receive, send))
+
+    await spy.started.wait()
+    # Bounded negative wait: an unexempted path is cancelled as soon as the
+    # middleware reads that disconnect, well inside this window.
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(asyncio.shield(task), timeout=2.0)
+    assert spy.cancelled is False, "an OIDC route was cut off mid-flight"
+
+    spy.release.set()
+    await asyncio.wait_for(task, timeout=5)
+
+    assert spy.completed is True
+
+
+@pytest.mark.asyncio
+async def test_cancelling_the_middleware_does_not_orphan_the_handler() -> None:
+    """A server shutdown must take the handler down with it.
+
+    Leaving it running detached would recreate the orphan this middleware
+    exists to prevent, just by a different route.
+    """
+    spy = _HandlerSpy()
+
+    async def receive() -> Message:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    async def send(message: Message) -> None:
+        pass
+
+    middleware = CancelOnClientDisconnectMiddleware(spy)
+    outer = asyncio.create_task(middleware(_scope("GET"), receive, send))
+    await spy.started.wait()
+
+    outer.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await outer
+
+    assert spy.cancelled is True
+    assert spy.completed is False
+
+
+@pytest.mark.asyncio
+async def test_body_still_reaches_the_handler() -> None:
+    """Consuming ``receive`` to watch for disconnects must not eat the body."""
+    seen: list[Message] = []
+
+    class _BodyReader:
+        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+            while True:
+                message = await receive()
+                seen.append(message)
+                if not message.get("more_body", False):
+                    return
+
+    middleware = CancelOnClientDisconnectMiddleware(_BodyReader())
+    pending: list[Message] = [
+        {"type": "http.request", "body": b"part-1", "more_body": True},
+        {"type": "http.request", "body": b"part-2", "more_body": False},
+    ]
+
+    async def receive() -> Message:
+        if pending:
+            return pending.pop(0)
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    async def send(message: Message) -> None:
+        pass
+
+    # GET, so the request actually goes through the queue. A POST would take
+    # the pass-through branch and prove nothing about the forwarding.
+    await asyncio.wait_for(middleware(_scope("GET"), receive, send), timeout=5)
+
+    assert [m["body"] for m in seen] == [b"part-1", b"part-2"]
