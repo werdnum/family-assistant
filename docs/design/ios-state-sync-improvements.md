@@ -266,7 +266,11 @@ A single idempotent, coalesced resync, ordered to avoid the lost-wakeup race the
 5. Apply snapshots only if generation and selection still match, merging around the live
    `ActiveTurnSession`.
 6. Drain buffered stream events; reattach to running turns.
-7. Publish `live` or `degraded` from per-channel health.
+7. Hand off to the steady-state stream loops and merge one bounded recent-conversation page to close
+   the activity stream's no-replay reconnect window when step 4 succeeded. If its authoritative
+   snapshot failed, retry the full replacement instead so a recent-page success cannot hide stale
+   older rows or clear the list failure state prematurely.
+8. Publish `live` or `degraded` from per-channel health.
 
 The same resync runs on `NWPathMonitor` recovery and (as a hint) on push receipt while foregrounded.
 
@@ -573,14 +577,15 @@ A fourth local codex pass (all findings P2 — the P1s had converged) raised fou
   `clearReattachedSession` now schedules `sendNextQueuedFollowUpSteerIfReady`, mirroring
   `finishStreaming` (whose normal-path drain is covered by
   `testFinishedSteerQueuesFollowUpUntilTurnCompletes`).
-- **[P2] Final list snapshot races the activity handover — ACCEPTED (documented).** After
-  `restartStreams()` spawns the coordinator loops, the resync's final full-list refetch races the
-  activity connection's connect-time refresh; a specific interleaving (final request snapshots old
-  state → a mutation lands → the no-replay activity stream connects and refreshes *after* it → the
-  delayed old response arrives last) can leave one list row stale until the next activity event or
-  resync. It requires several conditions to align, the staleness is transient and self-healing, and
-  the fix is added ordering machinery on the carefully sequenced handover; accepted per the
-  behaviour-altitude / cost-benefit gates.
+- **[P2] Final list snapshot races the activity handover — MITIGATED.** After `restartStreams()`
+  spawns the coordinator loops, the resync's final recent-page refetch races the activity
+  connection's connect-time refresh; a specific interleaving (final request snapshots old state → a
+  mutation lands → the no-replay activity stream connects and refreshes *after* it → the delayed old
+  response arrives last) can leave one list row stale until the next activity event or resync. It
+  remains transient and self-healing. After a successful authoritative replacement, the final
+  fallback is deliberately bounded to the recent page; repeating complete pagination caused
+  foreground resyncs to exceed their deadline under real database load. A failed authoritative
+  replacement still receives a full retry after handoff so older deletions remain recoverable.
 - **[P2] Resync retains its host across awaits, delaying teardown — ACCEPTED (documented).** The
   `deinit` `cancelInFlight()` hook (added in the third pass) cannot preempt a resync while it is
   suspended *inside* a host method call, because invoking a method on the (weak) `host` retains it

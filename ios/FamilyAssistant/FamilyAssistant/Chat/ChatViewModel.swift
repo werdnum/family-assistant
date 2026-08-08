@@ -626,21 +626,26 @@ final class ChatViewModel {
     /// coordinator health, but never raises a modal (the popup this design removes);
     /// a user-initiated refresh (pull-to-refresh, bootstrap) keeps its existing
     /// modal/inline surface.
-    func refreshConversations() async {
+    @discardableResult
+    func refreshConversations() async -> Bool {
         isLoadingConversations = true
+        let succeeded: Bool
         do {
             conversations = try await apiClient.listConversations()
             errorMessage = nil
             markConversationListRefreshed(operation: .conversationsRefresh)
+            succeeded = true
         } catch {
             handleConversationListRefreshFailure(
                 operation: .conversationsRefresh,
                 error: error,
-                retry: { [weak self] in await self?.refreshConversations() }
+                retry: { [weak self] in _ = await self?.refreshConversations() }
             )
             errorReporter.report(error, component: "Chat.conversations")
+            succeeded = false
         }
         isLoadingConversations = false
+        return succeeded
     }
 
     /// Refresh only the most recent page of conversation summaries.
@@ -5233,10 +5238,17 @@ extension ChatViewModel: ResyncHost {
         return resolution
     }
 
-    func applyListSnapshot() async {
+    func applyListSnapshot() async -> Bool {
         // Advisory (§4.4 step 4): a failed resume-time snapshot degrades from
         // per-channel health and breadcrumbs, but must never modal.
-        await refreshConversations()
+        return await refreshConversations()
+    }
+
+    func applyRecentListSnapshot() async {
+        // The first resync snapshot already applied full-replacement semantics.
+        // This post-handoff fallback only closes the activity no-replay window, so
+        // merge the bounded recent page instead of paginating the full history again.
+        await refreshRecentConversations()
     }
 
     func applyMessagesSnapshot(conversationID: String) async {

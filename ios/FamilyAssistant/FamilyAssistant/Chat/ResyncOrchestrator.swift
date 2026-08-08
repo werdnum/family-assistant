@@ -65,8 +65,14 @@ protocol ResyncHost: AnyObject {
 
     /// Snapshot the full conversation list with full-replacement semantics, so a
     /// conversation deleted server-side while backgrounded converges (disappears)
-    /// on resume rather than lingering from the held list.
-    func applyListSnapshot() async
+    /// on resume rather than lingering from the held list. Returns whether the
+    /// authoritative snapshot succeeded.
+    func applyListSnapshot() async -> Bool
+
+    /// Refresh only the bounded recent-conversation page after stream handoff.
+    /// The authoritative full replacement above already reconciled deletions; this
+    /// final merge only closes the activity stream's no-replay handoff window.
+    func applyRecentListSnapshot() async
 
     /// Snapshot the selected conversation's messages and `active_turns`, merging
     /// around the live send session and tail-attaching to any running turn the
@@ -131,9 +137,9 @@ protocol ResyncHost: AnyObject {
 /// resync streams are closed and the loops reconnect immediately. The activity
 /// stream has no replay, so the only residual gap is activity events between the
 /// drain and the loop's reconnect; the immediate loop start minimizes it and a
-/// final list refetch after handover closes it. Follow-stream content always
-/// comes from persisted history via the loop's connect-time catch-up, so the
-/// extra connect risks no lost follow content.
+/// final bounded recent-list refetch after handover closes it. Follow-stream
+/// content always comes from persisted history via the loop's connect-time
+/// catch-up, so the extra connect risks no lost follow content.
 ///
 /// Coalescing: a resync request that arrives while one is running joins the
 /// in-flight task instead of starting a second, so a burst of foreground /
@@ -533,7 +539,7 @@ final class ResyncOrchestrator {
         // Step 5: authoritative snapshots (full-replacement list + selected
         // conversation messages/active_turns).
         reportStep("listSnapshot", edge: "enter", attempt: attempt, runID: runID)
-        await host.applyListSnapshot()
+        let fullListSnapshotSucceeded = await host.applyListSnapshot()
         guard activeRunID == runID else {
             return .aborted
         }
@@ -612,10 +618,17 @@ final class ResyncOrchestrator {
         restartStreams(host: host, attempt: attempt, runID: runID)
 
         // Fallback mitigation: the activity stream has no replay, so close the
-        // residual window between the drain and the loop's activity reconnect with
-        // one final full-replacement list refetch.
+        // residual window between the drain and the loop's activity reconnect. A
+        // successful authoritative snapshot needs only one bounded recent-page merge.
+        // If it failed, retry the full replacement so an offset-zero success cannot
+        // hide stale older rows or clear the list failure state prematurely. Keep the
+        // existing breadcrumb step name for before/after timing comparison.
         reportStep("finalListSnapshot", edge: "enter", attempt: attempt, runID: runID)
-        await host.applyListSnapshot()
+        if fullListSnapshotSucceeded {
+            await host.applyRecentListSnapshot()
+        } else {
+            _ = await host.applyListSnapshot()
+        }
         guard activeRunID == runID else {
             return .aborted
         }
@@ -735,7 +748,7 @@ final class ResyncOrchestrator {
         // the point). Events the buffering tasks already consumed during the
         // snapshot-fetch window are in `buffer` and get drained; any event still
         // in flight is covered by the loop's connect-time catch-up (follow) and
-        // the final list refetch (activity, which has no replay).
+        // the final bounded recent-list refetch (activity, which has no replay).
         followBufferingTask?.cancel()
         activityBufferingTask?.cancel()
         followBufferingTask = nil
