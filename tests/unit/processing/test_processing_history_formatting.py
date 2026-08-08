@@ -525,6 +525,10 @@ async def test_delegated_attachments_are_named_to_the_model(
     assert attachment.attachment_id in block_text
     assert "backyard.jpeg" in block_text
     assert "image/jpeg" in block_text
+    # On the request itself, not on an injection message: a provider adapter
+    # may put an injection's payload in `parts`, and then only `parts` is sent.
+    assert "Mock up the hill with the proposed plants" in block_text
+    assert metadata_blocks[0].parts is None
 
 
 def _message_text(message: UserMessage) -> str:

@@ -954,7 +954,12 @@ class ProcessingService:
             trigger_content_parts,
             acting_user_id=user_id,
         )
-        messages_for_llm.extend(processed_content_parts.messages)
+        # Before the injection messages are appended, so the block lands on the
+        # trigger rather than on the newest injection. An injection built by a
+        # provider adapter can carry its payload in `parts`, which is what that
+        # provider renders -- text appended to `content` there is dropped on the
+        # floor.
+        #
         # Injected attachments are listed alongside the trigger's own: a
         # delegated profile receives its attachments only as injections, and
         # without their ids in the block it can see the image but cannot name
@@ -965,6 +970,7 @@ class ProcessingService:
                 trigger_attachments, processed_content_parts.attachments
             ),
         )
+        messages_for_llm.extend(processed_content_parts.messages)
         # Last, and after the attachment-metadata injection above: that scans back
         # for the newest user message, and would fasten the trigger's attachment
         # list onto this block instead of onto the trigger.
