@@ -5,6 +5,8 @@ import io
 from typing import Literal
 from unittest.mock import AsyncMock, Mock, patch
 
+import httpx
+import openai
 import pytest
 from PIL import Image
 
@@ -613,6 +615,68 @@ class TestOpenAIImageBackend:
         assert "input_fidelity" not in call_kwargs
 
     @pytest.mark.asyncio
+    async def test_transform_image_names_upload_after_actual_format(
+        self, openai_backend: OpenAIImageBackend
+    ) -> None:
+        """Test the upload filename follows the bytes, not a wrong declared type."""
+        mock_response = Mock()
+        mock_response.data = [Mock(b64_json=_make_png_b64())]
+        openai_backend.client.images.edit = AsyncMock(return_value=mock_response)
+
+        await openai_backend.transform_image(
+            ImageReference(content=_make_jpeg_bytes(), mime_type="image/png"),
+            "make it red",
+        )
+
+        image_file = openai_backend.client.images.edit.call_args.kwargs["image"]
+        assert image_file.name == "image_1.jpg"
+
+    @pytest.mark.asyncio
+    async def test_transform_image_retries_with_reencoded_bytes(
+        self, openai_backend: OpenAIImageBackend
+    ) -> None:
+        """Test a rejected image is re-encoded and retried rather than given up on."""
+        mock_response = Mock()
+        mock_response.data = [Mock(b64_json=_make_png_b64())]
+        openai_backend.client.images.edit = AsyncMock(
+            side_effect=[_invalid_image_file_error(), mock_response]
+        )
+        cmyk_source = _make_jpeg_bytes("CMYK")
+
+        result = await openai_backend.transform_image(
+            ImageReference(content=cmyk_source, mime_type="image/jpeg"),
+            "make it red",
+        )
+
+        assert isinstance(result, bytes)
+        assert openai_backend.client.images.edit.await_count == 2
+        retried_file = openai_backend.client.images.edit.call_args.kwargs["image"]
+        assert retried_file.name == "image_1.jpg"
+        retried_bytes = retried_file.getvalue()
+        assert retried_bytes != cmyk_source
+        assert Image.open(io.BytesIO(retried_bytes)).mode == "RGB"
+
+    @pytest.mark.asyncio
+    async def test_transform_image_reraises_unrelated_bad_request(
+        self, openai_backend: OpenAIImageBackend
+    ) -> None:
+        """Test a rejection that isn't about the image bytes is not retried."""
+        moderation_error = openai.BadRequestError(
+            "Your request was rejected by the safety system",
+            response=httpx.Response(
+                400,
+                request=httpx.Request("POST", "https://api.openai.com/v1/images/edits"),
+            ),
+            body={"code": "moderation_blocked", "message": "rejected"},
+        )
+        openai_backend.client.images.edit = AsyncMock(side_effect=moderation_error)
+
+        with pytest.raises(openai.BadRequestError, match="safety system"):
+            await openai_backend.transform_image(_make_png_bytes(), "make it red")
+
+        assert openai_backend.client.images.edit.await_count == 1
+
+    @pytest.mark.asyncio
     async def test_transform_image_no_data_raises(
         self, openai_backend: OpenAIImageBackend
     ) -> None:
@@ -953,3 +1017,26 @@ def _make_png_bytes() -> bytes:
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
+
+
+def _make_jpeg_bytes(mode: str = "RGB") -> bytes:
+    """Create valid JPEG bytes in the given colour mode."""
+    img = Image.new(mode, (64, 64), color=(0, 0, 255) if mode == "RGB" else None)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+def _invalid_image_file_error() -> "openai.BadRequestError":
+    """Build the error OpenAI returns when it refuses the uploaded bytes."""
+    return openai.BadRequestError(
+        "Invalid image file or mode for image 1",
+        response=httpx.Response(
+            400,
+            request=httpx.Request("POST", "https://api.openai.com/v1/images/edits"),
+        ),
+        body={
+            "code": "invalid_image_file",
+            "message": "Invalid image file or mode for image 1",
+        },
+    )

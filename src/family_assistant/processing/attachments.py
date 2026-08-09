@@ -4,6 +4,7 @@ import logging
 import re
 import uuid
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, timedelta
 
 import aiofiles
@@ -16,6 +17,7 @@ from family_assistant.llm.messages import (
     ContentPartDict,
     ImageUrlContentPart,
     LLMMessage,
+    MessageAttachmentMetadata,
     UserMessage,
 )
 from family_assistant.services.attachment_registry import AttachmentRegistry
@@ -30,6 +32,19 @@ logger = logging.getLogger(__name__)
 
 class AttachmentSelectionError(RuntimeError):
     """Raised when attachment selection cannot be completed correctly."""
+
+
+@dataclass(frozen=True)
+class ProcessedContentParts:
+    """Injection messages built from content parts, and the attachments they carry.
+
+    The attachment list is what lets the caller name these attachments to the
+    model. Injection puts the bytes in front of it; without the ids alongside,
+    a profile handed an image can look at it but cannot pass it to any tool.
+    """
+
+    messages: list[LLMMessage]
+    attachments: list[MessageAttachmentMetadata]
 
 
 class AttachmentProcessor:
@@ -63,7 +78,7 @@ class AttachmentProcessor:
         content_parts: list[ContentPartDict],
         *,
         acting_user_id: str | None,
-    ) -> list[LLMMessage]:
+    ) -> ProcessedContentParts:
         """
         Process attachment content parts by fetching and injecting them as user messages.
 
@@ -78,9 +93,10 @@ class AttachmentProcessor:
             acting_user_id: Acting user for owner-scoped attachment access.
 
         Returns:
-            LLM injection messages created from attachment and image content parts.
+            The injection messages, and metadata for every attachment they carry.
         """
         injection_messages: list[LLMMessage] = []
+        injected_attachments: list[MessageAttachmentMetadata] = []
 
         for part in content_parts:
             if part.get("type") == "attachment":
@@ -120,6 +136,18 @@ class AttachmentProcessor:
                     tool_attachment
                 )
                 injection_messages.append(injection_msg)
+                injected_attachments.append(
+                    MessageAttachmentMetadata(
+                        type="attachment_reference",
+                        attachment_id=attachment_id,
+                        mime_type=attachment_metadata.mime_type,
+                        description=attachment_metadata.description,
+                        filename=attachment_metadata.metadata.get(
+                            "original_filename", "attachment"
+                        ),
+                        size=attachment_metadata.size,
+                    )
+                )
                 logger.info(
                     "Processed attachment content part %s for LLM injection",
                     attachment_id,
@@ -138,7 +166,17 @@ class AttachmentProcessor:
                             ]
                         )
                     )
-        return injection_messages
+                    image_attachment_id = part.get("attachment_id")
+                    if image_attachment_id:
+                        injected_attachments.append(
+                            MessageAttachmentMetadata(
+                                type="attachment_reference",
+                                attachment_id=image_attachment_id,
+                            )
+                        )
+        return ProcessedContentParts(
+            messages=injection_messages, attachments=injected_attachments
+        )
 
     async def convert_urls_to_data_uris(
         self,

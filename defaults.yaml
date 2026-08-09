@@ -1115,6 +1115,8 @@ service_profiles:
 
           Note: for deterministic annotation of a provided image — drawing boxes, circles, arrows, or labels to point something out (e.g. "circle the bird", "highlight the error") — use `highlight_image` instead of `transform_image`. `transform_image` performs generative edits and is the wrong tool for precise markup.
 
+          The reference images available to you are listed by id in the `<attachment_metadata>` block that follows the request; pass those ids to `transform_image`. If the request is about a specific image — theirs, or one an earlier step handed you — and you cannot find its id, or `transform_image` fails on it, do not fall back to `generate_image`. A text-to-image call cannot see the picture, so it invents a plausible substitute that looks like an answer and is not one. Report what went wrong and what you needed instead.
+
           ## Video Generation Best Practices (Veo and Gemini Omni Flash)
 
           When using `generate_video`, follow these guidelines:

@@ -74,6 +74,75 @@ def _normalize_image_references(
     ]
 
 
+# The formats OpenAI's image-edit endpoint accepts, and the extension the upload
+# has to be named with for it to recognize one. The endpoint reads the filename,
+# so a name that disagrees with the bytes is itself a rejection.
+_OPENAI_EDIT_EXTENSIONS = {"PNG": ".png", "JPEG": ".jpg", "WEBP": ".webp"}
+
+
+def _openai_upload_extension(reference: ImageReference) -> str:
+    """Name an upload after the bytes' real format rather than the declared type."""
+    try:
+        with Image.open(io.BytesIO(reference.content)) as image:
+            sniffed = _OPENAI_EDIT_EXTENSIONS.get(image.format or "")
+    except OSError:
+        # Unreadable here does not mean unreadable there; fall back to the
+        # declared type and let the endpoint be the judge.
+        sniffed = None
+    return sniffed or mimetypes.guess_extension(reference.mime_type) or ".png"
+
+
+def _reencode_for_openai_edit(content: bytes) -> tuple[bytes, str]:
+    """
+    Re-encode an image to a baseline form the edit endpoint accepts.
+
+    Cameras produce JPEGs that every viewer opens but the edit endpoint rejects
+    outright -- CMYK or otherwise exotic colour modes, unusual ICC profiles,
+    orientation held only in EXIF. Decoding and re-saving discards all of that:
+    the pixels survive, the encoding quirks do not.
+    """
+    with Image.open(io.BytesIO(content)) as image:
+        oriented = ImageOps.exif_transpose(image) or image
+        has_alpha = oriented.mode in {"RGBA", "LA", "PA"} or "transparency" in (
+            oriented.info
+        )
+        converted = oriented.convert("RGBA" if has_alpha else "RGB")
+
+    buffer = io.BytesIO()
+    if has_alpha:
+        converted.save(buffer, format="PNG")
+        return buffer.getvalue(), ".png"
+    converted.save(buffer, format="JPEG", quality=95)
+    return buffer.getvalue(), ".jpg"
+
+
+def _build_openai_edit_files(
+    references: Sequence[ImageReference], *, normalize: bool
+) -> list[io.BytesIO]:
+    """
+    Build named upload files for the edit endpoint.
+
+    Decodes images with Pillow, so run it off the event loop.
+    """
+    image_files: list[io.BytesIO] = []
+    for index, reference in enumerate(references, start=1):
+        if normalize:
+            content, extension = _reencode_for_openai_edit(reference.content)
+        else:
+            content, extension = reference.content, _openai_upload_extension(reference)
+        image_file = io.BytesIO(content)
+        image_file.name = f"image_{index}{extension}"
+        image_files.append(image_file)
+    return image_files
+
+
+def _is_invalid_image_file_error(error: Exception) -> bool:
+    """Return whether OpenAI rejected the uploaded bytes rather than the request."""
+    if getattr(error, "code", None) == "invalid_image_file":
+        return True
+    return "invalid_image_file" in str(error)
+
+
 @runtime_checkable
 class ImageGenerationBackend(Protocol):
     """Protocol for image generation backends."""
@@ -646,31 +715,28 @@ class OpenAIImageBackend:
         """Transform existing image references using the OpenAI edit endpoint."""
         self.logger.debug(f"Calling OpenAI image edit with instruction: {instruction}")
 
-        # The OpenAI SDK accepts either one image file or an ordered list of files.
         image_inputs = _normalize_image_references(image_bytes)
-        image_files: list[io.BytesIO] = []
-        for index, image_input in enumerate(image_inputs, start=1):
-            image_file = io.BytesIO(image_input.content)
-            extension = mimetypes.guess_extension(image_input.mime_type) or ".png"
-            image_file.name = f"image_{index}{extension}"
-            image_files.append(image_file)
+        image_files = await asyncio.to_thread(
+            _build_openai_edit_files, image_inputs, normalize=False
+        )
 
-        image_request: io.BytesIO | list[io.BytesIO] = (
-            image_files[0] if len(image_files) == 1 else image_files
-        )
-        cfg = self.edit_config
-        response = await self.client.images.edit(
-            model=self.model,
-            image=cast(
-                "openai._types.FileTypes | list[openai._types.FileTypes]", image_request
-            ),
-            prompt=instruction,
-            n=1,
-            size=cfg.size,
-            quality=cfg.quality,
-            output_format=cfg.output_format,
-            output_compression=cfg.output_compression,
-        )
+        try:
+            response = await self._request_edit(image_files, instruction)
+        except openai.BadRequestError as error:
+            if not _is_invalid_image_file_error(error):
+                raise
+            # The user's own photo is the one image we cannot substitute, so a
+            # rejection of its encoding is worth a second call rather than an
+            # error the model then works around with some other picture.
+            self.logger.warning(
+                "OpenAI rejected the uploaded image bytes (%s); "
+                "retrying with re-encoded images",
+                error,
+            )
+            normalized_files = await asyncio.to_thread(
+                _build_openai_edit_files, image_inputs, normalize=True
+            )
+            response = await self._request_edit(normalized_files, instruction)
 
         if not response.data:
             raise ValueError("No image data in OpenAI edit API response")
@@ -683,6 +749,28 @@ class OpenAIImageBackend:
         self.logger.info(f"OpenAI edit returned image: {len(result_bytes)} bytes")
 
         return result_bytes
+
+    async def _request_edit(
+        self, image_files: list[io.BytesIO], instruction: str
+    ) -> openai.types.ImagesResponse:
+        """Call the edit endpoint with already-prepared upload files."""
+        # The OpenAI SDK accepts either one image file or an ordered list of files.
+        image_request: io.BytesIO | list[io.BytesIO] = (
+            image_files[0] if len(image_files) == 1 else image_files
+        )
+        cfg = self.edit_config
+        return await self.client.images.edit(
+            model=self.model,
+            image=cast(
+                "openai._types.FileTypes | list[openai._types.FileTypes]", image_request
+            ),
+            prompt=instruction,
+            n=1,
+            size=cfg.size,
+            quality=cfg.quality,
+            output_format=cfg.output_format,
+            output_compression=cfg.output_compression,
+        )
 
     @staticmethod
     def _apply_style_to_prompt(prompt: str, style: str) -> str:
