@@ -43,24 +43,24 @@
               {
                 "functionDeclarations": [
                   {
-                    "description": "Execute a Python script in a sandboxed environment for automation and complex operations.\n\n**Two modes:**\n• **Inline**: Pass code via `script` parameter\n• **Stored**: Pass `name` to run a saved script from the library (see list_scripts)\n\n**IMPORTANT: Before writing scripts, please read the scripting documentation first!**\nUse the command: `get_user_documentation_content filename='scripting.md'`\n\n**Tool Documentation:**\nTo see available tools and their parameters, ask: 'Show me the available tools'\n\n**Execution Environment:**\n• Timeout: 10 minutes maximum execution time (to allow for external API calls)\n• Sandboxed: No file system or network access\n• Deterministic: No random numbers or current time\n\n**Sandbox Limitations:**\nThe Monty scripting engine runs a sandboxed Python subset with these restrictions:\n• No class definitions (can't use `class` keyword)\n• No generators or yield statements\n• No match/case statements\n• No context managers or with statements\n• No del statement\n• No dict unpacking in literals ({**d1, **d2} not supported)\n• No str.format() method (use f-strings instead)\n• No map/filter functions (use list comprehensions instead)\n• Decorators are buggy (avoid using them)\n• Exceptions only accept 0 or 1 string arguments\n• No imports except heavily sandboxed os, sys, typing, pathlib modules\n• Resource limits: 256MB memory, 100 recursion depth\n• However: try/except, while loops, float(), set(), frozenset() ARE supported\n\n**Built-in Functions:**\n• Type conversions: bool(), int(), str(), list(), tuple(), dict()\n• Collections: len(), range(), sorted(), reversed(), enumerate(), zip()\n• Logic: all(), any(), max(), min()\n• Object inspection: type(), dir(), getattr(), hasattr()\n• Control: print(), fail() - print() output is captured and returned to you under a '--- Script Output ---' section (use it to surface intermediate values without returning them)\n• JSON: json_encode(value), json_decode(value)\n• Base64: base64_encode(data), base64_decode(data) -> str, base64_decode_bytes(data) -> bytes\n• LLM Wake: wake_llm(context, include_event=True) - Request LLM attention with context (string or dict)\n• LLM: llm(prompt), llm_json(prompt) - One-shot LLM calls for summarisation and data extraction\n\n**Family Assistant Tools:**\nAll enabled tools are available as functions. Call them directly:\n• add_or_update_note(title='...', content='...')\n• search_notes(query='...')\n• send_email(to='...', subject='...', body='...')\n\n**Note**: Tools return structured data (dicts, lists) directly. You can use results\nimmediately without parsing. `json_decode()` is safe to call on any value - it passes\nthrough dicts, lists, numbers, and booleans unchanged, and only parses strings:\n```python\nnotes = search_notes(query='TODO')  # Returns a list directly\nfor note in notes:\n    print(note['title'])\n```\n\n**Tools API Functions:**\n• tools_list() - List all available tools with descriptions\n• tools_get(name) - Get detailed info about a specific tool\n• tools_execute(name, **kwargs) - Execute a tool by name\n\n**LLM API Functions:**\n• llm(prompt, system=None, model=None) - One-shot LLM call, returns text\n• llm_json(prompt, schema=None, system=None, model=None) - One-shot LLM call, returns parsed JSON\nDefault model: gemini-3.6-flash. Useful for summarisation, data extraction, classification.\n\n**Attachment API Functions:**\n• attachment_get(attachment_id) - Get attachment metadata by ID\n• attachment_create(content, filename, description, mime_type) - Create new attachment\nNote: attachment_list() and attachment_send() are not available.\nScripts must receive attachment IDs from LLM context, tool results, or parameters.\n\n**Returning Attachments:**\nAttachments created by tools or attachment_create() are represented as dictionaries\nwith metadata: {\"id\": uuid, \"filename\": str, \"mime_type\": str, \"size\": int, \"description\": str}\nReturn these dicts to make attachments visible to the LLM:\n\n```python\n# Single attachment - last expression is returned\ndata = attachment_create(content=\"data\", filename=\"data.txt\", mime_type=\"text/plain\")\ndata  # Dict with attachment info, automatically sent to LLM\n\n# Multiple attachments - return list\nchart1 = create_chart(data1)  # Returns dict\nchart2 = create_chart(data2)  # Returns dict\n[chart1, chart2]  # Both dicts visible to LLM\n\n# Functional composition (recommended for data viz)\nchart = create_vega_chart(\n    spec=spec,\n    data_attachments=[jq_query(source, '.[] | select(.value > 10)')]\n)\nchart  # Returns attachment dict\n```\n\n**Example Scripts:**\n\n1. Simple note creation:\n```python\nresult = add_or_update_note(\n    title='Meeting Notes',\n    content='Discussed project timeline'\n)\nprint('Created note:', result)\n```\n\n2. Conditional logic with search:\n```python\ndef process_todos():\n    notes = search_notes(query='TODO')\n    \n    if len(notes) > 0:\n        print('Found', len(notes), 'TODO items')\n        for note in notes:\n            print('-', note['title'])\n    else:\n        print('No TODO items found')\n    return notes\n\n# Call the function\nprocess_todos()\n```\n\n3. Complex automation:\n```python\ndef create_project_summary():\n    # Search for notes, create summary, send email\n    project_notes = search_notes(query='Project Alpha')\n    \n    summary = 'Project Alpha Summary:\\n\\n'\n    for note in project_notes:\n        summary += '- ' + note['title'] + '\\n'\n    \n    if len(project_notes) > 0:\n        add_or_update_note(\n            title='Project Alpha Summary',\n            content=summary\n        )\n        result = send_email(\n            to='team@example.com',\n            subject='Weekly Project Summary',\n            body=summary\n        )\n        return {'notes_found': len(project_notes), 'email_result': result}\n    else:\n        return {'notes_found': 0, 'email_result': 'No notes to summarize'}\n\n# Execute the function\ncreate_project_summary()\n```\n\n4. Working with user attachments (attachment ID provided by LLM):\n```python\n# Attachment ID passed to script by LLM based on conversation context\n# Example: LLM calls execute_script with attachment_id parameter\ndef process_user_attachment(attachment_id):\n    # Get attachment details\n    attachment_info = attachment_get(attachment_id)\n    \n    if attachment_info:\n        print('Processing:', attachment_info['description'])\n        \n        # Process the attachment with a tool (ID auto-converted to content)\n        if 'image' in attachment_info['mime_type']:\n            analysis = tools_execute('analyze_image', image_data=attachment_id)\n            # Send results back to user via LLM tools\n            wake_llm({'message': 'Analysis: ' + analysis, 'attachments': [attachment_id]})\n        else:\n            # Use attach_to_response LLM tool to send attachment back\n            tools_execute('attach_to_response', attachment_ids=[attachment_id])\n    else:\n        print('Attachment not found or not accessible')\n\n# Call with attachment ID from LLM context\n# process_user_attachment('uuid-from-llm-context')\n```\n\n5. Data visualization with automatic attachment propagation:\n```python\n# Create a chart - attachment automatically returns to LLM\nspec = {\n  '$schema': 'https://vega.github.io/schema/vega-lite/v5.json',\n  'data': {'name': 'sensor_data'},\n  'mark': 'line',\n  'encoding': {\n    'x': {'field': 'timestamp', 'type': 'temporal'},\n    'y': {'field': 'temperature', 'type': 'quantitative'}\n  }\n}\n\n# Chart is automatically visible - no need for attach_to_response!\ncreate_vega_chart(\n  spec=json_encode(spec),\n  data_attachments=[sensor_attachment_id],\n  title='Temperature Over Time'\n)\n```\n\n6. Multi-chart dashboard:\n```python\n# Create multiple related charts\ntemp_spec = {'$schema': '...', 'mark': 'line', ...}\nhumidity_spec = {'$schema': '...', 'mark': 'area', ...}\n\ntemp_chart = create_vega_chart(spec=json_encode(temp_spec), data_attachments=[data])\nhumidity_chart = create_vega_chart(spec=json_encode(humidity_spec), data_attachments=[data])\n\n# Both charts automatically visible to LLM\n[temp_chart, humidity_chart]\n```\n\n",
+                    "description": "Execute an inline or stored Python script in a sandboxed environment. Before writing or debugging a script, load `scripting.md` with `get_user_documentation_content`; it documents the language constraints, available APIs, brokered HTTP, attachments, and return values. Use `script` with optional `globals` for inline code, or `name` with optional `parameters` for a stored script. Enabled Family Assistant tools and configured script APIs are available as functions.",
                     "name": "execute_script",
                     "parameters": {
                       "properties": {
                         "script": {
-                          "description": "The Python script code to execute (inline mode). Omit this and use 'name' instead to run a stored script.\n\nThe script can:\n• Define variables and functions\n• Use control flow (if/else, for loops)\n• Call any available Family Assistant tool\n• Process and transform data\n• Print output for debugging\n• Return a value (the last expression is returned)\n\nScripts should be self-contained and handle errors gracefully.\n\n**Wake LLM Contexts:**\nIf the script calls wake_llm(), the contexts will be included in the response.\nThis allows the LLM to receive and process wake requests from scripts.\n\n**Return Values:**\nReturns a string containing the script execution result:\n• Anything printed with print() appears first under a '--- Script Output ---' section\n• On success with return value: 'Script result: [value]' or for dict/list: 'Script result:\\n[JSON formatted]'\n• On success without return: 'Script executed successfully with no return value.'\n• If wake_llm() called: Also includes '--- Wake LLM Contexts ---' section with context details\n• On error: any output printed before the failure is included above the error message\n• On syntax error: 'Error: Syntax error in script [at line N]: [details]'\n• On timeout: 'Error: Script execution timed out after [N] seconds'\n• On execution error: 'Error: Script execution failed: [details]'\n• On unexpected error: 'Error: Unexpected error executing script: [details]'",
+                          "description": "Inline Python source. Load `scripting.md` with `get_user_documentation_content` before writing or debugging scripts. Omit this when using `name`.",
                           "type": "STRING"
                         },
                         "globals": {
-                          "description": "Optional dictionary of global variables to inject into the script.\n\nThese variables will be available in the script's global scope.\nUseful for passing configuration, data, or context to the script.\n\nExample:\n{\n  \"user_email\": \"john@example.com\",\n  \"project_id\": 123,\n  \"tags\": [\"important\", \"urgent\"]\n}\n\nThese can then be used in the script as regular variables.",
+                          "description": "Optional global values for inline `script` code. Do not use with a stored script.",
                           "type": "OBJECT"
                         },
                         "name": {
-                          "description": "Name of a stored script to execute (alternative to inline 'script').\nUse list_scripts to see available stored scripts. When using 'name',\npass arguments via 'parameters' instead of 'globals'.",
+                          "description": "Stored script name. Use `list_scripts` to discover names; omit `script` and pass arguments with `parameters`.",
                           "type": "STRING"
                         },
                         "parameters": {
-                          "description": "Parameters to pass to a stored script as global variables.\nOnly used with 'name'. Validated against the script's parameter schema if defined.",
+                          "description": "Optional arguments for the stored script selected by `name`; validated against its parameter schema.",
                           "type": "OBJECT"
                         }
                       },
@@ -100,11 +100,11 @@
                       "functionCall": {
                         "name": "execute_script",
                         "args": {
-                          "script": "5 + 5"
+                          "script": "print(5 + 5)\n"
                         },
-                        "id": "VYghDBs1"
+                        "id": "KPrsKvcK"
                       },
-                      "thoughtSignature": "EqAECp0EARFNMg8bbjKvKrTx6mwuvSOrA8TzH6mZYVOS2rzQBDE2LTWMddED7QIgNuXPb515UUD3BHtY2BOMVdwFhpQcEMUXqlie3kYYwoMFQKKbIw8IdAZzI0lZrbO3Ayywh9ia6WAixkO8O9DTBD95ulRJmmQXeYcuf/PzmK7/jdgxRk8oN3rmFdn2gw5Wt6DIV+dJ22RGcou9KlNu7PUBEi5zmtHnx/eUKGLH3uVG0xMjYD7Qas9qB5QOiLLeXjU7mJV8fwXl7X4kyj25HdGf3EtQ6NmbWdzLnPpxdXOEdT4+QpMpTiL6STztjqNhvO/gB2Y9TF9xe9lChoUthzLvtvRCCKbE84oiVflm+zTUgb3ilchJ30ZvnNG0nD3f6YQ7EUy8EquZSm3rpfWNGibMPZUM7Ia1IJCtqWWUo1psUunxlQheiC4bAVhN0L3veU0mDkIsa+96cplVEI2FUKcTZGHIvCuoAQ30X5WNOajIS8EqysXllv5dnITPoY+erJmJFgpbBgq9PnJbEOThgEcAI9IpmDB83cU8WmyGRJmleVFA3s86nZuCCmkPvwzCIP49c3JtHpmE8HQCdSrjxEAk6SgsT0/tn0/1Cj5PqkV/kTQmHWpEF7QqNp/CfrLCVqVs0jgkMvqOBc0DwE6AjSCs1gEcOW9Bur8e1QGJb38QBl5rw53Ntr1LbRISW+xRJybHXq9sd7TzO7AcwYgO+/oIyw=="
+                      "thoughtSignature": "ErYHCrMHARFNMg+TnF3Zc02GRwLeZR348qHfAlq2N7XjGMTG4VCEh0sByzUUm7ajWLH2/K7wG7Mi9f55QeVA2T77QIQFz5sdtZH9qFeJ06XfdHiVgHFzbaUalWViJMnmQt5gan/2pBBBgI/mi8Qh4faXU1PPAmPhTTuvP7nXFxFQq0CbLiiujpAA/M8jhG7K6w+N5oXY1i+3JmNdjPwCRuEvOXMZWajWyQDkuIC6S0bT6plvXYt/qPeGVXkYsMzJrNvvG1Mbs5eC/LLNq841bAL+ONPL6qBmXzFgjHCF6hda3kWNlFgzCSfBNRcKE3XBPuerBJ6s2HZVu7iuaOgC5BPA0Y3yAgXj23gExq/s1Ro37pjTPBKuu9oQpMsL/0ivGVsOntrKI6genMbya0K4pc0ioev0HLfNrC5Vmg0mYx23Qz6yXHku3BrYTXhQWrSX30icDshodQxotI9pMNtb07D0MqYVp7LGiSh99eQWXBBrgeNoeJD1aKocbHihKKle1oEO4LdUyVOFRPiQD/6TpWgd1hLh8E69fZQqIZqVY8qdLwfdVTPWQOvZDZw17QGIls+0WRNQsubqsAIvOav/oxm+LUVBfFrIwg2dtokZlkWlTazZH20mC3vOqWEMKknPw7s/Zdh6DNFCJO7teoRfgTlfelC6PSUHW4f2hH/jKkZMCw68Hbl7T9r4t2/JWkvQinVWGZXxW8RHLOcYyheb8wCaVc95nXAIWXAhI/giV/eRVk+fwVixHEHqoyJqoT3JmkP/ups3On4M5UpZqeAgLgnSIzMKdi34zZEiJJIqvDSquYdpRxqg/N+s1FGfHsKPzKrAjZxXGck1uybNPJsiGAfz2Xx0ZYW0HxmrpFmgmov9CWFJPIaEnZrxGgEPu/HmWJXQtHAW2FtCzx+DnhKIUsBn8Ig3y+uXaQvc/tPK8l+ohugpuEtg0dgjgr+TbFWd7K3P3OTB8W8tySuHRcCYRS8ai8zYtLp0IBEVoQdg2xW9TxS5tWajj9gdgX6XRkygnSZM43AceCJnmPxnrpg7X5etTTG1Dm2glB9JAMgh0tEVJxucXPMbRYNTpUMmSde9eHjtzLSLldMamEBHanUMp3dhCdpoE3p8kKpIq53YYy5+LzFtiW3+2yWZlk04HVdUoKgdJVpccp8dYcrQa2j5QSbjwxBthdHcVXCVckUjJUar9QHHQyoJDS5J9BVqKIZdOFEsJShowrLB4XsoTNuetjdUC534UHeVxmsQmqZg3/eE3OZGmOxgy0c="
                     }
                   ],
                   "role": "model"
@@ -113,20 +113,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 2861,
-              "candidatesTokenCount": 19,
-              "totalTokenCount": 3010,
+              "promptTokenCount": 439,
+              "candidatesTokenCount": 23,
+              "totalTokenCount": 678,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 2861
+                  "tokenCount": 439
                 }
               ],
-              "thoughtsTokenCount": 130,
+              "thoughtsTokenCount": 216,
               "serviceTier": "standard"
             },
             "modelVersion": "gemini-3.6-flash",
-            "responseId": "89R1apudIJOHxN8P0o_B2Q8"
+            "responseId": "R155apjqKr6LvdIPzMGH-Q4"
           },
           {
             "candidates": [
@@ -144,20 +144,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 2861,
-              "candidatesTokenCount": 19,
-              "totalTokenCount": 3010,
+              "promptTokenCount": 439,
+              "candidatesTokenCount": 23,
+              "totalTokenCount": 678,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 2861
+                  "tokenCount": 439
                 }
               ],
-              "thoughtsTokenCount": 130,
+              "thoughtsTokenCount": 216,
               "serviceTier": "standard"
             },
             "modelVersion": "gemini-3.6-flash",
-            "responseId": "89R1apudIJOHxN8P0o_B2Q8"
+            "responseId": "R155apjqKr6LvdIPzMGH-Q4"
           }
         ],
         "byte_segments": [],
@@ -182,13 +182,13 @@
                   "parts": [
                     {
                       "function_call": {
-                        "id": "VYghDBs1",
+                        "id": "KPrsKvcK",
                         "args": {
-                          "script": "5 + 5"
+                          "script": "print(5 + 5)\n"
                         },
                         "name": "execute_script"
                       },
-                      "thought_signature": "EqAECp0EARFNMg8bbjKvKrTx6mwuvSOrA8TzH6mZYVOS2rzQBDE2LTWMddED7QIgNuXPb515UUD3BHtY2BOMVdwFhpQcEMUXqlie3kYYwoMFQKKbIw8IdAZzI0lZrbO3Ayywh9ia6WAixkO8O9DTBD95ulRJmmQXeYcuf_PzmK7_jdgxRk8oN3rmFdn2gw5Wt6DIV-dJ22RGcou9KlNu7PUBEi5zmtHnx_eUKGLH3uVG0xMjYD7Qas9qB5QOiLLeXjU7mJV8fwXl7X4kyj25HdGf3EtQ6NmbWdzLnPpxdXOEdT4-QpMpTiL6STztjqNhvO_gB2Y9TF9xe9lChoUthzLvtvRCCKbE84oiVflm-zTUgb3ilchJ30ZvnNG0nD3f6YQ7EUy8EquZSm3rpfWNGibMPZUM7Ia1IJCtqWWUo1psUunxlQheiC4bAVhN0L3veU0mDkIsa-96cplVEI2FUKcTZGHIvCuoAQ30X5WNOajIS8EqysXllv5dnITPoY-erJmJFgpbBgq9PnJbEOThgEcAI9IpmDB83cU8WmyGRJmleVFA3s86nZuCCmkPvwzCIP49c3JtHpmE8HQCdSrjxEAk6SgsT0_tn0_1Cj5PqkV_kTQmHWpEF7QqNp_CfrLCVqVs0jgkMvqOBc0DwE6AjSCs1gEcOW9Bur8e1QGJb38QBl5rw53Ntr1LbRISW-xRJybHXq9sd7TzO7AcwYgO-_oIyw=="
+                      "thought_signature": "ErYHCrMHARFNMg-TnF3Zc02GRwLeZR348qHfAlq2N7XjGMTG4VCEh0sByzUUm7ajWLH2_K7wG7Mi9f55QeVA2T77QIQFz5sdtZH9qFeJ06XfdHiVgHFzbaUalWViJMnmQt5gan_2pBBBgI_mi8Qh4faXU1PPAmPhTTuvP7nXFxFQq0CbLiiujpAA_M8jhG7K6w-N5oXY1i-3JmNdjPwCRuEvOXMZWajWyQDkuIC6S0bT6plvXYt_qPeGVXkYsMzJrNvvG1Mbs5eC_LLNq841bAL-ONPL6qBmXzFgjHCF6hda3kWNlFgzCSfBNRcKE3XBPuerBJ6s2HZVu7iuaOgC5BPA0Y3yAgXj23gExq_s1Ro37pjTPBKuu9oQpMsL_0ivGVsOntrKI6genMbya0K4pc0ioev0HLfNrC5Vmg0mYx23Qz6yXHku3BrYTXhQWrSX30icDshodQxotI9pMNtb07D0MqYVp7LGiSh99eQWXBBrgeNoeJD1aKocbHihKKle1oEO4LdUyVOFRPiQD_6TpWgd1hLh8E69fZQqIZqVY8qdLwfdVTPWQOvZDZw17QGIls-0WRNQsubqsAIvOav_oxm-LUVBfFrIwg2dtokZlkWlTazZH20mC3vOqWEMKknPw7s_Zdh6DNFCJO7teoRfgTlfelC6PSUHW4f2hH_jKkZMCw68Hbl7T9r4t2_JWkvQinVWGZXxW8RHLOcYyheb8wCaVc95nXAIWXAhI_giV_eRVk-fwVixHEHqoyJqoT3JmkP_ups3On4M5UpZqeAgLgnSIzMKdi34zZEiJJIqvDSquYdpRxqg_N-s1FGfHsKPzKrAjZxXGck1uybNPJsiGAfz2Xx0ZYW0HxmrpFmgmov9CWFJPIaEnZrxGgEPu_HmWJXQtHAW2FtCzx-DnhKIUsBn8Ig3y-uXaQvc_tPK8l-ohugpuEtg0dgjgr-TbFWd7K3P3OTB8W8tySuHRcCYRS8ai8zYtLp0IBEVoQdg2xW9TxS5tWajj9gdgX6XRkygnSZM43AceCJnmPxnrpg7X5etTTG1Dm2glB9JAMgh0tEVJxucXPMbRYNTpUMmSde9eHjtzLSLldMamEBHanUMp3dhCdpoE3p8kKpIq53YYy5-LzFtiW3-2yWZlk04HVdUoKgdJVpccp8dYcrQa2j5QSbjwxBthdHcVXCVckUjJUar9QHHQyoJDS5J9BVqKIZdOFEsJShowrLB4XsoTNuetjdUC534UHeVxmsQmqZg3_eE3OZGmOxgy0c="
                     }
                   ],
                   "role": "model"
@@ -197,18 +197,18 @@
               }
             ],
             "model_version": "gemini-3.6-flash",
-            "response_id": "89R1apudIJOHxN8P0o_B2Q8",
+            "response_id": "R155apjqKr6LvdIPzMGH-Q4",
             "usage_metadata": {
-              "candidates_token_count": 19,
-              "prompt_token_count": 2861,
+              "candidates_token_count": 23,
+              "prompt_token_count": 439,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 2861
+                  "token_count": 439
                 }
               ],
-              "thoughts_token_count": 130,
-              "total_token_count": 3010
+              "thoughts_token_count": 216,
+              "total_token_count": 678
             }
           },
           {
@@ -240,18 +240,18 @@
               }
             ],
             "model_version": "gemini-3.6-flash",
-            "response_id": "89R1apudIJOHxN8P0o_B2Q8",
+            "response_id": "R155apjqKr6LvdIPzMGH-Q4",
             "usage_metadata": {
-              "candidates_token_count": 19,
-              "prompt_token_count": 2861,
+              "candidates_token_count": 23,
+              "prompt_token_count": 439,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 2861
+                  "token_count": 439
                 }
               ],
-              "thoughts_token_count": 130,
-              "total_token_count": 3010
+              "thoughts_token_count": 216,
+              "total_token_count": 678
             }
           }
         ]
@@ -298,13 +298,13 @@
                 "parts": [
                   {
                     "functionCall": {
-                      "id": "VYghDBs1",
+                      "id": "KPrsKvcK",
                       "args": {
-                        "script": "5 + 5"
+                        "script": "print(5 + 5)\n"
                       },
                       "name": "execute_script"
                     },
-                    "thoughtSignature": "EqAECp0EARFNMg8bbjKvKrTx6mwuvSOrA8TzH6mZYVOS2rzQBDE2LTWMddED7QIgNuXPb515UUD3BHtY2BOMVdwFhpQcEMUXqlie3kYYwoMFQKKbIw8IdAZzI0lZrbO3Ayywh9ia6WAixkO8O9DTBD95ulRJmmQXeYcuf_PzmK7_jdgxRk8oN3rmFdn2gw5Wt6DIV-dJ22RGcou9KlNu7PUBEi5zmtHnx_eUKGLH3uVG0xMjYD7Qas9qB5QOiLLeXjU7mJV8fwXl7X4kyj25HdGf3EtQ6NmbWdzLnPpxdXOEdT4-QpMpTiL6STztjqNhvO_gB2Y9TF9xe9lChoUthzLvtvRCCKbE84oiVflm-zTUgb3ilchJ30ZvnNG0nD3f6YQ7EUy8EquZSm3rpfWNGibMPZUM7Ia1IJCtqWWUo1psUunxlQheiC4bAVhN0L3veU0mDkIsa-96cplVEI2FUKcTZGHIvCuoAQ30X5WNOajIS8EqysXllv5dnITPoY-erJmJFgpbBgq9PnJbEOThgEcAI9IpmDB83cU8WmyGRJmleVFA3s86nZuCCmkPvwzCIP49c3JtHpmE8HQCdSrjxEAk6SgsT0_tn0_1Cj5PqkV_kTQmHWpEF7QqNp_CfrLCVqVs0jgkMvqOBc0DwE6AjSCs1gEcOW9Bur8e1QGJb38QBl5rw53Ntr1LbRISW-xRJybHXq9sd7TzO7AcwYgO-_oIyw=="
+                    "thoughtSignature": "ErYHCrMHARFNMg-TnF3Zc02GRwLeZR348qHfAlq2N7XjGMTG4VCEh0sByzUUm7ajWLH2_K7wG7Mi9f55QeVA2T77QIQFz5sdtZH9qFeJ06XfdHiVgHFzbaUalWViJMnmQt5gan_2pBBBgI_mi8Qh4faXU1PPAmPhTTuvP7nXFxFQq0CbLiiujpAA_M8jhG7K6w-N5oXY1i-3JmNdjPwCRuEvOXMZWajWyQDkuIC6S0bT6plvXYt_qPeGVXkYsMzJrNvvG1Mbs5eC_LLNq841bAL-ONPL6qBmXzFgjHCF6hda3kWNlFgzCSfBNRcKE3XBPuerBJ6s2HZVu7iuaOgC5BPA0Y3yAgXj23gExq_s1Ro37pjTPBKuu9oQpMsL_0ivGVsOntrKI6genMbya0K4pc0ioev0HLfNrC5Vmg0mYx23Qz6yXHku3BrYTXhQWrSX30icDshodQxotI9pMNtb07D0MqYVp7LGiSh99eQWXBBrgeNoeJD1aKocbHihKKle1oEO4LdUyVOFRPiQD_6TpWgd1hLh8E69fZQqIZqVY8qdLwfdVTPWQOvZDZw17QGIls-0WRNQsubqsAIvOav_oxm-LUVBfFrIwg2dtokZlkWlTazZH20mC3vOqWEMKknPw7s_Zdh6DNFCJO7teoRfgTlfelC6PSUHW4f2hH_jKkZMCw68Hbl7T9r4t2_JWkvQinVWGZXxW8RHLOcYyheb8wCaVc95nXAIWXAhI_giV_eRVk-fwVixHEHqoyJqoT3JmkP_ups3On4M5UpZqeAgLgnSIzMKdi34zZEiJJIqvDSquYdpRxqg_N-s1FGfHsKPzKrAjZxXGck1uybNPJsiGAfz2Xx0ZYW0HxmrpFmgmov9CWFJPIaEnZrxGgEPu_HmWJXQtHAW2FtCzx-DnhKIUsBn8Ig3y-uXaQvc_tPK8l-ohugpuEtg0dgjgr-TbFWd7K3P3OTB8W8tySuHRcCYRS8ai8zYtLp0IBEVoQdg2xW9TxS5tWajj9gdgX6XRkygnSZM43AceCJnmPxnrpg7X5etTTG1Dm2glB9JAMgh0tEVJxucXPMbRYNTpUMmSde9eHjtzLSLldMamEBHanUMp3dhCdpoE3p8kKpIq53YYy5-LzFtiW3-2yWZlk04HVdUoKgdJVpccp8dYcrQa2j5QSbjwxBthdHcVXCVckUjJUar9QHHQyoJDS5J9BVqKIZdOFEsJShowrLB4XsoTNuetjdUC534UHeVxmsQmqZg3_eE3OZGmOxgy0c="
                   }
                 ],
                 "role": "model"
@@ -313,10 +313,10 @@
                 "parts": [
                   {
                     "functionResponse": {
-                      "id": "VYghDBs1",
+                      "id": "KPrsKvcK",
                       "name": "execute_script",
                       "response": {
-                        "result": "Script result: 10"
+                        "result": "--- Script Output ---\n10\n\nScript executed successfully with no return value."
                       }
                     }
                   }
@@ -328,24 +328,24 @@
               {
                 "functionDeclarations": [
                   {
-                    "description": "Execute a Python script in a sandboxed environment for automation and complex operations.\n\n**Two modes:**\n• **Inline**: Pass code via `script` parameter\n• **Stored**: Pass `name` to run a saved script from the library (see list_scripts)\n\n**IMPORTANT: Before writing scripts, please read the scripting documentation first!**\nUse the command: `get_user_documentation_content filename='scripting.md'`\n\n**Tool Documentation:**\nTo see available tools and their parameters, ask: 'Show me the available tools'\n\n**Execution Environment:**\n• Timeout: 10 minutes maximum execution time (to allow for external API calls)\n• Sandboxed: No file system or network access\n• Deterministic: No random numbers or current time\n\n**Sandbox Limitations:**\nThe Monty scripting engine runs a sandboxed Python subset with these restrictions:\n• No class definitions (can't use `class` keyword)\n• No generators or yield statements\n• No match/case statements\n• No context managers or with statements\n• No del statement\n• No dict unpacking in literals ({**d1, **d2} not supported)\n• No str.format() method (use f-strings instead)\n• No map/filter functions (use list comprehensions instead)\n• Decorators are buggy (avoid using them)\n• Exceptions only accept 0 or 1 string arguments\n• No imports except heavily sandboxed os, sys, typing, pathlib modules\n• Resource limits: 256MB memory, 100 recursion depth\n• However: try/except, while loops, float(), set(), frozenset() ARE supported\n\n**Built-in Functions:**\n• Type conversions: bool(), int(), str(), list(), tuple(), dict()\n• Collections: len(), range(), sorted(), reversed(), enumerate(), zip()\n• Logic: all(), any(), max(), min()\n• Object inspection: type(), dir(), getattr(), hasattr()\n• Control: print(), fail() - print() output is captured and returned to you under a '--- Script Output ---' section (use it to surface intermediate values without returning them)\n• JSON: json_encode(value), json_decode(value)\n• Base64: base64_encode(data), base64_decode(data) -> str, base64_decode_bytes(data) -> bytes\n• LLM Wake: wake_llm(context, include_event=True) - Request LLM attention with context (string or dict)\n• LLM: llm(prompt), llm_json(prompt) - One-shot LLM calls for summarisation and data extraction\n\n**Family Assistant Tools:**\nAll enabled tools are available as functions. Call them directly:\n• add_or_update_note(title='...', content='...')\n• search_notes(query='...')\n• send_email(to='...', subject='...', body='...')\n\n**Note**: Tools return structured data (dicts, lists) directly. You can use results\nimmediately without parsing. `json_decode()` is safe to call on any value - it passes\nthrough dicts, lists, numbers, and booleans unchanged, and only parses strings:\n```python\nnotes = search_notes(query='TODO')  # Returns a list directly\nfor note in notes:\n    print(note['title'])\n```\n\n**Tools API Functions:**\n• tools_list() - List all available tools with descriptions\n• tools_get(name) - Get detailed info about a specific tool\n• tools_execute(name, **kwargs) - Execute a tool by name\n\n**LLM API Functions:**\n• llm(prompt, system=None, model=None) - One-shot LLM call, returns text\n• llm_json(prompt, schema=None, system=None, model=None) - One-shot LLM call, returns parsed JSON\nDefault model: gemini-3.6-flash. Useful for summarisation, data extraction, classification.\n\n**Attachment API Functions:**\n• attachment_get(attachment_id) - Get attachment metadata by ID\n• attachment_create(content, filename, description, mime_type) - Create new attachment\nNote: attachment_list() and attachment_send() are not available.\nScripts must receive attachment IDs from LLM context, tool results, or parameters.\n\n**Returning Attachments:**\nAttachments created by tools or attachment_create() are represented as dictionaries\nwith metadata: {\"id\": uuid, \"filename\": str, \"mime_type\": str, \"size\": int, \"description\": str}\nReturn these dicts to make attachments visible to the LLM:\n\n```python\n# Single attachment - last expression is returned\ndata = attachment_create(content=\"data\", filename=\"data.txt\", mime_type=\"text/plain\")\ndata  # Dict with attachment info, automatically sent to LLM\n\n# Multiple attachments - return list\nchart1 = create_chart(data1)  # Returns dict\nchart2 = create_chart(data2)  # Returns dict\n[chart1, chart2]  # Both dicts visible to LLM\n\n# Functional composition (recommended for data viz)\nchart = create_vega_chart(\n    spec=spec,\n    data_attachments=[jq_query(source, '.[] | select(.value > 10)')]\n)\nchart  # Returns attachment dict\n```\n\n**Example Scripts:**\n\n1. Simple note creation:\n```python\nresult = add_or_update_note(\n    title='Meeting Notes',\n    content='Discussed project timeline'\n)\nprint('Created note:', result)\n```\n\n2. Conditional logic with search:\n```python\ndef process_todos():\n    notes = search_notes(query='TODO')\n    \n    if len(notes) > 0:\n        print('Found', len(notes), 'TODO items')\n        for note in notes:\n            print('-', note['title'])\n    else:\n        print('No TODO items found')\n    return notes\n\n# Call the function\nprocess_todos()\n```\n\n3. Complex automation:\n```python\ndef create_project_summary():\n    # Search for notes, create summary, send email\n    project_notes = search_notes(query='Project Alpha')\n    \n    summary = 'Project Alpha Summary:\\n\\n'\n    for note in project_notes:\n        summary += '- ' + note['title'] + '\\n'\n    \n    if len(project_notes) > 0:\n        add_or_update_note(\n            title='Project Alpha Summary',\n            content=summary\n        )\n        result = send_email(\n            to='team@example.com',\n            subject='Weekly Project Summary',\n            body=summary\n        )\n        return {'notes_found': len(project_notes), 'email_result': result}\n    else:\n        return {'notes_found': 0, 'email_result': 'No notes to summarize'}\n\n# Execute the function\ncreate_project_summary()\n```\n\n4. Working with user attachments (attachment ID provided by LLM):\n```python\n# Attachment ID passed to script by LLM based on conversation context\n# Example: LLM calls execute_script with attachment_id parameter\ndef process_user_attachment(attachment_id):\n    # Get attachment details\n    attachment_info = attachment_get(attachment_id)\n    \n    if attachment_info:\n        print('Processing:', attachment_info['description'])\n        \n        # Process the attachment with a tool (ID auto-converted to content)\n        if 'image' in attachment_info['mime_type']:\n            analysis = tools_execute('analyze_image', image_data=attachment_id)\n            # Send results back to user via LLM tools\n            wake_llm({'message': 'Analysis: ' + analysis, 'attachments': [attachment_id]})\n        else:\n            # Use attach_to_response LLM tool to send attachment back\n            tools_execute('attach_to_response', attachment_ids=[attachment_id])\n    else:\n        print('Attachment not found or not accessible')\n\n# Call with attachment ID from LLM context\n# process_user_attachment('uuid-from-llm-context')\n```\n\n5. Data visualization with automatic attachment propagation:\n```python\n# Create a chart - attachment automatically returns to LLM\nspec = {\n  '$schema': 'https://vega.github.io/schema/vega-lite/v5.json',\n  'data': {'name': 'sensor_data'},\n  'mark': 'line',\n  'encoding': {\n    'x': {'field': 'timestamp', 'type': 'temporal'},\n    'y': {'field': 'temperature', 'type': 'quantitative'}\n  }\n}\n\n# Chart is automatically visible - no need for attach_to_response!\ncreate_vega_chart(\n  spec=json_encode(spec),\n  data_attachments=[sensor_attachment_id],\n  title='Temperature Over Time'\n)\n```\n\n6. Multi-chart dashboard:\n```python\n# Create multiple related charts\ntemp_spec = {'$schema': '...', 'mark': 'line', ...}\nhumidity_spec = {'$schema': '...', 'mark': 'area', ...}\n\ntemp_chart = create_vega_chart(spec=json_encode(temp_spec), data_attachments=[data])\nhumidity_chart = create_vega_chart(spec=json_encode(humidity_spec), data_attachments=[data])\n\n# Both charts automatically visible to LLM\n[temp_chart, humidity_chart]\n```\n\n",
+                    "description": "Execute an inline or stored Python script in a sandboxed environment. Before writing or debugging a script, load `scripting.md` with `get_user_documentation_content`; it documents the language constraints, available APIs, brokered HTTP, attachments, and return values. Use `script` with optional `globals` for inline code, or `name` with optional `parameters` for a stored script. Enabled Family Assistant tools and configured script APIs are available as functions.",
                     "name": "execute_script",
                     "parameters": {
                       "properties": {
                         "script": {
-                          "description": "The Python script code to execute (inline mode). Omit this and use 'name' instead to run a stored script.\n\nThe script can:\n• Define variables and functions\n• Use control flow (if/else, for loops)\n• Call any available Family Assistant tool\n• Process and transform data\n• Print output for debugging\n• Return a value (the last expression is returned)\n\nScripts should be self-contained and handle errors gracefully.\n\n**Wake LLM Contexts:**\nIf the script calls wake_llm(), the contexts will be included in the response.\nThis allows the LLM to receive and process wake requests from scripts.\n\n**Return Values:**\nReturns a string containing the script execution result:\n• Anything printed with print() appears first under a '--- Script Output ---' section\n• On success with return value: 'Script result: [value]' or for dict/list: 'Script result:\\n[JSON formatted]'\n• On success without return: 'Script executed successfully with no return value.'\n• If wake_llm() called: Also includes '--- Wake LLM Contexts ---' section with context details\n• On error: any output printed before the failure is included above the error message\n• On syntax error: 'Error: Syntax error in script [at line N]: [details]'\n• On timeout: 'Error: Script execution timed out after [N] seconds'\n• On execution error: 'Error: Script execution failed: [details]'\n• On unexpected error: 'Error: Unexpected error executing script: [details]'",
+                          "description": "Inline Python source. Load `scripting.md` with `get_user_documentation_content` before writing or debugging scripts. Omit this when using `name`.",
                           "type": "STRING"
                         },
                         "globals": {
-                          "description": "Optional dictionary of global variables to inject into the script.\n\nThese variables will be available in the script's global scope.\nUseful for passing configuration, data, or context to the script.\n\nExample:\n{\n  \"user_email\": \"john@example.com\",\n  \"project_id\": 123,\n  \"tags\": [\"important\", \"urgent\"]\n}\n\nThese can then be used in the script as regular variables.",
+                          "description": "Optional global values for inline `script` code. Do not use with a stored script.",
                           "type": "OBJECT"
                         },
                         "name": {
-                          "description": "Name of a stored script to execute (alternative to inline 'script').\nUse list_scripts to see available stored scripts. When using 'name',\npass arguments via 'parameters' instead of 'globals'.",
+                          "description": "Stored script name. Use `list_scripts` to discover names; omit `script` and pass arguments with `parameters`.",
                           "type": "STRING"
                         },
                         "parameters": {
-                          "description": "Parameters to pass to a stored script as global variables.\nOnly used with 'name'. Validated against the script's parameter schema if defined.",
+                          "description": "Optional arguments for the stored script selected by `name`; validated against its parameter schema.",
                           "type": "OBJECT"
                         }
                       },
@@ -391,20 +391,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 2899,
+              "promptTokenCount": 491,
               "candidatesTokenCount": 4,
-              "totalTokenCount": 2921,
+              "totalTokenCount": 514,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 2899
+                  "tokenCount": 491
                 }
               ],
-              "thoughtsTokenCount": 18,
+              "thoughtsTokenCount": 19,
               "serviceTier": "standard"
             },
             "modelVersion": "gemini-3.6-flash",
-            "responseId": "9NR1aseIOY7Zxs0Pxqu6uQg"
+            "responseId": "SV55av2tIYqXvdIPm93NwQg"
           },
           {
             "candidates": [
@@ -421,20 +421,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 3029,
+              "promptTokenCount": 707,
               "candidatesTokenCount": 8,
-              "totalTokenCount": 3055,
+              "totalTokenCount": 734,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 3029
+                  "tokenCount": 707
                 }
               ],
-              "thoughtsTokenCount": 18,
+              "thoughtsTokenCount": 19,
               "serviceTier": "standard"
             },
             "modelVersion": "gemini-3.6-flash",
-            "responseId": "9NR1aseIOY7Zxs0Pxqu6uQg"
+            "responseId": "SV55av2tIYqXvdIPm93NwQg"
           },
           {
             "candidates": [
@@ -443,7 +443,7 @@
                   "parts": [
                     {
                       "text": "",
-                      "thoughtSignature": "EpMBCpABARFNMg+6duk6sMTaefo2zvO7TuaDNnJdXY5rzS0f8TfaxOeMTvyhKwZ5xBJr3VPu5nu+j88b+wvA7evzv/f9nQ/9BFxNo9/ox2s/5Hd9OLToaFt0JZuKUylMMCPHcGMugw4GG0/1RHcYQuI+I9v3fzqtYiLr0VhM81q1IBhA0hYb0FZERZWLrRxdeDxU0YMV"
+                      "thoughtSignature": "EoMBCoABARFNMg/LnEJhxozu3HC39X1ixKGPQgFqCWmCJ2pp0DJLhDHbLVKVCQ6S7LvAsZtiz7bjmmkh+yYkMajH9vtOq+uLo6vZTl+UAQkuZVFLzaGVBVeqtcH+Yq5cQVX1Mi7P+4xzqSy0y72VKchzpw0cR2ECAVu4LRvO8l3z7LCbmuU="
                     }
                   ],
                   "role": "model"
@@ -453,20 +453,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 3029,
+              "promptTokenCount": 707,
               "candidatesTokenCount": 8,
-              "totalTokenCount": 3055,
+              "totalTokenCount": 734,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 3029
+                  "tokenCount": 707
                 }
               ],
-              "thoughtsTokenCount": 18,
+              "thoughtsTokenCount": 19,
               "serviceTier": "standard"
             },
             "modelVersion": "gemini-3.6-flash",
-            "responseId": "9NR1aseIOY7Zxs0Pxqu6uQg"
+            "responseId": "SV55av2tIYqXvdIPm93NwQg"
           }
         ],
         "byte_segments": [],
@@ -499,18 +499,18 @@
               }
             ],
             "model_version": "gemini-3.6-flash",
-            "response_id": "9NR1aseIOY7Zxs0Pxqu6uQg",
+            "response_id": "SV55av2tIYqXvdIPm93NwQg",
             "usage_metadata": {
               "candidates_token_count": 4,
-              "prompt_token_count": 2899,
+              "prompt_token_count": 491,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 2899
+                  "token_count": 491
                 }
               ],
-              "thoughts_token_count": 18,
-              "total_token_count": 2921
+              "thoughts_token_count": 19,
+              "total_token_count": 514
             }
           },
           {
@@ -541,18 +541,18 @@
               }
             ],
             "model_version": "gemini-3.6-flash",
-            "response_id": "9NR1aseIOY7Zxs0Pxqu6uQg",
+            "response_id": "SV55av2tIYqXvdIPm93NwQg",
             "usage_metadata": {
               "candidates_token_count": 8,
-              "prompt_token_count": 3029,
+              "prompt_token_count": 707,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 3029
+                  "token_count": 707
                 }
               ],
-              "thoughts_token_count": 18,
-              "total_token_count": 3055
+              "thoughts_token_count": 19,
+              "total_token_count": 734
             }
           },
           {
@@ -575,7 +575,7 @@
                   "parts": [
                     {
                       "text": "",
-                      "thought_signature": "EpMBCpABARFNMg-6duk6sMTaefo2zvO7TuaDNnJdXY5rzS0f8TfaxOeMTvyhKwZ5xBJr3VPu5nu-j88b-wvA7evzv_f9nQ_9BFxNo9_ox2s_5Hd9OLToaFt0JZuKUylMMCPHcGMugw4GG0_1RHcYQuI-I9v3fzqtYiLr0VhM81q1IBhA0hYb0FZERZWLrRxdeDxU0YMV"
+                      "thought_signature": "EoMBCoABARFNMg_LnEJhxozu3HC39X1ixKGPQgFqCWmCJ2pp0DJLhDHbLVKVCQ6S7LvAsZtiz7bjmmkh-yYkMajH9vtOq-uLo6vZTl-UAQkuZVFLzaGVBVeqtcH-Yq5cQVX1Mi7P-4xzqSy0y72VKchzpw0cR2ECAVu4LRvO8l3z7LCbmuU="
                     }
                   ],
                   "role": "model"
@@ -585,18 +585,18 @@
               }
             ],
             "model_version": "gemini-3.6-flash",
-            "response_id": "9NR1aseIOY7Zxs0Pxqu6uQg",
+            "response_id": "SV55av2tIYqXvdIPm93NwQg",
             "usage_metadata": {
               "candidates_token_count": 8,
-              "prompt_token_count": 3029,
+              "prompt_token_count": 707,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 3029
+                  "token_count": 707
                 }
               ],
-              "thoughts_token_count": 18,
-              "total_token_count": 3055
+              "thoughts_token_count": 19,
+              "total_token_count": 734
             }
           }
         ]
@@ -660,24 +660,24 @@
               {
                 "functionDeclarations": [
                   {
-                    "description": "Execute a Python script in a sandboxed environment for automation and complex operations.\n\n**Two modes:**\n• **Inline**: Pass code via `script` parameter\n• **Stored**: Pass `name` to run a saved script from the library (see list_scripts)\n\n**IMPORTANT: Before writing scripts, please read the scripting documentation first!**\nUse the command: `get_user_documentation_content filename='scripting.md'`\n\n**Tool Documentation:**\nTo see available tools and their parameters, ask: 'Show me the available tools'\n\n**Execution Environment:**\n• Timeout: 10 minutes maximum execution time (to allow for external API calls)\n• Sandboxed: No file system or network access\n• Deterministic: No random numbers or current time\n\n**Sandbox Limitations:**\nThe Monty scripting engine runs a sandboxed Python subset with these restrictions:\n• No class definitions (can't use `class` keyword)\n• No generators or yield statements\n• No match/case statements\n• No context managers or with statements\n• No del statement\n• No dict unpacking in literals ({**d1, **d2} not supported)\n• No str.format() method (use f-strings instead)\n• No map/filter functions (use list comprehensions instead)\n• Decorators are buggy (avoid using them)\n• Exceptions only accept 0 or 1 string arguments\n• No imports except heavily sandboxed os, sys, typing, pathlib modules\n• Resource limits: 256MB memory, 100 recursion depth\n• However: try/except, while loops, float(), set(), frozenset() ARE supported\n\n**Built-in Functions:**\n• Type conversions: bool(), int(), str(), list(), tuple(), dict()\n• Collections: len(), range(), sorted(), reversed(), enumerate(), zip()\n• Logic: all(), any(), max(), min()\n• Object inspection: type(), dir(), getattr(), hasattr()\n• Control: print(), fail() - print() output is captured and returned to you under a '--- Script Output ---' section (use it to surface intermediate values without returning them)\n• JSON: json_encode(value), json_decode(value)\n• Base64: base64_encode(data), base64_decode(data) -> str, base64_decode_bytes(data) -> bytes\n• LLM Wake: wake_llm(context, include_event=True) - Request LLM attention with context (string or dict)\n• LLM: llm(prompt), llm_json(prompt) - One-shot LLM calls for summarisation and data extraction\n\n**Family Assistant Tools:**\nAll enabled tools are available as functions. Call them directly:\n• add_or_update_note(title='...', content='...')\n• search_notes(query='...')\n• send_email(to='...', subject='...', body='...')\n\n**Note**: Tools return structured data (dicts, lists) directly. You can use results\nimmediately without parsing. `json_decode()` is safe to call on any value - it passes\nthrough dicts, lists, numbers, and booleans unchanged, and only parses strings:\n```python\nnotes = search_notes(query='TODO')  # Returns a list directly\nfor note in notes:\n    print(note['title'])\n```\n\n**Tools API Functions:**\n• tools_list() - List all available tools with descriptions\n• tools_get(name) - Get detailed info about a specific tool\n• tools_execute(name, **kwargs) - Execute a tool by name\n\n**LLM API Functions:**\n• llm(prompt, system=None, model=None) - One-shot LLM call, returns text\n• llm_json(prompt, schema=None, system=None, model=None) - One-shot LLM call, returns parsed JSON\nDefault model: gemini-3.6-flash. Useful for summarisation, data extraction, classification.\n\n**Attachment API Functions:**\n• attachment_get(attachment_id) - Get attachment metadata by ID\n• attachment_create(content, filename, description, mime_type) - Create new attachment\nNote: attachment_list() and attachment_send() are not available.\nScripts must receive attachment IDs from LLM context, tool results, or parameters.\n\n**Returning Attachments:**\nAttachments created by tools or attachment_create() are represented as dictionaries\nwith metadata: {\"id\": uuid, \"filename\": str, \"mime_type\": str, \"size\": int, \"description\": str}\nReturn these dicts to make attachments visible to the LLM:\n\n```python\n# Single attachment - last expression is returned\ndata = attachment_create(content=\"data\", filename=\"data.txt\", mime_type=\"text/plain\")\ndata  # Dict with attachment info, automatically sent to LLM\n\n# Multiple attachments - return list\nchart1 = create_chart(data1)  # Returns dict\nchart2 = create_chart(data2)  # Returns dict\n[chart1, chart2]  # Both dicts visible to LLM\n\n# Functional composition (recommended for data viz)\nchart = create_vega_chart(\n    spec=spec,\n    data_attachments=[jq_query(source, '.[] | select(.value > 10)')]\n)\nchart  # Returns attachment dict\n```\n\n**Example Scripts:**\n\n1. Simple note creation:\n```python\nresult = add_or_update_note(\n    title='Meeting Notes',\n    content='Discussed project timeline'\n)\nprint('Created note:', result)\n```\n\n2. Conditional logic with search:\n```python\ndef process_todos():\n    notes = search_notes(query='TODO')\n    \n    if len(notes) > 0:\n        print('Found', len(notes), 'TODO items')\n        for note in notes:\n            print('-', note['title'])\n    else:\n        print('No TODO items found')\n    return notes\n\n# Call the function\nprocess_todos()\n```\n\n3. Complex automation:\n```python\ndef create_project_summary():\n    # Search for notes, create summary, send email\n    project_notes = search_notes(query='Project Alpha')\n    \n    summary = 'Project Alpha Summary:\\n\\n'\n    for note in project_notes:\n        summary += '- ' + note['title'] + '\\n'\n    \n    if len(project_notes) > 0:\n        add_or_update_note(\n            title='Project Alpha Summary',\n            content=summary\n        )\n        result = send_email(\n            to='team@example.com',\n            subject='Weekly Project Summary',\n            body=summary\n        )\n        return {'notes_found': len(project_notes), 'email_result': result}\n    else:\n        return {'notes_found': 0, 'email_result': 'No notes to summarize'}\n\n# Execute the function\ncreate_project_summary()\n```\n\n4. Working with user attachments (attachment ID provided by LLM):\n```python\n# Attachment ID passed to script by LLM based on conversation context\n# Example: LLM calls execute_script with attachment_id parameter\ndef process_user_attachment(attachment_id):\n    # Get attachment details\n    attachment_info = attachment_get(attachment_id)\n    \n    if attachment_info:\n        print('Processing:', attachment_info['description'])\n        \n        # Process the attachment with a tool (ID auto-converted to content)\n        if 'image' in attachment_info['mime_type']:\n            analysis = tools_execute('analyze_image', image_data=attachment_id)\n            # Send results back to user via LLM tools\n            wake_llm({'message': 'Analysis: ' + analysis, 'attachments': [attachment_id]})\n        else:\n            # Use attach_to_response LLM tool to send attachment back\n            tools_execute('attach_to_response', attachment_ids=[attachment_id])\n    else:\n        print('Attachment not found or not accessible')\n\n# Call with attachment ID from LLM context\n# process_user_attachment('uuid-from-llm-context')\n```\n\n5. Data visualization with automatic attachment propagation:\n```python\n# Create a chart - attachment automatically returns to LLM\nspec = {\n  '$schema': 'https://vega.github.io/schema/vega-lite/v5.json',\n  'data': {'name': 'sensor_data'},\n  'mark': 'line',\n  'encoding': {\n    'x': {'field': 'timestamp', 'type': 'temporal'},\n    'y': {'field': 'temperature', 'type': 'quantitative'}\n  }\n}\n\n# Chart is automatically visible - no need for attach_to_response!\ncreate_vega_chart(\n  spec=json_encode(spec),\n  data_attachments=[sensor_attachment_id],\n  title='Temperature Over Time'\n)\n```\n\n6. Multi-chart dashboard:\n```python\n# Create multiple related charts\ntemp_spec = {'$schema': '...', 'mark': 'line', ...}\nhumidity_spec = {'$schema': '...', 'mark': 'area', ...}\n\ntemp_chart = create_vega_chart(spec=json_encode(temp_spec), data_attachments=[data])\nhumidity_chart = create_vega_chart(spec=json_encode(humidity_spec), data_attachments=[data])\n\n# Both charts automatically visible to LLM\n[temp_chart, humidity_chart]\n```\n\n",
+                    "description": "Execute an inline or stored Python script in a sandboxed environment. Before writing or debugging a script, load `scripting.md` with `get_user_documentation_content`; it documents the language constraints, available APIs, brokered HTTP, attachments, and return values. Use `script` with optional `globals` for inline code, or `name` with optional `parameters` for a stored script. Enabled Family Assistant tools and configured script APIs are available as functions.",
                     "name": "execute_script",
                     "parameters": {
                       "properties": {
                         "script": {
-                          "description": "The Python script code to execute (inline mode). Omit this and use 'name' instead to run a stored script.\n\nThe script can:\n• Define variables and functions\n• Use control flow (if/else, for loops)\n• Call any available Family Assistant tool\n• Process and transform data\n• Print output for debugging\n• Return a value (the last expression is returned)\n\nScripts should be self-contained and handle errors gracefully.\n\n**Wake LLM Contexts:**\nIf the script calls wake_llm(), the contexts will be included in the response.\nThis allows the LLM to receive and process wake requests from scripts.\n\n**Return Values:**\nReturns a string containing the script execution result:\n• Anything printed with print() appears first under a '--- Script Output ---' section\n• On success with return value: 'Script result: [value]' or for dict/list: 'Script result:\\n[JSON formatted]'\n• On success without return: 'Script executed successfully with no return value.'\n• If wake_llm() called: Also includes '--- Wake LLM Contexts ---' section with context details\n• On error: any output printed before the failure is included above the error message\n• On syntax error: 'Error: Syntax error in script [at line N]: [details]'\n• On timeout: 'Error: Script execution timed out after [N] seconds'\n• On execution error: 'Error: Script execution failed: [details]'\n• On unexpected error: 'Error: Unexpected error executing script: [details]'",
+                          "description": "Inline Python source. Load `scripting.md` with `get_user_documentation_content` before writing or debugging scripts. Omit this when using `name`.",
                           "type": "STRING"
                         },
                         "globals": {
-                          "description": "Optional dictionary of global variables to inject into the script.\n\nThese variables will be available in the script's global scope.\nUseful for passing configuration, data, or context to the script.\n\nExample:\n{\n  \"user_email\": \"john@example.com\",\n  \"project_id\": 123,\n  \"tags\": [\"important\", \"urgent\"]\n}\n\nThese can then be used in the script as regular variables.",
+                          "description": "Optional global values for inline `script` code. Do not use with a stored script.",
                           "type": "OBJECT"
                         },
                         "name": {
-                          "description": "Name of a stored script to execute (alternative to inline 'script').\nUse list_scripts to see available stored scripts. When using 'name',\npass arguments via 'parameters' instead of 'globals'.",
+                          "description": "Stored script name. Use `list_scripts` to discover names; omit `script` and pass arguments with `parameters`.",
                           "type": "STRING"
                         },
                         "parameters": {
-                          "description": "Parameters to pass to a stored script as global variables.\nOnly used with 'name'. Validated against the script's parameter schema if defined.",
+                          "description": "Optional arguments for the stored script selected by `name`; validated against its parameter schema.",
                           "type": "OBJECT"
                         }
                       },
@@ -717,11 +717,11 @@
                       "functionCall": {
                         "name": "execute_script",
                         "args": {
-                          "script": "res1 = 5 + 5\nres2 = 10 + 10\nprint(f\"5 + 5 = {res1}\")\nprint(f\"10 + 10 = {res2}\")\n"
+                          "script": "result1 = 5 + 5\nresult2 = 10 + 10\nprint(f\"5 + 5 = {result1}\")\nprint(f\"10 + 10 = {result2}\")\n"
                         },
-                        "id": "c02c82Eo"
+                        "id": "qSJCDqhq"
                       },
-                      "thoughtSignature": "EpsFCpgFARFNMg83cDK4YP31hPYgPvBV32q2knCEwQY/bi/Z1XVMLYiB6lFV301apYyT9GP+oHetXGAjYjx7ZTt2SrP1zO5ZEykcMyGBaYKxxl5N0xa4JA9wckdV9vgRz4hxhsCQqQ4y358rOtUP8p8hJzTrmWHw/GKMy3yptv40+lKvzUt+t5hqtymLmyu3ndk2e3owaGFhAqr0D3CcQmLl4t+lVhQI/4BkMPjn6qvfEFx38rhumkQTMv1hvXcc7KtHqUmrddLGFTyPdm4V0GKAqe5JmvVMy7BGvhccSyRvrpAuw+LxjR3kqYpVnBt2a4nsi1yN2PgHRFwqlU9OEf+eyzJTWMgt8awaSmcPAWJ3XX2ptBl2nUHgDtA4dnGfE5OJ7U9vIGgLAhKQCGs6UtI9k60aQ0AA4nBQZKd4zLkV+wEmoTizT1Icphq198skoB21XOdRb2ZNVDiw1gYYDjj0xMw5VMkKyjr553xKRf63SzKD5h49DmSgiGVMMuWJoVRtH2Kz8sZyUTnjEJ1a2pEmt+Va9FzP5e0hsgiirPrRUWJfOudSoF4U71lYJyEL25M5N/Z59WIwECxkmqh5SKc3eRNGI5YL/hHtKp3uuOXomVUJwJuN/CEypwySWit9AuM+MHslv7J1vZ4Ck3zfg/g0ERaGe7rBI+K5HS3CJMQl2oJbX79WldpH6K/Dvf59GsY/kOrehUf8bw6RXfYKHUs3LGhSZTg6PI0TxwWUWl5H1CN9bG7Xt9FqKTMQarXtj7fuT/bgNoXOifzMn5ZWjEGbk6vGM2eUpMgA5DS5ACek74AbRGoPUc8co+h2MIM0N+20zNncaoklBo29tQAJQt9JztzZOQI13z1Mgf+TpRffv5MAew31b2SiC+Gc8Q=="
+                      "thoughtSignature": "EvwGCvkGARFNMg8FN1daFilKsWTZzgPgIDfLisicdU/n5twIATkPGVeHVIh5eCsVf3Ylnym+iby7l9qpTPjP3KLxi/xfGxxdEPs5hkvkYTLmZuQUeVyaNTF5yfbY6E9UtxFO3jd9mignsUnCa1b0tHUco3x2RPhaJJVhM8WevkzHXDMg+9OWWz8m0dHFKz1JXaNO78PMrw7FYtrBimPALJdosdh0nXEUHmPBIS5aoDnEp3O+679dUlZi7s8wmD7IngCb56BaPb9ZIe1mnVUXrWdCpc8uSjxSbBroxTCXbt9hvoiKN2MDA57MxB4WGEAAnGs3ktsDeR7DuD0Xd9sX1cznMYeNpXeTrgDgs3uAxB69Htax0JKwt4QsQ3j00oJ6U9ztw0KQL/vzEtxaZ+nvtpcJuQjM7BDcuTr7Q4tMwXUsGc4wqSzF56opeaQdgVL0tGvQoGC1j0AZPL471isJkHBCDmDnZ03z5VToevkkpKtfyX5IVq3oXeZWcnFTcXSN+ycD1vETJy+1wCQOcHOnVY6vFqhrTbtXMMZ7bGSAgai2eM4rdz4dzz6ZxCoWgSpemU96TCcStw+GCICAccSvKtItq0KdVCpslDVzaTAjBODQablntfiXl6TUGUlrK9r/GkaOHe8TBRca1YoN7SdJkNrQjS+VKPsyNTdgMmouX3UY32GpYcFMBS9eIv/84SQrUi0qNEu9p6oxlRwSV03SD2R62pFkDyx5KEKTpB8Uwc2hxHFlG6eREPEh3gU/gnvIuyW33x7WzUqi9rsmjXNaQGSWgfEo3zUhBTrzVPa6nUvUZph6NcZmkJF2+yXppJlzlFMCrUa3GGuR/AEgQXiAPr+wmBH//f2AFnAKXpMsgZ6E13oDKWYZJvsbVkUvYwm845Hemu3klah86CWAnpTMiJIPxbq7gqZmy+L4bUTmNyu2Kqr2Xfy92/sdvBbN88y5QjkGAyDQILIO1OFqmSbl02SMhfbou1M3gvkVdX/OjeSh/6iy6qJbgON/FD152sDGnjvArZ6TEfK+ML6n8+jah+tn/TrZHUMQ8fsyiWHR54ScdzGmZRfeRX6ucK/OxGflPnK/DgHvlXixLVoBBa3PgN8m0yz/HCHsCNdJXiXP0ebKXYrToYpHf99aHn3VFuIScL80Alc7eXiRzursveniaVr+LJpP4LBgZS/syA1mTw=="
                     }
                   ],
                   "role": "model"
@@ -730,20 +730,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 2883,
+              "promptTokenCount": 461,
               "candidatesTokenCount": 65,
-              "totalTokenCount": 3100,
+              "totalTokenCount": 732,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 2883
+                  "tokenCount": 461
                 }
               ],
-              "thoughtsTokenCount": 152,
+              "thoughtsTokenCount": 206,
               "serviceTier": "standard"
             },
             "modelVersion": "gemini-3.6-flash",
-            "responseId": "9dR1ap3wM4nUvdIP7pSt4Qo"
+            "responseId": "Sl55aqevGIW3xN8Pw_yFwAI"
           },
           {
             "candidates": [
@@ -761,20 +761,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 2883,
+              "promptTokenCount": 461,
               "candidatesTokenCount": 65,
-              "totalTokenCount": 3100,
+              "totalTokenCount": 732,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 2883
+                  "tokenCount": 461
                 }
               ],
-              "thoughtsTokenCount": 152,
+              "thoughtsTokenCount": 206,
               "serviceTier": "standard"
             },
             "modelVersion": "gemini-3.6-flash",
-            "responseId": "9dR1ap3wM4nUvdIP7pSt4Qo"
+            "responseId": "Sl55aqevGIW3xN8Pw_yFwAI"
           }
         ],
         "byte_segments": [],
@@ -799,13 +799,13 @@
                   "parts": [
                     {
                       "function_call": {
-                        "id": "c02c82Eo",
+                        "id": "qSJCDqhq",
                         "args": {
-                          "script": "res1 = 5 + 5\nres2 = 10 + 10\nprint(f\"5 + 5 = {res1}\")\nprint(f\"10 + 10 = {res2}\")\n"
+                          "script": "result1 = 5 + 5\nresult2 = 10 + 10\nprint(f\"5 + 5 = {result1}\")\nprint(f\"10 + 10 = {result2}\")\n"
                         },
                         "name": "execute_script"
                       },
-                      "thought_signature": "EpsFCpgFARFNMg83cDK4YP31hPYgPvBV32q2knCEwQY_bi_Z1XVMLYiB6lFV301apYyT9GP-oHetXGAjYjx7ZTt2SrP1zO5ZEykcMyGBaYKxxl5N0xa4JA9wckdV9vgRz4hxhsCQqQ4y358rOtUP8p8hJzTrmWHw_GKMy3yptv40-lKvzUt-t5hqtymLmyu3ndk2e3owaGFhAqr0D3CcQmLl4t-lVhQI_4BkMPjn6qvfEFx38rhumkQTMv1hvXcc7KtHqUmrddLGFTyPdm4V0GKAqe5JmvVMy7BGvhccSyRvrpAuw-LxjR3kqYpVnBt2a4nsi1yN2PgHRFwqlU9OEf-eyzJTWMgt8awaSmcPAWJ3XX2ptBl2nUHgDtA4dnGfE5OJ7U9vIGgLAhKQCGs6UtI9k60aQ0AA4nBQZKd4zLkV-wEmoTizT1Icphq198skoB21XOdRb2ZNVDiw1gYYDjj0xMw5VMkKyjr553xKRf63SzKD5h49DmSgiGVMMuWJoVRtH2Kz8sZyUTnjEJ1a2pEmt-Va9FzP5e0hsgiirPrRUWJfOudSoF4U71lYJyEL25M5N_Z59WIwECxkmqh5SKc3eRNGI5YL_hHtKp3uuOXomVUJwJuN_CEypwySWit9AuM-MHslv7J1vZ4Ck3zfg_g0ERaGe7rBI-K5HS3CJMQl2oJbX79WldpH6K_Dvf59GsY_kOrehUf8bw6RXfYKHUs3LGhSZTg6PI0TxwWUWl5H1CN9bG7Xt9FqKTMQarXtj7fuT_bgNoXOifzMn5ZWjEGbk6vGM2eUpMgA5DS5ACek74AbRGoPUc8co-h2MIM0N-20zNncaoklBo29tQAJQt9JztzZOQI13z1Mgf-TpRffv5MAew31b2SiC-Gc8Q=="
+                      "thought_signature": "EvwGCvkGARFNMg8FN1daFilKsWTZzgPgIDfLisicdU_n5twIATkPGVeHVIh5eCsVf3Ylnym-iby7l9qpTPjP3KLxi_xfGxxdEPs5hkvkYTLmZuQUeVyaNTF5yfbY6E9UtxFO3jd9mignsUnCa1b0tHUco3x2RPhaJJVhM8WevkzHXDMg-9OWWz8m0dHFKz1JXaNO78PMrw7FYtrBimPALJdosdh0nXEUHmPBIS5aoDnEp3O-679dUlZi7s8wmD7IngCb56BaPb9ZIe1mnVUXrWdCpc8uSjxSbBroxTCXbt9hvoiKN2MDA57MxB4WGEAAnGs3ktsDeR7DuD0Xd9sX1cznMYeNpXeTrgDgs3uAxB69Htax0JKwt4QsQ3j00oJ6U9ztw0KQL_vzEtxaZ-nvtpcJuQjM7BDcuTr7Q4tMwXUsGc4wqSzF56opeaQdgVL0tGvQoGC1j0AZPL471isJkHBCDmDnZ03z5VToevkkpKtfyX5IVq3oXeZWcnFTcXSN-ycD1vETJy-1wCQOcHOnVY6vFqhrTbtXMMZ7bGSAgai2eM4rdz4dzz6ZxCoWgSpemU96TCcStw-GCICAccSvKtItq0KdVCpslDVzaTAjBODQablntfiXl6TUGUlrK9r_GkaOHe8TBRca1YoN7SdJkNrQjS-VKPsyNTdgMmouX3UY32GpYcFMBS9eIv_84SQrUi0qNEu9p6oxlRwSV03SD2R62pFkDyx5KEKTpB8Uwc2hxHFlG6eREPEh3gU_gnvIuyW33x7WzUqi9rsmjXNaQGSWgfEo3zUhBTrzVPa6nUvUZph6NcZmkJF2-yXppJlzlFMCrUa3GGuR_AEgQXiAPr-wmBH__f2AFnAKXpMsgZ6E13oDKWYZJvsbVkUvYwm845Hemu3klah86CWAnpTMiJIPxbq7gqZmy-L4bUTmNyu2Kqr2Xfy92_sdvBbN88y5QjkGAyDQILIO1OFqmSbl02SMhfbou1M3gvkVdX_OjeSh_6iy6qJbgON_FD152sDGnjvArZ6TEfK-ML6n8-jah-tn_TrZHUMQ8fsyiWHR54ScdzGmZRfeRX6ucK_OxGflPnK_DgHvlXixLVoBBa3PgN8m0yz_HCHsCNdJXiXP0ebKXYrToYpHf99aHn3VFuIScL80Alc7eXiRzursveniaVr-LJpP4LBgZS_syA1mTw=="
                     }
                   ],
                   "role": "model"
@@ -814,18 +814,18 @@
               }
             ],
             "model_version": "gemini-3.6-flash",
-            "response_id": "9dR1ap3wM4nUvdIP7pSt4Qo",
+            "response_id": "Sl55aqevGIW3xN8Pw_yFwAI",
             "usage_metadata": {
               "candidates_token_count": 65,
-              "prompt_token_count": 2883,
+              "prompt_token_count": 461,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 2883
+                  "token_count": 461
                 }
               ],
-              "thoughts_token_count": 152,
-              "total_token_count": 3100
+              "thoughts_token_count": 206,
+              "total_token_count": 732
             }
           },
           {
@@ -857,18 +857,18 @@
               }
             ],
             "model_version": "gemini-3.6-flash",
-            "response_id": "9dR1ap3wM4nUvdIP7pSt4Qo",
+            "response_id": "Sl55aqevGIW3xN8Pw_yFwAI",
             "usage_metadata": {
               "candidates_token_count": 65,
-              "prompt_token_count": 2883,
+              "prompt_token_count": 461,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 2883
+                  "token_count": 461
                 }
               ],
-              "thoughts_token_count": 152,
-              "total_token_count": 3100
+              "thoughts_token_count": 206,
+              "total_token_count": 732
             }
           }
         ]
@@ -931,13 +931,13 @@
                 "parts": [
                   {
                     "functionCall": {
-                      "id": "c02c82Eo",
+                      "id": "qSJCDqhq",
                       "args": {
-                        "script": "res1 = 5 + 5\nres2 = 10 + 10\nprint(f\"5 + 5 = {res1}\")\nprint(f\"10 + 10 = {res2}\")\n"
+                        "script": "result1 = 5 + 5\nresult2 = 10 + 10\nprint(f\"5 + 5 = {result1}\")\nprint(f\"10 + 10 = {result2}\")\n"
                       },
                       "name": "execute_script"
                     },
-                    "thoughtSignature": "EpsFCpgFARFNMg83cDK4YP31hPYgPvBV32q2knCEwQY_bi_Z1XVMLYiB6lFV301apYyT9GP-oHetXGAjYjx7ZTt2SrP1zO5ZEykcMyGBaYKxxl5N0xa4JA9wckdV9vgRz4hxhsCQqQ4y358rOtUP8p8hJzTrmWHw_GKMy3yptv40-lKvzUt-t5hqtymLmyu3ndk2e3owaGFhAqr0D3CcQmLl4t-lVhQI_4BkMPjn6qvfEFx38rhumkQTMv1hvXcc7KtHqUmrddLGFTyPdm4V0GKAqe5JmvVMy7BGvhccSyRvrpAuw-LxjR3kqYpVnBt2a4nsi1yN2PgHRFwqlU9OEf-eyzJTWMgt8awaSmcPAWJ3XX2ptBl2nUHgDtA4dnGfE5OJ7U9vIGgLAhKQCGs6UtI9k60aQ0AA4nBQZKd4zLkV-wEmoTizT1Icphq198skoB21XOdRb2ZNVDiw1gYYDjj0xMw5VMkKyjr553xKRf63SzKD5h49DmSgiGVMMuWJoVRtH2Kz8sZyUTnjEJ1a2pEmt-Va9FzP5e0hsgiirPrRUWJfOudSoF4U71lYJyEL25M5N_Z59WIwECxkmqh5SKc3eRNGI5YL_hHtKp3uuOXomVUJwJuN_CEypwySWit9AuM-MHslv7J1vZ4Ck3zfg_g0ERaGe7rBI-K5HS3CJMQl2oJbX79WldpH6K_Dvf59GsY_kOrehUf8bw6RXfYKHUs3LGhSZTg6PI0TxwWUWl5H1CN9bG7Xt9FqKTMQarXtj7fuT_bgNoXOifzMn5ZWjEGbk6vGM2eUpMgA5DS5ACek74AbRGoPUc8co-h2MIM0N-20zNncaoklBo29tQAJQt9JztzZOQI13z1Mgf-TpRffv5MAew31b2SiC-Gc8Q=="
+                    "thoughtSignature": "EvwGCvkGARFNMg8FN1daFilKsWTZzgPgIDfLisicdU_n5twIATkPGVeHVIh5eCsVf3Ylnym-iby7l9qpTPjP3KLxi_xfGxxdEPs5hkvkYTLmZuQUeVyaNTF5yfbY6E9UtxFO3jd9mignsUnCa1b0tHUco3x2RPhaJJVhM8WevkzHXDMg-9OWWz8m0dHFKz1JXaNO78PMrw7FYtrBimPALJdosdh0nXEUHmPBIS5aoDnEp3O-679dUlZi7s8wmD7IngCb56BaPb9ZIe1mnVUXrWdCpc8uSjxSbBroxTCXbt9hvoiKN2MDA57MxB4WGEAAnGs3ktsDeR7DuD0Xd9sX1cznMYeNpXeTrgDgs3uAxB69Htax0JKwt4QsQ3j00oJ6U9ztw0KQL_vzEtxaZ-nvtpcJuQjM7BDcuTr7Q4tMwXUsGc4wqSzF56opeaQdgVL0tGvQoGC1j0AZPL471isJkHBCDmDnZ03z5VToevkkpKtfyX5IVq3oXeZWcnFTcXSN-ycD1vETJy-1wCQOcHOnVY6vFqhrTbtXMMZ7bGSAgai2eM4rdz4dzz6ZxCoWgSpemU96TCcStw-GCICAccSvKtItq0KdVCpslDVzaTAjBODQablntfiXl6TUGUlrK9r_GkaOHe8TBRca1YoN7SdJkNrQjS-VKPsyNTdgMmouX3UY32GpYcFMBS9eIv_84SQrUi0qNEu9p6oxlRwSV03SD2R62pFkDyx5KEKTpB8Uwc2hxHFlG6eREPEh3gU_gnvIuyW33x7WzUqi9rsmjXNaQGSWgfEo3zUhBTrzVPa6nUvUZph6NcZmkJF2-yXppJlzlFMCrUa3GGuR_AEgQXiAPr-wmBH__f2AFnAKXpMsgZ6E13oDKWYZJvsbVkUvYwm845Hemu3klah86CWAnpTMiJIPxbq7gqZmy-L4bUTmNyu2Kqr2Xfy92_sdvBbN88y5QjkGAyDQILIO1OFqmSbl02SMhfbou1M3gvkVdX_OjeSh_6iy6qJbgON_FD152sDGnjvArZ6TEfK-ML6n8-jah-tn_TrZHUMQ8fsyiWHR54ScdzGmZRfeRX6ucK_OxGflPnK_DgHvlXixLVoBBa3PgN8m0yz_HCHsCNdJXiXP0ebKXYrToYpHf99aHn3VFuIScL80Alc7eXiRzursveniaVr-LJpP4LBgZS_syA1mTw=="
                   }
                 ],
                 "role": "model"
@@ -946,7 +946,7 @@
                 "parts": [
                   {
                     "functionResponse": {
-                      "id": "c02c82Eo",
+                      "id": "qSJCDqhq",
                       "name": "execute_script",
                       "response": {
                         "result": "--- Script Output ---\n5 + 5 = 10\n10 + 10 = 20\n\nScript executed successfully with no return value."
@@ -961,24 +961,24 @@
               {
                 "functionDeclarations": [
                   {
-                    "description": "Execute a Python script in a sandboxed environment for automation and complex operations.\n\n**Two modes:**\n• **Inline**: Pass code via `script` parameter\n• **Stored**: Pass `name` to run a saved script from the library (see list_scripts)\n\n**IMPORTANT: Before writing scripts, please read the scripting documentation first!**\nUse the command: `get_user_documentation_content filename='scripting.md'`\n\n**Tool Documentation:**\nTo see available tools and their parameters, ask: 'Show me the available tools'\n\n**Execution Environment:**\n• Timeout: 10 minutes maximum execution time (to allow for external API calls)\n• Sandboxed: No file system or network access\n• Deterministic: No random numbers or current time\n\n**Sandbox Limitations:**\nThe Monty scripting engine runs a sandboxed Python subset with these restrictions:\n• No class definitions (can't use `class` keyword)\n• No generators or yield statements\n• No match/case statements\n• No context managers or with statements\n• No del statement\n• No dict unpacking in literals ({**d1, **d2} not supported)\n• No str.format() method (use f-strings instead)\n• No map/filter functions (use list comprehensions instead)\n• Decorators are buggy (avoid using them)\n• Exceptions only accept 0 or 1 string arguments\n• No imports except heavily sandboxed os, sys, typing, pathlib modules\n• Resource limits: 256MB memory, 100 recursion depth\n• However: try/except, while loops, float(), set(), frozenset() ARE supported\n\n**Built-in Functions:**\n• Type conversions: bool(), int(), str(), list(), tuple(), dict()\n• Collections: len(), range(), sorted(), reversed(), enumerate(), zip()\n• Logic: all(), any(), max(), min()\n• Object inspection: type(), dir(), getattr(), hasattr()\n• Control: print(), fail() - print() output is captured and returned to you under a '--- Script Output ---' section (use it to surface intermediate values without returning them)\n• JSON: json_encode(value), json_decode(value)\n• Base64: base64_encode(data), base64_decode(data) -> str, base64_decode_bytes(data) -> bytes\n• LLM Wake: wake_llm(context, include_event=True) - Request LLM attention with context (string or dict)\n• LLM: llm(prompt), llm_json(prompt) - One-shot LLM calls for summarisation and data extraction\n\n**Family Assistant Tools:**\nAll enabled tools are available as functions. Call them directly:\n• add_or_update_note(title='...', content='...')\n• search_notes(query='...')\n• send_email(to='...', subject='...', body='...')\n\n**Note**: Tools return structured data (dicts, lists) directly. You can use results\nimmediately without parsing. `json_decode()` is safe to call on any value - it passes\nthrough dicts, lists, numbers, and booleans unchanged, and only parses strings:\n```python\nnotes = search_notes(query='TODO')  # Returns a list directly\nfor note in notes:\n    print(note['title'])\n```\n\n**Tools API Functions:**\n• tools_list() - List all available tools with descriptions\n• tools_get(name) - Get detailed info about a specific tool\n• tools_execute(name, **kwargs) - Execute a tool by name\n\n**LLM API Functions:**\n• llm(prompt, system=None, model=None) - One-shot LLM call, returns text\n• llm_json(prompt, schema=None, system=None, model=None) - One-shot LLM call, returns parsed JSON\nDefault model: gemini-3.6-flash. Useful for summarisation, data extraction, classification.\n\n**Attachment API Functions:**\n• attachment_get(attachment_id) - Get attachment metadata by ID\n• attachment_create(content, filename, description, mime_type) - Create new attachment\nNote: attachment_list() and attachment_send() are not available.\nScripts must receive attachment IDs from LLM context, tool results, or parameters.\n\n**Returning Attachments:**\nAttachments created by tools or attachment_create() are represented as dictionaries\nwith metadata: {\"id\": uuid, \"filename\": str, \"mime_type\": str, \"size\": int, \"description\": str}\nReturn these dicts to make attachments visible to the LLM:\n\n```python\n# Single attachment - last expression is returned\ndata = attachment_create(content=\"data\", filename=\"data.txt\", mime_type=\"text/plain\")\ndata  # Dict with attachment info, automatically sent to LLM\n\n# Multiple attachments - return list\nchart1 = create_chart(data1)  # Returns dict\nchart2 = create_chart(data2)  # Returns dict\n[chart1, chart2]  # Both dicts visible to LLM\n\n# Functional composition (recommended for data viz)\nchart = create_vega_chart(\n    spec=spec,\n    data_attachments=[jq_query(source, '.[] | select(.value > 10)')]\n)\nchart  # Returns attachment dict\n```\n\n**Example Scripts:**\n\n1. Simple note creation:\n```python\nresult = add_or_update_note(\n    title='Meeting Notes',\n    content='Discussed project timeline'\n)\nprint('Created note:', result)\n```\n\n2. Conditional logic with search:\n```python\ndef process_todos():\n    notes = search_notes(query='TODO')\n    \n    if len(notes) > 0:\n        print('Found', len(notes), 'TODO items')\n        for note in notes:\n            print('-', note['title'])\n    else:\n        print('No TODO items found')\n    return notes\n\n# Call the function\nprocess_todos()\n```\n\n3. Complex automation:\n```python\ndef create_project_summary():\n    # Search for notes, create summary, send email\n    project_notes = search_notes(query='Project Alpha')\n    \n    summary = 'Project Alpha Summary:\\n\\n'\n    for note in project_notes:\n        summary += '- ' + note['title'] + '\\n'\n    \n    if len(project_notes) > 0:\n        add_or_update_note(\n            title='Project Alpha Summary',\n            content=summary\n        )\n        result = send_email(\n            to='team@example.com',\n            subject='Weekly Project Summary',\n            body=summary\n        )\n        return {'notes_found': len(project_notes), 'email_result': result}\n    else:\n        return {'notes_found': 0, 'email_result': 'No notes to summarize'}\n\n# Execute the function\ncreate_project_summary()\n```\n\n4. Working with user attachments (attachment ID provided by LLM):\n```python\n# Attachment ID passed to script by LLM based on conversation context\n# Example: LLM calls execute_script with attachment_id parameter\ndef process_user_attachment(attachment_id):\n    # Get attachment details\n    attachment_info = attachment_get(attachment_id)\n    \n    if attachment_info:\n        print('Processing:', attachment_info['description'])\n        \n        # Process the attachment with a tool (ID auto-converted to content)\n        if 'image' in attachment_info['mime_type']:\n            analysis = tools_execute('analyze_image', image_data=attachment_id)\n            # Send results back to user via LLM tools\n            wake_llm({'message': 'Analysis: ' + analysis, 'attachments': [attachment_id]})\n        else:\n            # Use attach_to_response LLM tool to send attachment back\n            tools_execute('attach_to_response', attachment_ids=[attachment_id])\n    else:\n        print('Attachment not found or not accessible')\n\n# Call with attachment ID from LLM context\n# process_user_attachment('uuid-from-llm-context')\n```\n\n5. Data visualization with automatic attachment propagation:\n```python\n# Create a chart - attachment automatically returns to LLM\nspec = {\n  '$schema': 'https://vega.github.io/schema/vega-lite/v5.json',\n  'data': {'name': 'sensor_data'},\n  'mark': 'line',\n  'encoding': {\n    'x': {'field': 'timestamp', 'type': 'temporal'},\n    'y': {'field': 'temperature', 'type': 'quantitative'}\n  }\n}\n\n# Chart is automatically visible - no need for attach_to_response!\ncreate_vega_chart(\n  spec=json_encode(spec),\n  data_attachments=[sensor_attachment_id],\n  title='Temperature Over Time'\n)\n```\n\n6. Multi-chart dashboard:\n```python\n# Create multiple related charts\ntemp_spec = {'$schema': '...', 'mark': 'line', ...}\nhumidity_spec = {'$schema': '...', 'mark': 'area', ...}\n\ntemp_chart = create_vega_chart(spec=json_encode(temp_spec), data_attachments=[data])\nhumidity_chart = create_vega_chart(spec=json_encode(humidity_spec), data_attachments=[data])\n\n# Both charts automatically visible to LLM\n[temp_chart, humidity_chart]\n```\n\n",
+                    "description": "Execute an inline or stored Python script in a sandboxed environment. Before writing or debugging a script, load `scripting.md` with `get_user_documentation_content`; it documents the language constraints, available APIs, brokered HTTP, attachments, and return values. Use `script` with optional `globals` for inline code, or `name` with optional `parameters` for a stored script. Enabled Family Assistant tools and configured script APIs are available as functions.",
                     "name": "execute_script",
                     "parameters": {
                       "properties": {
                         "script": {
-                          "description": "The Python script code to execute (inline mode). Omit this and use 'name' instead to run a stored script.\n\nThe script can:\n• Define variables and functions\n• Use control flow (if/else, for loops)\n• Call any available Family Assistant tool\n• Process and transform data\n• Print output for debugging\n• Return a value (the last expression is returned)\n\nScripts should be self-contained and handle errors gracefully.\n\n**Wake LLM Contexts:**\nIf the script calls wake_llm(), the contexts will be included in the response.\nThis allows the LLM to receive and process wake requests from scripts.\n\n**Return Values:**\nReturns a string containing the script execution result:\n• Anything printed with print() appears first under a '--- Script Output ---' section\n• On success with return value: 'Script result: [value]' or for dict/list: 'Script result:\\n[JSON formatted]'\n• On success without return: 'Script executed successfully with no return value.'\n• If wake_llm() called: Also includes '--- Wake LLM Contexts ---' section with context details\n• On error: any output printed before the failure is included above the error message\n• On syntax error: 'Error: Syntax error in script [at line N]: [details]'\n• On timeout: 'Error: Script execution timed out after [N] seconds'\n• On execution error: 'Error: Script execution failed: [details]'\n• On unexpected error: 'Error: Unexpected error executing script: [details]'",
+                          "description": "Inline Python source. Load `scripting.md` with `get_user_documentation_content` before writing or debugging scripts. Omit this when using `name`.",
                           "type": "STRING"
                         },
                         "globals": {
-                          "description": "Optional dictionary of global variables to inject into the script.\n\nThese variables will be available in the script's global scope.\nUseful for passing configuration, data, or context to the script.\n\nExample:\n{\n  \"user_email\": \"john@example.com\",\n  \"project_id\": 123,\n  \"tags\": [\"important\", \"urgent\"]\n}\n\nThese can then be used in the script as regular variables.",
+                          "description": "Optional global values for inline `script` code. Do not use with a stored script.",
                           "type": "OBJECT"
                         },
                         "name": {
-                          "description": "Name of a stored script to execute (alternative to inline 'script').\nUse list_scripts to see available stored scripts. When using 'name',\npass arguments via 'parameters' instead of 'globals'.",
+                          "description": "Stored script name. Use `list_scripts` to discover names; omit `script` and pass arguments with `parameters`.",
                           "type": "STRING"
                         },
                         "parameters": {
-                          "description": "Parameters to pass to a stored script as global variables.\nOnly used with 'name'. Validated against the script's parameter schema if defined.",
+                          "description": "Optional arguments for the stored script selected by `name`; validated against its parameter schema.",
                           "type": "OBJECT"
                         }
                       },
@@ -1015,7 +1015,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "Using Python via `execute_script"
+                      "text": "Using Python via the `execute_"
                     }
                   ],
                   "role": "model"
@@ -1024,20 +1024,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 2994,
+              "promptTokenCount": 572,
               "candidatesTokenCount": 7,
-              "totalTokenCount": 3040,
+              "totalTokenCount": 619,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 2994
+                  "tokenCount": 572
                 }
               ],
-              "thoughtsTokenCount": 39,
+              "thoughtsTokenCount": 40,
               "serviceTier": "standard"
             },
             "modelVersion": "gemini-3.6-flash",
-            "responseId": "99R1asWYHcCFxs0PhYK46QI"
+            "responseId": "TF55apvaK4zXvdIPy-rk8Ak"
           },
           {
             "candidates": [
@@ -1045,7 +1045,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "`, the calculations are:\n\n* **5 + 5** = 10\n* **10 + 10**"
+                      "text": "script` tool:\n\n* **5 + 5** = **10**\n* **10 + 10** ="
                     }
                   ],
                   "role": "model"
@@ -1054,20 +1054,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 2994,
-              "candidatesTokenCount": 34,
-              "totalTokenCount": 3067,
+              "promptTokenCount": 778,
+              "candidatesTokenCount": 35,
+              "totalTokenCount": 853,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 2994
+                  "tokenCount": 778
                 }
               ],
-              "thoughtsTokenCount": 39,
+              "thoughtsTokenCount": 40,
               "serviceTier": "standard"
             },
             "modelVersion": "gemini-3.6-flash",
-            "responseId": "99R1asWYHcCFxs0PhYK46QI"
+            "responseId": "TF55apvaK4zXvdIPy-rk8Ak"
           },
           {
             "candidates": [
@@ -1075,7 +1075,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": " = 20"
+                      "text": " **20**"
                     }
                   ],
                   "role": "model"
@@ -1084,20 +1084,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 2994,
-              "candidatesTokenCount": 38,
-              "totalTokenCount": 3071,
+              "promptTokenCount": 778,
+              "candidatesTokenCount": 39,
+              "totalTokenCount": 857,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 2994
+                  "tokenCount": 778
                 }
               ],
-              "thoughtsTokenCount": 39,
+              "thoughtsTokenCount": 40,
               "serviceTier": "standard"
             },
             "modelVersion": "gemini-3.6-flash",
-            "responseId": "99R1asWYHcCFxs0PhYK46QI"
+            "responseId": "TF55apvaK4zXvdIPy-rk8Ak"
           },
           {
             "candidates": [
@@ -1106,7 +1106,7 @@
                   "parts": [
                     {
                       "text": "",
-                      "thoughtSignature": "EtABCs0BARFNMg+Rf3MPNPCEGm9Kg8ncbwtfAyFbqKEM7w+rTmLHX1qTNLoCgAdyE+G2FK7B9Xmkx2rX3DgXgsjMmmlcxI7PP/tN8Auq+bQpi2wi8G47/DzMSQHg/SrOTE/e2eCjltfs8P1MHpOdUmWneYVLoejsxMPUxcJMezrkHNglDfv8iippweE8igXUK6GqY3m8TTyyVKCGa5T59Ub4BwX0oxifAcH9sw05ZJPBndnUFU8GIkxilsPFbhsSvvEsJVnpv3AtyOurhmaJtyBHEw=="
+                      "thoughtSignature": "EtIBCs8BARFNMg+3t7rK95P8J86WCVldmm1F94V1gB8sF7TDpRtBbnodR/vPUEGIn4s4xH8jooWsCGzGVFRXMPWTUzCowDR05UdF2Ml462We+FLwu99dzGNGh3zsA145dZY3Pj3w+EXCJ8C1k0cndLXcwK6MeCZSKs8xVZQR4JYY6jgzqM6eDQcRqRPlBEu2IbH1hgUm+l8vtur1IXCPC396uOfiHTGczNmcknONJ8XXKsyUjqtYvZH9sieXR3YtC5G7xrV2H1emcQtuze2Gz4OS2naI"
                     }
                   ],
                   "role": "model"
@@ -1116,20 +1116,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 3146,
-              "candidatesTokenCount": 38,
-              "totalTokenCount": 3223,
+              "promptTokenCount": 778,
+              "candidatesTokenCount": 39,
+              "totalTokenCount": 857,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 3146
+                  "tokenCount": 778
                 }
               ],
-              "thoughtsTokenCount": 39,
+              "thoughtsTokenCount": 40,
               "serviceTier": "standard"
             },
             "modelVersion": "gemini-3.6-flash",
-            "responseId": "99R1asWYHcCFxs0PhYK46QI"
+            "responseId": "TF55apvaK4zXvdIPy-rk8Ak"
           }
         ],
         "byte_segments": [],
@@ -1153,7 +1153,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "Using Python via `execute_script"
+                      "text": "Using Python via the `execute_"
                     }
                   ],
                   "role": "model"
@@ -1162,18 +1162,18 @@
               }
             ],
             "model_version": "gemini-3.6-flash",
-            "response_id": "99R1asWYHcCFxs0PhYK46QI",
+            "response_id": "TF55apvaK4zXvdIPy-rk8Ak",
             "usage_metadata": {
               "candidates_token_count": 7,
-              "prompt_token_count": 2994,
+              "prompt_token_count": 572,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 2994
+                  "token_count": 572
                 }
               ],
-              "thoughts_token_count": 39,
-              "total_token_count": 3040
+              "thoughts_token_count": 40,
+              "total_token_count": 619
             }
           },
           {
@@ -1195,7 +1195,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "`, the calculations are:\n\n* **5 + 5** = 10\n* **10 + 10**"
+                      "text": "script` tool:\n\n* **5 + 5** = **10**\n* **10 + 10** ="
                     }
                   ],
                   "role": "model"
@@ -1204,18 +1204,18 @@
               }
             ],
             "model_version": "gemini-3.6-flash",
-            "response_id": "99R1asWYHcCFxs0PhYK46QI",
+            "response_id": "TF55apvaK4zXvdIPy-rk8Ak",
             "usage_metadata": {
-              "candidates_token_count": 34,
-              "prompt_token_count": 2994,
+              "candidates_token_count": 35,
+              "prompt_token_count": 778,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 2994
+                  "token_count": 778
                 }
               ],
-              "thoughts_token_count": 39,
-              "total_token_count": 3067
+              "thoughts_token_count": 40,
+              "total_token_count": 853
             }
           },
           {
@@ -1237,7 +1237,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": " = 20"
+                      "text": " **20**"
                     }
                   ],
                   "role": "model"
@@ -1246,18 +1246,18 @@
               }
             ],
             "model_version": "gemini-3.6-flash",
-            "response_id": "99R1asWYHcCFxs0PhYK46QI",
+            "response_id": "TF55apvaK4zXvdIPy-rk8Ak",
             "usage_metadata": {
-              "candidates_token_count": 38,
-              "prompt_token_count": 2994,
+              "candidates_token_count": 39,
+              "prompt_token_count": 778,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 2994
+                  "token_count": 778
                 }
               ],
-              "thoughts_token_count": 39,
-              "total_token_count": 3071
+              "thoughts_token_count": 40,
+              "total_token_count": 857
             }
           },
           {
@@ -1280,7 +1280,7 @@
                   "parts": [
                     {
                       "text": "",
-                      "thought_signature": "EtABCs0BARFNMg-Rf3MPNPCEGm9Kg8ncbwtfAyFbqKEM7w-rTmLHX1qTNLoCgAdyE-G2FK7B9Xmkx2rX3DgXgsjMmmlcxI7PP_tN8Auq-bQpi2wi8G47_DzMSQHg_SrOTE_e2eCjltfs8P1MHpOdUmWneYVLoejsxMPUxcJMezrkHNglDfv8iippweE8igXUK6GqY3m8TTyyVKCGa5T59Ub4BwX0oxifAcH9sw05ZJPBndnUFU8GIkxilsPFbhsSvvEsJVnpv3AtyOurhmaJtyBHEw=="
+                      "thought_signature": "EtIBCs8BARFNMg-3t7rK95P8J86WCVldmm1F94V1gB8sF7TDpRtBbnodR_vPUEGIn4s4xH8jooWsCGzGVFRXMPWTUzCowDR05UdF2Ml462We-FLwu99dzGNGh3zsA145dZY3Pj3w-EXCJ8C1k0cndLXcwK6MeCZSKs8xVZQR4JYY6jgzqM6eDQcRqRPlBEu2IbH1hgUm-l8vtur1IXCPC396uOfiHTGczNmcknONJ8XXKsyUjqtYvZH9sieXR3YtC5G7xrV2H1emcQtuze2Gz4OS2naI"
                     }
                   ],
                   "role": "model"
@@ -1290,18 +1290,18 @@
               }
             ],
             "model_version": "gemini-3.6-flash",
-            "response_id": "99R1asWYHcCFxs0PhYK46QI",
+            "response_id": "TF55apvaK4zXvdIPy-rk8Ak",
             "usage_metadata": {
-              "candidates_token_count": 38,
-              "prompt_token_count": 3146,
+              "candidates_token_count": 39,
+              "prompt_token_count": 778,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 3146
+                  "token_count": 778
                 }
               ],
-              "thoughts_token_count": 39,
-              "total_token_count": 3223
+              "thoughts_token_count": 40,
+              "total_token_count": 857
             }
           }
         ]

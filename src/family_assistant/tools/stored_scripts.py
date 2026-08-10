@@ -8,6 +8,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from family_assistant.scripting.apis.keychute import (
+    get_keychute_config,
+    keychute_external_function_names,
+)
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
@@ -175,6 +179,9 @@ async def save_script_tool(
     validation = ScriptValidator(tool_definitions=tool_definitions).validate(
         code,
         input_names=input_names,
+        extra_external_functions=keychute_external_function_names(
+            get_keychute_config(exec_context)
+        ),
         include_tools_api=tools_provider is not None,
         include_attachment_api=bool(exec_context.attachment_registry),
     )

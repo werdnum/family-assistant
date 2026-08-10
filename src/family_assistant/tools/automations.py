@@ -10,6 +10,10 @@ from family_assistant.actions import (
     WakeLlmProfileError,
     assert_wake_llm_allowed,
 )
+from family_assistant.scripting.apis.keychute import (
+    get_keychute_config,
+    keychute_external_function_names,
+)
 from family_assistant.scripting.validator import ScriptValidator
 from family_assistant.tools.stored_scripts import (
     AUTOMATION_RUNTIME_GLOBALS,
@@ -21,6 +25,7 @@ if TYPE_CHECKING:
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
+    from family_assistant.config_models import KeychuteConfig
     from family_assistant.storage.database import Database
     from family_assistant.storage.models import Automation
     from family_assistant.storage.repositories.automations import AutomationType
@@ -376,6 +381,7 @@ async def _validate_script_code_with_provider(
     tools_provider: ToolsProvider | None,
     script_code: str,
     input_names: list[str],
+    keychute_config: KeychuteConfig | None = None,
 ) -> str | None:
     tool_definitions = None
     if tools_provider:
@@ -385,6 +391,7 @@ async def _validate_script_code_with_provider(
     validation = validator.validate(
         script_code,
         input_names=input_names,
+        extra_external_functions=keychute_external_function_names(keychute_config),
         include_tools_api=tools_provider is not None,
     )
     if not validation.is_valid:
@@ -397,6 +404,7 @@ async def validate_action_scripts_with_provider(
     tools_provider: ToolsProvider | None,
     # ast-grep-ignore: no-dict-any - action config has varying keys per action type
     action_config: dict[str, Any],
+    keychute_config: KeychuteConfig | None = None,
 ) -> str | None:
     """Validate a script action_config's code against a profile's tool set.
 
@@ -415,6 +423,7 @@ async def validate_action_scripts_with_provider(
             tools_provider,
             script_code,
             input_names=sorted(AUTOMATION_RUNTIME_GLOBALS),
+            keychute_config=keychute_config,
         )
 
     script_name = action_config.get("script_name")
@@ -440,6 +449,7 @@ async def validate_action_scripts_with_provider(
         tools_provider,
         stored.script_code,
         input_names=sorted(input_names),
+        keychute_config=keychute_config,
     )
     if error:
         return f"Stored script '{script_name}': {error}"
@@ -461,7 +471,10 @@ async def validate_action_scripts(
     ):
         tools_provider = exec_context.processing_service.tools_provider
     return await validate_action_scripts_with_provider(
-        exec_context.db_context, tools_provider, action_config
+        exec_context.db_context,
+        tools_provider,
+        action_config,
+        keychute_config=get_keychute_config(exec_context),
     )
 
 

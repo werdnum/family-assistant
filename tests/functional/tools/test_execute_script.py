@@ -7,10 +7,14 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig, KeychuteConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from family_assistant.tools.data_visualization import create_vega_chart_tool
-from family_assistant.tools.execute_script import execute_script_tool
+from family_assistant.tools.execute_script import (
+    SCRIPT_TOOLS_DEFINITION,
+    execute_script_tool,
+)
 from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
@@ -21,6 +25,18 @@ from family_assistant.tools.types import (
     ToolExecutionContext,
     ToolResult,
 )
+
+
+def test_execute_script_tool_description_points_to_scripting_guide() -> None:
+    """Detailed scripting guidance is loaded on demand instead of sent every turn."""
+    function = SCRIPT_TOOLS_DEFINITION[0]["function"]
+    description = function["description"]
+
+    assert "scripting.md" in description
+    assert "get_user_documentation_content" in description
+    assert "Example Scripts" not in description
+    assert "Sandbox Limitations" not in description
+    assert len(description) < 600
 
 
 @pytest.mark.asyncio
@@ -99,6 +115,54 @@ len(tools)
     assert result.text is not None
 
     assert "Script result: 0" in result.text
+
+
+@pytest.mark.asyncio
+async def test_execute_script_exposes_configured_keychute(
+    db_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Configured scripts can consume a response without receiving a credential."""
+
+    async def fake_request(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return {"status_code": 200, "headers": {}, "body": b'{"answer": 42}'}
+
+    monkeypatch.setattr(
+        "family_assistant.scripting.apis.keychute.KeychuteScriptHttpClient.request",
+        fake_request,
+    )
+    db = Database(engine=db_engine)
+    mock_service = Mock()
+    mock_service.tools_provider = CompositeToolsProvider([])
+    mock_service.app_config = AppConfig(
+        keychute_config=KeychuteConfig(
+            enabled=True,
+            url="https://keychute.test",
+            token="client-token",
+        )
+    )
+    ctx = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-conv",
+        user_name="test",
+        turn_id=None,
+        db_context=db,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        processing_service=mock_service,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
+
+    result = await execute_script_tool(
+        ctx,
+        'json_decode(keychute_http_request("api", "https://example.test")["body"])["answer"]',
+    )
+
+    assert result.text == "Script result: 42"
 
 
 @pytest.mark.asyncio

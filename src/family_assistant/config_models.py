@@ -905,6 +905,19 @@ class MessageBatchingConfig(BaseModel):
     media_group_max_wait_seconds: float = 60.0
 
 
+class KeychuteConfig(BaseModel):
+    """Configuration for brokered HTTP calls from scripts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    url: str | None = None
+    token: str | None = None
+    token_file: str | None = None
+    ca_bundle: str | None = None
+    max_response_bytes: int = Field(default=25 * 1024 * 1024, ge=1)
+
+
 class DatabaseErrorsLoggingConfig(BaseModel):
     """Configuration for database error logging."""
 
@@ -1444,6 +1457,7 @@ class AppConfig(BaseSettings):
     message_batching_config: MessageBatchingConfig = Field(
         default_factory=MessageBatchingConfig
     )
+    keychute_config: KeychuteConfig = Field(default_factory=KeychuteConfig)
     ai_worker_config: AIWorkerConfig = Field(default_factory=AIWorkerConfig)
     browser_handoff_config: BrowserHandoffConfig = Field(
         default_factory=BrowserHandoffConfig

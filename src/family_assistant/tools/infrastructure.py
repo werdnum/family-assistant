@@ -25,6 +25,7 @@ from typing import (
 )
 
 from family_assistant.security.taint import (
+    SinkClass,
     TaintPolicyConfig,
     TaintPolicyEvaluation,
     TaintPolicyEvaluator,
@@ -1137,6 +1138,86 @@ class TaintTrackingToolsProvider(ToolsProvider):
         """Return the wrapped descriptor for a tool."""
         return await self._descriptor_provider.get_tool_descriptor(name)
 
+    async def authorize_taint_sink(
+        self,
+        *,
+        name: str,
+        sink_class: SinkClass,
+        # ast-grep-ignore: no-dict-any - sink arguments are dynamic audit and confirmation context
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
+    ) -> None:
+        """Apply runtime taint policy to an egress sink outside tool dispatch."""
+        if context.taint_tracker is None:
+            return
+
+        state = context.taint_tracker.snapshot()
+        evaluation = self._taint_evaluator.evaluate(
+            state=state,
+            sink_class=sink_class,
+        )
+        logger.info(
+            "Runtime taint policy evaluated: tool=%s call_id=%s sink=%s "
+            "requested=%s effective=%s mode=%s reason=%s",
+            name,
+            call_id,
+            evaluation.sink_class.value,
+            evaluation.requested_outcome.value,
+            evaluation.effective_outcome.value,
+            evaluation.mode.value,
+            evaluation.reason,
+        )
+        if (
+            evaluation.mode is TaintPolicyMode.OBSERVE
+            and evaluation.requested_outcome is not evaluation.effective_outcome
+        ):
+            logger.warning(
+                "Runtime taint WOULD ENFORCE (observe mode, not blocked): "
+                "tool=%s call_id=%s conversation=%s sink=%s would_be=%s "
+                "max_tier=%s reason=%s",
+                name,
+                call_id,
+                context.conversation_id,
+                evaluation.sink_class.value,
+                evaluation.requested_outcome.value,
+                state.max_tier.config_value,
+                evaluation.reason,
+            )
+        await self._record_named_policy_evaluation_audit(
+            tool_name=name,
+            context=context,
+            call_id=call_id,
+            arguments=arguments,
+            state=state,
+            evaluation=evaluation,
+        )
+        if evaluation.effective_outcome is TaintPolicyOutcome.DENY:
+            raise ToolPolicyDeniedError(name, evaluation.reason)
+        if evaluation.effective_outcome is TaintPolicyOutcome.REDACT:
+            raise ToolPolicyDeniedError(
+                name,
+                f"{evaluation.reason}; redaction outcomes are not executable yet",
+            )
+        if evaluation.effective_outcome is TaintPolicyOutcome.CONFIRM:
+            confirmation_result = await self._request_taint_confirmation(
+                name=name,
+                arguments=arguments,
+                context=context,
+                call_id=call_id,
+                reason=evaluation.reason,
+            )
+            if confirmation_result is not None:
+                detail = (
+                    confirmation_result.get_text()
+                    if isinstance(confirmation_result, ToolResult)
+                    else confirmation_result
+                )
+                raise ToolPolicyDeniedError(
+                    name,
+                    f"{evaluation.reason}; confirmation did not approve execution: {detail}",
+                )
+
     async def execute_tool(
         self,
         name: str,
@@ -1355,6 +1436,26 @@ class TaintTrackingToolsProvider(ToolsProvider):
         state: TurnTaintState,
         evaluation: TaintPolicyEvaluation,
     ) -> None:
+        await self._record_named_policy_evaluation_audit(
+            tool_name=descriptor.name,
+            context=context,
+            call_id=call_id,
+            arguments=arguments,
+            state=state,
+            evaluation=evaluation,
+        )
+
+    async def _record_named_policy_evaluation_audit(
+        self,
+        *,
+        tool_name: str,
+        context: ToolExecutionContext,
+        call_id: str | None,
+        # ast-grep-ignore: no-dict-any - sink arguments are dynamic audit context
+        arguments: dict[str, Any],
+        state: TurnTaintState,
+        evaluation: TaintPolicyEvaluation,
+    ) -> None:
         await context.db_context.taint_audit_events.add(
             event_id=str(uuid.uuid4()),
             event_type="policy_evaluation",
@@ -1362,7 +1463,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             turn_id=context.turn_id,
             processing_profile_id=context.processing_profile_id,
             subconversation_id=context.subconversation_id,
-            tool_name=descriptor.name,
+            tool_name=tool_name,
             tool_call_id=call_id,
             sink_class=evaluation.sink_class.value,
             max_tier=state.max_tier.config_value,

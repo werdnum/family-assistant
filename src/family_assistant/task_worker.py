@@ -50,6 +50,7 @@ from family_assistant.scripting import (
     ScriptError,
     ScriptTimeoutError,
 )
+from family_assistant.scripting.apis.keychute import add_keychute_http_api
 from family_assistant.scripting.config import ScriptConfig
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
@@ -4325,6 +4326,14 @@ async def handle_script_execution(
         for k, v in script_parameters.items():
             if k not in script_globals:
                 script_globals[k] = v
+
+    if processing_service is not None:
+        script_globals = add_keychute_http_api(
+            script_globals,
+            config=processing_service.app_config.keychute_config,
+            script_source=script_code,
+            execution_context=exec_context,
+        )
 
     # Execute the script
     try:

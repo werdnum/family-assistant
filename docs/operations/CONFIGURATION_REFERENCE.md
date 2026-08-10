@@ -1325,6 +1325,39 @@ ______________________________________________________________________
 
 ## External Services
 
+### Keychute brokered script HTTP
+
+Family Assistant can expose `keychute_http_request()` to Monty scripts while leaving credentials
+inside [Keychute](https://github.com/werdnum/keychute). Family Assistant calls Keychute's HTTP API
+directly to create and await an access request, validate the resulting grant, and proxy the call.
+
+```yaml
+keychute_config:
+  enabled: true
+  url: "https://keychute.example.com"
+  token_file: "/var/run/secrets/keychute/token"
+  ca_bundle: "/etc/ssl/keychute/ca.crt"
+  max_response_bytes: 26214400
+```
+
+| Setting              | Default    | Description                                         |
+| -------------------- | ---------- | --------------------------------------------------- |
+| `enabled`            | `false`    | Exposes the brokered HTTP function to scripts.      |
+| `url`                | `null`     | Keychute API origin.                                |
+| `token`              | `null`     | Static client bearer token.                         |
+| `token_file`         | `null`     | Rotating client bearer-token file.                  |
+| `ca_bundle`          | `null`     | Optional PEM CA bundle for the Keychute connection. |
+| `max_response_bytes` | `26214400` | Maximum upstream response body retained in RAM.     |
+
+The URL, token, token file, and CA bundle may instead be supplied through `KEYCHUTE_URL`,
+`KEYCHUTE_TOKEN`, `KEYCHUTE_TOKEN_FILE`, and `KEYCHUTE_CA_BUNDLE`. Production deployments normally
+use the rotating service-account token file. The file is reread for every Keychute API request so
+token rotation continues during an approval wait. Enabling the integration without a working
+configuration fails individual script calls explicitly; it does not fall back to direct
+unauthenticated HTTP.
+
+______________________________________________________________________
+
 ### BRAVE_API_KEY
 
 Brave Search API key for web search.
