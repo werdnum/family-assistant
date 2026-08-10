@@ -22,6 +22,7 @@ from family_assistant.storage.base import (
     POSTGRES_STATEMENT_TIMEOUT_MS,
     create_engine_with_sqlite_optimizations,
 )
+from family_assistant.storage.conversation_shares import conversation_shares_table
 from family_assistant.storage.database import Database, DatabaseTransaction
 from tests.helpers import wait_for_condition
 
@@ -29,6 +30,13 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
 _MARKER = "test_statement_cancellation_marker"
+_PREVIOUS_REVISION = "mh_conversation_owner_idx"
+
+_alembic_version_table = sa.Table(
+    "alembic_version",
+    sa.MetaData(),
+    sa.Column("version_num", sa.String(32), primary_key=True),
+)
 
 
 async def _active_marked_statements(db: Database) -> int:
@@ -164,18 +172,23 @@ async def test_connections_carry_a_statement_timeout(
 async def test_migrations_still_run_under_a_ceiling_that_aborts_queries(
     db_engine: AsyncEngine,
 ) -> None:
-    """Startup migrations keep working on an engine whose ceiling is tight.
+    """Startup migrations commit on an engine whose ceiling is tight.
 
     ``init_db`` hands Alembic a connection from the application's own pool, so
     migrations would otherwise inherit ``POSTGRES_STATEMENT_TIMEOUT_MS`` -- and
     a long index build or backfill is the one place that ceiling is wrong.
-
-    A guard against gross regressions rather than a proof: the schema offers no
-    migration statement slow enough to outrun the ceiling on demand, so this
-    cannot distinguish "exempt" from "fast enough". The exemption itself is one
-    ``SET`` in ``_run_alembic_command``.
     """
     url = db_engine.url.render_as_string(hide_password=False)
+    db = Database(db_engine)
+
+    async def regress_to_previous_revision(txn: DatabaseTransaction) -> None:
+        await txn.execute(sa.text("DROP TABLE conversation_shares"))
+        await txn.execute(
+            sa.update(_alembic_version_table).values(version_num=_PREVIOUS_REVISION)
+        )
+
+    await db.atomic(regress_to_previous_revision)
+
     # Well above connection setup: below roughly 25ms the abort lands outside
     # SQLAlchemy's cursor wrapper and surfaces as a raw asyncpg error.
     tight_engine = create_engine_with_sqlite_optimizations(
@@ -191,6 +204,20 @@ async def test_migrations_still_run_under_a_ceiling_that_aborts_queries(
         await init_db(tight_engine)
     finally:
         await tight_engine.dispose()
+
+    verification_engine = create_engine_with_sqlite_optimizations(url)
+    try:
+        async with verification_engine.connect() as conn:
+            tables = await conn.run_sync(
+                lambda sync_conn: sa.inspect(sync_conn).get_table_names()
+            )
+            revision = await conn.scalar(
+                sa.select(_alembic_version_table.c.version_num)
+            )
+        assert conversation_shares_table.name in tables
+        assert revision == "conversation_shares"
+    finally:
+        await verification_engine.dispose()
 
 
 @pytest.mark.postgres
