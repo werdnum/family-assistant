@@ -48,6 +48,7 @@ recovery mechanism if it is exposed accidentally.
 Endpoints:
 
 - `POST /api/v1/chat/conversations/{conversation_id}/share` rotates and returns the link.
+- `GET /api/v1/chat/conversations/{conversation_id}/share` reports whether a share is active.
 - `DELETE /api/v1/chat/conversations/{conversation_id}/share` revokes it.
 - `GET /api/v1/shared-conversations/{token}/messages` returns the visible main-conversation rows.
 - `GET /api/v1/shared-conversations/{token}/attachments/{attachment_id}` serves a scoped file.

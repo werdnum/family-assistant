@@ -56,6 +56,7 @@ def _is_public(path: str) -> bool:
     "path",
     [
         "/notes",
+        "/shared/conversations/secret-token",
         "/manifest.json",
         "/manifest.jsonx",
         "/sw.json",

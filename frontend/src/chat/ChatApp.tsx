@@ -16,6 +16,7 @@ import { NotificationSettings } from './NotificationSettings';
 import { PendingConfirmationsTray } from './PendingConfirmationsTray';
 import ProfileSelector from './ProfileSelector';
 import { PushNotificationButton } from './PushNotificationButton';
+import { ShareConversationButton } from './ShareConversationButton';
 import { ChatControlsContext, type SteerResult } from './chatControls';
 import { Thread } from './Thread';
 import { ToolConfirmationProvider } from './ToolConfirmationContext';
@@ -2502,6 +2503,10 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               </div>
 
               <div className="flex items-center gap-2 ml-auto">
+                <ShareConversationButton
+                  conversationId={conversationId}
+                  hasMessages={messages.length > 0}
+                />
                 <NotificationSettings
                   enabled={notificationsEnabled}
                   onEnabledChange={handleNotificationEnabledChange}
@@ -2570,6 +2575,10 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               </div>
 
               <div className="flex items-center gap-2 ml-auto">
+                <ShareConversationButton
+                  conversationId={conversationId}
+                  hasMessages={messages.length > 0}
+                />
                 <NotificationSettings
                   enabled={notificationsEnabled}
                   onEnabledChange={handleNotificationEnabledChange}

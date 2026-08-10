@@ -95,6 +95,10 @@ export const handlers = [
     });
   }),
 
+  http.get('/api/v1/chat/conversations/:conversationId/share', () => {
+    return HttpResponse.json({ active: false });
+  }),
+
   // Mock conversation messages endpoint
   http.get('/api/v1/chat/conversations/:conversationId/messages', ({ params }) => {
     const { conversationId } = params;

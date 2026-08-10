@@ -1,9 +1,11 @@
 import asyncio
 import base64
 import binascii
+import hashlib
 import json
 import logging
 import mimetypes
+import secrets
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from contextlib import asynccontextmanager
@@ -11,8 +13,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from family_assistant.llm import ToolCallItem
@@ -51,6 +53,7 @@ from family_assistant.services.user_identity import (
     UserIdentityResolver,
 )
 from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.conversation_shares import ConversationShare
 from family_assistant.storage.types import MessageHistoryRow
 from family_assistant.tools import MCPToolsProvider, find_provider_by_type
 from family_assistant.tools.infrastructure import ToolDescriptorProvider
@@ -538,6 +541,18 @@ class ConversationMessagesResponse(BaseModel):
             "client distinguish durable tool-only replies from partial rows."
         ),
     )
+
+
+class ConversationShareResponse(BaseModel):
+    """New active share link for a conversation."""
+
+    share_url: str
+
+
+class ConversationShareStatusResponse(BaseModel):
+    """Whether a conversation currently has an active share."""
+
+    active: bool
 
 
 class ActiveTurnInfo(BaseModel):
@@ -1119,6 +1134,50 @@ async def _ensure_user_owns_conversation(
         # isolation. (Empty conversations are handled above.)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     return raw_user_id
+
+
+async def _ensure_user_owns_persisted_conversation(
+    request: Request,
+    current_user: Mapping[str, object],
+    conversation_id: str,
+) -> str:
+    """Return the owner id for a non-empty conversation owned by the caller."""
+    user_id = await _ensure_user_owns_conversation(
+        request, current_user, conversation_id, allow_new=False
+    )
+    db_context = Database(request.app.state.database_engine)
+    if not await db_context.message_history.get_conversation_owner_ids(conversation_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    return user_id
+
+
+def _share_token_hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+async def _get_active_conversation_share(
+    request: Request,
+    db_context: Database,
+    token: str,
+) -> ConversationShare:
+    """Resolve an active token without revealing why an invalid share failed."""
+    if len(token) != 43:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    share = await db_context.conversation_shares.get_by_token_hash(
+        _share_token_hash(token)
+    )
+    if share is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+    owners = await db_context.message_history.get_conversation_owner_ids(
+        share.conversation_id
+    )
+    resolver = get_user_identity_resolver(request)
+    if not owners or not _caller_is_sole_canonical_owner(
+        resolver, owners, share.owner_user_id
+    ):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    return share
 
 
 # ----------------------------------------------------------------------- #
@@ -2491,6 +2550,110 @@ async def get_conversations(
     )
 
 
+@chat_api_router.get(
+    "/v1/chat/conversations/{conversation_id}/share",
+)
+async def get_conversation_share_status(
+    conversation_id: str,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    db_context: Annotated[Database, Depends(get_db)],
+) -> ConversationShareStatusResponse:
+    """Return share status to the authenticated conversation owner."""
+    await _ensure_user_owns_persisted_conversation(
+        request, current_user, conversation_id
+    )
+    share = await db_context.conversation_shares.get_by_conversation(conversation_id)
+    return ConversationShareStatusResponse(active=share is not None)
+
+
+@chat_api_router.post(
+    "/v1/chat/conversations/{conversation_id}/share",
+)
+async def create_conversation_share(
+    conversation_id: str,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    db_context: Annotated[Database, Depends(get_db)],
+) -> ConversationShareResponse:
+    """Rotate and return a read-only share link for the conversation owner."""
+    owner_user_id = await _ensure_user_owns_persisted_conversation(
+        request, current_user, conversation_id
+    )
+    token = secrets.token_urlsafe(32)
+    await db_context.conversation_shares.rotate(
+        conversation_id, owner_user_id, _share_token_hash(token)
+    )
+    return ConversationShareResponse(share_url=f"/shared/conversations/{token}")
+
+
+@chat_api_router.delete(
+    "/v1/chat/conversations/{conversation_id}/share",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
+async def revoke_conversation_share(
+    conversation_id: str,
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    db_context: Annotated[Database, Depends(get_db)],
+) -> Response:
+    """Revoke the active read-only share as the conversation owner."""
+    await _ensure_user_owns_persisted_conversation(
+        request, current_user, conversation_id
+    )
+    await db_context.conversation_shares.revoke(conversation_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _serialize_conversation_messages(
+    messages: list[MessageHistoryRow],
+) -> list[ConversationMessage]:
+    """Convert visible history rows to the public conversation message shape."""
+    response_messages: list[ConversationMessage] = []
+    for msg in messages:
+        if not all(key in msg for key in ["internal_id", "role", "timestamp"]):
+            continue
+
+        tool_calls_dicts = None
+        msg_tool_calls = msg.get("tool_calls")
+        if msg_tool_calls:
+            tool_calls_dicts = []
+            for tool_call in msg_tool_calls:
+                if isinstance(tool_call, ToolCallItem):
+                    arguments = tool_call.function.arguments
+                    if not isinstance(arguments, str):
+                        arguments = json.dumps(arguments)
+                    tool_calls_dicts.append({
+                        "id": tool_call.id,
+                        "type": tool_call.type,
+                        "function": {
+                            "name": tool_call.function.name,
+                            "arguments": arguments,
+                        },
+                    })
+                elif isinstance(tool_call, dict):
+                    tool_calls_dicts.append(tool_call)
+
+        response_messages.append(
+            ConversationMessage(
+                internal_id=msg["internal_id"],
+                turn_id=msg.get("turn_id"),
+                role=msg["role"],
+                content=msg.get("content"),
+                timestamp=msg["timestamp"],
+                tool_calls=tool_calls_dicts,
+                tool_call_id=msg.get("tool_call_id"),
+                error_traceback=msg.get("error_traceback"),
+                attachments=msg.get("attachments"),
+                processing_profile_id=msg.get("processing_profile_id"),
+                reasoning_info=msg.get("reasoning_info"),
+                metadata=None,
+            )
+        )
+    return response_messages
+
+
 @chat_api_router.get("/v1/chat/conversations/{conversation_id}/messages")
 async def get_conversation_messages(
     conversation_id: str,
@@ -2592,55 +2755,7 @@ async def get_conversation_messages(
         acting_user_id=user_id,
     )
 
-    # Convert to response format
-    response_messages = []
-    for msg in messages:
-        # Skip messages with missing required fields
-        if not all(key in msg for key in ["internal_id", "role", "timestamp"]):
-            continue
-
-        # Convert tool_calls from ToolCallItem objects to dicts for Pydantic
-        tool_calls_dicts = None
-        msg_tool_calls = msg.get("tool_calls")
-        if msg_tool_calls:
-            tool_calls_dicts = []
-            for tc in msg_tool_calls:
-                if isinstance(tc, ToolCallItem):
-                    # Convert ToolCallItem to dict
-                    # Ensure arguments is always a JSON string
-                    args = tc.function.arguments
-                    if not isinstance(args, str):
-                        args = json.dumps(args)
-                    tc_dict = {
-                        "id": tc.id,
-                        "type": tc.type,
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": args,
-                        },
-                    }
-                    # Note: provider_metadata is not included in API response
-                    tool_calls_dicts.append(tc_dict)
-                elif isinstance(tc, dict):
-                    # Already a dict, use as-is
-                    tool_calls_dicts.append(tc)
-
-        response_messages.append(
-            ConversationMessage(
-                internal_id=msg["internal_id"],
-                turn_id=msg.get("turn_id"),
-                role=msg["role"],
-                content=msg.get("content"),
-                timestamp=msg["timestamp"],
-                tool_calls=tool_calls_dicts,
-                tool_call_id=msg.get("tool_call_id"),
-                error_traceback=msg.get("error_traceback"),
-                attachments=msg.get("attachments"),
-                processing_profile_id=msg.get("processing_profile_id"),
-                reasoning_info=msg.get("reasoning_info"),
-                metadata=None,
-            )
-        )
+    response_messages = _serialize_conversation_messages(messages)
 
     # Get total message count for the conversation
     total_message_count = (
@@ -2670,6 +2785,126 @@ async def get_conversation_messages(
         has_more_after=has_more_after,
         latest_user_profile_id=latest_user_profile_id,
         active_turns=active_turns,
+    )
+
+
+@chat_api_router.get(
+    "/v1/shared-conversations/{token}/messages",
+)
+async def get_shared_conversation_messages(
+    token: str,
+    request: Request,
+    _current_user: Annotated[dict, Depends(get_current_user)],
+    db_context: Annotated[Database, Depends(get_db)],
+    attachment_registry: Annotated[
+        "AttachmentRegistry", Depends(get_attachment_registry)
+    ],
+) -> ConversationMessagesResponse:
+    """Return a read-only transcript to an authenticated share-link holder."""
+    share = await _get_active_conversation_share(request, db_context, token)
+    history_by_chat = await db_context.message_history.get_all_grouped(
+        interface_type=None,
+        conversation_id=share.conversation_id,
+        include_subconversations=False,
+    )
+    messages = [
+        message
+        for (
+            _interface_type,
+            conversation_id,
+        ), conversation_messages in history_by_chat.items()
+        if conversation_id == share.conversation_id
+        for message in conversation_messages
+    ]
+    messages.sort(
+        key=lambda message: message.get("timestamp", datetime.min.replace(tzinfo=UTC))
+    )
+    await _enrich_persisted_attachments(
+        messages,
+        db_context=db_context,
+        attachment_registry=attachment_registry,
+        acting_user_id=share.owner_user_id,
+    )
+    for message in messages:
+        for attachment in message.get("attachments") or []:
+            attachment_id = attachment.get("attachment_id")
+            if attachment_id:
+                shared_url = (
+                    f"/api/v1/shared-conversations/{token}/attachments/{attachment_id}"
+                )
+                attachment["content_url"] = shared_url
+                attachment["url"] = shared_url
+
+    response_messages = _serialize_conversation_messages(messages)
+    return ConversationMessagesResponse(
+        conversation_id=share.conversation_id,
+        messages=response_messages,
+        count=len(response_messages),
+        total_messages=len(response_messages),
+        has_more_before=False,
+        has_more_after=False,
+        latest_user_profile_id=None,
+        active_turns=[],
+    )
+
+
+@chat_api_router.get(
+    "/v1/shared-conversations/{token}/attachments/{attachment_id}",
+    response_class=FileResponse,
+)
+async def serve_shared_conversation_attachment(
+    token: str,
+    attachment_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    _current_user: Annotated[dict, Depends(get_current_user)],
+    db_context: Annotated[Database, Depends(get_db)],
+    attachment_registry: Annotated[
+        "AttachmentRegistry", Depends(get_attachment_registry)
+    ],
+) -> FileResponse:
+    """Serve one attachment scoped to an active authenticated share link."""
+    try:
+        uuid.UUID(attachment_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND) from exc
+
+    share = await _get_active_conversation_share(request, db_context, token)
+    attachment = await attachment_registry.get_attachment(
+        db_context,
+        attachment_id,
+        acting_user_id=share.owner_user_id,
+    )
+    if attachment is None or attachment.conversation_id != share.conversation_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+    file_path = attachment_registry.get_attachment_path(
+        attachment_id,
+        stored_path=attachment.storage_path,
+        source_type=attachment.source_type,
+    )
+    if file_path is None or not file_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+
+    background_tasks.add_task(
+        attachment_registry.update_access_time_background,
+        attachment_id,
+        acting_user_id=share.owner_user_id,
+    )
+    original_filename = attachment.metadata.get("original_filename")
+    filename = (
+        original_filename
+        if isinstance(original_filename, str) and original_filename
+        else file_path.name
+    )
+    return FileResponse(
+        path=str(file_path),
+        media_type=attachment_registry.get_content_type(file_path),
+        filename=filename,
+        headers={
+            "Cache-Control": "private, no-store",
+            "ETag": f'"{attachment_id}"',
+        },
     )
 
 
