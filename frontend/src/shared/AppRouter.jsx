@@ -4,6 +4,7 @@ import { BrowserRouter, Route, Routes } from 'react-router-dom';
 // Lazy load all route components for code splitting
 const Layout = lazy(() => import('./Layout.tsx'));
 const ChatPage = lazy(() => import('../chat/ChatApp'));
+const SharedConversationPage = lazy(() => import('../chat/SharedConversationPage'));
 const ToolsApp = lazy(() => import('../tools/ToolsApp'));
 const ErrorsApp = lazy(() => import('../errors/ErrorsApp'));
 const ContextPage = lazy(() => import('./ContextPage.tsx'));
@@ -69,6 +70,14 @@ const AppRouter = () => {
           element={
             <Suspense fallback={<LoadingSpinner />}>
               <ChatPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="/shared/conversations/:token"
+          element={
+            <Suspense fallback={<LoadingSpinner />}>
+              <SharedConversationPage />
             </Suspense>
           }
         />

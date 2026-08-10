@@ -47,6 +47,17 @@ profile's context stays separate — but anything you have already typed comes w
 draft a message and then decide who should handle it. If the chat is still empty, switching just
 changes the profile and keeps you where you are.
 
+**Share a conversation.** Open a conversation that already has messages and select the share icon in
+the chat header. Family Assistant copies a link to a read-only transcript. The recipient must sign
+in as an authorized Family Assistant user, and the conversation does not appear in their history
+list. Selecting share again replaces the old link; select the stop-sharing icon to make the current
+link unavailable. The transcript reflects messages added after the link was created when the
+recipient refreshes it.
+
+Treat the link as private within your household. It is meant to stop another authorized user from
+casually browsing your history, not to protect a conversation from someone who obtains the link and
+deliberately tries to access it.
+
 **Stop or steer a running reply.** While the assistant is generating, the chat box doubles as a
 steering box:
 

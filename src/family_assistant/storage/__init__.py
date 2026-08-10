@@ -29,6 +29,7 @@ from family_assistant.storage.base import (
 
 # Import table definitions for direct use
 from family_assistant.storage.confirmation_requests import confirmation_requests_table
+from family_assistant.storage.conversation_shares import conversation_shares_table
 from family_assistant.storage.database import Database
 from family_assistant.storage.delegation_runs import delegation_runs_table
 from family_assistant.storage.email import received_emails_table
@@ -359,6 +360,7 @@ __all__ = [
     "EventSourceType",
     "InterfaceType",
     "confirmation_requests_table",
+    "conversation_shares_table",
     "create_engine_with_sqlite_optimizations",
     "delegation_runs_table",
     "error_logs_table",

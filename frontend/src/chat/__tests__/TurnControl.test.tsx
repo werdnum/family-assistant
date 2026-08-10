@@ -1637,7 +1637,7 @@ describe('Web turn control (Stop / Steer)', () => {
             screen.getByText(/Couldn't confirm the assistant received this/i)
           ).toBeInTheDocument();
         }, WAIT);
-        expect(screen.getByText(/and the dentist too/)).toBeInTheDocument();
+        expect(screen.getByTestId('steer-error')).toHaveTextContent('and the dentist too');
         // Handed back, not resent for the user.
         expect(turnsPosts).toBe(1);
       } finally {

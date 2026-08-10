@@ -2,7 +2,8 @@ import json
 import logging
 import uuid
 from collections.abc import AsyncGenerator
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
@@ -28,10 +29,12 @@ from family_assistant.llm import (
 )
 from family_assistant.llm.messages import (
     AssistantMessage,
+    MessageAttachmentMetadata,
     ToolMessage,
     UserMessage,
 )
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage import init_db
 from family_assistant.storage.database import Database
 from family_assistant.tools import (
@@ -48,6 +51,7 @@ from family_assistant.tools import (
     ToolsProvider,
 )
 from family_assistant.web.app_creator import app as actual_app
+from family_assistant.web.dependencies import get_current_user
 from family_assistant.web.models import ChatMessageResponse
 from family_assistant.web.web_chat_interface import WebChatInterface
 from tests.mocks.mock_llm import (
@@ -583,3 +587,129 @@ async def test_api_chat_send_message_persists_user_id_no_tools(
     logger.info(
         f"Successfully verified user_id '{expected_user_id}' was persisted for all messages without tools."
     )
+
+
+@pytest.mark.asyncio
+async def test_conversation_share_is_authenticated_read_only_and_revocable(
+    test_client: AsyncClient,
+    app_fixture: FastAPI,
+    db_context: Database,
+    tmp_path: Path,
+) -> None:
+    conversation_id = str(uuid.uuid4())
+    await db_context.message_history.add_message(
+        UserMessage(content="Please help me choose a gift"),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=datetime.now(UTC),
+        user_id="test_user",
+    )
+    attachment_registry = AttachmentRegistry(str(tmp_path), db_context.engine)
+    app_fixture.state.attachment_registry = attachment_registry
+    attachment = await attachment_registry.register_user_attachment(
+        db_context,
+        b"shared details",
+        "details.txt",
+        "text/plain",
+        conversation_id=conversation_id,
+        user_id="test_user",
+    )
+    await db_context.message_history.add_message(
+        AssistantMessage(content="Here are the gift options."),
+        interface_type="web",
+        conversation_id=conversation_id,
+        timestamp=datetime.now(UTC),
+        user_id="test_user",
+        attachments=[
+            MessageAttachmentMetadata(
+                type="attachment_reference",
+                attachment_id=attachment.attachment_id,
+            )
+        ],
+    )
+    foreign_attachment = await attachment_registry.register_user_attachment(
+        db_context,
+        b"private",
+        "private.txt",
+        "text/plain",
+        conversation_id=str(uuid.uuid4()),
+        user_id="test_user",
+    )
+
+    create_response = await test_client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/share"
+    )
+    assert create_response.status_code == 200
+    share_url = create_response.json()["share_url"]
+    token = share_url.rsplit("/", 1)[-1]
+    stored_share = await db_context.conversation_shares.get_by_conversation(
+        conversation_id
+    )
+    assert stored_share is not None
+    assert stored_share.token_hash != token
+    assert len(stored_share.token_hash) == 64
+    status_response = await test_client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/share"
+    )
+    assert status_response.json() == {"active": True}
+
+    replacement_response = await test_client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/share"
+    )
+    replacement_token = replacement_response.json()["share_url"].rsplit("/", 1)[-1]
+    assert replacement_token != token
+
+    async def wife_user() -> dict[str, str]:
+        return {"user_identifier": "wife"}
+
+    app_fixture.dependency_overrides[get_current_user] = wife_user
+    non_owner_share = await test_client.post(
+        f"/api/v1/chat/conversations/{conversation_id}/share"
+    )
+    assert non_owner_share.status_code == 404
+    replaced_read = await test_client.get(
+        f"/api/v1/shared-conversations/{token}/messages"
+    )
+    assert replaced_read.status_code == 404
+    token = replacement_token
+    owner_read = await test_client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/messages"
+    )
+    assert owner_read.status_code == 404
+
+    shared_read = await test_client.get(
+        f"/api/v1/shared-conversations/{token}/messages"
+    )
+    assert shared_read.status_code == 200
+    payload = shared_read.json()
+    assert [message["content"] for message in payload["messages"]] == [
+        "Please help me choose a gift",
+        "Here are the gift options.",
+    ]
+    shared_attachment_url = payload["messages"][1]["attachments"][0]["content_url"]
+    attachment_response = await test_client.get(shared_attachment_url)
+    assert attachment_response.status_code == 200
+    assert attachment_response.content == b"shared details"
+    foreign_attachment_response = await test_client.get(
+        f"/api/v1/shared-conversations/{token}/attachments/"
+        f"{foreign_attachment.attachment_id}"
+    )
+    assert foreign_attachment_response.status_code == 404
+
+    conversation_list = await test_client.get(
+        "/api/v1/chat/conversations?interface_type=web"
+    )
+    assert conversation_list.status_code == 200
+    assert conversation_list.json()["conversations"] == []
+
+    app_fixture.dependency_overrides.pop(get_current_user)
+    revoke_response = await test_client.delete(
+        f"/api/v1/chat/conversations/{conversation_id}/share"
+    )
+    assert revoke_response.status_code == 204
+    app_fixture.dependency_overrides[get_current_user] = wife_user
+    revoked_read = await test_client.get(
+        f"/api/v1/shared-conversations/{token}/messages"
+    )
+    assert revoked_read.status_code == 404
+    app_fixture.dependency_overrides.pop(get_current_user)

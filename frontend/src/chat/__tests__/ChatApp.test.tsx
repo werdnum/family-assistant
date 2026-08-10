@@ -1,7 +1,9 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { HttpResponse, http } from 'msw';
 import { vi } from 'vitest';
 import { mockLocalStorage, resetLocalStorageMock } from '../../test/mocks/localStorageMock';
+import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
 import { waitForMessageSent } from '../../test/utils/waitHelpers';
 import { mergeConsecutiveToolOnlyAssistantMessages } from '../ChatApp';
@@ -63,6 +65,60 @@ describe('ChatApp', () => {
     // @assistant-ui/react runtime behavior, which may not show messages
     // in the DOM in the same way as a traditional chat UI
   }, 30000);
+
+  it('waits for a new conversation to persist before loading share status', async () => {
+    const user = userEvent.setup();
+    const statusRequest = vi.fn(() => HttpResponse.json({ active: false }));
+    let conversationId = '';
+    let turnId = '';
+    let finishStream: (() => void) | undefined;
+    server.use(
+      http.get('/api/v1/chat/conversations/:conversationId/share', statusRequest),
+      http.post('/api/v1/chat/turns', async ({ request }) => {
+        const body = (await request.json()) as {
+          conversation_id: string;
+          turn_id: string;
+        };
+        conversationId = body.conversation_id;
+        turnId = body.turn_id;
+        return HttpResponse.json({
+          conversation_id: conversationId,
+          turn_id: turnId,
+          first_seq: 0,
+        });
+      }),
+      http.get('/api/v1/chat/conversations/:conversationId/stream', () => {
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              encoder.encode(
+                `event: turn_started\ndata: ${JSON.stringify({ turn_id: turnId, seq: 0 })}\n\n`
+              )
+            );
+            finishStream = () => {
+              controller.enqueue(
+                encoder.encode(
+                  `event: turn_ended\ndata: ${JSON.stringify({ turn_id: turnId, seq: 1, status: 'complete' })}\n\n`
+                )
+              );
+              controller.close();
+            };
+          },
+        });
+        return new HttpResponse(stream, { headers: { 'Content-Type': 'text/event-stream' } });
+      })
+    );
+    await renderChatApp({ waitForReady: true });
+
+    await user.type(screen.getByPlaceholderText('Message Family Assistant...'), 'Hello');
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(finishStream).toBeDefined());
+    expect(statusRequest).not.toHaveBeenCalled();
+
+    finishStream?.();
+    await waitFor(() => expect(statusRequest).toHaveBeenCalledOnce());
+  });
 
   it('handles conversation loading', async () => {
     await renderChatApp({ waitForReady: true });
