@@ -27,7 +27,7 @@ describe('ShareConversationButton', () => {
         return new HttpResponse(null, { status: 204 });
       })
     );
-    render(<ShareConversationButton conversationId="conversation-1" hasMessages={true} />);
+    render(<ShareConversationButton conversationId="conversation-1" hasPersistedMessages={true} />);
 
     await user.click(await screen.findByRole('button', { name: 'Share conversation' }));
     await waitFor(() => {
@@ -56,7 +56,7 @@ describe('ShareConversationButton', () => {
           : HttpResponse.json({ active: true });
       })
     );
-    render(<ShareConversationButton conversationId="conversation-1" hasMessages={true} />);
+    render(<ShareConversationButton conversationId="conversation-1" hasPersistedMessages={true} />);
 
     await screen.findByRole('button', { name: 'Retry loading sharing status' });
     expect(screen.queryByRole('button', { name: 'Share conversation' })).not.toBeInTheDocument();
@@ -69,5 +69,22 @@ describe('ShareConversationButton', () => {
       await screen.findByRole('button', { name: 'Stop sharing conversation' })
     ).toBeInTheDocument();
     consoleError.mockRestore();
+  });
+
+  it('does not request status for optimistic messages before they persist', async () => {
+    const statusRequest = vi.fn(() => HttpResponse.json({ active: false }));
+    server.use(http.get('/api/v1/chat/conversations/conversation-1/share', statusRequest));
+    const { rerender } = render(
+      <ShareConversationButton conversationId="conversation-1" hasPersistedMessages={false} />
+    );
+
+    await Promise.resolve();
+    expect(statusRequest).not.toHaveBeenCalled();
+
+    rerender(
+      <ShareConversationButton conversationId="conversation-1" hasPersistedMessages={true} />
+    );
+    expect(await screen.findByRole('button', { name: 'Share conversation' })).toBeInTheDocument();
+    expect(statusRequest).toHaveBeenCalledOnce();
   });
 });

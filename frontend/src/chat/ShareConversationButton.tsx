@@ -4,14 +4,14 @@ import { Button } from '@/components/ui/button';
 
 interface ShareConversationButtonProps {
   conversationId: string | null;
-  hasMessages: boolean;
+  hasPersistedMessages: boolean;
 }
 
 type ShareStatus = 'loading' | 'active' | 'inactive' | 'error';
 
 export const ShareConversationButton: React.FC<ShareConversationButtonProps> = ({
   conversationId,
-  hasMessages,
+  hasPersistedMessages,
 }) => {
   const [shareStatus, setShareStatus] = useState<ShareStatus>('loading');
   const [busy, setBusy] = useState(false);
@@ -25,7 +25,7 @@ export const ShareConversationButton: React.FC<ShareConversationButtonProps> = (
     setFeedback(null);
     setManualShareUrl(null);
     mutationStartedRef.current = false;
-    if (!conversationId || !hasMessages) {
+    if (!conversationId || !hasPersistedMessages) {
       return;
     }
     const controller = new AbortController();
@@ -47,9 +47,9 @@ export const ShareConversationButton: React.FC<ShareConversationButtonProps> = (
         }
       });
     return () => controller.abort();
-  }, [conversationId, hasMessages, statusRequestVersion]);
+  }, [conversationId, hasPersistedMessages, statusRequestVersion]);
 
-  if (!conversationId || !hasMessages) {
+  if (!conversationId || !hasPersistedMessages) {
     return null;
   }
 

@@ -384,6 +384,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(window.innerWidth > 768);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [persistedConversationId, setPersistedConversationId] = useState<string | null>(null);
   // Always-current mirror of conversationId, so a deferred follow-up timer can
   // synchronously check whether the conversation changed before it fires.
   const conversationIdRef = useRef<string | null>(null);
@@ -804,6 +805,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       // clock can't pin it.
       if (turnId) {
         pendingOptimisticConversationsRef.current.delete(turnId);
+      }
+      if (!kickoffFailed && conversationId) {
+        setPersistedConversationId(conversationId);
       }
 
       if (messageId) {
@@ -1402,6 +1406,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
           // A stream is active for this conversation — its own completion will
           // reconcile. Don't clobber it, and treat this as a supersession.
           return 'bailed' as const;
+        }
+        if (data.messages.length > 0 && conversationIdRef.current === convId) {
+          setPersistedConversationId(convId);
         }
 
         // A foreground load means the user just opened this conversation (every
@@ -2505,7 +2512,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               <div className="flex items-center gap-2 ml-auto">
                 <ShareConversationButton
                   conversationId={conversationId}
-                  hasMessages={messages.length > 0}
+                  hasPersistedMessages={
+                    messages.length > 0 && persistedConversationId === conversationId
+                  }
                 />
                 <NotificationSettings
                   enabled={notificationsEnabled}
@@ -2577,7 +2586,9 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               <div className="flex items-center gap-2 ml-auto">
                 <ShareConversationButton
                   conversationId={conversationId}
-                  hasMessages={messages.length > 0}
+                  hasPersistedMessages={
+                    messages.length > 0 && persistedConversationId === conversationId
+                  }
                 />
                 <NotificationSettings
                   enabled={notificationsEnabled}
