@@ -1324,6 +1324,34 @@ ______________________________________________________________________
 
 ## External Services
 
+### Keychute brokered script HTTP
+
+Family Assistant can expose `keychute_http_request()` to Monty scripts while leaving credentials
+inside [Keychute](https://github.com/werdnum/keychute). The integration invokes Keychute's own CLI,
+which owns access-request creation, approval waiting, grant validation, and proxying.
+
+```yaml
+keychute_config:
+  enabled: true
+  executable: "keychute"
+  max_response_bytes: 26214400
+```
+
+| Setting              | Default    | Description                                     |
+| -------------------- | ---------- | ----------------------------------------------- |
+| `enabled`            | `false`    | Exposes the brokered HTTP function to scripts.  |
+| `executable`         | `keychute` | Keychute CLI executable name or absolute path.  |
+| `max_response_bytes` | `26214400` | Maximum upstream response body retained in RAM. |
+
+Configure the CLI in the Family Assistant process environment. `KEYCHUTE_URL` is required, plus
+either `KEYCHUTE_TOKEN` or `KEYCHUTE_TOKEN_FILE`. Production deployments normally use the rotating
+service-account token file and may also set `KEYCHUTE_CA_BUNDLE` for an internal CA. See the
+Keychute documentation for its complete environment contract. Enabling the Family Assistant setting
+without a working CLI configuration fails individual script calls explicitly; it does not fall back
+to direct unauthenticated HTTP.
+
+______________________________________________________________________
+
 ### BRAVE_API_KEY
 
 Brave Search API key for web search.

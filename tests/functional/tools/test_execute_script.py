@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig, KeychuteConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from family_assistant.tools.data_visualization import create_vega_chart_tool
@@ -99,6 +100,54 @@ len(tools)
     assert result.text is not None
 
     assert "Script result: 0" in result.text
+
+
+@pytest.mark.asyncio
+async def test_execute_script_exposes_configured_keychute(
+    db_engine: AsyncEngine, tmp_path: Path
+) -> None:
+    """Configured scripts can consume a response without receiving a credential."""
+    executable = tmp_path / "keychute"
+    executable.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        "sys.stdout.buffer.write("
+        "b'HTTP/1.1 200 OK\\r\\nContent-Type: application/json\\r\\n\\r\\n'"
+        "b'{\"answer\": 42}')\n"
+    )
+    executable.chmod(0o755)
+    db = Database(engine=db_engine)
+    mock_service = Mock()
+    mock_service.tools_provider = CompositeToolsProvider([])
+    mock_service.app_config = AppConfig(
+        keychute_config=KeychuteConfig(
+            enabled=True,
+            executable=str(executable),
+        )
+    )
+    ctx = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-conv",
+        user_name="test",
+        turn_id=None,
+        db_context=db,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        processing_service=mock_service,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
+
+    result = await execute_script_tool(
+        ctx,
+        'json_decode(keychute_http_request("api", "https://example.test")["body"])["answer"]',
+    )
+
+    assert result.text == "Script result: 42"
 
 
 @pytest.mark.asyncio

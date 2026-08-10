@@ -151,6 +151,38 @@ finally:
 
 ## Available APIs
 
+### Brokered HTTP with Keychute
+
+When the operator has configured [Keychute](https://github.com/werdnum/keychute), scripts can make
+authenticated HTTPS calls without receiving or handling the credential. Use
+`keychute_http_request()` and identify the stored secret by name:
+
+```python
+response = keychute_http_request(
+    secret_name="weather-api-token",
+    url="https://api.example.com/v1/forecast?city=Melbourne",
+    method="GET",
+    reason="Fetch the forecast requested by the user",
+)
+
+if response["status_code"] == 200:
+    forecast = json_decode(response["body"])
+    forecast["summary"]
+else:
+    print("Weather API returned", response["status_code"])
+```
+
+The response is a dictionary containing `status_code` (an integer), `headers` (a dictionary whose
+values are lists), and `body` (bytes). `json_decode()` accepts the byte body directly. Optional
+arguments include `headers`, `body`, `ttl_seconds`, `max_uses`, `approval_timeout_seconds`, and
+`request_timeout_seconds`.
+
+Keychute decides whether the call is allowed or needs operator approval. The approval includes the
+exact script source, destination, method, and requested access constraints. Redirects are not
+followed, and the credential is attached inside Keychute rather than handed to Family Assistant. The
+upstream response is untrusted and is returned verbatim, so only approved, trusted origins should
+receive a credential; a hostile upstream could reflect request data in its response.
+
 ### Script Output (`print`)
 
 A script returns its **last expression** to the assistant. In addition, anything written with

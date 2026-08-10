@@ -34,6 +34,12 @@ event_system:
     home_assistant:
       enabled: true
       # URL and token are shared with context provider
+# Keychute brokered HTTP for Monty scripts. Enabling this exposes
+# keychute_http_request(); the CLI reads KEYCHUTE_URL and its auth/TLS env vars.
+keychute_config:
+  enabled: false
+  executable: "keychute"
+  max_response_bytes: 26214400 # 25 MiB
 # LLM provider-specific parameters
 # Keys can be full model names or prefixes (ending with '-')
 # Parameters defined here will be passed as keyword arguments to the LLM provider
@@ -1786,4 +1792,3 @@ browser_handoff_config:
 # embedding_api_key (EMBEDDING_API_KEY). For OpenRouter use
 # embedding_base_url=https://openrouter.ai/api/v1. See
 # docs/operations/CONFIGURATION_REFERENCE.md.
-

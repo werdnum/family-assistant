@@ -8,9 +8,10 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
+from family_assistant.scripting.apis.keychute import add_keychute_http_api
 from family_assistant.scripting.config import ScriptConfig
 from family_assistant.scripting.errors import (
     ScriptExecutionError,
@@ -21,6 +22,7 @@ from family_assistant.scripting.monty_engine import MontyEngine, ScriptOutputBuf
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
+    from family_assistant.config_models import KeychuteConfig
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -211,6 +213,20 @@ async def execute_script_tool(
                     "error_type": "validation_error",
                     "error": error_msg,
                 },
+            )
+
+        processing_service = exec_context.processing_service
+        keychute_config = getattr(
+            getattr(processing_service, "app_config", None),
+            "keychute_config",
+            None,
+        )
+        if isinstance(getattr(keychute_config, "enabled", None), bool):
+            globals = add_keychute_http_api(
+                globals,
+                config=cast("KeychuteConfig", keychute_config),
+                script_source=script,
+                execution_context=exec_context,
             )
         # Create a configuration with reasonable defaults
         config = ScriptConfig(
@@ -517,6 +533,9 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "• Base64: base64_encode(data), base64_decode(data) -> str, base64_decode_bytes(data) -> bytes\n"
                 "• LLM Wake: wake_llm(context, include_event=True) - Request LLM attention with context (string or dict)\n"
                 "• LLM: llm(prompt), llm_json(prompt) - One-shot LLM calls for summarisation and data extraction\n\n"
+                "**Brokered HTTP:**\n"
+                "• When Keychute is configured, use keychute_http_request(secret_name, url, ...) "
+                "for authenticated HTTP without exposing the credential to the script.\n\n"
                 "**Family Assistant Tools:**\n"
                 "All enabled tools are available as functions. Call them directly:\n"
                 "• add_or_update_note(title='...', content='...')\n"
