@@ -32,6 +32,12 @@ scripts all use the same client.
   memory.
 - A returned upstream response enters the turn's runtime-taint tracker as untrusted external
   content, so subsequent script tool calls remain subject to Rule of Two enforcement.
+- Before Family Assistant contacts Keychute, the current turn state is evaluated as a
+  `sandbox_network` sink. Enforced deny or redaction outcomes stop the request before access-request
+  creation; confirmation outcomes require the normal Family Assistant confirmation path in addition
+  to any approval Keychute requires.
+- The simulated-script harness does not expose brokered HTTP, so testing cannot reach an
+  auto-approved grant or mutate an upstream service.
 - Invalid Keychute configuration, denial, expiry, timeout, or a malformed response fails the script
   rather than falling back to direct HTTP.
 - Event condition scripts remain isolated because they have no execution context and never receive

@@ -138,6 +138,7 @@ async def execute_script_tool(
     name: str | None = None,
     # ast-grep-ignore: no-dict-any - arbitrary parameters passed as script globals
     parameters: dict[str, Any] | None = None,
+    _allow_external_script_apis: bool = True,
 ) -> ToolResult:
     """
     Execute a Python script in a sandboxed environment.
@@ -218,7 +219,7 @@ async def execute_script_tool(
             )
 
         keychute_config = get_keychute_config(exec_context)
-        if keychute_config is not None:
+        if _allow_external_script_apis and keychute_config is not None:
             globals = add_keychute_http_api(
                 globals,
                 config=keychute_config,

@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from family_assistant.config_models import AppConfig, KeychuteConfig
 from family_assistant.llm.messages import AssistantMessage, ToolMessage
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.storage.database import Database
@@ -880,6 +881,47 @@ async def test_script_testing_returns_structured_error_when_tools_provider_missi
         ),
         "transcript": [],
     }
+
+
+@pytest.mark.asyncio
+async def test_script_testing_does_not_expose_keychute(
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The simulation harness cannot make a real brokered HTTP request."""
+    db = Database(engine=db_engine)
+    tools_provider = _build_tools_provider("get_note")
+    exec_context = _build_exec_context(
+        db=db,
+        tools_provider=tools_provider,
+        conversation_id="conv-keychute-simulation",
+        user_id="user-1",
+    )
+    assert exec_context.processing_service is not None
+    exec_context.processing_service.app_config = AppConfig(
+        keychute_config=KeychuteConfig(
+            enabled=True,
+            url="https://keychute.test",
+            token="client-token",
+        )
+    )
+    request = AsyncMock(side_effect=AssertionError("real Keychute call attempted"))
+    monkeypatch.setattr(
+        "family_assistant.scripting.apis.keychute.KeychuteScriptHttpClient.request",
+        request,
+    )
+
+    result = await test_script_with_simulated_tools_tool(
+        exec_context,
+        script='keychute_http_request("weather", "https://example.test")',
+        scenario_description="No external request should be sent.",
+    )
+
+    assert isinstance(result.data, dict)
+    assert result.data["status"] == "error"
+    assert result.data["transcript"] == []
+    assert "keychute_http_request" in result.data["error"]
+    request.assert_not_awaited()
 
 
 @pytest.mark.asyncio

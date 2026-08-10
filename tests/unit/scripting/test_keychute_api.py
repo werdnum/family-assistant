@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
@@ -15,12 +15,46 @@ from family_assistant.scripting.apis.keychute import (
 )
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
+    SinkClass,
     SourceTrustTier,
+    TaintPolicyConfig,
+    TaintPolicyMode,
+    TaintSource,
+    TaintSourceType,
+)
+from family_assistant.tools.infrastructure import (
+    CompositeToolsProvider,
+    TaintTrackingToolsProvider,
 )
 from family_assistant.tools.types import ToolExecutionContext
 
 _REQUEST_ID = "11111111-1111-4111-8111-111111111111"
 _GRANT_ID = "22222222-2222-4222-8222-222222222222"
+
+
+def _taint_execution_context(
+    tracker: InMemoryTurnTaintTracker,
+    *,
+    policy: TaintPolicyConfig | None = None,
+) -> Mock:
+    provider = TaintTrackingToolsProvider(
+        CompositeToolsProvider([]),
+        taint_policy=policy,
+    )
+    execution_context = Mock(spec=ToolExecutionContext)
+    execution_context.taint_tracker = tracker
+    execution_context.tools_provider = provider
+    execution_context.processing_service = None
+    execution_context.request_confirmation_callback = None
+    execution_context.interface_type = "test"
+    execution_context.conversation_id = "conversation"
+    execution_context.turn_id = "turn"
+    execution_context.processing_profile_id = "profile"
+    execution_context.subconversation_id = None
+    execution_context.user_id = "user"
+    execution_context.db_context = Mock()
+    execution_context.db_context.taint_audit_events.add = AsyncMock()
+    return execution_context
 
 
 @pytest.mark.asyncio
@@ -79,8 +113,7 @@ async def test_request_uses_direct_api_and_preserves_response(tmp_path: Path) ->
         )
 
     tracker = InMemoryTurnTaintTracker()
-    execution_context = Mock(spec=ToolExecutionContext)
-    execution_context.taint_tracker = tracker
+    execution_context = _taint_execution_context(tracker)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
         client = KeychuteScriptHttpClient(
             KeychuteConfig(
@@ -122,6 +155,50 @@ async def test_request_uses_direct_api_and_preserves_response(tmp_path: Path) ->
         "reason": "forecast",
         "structured": {"script": script_source},
     }
+    execution_context.db_context.taint_audit_events.add.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_request_denies_high_taint_before_contacting_keychute() -> None:
+    tracker = InMemoryTurnTaintTracker()
+    tracker.add_source(
+        TaintSource(
+            source_type=TaintSourceType.TOOL_OUTPUT,
+            source_id="attacker-controlled-response",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="Untrusted external content entered the script.",
+        )
+    )
+    execution_context = _taint_execution_context(
+        tracker,
+        policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+    )
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        pytest.fail("Taint-denied egress must not contact Keychute")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        client = KeychuteScriptHttpClient(
+            KeychuteConfig(
+                enabled=True,
+                url="https://keychute.test",
+                token="client-token",
+            ),
+            "keychute_http_request(...) ",
+            execution_context,
+            http_client,
+        )
+        with pytest.raises(
+            KeychuteScriptError,
+            match="egress denied by runtime taint policy",
+        ):
+            await client.request("weather", "https://example.test/x")
+
+    audit = execution_context.db_context.taint_audit_events.add
+    audit.assert_awaited_once()
+    assert audit.await_args.kwargs["sink_class"] == SinkClass.SANDBOX_NETWORK.value
+    assert audit.await_args.kwargs["effective_outcome"] == "deny"
 
 
 @pytest.mark.asyncio

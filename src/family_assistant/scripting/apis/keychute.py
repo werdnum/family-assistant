@@ -15,6 +15,7 @@ from urllib.parse import SplitResult, urlsplit
 import httpx
 
 from family_assistant.security.taint import (
+    SinkClass,
     SourceTrustTier,
     TaintSource,
     TaintSourceType,
@@ -467,6 +468,11 @@ class KeychuteScriptHttpClient:
         target = _parse_target(url)
         normalized_method = method.upper()
         _validate_caller_headers(headers)
+        await self._authorize_egress(
+            secret_name=secret_name,
+            url=url,
+            method=normalized_method,
+        )
         idempotency_key = str(uuid.uuid4())
         status = await self._create_access_request(
             client,
@@ -524,6 +530,54 @@ class KeychuteScriptHttpClient:
                 )
             )
         return response
+
+    async def _authorize_egress(
+        self,
+        *,
+        secret_name: str,
+        url: str,
+        method: str,
+    ) -> None:
+        """Apply the profile's runtime-taint policy before contacting Keychute."""
+        context = self._execution_context
+        if context is None or context.taint_tracker is None:
+            return
+
+        provider = context.tools_provider
+        if provider is None and context.processing_service is not None:
+            provider = context.processing_service.tools_provider
+        if provider is None:
+            raise KeychuteScriptError(
+                "Keychute egress denied because runtime taint policy is unavailable"
+            )
+
+        # Lazy import avoids scripting -> tools package initialization cycles.
+        from family_assistant.tools.infrastructure import (  # noqa: PLC0415
+            TaintTrackingToolsProvider,
+            ToolPolicyDeniedError,
+            find_provider_by_type,
+        )
+
+        authorizer = find_provider_by_type(provider, TaintTrackingToolsProvider)
+        if authorizer is None:
+            raise KeychuteScriptError(
+                "Keychute egress denied because runtime taint policy is unavailable"
+            )
+        try:
+            await authorizer.authorize_taint_sink(
+                name="keychute_http_request",
+                sink_class=SinkClass.SANDBOX_NETWORK,
+                arguments={
+                    "secret_name": secret_name,
+                    "url": url,
+                    "method": method,
+                },
+                context=context,
+            )
+        except ToolPolicyDeniedError as exc:
+            raise KeychuteScriptError(
+                f"Keychute egress denied by runtime taint policy: {exc.reason}"
+            ) from exc
 
     async def request(
         self,

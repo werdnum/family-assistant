@@ -183,6 +183,10 @@ followed, and the credential is attached inside Keychute rather than handed to F
 upstream response is untrusted and is returned verbatim, so only approved, trusted origins should
 receive a credential; a hostile upstream could reflect request data in its response.
 
+`test_script_with_simulated_tools` does not expose brokered HTTP. Test the surrounding script logic
+with ordinary simulated tools, then use `execute_script` when testing an actual Keychute request and
+approval flow.
+
 ### Script Output (`print`)
 
 A script returns its **last expression** to the assistant. In addition, anything written with
