@@ -104,25 +104,25 @@ len(tools)
 
 @pytest.mark.asyncio
 async def test_execute_script_exposes_configured_keychute(
-    db_engine: AsyncEngine, tmp_path: Path
+    db_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Configured scripts can consume a response without receiving a credential."""
-    executable = tmp_path / "keychute"
-    executable.write_text(
-        "#!/usr/bin/env python3\n"
-        "import sys\n"
-        "sys.stdout.buffer.write("
-        "b'HTTP/1.1 200 OK\\r\\nContent-Type: application/json\\r\\n\\r\\n'"
-        "b'{\"answer\": 42}')\n"
+
+    async def fake_request(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return {"status_code": 200, "headers": {}, "body": b'{"answer": 42}'}
+
+    monkeypatch.setattr(
+        "family_assistant.scripting.apis.keychute.KeychuteScriptHttpClient.request",
+        fake_request,
     )
-    executable.chmod(0o755)
     db = Database(engine=db_engine)
     mock_service = Mock()
     mock_service.tools_provider = CompositeToolsProvider([])
     mock_service.app_config = AppConfig(
         keychute_config=KeychuteConfig(
             enabled=True,
-            executable=str(executable),
+            url="https://keychute.test",
+            token="client-token",
         )
     )
     ctx = ToolExecutionContext(

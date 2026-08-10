@@ -911,7 +911,10 @@ class KeychuteConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
-    executable: str = "keychute"
+    url: str | None = None
+    token: str | None = None
+    token_file: str | None = None
+    ca_bundle: str | None = None
     max_response_bytes: int = Field(default=25 * 1024 * 1024, ge=1)
 
 
