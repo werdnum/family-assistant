@@ -1,12 +1,14 @@
 """CRUD operations for automations (create, list, get, update, delete)."""
 
 from typing import TYPE_CHECKING, cast
+from unittest.mock import Mock
 from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig, KeychuteConfig
 from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.tools.automations import (
@@ -460,6 +462,54 @@ async def test_create_automation_with_stored_script_name(
     )
 
     assert "Created event automation 'Stored Script Automation'" in result.get_text()
+
+
+@pytest.mark.asyncio
+async def test_create_automation_accepts_configured_keychute_api(
+    db_engine: AsyncEngine,
+) -> None:
+    """Scheduled-script validation uses the configured runtime API namespace."""
+    db_ctx = Database(engine=db_engine)
+    processing_service = Mock()
+    processing_service.tools_provider = None
+    processing_service.app_config = AppConfig(
+        keychute_config=KeychuteConfig(
+            enabled=True,
+            url="https://keychute.test",
+            token="client-token",
+        )
+    )
+    exec_context = ToolExecutionContext(
+        interface_type="web",
+        conversation_id="test_conv_keychute",
+        user_name="test_user",
+        turn_id="test_turn",
+        db_context=db_ctx,
+        processing_service=processing_service,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
+
+    result = await create_automation_tool(
+        exec_context=exec_context,
+        name="Brokered Request Automation",
+        automation_type="schedule",
+        trigger_config={"recurrence_rule": "FREQ=DAILY"},
+        action_type="script",
+        action_config={
+            "script_code": ('keychute_http_request("weather", "https://example.test")')
+        },
+    )
+
+    assert (
+        "Created schedule automation 'Brokered Request Automation'" in result.get_text()
+    )
 
 
 @pytest.mark.asyncio

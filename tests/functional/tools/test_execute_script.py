@@ -11,7 +11,10 @@ from family_assistant.config_models import AppConfig, KeychuteConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from family_assistant.tools.data_visualization import create_vega_chart_tool
-from family_assistant.tools.execute_script import execute_script_tool
+from family_assistant.tools.execute_script import (
+    SCRIPT_TOOLS_DEFINITION,
+    execute_script_tool,
+)
 from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
     LocalToolsProvider,
@@ -22,6 +25,18 @@ from family_assistant.tools.types import (
     ToolExecutionContext,
     ToolResult,
 )
+
+
+def test_execute_script_tool_description_points_to_scripting_guide() -> None:
+    """Detailed scripting guidance is loaded on demand instead of sent every turn."""
+    function = SCRIPT_TOOLS_DEFINITION[0]["function"]
+    description = function["description"]
+
+    assert "scripting.md" in description
+    assert "get_user_documentation_content" in description
+    assert "Example Scripts" not in description
+    assert "Sandbox Limitations" not in description
+    assert len(description) < 600
 
 
 @pytest.mark.asyncio

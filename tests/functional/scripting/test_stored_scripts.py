@@ -8,11 +8,13 @@ Tests the CRUD operations and execution of stored scripts including:
 - delete_script_tool: Delete scripts
 """
 
+from unittest.mock import Mock
 from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.config_models import AppConfig, KeychuteConfig
 from family_assistant.storage.database import Database
 from family_assistant.tools.execute_script import execute_script_tool
 from family_assistant.tools.stored_scripts import (
@@ -69,6 +71,50 @@ async def test_save_and_list_scripts(db_engine: AsyncEngine) -> None:
     assert len(list_data["scripts"]) == 1
     assert list_data["scripts"][0]["name"] == "test-script-1"
     assert list_data["scripts"][0]["description"] == "A simple test script"
+
+
+@pytest.mark.asyncio
+async def test_save_script_accepts_configured_keychute_api(
+    db_engine: AsyncEngine,
+) -> None:
+    """Stored-script validation uses the configured runtime API namespace."""
+    db = Database(engine=db_engine)
+    processing_service = Mock()
+    processing_service.tools_provider = None
+    processing_service.app_config = AppConfig(
+        keychute_config=KeychuteConfig(
+            enabled=True,
+            url="https://keychute.test",
+            token="client-token",
+        )
+    )
+    context = ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test-conv-keychute",
+        user_name="Test User",
+        turn_id="turn-1",
+        db_context=db,
+        processing_service=processing_service,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
+
+    result = await save_script_tool(
+        context,
+        name="brokered-request",
+        description="Call an API through Keychute",
+        code='keychute_http_request("weather", "https://example.test")',
+    )
+
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data["name"] == "brokered-request"
 
 
 @pytest.mark.asyncio

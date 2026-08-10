@@ -8,10 +8,13 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
-from family_assistant.scripting.apis.keychute import add_keychute_http_api
+from family_assistant.scripting.apis.keychute import (
+    add_keychute_http_api,
+    get_keychute_config,
+)
 from family_assistant.scripting.config import ScriptConfig
 from family_assistant.scripting.errors import (
     ScriptExecutionError,
@@ -22,7 +25,6 @@ from family_assistant.scripting.monty_engine import MontyEngine, ScriptOutputBuf
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
-    from family_assistant.config_models import KeychuteConfig
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -215,16 +217,11 @@ async def execute_script_tool(
                 },
             )
 
-        processing_service = exec_context.processing_service
-        keychute_config = getattr(
-            getattr(processing_service, "app_config", None),
-            "keychute_config",
-            None,
-        )
-        if isinstance(getattr(keychute_config, "enabled", None), bool):
+        keychute_config = get_keychute_config(exec_context)
+        if keychute_config is not None:
             globals = add_keychute_http_api(
                 globals,
-                config=cast("KeychuteConfig", keychute_config),
+                config=keychute_config,
                 script_source=script,
                 execution_context=exec_context,
             )
@@ -494,199 +491,13 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "execute_script",
             "description": (
-                "Execute a Python script in a sandboxed environment for automation and complex operations.\n\n"
-                "**Two modes:**\n"
-                "• **Inline**: Pass code via `script` parameter\n"
-                "• **Stored**: Pass `name` to run a saved script from the library (see list_scripts)\n\n"
-                "**IMPORTANT: Before writing scripts, please read the scripting documentation first!**\n"
-                "Use the command: `get_user_documentation_content filename='scripting.md'`\n\n"
-                "**Tool Documentation:**\n"
-                "To see available tools and their parameters, ask: 'Show me the available tools'\n\n"
-                "**Execution Environment:**\n"
-                "• Timeout: 10 minutes maximum execution time (to allow for external API calls)\n"
-                "• Sandboxed: No file system or network access\n"
-                "• Deterministic: No random numbers or current time\n\n"
-                "**Sandbox Limitations:**\n"
-                "The Monty scripting engine runs a sandboxed Python subset with these restrictions:\n"
-                "• No class definitions (can't use `class` keyword)\n"
-                "• No generators or yield statements\n"
-                "• No match/case statements\n"
-                "• No context managers or with statements\n"
-                "• No del statement\n"
-                "• No dict unpacking in literals ({**d1, **d2} not supported)\n"
-                "• No str.format() method (use f-strings instead)\n"
-                "• No map/filter functions (use list comprehensions instead)\n"
-                "• Decorators are buggy (avoid using them)\n"
-                "• Exceptions only accept 0 or 1 string arguments\n"
-                "• No imports except heavily sandboxed os, sys, typing, pathlib modules\n"
-                "• Resource limits: 256MB memory, 100 recursion depth\n"
-                "• However: try/except, while loops, float(), set(), frozenset() ARE supported\n\n"
-                "**Built-in Functions:**\n"
-                "• Type conversions: bool(), int(), str(), list(), tuple(), dict()\n"
-                "• Collections: len(), range(), sorted(), reversed(), enumerate(), zip()\n"
-                "• Logic: all(), any(), max(), min()\n"
-                "• Object inspection: type(), dir(), getattr(), hasattr()\n"
-                "• Control: print(), fail() - print() output is captured and returned to you "
-                "under a '--- Script Output ---' section (use it to surface intermediate values "
-                "without returning them)\n"
-                "• JSON: json_encode(value), json_decode(value)\n"
-                "• Base64: base64_encode(data), base64_decode(data) -> str, base64_decode_bytes(data) -> bytes\n"
-                "• LLM Wake: wake_llm(context, include_event=True) - Request LLM attention with context (string or dict)\n"
-                "• LLM: llm(prompt), llm_json(prompt) - One-shot LLM calls for summarisation and data extraction\n\n"
-                "**Brokered HTTP:**\n"
-                "• When Keychute is configured, use keychute_http_request(secret_name, url, ...) "
-                "for authenticated HTTP without exposing the credential to the script.\n\n"
-                "**Family Assistant Tools:**\n"
-                "All enabled tools are available as functions. Call them directly:\n"
-                "• add_or_update_note(title='...', content='...')\n"
-                "• search_notes(query='...')\n"
-                "• send_email(to='...', subject='...', body='...')\n\n"
-                "**Note**: Tools return structured data (dicts, lists) directly. You can use results\n"
-                "immediately without parsing. `json_decode()` is safe to call on any value - it passes\n"
-                "through dicts, lists, numbers, and booleans unchanged, and only parses strings:\n"
-                "```python\n"
-                "notes = search_notes(query='TODO')  # Returns a list directly\n"
-                "for note in notes:\n"
-                "    print(note['title'])\n"
-                "```\n\n"
-                "**Tools API Functions:**\n"
-                "• tools_list() - List all available tools with descriptions\n"
-                "• tools_get(name) - Get detailed info about a specific tool\n"
-                "• tools_execute(name, **kwargs) - Execute a tool by name\n\n"
-                "**LLM API Functions:**\n"
-                "• llm(prompt, system=None, model=None) - One-shot LLM call, returns text\n"
-                "• llm_json(prompt, schema=None, system=None, model=None) - One-shot LLM call, returns parsed JSON\n"
-                "Default model: gemini-3.6-flash. Useful for summarisation, data extraction, classification.\n\n"
-                "**Attachment API Functions:**\n"
-                "• attachment_get(attachment_id) - Get attachment metadata by ID\n"
-                "• attachment_create(content, filename, description, mime_type) - Create new attachment\n"
-                "Note: attachment_list() and attachment_send() are not available.\n"
-                "Scripts must receive attachment IDs from LLM context, tool results, or parameters.\n\n"
-                "**Returning Attachments:**\n"
-                "Attachments created by tools or attachment_create() are represented as dictionaries\n"
-                'with metadata: {"id": uuid, "filename": str, "mime_type": str, "size": int, "description": str}\n'
-                "Return these dicts to make attachments visible to the LLM:\n\n"
-                "```python\n"
-                "# Single attachment - last expression is returned\n"
-                'data = attachment_create(content="data", filename="data.txt", mime_type="text/plain")\n'
-                "data  # Dict with attachment info, automatically sent to LLM\n\n"
-                "# Multiple attachments - return list\n"
-                "chart1 = create_chart(data1)  # Returns dict\n"
-                "chart2 = create_chart(data2)  # Returns dict\n"
-                "[chart1, chart2]  # Both dicts visible to LLM\n\n"
-                "# Functional composition (recommended for data viz)\n"
-                "chart = create_vega_chart(\n"
-                "    spec=spec,\n"
-                "    data_attachments=[jq_query(source, '.[] | select(.value > 10)')]\n"
-                ")\n"
-                "chart  # Returns attachment dict\n"
-                "```\n\n"
-                "**Example Scripts:**\n\n"
-                "1. Simple note creation:\n"
-                "```python\n"
-                "result = add_or_update_note(\n"
-                "    title='Meeting Notes',\n"
-                "    content='Discussed project timeline'\n"
-                ")\n"
-                "print('Created note:', result)\n"
-                "```\n\n"
-                "2. Conditional logic with search:\n"
-                "```python\n"
-                "def process_todos():\n"
-                "    notes = search_notes(query='TODO')\n"
-                "    \n"
-                "    if len(notes) > 0:\n"
-                "        print('Found', len(notes), 'TODO items')\n"
-                "        for note in notes:\n"
-                "            print('-', note['title'])\n"
-                "    else:\n"
-                "        print('No TODO items found')\n"
-                "    return notes\n"
-                "\n"
-                "# Call the function\n"
-                "process_todos()\n"
-                "```\n\n"
-                "3. Complex automation:\n"
-                "```python\n"
-                "def create_project_summary():\n"
-                "    # Search for notes, create summary, send email\n"
-                "    project_notes = search_notes(query='Project Alpha')\n"
-                "    \n"
-                "    summary = 'Project Alpha Summary:\\n\\n'\n"
-                "    for note in project_notes:\n"
-                "        summary += '- ' + note['title'] + '\\n'\n"
-                "    \n"
-                "    if len(project_notes) > 0:\n"
-                "        add_or_update_note(\n"
-                "            title='Project Alpha Summary',\n"
-                "            content=summary\n"
-                "        )\n"
-                "        result = send_email(\n"
-                "            to='team@example.com',\n"
-                "            subject='Weekly Project Summary',\n"
-                "            body=summary\n"
-                "        )\n"
-                "        return {'notes_found': len(project_notes), 'email_result': result}\n"
-                "    else:\n"
-                "        return {'notes_found': 0, 'email_result': 'No notes to summarize'}\n"
-                "\n"
-                "# Execute the function\n"
-                "create_project_summary()\n"
-                "```\n\n"
-                "4. Working with user attachments (attachment ID provided by LLM):\n"
-                "```python\n"
-                "# Attachment ID passed to script by LLM based on conversation context\n"
-                "# Example: LLM calls execute_script with attachment_id parameter\n"
-                "def process_user_attachment(attachment_id):\n"
-                "    # Get attachment details\n"
-                "    attachment_info = attachment_get(attachment_id)\n"
-                "    \n"
-                "    if attachment_info:\n"
-                "        print('Processing:', attachment_info['description'])\n"
-                "        \n"
-                "        # Process the attachment with a tool (ID auto-converted to content)\n"
-                "        if 'image' in attachment_info['mime_type']:\n"
-                "            analysis = tools_execute('analyze_image', image_data=attachment_id)\n"
-                "            # Send results back to user via LLM tools\n"
-                "            wake_llm({'message': 'Analysis: ' + analysis, 'attachments': [attachment_id]})\n"
-                "        else:\n"
-                "            # Use attach_to_response LLM tool to send attachment back\n"
-                "            tools_execute('attach_to_response', attachment_ids=[attachment_id])\n"
-                "    else:\n"
-                "        print('Attachment not found or not accessible')\n"
-                "\n"
-                "# Call with attachment ID from LLM context\n"
-                "# process_user_attachment('uuid-from-llm-context')\n"
-                "```\n\n"
-                "5. Data visualization with automatic attachment propagation:\n"
-                "```python\n"
-                "# Create a chart - attachment automatically returns to LLM\n"
-                "spec = {\n"
-                "  '$schema': 'https://vega.github.io/schema/vega-lite/v5.json',\n"
-                "  'data': {'name': 'sensor_data'},\n"
-                "  'mark': 'line',\n"
-                "  'encoding': {\n"
-                "    'x': {'field': 'timestamp', 'type': 'temporal'},\n"
-                "    'y': {'field': 'temperature', 'type': 'quantitative'}\n"
-                "  }\n"
-                "}\n\n"
-                "# Chart is automatically visible - no need for attach_to_response!\n"
-                "create_vega_chart(\n"
-                "  spec=json_encode(spec),\n"
-                "  data_attachments=[sensor_attachment_id],\n"
-                "  title='Temperature Over Time'\n"
-                ")\n"
-                "```\n\n"
-                "6. Multi-chart dashboard:\n"
-                "```python\n"
-                "# Create multiple related charts\n"
-                "temp_spec = {'$schema': '...', 'mark': 'line', ...}\n"
-                "humidity_spec = {'$schema': '...', 'mark': 'area', ...}\n\n"
-                "temp_chart = create_vega_chart(spec=json_encode(temp_spec), data_attachments=[data])\n"
-                "humidity_chart = create_vega_chart(spec=json_encode(humidity_spec), data_attachments=[data])\n\n"
-                "# Both charts automatically visible to LLM\n"
-                "[temp_chart, humidity_chart]\n"
-                "```\n\n"
+                "Execute an inline or stored Python script in a sandboxed environment. "
+                "Before writing or debugging a script, load `scripting.md` with "
+                "`get_user_documentation_content`; it documents the language constraints, "
+                "available APIs, brokered HTTP, attachments, and return values. Use `script` "
+                "with optional `globals` for inline code, or `name` with optional `parameters` "
+                "for a stored script. Enabled Family Assistant tools and configured script "
+                "APIs are available as functions."
             ),
             "parameters": {
                 "type": "object",
@@ -694,61 +505,31 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                     "script": {
                         "type": "string",
                         "description": (
-                            "The Python script code to execute (inline mode). "
-                            "Omit this and use 'name' instead to run a stored script.\n\n"
-                            "The script can:\n"
-                            "• Define variables and functions\n"
-                            "• Use control flow (if/else, for loops)\n"
-                            "• Call any available Family Assistant tool\n"
-                            "• Process and transform data\n"
-                            "• Print output for debugging\n"
-                            "• Return a value (the last expression is returned)\n\n"
-                            "Scripts should be self-contained and handle errors gracefully.\n\n"
-                            "**Wake LLM Contexts:**\n"
-                            "If the script calls wake_llm(), the contexts will be included in the response.\n"
-                            "This allows the LLM to receive and process wake requests from scripts.\n\n"
-                            "**Return Values:**\n"
-                            "Returns a string containing the script execution result:\n"
-                            "• Anything printed with print() appears first under a '--- Script Output ---' section\n"
-                            "• On success with return value: 'Script result: [value]' or for dict/list: 'Script result:\\n[JSON formatted]'\n"
-                            "• On success without return: 'Script executed successfully with no return value.'\n"
-                            "• If wake_llm() called: Also includes '--- Wake LLM Contexts ---' section with context details\n"
-                            "• On error: any output printed before the failure is included above the error message\n"
-                            "• On syntax error: 'Error: Syntax error in script [at line N]: [details]'\n"
-                            "• On timeout: 'Error: Script execution timed out after [N] seconds'\n"
-                            "• On execution error: 'Error: Script execution failed: [details]'\n"
-                            "• On unexpected error: 'Error: Unexpected error executing script: [details]'"
+                            "Inline Python source. Load `scripting.md` with "
+                            "`get_user_documentation_content` before writing or "
+                            "debugging scripts. Omit this when using `name`."
                         ),
                     },
                     "globals": {
                         "type": "object",
                         "description": (
-                            "Optional dictionary of global variables to inject into the script.\n\n"
-                            "These variables will be available in the script's global scope.\n"
-                            "Useful for passing configuration, data, or context to the script.\n\n"
-                            "Example:\n"
-                            "{\n"
-                            '  "user_email": "john@example.com",\n'
-                            '  "project_id": 123,\n'
-                            '  "tags": ["important", "urgent"]\n'
-                            "}\n\n"
-                            "These can then be used in the script as regular variables."
+                            "Optional global values for inline `script` code. "
+                            "Do not use with a stored script."
                         ),
                         "additionalProperties": True,
                     },
                     "name": {
                         "type": "string",
                         "description": (
-                            "Name of a stored script to execute (alternative to inline 'script').\n"
-                            "Use list_scripts to see available stored scripts. When using 'name',\n"
-                            "pass arguments via 'parameters' instead of 'globals'."
+                            "Stored script name. Use `list_scripts` to discover names; "
+                            "omit `script` and pass arguments with `parameters`."
                         ),
                     },
                     "parameters": {
                         "type": "object",
                         "description": (
-                            "Parameters to pass to a stored script as global variables.\n"
-                            "Only used with 'name'. Validated against the script's parameter schema if defined."
+                            "Optional arguments for the stored script selected by `name`; "
+                            "validated against its parameter schema."
                         ),
                         "additionalProperties": True,
                     },

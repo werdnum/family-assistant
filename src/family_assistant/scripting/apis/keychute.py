@@ -9,7 +9,7 @@ import ssl
 import time
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, TypedDict, cast
 from urllib.parse import SplitResult, urlsplit
 
 import httpx
@@ -588,3 +588,27 @@ def add_keychute_http_api(
         config, script_source, execution_context
     ).request
     return result
+
+
+def get_keychute_config(
+    execution_context: ToolExecutionContext,
+) -> KeychuteConfig | None:
+    """Return a usable Keychute config from a tool execution context."""
+    processing_service = execution_context.processing_service
+    candidate = getattr(
+        getattr(processing_service, "app_config", None),
+        "keychute_config",
+        None,
+    )
+    if not isinstance(getattr(candidate, "enabled", None), bool):
+        return None
+    return cast("KeychuteConfig", candidate)
+
+
+def keychute_external_function_names(
+    config: KeychuteConfig | None,
+) -> list[str] | None:
+    """Return the callable namespace exposed by the configured integration."""
+    if config is None or not config.enabled:
+        return None
+    return ["keychute_http_request"]

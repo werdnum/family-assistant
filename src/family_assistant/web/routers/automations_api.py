@@ -276,7 +276,10 @@ async def create_event_automation(
         # tools, the same profile this automation is stamped with and will
         # execute under.
         validation_error = await validate_action_scripts_with_provider(
-            db, processing_service.tools_provider, request.action_config or {}
+            db,
+            processing_service.tools_provider,
+            request.action_config or {},
+            keychute_config=processing_service.app_config.keychute_config,
         )
         if validation_error:
             raise HTTPException(status_code=400, detail=validation_error)
@@ -356,7 +359,10 @@ async def create_schedule_automation(
         # tools, the same profile this automation is stamped with and will
         # execute under.
         validation_error = await validate_action_scripts_with_provider(
-            db, processing_service.tools_provider, request.action_config or {}
+            db,
+            processing_service.tools_provider,
+            request.action_config or {},
+            keychute_config=processing_service.app_config.keychute_config,
         )
         if validation_error:
             raise HTTPException(status_code=400, detail=validation_error)
@@ -464,7 +470,10 @@ async def update_automation(
         if script_error:
             raise HTTPException(status_code=400, detail=script_error)
         validation_error = await validate_action_scripts_with_provider(
-            db, processing_service.tools_provider, new_action_config
+            db,
+            processing_service.tools_provider,
+            new_action_config,
+            keychute_config=processing_service.app_config.keychute_config,
         )
         if validation_error:
             raise HTTPException(status_code=400, detail=validation_error)
