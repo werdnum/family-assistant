@@ -19,6 +19,17 @@ function messageText(message: BackendConversationMessage): string {
   return '';
 }
 
+function isConversationResponse(
+  value: unknown
+): value is { messages: BackendConversationMessage[] } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'messages' in value &&
+    Array.isArray(value.messages)
+  );
+}
+
 const SharedAttachments: React.FC<{ attachments?: BackendAttachment[] }> = ({ attachments }) => {
   if (!attachments?.length) {
     return null;
@@ -88,13 +99,15 @@ const SharedMessage: React.FC<{ message: BackendConversationMessage }> = ({ mess
 const SharedConversationPage: React.FC = () => {
   const { token } = useParams<{ token: string }>();
   const [messages, setMessages] = useState<BackendConversationMessage[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [notFound, setNotFound] = useState(false);
+  const [loadState, setLoadState] = useState<
+    'loading' | 'ready' | 'not-found' | 'authentication-required' | 'error'
+  >('loading');
+  const [requestVersion, setRequestVersion] = useState(0);
 
   useEffect(() => {
+    setLoadState('loading');
     if (!token) {
-      setNotFound(true);
-      setLoading(false);
+      setLoadState('not-found');
       return;
     }
     const controller = new AbortController();
@@ -102,20 +115,37 @@ const SharedConversationPage: React.FC = () => {
       signal: controller.signal,
     })
       .then(async (response) => {
+        if (response.status === 404) {
+          setLoadState('not-found');
+          return null;
+        }
+        if (response.status === 401 || response.status === 403) {
+          setLoadState('authentication-required');
+          return null;
+        }
         if (!response.ok) {
-          throw new Error(String(response.status));
+          throw new Error(`Shared conversation request failed with status ${response.status}`);
         }
         return response.json();
       })
-      .then((data: { messages: BackendConversationMessage[] }) => setMessages(data.messages))
+      .then((data: unknown) => {
+        if (data === null) {
+          return;
+        }
+        if (!isConversationResponse(data)) {
+          throw new Error('Shared conversation response is malformed');
+        }
+        setMessages(data.messages);
+        setLoadState('ready');
+      })
       .catch((error: unknown) => {
         if (!(error instanceof DOMException && error.name === 'AbortError')) {
-          setNotFound(true);
+          console.error('Failed to load shared conversation:', error);
+          setLoadState('error');
         }
-      })
-      .finally(() => setLoading(false));
+      });
     return () => controller.abort();
-  }, [token]);
+  }, [token, requestVersion]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -135,8 +165,10 @@ const SharedConversationPage: React.FC = () => {
         </div>
       </header>
       <main className="mx-auto max-w-4xl space-y-4 px-4 py-8">
-        {loading && <p className="text-center text-muted-foreground">Loading conversation…</p>}
-        {notFound && (
+        {loadState === 'loading' && (
+          <p className="text-center text-muted-foreground">Loading conversation…</p>
+        )}
+        {loadState === 'not-found' && (
           <Card className="p-6 text-center">
             <h2 className="font-semibold">This shared conversation is unavailable</h2>
             <p className="mt-2 text-sm text-muted-foreground">
@@ -144,8 +176,29 @@ const SharedConversationPage: React.FC = () => {
             </p>
           </Card>
         )}
-        {!loading &&
-          !notFound &&
+        {loadState === 'authentication-required' && (
+          <Card className="p-6 text-center">
+            <h2 className="font-semibold">Sign in to view this conversation</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Shared conversations are available only to authorized Family Assistant users.
+            </p>
+            <Button asChild className="mt-4">
+              <a href={window.location.href}>Sign in again</a>
+            </Button>
+          </Card>
+        )}
+        {loadState === 'error' && (
+          <Card className="p-6 text-center">
+            <h2 className="font-semibold">Could not load the shared conversation</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Check your connection and try again.
+            </p>
+            <Button className="mt-4" onClick={() => setRequestVersion((version) => version + 1)}>
+              Try again
+            </Button>
+          </Card>
+        )}
+        {loadState === 'ready' &&
           messages.map((message) => <SharedMessage key={message.internal_id} message={message} />)}
       </main>
     </div>

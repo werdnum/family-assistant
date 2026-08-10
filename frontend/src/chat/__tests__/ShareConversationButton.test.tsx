@@ -43,4 +43,31 @@ describe('ShareConversationButton', () => {
       screen.queryByRole('button', { name: 'Stop sharing conversation' })
     ).not.toBeInTheDocument();
   });
+
+  it('blocks share mutations and offers retry when status cannot load', async () => {
+    const user = userEvent.setup();
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    let attempts = 0;
+    server.use(
+      http.get('/api/v1/chat/conversations/conversation-1/share', () => {
+        attempts += 1;
+        return attempts === 1
+          ? HttpResponse.json({ detail: 'Unavailable' }, { status: 503 })
+          : HttpResponse.json({ active: true });
+      })
+    );
+    render(<ShareConversationButton conversationId="conversation-1" hasMessages={true} />);
+
+    await screen.findByRole('button', { name: 'Retry loading sharing status' });
+    expect(screen.queryByRole('button', { name: 'Share conversation' })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Stop sharing conversation' })
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Retry loading sharing status' }));
+    expect(
+      await screen.findByRole('button', { name: 'Stop sharing conversation' })
+    ).toBeInTheDocument();
+    consoleError.mockRestore();
+  });
 });
