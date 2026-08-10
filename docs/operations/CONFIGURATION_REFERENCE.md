@@ -52,7 +52,8 @@ disable, which is PostgreSQL's own meaning for the setting.
 
 Startup migrations are exempt: they run on a connection from this same pool, so the migration runner
 lifts the ceiling for their duration (a large index build or backfill is the one place a long
-statement is legitimate) and then discards the connection. Ignored on SQLite.
+statement is legitimate). The exemption is local to the migration transaction and disappears when
+that transaction commits. Ignored on SQLite.
 
 ______________________________________________________________________
 
