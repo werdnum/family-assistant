@@ -126,8 +126,10 @@ ______________________________________________________________________
 
 ### PRIVACY_POLICY_CONTACT_EMAIL
 
-Contact address for privacy questions and data deletion requests. When unset, the policy tells
-readers to contact the operator who invited them instead of showing an address.
+Contact address for privacy questions and data deletion requests. When unset, the policy directs
+readers to the operator instead of showing an address. Set it on any instance reachable from the
+internet, and especially where email intake is enabled — inbound mail can come from people who are
+not users of the instance and have no other way to reach its operator.
 
 | Property  | Value                 |
 | --------- | --------------------- |
