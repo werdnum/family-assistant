@@ -123,6 +123,17 @@ For a VPS you already run behind a reverse proxy with TLS.
 
 ______________________________________________________________________
 
+______________________________________________________________________
+
+## Path C — Kubernetes
+
+The same sandbox, translated into GitOps manifests, lives in the `kube-config` repo at
+`kubernetes/manifests/workloads/family-assistant-demo/` — dedicated namespace, own PostgreSQL, own
+Dex, default-deny NetworkPolicy, served at `assistant-demo.andrewgarrett.dev`. Its `configmap.yaml`
+is a copy of this directory's `config.yaml`; changing one means changing the other.
+
+______________________________________________________________________
+
 ## Pointing the app at the sandbox
 
 The iOS app authenticates against whatever server URL it's configured with, and the OIDC redirect
