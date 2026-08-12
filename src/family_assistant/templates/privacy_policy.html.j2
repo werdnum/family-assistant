@@ -116,6 +116,10 @@
   </ul>
   <p>The app does not collect location, contacts, health data, photos you have not chosen to share,
   or an advertising identifier.</p>
+  <p>If the operator has enabled email intake, the instance also receives and stores messages sent
+  to its intake address, together with their attachments. Depending on how the operator has
+  configured that feature, those messages can come from senders who are not users of the instance;
+  they are stored on the server in the same way as anything else you send it.</p>
 
   <h2>How the information is used</h2>
   <p>Solely to provide the assistant: answering your messages, carrying out tasks you ask for,
@@ -130,8 +134,11 @@
     <li><strong>AI model providers</strong> — the content of your conversations, and the data the
     assistant needs to answer them, is sent to the model provider(s) configured on your server (for
     example OpenAI, Google or Anthropic) for processing. Their handling of that data is governed by
-    the API terms and privacy policies of whichever providers your operator has configured; these
-    APIs are used under terms that do not permit training on submitted content.</li>
+    the API terms and privacy policies of whichever providers your operator has configured. Whether
+    submitted content may be used to improve a provider's models depends on that provider, the plan
+    it is used under and the account's settings — paid API tiers generally exclude it, some free
+    tiers do not. Ask your operator which providers and plans this instance uses, and consult those
+    providers' terms.</li>
     <li><strong>Apple</strong> — push notification payloads pass through the Apple Push Notification
     service in order to reach your device. TestFlight builds also report crashes to Apple under
     <a href="https://www.apple.com/legal/privacy/">Apple's privacy policy</a>.</li>
@@ -143,8 +150,9 @@
   </ul>
 
   <h2>Storage, retention and security</h2>
-  <p>Data is stored in the database of the instance you use, under the operator's control, and is
-  kept until you or the operator delete it. Traffic between the app and the server is encrypted with
+  <p>Your records are stored in the database of the instance you use, and uploaded files — documents
+  and attachments — are stored on that server's filesystem with the database holding their metadata.
+  Both are under the operator's control and are kept until you or the operator delete them. Traffic between the app and the server is encrypted with
   HTTPS, and device sessions can be revoked at any time from the server's token settings. No system
   is perfectly secure, and this is self-hosted software: the security of your data depends on how
   the operator configures and maintains their server, including how they restrict access to it.</p>
@@ -167,8 +175,8 @@
   <h2>Children</h2>
   <p>Family Assistant is designed for household use, and a household may include children whose
   parent or guardian sets up and supervises their access. The software is not directed at children
-  generally, is not distributed to the public, and no data is collected from anyone who has not been
-  invited to an instance by its operator. Where a child uses the assistant, the parent or guardian
+  generally, is not distributed to the public, and the app can only be used by someone the operator
+  has given access to. Where a child uses the assistant, the parent or guardian
   operating the instance controls that child's data and can delete it at any time.</p>
 
   <h2>International use</h2>
