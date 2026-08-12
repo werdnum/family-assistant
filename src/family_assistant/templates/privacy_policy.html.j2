@@ -66,8 +66,9 @@
   <p class="meta">Last updated: {{ last_updated }}</p>
 
   <div class="summary">
-    <p><strong>In short:</strong> Family Assistant is self-hosted software. The app talks only to the
-    server address you enter when you set it up. There is no Family Assistant company, no central
+    <p><strong>In short:</strong> Family Assistant is self-hosted software. The app talks to the
+    server address you enter when you set it up, and otherwise only to Apple's own services for push
+    notifications and TestFlight crash reports. There is no Family Assistant company, no central
     service, no analytics or advertising SDKs, and no sale or sharing of your data for advertising.
     Your information lives on the server you (or the person who invited you) run, and is processed
     by the AI providers and integrations that server is configured to use.</p>
@@ -152,8 +153,11 @@
 
   <h2>Storage, retention and security</h2>
   <p>Everything described above — your records and the files you upload — is stored on the instance
-  you use, under the operator's control, and is kept until you or the operator delete it. Traffic between the app and the server is encrypted with
-  HTTPS, and device sessions can be revoked at any time from the server's token settings. No system
+  you use, under the operator's control, and is kept until you or the operator delete it. Traffic
+  between the app and the server is encrypted with HTTPS wherever the operator publishes the server
+  over HTTPS, which is how any instance reachable over the internet should be run; an instance
+  reached only over a home network may be served without it. Device sessions can be revoked at any
+  time from the server's token settings. No system
   is perfectly secure, and this is self-hosted software: the security of your data depends on how
   the operator configures and maintains their server, including how they restrict access to it.</p>
 
@@ -191,8 +195,9 @@
   {% if contact_email %}
   <p>Questions, or requests about your data: <a href="mailto:{{ contact_email }}">{{ contact_email }}</a>.</p>
   {% else %}
-  <p>Questions, or requests about your data, should go to the operator of this instance, who invited
-  you to it.</p>
+  <p>Questions, or requests about your data, should go to the operator of this instance — the person
+  or household who runs it. If you reached this page because you corresponded with an instance you
+  do not use yourself, reply to the address you were writing to and the operator will receive it.</p>
   {% endif %}
 
   <footer>
