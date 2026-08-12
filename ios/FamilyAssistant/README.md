@@ -251,6 +251,51 @@ FamilyAssistant/
 - **UniformTypeIdentifiers** - Attachment MIME/type validation
 - **Swift Markdown 0.8.0** - GitHub-flavored Markdown parsing support
 
+## Privacy Manifest
+
+`FamilyAssistant/PrivacyInfo.xcprivacy` ships in the app bundle as a resource of the
+`FamilyAssistant` target. App Store submission requires it, and it feeds both the App Store privacy
+"nutrition label" and the Xcode privacy report.
+
+It declares no tracking and no tracking domains: the app carries no analytics, attribution or ad
+SDKs, and Swift Markdown is the only third-party package.
+
+Collected data types, all marked linked-to-identity (every request carries an account API token) and
+all for App Functionality only:
+
+| Declared type         | Source                                                      |
+| --------------------- | ----------------------------------------------------------- |
+| Photos or Videos      | Image attachments picked in native Chat                     |
+| Audio Data            | Voice mode streams microphone frames to the Gemini Live API |
+| Other User Content    | Chat messages, notes, PDF/text/Markdown attachments         |
+| User ID               | The account behind the API token                            |
+| Device ID             | APNs device token and the `fa_installation_id` UUID         |
+| Crash Data            | Uncaught `NSException` reports, with stack symbols          |
+| Other Diagnostic Data | The telemetry lane, plus app version, build and OS version  |
+
+Audio is the one type that leaves the device for somewhere other than the Family Assistant server:
+`Voice/GeminiLiveClient.swift` opens its `wss://` session straight to Google's Generative Language
+endpoint using a backend-minted ephemeral token, so the frames do not transit the server.
+
+Required-reason API declarations:
+
+- `NSPrivacyAccessedAPICategoryUserDefaults` — `CA92.1`, for `UserDefaults` values only this app
+  reads (notification toggle, stored device token, installation ID, persisted chat selections).
+- `NSPrivacyAccessedAPICategoryFileTimestamp` — `C617.1`, the in-container reason, for the
+  `.creationDateKey` sort that trims the error reporter's spool directory. Not `DDA9.1`, which
+  covers displaying timestamps to the person using the device and forbids sending them off-device;
+  the trim neither displays nor transmits them.
+
+Two changes oblige an update here. Sending a new kind of data off-device means a new
+`NSPrivacyCollectedDataTypes` entry and a matching answer in App Store Connect. Reaching for a
+required-reason API — disk space, system boot time, active keyboards, or file timestamps outside the
+app container — means a new `NSPrivacyAccessedAPITypes` entry, or the build is rejected at upload.
+
+Note that `device_name` in the push-token payload is not a declared data type: with a deployment
+target of iOS 17 and no user-assigned-device-name entitlement, `UIDevice.current.name` returns a
+generic model string rather than a personal one. Adding that entitlement would make it personal data
+and would require declaring Contact Info → Name.
+
 ## Building from Command Line
 
 If you prefer to build from the command line:
