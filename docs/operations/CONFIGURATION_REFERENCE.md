@@ -104,7 +104,7 @@ ______________________________________________________________________
 
 Every deployment serves a privacy policy at `/privacy`. The path is in `PUBLIC_PATHS`, so it renders
 without authentication — App Store Connect and TestFlight require a policy URL reachable by
-reviewers who have no account. Use `https://<your SERVER_URL>/privacy` as the app's privacy policy
+reviewers who have no account. Use your `SERVER_URL` with `/privacy` appended as the privacy policy
 URL.
 
 The policy text lives in `src/family_assistant/templates/privacy_policy.html.j2` and describes the

@@ -72,6 +72,27 @@ async def test_privacy_policy_falls_back_without_contact(
     assert "the person who operates this Family Assistant instance" in response.text
 
 
+@pytest.mark.asyncio
+async def test_configured_values_are_html_escaped(
+    privacy_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Operator-supplied values must not be able to inject markup.
+
+    Jinja's ``select_autoescape`` keys on the final filename extension, which is
+    ``.j2`` here, so the template escapes these substitutions explicitly.
+    """
+    monkeypatch.setenv("PRIVACY_POLICY_OPERATOR", "<script>alert(1)</script>")
+    monkeypatch.setenv("PRIVACY_POLICY_CONTACT_EMAIL", '"><script>alert(2)</script>')
+
+    response = await privacy_client.get("/privacy")
+
+    assert response.status_code == 200
+    assert "<script>alert(1)</script>" not in response.text
+    assert "<script>alert(2)</script>" not in response.text
+    assert "&lt;script&gt;" in response.text
+
+
 def test_privacy_path_is_public() -> None:
     """The policy path must bypass the auth middleware."""
     assert any(pattern.match("/privacy") for pattern in PUBLIC_PATHS)

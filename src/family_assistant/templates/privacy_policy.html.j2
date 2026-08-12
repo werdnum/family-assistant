@@ -77,7 +77,7 @@
   <h2>Who this policy covers</h2>
   <p>This policy describes how the Family Assistant iOS app, web interface and backend server handle
   personal information. This copy of the policy is published by the operator of this particular
-  instance: {{ operator }}. That operator is the data controller for everything stored in it.</p>
+  instance: {{ operator | e }}. That operator is the data controller for everything stored in it.</p>
   <p>Family Assistant is intended for a household and the people it invites. The app is only usable
   against an instance you have been given access to; who may reach that instance, and how they sign
   in, is configured by its operator.</p>
@@ -193,7 +193,7 @@
 
   <h2>Contact</h2>
   {% if contact_email %}
-  <p>Questions, or requests about your data: <a href="mailto:{{ contact_email }}">{{ contact_email }}</a>.</p>
+  <p>Questions, or requests about your data: <a href="mailto:{{ contact_email | e }}">{{ contact_email | e }}</a>.</p>
   {% else %}
   <p>Questions, or requests about your data, should go to the operator of this instance — the person
   or household who runs it. If you reached this page because you corresponded with an instance you
