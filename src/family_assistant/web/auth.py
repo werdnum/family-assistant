@@ -55,6 +55,7 @@ PUBLIC_PATHS = [
     re.compile(r"^/webhook(/.*)?$"),
     re.compile(r"^/api(/.*)?$"),
     re.compile(r"^/health$"),
+    re.compile(r"^/privacy$"),
     re.compile(r"^/static(/.*)?$"),
     re.compile(r"^/favicon.ico$"),
     re.compile(r"^/\.well-known(/.*)?$"),

@@ -100,6 +100,44 @@ Enables development-specific features like hot reloading and debug endpoints.
 
 ______________________________________________________________________
 
+## Privacy Policy Page
+
+Every deployment serves a privacy policy at `/privacy`. The path is in `PUBLIC_PATHS`, so it renders
+without authentication — App Store Connect and TestFlight require a policy URL reachable by
+reviewers who have no account. Use `https://<your SERVER_URL>/privacy` as the app's privacy policy
+URL.
+
+The policy text lives in `src/family_assistant/templates/privacy_policy.html.j2` and describes the
+software's data handling; the two settings below identify the operator of your instance, who is the
+data controller.
+
+### PRIVACY_POLICY_OPERATOR
+
+Name of the person or household operating this instance, shown in the policy.
+
+| Property  | Value                                                    |
+| --------- | -------------------------------------------------------- |
+| Required  | No                                                       |
+| Default   | `the person who operates this Family Assistant instance` |
+| Sensitive | No                                                       |
+| Example   | `The Garrett household`                                  |
+
+______________________________________________________________________
+
+### PRIVACY_POLICY_CONTACT_EMAIL
+
+Contact address for privacy questions and data deletion requests. When unset, the policy tells
+readers to contact the operator who invited them instead of showing an address.
+
+| Property  | Value                 |
+| --------- | --------------------- |
+| Required  | No                    |
+| Default   | Unset                 |
+| Sensitive | No                    |
+| Example   | `privacy@example.com` |
+
+______________________________________________________________________
+
 ## Storage Paths
 
 ### DOCUMENT_STORAGE_PATH
