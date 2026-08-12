@@ -153,6 +153,9 @@ provide:
 
 ## Tearing it down
 
-Delete the Render Blueprint (or `docker compose down -v`) when review is complete. Because the
-database was never shared with production, nothing of yours is left behind. Revoke the capped
-OpenRouter key for good measure.
+Delete the Render Blueprint (or `docker compose down -v`) when review is complete. On the Kubernetes
+path, remove the ArgoCD Application instead — pruning takes the namespace, its PVCs and the
+reviewer's data with it; `kubernetes/manifests/workloads/family-assistant-demo/README.md` has the
+full list, including the tunnel hostnames and Cloudflare Access entries. Because the database was
+never shared with production, nothing of yours is left behind whichever path you took. Revoke the
+capped OpenRouter key for good measure.
