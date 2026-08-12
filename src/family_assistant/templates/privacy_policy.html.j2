@@ -77,8 +77,9 @@
   <p>This policy describes how the Family Assistant iOS app, web interface and backend server handle
   personal information. This copy of the policy is published by the operator of this particular
   instance: {{ operator }}. That operator is the data controller for everything stored in it.</p>
-  <p>Family Assistant is intended for a household and the people it invites. Access requires an
-  account on the instance you connect to; the app is not usable without one.</p>
+  <p>Family Assistant is intended for a household and the people it invites. The app is only usable
+  against an instance you have been given access to; who may reach that instance, and how they sign
+  in, is configured by its operator.</p>
 
   <h2>What the app collects</h2>
   <p>The iOS app collects no information for its own purposes. It has no analytics, advertising,
@@ -144,13 +145,15 @@
   <h2>Storage, retention and security</h2>
   <p>Data is stored in the database of the instance you use, under the operator's control, and is
   kept until you or the operator delete it. Traffic between the app and the server is encrypted with
-  HTTPS. Access requires authentication, and device sessions can be revoked at any time from the
-  server's token settings. No system is perfectly secure, and this is self-hosted software: the
-  security of your data also depends on how the operator configures and maintains their server.</p>
+  HTTPS, and device sessions can be revoked at any time from the server's token settings. No system
+  is perfectly secure, and this is self-hosted software: the security of your data depends on how
+  the operator configures and maintains their server, including how they restrict access to it.</p>
 
   <h2>Your choices and rights</h2>
   <ul>
-    <li>Delete individual notes, tasks, documents and conversations from within the app at any time.</li>
+    <li>Delete notes, calendar events, automations and attachments at any time, either in the app or
+    by asking the assistant to do it. For anything the app has no delete control for — conversation
+    history, uploaded documents — ask the operator, who can remove it from the server.</li>
     <li>Turn off notifications in iOS Settings, and revoke a device's access from the app's token
     settings.</li>
     <li>Disconnect any linked account to stop further access to it.</li>
