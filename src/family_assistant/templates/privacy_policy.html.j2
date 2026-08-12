@@ -67,8 +67,9 @@
 
   <div class="summary">
     <p><strong>In short:</strong> Family Assistant is self-hosted software. The app talks to the
-    server address you enter when you set it up, and otherwise only to Apple's own services for push
-    notifications and TestFlight crash reports. There is no Family Assistant company, no central
+    server address you enter when you set it up; otherwise only to Apple's own services for push
+    notifications and TestFlight crash reports, and to Google during a voice conversation. There is
+    no Family Assistant company, no central
     service, no analytics or advertising SDKs, and no sale or sharing of your data for advertising.
     Your information lives on the server you (or the person who invited you) run, and is processed
     by the AI providers and integrations that server is configured to use.</p>
@@ -96,8 +97,10 @@
     <li><strong>Attachments and documents</strong> — photos, PDFs, text files, audio and other files
     you upload or share into the app.</li>
     <li><strong>Voice input</strong> — when you start a voice conversation, microphone audio is
-    streamed for as long as that conversation is active. The app requests microphone access only for
-    this, and only when you use it.</li>
+    streamed for as long as that conversation is active. In the iOS app's voice mode that audio goes
+    from your device straight to Google's Gemini Live service, using a short-lived token your server
+    issues, rather than through your server. The app requests microphone access only for this, and
+    only when you use it.</li>
     <li><strong>Connected accounts</strong> — if you link an integration such as Google (Gmail,
     Calendar, Drive), Telegram, email intake or a smart-home system, the credentials for that link
     and the data it retrieves are stored on your server.</li>
@@ -107,8 +110,10 @@
   <ul>
     <li><strong>Account and session data</strong> — your sign-in identity, session cookies and API
     tokens issued to your devices.</li>
-    <li><strong>Push notification tokens</strong> — an Apple Push Notification service device token,
-    if you enable notifications, so the server can notify that device.</li>
+    <li><strong>Push notification registration</strong> — if you enable notifications, the app sends
+    your server an Apple Push Notification service device token so it can notify that device, along
+    with an identifier for that app installation and the device's name (which on iOS is often
+    something like "Alex's iPhone").</li>
     <li><strong>Diagnostics</strong> — error reports and short-lived technical breadcrumbs (such as
     connection events and app-version information) sent to your own server to help debug problems.
     These are stored on your server, not sent to any third-party crash or analytics service.</li>
