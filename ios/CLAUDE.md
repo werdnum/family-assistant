@@ -39,6 +39,14 @@ See [docs/design/ios_error_reporting.md](../docs/design/ios_error_reporting.md) 
 [src/family_assistant/web/CLAUDE.md](../src/family_assistant/web/CLAUDE.md) for the server side of
 the contract.
 
+## Privacy Manifest
+
+`FamilyAssistant/PrivacyInfo.xcprivacy` is a bundled resource of the app target and is required for
+App Store submission. Adding a new outbound data flow needs a matching `NSPrivacyCollectedDataTypes`
+entry; calling a required-reason API (disk space, boot time, active keyboards, file timestamps)
+needs an `NSPrivacyAccessedAPITypes` entry or the upload is rejected. See
+[FamilyAssistant/README.md](FamilyAssistant/README.md) for what is currently declared and why.
+
 ## Push Notifications
 
 Native push is delivered through APNs. The device-token registration endpoints and every APNs
