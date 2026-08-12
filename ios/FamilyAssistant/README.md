@@ -281,8 +281,10 @@ Required-reason API declarations:
 
 - `NSPrivacyAccessedAPICategoryUserDefaults` — `CA92.1`, for `UserDefaults` values only this app
   reads (notification toggle, stored device token, installation ID, persisted chat selections).
-- `NSPrivacyAccessedAPICategoryFileTimestamp` — `DDA9.1`, for the `.creationDateKey` sort that trims
-  the error reporter's spool directory inside the app container.
+- `NSPrivacyAccessedAPICategoryFileTimestamp` — `C617.1`, the in-container reason, for the
+  `.creationDateKey` sort that trims the error reporter's spool directory. Not `DDA9.1`, which
+  covers displaying timestamps to the person using the device and forbids sending them off-device;
+  the trim neither displays nor transmits them.
 
 Two changes oblige an update here. Sending a new kind of data off-device means a new
 `NSPrivacyCollectedDataTypes` entry and a matching answer in App Store Connect. Reaching for a
