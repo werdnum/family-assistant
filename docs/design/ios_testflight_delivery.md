@@ -97,6 +97,12 @@ These steps happen in Xcode / App Store Connect and cannot be scripted from the 
    certificate; no secrets land in the repo).
 5. Trigger the first build manually to confirm the archive uploads and the build number reflects
    `CI_BUILD_NUMBER`.
+6. **Privacy policy URL** — App Store Connect requires one before a build can be distributed. The
+   backend serves the policy unauthenticated at `/privacy`, so enter `SERVER_URL` with `/privacy`
+   appended (e.g. `https://assistant.example.com/privacy`) under App Information → Privacy Policy
+   URL. Set `PRIVACY_POLICY_OPERATOR` and `PRIVACY_POLICY_CONTACT_EMAIL` on the server first (see
+   [CONFIGURATION_REFERENCE.md](../operations/CONFIGURATION_REFERENCE.md)) so the page names a real
+   operator and contact.
 
 ### Optional: run tests inside Xcode Cloud too
 

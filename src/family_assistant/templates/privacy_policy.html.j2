@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Privacy Policy &middot; Family Assistant</title>
+<meta name="robots" content="index, follow">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff;
+    --fg: #1c1c1e;
+    --muted: #55555c;
+    --rule: #e0e0e4;
+    --accent: #0b5fbd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16171a;
+      --fg: #ececf1;
+      --muted: #a5a5ae;
+      --rule: #33343a;
+      --accent: #7fb2ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2.5rem 1.25rem 4rem;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    font-size: 17px;
+  }
+  main { max-width: 44rem; margin: 0 auto; }
+  h1 { font-size: 1.9rem; line-height: 1.25; margin: 0 0 0.25rem; }
+  h2 { font-size: 1.25rem; margin: 2.25rem 0 0.5rem; }
+  h3 { font-size: 1.05rem; margin: 1.5rem 0 0.35rem; }
+  p, li { color: var(--fg); }
+  ul { padding-left: 1.25rem; }
+  li { margin: 0.3rem 0; }
+  a { color: var(--accent); }
+  .meta { color: var(--muted); font-size: 0.95rem; margin: 0 0 1.5rem; }
+  .summary {
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    padding: 1rem 1.25rem;
+    margin: 1.5rem 0 0;
+    background: color-mix(in srgb, var(--fg) 4%, transparent);
+  }
+  .summary p:first-child { margin-top: 0; }
+  .summary p:last-child { margin-bottom: 0; }
+  footer {
+    margin-top: 3rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--rule);
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Family Assistant Privacy Policy</h1>
+  <p class="meta">Last updated: {{ last_updated }}</p>
+
+  <div class="summary">
+    <p><strong>In short:</strong> Family Assistant is self-hosted software. The app talks to the
+    server address you enter when you set it up; otherwise only to Apple's own services for push
+    notifications and TestFlight crash reports, and to Google during a voice conversation. There is
+    no Family Assistant company, no central
+    service, no analytics or advertising SDKs, and no sale or sharing of your data for advertising.
+    Your information lives on the server you (or the person who invited you) run, and is processed
+    by the AI providers and integrations that server is configured to use.</p>
+  </div>
+
+  <h2>Who this policy covers</h2>
+  <p>This policy describes how the Family Assistant iOS app, web interface and backend server handle
+  personal information. This copy of the policy is published by the operator of this particular
+  instance: {{ operator | e }}. That operator is the data controller for everything stored in it.</p>
+  <p>Family Assistant is intended for a household and the people it invites. The app is only usable
+  against an instance you have been given access to; who may reach that instance, and how they sign
+  in, is configured by its operator.</p>
+
+  <h2>What the app collects</h2>
+  <p>The iOS app collects no information for its own purposes. It has no analytics, advertising,
+  attribution or tracking SDKs, and it does not build a profile of you. Everything below is
+  information handled so the assistant can do what you asked. It goes to <em>your</em> server, with
+  one exception noted where it applies: in voice mode the microphone audio goes from your device
+  straight to Google.</p>
+
+  <h3>Information you provide</h3>
+  <ul>
+    <li><strong>Conversations</strong> — the messages you send to the assistant and its replies,
+    including anything you paste or dictate into them.</li>
+    <li><strong>Content you create</strong> — notes, tasks, reminders, calendar events, automations
+    and similar records.</li>
+    <li><strong>Attachments and documents</strong> — photos, PDFs, text files, audio and other files
+    you upload or share into the app.</li>
+    <li><strong>Voice input</strong> — when you start a voice conversation, microphone audio is
+    streamed for as long as that conversation is active. In the iOS app's voice mode that audio goes
+    from your device straight to Google's Gemini Live service, using a short-lived token your server
+    issues, rather than through your server. The app requests microphone access only for this, and
+    only when you use it.</li>
+    <li><strong>Connected accounts</strong> — if you link an integration such as Google (Gmail,
+    Calendar, Drive), Telegram, email intake or a smart-home system, the credentials for that link
+    and the data it retrieves are stored on your server.</li>
+  </ul>
+
+  <h3>Information collected automatically</h3>
+  <ul>
+    <li><strong>Account and session data</strong> — your sign-in identity, session cookies and API
+    tokens issued to your devices.</li>
+    <li><strong>Push notification registration</strong> — if you enable notifications, the app sends
+    your server an Apple Push Notification service device token so it can notify that device, along
+    with an identifier for that app installation and the device's name (which on iOS is often
+    something like "Alex's iPhone").</li>
+    <li><strong>Diagnostics</strong> — error reports and short-lived technical breadcrumbs (such as
+    connection events and app-version information) sent to your own server to help debug problems.
+    These are stored on your server, not sent to any third-party crash or analytics service.</li>
+    <li><strong>Server logs</strong> — ordinary request logs kept by the server and its hosting
+    infrastructure.</li>
+  </ul>
+  <p>The app does not collect location, contacts, health data, photos you have not chosen to share,
+  or an advertising identifier.</p>
+  <p>If the operator has enabled email intake, the instance also receives and stores messages sent
+  to its intake address, together with their attachments. Depending on how the operator has
+  configured that feature, those messages can come from senders who are not users of the instance;
+  they are stored on the server in the same way as anything else you send it.</p>
+
+  <h2>How the information is used</h2>
+  <p>Solely to provide the assistant: answering your messages, carrying out tasks you ask for,
+  storing and retrieving your notes, documents, calendar and reminders, sending notifications you
+  have enabled, and diagnosing faults. The operator does not use it for advertising or profiling.
+  What the AI providers your instance is configured to use may do with the content sent to them is
+  set out below.</p>
+
+  <h2>Who the information is shared with</h2>
+  <p>Your data is not sold, and is not shared for advertising or marketing. It is disclosed only to
+  the services your instance is configured to use:</p>
+  <ul>
+    <li><strong>AI model providers</strong> — the content of your conversations, and the data the
+    assistant needs to answer them, is sent to the model provider(s) configured on your server (for
+    example OpenAI, Google or Anthropic) for processing. Their handling of that data is governed by
+    the API terms and privacy policies of whichever providers your operator has configured. Whether
+    submitted content may be used to improve a provider's models depends on that provider, the plan
+    it is used under and the account's settings — paid API tiers generally exclude it, some free
+    tiers do not. Ask your operator which providers and plans this instance uses, and consult those
+    providers' terms.</li>
+    <li><strong>Apple</strong> — push notification payloads pass through the Apple Push Notification
+    service in order to reach your device. TestFlight builds also report crashes to Apple under
+    <a href="https://www.apple.com/legal/privacy/">Apple's privacy policy</a>.</li>
+    <li><strong>Integrations you connect</strong> — services such as Google, Telegram, your email
+    provider or a smart-home system, but only for the data needed to fulfil the request.</li>
+    <li><strong>Hosting infrastructure</strong> — whoever hosts the server (which may be the
+    operator's own hardware).</li>
+    <li><strong>Legal obligations</strong> — the operator may disclose data if legally required to.</li>
+  </ul>
+
+  <h2>Storage, retention and security</h2>
+  <p>Everything described above — your records and the files you upload — is stored on the instance
+  you use, under the operator's control, and is kept until you or the operator delete it. Traffic
+  between the app and the server is encrypted with HTTPS wherever the operator publishes the server
+  over HTTPS, which is how any instance reachable over the internet should be run; an instance
+  reached only over a home network may be served without it. Device sessions can be revoked at any
+  time from the server's token settings. No system
+  is perfectly secure, and this is self-hosted software: the security of your data depends on how
+  the operator configures and maintains their server, including how they restrict access to it.</p>
+
+  <h2>Your choices and rights</h2>
+  <ul>
+    <li>Delete notes, calendar events, automations and attachments at any time, either in the app or
+    by asking the assistant to do it. For anything the app has no delete control for — conversation
+    history, uploaded documents — ask the operator, who can remove it from the server.</li>
+    <li>Turn off notifications in iOS Settings, and revoke a device's access from the app's token
+    settings.</li>
+    <li>Disconnect any linked account to stop further access to it.</li>
+    <li>Ask the operator for a copy of your data, for its correction, or for its deletion, including
+    the deletion of your whole account. Depending on where you live (for example under the GDPR or
+    the CCPA) you may have a legal right to these; the operator honours such requests.</li>
+    <li>Deleting the app removes local caches from your device but not data already stored on the
+    server — ask the operator to delete the account for that.</li>
+  </ul>
+
+  <h2>Children</h2>
+  <p>Family Assistant is designed for household use, and a household may include children whose
+  parent or guardian sets up and supervises their access. The software is not directed at children
+  generally, is not distributed to the public, and the app can only be used by someone the operator
+  has given access to. Where a child uses the assistant, the parent or guardian
+  operating the instance controls that child's data and can delete it at any time.</p>
+
+  <h2>International use</h2>
+  <p>Your data is stored wherever the operator hosts the server, and may be processed in other
+  countries by the AI providers and integrations described above.</p>
+
+  <h2>Changes to this policy</h2>
+  <p>If this policy changes, the updated version is published at this address with a new "last
+  updated" date. Material changes will also be communicated by the operator.</p>
+
+  <h2>Contact</h2>
+  {% if contact_email %}
+  <p>Questions, or requests about your data: <a href="mailto:{{ contact_email | e }}">{{ contact_email | e }}</a>.</p>
+  {% else %}
+  <p>Questions, or requests about your data, should go to the operator of this instance — the person
+  or household who runs it. If you reached this page because you corresponded with an instance you
+  do not use yourself, reply to the address you were writing to and the operator will receive it.</p>
+  {% endif %}
+
+  <footer>
+    Family Assistant is self-hosted software. This page is served by the instance you are viewing and
+    describes that instance.
+  </footer>
+</main>
+</body>
+</html>
