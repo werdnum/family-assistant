@@ -486,7 +486,7 @@
 					E10001 = {
 						CreatedOnToolsVersion = 15.4;
 						SystemCapabilities = {
-							com.apple.AssociatedDomains = {
+							com.apple.SafariKeychain = {
 								enabled = 1;
 							};
 						};
