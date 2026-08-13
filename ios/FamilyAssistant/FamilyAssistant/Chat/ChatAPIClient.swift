@@ -51,6 +51,17 @@ struct ChatAPIClient {
         try await getMessagesPage(conversationID: conversationID, after: nil, limit: 0)
     }
 
+    /// Load the authenticated, read-only transcript addressed by a share token.
+    /// This deliberately uses the share-scoped endpoint so the recipient never
+    /// gains owner access to the conversation or its attachments.
+    func getSharedConversationMessages(token: String) async throws -> ChatConversationMessagesResponse {
+        let encodedToken = Self.encodedPathComponent(token)
+        let url = try apiURL("/api/v1/shared-conversations/\(encodedToken)/messages")
+        let (data, response) = try await authorizedGETWithAuthRetry(url: url)
+        try validate(response: response, data: data)
+        return try JSONDecoder.chatDecoder.decode(ChatConversationMessagesResponse.self, from: data)
+    }
+
     /// Load only messages newer than `after` (ISO-8601 timestamp).
     ///
     /// Incremental loads after a turn or live event pass the timestamp of the

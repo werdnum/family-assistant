@@ -111,6 +111,67 @@ final class ChatAPIClientTests: XCTestCase {
         XCTAssertEqual(conversations.map(\.conversationID), ["web_conv_1", "web_conv_2"])
     }
 
+    func testGetSharedConversationUsesScopedAuthenticatedEndpoint() async throws {
+        ChatMockBackendURLProtocol.respond { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(
+                request.url?.path,
+                "/api/v1/shared-conversations/share-token_123/messages"
+            )
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(self.apiToken)")
+            return .json(
+                """
+                {
+                  "conversation_id": "web_conv_shared",
+                  "messages": [
+                    {
+                      "internal_id": "shared-1",
+                      "role": "assistant",
+                      "content": "Shared answer",
+                      "timestamp": "2026-08-13T12:00:00Z",
+                      "attachments": [
+                        {
+                          "attachment_id": "attachment-1",
+                          "name": "photo.png",
+                          "mime_type": "image/png",
+                          "content_url": "/api/v1/shared-conversations/share-token_123/attachments/attachment-1"
+                        }
+                      ]
+                    }
+                  ],
+                  "count": 1,
+                  "total_messages": 1,
+                  "has_more_before": false,
+                  "has_more_after": false,
+                  "active_turns": []
+                }
+                """
+            )
+        }
+
+        let response = try await makeClient().getSharedConversationMessages(token: "share-token_123")
+
+        XCTAssertEqual(response.conversationID, "web_conv_shared")
+        XCTAssertEqual(response.messages.map(\.text), ["Shared answer"])
+        XCTAssertEqual(
+            response.messages.first?.attachments.first?.contentURL,
+            "/api/v1/shared-conversations/share-token_123/attachments/attachment-1"
+        )
+    }
+
+    func testGetSharedConversationPreservesUnavailableStatus() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(#"{"detail":"Shared conversation not found"}"#, statusCode: 404)
+        }
+
+        do {
+            _ = try await makeClient().getSharedConversationMessages(token: "revoked-token")
+            XCTFail("Expected a revoked share to throw")
+        } catch let ChatAPIError.server(statusCode, _, _) {
+            XCTAssertEqual(statusCode, 404)
+        }
+    }
+
     func testProfilesDecodeDirectChatProfiles() async throws {
         ChatMockBackendURLProtocol.respond { request in
             XCTAssertEqual(request.httpMethod, "GET")

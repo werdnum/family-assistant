@@ -399,9 +399,43 @@ func containsMarkdownSyntax(_ text: String) -> Bool {
     return false
 }
 
-private struct MessageBubble: View {
+@MainActor
+protocol ChatAttachmentLoading: AnyObject {
+    var attachmentCacheScope: String { get }
+
+    func authenticatedImageData(for attachment: ChatAttachment) async throws -> Data
+    func downloadAttachmentForSharing(_ attachment: ChatAttachment) async -> URL?
+}
+
+extension ChatViewModel: ChatAttachmentLoading {}
+
+struct MessageBubble: View {
     let message: ChatMessage
-    var viewModel: ChatViewModel
+    let attachmentLoader: any ChatAttachmentLoading
+    let retryViewModel: ChatViewModel?
+    let userRoleTitle: String
+
+    init(
+        message: ChatMessage,
+        viewModel: ChatViewModel,
+        userRoleTitle: String = "You"
+    ) {
+        self.message = message
+        attachmentLoader = viewModel
+        retryViewModel = viewModel
+        self.userRoleTitle = userRoleTitle
+    }
+
+    init(
+        message: ChatMessage,
+        attachmentLoader: any ChatAttachmentLoading,
+        userRoleTitle: String
+    ) {
+        self.message = message
+        self.attachmentLoader = attachmentLoader
+        retryViewModel = nil
+        self.userRoleTitle = userRoleTitle
+    }
 
     private var isUser: Bool {
         message.role == .user
@@ -449,22 +483,22 @@ private struct MessageBubble: View {
             // left inside it is invisible on reload even though it rendered
             // during the live turn.
             if !inlineImages.isEmpty {
-                ResponseImageGallery(images: inlineImages, viewModel: viewModel)
+                ResponseImageGallery(images: inlineImages, attachmentLoader: attachmentLoader)
             }
             if !message.toolCalls.isEmpty {
                 ToolGroupView(
                     toolCalls: message.toolCalls,
                     hoistedAttachmentKeys: hoistedKeys,
-                    viewModel: viewModel
+                    attachmentLoader: attachmentLoader
                 )
             }
             let strayAttachments = message.attachments.filter { !hoistedKeys.contains($0.dedupeKey) }
             if !strayAttachments.isEmpty {
-                AttachmentStrip(attachments: strayAttachments, viewModel: viewModel)
+                AttachmentStrip(attachments: strayAttachments, attachmentLoader: attachmentLoader)
             }
-            if let failed = viewModel.failedSend(for: message) {
+            if let retryViewModel, let failed = retryViewModel.failedSend(for: message) {
                 Button {
-                    Task { await viewModel.retryFailedSend(turnID: failed.turnID) }
+                    Task { await retryViewModel.retryFailedSend(turnID: failed.turnID) }
                 } label: {
                     Label("Retry", systemImage: "arrow.clockwise")
                         .font(.caption.bold())
@@ -475,7 +509,7 @@ private struct MessageBubble: View {
                 // it must not fire while a newer turn is actively streaming (it would
                 // cancel that unrelated in-flight reply). Mirrors the composer's
                 // send guard.
-                .disabled(viewModel.isStreaming)
+                .disabled(retryViewModel.isStreaming)
                 .accessibilityIdentifier("chat-retry-\(message.id)")
             }
         }
@@ -515,7 +549,7 @@ private struct MessageBubble: View {
     private var roleTitle: String {
         switch message.role {
         case .user:
-            "You"
+            userRoleTitle
         case .assistant:
             "Assistant"
         case .system:
@@ -1724,7 +1758,7 @@ private struct ToolGroupView: View {
     /// Attachments already shown inline in the reply, which the cards must not
     /// render a second time.
     let hoistedAttachmentKeys: Set<String>
-    var viewModel: ChatViewModel
+    let attachmentLoader: any ChatAttachmentLoading
     @State private var collapsedCompleted = true
 
     private var shouldCollapse: Bool {
@@ -1738,7 +1772,7 @@ private struct ToolGroupView: View {
                     ToolCallCard(
                         toolCall: toolCall,
                         hoistedAttachmentKeys: hoistedAttachmentKeys,
-                        viewModel: viewModel
+                        attachmentLoader: attachmentLoader
                     )
                 }
             }
@@ -1754,7 +1788,7 @@ private struct ToolGroupView: View {
 private struct ToolCallCard: View {
     let toolCall: ChatToolCall
     let hoistedAttachmentKeys: Set<String>
-    var viewModel: ChatViewModel
+    let attachmentLoader: any ChatAttachmentLoading
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1778,7 +1812,7 @@ private struct ToolCallCard: View {
                 !hoistedAttachmentKeys.contains($0.dedupeKey)
             }
             if !remainingAttachments.isEmpty {
-                AttachmentStrip(attachments: remainingAttachments, viewModel: viewModel)
+                AttachmentStrip(attachments: remainingAttachments, attachmentLoader: attachmentLoader)
             }
         }
         .padding(10)
@@ -1804,7 +1838,7 @@ private struct ToolCallCard: View {
 
 private struct AttachmentStrip: View {
     let attachments: [ChatAttachment]
-    var viewModel: ChatViewModel
+    let attachmentLoader: any ChatAttachmentLoading
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -1814,7 +1848,7 @@ private struct AttachmentStrip: View {
             // stack would pull every one of them at once.
             LazyHStack(spacing: 10) {
                 ForEach(attachments) { attachment in
-                    AttachmentPreview(attachment: attachment, viewModel: viewModel)
+                    AttachmentPreview(attachment: attachment, attachmentLoader: attachmentLoader)
                 }
             }
         }
@@ -1823,13 +1857,13 @@ private struct AttachmentStrip: View {
 
 private struct AttachmentPreview: View {
     let attachment: ChatAttachment
-    var viewModel: ChatViewModel
+    let attachmentLoader: any ChatAttachmentLoading
     @State private var shareURL: URL?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             if attachment.type == .image {
-                AuthenticatedAttachmentImage(attachment: attachment, viewModel: viewModel)
+                AuthenticatedAttachmentImage(attachment: attachment, attachmentLoader: attachmentLoader)
                     .frame(width: 160, height: 110)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             } else {
@@ -1845,7 +1879,7 @@ private struct AttachmentPreview: View {
                 Spacer()
                 Button {
                     Task {
-                        shareURL = await viewModel.downloadAttachmentForSharing(attachment)
+                        shareURL = await attachmentLoader.downloadAttachmentForSharing(attachment)
                     }
                 } label: {
                     Image(systemName: "square.and.arrow.down")
@@ -1872,7 +1906,7 @@ private struct AttachmentPreview: View {
 /// the scene-update watchdog).
 private struct ResponseImageGallery: View {
     let images: [ChatAttachment]
-    var viewModel: ChatViewModel
+    let attachmentLoader: any ChatAttachmentLoading
     // One sheet binding for both destinations: stacking two `.sheet` modifiers
     // on the same view leaves only one of them able to present.
     @State private var sheet: Sheet?
@@ -1900,7 +1934,11 @@ private struct ResponseImageGallery: View {
                     Button {
                         sheet = .fullSize(image)
                     } label: {
-                        AuthenticatedAttachmentImage(attachment: image, viewModel: viewModel, contentMode: .fit)
+                        AuthenticatedAttachmentImage(
+                            attachment: image,
+                            attachmentLoader: attachmentLoader,
+                            contentMode: .fit
+                        )
                             // A cap rather than a fixed height: a wide, short
                             // image keeps its own proportions instead of sitting
                             // in a tall empty band, while a tall one still costs
@@ -1919,7 +1957,7 @@ private struct ResponseImageGallery: View {
                         Spacer()
                         Button {
                             Task {
-                                if let url = await viewModel.downloadAttachmentForSharing(image) {
+                                if let url = await attachmentLoader.downloadAttachmentForSharing(image) {
                                     sheet = .share(url)
                                 }
                             }
@@ -1935,7 +1973,7 @@ private struct ResponseImageGallery: View {
         .sheet(item: $sheet) { sheet in
             switch sheet {
             case .fullSize(let image):
-                ResponseImageViewer(attachment: image, viewModel: viewModel)
+                ResponseImageViewer(attachment: image, attachmentLoader: attachmentLoader)
             case .share(let url):
                 ShareSheet(activityItems: [url])
             }
@@ -1946,13 +1984,17 @@ private struct ResponseImageGallery: View {
 /// Full-size view of one response image, reached by tapping its inline copy.
 private struct ResponseImageViewer: View {
     let attachment: ChatAttachment
-    var viewModel: ChatViewModel
+    let attachmentLoader: any ChatAttachmentLoading
     @Environment(\.dismiss) private var dismiss
     @State private var shareURL: URL?
 
     var body: some View {
         NavigationStack {
-            AuthenticatedAttachmentImage(attachment: attachment, viewModel: viewModel, contentMode: .fit)
+            AuthenticatedAttachmentImage(
+                attachment: attachment,
+                attachmentLoader: attachmentLoader,
+                contentMode: .fit
+            )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .navigationTitle(attachment.name)
                 .navigationBarTitleDisplayMode(.inline)
@@ -1962,7 +2004,7 @@ private struct ResponseImageViewer: View {
                     }
                     ToolbarItem(placement: .topBarTrailing) {
                         Button {
-                            Task { shareURL = await viewModel.downloadAttachmentForSharing(attachment) }
+                            Task { shareURL = await attachmentLoader.downloadAttachmentForSharing(attachment) }
                         } label: {
                             Image(systemName: "square.and.arrow.up")
                         }
@@ -1982,7 +2024,7 @@ private struct ResponseImageViewer: View {
 
 private struct AuthenticatedAttachmentImage: View {
     let attachment: ChatAttachment
-    var viewModel: ChatViewModel
+    let attachmentLoader: any ChatAttachmentLoading
     var contentMode: ContentMode = .fill
     @State private var image: UIImage?
     @State private var failed = false
@@ -2006,8 +2048,8 @@ private struct AuthenticatedAttachmentImage: View {
         // Keyed on the session scope as well as the URL: a change of
         // credentials must re-run this rather than leave the previously decoded
         // image on screen.
-        .task(id: "\(viewModel.attachmentCacheScope)|\(attachment.contentURL ?? "")") {
-            let server = viewModel.attachmentCacheScope
+        .task(id: "\(attachmentLoader.attachmentCacheScope)|\(attachment.contentURL ?? "")") {
+            let server = attachmentLoader.attachmentCacheScope
             if let cached = AttachmentImageCache.image(for: attachment, server: server) {
                 image = cached
                 failed = false
@@ -2016,7 +2058,7 @@ private struct AuthenticatedAttachmentImage: View {
             image = nil
             failed = false
             do {
-                let data = try await viewModel.authenticatedImageData(for: attachment)
+                let data = try await attachmentLoader.authenticatedImageData(for: attachment)
                 guard let decodedImage = UIImage(data: data) else {
                     image = nil
                     failed = true

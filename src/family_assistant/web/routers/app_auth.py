@@ -452,11 +452,11 @@ async def auth_me(
 async def apple_app_site_association() -> JSONResponse:
     """Serve the Apple App Site Association file for Universal Links.
 
-    The iOS app uses this to claim the /.well-known/app-auth-callback path.
-    Team ID and bundle ID are configured via environment variables.
+    The iOS app uses this to claim the app-auth callback and shared-conversation
+    paths. Team ID and bundle ID can be overridden via environment variables.
     """
-    team_id = os.environ.get("APPLE_TEAM_ID", "XXXXXXXXXX")
-    bundle_id = os.environ.get("APPLE_BUNDLE_ID", "com.example.FamilyAssistant")
+    team_id = os.environ.get("APPLE_TEAM_ID", "H7NBC2S52X")
+    bundle_id = os.environ.get("APPLE_BUNDLE_ID", "dev.andrewgarrett.assistant")
     app_id = f"{team_id}.{bundle_id}"
 
     return JSONResponse(
@@ -466,7 +466,10 @@ async def apple_app_site_association() -> JSONResponse:
                 "details": [
                     {
                         "appID": app_id,
-                        "paths": ["/.well-known/app-auth-callback*"],
+                        "paths": [
+                            "/.well-known/app-auth-callback*",
+                            "/shared/conversations/*",
+                        ],
                     }
                 ],
             },
