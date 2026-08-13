@@ -4,15 +4,21 @@
   "generated_by": "scripts/refresh-provider-model-skills.py",
   "models": [
     {
+      "id": "gemini-3.7-flash",
+      "name": "Gemini 3.7 Flash",
+      "description": "Our latest and most capable Flash model, built for complex coding, agentic workflows, and reliable multi-step execution",
+      "source": "https://ai.google.dev/gemini-api/docs/models/gemini-3.7-flash"
+    },
+    {
       "id": "gemini-3.6-flash",
       "name": "Gemini 3.6 Flash",
-      "description": "Our latest model that balances speed with intelligence to deliver strong performance in agentic and multimodal tasks",
+      "description": "Our previous-generation Flash model, balancing speed and multimodal capabilities across general agentic and everyday tasks",
       "source": "https://ai.google.dev/gemini-api/docs/models/gemini-3.6-flash"
     },
     {
       "id": "gemini-3.5-flash",
       "name": "Gemini 3.5 Flash",
-      "description": "Most intelligent model for sustained frontier performance on agentic and coding tasks",
+      "description": "Our legacy Flash model, providing baseline speed and foundational performance for routine, high-throughput workloads",
       "source": "https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash"
     },
     {
@@ -95,13 +101,13 @@
     },
     {
       "id": "gemini-2.5-flash-native-audio-preview-12-2025",
-      "name": "Gemini 2.5 Flash Live Preview",
+      "name": "Gemini 2.5 Flash Live",
       "description": "Optimized for real-time conversational agents with sub-second native audio streaming",
       "source": "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash-native-audio-preview-12-2025"
     },
     {
       "id": "gemini-2.5-flash-preview-tts",
-      "name": "Gemini 2.5 Flash TTS Preview",
+      "name": "Gemini 2.5 Flash TTS",
       "description": "Controllable text-to-speech audio generation with fine control over style and pacing",
       "source": "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash-preview-tts"
     },
@@ -114,50 +120,50 @@
     {
       "id": "gemini-2.5-pro",
       "name": "Gemini 2.5 Pro",
-      "description": "Our most advanced model for complex tasks, featuring deep reasoning and coding capabilities",
+      "description": "Our most advanced model for complex tasks, featuring deep reasoning and coding capabilities in the 2.5 family",
       "source": "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-pro"
     },
     {
       "id": "gemini-2.5-pro-preview-tts",
-      "name": "Gemini 2.5 Pro TTS Preview",
+      "name": "Gemini 2.5 Pro TTS",
       "description": "High-fidelity speech synthesis optimized for quality in structured workflows like podcasts and audiobooks",
       "source": "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-pro-preview-tts"
     },
     {
       "id": "veo-3.1-generate-preview",
-      "name": "Veo 3.1 Preview",
+      "name": "Veo 3.1",
       "description": "State-of-the-art cinematic video generation with advanced creative controls and natively synchronized audio",
       "source": "https://ai.google.dev/gemini-api/docs/models/veo-3.1-generate-preview"
     },
     {
       "id": "veo-3.1-lite-generate-preview",
-      "name": "Veo 3.1 Lite Preview",
+      "name": "Veo 3.1 Lite",
       "description": "High-efficiency, low-cost, developer-first video generation, editing, and cinematic control from the Veo 3.1 family",
       "source": "https://ai.google.dev/gemini-api/docs/models/veo-3.1-lite-generate-preview"
     },
     {
       "id": "gemini-2.5-computer-use-preview-10-2025",
-      "name": "Computer Use Preview",
+      "name": "Computer Use",
       "description": "A specialized model that can \"see\" a digital screen and perform UI actions like clicking, typing, and navigating to automate complex browser tasks",
       "source": "https://ai.google.dev/gemini-api/docs/models/gemini-2.5-computer-use-preview-10-2025"
     },
     {
       "id": "deep-research-preview-04-2026",
-      "name": "Gemini Deep Research Preview",
+      "name": "Gemini Deep Research",
       "description": "An agentic model that autonomously plans and executes multi-step research across hundreds of sources to produce cited, interactive reports",
       "source": "https://ai.google.dev/gemini-api/docs/models/deep-research-preview-04-2026",
       "id_source": "url-slug (no documented Model code row)"
     },
     {
       "id": "deep-research-max-preview-04-2026",
-      "name": "Gemini Deep Research Max Preview",
+      "name": "Gemini Deep Research Max",
       "description": "Maximum comprehensiveness for automated context gathering and synthesis across hundreds of sources",
       "source": "https://ai.google.dev/gemini-api/docs/models/deep-research-max-preview-04-2026",
       "id_source": "url-slug (no documented Model code row)"
     },
     {
       "id": "antigravity-preview-05-2026",
-      "name": "Antigravity Agent Preview",
+      "name": "Antigravity Agent",
       "description": "A general-purpose managed agent that autonomously plans, reasons, runs code, manages files, and browses the web inside a secure, isolated Linux sandbox",
       "source": "https://ai.google.dev/gemini-api/docs/models/antigravity-preview-05-2026",
       "id_source": "url-slug (no documented Model code row)"
@@ -176,7 +182,7 @@
     },
     {
       "id": "gemini-robotics-er-1.6-preview",
-      "name": "Gemini Robotics ER 1.6Preview",
+      "name": "Gemini Robotics ER 1.6",
       "description": "Advanced embodied reasoning model that understands physical spaces and plans multi-step tasks for robotic agents with new capabilities like instrument reading, improved spatial and physical reasoning",
       "source": "https://ai.google.dev/gemini-api/docs/models/gemini-robotics-er-1.6-preview"
     }

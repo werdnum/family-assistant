@@ -743,7 +743,7 @@ async def test_streaming_content_accumulation(
 @pytest.mark.parametrize(
     "provider,model",
     [
-        ("google", "gemini-3.6-flash"),
+        ("google", "gemini-3.7-flash"),
     ],
 )
 async def test_basic_streaming_gemini(
@@ -795,7 +795,7 @@ async def test_basic_streaming_gemini(
 @pytest.mark.parametrize(
     "provider,model",
     [
-        ("google", "gemini-3.6-flash"),
+        ("google", "gemini-3.7-flash"),
     ],
 )
 async def test_streaming_with_system_message_gemini(
@@ -849,7 +849,7 @@ async def test_streaming_with_system_message_gemini(
 @pytest.mark.parametrize(
     "provider,model",
     [
-        ("google", "gemini-3.6-flash"),
+        ("google", "gemini-3.7-flash"),
     ],
 )
 async def test_streaming_with_tool_calls_gemini(
@@ -908,7 +908,7 @@ async def test_streaming_with_tool_calls_gemini(
 @pytest.mark.parametrize(
     "provider,model",
     [
-        ("google", "gemini-3.6-flash"),
+        ("google", "gemini-3.7-flash"),
     ],
 )
 async def test_streaming_error_handling_gemini(
@@ -953,7 +953,7 @@ async def test_streaming_error_handling_gemini(
 @pytest.mark.parametrize(
     "provider,model",
     [
-        ("google", "gemini-3.6-flash"),
+        ("google", "gemini-3.7-flash"),
     ],
 )
 async def test_streaming_with_multi_turn_conversation_gemini(
@@ -998,7 +998,7 @@ async def test_streaming_with_multi_turn_conversation_gemini(
 @pytest.mark.parametrize(
     "provider,model",
     [
-        ("google", "gemini-3.6-flash"),
+        ("google", "gemini-3.7-flash"),
     ],
 )
 async def test_streaming_reasoning_info_gemini(
@@ -1055,7 +1055,7 @@ async def test_streaming_reasoning_info_gemini(
 @pytest.mark.parametrize(
     "provider,model",
     [
-        ("google", "gemini-3.6-flash"),
+        ("google", "gemini-3.7-flash"),
     ],
 )
 async def test_google_streaming_with_multiturns_and_tool_calls(
@@ -1199,7 +1199,7 @@ async def test_google_streaming_pydantic_validation_reproducer(
         "replays_directory": "tests/cassettes/gemini",
     }
 
-    client = await llm_client_factory("google", "gemini-3.6-flash", None, debug_config)
+    client = await llm_client_factory("google", "gemini-3.7-flash", None, debug_config)
     assert isinstance(client, GoogleGenAIClient)
 
     # Create conversation with tool calls - this triggers the buggy code path

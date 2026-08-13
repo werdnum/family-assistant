@@ -99,7 +99,7 @@ def _gemini_catalog_entries(markdown: str) -> list[tuple[str, str, str]]:
     entries: list[tuple[str, str, str]] = []
 
     card_pattern = re.compile(
-        r"\[### ([^\n]+)\n([^\n]+)\n(?:Stable|(?:New )?Preview)]"
+        r"\[### ([^\n]+)\n([^\n]+)\n(?:New )?(?:Stable|Preview)]"
         r"\((https://ai\.google\.dev/gemini-api/docs/models/[a-z0-9.\-]+)\)"
     )
     heading_pattern = re.compile(
@@ -108,14 +108,25 @@ def _gemini_catalog_entries(markdown: str) -> list[tuple[str, str, str]]:
         r"\n\n([^\n]+)",
         flags=re.MULTILINE,
     )
+    # Sections outside the Gemini 3 cards list their models as table rows of
+    # name, description and endpoint. Rows carrying only a name and an endpoint
+    # (the "All Gemini 3 models" summary) repeat models the cards already
+    # describe, so they are left to the dedup below rather than parsed here.
+    table_row_pattern = re.compile(
+        r"^\| \[([^]]+)]"
+        r"\((https://ai\.google\.dev/gemini-api/docs/models/[a-z0-9.\-]+)\) \| "
+        r"([^|]+?) \| ```",
+        flags=re.MULTILINE,
+    )
     for name, description, url in card_pattern.findall(current):
         entries.append((name, description, url))
-    for name, url, description in heading_pattern.findall(current):
-        if "Deprecated" in name or "Shut down" in name:
-            continue
-        if "/lyria-" in url:
-            continue
-        entries.append((name, description, url))
+    for pattern in (heading_pattern, table_row_pattern):
+        for name, url, description in pattern.findall(current):
+            if "Deprecated" in name or "Shut down" in name:
+                continue
+            if "/lyria-" in url:
+                continue
+            entries.append((name, description, url))
 
     deduplicated: dict[str, tuple[str, str, str]] = {}
     for entry in entries:

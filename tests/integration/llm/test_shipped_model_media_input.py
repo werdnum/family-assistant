@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 _SHIPPED_OPENAI_MODEL = "gpt-5.6-terra"
 # The media_analyst provider, and the only configured one whose adapter
 # represents audio at all.
-_SHIPPED_GOOGLE_MODEL = "gemini-3.6-flash"
+_SHIPPED_GOOGLE_MODEL = "gemini-3.7-flash"
 
 _CALCULATE_TOOL: "ToolDefinition" = {
     "type": "function",

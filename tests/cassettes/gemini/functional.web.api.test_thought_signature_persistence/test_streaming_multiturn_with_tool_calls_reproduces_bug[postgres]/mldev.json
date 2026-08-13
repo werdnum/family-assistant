@@ -4,7 +4,7 @@
     {
       "request": {
         "method": "post",
-        "url": "{MLDEV_URL_PREFIX}/models/gemini-3.6-flash:streamGenerateContent?alt=sse",
+        "url": "{MLDEV_URL_PREFIX}/models/gemini-3.7-flash:streamGenerateContent?alt=sse",
         "headers": {
           "Content-Type": "application/json",
           "x-goog-api-key": "{REDACTED}",
@@ -87,8 +87,7 @@
           "Server": "scaffolding on HTTPServer2",
           "X-XSS-Protection": "0",
           "X-Frame-Options": "SAMEORIGIN",
-          "X-Content-Type-Options": "nosniff",
-          "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          "X-Content-Type-Options": "nosniff"
         },
         "body_segments": [
           {
@@ -100,11 +99,11 @@
                       "functionCall": {
                         "name": "execute_script",
                         "args": {
-                          "script": "print(5 + 5)\n"
+                          "script": "result = 5 + 5\nreturn result\n"
                         },
-                        "id": "KPrsKvcK"
+                        "id": "call_96207"
                       },
-                      "thoughtSignature": "ErYHCrMHARFNMg+TnF3Zc02GRwLeZR348qHfAlq2N7XjGMTG4VCEh0sByzUUm7ajWLH2/K7wG7Mi9f55QeVA2T77QIQFz5sdtZH9qFeJ06XfdHiVgHFzbaUalWViJMnmQt5gan/2pBBBgI/mi8Qh4faXU1PPAmPhTTuvP7nXFxFQq0CbLiiujpAA/M8jhG7K6w+N5oXY1i+3JmNdjPwCRuEvOXMZWajWyQDkuIC6S0bT6plvXYt/qPeGVXkYsMzJrNvvG1Mbs5eC/LLNq841bAL+ONPL6qBmXzFgjHCF6hda3kWNlFgzCSfBNRcKE3XBPuerBJ6s2HZVu7iuaOgC5BPA0Y3yAgXj23gExq/s1Ro37pjTPBKuu9oQpMsL/0ivGVsOntrKI6genMbya0K4pc0ioev0HLfNrC5Vmg0mYx23Qz6yXHku3BrYTXhQWrSX30icDshodQxotI9pMNtb07D0MqYVp7LGiSh99eQWXBBrgeNoeJD1aKocbHihKKle1oEO4LdUyVOFRPiQD/6TpWgd1hLh8E69fZQqIZqVY8qdLwfdVTPWQOvZDZw17QGIls+0WRNQsubqsAIvOav/oxm+LUVBfFrIwg2dtokZlkWlTazZH20mC3vOqWEMKknPw7s/Zdh6DNFCJO7teoRfgTlfelC6PSUHW4f2hH/jKkZMCw68Hbl7T9r4t2/JWkvQinVWGZXxW8RHLOcYyheb8wCaVc95nXAIWXAhI/giV/eRVk+fwVixHEHqoyJqoT3JmkP/ups3On4M5UpZqeAgLgnSIzMKdi34zZEiJJIqvDSquYdpRxqg/N+s1FGfHsKPzKrAjZxXGck1uybNPJsiGAfz2Xx0ZYW0HxmrpFmgmov9CWFJPIaEnZrxGgEPu/HmWJXQtHAW2FtCzx+DnhKIUsBn8Ig3y+uXaQvc/tPK8l+ohugpuEtg0dgjgr+TbFWd7K3P3OTB8W8tySuHRcCYRS8ai8zYtLp0IBEVoQdg2xW9TxS5tWajj9gdgX6XRkygnSZM43AceCJnmPxnrpg7X5etTTG1Dm2glB9JAMgh0tEVJxucXPMbRYNTpUMmSde9eHjtzLSLldMamEBHanUMp3dhCdpoE3p8kKpIq53YYy5+LzFtiW3+2yWZlk04HVdUoKgdJVpccp8dYcrQa2j5QSbjwxBthdHcVXCVckUjJUar9QHHQyoJDS5J9BVqKIZdOFEsJShowrLB4XsoTNuetjdUC534UHeVxmsQmqZg3/eE3OZGmOxgy0c="
+                      "thoughtSignature": "EvoBCvcBARFNMg9RO1lb+J3FVXtEfoT7/suJXXq9OboA4Sa5lTs0gsZ3IG4x1jm5LfztBioC0xVhf/LIRtWpL3ZmiE4CYL7sGvkNSI0Yr7BZSu8fRgJAZmYLAApgj3gBf7oEfONLB/hfh5pXtGhVwFR+nAGdZ0xrt0Yl3d4k6lDr60MDsyCzxAkOL2ExxGp/BFQyeHu+KcB+ethm/gmqY7Xfqic40JIbfVBgahi5mU7+9ZLL3zYnA/OAggG5GgFutwhYgAxB3edQrSSWsJuLvpgMz9JV3rlnMqtr0aqQpl3T6IFUNROF22i1OiDOzf0CbHUcFrnv1UfmCGQ90w=="
                     }
                   ],
                   "role": "model"
@@ -114,19 +113,19 @@
             ],
             "usageMetadata": {
               "promptTokenCount": 439,
-              "candidatesTokenCount": 23,
-              "totalTokenCount": 678,
+              "candidatesTokenCount": 26,
+              "totalTokenCount": 497,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
                   "tokenCount": 439
                 }
               ],
-              "thoughtsTokenCount": 216,
+              "thoughtsTokenCount": 32,
               "serviceTier": "standard"
             },
-            "modelVersion": "gemini-3.6-flash",
-            "responseId": "R155apjqKr6LvdIPzMGH-Q4"
+            "modelVersion": "gemini-3.7-flash",
+            "responseId": "GCd-au6ZEObTjMcP3orVuQE"
           },
           {
             "candidates": [
@@ -145,19 +144,19 @@
             ],
             "usageMetadata": {
               "promptTokenCount": 439,
-              "candidatesTokenCount": 23,
-              "totalTokenCount": 678,
+              "candidatesTokenCount": 26,
+              "totalTokenCount": 497,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
                   "tokenCount": 439
                 }
               ],
-              "thoughtsTokenCount": 216,
+              "thoughtsTokenCount": 32,
               "serviceTier": "standard"
             },
-            "modelVersion": "gemini-3.6-flash",
-            "responseId": "R155apjqKr6LvdIPzMGH-Q4"
+            "modelVersion": "gemini-3.7-flash",
+            "responseId": "GCd-au6ZEObTjMcP3orVuQE"
           }
         ],
         "byte_segments": [],
@@ -172,8 +171,7 @@
                 "Server": "scaffolding on HTTPServer2",
                 "X-XSS-Protection": "0",
                 "X-Frame-Options": "SAMEORIGIN",
-                "X-Content-Type-Options": "nosniff",
-                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+                "X-Content-Type-Options": "nosniff"
               }
             },
             "candidates": [
@@ -182,13 +180,13 @@
                   "parts": [
                     {
                       "function_call": {
-                        "id": "KPrsKvcK",
+                        "id": "call_96207",
                         "args": {
-                          "script": "print(5 + 5)\n"
+                          "script": "result = 5 + 5\nreturn result\n"
                         },
                         "name": "execute_script"
                       },
-                      "thought_signature": "ErYHCrMHARFNMg-TnF3Zc02GRwLeZR348qHfAlq2N7XjGMTG4VCEh0sByzUUm7ajWLH2_K7wG7Mi9f55QeVA2T77QIQFz5sdtZH9qFeJ06XfdHiVgHFzbaUalWViJMnmQt5gan_2pBBBgI_mi8Qh4faXU1PPAmPhTTuvP7nXFxFQq0CbLiiujpAA_M8jhG7K6w-N5oXY1i-3JmNdjPwCRuEvOXMZWajWyQDkuIC6S0bT6plvXYt_qPeGVXkYsMzJrNvvG1Mbs5eC_LLNq841bAL-ONPL6qBmXzFgjHCF6hda3kWNlFgzCSfBNRcKE3XBPuerBJ6s2HZVu7iuaOgC5BPA0Y3yAgXj23gExq_s1Ro37pjTPBKuu9oQpMsL_0ivGVsOntrKI6genMbya0K4pc0ioev0HLfNrC5Vmg0mYx23Qz6yXHku3BrYTXhQWrSX30icDshodQxotI9pMNtb07D0MqYVp7LGiSh99eQWXBBrgeNoeJD1aKocbHihKKle1oEO4LdUyVOFRPiQD_6TpWgd1hLh8E69fZQqIZqVY8qdLwfdVTPWQOvZDZw17QGIls-0WRNQsubqsAIvOav_oxm-LUVBfFrIwg2dtokZlkWlTazZH20mC3vOqWEMKknPw7s_Zdh6DNFCJO7teoRfgTlfelC6PSUHW4f2hH_jKkZMCw68Hbl7T9r4t2_JWkvQinVWGZXxW8RHLOcYyheb8wCaVc95nXAIWXAhI_giV_eRVk-fwVixHEHqoyJqoT3JmkP_ups3On4M5UpZqeAgLgnSIzMKdi34zZEiJJIqvDSquYdpRxqg_N-s1FGfHsKPzKrAjZxXGck1uybNPJsiGAfz2Xx0ZYW0HxmrpFmgmov9CWFJPIaEnZrxGgEPu_HmWJXQtHAW2FtCzx-DnhKIUsBn8Ig3y-uXaQvc_tPK8l-ohugpuEtg0dgjgr-TbFWd7K3P3OTB8W8tySuHRcCYRS8ai8zYtLp0IBEVoQdg2xW9TxS5tWajj9gdgX6XRkygnSZM43AceCJnmPxnrpg7X5etTTG1Dm2glB9JAMgh0tEVJxucXPMbRYNTpUMmSde9eHjtzLSLldMamEBHanUMp3dhCdpoE3p8kKpIq53YYy5-LzFtiW3-2yWZlk04HVdUoKgdJVpccp8dYcrQa2j5QSbjwxBthdHcVXCVckUjJUar9QHHQyoJDS5J9BVqKIZdOFEsJShowrLB4XsoTNuetjdUC534UHeVxmsQmqZg3_eE3OZGmOxgy0c="
+                      "thought_signature": "EvoBCvcBARFNMg9RO1lb-J3FVXtEfoT7_suJXXq9OboA4Sa5lTs0gsZ3IG4x1jm5LfztBioC0xVhf_LIRtWpL3ZmiE4CYL7sGvkNSI0Yr7BZSu8fRgJAZmYLAApgj3gBf7oEfONLB_hfh5pXtGhVwFR-nAGdZ0xrt0Yl3d4k6lDr60MDsyCzxAkOL2ExxGp_BFQyeHu-KcB-ethm_gmqY7Xfqic40JIbfVBgahi5mU7-9ZLL3zYnA_OAggG5GgFutwhYgAxB3edQrSSWsJuLvpgMz9JV3rlnMqtr0aqQpl3T6IFUNROF22i1OiDOzf0CbHUcFrnv1UfmCGQ90w=="
                     }
                   ],
                   "role": "model"
@@ -196,10 +194,10 @@
                 "index": 0
               }
             ],
-            "model_version": "gemini-3.6-flash",
-            "response_id": "R155apjqKr6LvdIPzMGH-Q4",
+            "model_version": "gemini-3.7-flash",
+            "response_id": "GCd-au6ZEObTjMcP3orVuQE",
             "usage_metadata": {
-              "candidates_token_count": 23,
+              "candidates_token_count": 26,
               "prompt_token_count": 439,
               "prompt_tokens_details": [
                 {
@@ -207,8 +205,8 @@
                   "token_count": 439
                 }
               ],
-              "thoughts_token_count": 216,
-              "total_token_count": 678
+              "thoughts_token_count": 32,
+              "total_token_count": 497
             }
           },
           {
@@ -221,8 +219,7 @@
                 "Server": "scaffolding on HTTPServer2",
                 "X-XSS-Protection": "0",
                 "X-Frame-Options": "SAMEORIGIN",
-                "X-Content-Type-Options": "nosniff",
-                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+                "X-Content-Type-Options": "nosniff"
               }
             },
             "candidates": [
@@ -239,10 +236,10 @@
                 "index": 0
               }
             ],
-            "model_version": "gemini-3.6-flash",
-            "response_id": "R155apjqKr6LvdIPzMGH-Q4",
+            "model_version": "gemini-3.7-flash",
+            "response_id": "GCd-au6ZEObTjMcP3orVuQE",
             "usage_metadata": {
-              "candidates_token_count": 23,
+              "candidates_token_count": 26,
               "prompt_token_count": 439,
               "prompt_tokens_details": [
                 {
@@ -250,8 +247,8 @@
                   "token_count": 439
                 }
               ],
-              "thoughts_token_count": 216,
-              "total_token_count": 678
+              "thoughts_token_count": 32,
+              "total_token_count": 497
             }
           }
         ]
@@ -260,7 +257,7 @@
     {
       "request": {
         "method": "post",
-        "url": "{MLDEV_URL_PREFIX}/models/gemini-3.6-flash:streamGenerateContent?alt=sse",
+        "url": "{MLDEV_URL_PREFIX}/models/gemini-3.7-flash:streamGenerateContent?alt=sse",
         "headers": {
           "Content-Type": "application/json",
           "x-goog-api-key": "{REDACTED}",
@@ -298,13 +295,13 @@
                 "parts": [
                   {
                     "functionCall": {
-                      "id": "KPrsKvcK",
+                      "id": "call_96207",
                       "args": {
-                        "script": "print(5 + 5)\n"
+                        "script": "result = 5 + 5\nreturn result\n"
                       },
                       "name": "execute_script"
                     },
-                    "thoughtSignature": "ErYHCrMHARFNMg-TnF3Zc02GRwLeZR348qHfAlq2N7XjGMTG4VCEh0sByzUUm7ajWLH2_K7wG7Mi9f55QeVA2T77QIQFz5sdtZH9qFeJ06XfdHiVgHFzbaUalWViJMnmQt5gan_2pBBBgI_mi8Qh4faXU1PPAmPhTTuvP7nXFxFQq0CbLiiujpAA_M8jhG7K6w-N5oXY1i-3JmNdjPwCRuEvOXMZWajWyQDkuIC6S0bT6plvXYt_qPeGVXkYsMzJrNvvG1Mbs5eC_LLNq841bAL-ONPL6qBmXzFgjHCF6hda3kWNlFgzCSfBNRcKE3XBPuerBJ6s2HZVu7iuaOgC5BPA0Y3yAgXj23gExq_s1Ro37pjTPBKuu9oQpMsL_0ivGVsOntrKI6genMbya0K4pc0ioev0HLfNrC5Vmg0mYx23Qz6yXHku3BrYTXhQWrSX30icDshodQxotI9pMNtb07D0MqYVp7LGiSh99eQWXBBrgeNoeJD1aKocbHihKKle1oEO4LdUyVOFRPiQD_6TpWgd1hLh8E69fZQqIZqVY8qdLwfdVTPWQOvZDZw17QGIls-0WRNQsubqsAIvOav_oxm-LUVBfFrIwg2dtokZlkWlTazZH20mC3vOqWEMKknPw7s_Zdh6DNFCJO7teoRfgTlfelC6PSUHW4f2hH_jKkZMCw68Hbl7T9r4t2_JWkvQinVWGZXxW8RHLOcYyheb8wCaVc95nXAIWXAhI_giV_eRVk-fwVixHEHqoyJqoT3JmkP_ups3On4M5UpZqeAgLgnSIzMKdi34zZEiJJIqvDSquYdpRxqg_N-s1FGfHsKPzKrAjZxXGck1uybNPJsiGAfz2Xx0ZYW0HxmrpFmgmov9CWFJPIaEnZrxGgEPu_HmWJXQtHAW2FtCzx-DnhKIUsBn8Ig3y-uXaQvc_tPK8l-ohugpuEtg0dgjgr-TbFWd7K3P3OTB8W8tySuHRcCYRS8ai8zYtLp0IBEVoQdg2xW9TxS5tWajj9gdgX6XRkygnSZM43AceCJnmPxnrpg7X5etTTG1Dm2glB9JAMgh0tEVJxucXPMbRYNTpUMmSde9eHjtzLSLldMamEBHanUMp3dhCdpoE3p8kKpIq53YYy5-LzFtiW3-2yWZlk04HVdUoKgdJVpccp8dYcrQa2j5QSbjwxBthdHcVXCVckUjJUar9QHHQyoJDS5J9BVqKIZdOFEsJShowrLB4XsoTNuetjdUC534UHeVxmsQmqZg3_eE3OZGmOxgy0c="
+                    "thoughtSignature": "EvoBCvcBARFNMg9RO1lb-J3FVXtEfoT7_suJXXq9OboA4Sa5lTs0gsZ3IG4x1jm5LfztBioC0xVhf_LIRtWpL3ZmiE4CYL7sGvkNSI0Yr7BZSu8fRgJAZmYLAApgj3gBf7oEfONLB_hfh5pXtGhVwFR-nAGdZ0xrt0Yl3d4k6lDr60MDsyCzxAkOL2ExxGp_BFQyeHu-KcB-ethm_gmqY7Xfqic40JIbfVBgahi5mU7-9ZLL3zYnA_OAggG5GgFutwhYgAxB3edQrSSWsJuLvpgMz9JV3rlnMqtr0aqQpl3T6IFUNROF22i1OiDOzf0CbHUcFrnv1UfmCGQ90w=="
                   }
                 ],
                 "role": "model"
@@ -313,7 +310,658 @@
                 "parts": [
                   {
                     "functionResponse": {
-                      "id": "KPrsKvcK",
+                      "id": "call_96207",
+                      "name": "execute_script",
+                      "response": {
+                        "result": "Error: Script validation failed: error at line 2: `return` statement outside of a function"
+                      }
+                    }
+                  }
+                ],
+                "role": "user"
+              }
+            ],
+            "tools": [
+              {
+                "functionDeclarations": [
+                  {
+                    "description": "Execute an inline or stored Python script in a sandboxed environment. Before writing or debugging a script, load `scripting.md` with `get_user_documentation_content`; it documents the language constraints, available APIs, brokered HTTP, attachments, and return values. Use `script` with optional `globals` for inline code, or `name` with optional `parameters` for a stored script. Enabled Family Assistant tools and configured script APIs are available as functions.",
+                    "name": "execute_script",
+                    "parameters": {
+                      "properties": {
+                        "script": {
+                          "description": "Inline Python source. Load `scripting.md` with `get_user_documentation_content` before writing or debugging scripts. Omit this when using `name`.",
+                          "type": "STRING"
+                        },
+                        "globals": {
+                          "description": "Optional global values for inline `script` code. Do not use with a stored script.",
+                          "type": "OBJECT"
+                        },
+                        "name": {
+                          "description": "Stored script name. Use `list_scripts` to discover names; omit `script` and pass arguments with `parameters`.",
+                          "type": "STRING"
+                        },
+                        "parameters": {
+                          "description": "Optional arguments for the stored script selected by `name`; validated against its parameter schema.",
+                          "type": "OBJECT"
+                        }
+                      },
+                      "required": [],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              }
+            ],
+            "generationConfig": {
+              "mediaResolution": "MEDIA_RESOLUTION_HIGH"
+            }
+          }
+        ]
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "Content-Type": "text/event-stream",
+          "Content-Disposition": "attachment",
+          "Vary": "Origin, X-Origin, Referer",
+          "Transfer-Encoding": "chunked",
+          "Server": "scaffolding on HTTPServer2",
+          "X-XSS-Protection": "0",
+          "X-Frame-Options": "SAMEORIGIN",
+          "X-Content-Type-Options": "nosniff"
+        },
+        "body_segments": [
+          {
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "functionCall": {
+                        "name": "execute_script",
+                        "args": {
+                          "script": "def main():\n    return 5 + 5\n\nresult = main()\n"
+                        },
+                        "id": "call_331107"
+                      },
+                      "thoughtSignature": "ErcDCrQDARFNMg9B01/oLrKje5YZVrqeNsh1mQzVlI5IxztlhwCjSkU/GPB3IP+iELwZZTRX7lrMz3gJYko+UUjJbIF58qtiSYccwH1TamZcZXzfT0KJzRPowqhf2q7rHmX/O4k42tJ0WU7vD6XlK8xczgyOE6tFQQonXxBrDgkTTrRei1dcpTJrlfU8MIf2t6MamrpzJfhoD1CTxr37h/BccqKVPoRIhlpHGbfsDEQba6sRKwWPkoLWLqB+ER/KZu64hC3i48noXWYYjfyo1FAGrWk4OTktzkAPXcfYzEfHx+6Nm5SYTfnOUclH6GYJHn/+vZaqEfRGEgDqA2K/guc1hkusCHPH/0zksh34b4UHYdeMaFQmg4t1a2JEeyi7jlMGH/16CpgnwDdYPbFvqF6uB2ACOGPiRaFLMVhBMghyUlYHX+lxwlPLri45rLDXbfT/SRAo5ix8Rgw4rYIXlfmSMD7mZnM4Ixngc/uhBgAGMJbbqI/1gIZ/H1AHDFTHLUQUzryu9kYGkePOmbDi185L0YENzpYTEUYiI7CkDT/IbJzWm3erjwJQv2TznN39zt0yzIdVUKpEfA=="
+                    }
+                  ],
+                  "role": "model"
+                },
+                "index": 0
+              }
+            ],
+            "usageMetadata": {
+              "promptTokenCount": 498,
+              "candidatesTokenCount": 32,
+              "totalTokenCount": 600,
+              "promptTokensDetails": [
+                {
+                  "modality": "TEXT",
+                  "tokenCount": 498
+                }
+              ],
+              "thoughtsTokenCount": 70,
+              "serviceTier": "standard"
+            },
+            "modelVersion": "gemini-3.7-flash",
+            "responseId": "GCd-atC8NaDUjMcP5IuW6A8"
+          },
+          {
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "text": ""
+                    }
+                  ],
+                  "role": "model"
+                },
+                "finishReason": "STOP",
+                "index": 0
+              }
+            ],
+            "usageMetadata": {
+              "promptTokenCount": 530,
+              "candidatesTokenCount": 32,
+              "totalTokenCount": 632,
+              "promptTokensDetails": [
+                {
+                  "modality": "TEXT",
+                  "tokenCount": 530
+                }
+              ],
+              "thoughtsTokenCount": 70,
+              "serviceTier": "standard"
+            },
+            "modelVersion": "gemini-3.7-flash",
+            "responseId": "GCd-atC8NaDUjMcP5IuW6A8"
+          }
+        ],
+        "byte_segments": [],
+        "sdk_response_segments": [
+          {
+            "sdk_http_response": {
+              "headers": {
+                "Content-Type": "text/event-stream",
+                "Content-Disposition": "attachment",
+                "Vary": "Origin, X-Origin, Referer",
+                "Transfer-Encoding": "chunked",
+                "Server": "scaffolding on HTTPServer2",
+                "X-XSS-Protection": "0",
+                "X-Frame-Options": "SAMEORIGIN",
+                "X-Content-Type-Options": "nosniff"
+              }
+            },
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "function_call": {
+                        "id": "call_331107",
+                        "args": {
+                          "script": "def main():\n    return 5 + 5\n\nresult = main()\n"
+                        },
+                        "name": "execute_script"
+                      },
+                      "thought_signature": "ErcDCrQDARFNMg9B01_oLrKje5YZVrqeNsh1mQzVlI5IxztlhwCjSkU_GPB3IP-iELwZZTRX7lrMz3gJYko-UUjJbIF58qtiSYccwH1TamZcZXzfT0KJzRPowqhf2q7rHmX_O4k42tJ0WU7vD6XlK8xczgyOE6tFQQonXxBrDgkTTrRei1dcpTJrlfU8MIf2t6MamrpzJfhoD1CTxr37h_BccqKVPoRIhlpHGbfsDEQba6sRKwWPkoLWLqB-ER_KZu64hC3i48noXWYYjfyo1FAGrWk4OTktzkAPXcfYzEfHx-6Nm5SYTfnOUclH6GYJHn_-vZaqEfRGEgDqA2K_guc1hkusCHPH_0zksh34b4UHYdeMaFQmg4t1a2JEeyi7jlMGH_16CpgnwDdYPbFvqF6uB2ACOGPiRaFLMVhBMghyUlYHX-lxwlPLri45rLDXbfT_SRAo5ix8Rgw4rYIXlfmSMD7mZnM4Ixngc_uhBgAGMJbbqI_1gIZ_H1AHDFTHLUQUzryu9kYGkePOmbDi185L0YENzpYTEUYiI7CkDT_IbJzWm3erjwJQv2TznN39zt0yzIdVUKpEfA=="
+                    }
+                  ],
+                  "role": "model"
+                },
+                "index": 0
+              }
+            ],
+            "model_version": "gemini-3.7-flash",
+            "response_id": "GCd-atC8NaDUjMcP5IuW6A8",
+            "usage_metadata": {
+              "candidates_token_count": 32,
+              "prompt_token_count": 498,
+              "prompt_tokens_details": [
+                {
+                  "modality": "TEXT",
+                  "token_count": 498
+                }
+              ],
+              "thoughts_token_count": 70,
+              "total_token_count": 600
+            }
+          },
+          {
+            "sdk_http_response": {
+              "headers": {
+                "Content-Type": "text/event-stream",
+                "Content-Disposition": "attachment",
+                "Vary": "Origin, X-Origin, Referer",
+                "Transfer-Encoding": "chunked",
+                "Server": "scaffolding on HTTPServer2",
+                "X-XSS-Protection": "0",
+                "X-Frame-Options": "SAMEORIGIN",
+                "X-Content-Type-Options": "nosniff"
+              }
+            },
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "text": ""
+                    }
+                  ],
+                  "role": "model"
+                },
+                "finish_reason": "STOP",
+                "index": 0
+              }
+            ],
+            "model_version": "gemini-3.7-flash",
+            "response_id": "GCd-atC8NaDUjMcP5IuW6A8",
+            "usage_metadata": {
+              "candidates_token_count": 32,
+              "prompt_token_count": 530,
+              "prompt_tokens_details": [
+                {
+                  "modality": "TEXT",
+                  "token_count": 530
+                }
+              ],
+              "thoughts_token_count": 70,
+              "total_token_count": 632
+            }
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "post",
+        "url": "{MLDEV_URL_PREFIX}/models/gemini-3.7-flash:streamGenerateContent?alt=sse",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-goog-api-key": "{REDACTED}",
+          "user-agent": "google-genai-sdk/{VERSION_NUMBER} {LANGUAGE_LABEL}/{VERSION_NUMBER}",
+          "x-goog-api-client": "google-genai-sdk/{VERSION_NUMBER} {LANGUAGE_LABEL}/{VERSION_NUMBER}"
+        },
+        "body_segments": [
+          {
+            "contents": [
+              {
+                "parts": [
+                  {
+                    "text": "System: [Active Processing Profile: test]\nThe user has explicitly selected the \"test\" processing profile.\nYour available tools and capabilities are specific to this profile. Do not attempt actions outside your profile's scope.\n\nYou are a helpful assistant.\n\nA <turn_context> block is appended to the end of the conversation on every request. It is generated by the system, and carries the current time. It is not written by the user and is not part of what they said. Use it freely, but never reproduce the block or its tags in your reply."
+                  }
+                ],
+                "role": "user"
+              },
+              {
+                "parts": [
+                  {
+                    "text": "Use Python to calculate 5 + 5. Use the execute_script tool."
+                  }
+                ],
+                "role": "user"
+              },
+              {
+                "parts": [
+                  {
+                    "text": "<turn_context>\nCurrent time: 2026-08-07 12:00:00 UTC\n</turn_context>"
+                  }
+                ],
+                "role": "user"
+              },
+              {
+                "parts": [
+                  {
+                    "functionCall": {
+                      "id": "call_96207",
+                      "args": {
+                        "script": "result = 5 + 5\nreturn result\n"
+                      },
+                      "name": "execute_script"
+                    },
+                    "thoughtSignature": "EvoBCvcBARFNMg9RO1lb-J3FVXtEfoT7_suJXXq9OboA4Sa5lTs0gsZ3IG4x1jm5LfztBioC0xVhf_LIRtWpL3ZmiE4CYL7sGvkNSI0Yr7BZSu8fRgJAZmYLAApgj3gBf7oEfONLB_hfh5pXtGhVwFR-nAGdZ0xrt0Yl3d4k6lDr60MDsyCzxAkOL2ExxGp_BFQyeHu-KcB-ethm_gmqY7Xfqic40JIbfVBgahi5mU7-9ZLL3zYnA_OAggG5GgFutwhYgAxB3edQrSSWsJuLvpgMz9JV3rlnMqtr0aqQpl3T6IFUNROF22i1OiDOzf0CbHUcFrnv1UfmCGQ90w=="
+                  }
+                ],
+                "role": "model"
+              },
+              {
+                "parts": [
+                  {
+                    "functionResponse": {
+                      "id": "call_96207",
+                      "name": "execute_script",
+                      "response": {
+                        "result": "Error: Script validation failed: error at line 2: `return` statement outside of a function"
+                      }
+                    }
+                  }
+                ],
+                "role": "user"
+              },
+              {
+                "parts": [
+                  {
+                    "functionCall": {
+                      "id": "call_331107",
+                      "args": {
+                        "script": "def main():\n    return 5 + 5\n\nresult = main()\n"
+                      },
+                      "name": "execute_script"
+                    },
+                    "thoughtSignature": "ErcDCrQDARFNMg9B01_oLrKje5YZVrqeNsh1mQzVlI5IxztlhwCjSkU_GPB3IP-iELwZZTRX7lrMz3gJYko-UUjJbIF58qtiSYccwH1TamZcZXzfT0KJzRPowqhf2q7rHmX_O4k42tJ0WU7vD6XlK8xczgyOE6tFQQonXxBrDgkTTrRei1dcpTJrlfU8MIf2t6MamrpzJfhoD1CTxr37h_BccqKVPoRIhlpHGbfsDEQba6sRKwWPkoLWLqB-ER_KZu64hC3i48noXWYYjfyo1FAGrWk4OTktzkAPXcfYzEfHx-6Nm5SYTfnOUclH6GYJHn_-vZaqEfRGEgDqA2K_guc1hkusCHPH_0zksh34b4UHYdeMaFQmg4t1a2JEeyi7jlMGH_16CpgnwDdYPbFvqF6uB2ACOGPiRaFLMVhBMghyUlYHX-lxwlPLri45rLDXbfT_SRAo5ix8Rgw4rYIXlfmSMD7mZnM4Ixngc_uhBgAGMJbbqI_1gIZ_H1AHDFTHLUQUzryu9kYGkePOmbDi185L0YENzpYTEUYiI7CkDT_IbJzWm3erjwJQv2TznN39zt0yzIdVUKpEfA=="
+                  }
+                ],
+                "role": "model"
+              },
+              {
+                "parts": [
+                  {
+                    "functionResponse": {
+                      "id": "call_331107",
+                      "name": "execute_script",
+                      "response": {
+                        "result": "Script executed successfully with no return value."
+                      }
+                    }
+                  }
+                ],
+                "role": "user"
+              }
+            ],
+            "tools": [
+              {
+                "functionDeclarations": [
+                  {
+                    "description": "Execute an inline or stored Python script in a sandboxed environment. Before writing or debugging a script, load `scripting.md` with `get_user_documentation_content`; it documents the language constraints, available APIs, brokered HTTP, attachments, and return values. Use `script` with optional `globals` for inline code, or `name` with optional `parameters` for a stored script. Enabled Family Assistant tools and configured script APIs are available as functions.",
+                    "name": "execute_script",
+                    "parameters": {
+                      "properties": {
+                        "script": {
+                          "description": "Inline Python source. Load `scripting.md` with `get_user_documentation_content` before writing or debugging scripts. Omit this when using `name`.",
+                          "type": "STRING"
+                        },
+                        "globals": {
+                          "description": "Optional global values for inline `script` code. Do not use with a stored script.",
+                          "type": "OBJECT"
+                        },
+                        "name": {
+                          "description": "Stored script name. Use `list_scripts` to discover names; omit `script` and pass arguments with `parameters`.",
+                          "type": "STRING"
+                        },
+                        "parameters": {
+                          "description": "Optional arguments for the stored script selected by `name`; validated against its parameter schema.",
+                          "type": "OBJECT"
+                        }
+                      },
+                      "required": [],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              }
+            ],
+            "generationConfig": {
+              "mediaResolution": "MEDIA_RESOLUTION_HIGH"
+            }
+          }
+        ]
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "Content-Type": "text/event-stream",
+          "Content-Disposition": "attachment",
+          "Vary": "Origin, X-Origin, Referer",
+          "Transfer-Encoding": "chunked",
+          "Server": "scaffolding on HTTPServer2",
+          "X-XSS-Protection": "0",
+          "X-Frame-Options": "SAMEORIGIN",
+          "X-Content-Type-Options": "nosniff"
+        },
+        "body_segments": [
+          {
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "functionCall": {
+                        "name": "execute_script",
+                        "args": {
+                          "script": "print(5 + 5)\n"
+                        },
+                        "id": "call_488683"
+                      },
+                      "thoughtSignature": "Er0FCroFARFNMg/FbxHl0x3yKowtNOo+/BS4uJELVezCybY/fd/81zEZ89PRjDzaudA3S+nKReQOuy1Wel2Zor6LVjCd4plTD3P+gRbQ/pEpGVzyiBptysW1bW6jnDsJrBYNp7tFpPPJJA0ak+czffYdT3ppnAi6pqSH02wAmK+jZ1iMmR1vq6VwOeZRVK6j7IuEoDe0RvjKHaopFctsankXT014mZcvzO5N7GUqdovJrIAKGwomGdJuzKS4w+1WAxcFyaET27rnAKC9jYC1nHe8VJF6uicJdg7v3Rq+7R+9sbPMYaNcuo6XTXmcnlrlm5ueaeQzK4uz/hucdESCDK47XJIMrrHVaUH1HpH+K5NLHPD/Lv5hLFoXiR92L8XpoIgkL82AWyjb+BOsjLxNEObXQRxX6ym96fxdDBVXe4oIA8nfMtsGmuMDI2G7d7l41BP3rXvRk6xVJ8N5oOOs78zdI3s9mYt8lIPBfDj0JHdWtMPrJwiNzM9iBqgu2cFT7+Gbk27kLVAh1IFyTQCgwT6OWWgjXSQCT0hENX6awUHQV5yQXDwXzI0dGXGo3OhWtR9n+r7hjOVA+aRSxeZlML4RipfQ55jRxiO/zLNxp9IXdVaE/kPt9dIczUM1U6S4HO8YO8tlPNAeyZh8vUXgxXViwE5zvD8/w+AqVyjpkLiJ8pMsewopJXOdePg3kTffuILWVe5zA9UQ6xXMpTZzTQ4H9Pdp8OBfrZVVHY9yMn6kQPMrT4LkExA0GRq0NhTf0jzDCK3VXNpKkFm7HpqkcV542AdYQjLHt75m0MRq2XQOXr9N5ieoTLuAk35xAFinsavbYycqDsiNleLN4tBg4f8FSWmCAxbLKfZWw7L85QGclL9Amk6918I98xP3GNcdIRfPgZ60ENnICO0cYb5EfcEJ0aZDwXFHfQVzw+WfGWM="
+                    }
+                  ],
+                  "role": "model"
+                },
+                "index": 0
+              }
+            ],
+            "usageMetadata": {
+              "promptTokenCount": 551,
+              "candidatesTokenCount": 23,
+              "totalTokenCount": 723,
+              "promptTokensDetails": [
+                {
+                  "modality": "TEXT",
+                  "tokenCount": 551
+                }
+              ],
+              "thoughtsTokenCount": 149,
+              "serviceTier": "standard"
+            },
+            "modelVersion": "gemini-3.7-flash",
+            "responseId": "GSd-asedM47RjMcP44XT0AM"
+          },
+          {
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "text": ""
+                    }
+                  ],
+                  "role": "model"
+                },
+                "finishReason": "STOP",
+                "index": 0
+              }
+            ],
+            "usageMetadata": {
+              "promptTokenCount": 653,
+              "candidatesTokenCount": 23,
+              "totalTokenCount": 825,
+              "promptTokensDetails": [
+                {
+                  "modality": "TEXT",
+                  "tokenCount": 653
+                }
+              ],
+              "thoughtsTokenCount": 149,
+              "serviceTier": "standard"
+            },
+            "modelVersion": "gemini-3.7-flash",
+            "responseId": "GSd-asedM47RjMcP44XT0AM"
+          }
+        ],
+        "byte_segments": [],
+        "sdk_response_segments": [
+          {
+            "sdk_http_response": {
+              "headers": {
+                "Content-Type": "text/event-stream",
+                "Content-Disposition": "attachment",
+                "Vary": "Origin, X-Origin, Referer",
+                "Transfer-Encoding": "chunked",
+                "Server": "scaffolding on HTTPServer2",
+                "X-XSS-Protection": "0",
+                "X-Frame-Options": "SAMEORIGIN",
+                "X-Content-Type-Options": "nosniff"
+              }
+            },
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "function_call": {
+                        "id": "call_488683",
+                        "args": {
+                          "script": "print(5 + 5)\n"
+                        },
+                        "name": "execute_script"
+                      },
+                      "thought_signature": "Er0FCroFARFNMg_FbxHl0x3yKowtNOo-_BS4uJELVezCybY_fd_81zEZ89PRjDzaudA3S-nKReQOuy1Wel2Zor6LVjCd4plTD3P-gRbQ_pEpGVzyiBptysW1bW6jnDsJrBYNp7tFpPPJJA0ak-czffYdT3ppnAi6pqSH02wAmK-jZ1iMmR1vq6VwOeZRVK6j7IuEoDe0RvjKHaopFctsankXT014mZcvzO5N7GUqdovJrIAKGwomGdJuzKS4w-1WAxcFyaET27rnAKC9jYC1nHe8VJF6uicJdg7v3Rq-7R-9sbPMYaNcuo6XTXmcnlrlm5ueaeQzK4uz_hucdESCDK47XJIMrrHVaUH1HpH-K5NLHPD_Lv5hLFoXiR92L8XpoIgkL82AWyjb-BOsjLxNEObXQRxX6ym96fxdDBVXe4oIA8nfMtsGmuMDI2G7d7l41BP3rXvRk6xVJ8N5oOOs78zdI3s9mYt8lIPBfDj0JHdWtMPrJwiNzM9iBqgu2cFT7-Gbk27kLVAh1IFyTQCgwT6OWWgjXSQCT0hENX6awUHQV5yQXDwXzI0dGXGo3OhWtR9n-r7hjOVA-aRSxeZlML4RipfQ55jRxiO_zLNxp9IXdVaE_kPt9dIczUM1U6S4HO8YO8tlPNAeyZh8vUXgxXViwE5zvD8_w-AqVyjpkLiJ8pMsewopJXOdePg3kTffuILWVe5zA9UQ6xXMpTZzTQ4H9Pdp8OBfrZVVHY9yMn6kQPMrT4LkExA0GRq0NhTf0jzDCK3VXNpKkFm7HpqkcV542AdYQjLHt75m0MRq2XQOXr9N5ieoTLuAk35xAFinsavbYycqDsiNleLN4tBg4f8FSWmCAxbLKfZWw7L85QGclL9Amk6918I98xP3GNcdIRfPgZ60ENnICO0cYb5EfcEJ0aZDwXFHfQVzw-WfGWM="
+                    }
+                  ],
+                  "role": "model"
+                },
+                "index": 0
+              }
+            ],
+            "model_version": "gemini-3.7-flash",
+            "response_id": "GSd-asedM47RjMcP44XT0AM",
+            "usage_metadata": {
+              "candidates_token_count": 23,
+              "prompt_token_count": 551,
+              "prompt_tokens_details": [
+                {
+                  "modality": "TEXT",
+                  "token_count": 551
+                }
+              ],
+              "thoughts_token_count": 149,
+              "total_token_count": 723
+            }
+          },
+          {
+            "sdk_http_response": {
+              "headers": {
+                "Content-Type": "text/event-stream",
+                "Content-Disposition": "attachment",
+                "Vary": "Origin, X-Origin, Referer",
+                "Transfer-Encoding": "chunked",
+                "Server": "scaffolding on HTTPServer2",
+                "X-XSS-Protection": "0",
+                "X-Frame-Options": "SAMEORIGIN",
+                "X-Content-Type-Options": "nosniff"
+              }
+            },
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "text": ""
+                    }
+                  ],
+                  "role": "model"
+                },
+                "finish_reason": "STOP",
+                "index": 0
+              }
+            ],
+            "model_version": "gemini-3.7-flash",
+            "response_id": "GSd-asedM47RjMcP44XT0AM",
+            "usage_metadata": {
+              "candidates_token_count": 23,
+              "prompt_token_count": 653,
+              "prompt_tokens_details": [
+                {
+                  "modality": "TEXT",
+                  "token_count": 653
+                }
+              ],
+              "thoughts_token_count": 149,
+              "total_token_count": 825
+            }
+          }
+        ]
+      }
+    },
+    {
+      "request": {
+        "method": "post",
+        "url": "{MLDEV_URL_PREFIX}/models/gemini-3.7-flash:streamGenerateContent?alt=sse",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-goog-api-key": "{REDACTED}",
+          "user-agent": "google-genai-sdk/{VERSION_NUMBER} {LANGUAGE_LABEL}/{VERSION_NUMBER}",
+          "x-goog-api-client": "google-genai-sdk/{VERSION_NUMBER} {LANGUAGE_LABEL}/{VERSION_NUMBER}"
+        },
+        "body_segments": [
+          {
+            "contents": [
+              {
+                "parts": [
+                  {
+                    "text": "System: [Active Processing Profile: test]\nThe user has explicitly selected the \"test\" processing profile.\nYour available tools and capabilities are specific to this profile. Do not attempt actions outside your profile's scope.\n\nYou are a helpful assistant.\n\nA <turn_context> block is appended to the end of the conversation on every request. It is generated by the system, and carries the current time. It is not written by the user and is not part of what they said. Use it freely, but never reproduce the block or its tags in your reply."
+                  }
+                ],
+                "role": "user"
+              },
+              {
+                "parts": [
+                  {
+                    "text": "Use Python to calculate 5 + 5. Use the execute_script tool."
+                  }
+                ],
+                "role": "user"
+              },
+              {
+                "parts": [
+                  {
+                    "text": "<turn_context>\nCurrent time: 2026-08-07 12:00:00 UTC\n</turn_context>"
+                  }
+                ],
+                "role": "user"
+              },
+              {
+                "parts": [
+                  {
+                    "functionCall": {
+                      "id": "call_96207",
+                      "args": {
+                        "script": "result = 5 + 5\nreturn result\n"
+                      },
+                      "name": "execute_script"
+                    },
+                    "thoughtSignature": "EvoBCvcBARFNMg9RO1lb-J3FVXtEfoT7_suJXXq9OboA4Sa5lTs0gsZ3IG4x1jm5LfztBioC0xVhf_LIRtWpL3ZmiE4CYL7sGvkNSI0Yr7BZSu8fRgJAZmYLAApgj3gBf7oEfONLB_hfh5pXtGhVwFR-nAGdZ0xrt0Yl3d4k6lDr60MDsyCzxAkOL2ExxGp_BFQyeHu-KcB-ethm_gmqY7Xfqic40JIbfVBgahi5mU7-9ZLL3zYnA_OAggG5GgFutwhYgAxB3edQrSSWsJuLvpgMz9JV3rlnMqtr0aqQpl3T6IFUNROF22i1OiDOzf0CbHUcFrnv1UfmCGQ90w=="
+                  }
+                ],
+                "role": "model"
+              },
+              {
+                "parts": [
+                  {
+                    "functionResponse": {
+                      "id": "call_96207",
+                      "name": "execute_script",
+                      "response": {
+                        "result": "Error: Script validation failed: error at line 2: `return` statement outside of a function"
+                      }
+                    }
+                  }
+                ],
+                "role": "user"
+              },
+              {
+                "parts": [
+                  {
+                    "functionCall": {
+                      "id": "call_331107",
+                      "args": {
+                        "script": "def main():\n    return 5 + 5\n\nresult = main()\n"
+                      },
+                      "name": "execute_script"
+                    },
+                    "thoughtSignature": "ErcDCrQDARFNMg9B01_oLrKje5YZVrqeNsh1mQzVlI5IxztlhwCjSkU_GPB3IP-iELwZZTRX7lrMz3gJYko-UUjJbIF58qtiSYccwH1TamZcZXzfT0KJzRPowqhf2q7rHmX_O4k42tJ0WU7vD6XlK8xczgyOE6tFQQonXxBrDgkTTrRei1dcpTJrlfU8MIf2t6MamrpzJfhoD1CTxr37h_BccqKVPoRIhlpHGbfsDEQba6sRKwWPkoLWLqB-ER_KZu64hC3i48noXWYYjfyo1FAGrWk4OTktzkAPXcfYzEfHx-6Nm5SYTfnOUclH6GYJHn_-vZaqEfRGEgDqA2K_guc1hkusCHPH_0zksh34b4UHYdeMaFQmg4t1a2JEeyi7jlMGH_16CpgnwDdYPbFvqF6uB2ACOGPiRaFLMVhBMghyUlYHX-lxwlPLri45rLDXbfT_SRAo5ix8Rgw4rYIXlfmSMD7mZnM4Ixngc_uhBgAGMJbbqI_1gIZ_H1AHDFTHLUQUzryu9kYGkePOmbDi185L0YENzpYTEUYiI7CkDT_IbJzWm3erjwJQv2TznN39zt0yzIdVUKpEfA=="
+                  }
+                ],
+                "role": "model"
+              },
+              {
+                "parts": [
+                  {
+                    "functionResponse": {
+                      "id": "call_331107",
+                      "name": "execute_script",
+                      "response": {
+                        "result": "Script executed successfully with no return value."
+                      }
+                    }
+                  }
+                ],
+                "role": "user"
+              },
+              {
+                "parts": [
+                  {
+                    "functionCall": {
+                      "id": "call_488683",
+                      "args": {
+                        "script": "print(5 + 5)\n"
+                      },
+                      "name": "execute_script"
+                    },
+                    "thoughtSignature": "Er0FCroFARFNMg_FbxHl0x3yKowtNOo-_BS4uJELVezCybY_fd_81zEZ89PRjDzaudA3S-nKReQOuy1Wel2Zor6LVjCd4plTD3P-gRbQ_pEpGVzyiBptysW1bW6jnDsJrBYNp7tFpPPJJA0ak-czffYdT3ppnAi6pqSH02wAmK-jZ1iMmR1vq6VwOeZRVK6j7IuEoDe0RvjKHaopFctsankXT014mZcvzO5N7GUqdovJrIAKGwomGdJuzKS4w-1WAxcFyaET27rnAKC9jYC1nHe8VJF6uicJdg7v3Rq-7R-9sbPMYaNcuo6XTXmcnlrlm5ueaeQzK4uz_hucdESCDK47XJIMrrHVaUH1HpH-K5NLHPD_Lv5hLFoXiR92L8XpoIgkL82AWyjb-BOsjLxNEObXQRxX6ym96fxdDBVXe4oIA8nfMtsGmuMDI2G7d7l41BP3rXvRk6xVJ8N5oOOs78zdI3s9mYt8lIPBfDj0JHdWtMPrJwiNzM9iBqgu2cFT7-Gbk27kLVAh1IFyTQCgwT6OWWgjXSQCT0hENX6awUHQV5yQXDwXzI0dGXGo3OhWtR9n-r7hjOVA-aRSxeZlML4RipfQ55jRxiO_zLNxp9IXdVaE_kPt9dIczUM1U6S4HO8YO8tlPNAeyZh8vUXgxXViwE5zvD8_w-AqVyjpkLiJ8pMsewopJXOdePg3kTffuILWVe5zA9UQ6xXMpTZzTQ4H9Pdp8OBfrZVVHY9yMn6kQPMrT4LkExA0GRq0NhTf0jzDCK3VXNpKkFm7HpqkcV542AdYQjLHt75m0MRq2XQOXr9N5ieoTLuAk35xAFinsavbYycqDsiNleLN4tBg4f8FSWmCAxbLKfZWw7L85QGclL9Amk6918I98xP3GNcdIRfPgZ60ENnICO0cYb5EfcEJ0aZDwXFHfQVzw-WfGWM="
+                  }
+                ],
+                "role": "model"
+              },
+              {
+                "parts": [
+                  {
+                    "functionResponse": {
+                      "id": "call_488683",
                       "name": "execute_script",
                       "response": {
                         "result": "--- Script Output ---\n10\n\nScript executed successfully with no return value."
@@ -372,8 +1020,7 @@
           "Server": "scaffolding on HTTPServer2",
           "X-XSS-Protection": "0",
           "X-Frame-Options": "SAMEORIGIN",
-          "X-Content-Type-Options": "nosniff",
-          "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          "X-Content-Type-Options": "nosniff"
         },
         "body_segments": [
           {
@@ -382,7 +1029,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "5 + 5"
+                      "text": "The calculation of \\("
                     }
                   ],
                   "role": "model"
@@ -391,20 +1038,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 491,
+              "promptTokenCount": 603,
               "candidatesTokenCount": 4,
-              "totalTokenCount": 514,
+              "totalTokenCount": 633,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 491
+                  "tokenCount": 603
                 }
               ],
-              "thoughtsTokenCount": 19,
+              "thoughtsTokenCount": 26,
               "serviceTier": "standard"
             },
-            "modelVersion": "gemini-3.6-flash",
-            "responseId": "SV55av2tIYqXvdIPm93NwQg"
+            "modelVersion": "gemini-3.7-flash",
+            "responseId": "Gid-avLhK7qMjMcPkszjwQE"
           },
           {
             "candidates": [
@@ -412,7 +1059,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": " = 10"
+                      "text": "5 + 5\\) is **10**."
                     }
                   ],
                   "role": "model"
@@ -421,20 +1068,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 707,
-              "candidatesTokenCount": 8,
-              "totalTokenCount": 734,
+              "promptTokenCount": 603,
+              "candidatesTokenCount": 14,
+              "totalTokenCount": 643,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 707
+                  "tokenCount": 603
                 }
               ],
-              "thoughtsTokenCount": 19,
+              "thoughtsTokenCount": 26,
               "serviceTier": "standard"
             },
-            "modelVersion": "gemini-3.6-flash",
-            "responseId": "SV55av2tIYqXvdIPm93NwQg"
+            "modelVersion": "gemini-3.7-flash",
+            "responseId": "Gid-avLhK7qMjMcPkszjwQE"
           },
           {
             "candidates": [
@@ -443,7 +1090,7 @@
                   "parts": [
                     {
                       "text": "",
-                      "thoughtSignature": "EoMBCoABARFNMg/LnEJhxozu3HC39X1ixKGPQgFqCWmCJ2pp0DJLhDHbLVKVCQ6S7LvAsZtiz7bjmmkh+yYkMajH9vtOq+uLo6vZTl+UAQkuZVFLzaGVBVeqtcH+Yq5cQVX1Mi7P+4xzqSy0y72VKchzpw0cR2ECAVu4LRvO8l3z7LCbmuU="
+                      "thoughtSignature": "EroBCrcBARFNMg+o+EzF0LVOUW5gzN1DRNyvRJ4wpiV6+v9aQfrQuDdd0D6l7wKMNF3YPcHldUQIsxA+yHYOTv5YwABuGg73Igf/cJu2OwW8e/hWxX5dxOYIPI/DIaWqgllye6vDH5AWbQIe8/Ve7Dpe2QFuseLvnPTt5tBa05ChVwb8jZ0+5xEhh/VPQCPgPnsizpVhVijniSv1vO+Biwbebzx+BV4U0QOOQwrTp6PBiRePFJa+FTkr5Dta"
                     }
                   ],
                   "role": "model"
@@ -453,20 +1100,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 707,
-              "candidatesTokenCount": 8,
-              "totalTokenCount": 734,
+              "promptTokenCount": 854,
+              "candidatesTokenCount": 14,
+              "totalTokenCount": 894,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 707
+                  "tokenCount": 854
                 }
               ],
-              "thoughtsTokenCount": 19,
+              "thoughtsTokenCount": 26,
               "serviceTier": "standard"
             },
-            "modelVersion": "gemini-3.6-flash",
-            "responseId": "SV55av2tIYqXvdIPm93NwQg"
+            "modelVersion": "gemini-3.7-flash",
+            "responseId": "Gid-avLhK7qMjMcPkszjwQE"
           }
         ],
         "byte_segments": [],
@@ -481,8 +1128,7 @@
                 "Server": "scaffolding on HTTPServer2",
                 "X-XSS-Protection": "0",
                 "X-Frame-Options": "SAMEORIGIN",
-                "X-Content-Type-Options": "nosniff",
-                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+                "X-Content-Type-Options": "nosniff"
               }
             },
             "candidates": [
@@ -490,7 +1136,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "5 + 5"
+                      "text": "The calculation of \\("
                     }
                   ],
                   "role": "model"
@@ -498,19 +1144,19 @@
                 "index": 0
               }
             ],
-            "model_version": "gemini-3.6-flash",
-            "response_id": "SV55av2tIYqXvdIPm93NwQg",
+            "model_version": "gemini-3.7-flash",
+            "response_id": "Gid-avLhK7qMjMcPkszjwQE",
             "usage_metadata": {
               "candidates_token_count": 4,
-              "prompt_token_count": 491,
+              "prompt_token_count": 603,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 491
+                  "token_count": 603
                 }
               ],
-              "thoughts_token_count": 19,
-              "total_token_count": 514
+              "thoughts_token_count": 26,
+              "total_token_count": 633
             }
           },
           {
@@ -523,8 +1169,7 @@
                 "Server": "scaffolding on HTTPServer2",
                 "X-XSS-Protection": "0",
                 "X-Frame-Options": "SAMEORIGIN",
-                "X-Content-Type-Options": "nosniff",
-                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+                "X-Content-Type-Options": "nosniff"
               }
             },
             "candidates": [
@@ -532,7 +1177,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": " = 10"
+                      "text": "5 + 5\\) is **10**."
                     }
                   ],
                   "role": "model"
@@ -540,19 +1185,19 @@
                 "index": 0
               }
             ],
-            "model_version": "gemini-3.6-flash",
-            "response_id": "SV55av2tIYqXvdIPm93NwQg",
+            "model_version": "gemini-3.7-flash",
+            "response_id": "Gid-avLhK7qMjMcPkszjwQE",
             "usage_metadata": {
-              "candidates_token_count": 8,
-              "prompt_token_count": 707,
+              "candidates_token_count": 14,
+              "prompt_token_count": 603,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 707
+                  "token_count": 603
                 }
               ],
-              "thoughts_token_count": 19,
-              "total_token_count": 734
+              "thoughts_token_count": 26,
+              "total_token_count": 643
             }
           },
           {
@@ -565,8 +1210,7 @@
                 "Server": "scaffolding on HTTPServer2",
                 "X-XSS-Protection": "0",
                 "X-Frame-Options": "SAMEORIGIN",
-                "X-Content-Type-Options": "nosniff",
-                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+                "X-Content-Type-Options": "nosniff"
               }
             },
             "candidates": [
@@ -575,7 +1219,7 @@
                   "parts": [
                     {
                       "text": "",
-                      "thought_signature": "EoMBCoABARFNMg_LnEJhxozu3HC39X1ixKGPQgFqCWmCJ2pp0DJLhDHbLVKVCQ6S7LvAsZtiz7bjmmkh-yYkMajH9vtOq-uLo6vZTl-UAQkuZVFLzaGVBVeqtcH-Yq5cQVX1Mi7P-4xzqSy0y72VKchzpw0cR2ECAVu4LRvO8l3z7LCbmuU="
+                      "thought_signature": "EroBCrcBARFNMg-o-EzF0LVOUW5gzN1DRNyvRJ4wpiV6-v9aQfrQuDdd0D6l7wKMNF3YPcHldUQIsxA-yHYOTv5YwABuGg73Igf_cJu2OwW8e_hWxX5dxOYIPI_DIaWqgllye6vDH5AWbQIe8_Ve7Dpe2QFuseLvnPTt5tBa05ChVwb8jZ0-5xEhh_VPQCPgPnsizpVhVijniSv1vO-Biwbebzx-BV4U0QOOQwrTp6PBiRePFJa-FTkr5Dta"
                     }
                   ],
                   "role": "model"
@@ -584,19 +1228,19 @@
                 "index": 0
               }
             ],
-            "model_version": "gemini-3.6-flash",
-            "response_id": "SV55av2tIYqXvdIPm93NwQg",
+            "model_version": "gemini-3.7-flash",
+            "response_id": "Gid-avLhK7qMjMcPkszjwQE",
             "usage_metadata": {
-              "candidates_token_count": 8,
-              "prompt_token_count": 707,
+              "candidates_token_count": 14,
+              "prompt_token_count": 854,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 707
+                  "token_count": 854
                 }
               ],
-              "thoughts_token_count": 19,
-              "total_token_count": 734
+              "thoughts_token_count": 26,
+              "total_token_count": 894
             }
           }
         ]
@@ -605,7 +1249,7 @@
     {
       "request": {
         "method": "post",
-        "url": "{MLDEV_URL_PREFIX}/models/gemini-3.6-flash:streamGenerateContent?alt=sse",
+        "url": "{MLDEV_URL_PREFIX}/models/gemini-3.7-flash:streamGenerateContent?alt=sse",
         "headers": {
           "Content-Type": "application/json",
           "x-goog-api-key": "{REDACTED}",
@@ -626,7 +1270,7 @@
               {
                 "parts": [
                   {
-                    "text": "5 + 5 = 10"
+                    "text": "The calculation of \\(5 + 5\\) is **10**."
                   }
                 ],
                 "role": "model"
@@ -704,8 +1348,7 @@
           "Server": "scaffolding on HTTPServer2",
           "X-XSS-Protection": "0",
           "X-Frame-Options": "SAMEORIGIN",
-          "X-Content-Type-Options": "nosniff",
-          "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          "X-Content-Type-Options": "nosniff"
         },
         "body_segments": [
           {
@@ -717,11 +1360,11 @@
                       "functionCall": {
                         "name": "execute_script",
                         "args": {
-                          "script": "result1 = 5 + 5\nresult2 = 10 + 10\nprint(f\"5 + 5 = {result1}\")\nprint(f\"10 + 10 = {result2}\")\n"
+                          "script": "result = 10 + 10\nprint(result)\n"
                         },
-                        "id": "qSJCDqhq"
+                        "id": "call_137251"
                       },
-                      "thoughtSignature": "EvwGCvkGARFNMg8FN1daFilKsWTZzgPgIDfLisicdU/n5twIATkPGVeHVIh5eCsVf3Ylnym+iby7l9qpTPjP3KLxi/xfGxxdEPs5hkvkYTLmZuQUeVyaNTF5yfbY6E9UtxFO3jd9mignsUnCa1b0tHUco3x2RPhaJJVhM8WevkzHXDMg+9OWWz8m0dHFKz1JXaNO78PMrw7FYtrBimPALJdosdh0nXEUHmPBIS5aoDnEp3O+679dUlZi7s8wmD7IngCb56BaPb9ZIe1mnVUXrWdCpc8uSjxSbBroxTCXbt9hvoiKN2MDA57MxB4WGEAAnGs3ktsDeR7DuD0Xd9sX1cznMYeNpXeTrgDgs3uAxB69Htax0JKwt4QsQ3j00oJ6U9ztw0KQL/vzEtxaZ+nvtpcJuQjM7BDcuTr7Q4tMwXUsGc4wqSzF56opeaQdgVL0tGvQoGC1j0AZPL471isJkHBCDmDnZ03z5VToevkkpKtfyX5IVq3oXeZWcnFTcXSN+ycD1vETJy+1wCQOcHOnVY6vFqhrTbtXMMZ7bGSAgai2eM4rdz4dzz6ZxCoWgSpemU96TCcStw+GCICAccSvKtItq0KdVCpslDVzaTAjBODQablntfiXl6TUGUlrK9r/GkaOHe8TBRca1YoN7SdJkNrQjS+VKPsyNTdgMmouX3UY32GpYcFMBS9eIv/84SQrUi0qNEu9p6oxlRwSV03SD2R62pFkDyx5KEKTpB8Uwc2hxHFlG6eREPEh3gU/gnvIuyW33x7WzUqi9rsmjXNaQGSWgfEo3zUhBTrzVPa6nUvUZph6NcZmkJF2+yXppJlzlFMCrUa3GGuR/AEgQXiAPr+wmBH//f2AFnAKXpMsgZ6E13oDKWYZJvsbVkUvYwm845Hemu3klah86CWAnpTMiJIPxbq7gqZmy+L4bUTmNyu2Kqr2Xfy92/sdvBbN88y5QjkGAyDQILIO1OFqmSbl02SMhfbou1M3gvkVdX/OjeSh/6iy6qJbgON/FD152sDGnjvArZ6TEfK+ML6n8+jah+tn/TrZHUMQ8fsyiWHR54ScdzGmZRfeRX6ucK/OxGflPnK/DgHvlXixLVoBBa3PgN8m0yz/HCHsCNdJXiXP0ebKXYrToYpHf99aHn3VFuIScL80Alc7eXiRzursveniaVr+LJpP4LBgZS/syA1mTw=="
+                      "thoughtSignature": "EvcCCvQCARFNMg92bbMH82739NhokhdcicCs1L5p8Ir4g557V9aiFvCKYo1Vto30ezLGMj3SP6HdckWNM3VsXBT2VciirWcve7ilRUgK7r1/HCRxefJWu9u6SFnpb7rND1Z/ZqSWnb5exOGPVPRBm2mErteSXLO//j0TYRjEhs5iWqoE0B62pbd3rHfFdZa6lb404FxVHkhCoZsO2OzbMTiWa7ZnEsArgjA5xacHJDZWk5uijBuyTxJucrAj2SMRfbg/IXdDvIKcMi7HHZcoXq+5e1aPAcKIrIVcPm7tE5ttVoUJAlrAkiQ3e5/Lwo8luMB7xYsM5EunTgkRCiPxlLdMex3eIuDCwkXL1OUtj32bllSI22p+97c6kxWqvpXYNBDfUyJ8NW9hCbOOMuX3UliwJcHcL7q+Rlei9ojha0SsYN1m7/aeUO0qqXj/SmpfWqm/iubuJNpZpWR3qEmKlZZdcVlzFXQHSvbHQGvRya81S9Qo7vaGucn2"
                     }
                   ],
                   "role": "model"
@@ -730,20 +1373,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 461,
-              "candidatesTokenCount": 65,
-              "totalTokenCount": 732,
+              "promptTokenCount": 467,
+              "candidatesTokenCount": 30,
+              "totalTokenCount": 572,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 461
+                  "tokenCount": 467
                 }
               ],
-              "thoughtsTokenCount": 206,
+              "thoughtsTokenCount": 75,
               "serviceTier": "standard"
             },
-            "modelVersion": "gemini-3.6-flash",
-            "responseId": "Sl55aqevGIW3xN8Pw_yFwAI"
+            "modelVersion": "gemini-3.7-flash",
+            "responseId": "Gyd-ap_9FMP1jMcP0I-AyQE"
           },
           {
             "candidates": [
@@ -761,20 +1404,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 461,
-              "candidatesTokenCount": 65,
-              "totalTokenCount": 732,
+              "promptTokenCount": 467,
+              "candidatesTokenCount": 30,
+              "totalTokenCount": 572,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 461
+                  "tokenCount": 467
                 }
               ],
-              "thoughtsTokenCount": 206,
+              "thoughtsTokenCount": 75,
               "serviceTier": "standard"
             },
-            "modelVersion": "gemini-3.6-flash",
-            "responseId": "Sl55aqevGIW3xN8Pw_yFwAI"
+            "modelVersion": "gemini-3.7-flash",
+            "responseId": "Gyd-ap_9FMP1jMcP0I-AyQE"
           }
         ],
         "byte_segments": [],
@@ -789,8 +1432,7 @@
                 "Server": "scaffolding on HTTPServer2",
                 "X-XSS-Protection": "0",
                 "X-Frame-Options": "SAMEORIGIN",
-                "X-Content-Type-Options": "nosniff",
-                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+                "X-Content-Type-Options": "nosniff"
               }
             },
             "candidates": [
@@ -799,13 +1441,13 @@
                   "parts": [
                     {
                       "function_call": {
-                        "id": "qSJCDqhq",
+                        "id": "call_137251",
                         "args": {
-                          "script": "result1 = 5 + 5\nresult2 = 10 + 10\nprint(f\"5 + 5 = {result1}\")\nprint(f\"10 + 10 = {result2}\")\n"
+                          "script": "result = 10 + 10\nprint(result)\n"
                         },
                         "name": "execute_script"
                       },
-                      "thought_signature": "EvwGCvkGARFNMg8FN1daFilKsWTZzgPgIDfLisicdU_n5twIATkPGVeHVIh5eCsVf3Ylnym-iby7l9qpTPjP3KLxi_xfGxxdEPs5hkvkYTLmZuQUeVyaNTF5yfbY6E9UtxFO3jd9mignsUnCa1b0tHUco3x2RPhaJJVhM8WevkzHXDMg-9OWWz8m0dHFKz1JXaNO78PMrw7FYtrBimPALJdosdh0nXEUHmPBIS5aoDnEp3O-679dUlZi7s8wmD7IngCb56BaPb9ZIe1mnVUXrWdCpc8uSjxSbBroxTCXbt9hvoiKN2MDA57MxB4WGEAAnGs3ktsDeR7DuD0Xd9sX1cznMYeNpXeTrgDgs3uAxB69Htax0JKwt4QsQ3j00oJ6U9ztw0KQL_vzEtxaZ-nvtpcJuQjM7BDcuTr7Q4tMwXUsGc4wqSzF56opeaQdgVL0tGvQoGC1j0AZPL471isJkHBCDmDnZ03z5VToevkkpKtfyX5IVq3oXeZWcnFTcXSN-ycD1vETJy-1wCQOcHOnVY6vFqhrTbtXMMZ7bGSAgai2eM4rdz4dzz6ZxCoWgSpemU96TCcStw-GCICAccSvKtItq0KdVCpslDVzaTAjBODQablntfiXl6TUGUlrK9r_GkaOHe8TBRca1YoN7SdJkNrQjS-VKPsyNTdgMmouX3UY32GpYcFMBS9eIv_84SQrUi0qNEu9p6oxlRwSV03SD2R62pFkDyx5KEKTpB8Uwc2hxHFlG6eREPEh3gU_gnvIuyW33x7WzUqi9rsmjXNaQGSWgfEo3zUhBTrzVPa6nUvUZph6NcZmkJF2-yXppJlzlFMCrUa3GGuR_AEgQXiAPr-wmBH__f2AFnAKXpMsgZ6E13oDKWYZJvsbVkUvYwm845Hemu3klah86CWAnpTMiJIPxbq7gqZmy-L4bUTmNyu2Kqr2Xfy92_sdvBbN88y5QjkGAyDQILIO1OFqmSbl02SMhfbou1M3gvkVdX_OjeSh_6iy6qJbgON_FD152sDGnjvArZ6TEfK-ML6n8-jah-tn_TrZHUMQ8fsyiWHR54ScdzGmZRfeRX6ucK_OxGflPnK_DgHvlXixLVoBBa3PgN8m0yz_HCHsCNdJXiXP0ebKXYrToYpHf99aHn3VFuIScL80Alc7eXiRzursveniaVr-LJpP4LBgZS_syA1mTw=="
+                      "thought_signature": "EvcCCvQCARFNMg92bbMH82739NhokhdcicCs1L5p8Ir4g557V9aiFvCKYo1Vto30ezLGMj3SP6HdckWNM3VsXBT2VciirWcve7ilRUgK7r1_HCRxefJWu9u6SFnpb7rND1Z_ZqSWnb5exOGPVPRBm2mErteSXLO__j0TYRjEhs5iWqoE0B62pbd3rHfFdZa6lb404FxVHkhCoZsO2OzbMTiWa7ZnEsArgjA5xacHJDZWk5uijBuyTxJucrAj2SMRfbg_IXdDvIKcMi7HHZcoXq-5e1aPAcKIrIVcPm7tE5ttVoUJAlrAkiQ3e5_Lwo8luMB7xYsM5EunTgkRCiPxlLdMex3eIuDCwkXL1OUtj32bllSI22p-97c6kxWqvpXYNBDfUyJ8NW9hCbOOMuX3UliwJcHcL7q-Rlei9ojha0SsYN1m7_aeUO0qqXj_SmpfWqm_iubuJNpZpWR3qEmKlZZdcVlzFXQHSvbHQGvRya81S9Qo7vaGucn2"
                     }
                   ],
                   "role": "model"
@@ -813,19 +1455,19 @@
                 "index": 0
               }
             ],
-            "model_version": "gemini-3.6-flash",
-            "response_id": "Sl55aqevGIW3xN8Pw_yFwAI",
+            "model_version": "gemini-3.7-flash",
+            "response_id": "Gyd-ap_9FMP1jMcP0I-AyQE",
             "usage_metadata": {
-              "candidates_token_count": 65,
-              "prompt_token_count": 461,
+              "candidates_token_count": 30,
+              "prompt_token_count": 467,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 461
+                  "token_count": 467
                 }
               ],
-              "thoughts_token_count": 206,
-              "total_token_count": 732
+              "thoughts_token_count": 75,
+              "total_token_count": 572
             }
           },
           {
@@ -838,8 +1480,7 @@
                 "Server": "scaffolding on HTTPServer2",
                 "X-XSS-Protection": "0",
                 "X-Frame-Options": "SAMEORIGIN",
-                "X-Content-Type-Options": "nosniff",
-                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+                "X-Content-Type-Options": "nosniff"
               }
             },
             "candidates": [
@@ -856,19 +1497,19 @@
                 "index": 0
               }
             ],
-            "model_version": "gemini-3.6-flash",
-            "response_id": "Sl55aqevGIW3xN8Pw_yFwAI",
+            "model_version": "gemini-3.7-flash",
+            "response_id": "Gyd-ap_9FMP1jMcP0I-AyQE",
             "usage_metadata": {
-              "candidates_token_count": 65,
-              "prompt_token_count": 461,
+              "candidates_token_count": 30,
+              "prompt_token_count": 467,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 461
+                  "token_count": 467
                 }
               ],
-              "thoughts_token_count": 206,
-              "total_token_count": 732
+              "thoughts_token_count": 75,
+              "total_token_count": 572
             }
           }
         ]
@@ -877,7 +1518,7 @@
     {
       "request": {
         "method": "post",
-        "url": "{MLDEV_URL_PREFIX}/models/gemini-3.6-flash:streamGenerateContent?alt=sse",
+        "url": "{MLDEV_URL_PREFIX}/models/gemini-3.7-flash:streamGenerateContent?alt=sse",
         "headers": {
           "Content-Type": "application/json",
           "x-goog-api-key": "{REDACTED}",
@@ -898,7 +1539,7 @@
               {
                 "parts": [
                   {
-                    "text": "5 + 5 = 10"
+                    "text": "The calculation of \\(5 + 5\\) is **10**."
                   }
                 ],
                 "role": "model"
@@ -931,13 +1572,13 @@
                 "parts": [
                   {
                     "functionCall": {
-                      "id": "qSJCDqhq",
+                      "id": "call_137251",
                       "args": {
-                        "script": "result1 = 5 + 5\nresult2 = 10 + 10\nprint(f\"5 + 5 = {result1}\")\nprint(f\"10 + 10 = {result2}\")\n"
+                        "script": "result = 10 + 10\nprint(result)\n"
                       },
                       "name": "execute_script"
                     },
-                    "thoughtSignature": "EvwGCvkGARFNMg8FN1daFilKsWTZzgPgIDfLisicdU_n5twIATkPGVeHVIh5eCsVf3Ylnym-iby7l9qpTPjP3KLxi_xfGxxdEPs5hkvkYTLmZuQUeVyaNTF5yfbY6E9UtxFO3jd9mignsUnCa1b0tHUco3x2RPhaJJVhM8WevkzHXDMg-9OWWz8m0dHFKz1JXaNO78PMrw7FYtrBimPALJdosdh0nXEUHmPBIS5aoDnEp3O-679dUlZi7s8wmD7IngCb56BaPb9ZIe1mnVUXrWdCpc8uSjxSbBroxTCXbt9hvoiKN2MDA57MxB4WGEAAnGs3ktsDeR7DuD0Xd9sX1cznMYeNpXeTrgDgs3uAxB69Htax0JKwt4QsQ3j00oJ6U9ztw0KQL_vzEtxaZ-nvtpcJuQjM7BDcuTr7Q4tMwXUsGc4wqSzF56opeaQdgVL0tGvQoGC1j0AZPL471isJkHBCDmDnZ03z5VToevkkpKtfyX5IVq3oXeZWcnFTcXSN-ycD1vETJy-1wCQOcHOnVY6vFqhrTbtXMMZ7bGSAgai2eM4rdz4dzz6ZxCoWgSpemU96TCcStw-GCICAccSvKtItq0KdVCpslDVzaTAjBODQablntfiXl6TUGUlrK9r_GkaOHe8TBRca1YoN7SdJkNrQjS-VKPsyNTdgMmouX3UY32GpYcFMBS9eIv_84SQrUi0qNEu9p6oxlRwSV03SD2R62pFkDyx5KEKTpB8Uwc2hxHFlG6eREPEh3gU_gnvIuyW33x7WzUqi9rsmjXNaQGSWgfEo3zUhBTrzVPa6nUvUZph6NcZmkJF2-yXppJlzlFMCrUa3GGuR_AEgQXiAPr-wmBH__f2AFnAKXpMsgZ6E13oDKWYZJvsbVkUvYwm845Hemu3klah86CWAnpTMiJIPxbq7gqZmy-L4bUTmNyu2Kqr2Xfy92_sdvBbN88y5QjkGAyDQILIO1OFqmSbl02SMhfbou1M3gvkVdX_OjeSh_6iy6qJbgON_FD152sDGnjvArZ6TEfK-ML6n8-jah-tn_TrZHUMQ8fsyiWHR54ScdzGmZRfeRX6ucK_OxGflPnK_DgHvlXixLVoBBa3PgN8m0yz_HCHsCNdJXiXP0ebKXYrToYpHf99aHn3VFuIScL80Alc7eXiRzursveniaVr-LJpP4LBgZS_syA1mTw=="
+                    "thoughtSignature": "EvcCCvQCARFNMg92bbMH82739NhokhdcicCs1L5p8Ir4g557V9aiFvCKYo1Vto30ezLGMj3SP6HdckWNM3VsXBT2VciirWcve7ilRUgK7r1_HCRxefJWu9u6SFnpb7rND1Z_ZqSWnb5exOGPVPRBm2mErteSXLO__j0TYRjEhs5iWqoE0B62pbd3rHfFdZa6lb404FxVHkhCoZsO2OzbMTiWa7ZnEsArgjA5xacHJDZWk5uijBuyTxJucrAj2SMRfbg_IXdDvIKcMi7HHZcoXq-5e1aPAcKIrIVcPm7tE5ttVoUJAlrAkiQ3e5_Lwo8luMB7xYsM5EunTgkRCiPxlLdMex3eIuDCwkXL1OUtj32bllSI22p-97c6kxWqvpXYNBDfUyJ8NW9hCbOOMuX3UliwJcHcL7q-Rlei9ojha0SsYN1m7_aeUO0qqXj_SmpfWqm_iubuJNpZpWR3qEmKlZZdcVlzFXQHSvbHQGvRya81S9Qo7vaGucn2"
                   }
                 ],
                 "role": "model"
@@ -946,10 +1587,10 @@
                 "parts": [
                   {
                     "functionResponse": {
-                      "id": "qSJCDqhq",
+                      "id": "call_137251",
                       "name": "execute_script",
                       "response": {
-                        "result": "--- Script Output ---\n5 + 5 = 10\n10 + 10 = 20\n\nScript executed successfully with no return value."
+                        "result": "--- Script Output ---\n20\n\nScript executed successfully with no return value."
                       }
                     }
                   }
@@ -1005,8 +1646,7 @@
           "Server": "scaffolding on HTTPServer2",
           "X-XSS-Protection": "0",
           "X-Frame-Options": "SAMEORIGIN",
-          "X-Content-Type-Options": "nosniff",
-          "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          "X-Content-Type-Options": "nosniff"
         },
         "body_segments": [
           {
@@ -1015,7 +1655,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "Using Python via the `execute_"
+                      "text": "The calculation of \\(10 + 10\\)"
                     }
                   ],
                   "role": "model"
@@ -1024,20 +1664,19 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 572,
-              "candidatesTokenCount": 7,
-              "totalTokenCount": 619,
+              "promptTokenCount": 526,
+              "candidatesTokenCount": 11,
+              "totalTokenCount": 537,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 572
+                  "tokenCount": 526
                 }
               ],
-              "thoughtsTokenCount": 40,
               "serviceTier": "standard"
             },
-            "modelVersion": "gemini-3.6-flash",
-            "responseId": "TF55apvaK4zXvdIPy-rk8Ak"
+            "modelVersion": "gemini-3.7-flash",
+            "responseId": "HCd-auT6BNPWjMcPtKiugQc"
           },
           {
             "candidates": [
@@ -1045,7 +1684,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "script` tool:\n\n* **5 + 5** = **10**\n* **10 + 10** ="
+                      "text": " using Python is **20**."
                     }
                   ],
                   "role": "model"
@@ -1054,50 +1693,19 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 778,
-              "candidatesTokenCount": 35,
-              "totalTokenCount": 853,
+              "promptTokenCount": 526,
+              "candidatesTokenCount": 18,
+              "totalTokenCount": 544,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 778
+                  "tokenCount": 526
                 }
               ],
-              "thoughtsTokenCount": 40,
               "serviceTier": "standard"
             },
-            "modelVersion": "gemini-3.6-flash",
-            "responseId": "TF55apvaK4zXvdIPy-rk8Ak"
-          },
-          {
-            "candidates": [
-              {
-                "content": {
-                  "parts": [
-                    {
-                      "text": " **20**"
-                    }
-                  ],
-                  "role": "model"
-                },
-                "index": 0
-              }
-            ],
-            "usageMetadata": {
-              "promptTokenCount": 778,
-              "candidatesTokenCount": 39,
-              "totalTokenCount": 857,
-              "promptTokensDetails": [
-                {
-                  "modality": "TEXT",
-                  "tokenCount": 778
-                }
-              ],
-              "thoughtsTokenCount": 40,
-              "serviceTier": "standard"
-            },
-            "modelVersion": "gemini-3.6-flash",
-            "responseId": "TF55apvaK4zXvdIPy-rk8Ak"
+            "modelVersion": "gemini-3.7-flash",
+            "responseId": "HCd-auT6BNPWjMcPtKiugQc"
           },
           {
             "candidates": [
@@ -1106,7 +1714,7 @@
                   "parts": [
                     {
                       "text": "",
-                      "thoughtSignature": "EtIBCs8BARFNMg+3t7rK95P8J86WCVldmm1F94V1gB8sF7TDpRtBbnodR/vPUEGIn4s4xH8jooWsCGzGVFRXMPWTUzCowDR05UdF2Ml462We+FLwu99dzGNGh3zsA145dZY3Pj3w+EXCJ8C1k0cndLXcwK6MeCZSKs8xVZQR4JYY6jgzqM6eDQcRqRPlBEu2IbH1hgUm+l8vtur1IXCPC396uOfiHTGczNmcknONJ8XXKsyUjqtYvZH9sieXR3YtC5G7xrV2H1emcQtuze2Gz4OS2naI"
+                      "thoughtSignature": "El4KXAERTTIPwasKpUfEPVVq1S7m/uz4S8Ki3brnNw6N2beUXJRTFP9B5FU4t3oI6cqOOkZOnrrsWgTwscyDYUAJjxF0tvAQI/jTLI9dxU2l5Ys7NlFBuOKg+2dnyHer"
                     }
                   ],
                   "role": "model"
@@ -1116,20 +1724,19 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 778,
-              "candidatesTokenCount": 39,
-              "totalTokenCount": 857,
+              "promptTokenCount": 601,
+              "candidatesTokenCount": 18,
+              "totalTokenCount": 619,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 778
+                  "tokenCount": 601
                 }
               ],
-              "thoughtsTokenCount": 40,
               "serviceTier": "standard"
             },
-            "modelVersion": "gemini-3.6-flash",
-            "responseId": "TF55apvaK4zXvdIPy-rk8Ak"
+            "modelVersion": "gemini-3.7-flash",
+            "responseId": "HCd-auT6BNPWjMcPtKiugQc"
           }
         ],
         "byte_segments": [],
@@ -1144,8 +1751,7 @@
                 "Server": "scaffolding on HTTPServer2",
                 "X-XSS-Protection": "0",
                 "X-Frame-Options": "SAMEORIGIN",
-                "X-Content-Type-Options": "nosniff",
-                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+                "X-Content-Type-Options": "nosniff"
               }
             },
             "candidates": [
@@ -1153,7 +1759,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "Using Python via the `execute_"
+                      "text": "The calculation of \\(10 + 10\\)"
                     }
                   ],
                   "role": "model"
@@ -1161,19 +1767,18 @@
                 "index": 0
               }
             ],
-            "model_version": "gemini-3.6-flash",
-            "response_id": "TF55apvaK4zXvdIPy-rk8Ak",
+            "model_version": "gemini-3.7-flash",
+            "response_id": "HCd-auT6BNPWjMcPtKiugQc",
             "usage_metadata": {
-              "candidates_token_count": 7,
-              "prompt_token_count": 572,
+              "candidates_token_count": 11,
+              "prompt_token_count": 526,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 572
+                  "token_count": 526
                 }
               ],
-              "thoughts_token_count": 40,
-              "total_token_count": 619
+              "total_token_count": 537
             }
           },
           {
@@ -1186,8 +1791,7 @@
                 "Server": "scaffolding on HTTPServer2",
                 "X-XSS-Protection": "0",
                 "X-Frame-Options": "SAMEORIGIN",
-                "X-Content-Type-Options": "nosniff",
-                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+                "X-Content-Type-Options": "nosniff"
               }
             },
             "candidates": [
@@ -1195,7 +1799,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "script` tool:\n\n* **5 + 5** = **10**\n* **10 + 10** ="
+                      "text": " using Python is **20**."
                     }
                   ],
                   "role": "model"
@@ -1203,19 +1807,18 @@
                 "index": 0
               }
             ],
-            "model_version": "gemini-3.6-flash",
-            "response_id": "TF55apvaK4zXvdIPy-rk8Ak",
+            "model_version": "gemini-3.7-flash",
+            "response_id": "HCd-auT6BNPWjMcPtKiugQc",
             "usage_metadata": {
-              "candidates_token_count": 35,
-              "prompt_token_count": 778,
+              "candidates_token_count": 18,
+              "prompt_token_count": 526,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 778
+                  "token_count": 526
                 }
               ],
-              "thoughts_token_count": 40,
-              "total_token_count": 853
+              "total_token_count": 544
             }
           },
           {
@@ -1228,50 +1831,7 @@
                 "Server": "scaffolding on HTTPServer2",
                 "X-XSS-Protection": "0",
                 "X-Frame-Options": "SAMEORIGIN",
-                "X-Content-Type-Options": "nosniff",
-                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
-              }
-            },
-            "candidates": [
-              {
-                "content": {
-                  "parts": [
-                    {
-                      "text": " **20**"
-                    }
-                  ],
-                  "role": "model"
-                },
-                "index": 0
-              }
-            ],
-            "model_version": "gemini-3.6-flash",
-            "response_id": "TF55apvaK4zXvdIPy-rk8Ak",
-            "usage_metadata": {
-              "candidates_token_count": 39,
-              "prompt_token_count": 778,
-              "prompt_tokens_details": [
-                {
-                  "modality": "TEXT",
-                  "token_count": 778
-                }
-              ],
-              "thoughts_token_count": 40,
-              "total_token_count": 857
-            }
-          },
-          {
-            "sdk_http_response": {
-              "headers": {
-                "Content-Type": "text/event-stream",
-                "Content-Disposition": "attachment",
-                "Vary": "Origin, X-Origin, Referer",
-                "Transfer-Encoding": "chunked",
-                "Server": "scaffolding on HTTPServer2",
-                "X-XSS-Protection": "0",
-                "X-Frame-Options": "SAMEORIGIN",
-                "X-Content-Type-Options": "nosniff",
-                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+                "X-Content-Type-Options": "nosniff"
               }
             },
             "candidates": [
@@ -1280,7 +1840,7 @@
                   "parts": [
                     {
                       "text": "",
-                      "thought_signature": "EtIBCs8BARFNMg-3t7rK95P8J86WCVldmm1F94V1gB8sF7TDpRtBbnodR_vPUEGIn4s4xH8jooWsCGzGVFRXMPWTUzCowDR05UdF2Ml462We-FLwu99dzGNGh3zsA145dZY3Pj3w-EXCJ8C1k0cndLXcwK6MeCZSKs8xVZQR4JYY6jgzqM6eDQcRqRPlBEu2IbH1hgUm-l8vtur1IXCPC396uOfiHTGczNmcknONJ8XXKsyUjqtYvZH9sieXR3YtC5G7xrV2H1emcQtuze2Gz4OS2naI"
+                      "thought_signature": "El4KXAERTTIPwasKpUfEPVVq1S7m_uz4S8Ki3brnNw6N2beUXJRTFP9B5FU4t3oI6cqOOkZOnrrsWgTwscyDYUAJjxF0tvAQI_jTLI9dxU2l5Ys7NlFBuOKg-2dnyHer"
                     }
                   ],
                   "role": "model"
@@ -1289,19 +1849,18 @@
                 "index": 0
               }
             ],
-            "model_version": "gemini-3.6-flash",
-            "response_id": "TF55apvaK4zXvdIPy-rk8Ak",
+            "model_version": "gemini-3.7-flash",
+            "response_id": "HCd-auT6BNPWjMcPtKiugQc",
             "usage_metadata": {
-              "candidates_token_count": 39,
-              "prompt_token_count": 778,
+              "candidates_token_count": 18,
+              "prompt_token_count": 601,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 778
+                  "token_count": 601
                 }
               ],
-              "thoughts_token_count": 40,
-              "total_token_count": 857
+              "total_token_count": 619
             }
           }
         ]
