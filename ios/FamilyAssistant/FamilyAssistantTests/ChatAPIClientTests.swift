@@ -172,6 +172,27 @@ final class ChatAPIClientTests: XCTestCase {
         }
     }
 
+    func testSharedConversationTransientAuthFailureOffersRetry() async {
+        seedRefreshToken()
+        ChatMockBackendURLProtocol.respond { request in
+            if request.url?.path == "/api/auth/refresh" {
+                throw URLError(.notConnectedToInternet)
+            }
+            return .json(#"{"detail":"expired"}"#, statusCode: 401)
+        }
+        let authManager = makeAuthManager()
+        let viewModel = SharedConversationViewModel(
+            authManager: authManager,
+            apiClient: ChatAPIClient(authManager: authManager)
+        )
+
+        await viewModel.load(token: "share-token")
+
+        guard case .failed = viewModel.loadState else {
+            return XCTFail("A transient refresh failure should remain retryable")
+        }
+    }
+
     func testProfilesDecodeDirectChatProfiles() async throws {
         ChatMockBackendURLProtocol.respond { request in
             XCTAssertEqual(request.httpMethod, "GET")

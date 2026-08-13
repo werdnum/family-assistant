@@ -50,7 +50,7 @@ final class SharedConversationViewModel {
             guard generation == loadGeneration else { return }
             messages = []
             loadState = .authenticationRequired
-        } catch is AuthError {
+        } catch AuthError.authRejected, AuthError.noCredentials {
             guard generation == loadGeneration else { return }
             messages = []
             loadState = .authenticationRequired
