@@ -485,6 +485,11 @@
 				TargetAttributes = {
 					E10001 = {
 						CreatedOnToolsVersion = 15.4;
+						SystemCapabilities = {
+							com.apple.AssociatedDomains = {
+								enabled = 1;
+							};
+						};
 					};
 					E20001 = {
 						CreatedOnToolsVersion = 15.4;
