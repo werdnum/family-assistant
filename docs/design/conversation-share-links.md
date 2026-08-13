@@ -12,6 +12,9 @@ substitute: every request still requires an authenticated, allowlisted user.
 - Sharing rotates the conversation's one active link and copies the replacement URL.
 - The owner can stop sharing, immediately invalidating the link.
 - A recipient opens `/shared/conversations/{token}` and sees a dedicated read-only transcript.
+- On `assistant.andrewgarrett.dev`, the iOS Associated Domains entitlement and AASA file route that
+  link to a native read-only transcript. The custom scene delegate forwards both cold- and
+  warm-launch Universal Link activities before the app router selects the native Chat destination.
 - Shared conversations never appear in the recipient's conversation list and cannot be continued,
   steered, or used to approve tool calls.
 - The transcript is live at read time: later persisted messages appear after a refresh.

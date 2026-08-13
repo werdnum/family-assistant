@@ -58,6 +58,8 @@ chat behavior rather than matching every pixel:
 - Image, PDF, plain text, and Markdown uploads up to 100 MB
 - Authenticated attachment previews/downloads
 - Live message update SSE connection and notification/deep-link routing
+- Native read-only shared-conversation transcripts opened from
+  `https://assistant.andrewgarrett.dev/shared/conversations/<token>` Universal Links
 - Stop-generating and reload/error recovery paths
 
 The native chat client calls these existing authenticated endpoints:
@@ -65,6 +67,8 @@ The native chat client calls these existing authenticated endpoints:
 ```http
 GET /api/v1/chat/conversations?interface_type=web
 GET /api/v1/chat/conversations/{conversation_id}/messages
+GET /api/v1/shared-conversations/{token}/messages
+GET /api/v1/shared-conversations/{token}/attachments/{attachment_id}
 GET /api/v1/profiles
 POST /api/v1/chat/turns
 GET /api/v1/chat/conversations/{conversation_id}/stream?from_seq=<n>&follow=<bool>
@@ -74,6 +78,11 @@ POST /api/attachments/upload
 DELETE /api/attachments/{attachment_id}
 GET /api/attachments/{attachment_id}
 ```
+
+The app target claims `applinks:assistant.andrewgarrett.dev`. The server's
+`/.well-known/apple-app-site-association` response associates the production Team ID and bundle ID
+with app-auth callbacks and shared-conversation links. Self-hosted builds must override
+`APPLE_TEAM_ID` and `APPLE_BUNDLE_ID` and add their own hostname to the app entitlement.
 
 Confirmation actions sent by the iOS app include `"approving_interface": "ios"` while the backend
 continues to default older web/APNs callers to `"web"`.

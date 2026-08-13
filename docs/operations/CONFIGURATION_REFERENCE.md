@@ -991,6 +991,36 @@ subscriptions fail.
 
 ______________________________________________________________________
 
+## iOS Universal Links
+
+The server publishes `/.well-known/apple-app-site-association` for native app-auth callbacks and
+shared-conversation links. The checked-in production defaults match the
+`assistant.andrewgarrett.dev` app; set both variables for a differently signed or self-hosted app.
+Setting both also makes the app-auth callback use the verified HTTPS Universal Link instead of the
+`familyassistant://` fallback.
+
+### APPLE_TEAM_ID
+
+Apple Developer Team ID used in the AASA `appID`.
+
+| Property  | Value        |
+| --------- | ------------ |
+| Required  | Self-hosted  |
+| Default   | `H7NBC2S52X` |
+| Sensitive | No           |
+
+### APPLE_BUNDLE_ID
+
+iOS application bundle identifier used in the AASA `appID`.
+
+| Property  | Value                         |
+| --------- | ----------------------------- |
+| Required  | Self-hosted                   |
+| Default   | `dev.andrewgarrett.assistant` |
+| Sensitive | No                            |
+
+______________________________________________________________________
+
 ## Push Notifications (iOS APNs)
 
 Native iOS push is delivered through Apple Push Notification service using provider-token

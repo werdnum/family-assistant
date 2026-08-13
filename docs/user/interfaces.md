@@ -50,7 +50,9 @@ changes the profile and keeps you where you are.
 **Share a conversation.** Open a conversation that already has messages and select the share icon in
 the chat header. Family Assistant copies a link to a read-only transcript. The recipient must sign
 in as an authorized Family Assistant user, and the conversation does not appear in their history
-list. Selecting share again replaces the old link; select the stop-sharing icon to make the current
+list. On iPhone or iPad with the Family Assistant app installed, links from
+`assistant.andrewgarrett.dev` open the transcript in a native read-only view; pull down to refresh
+it. Selecting share again replaces the old link; select the stop-sharing icon to make the current
 link unavailable. The transcript reflects messages added after the link was created when the
 recipient refreshes it.
 

@@ -65,6 +65,33 @@ final class RouteTests: XCTestCase {
         XCTAssertNotNil(parsed.newConversationRequestID)
     }
 
+    // MARK: - SharedConversationRoute parsing
+
+    func testSharedConversationRouteParsesSameOriginToken() throws {
+        let parsed = SharedConversationRoute.route(
+            for: try url("/shared/conversations/share-token_123"),
+            relativeTo: baseURL
+        )
+
+        XCTAssertEqual(parsed, SharedConversationRoute(token: "share-token_123"))
+    }
+
+    func testSharedConversationRouteRejectsMissingOrNestedToken() throws {
+        XCTAssertNil(SharedConversationRoute.route(
+            for: try url("/shared/conversations/"),
+            relativeTo: baseURL
+        ))
+        XCTAssertNil(SharedConversationRoute.route(
+            for: try url("/shared/conversations/token/extra"),
+            relativeTo: baseURL
+        ))
+    }
+
+    func testSharedConversationRouteRejectsForeignOrigin() throws {
+        let foreign = try XCTUnwrap(URL(string: "https://evil.test/shared/conversations/token"))
+        XCTAssertNil(SharedConversationRoute.route(for: foreign, relativeTo: baseURL))
+    }
+
     // MARK: - owningTab resolution (table-driven)
 
     func testOwningTabResolvesEachDestination() throws {
@@ -72,6 +99,7 @@ final class RouteTests: XCTestCase {
             ("/chat", .chat),
             ("/chat?conversation_id=abc&q=hi", .chat),
             ("/chat?new=1", .chat),
+            ("/shared/conversations/token", .chat),
             ("/notes", .notes),
             ("/notes/edit/Milk", .notes),
             ("/documents/", .documents),
@@ -102,6 +130,32 @@ final class RouteTests: XCTestCase {
         XCTAssertTrue(router.navigate(to: try url("/chat?conversation_id=c1&q=hey"), relativeTo: baseURL))
         XCTAssertEqual(router.selectedTab, .chat)
         XCTAssertEqual(router.chatSelection, ChatRoute(conversationID: "c1", initialPrompt: "hey"))
+        XCTAssertNil(router.sharedConversationRoute)
+    }
+
+    func testNavigateSelectsNativeSharedConversation() throws {
+        let router = AppRouter()
+
+        XCTAssertTrue(router.navigate(
+            to: try url("/shared/conversations/share-token"),
+            relativeTo: baseURL
+        ))
+
+        XCTAssertEqual(router.selectedTab, .chat)
+        XCTAssertEqual(router.sharedConversationRoute, SharedConversationRoute(token: "share-token"))
+    }
+
+    func testNavigateFromSharedConversationBackToChatClearsSharedRoute() throws {
+        let router = AppRouter()
+        XCTAssertTrue(router.navigate(
+            to: try url("/shared/conversations/share-token"),
+            relativeTo: baseURL
+        ))
+
+        XCTAssertTrue(router.navigate(to: try url("/chat?conversation_id=c1"), relativeTo: baseURL))
+
+        XCTAssertNil(router.sharedConversationRoute)
+        XCTAssertEqual(router.chatSelection.conversationID, "c1")
     }
 
     func testNavigateSelectsNotesRoute() throws {
@@ -202,11 +256,13 @@ final class RouteTests: XCTestCase {
         router.documentsPath = [WebRoute(path: "/documents/1")]
         router.notesRoute = .add
         router.chatSelection = ChatRoute(conversationID: "c", initialPrompt: "p")
+        router.sharedConversationRoute = SharedConversationRoute(token: "token")
 
         router.reset()
 
         XCTAssertEqual(router.selectedTab, .chat)
         XCTAssertEqual(router.chatSelection, ChatRoute())
+        XCTAssertNil(router.sharedConversationRoute)
         XCTAssertEqual(router.notesRoute, .list)
         XCTAssertEqual(router.documentsPath, [])
         XCTAssertEqual(router.morePath, [])
@@ -347,6 +403,21 @@ final class RouteTests: XCTestCase {
         let url = try XCTUnwrap(URL(string: "familyassistant://chat?q=forwarded"))
 
         HomeScreenShortcutSceneDelegate.forwardOpenedURLs([url])
+
+        XCTAssertEqual(OpenURLCenter.shared.pendingURLs, [url])
+    }
+
+    @MainActor
+    func testSceneDelegateForwardsUniversalLinkUserActivityToSharedCenter() throws {
+        _ = OpenURLCenter.shared.consumePendingURLs()
+        defer { _ = OpenURLCenter.shared.consumePendingURLs() }
+        let url = try XCTUnwrap(
+            URL(string: "https://assistant.andrewgarrett.dev/shared/conversations/token")
+        )
+        let activity = NSUserActivity(activityType: NSUserActivityTypeBrowsingWeb)
+        activity.webpageURL = url
+
+        HomeScreenShortcutSceneDelegate.forwardUserActivities([activity])
 
         XCTAssertEqual(OpenURLCenter.shared.pendingURLs, [url])
     }

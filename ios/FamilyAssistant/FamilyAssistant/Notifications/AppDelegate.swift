@@ -79,10 +79,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
 /// Installed via `UISceneConfiguration.delegateClass`, which replaces SwiftUI's
 /// internal scene delegate. That internal delegate is what feeds `.onOpenURL`,
-/// so this class must forward every URL-open event (custom-scheme deep links
-/// and file "Open in Family Assistant" hand-offs) into `OpenURLCenter`, from
-/// which `FamilyAssistantApp` dispatches them. Dropping either hook silently
-/// breaks external URL opens.
+/// so this class must forward every URL-open event (Universal Links,
+/// custom-scheme deep links, and file "Open in Family Assistant" hand-offs)
+/// into `OpenURLCenter`, from which `FamilyAssistantApp` dispatches them.
+/// Dropping any hook silently breaks an external URL delivery path.
 final class HomeScreenShortcutSceneDelegate: NSObject, UIWindowSceneDelegate {
     func scene(
         _ scene: UIScene,
@@ -93,6 +93,7 @@ final class HomeScreenShortcutSceneDelegate: NSObject, UIWindowSceneDelegate {
             _ = HomeScreenShortcutRouter.handle(shortcutItem)
         }
         Self.forwardOpenedURLs(connectionOptions.urlContexts)
+        Self.forwardUserActivities(connectionOptions.userActivities)
     }
 
     func windowScene(
@@ -107,8 +108,21 @@ final class HomeScreenShortcutSceneDelegate: NSObject, UIWindowSceneDelegate {
         Self.forwardOpenedURLs(URLContexts)
     }
 
+    func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
+        Self.forwardUserActivities([userActivity])
+    }
+
     private static func forwardOpenedURLs(_ contexts: Set<UIOpenURLContext>) {
         forwardOpenedURLs(contexts.map(\.url))
+    }
+
+    static func forwardUserActivities(_ activities: Set<NSUserActivity>) {
+        forwardOpenedURLs(activities.compactMap { activity in
+            guard activity.activityType == NSUserActivityTypeBrowsingWeb else {
+                return nil
+            }
+            return activity.webpageURL
+        })
     }
 
     static func forwardOpenedURLs(_ urls: [URL]) {

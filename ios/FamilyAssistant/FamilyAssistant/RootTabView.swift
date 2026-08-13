@@ -12,10 +12,7 @@ struct RootTabView: View {
 
     var body: some View {
         TabView(selection: $appRouter.selectedTab) {
-            ChatRootView(
-                authManager: authManager,
-                route: appRouter.chatSelection
-            )
+            chatTab
             .tabItem { Label("Chat", systemImage: "message") }
             .tag(AppTab.chat)
 
@@ -39,6 +36,24 @@ struct RootTabView: View {
             MoreTabView(appRouter: appRouter, baseURL: baseURL, onLogout: onLogout)
                 .tabItem { Label("More", systemImage: "ellipsis") }
                 .tag(AppTab.more)
+        }
+    }
+
+    @ViewBuilder
+    private var chatTab: some View {
+        if let sharedRoute = appRouter.sharedConversationRoute {
+            NavigationStack {
+                SharedConversationView(
+                    authManager: authManager,
+                    token: sharedRoute.token,
+                    onClose: appRouter.closeSharedConversation
+                )
+            }
+        } else {
+            ChatRootView(
+                authManager: authManager,
+                route: appRouter.chatSelection
+            )
         }
     }
 }

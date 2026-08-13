@@ -57,6 +57,7 @@
 		A10050 /* ErrorReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10050 /* ErrorReporter.swift */; };
 		A10051 /* ResyncOrchestrator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10051 /* ResyncOrchestrator.swift */; };
 		A10052 /* ChatErrorClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10052 /* ChatErrorClassifier.swift */; };
+		A10053 /* SharedConversationView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10053 /* SharedConversationView.swift */; };
 		A20001 /* RouteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20002 /* RouteTests.swift */; };
 		A20002 /* NotesModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20003 /* NotesModelTests.swift */; };
 		A20003 /* NotesAPIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20004 /* NotesAPIClientTests.swift */; };
@@ -164,6 +165,7 @@
 		B10050 /* ErrorReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorReporter.swift; sourceTree = "<group>"; };
 		B10051 /* ResyncOrchestrator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResyncOrchestrator.swift; sourceTree = "<group>"; };
 		B10052 /* ChatErrorClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatErrorClassifier.swift; sourceTree = "<group>"; };
+		B10053 /* SharedConversationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedConversationView.swift; sourceTree = "<group>"; };
 		B20001 /* FamilyAssistantTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FamilyAssistantTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B20002 /* RouteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouteTests.swift; sourceTree = "<group>"; };
 		B20003 /* NotesModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesModelTests.swift; sourceTree = "<group>"; };
@@ -343,6 +345,7 @@
 				B10049 /* ActiveTurnSession.swift */,
 				B10051 /* ResyncOrchestrator.swift */,
 				B10052 /* ChatErrorClassifier.swift */,
+				B10053 /* SharedConversationView.swift */,
 			);
 			path = Chat;
 			sourceTree = "<group>";
@@ -584,6 +587,7 @@
 				A10050 /* ErrorReporter.swift in Sources */,
 				A10051 /* ResyncOrchestrator.swift in Sources */,
 				A10052 /* ChatErrorClassifier.swift in Sources */,
+				A10053 /* SharedConversationView.swift in Sources */,
 				D0F574A4B1DB1233913FABAD /* GeminiLiveModels.swift in Sources */,
 				2ABFDD16D062601B9E6B3852 /* GeminiLiveCodec.swift in Sources */,
 				EF8E1CBADFFFEADB737479EA /* GeminiLiveSocket.swift in Sources */,

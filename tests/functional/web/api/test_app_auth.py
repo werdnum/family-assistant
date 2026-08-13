@@ -254,7 +254,12 @@ class TestTokenSession:
 
 class TestAppleAppSiteAssociation:
     @pytest.mark.asyncio
-    async def test_aasa_endpoint(self, api_test_client: AsyncClient) -> None:
+    async def test_aasa_endpoint(
+        self, api_test_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("APPLE_TEAM_ID", raising=False)
+        monkeypatch.delenv("APPLE_BUNDLE_ID", raising=False)
+
         response = await api_test_client.get("/.well-known/apple-app-site-association")
         assert response.status_code == 200
         data = response.json()
@@ -262,7 +267,9 @@ class TestAppleAppSiteAssociation:
         assert "details" in data["applinks"]
         details = data["applinks"]["details"]
         assert len(details) == 1
+        assert details[0]["appID"] == "H7NBC2S52X.dev.andrewgarrett.assistant"
         assert "/.well-known/app-auth-callback*" in details[0]["paths"]
+        assert "/shared/conversations/*" in details[0]["paths"]
 
 
 class TestCleanupExpiredCodes:
