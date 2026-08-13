@@ -1,10 +1,10 @@
 {
-  "replay_id": "integration.llm.test_streaming/test_streaming_with_tool_calls_gemini[google-gemini-3.6-flash]/mldev",
+  "replay_id": "integration.llm.test_streaming/test_google_streaming_with_multiturns_and_tool_calls[google-gemini-3.7-flash]/mldev",
   "interactions": [
     {
       "request": {
         "method": "post",
-        "url": "{MLDEV_URL_PREFIX}/models/gemini-3.6-flash:streamGenerateContent?alt=sse",
+        "url": "{MLDEV_URL_PREFIX}/models/gemini-3.7-flash:streamGenerateContent?alt=sse",
         "headers": {
           "Content-Type": "application/json",
           "x-goog-api-key": "{REDACTED}",
@@ -17,7 +17,37 @@
               {
                 "parts": [
                   {
-                    "text": "What's the weather in Paris, France? Also calculate 42 * 17."
+                    "text": "What's the weather in Paris?"
+                  }
+                ],
+                "role": "user"
+              },
+              {
+                "parts": [
+                  {
+                    "functionCall": {
+                      "id": "call_123",
+                      "args": {
+                        "location": "Paris, France",
+                        "unit": "celsius"
+                      },
+                      "name": "get_weather"
+                    },
+                    "thoughtSignature": "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="
+                  }
+                ],
+                "role": "model"
+              },
+              {
+                "parts": [
+                  {
+                    "functionResponse": {
+                      "id": "call_123",
+                      "name": "get_weather",
+                      "response": {
+                        "result": "The weather in Paris is 18°C and sunny."
+                      }
+                    }
                   }
                 ],
                 "role": "user"
@@ -81,8 +111,7 @@
           "Server": "scaffolding on HTTPServer2",
           "X-XSS-Protection": "0",
           "X-Frame-Options": "SAMEORIGIN",
-          "X-Content-Type-Options": "nosniff",
-          "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+          "X-Content-Type-Options": "nosniff"
         },
         "body_segments": [
           {
@@ -91,14 +120,7 @@
                 "content": {
                   "parts": [
                     {
-                      "functionCall": {
-                        "name": "get_weather",
-                        "args": {
-                          "location": "Paris, France"
-                        },
-                        "id": "bmOCFA5H"
-                      },
-                      "thoughtSignature": "EpAFCo0FARFNMg9AszMEsHN8QvngPwaxMYt1EMPowZw7BhYQs3kZNwGScGglClw6eQZh9YP24TXbHMsbuPoqUlyMIWY0CdPT6YaAt8HcqJPZlYowWZp6CQAMJLJY8yKEEAwNRxvWS9n3yJyWoFSpfw6v/vFMReduibBJ28RPEY6FrvVfAowbqOnTZrOo1yk1e+Hhox64J0VZitOeWZtBoqge6rJZ9t/VHRGsO3M7J857+L/KVhtFapv8199pmqKq/eWj2ALZPn/UUdwA5IWn3xxboiKUmgr5fOhTqJhH080zyqk/aa6a04Cc6TBQQDA+ZPHFg4jA+2gimUDCdsqaxea/ImRCCfGbfXpqfhE4cGzRko0RKugPg0POypn4dn/SOYj65jeVKLtaosjsf0a+qjZ1ANiiQcN9SI02f/Gu5agtUSni9RTh7QNZU8M7DJZt6AYJP662x0abOzQUPk+YlHtV+ulX1lb5KmHv7PI/XrxMbqnc6HPVPsQefrIxBwg5k5inRYsB43p4ygxrlBEkvdhNHQC63htwYNeTy96LjksGNON8hJxHIxkl/0RDzE5vfxr14N/QQ4+yvjLHqEt9TgjkwFWSZA4ET9NPFJNsgeSeONUrEyVyB5FsuIPHmjVr/AG2hdsqIYh8V4j0NEDGdOgBVTV2XvGR3+wKFxpnolzBvGdqWqGVVhPfOOwabqiQwfGPSE8qH34WI2kWgkdcDSxRx2KBwsWGMvMKQXQWHE1QZY8DEJ/sZVlLCje8YfzB/hspLoLxY7e8MAaS/ELE42FZtlZfQF1tcVhIXTrhGPtp+B76Km3paDB7x/tj0vz1QIKUTjalGILwW5t8zjCftTGwryAnjn8stvLXAY4hnW7psHI="
+                      "text": "The current weather in Paris is"
                     }
                   ],
                   "role": "model"
@@ -107,20 +129,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 135,
-              "candidatesTokenCount": 18,
-              "totalTokenCount": 297,
+              "promptTokenCount": 174,
+              "candidatesTokenCount": 6,
+              "totalTokenCount": 192,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 135
+                  "tokenCount": 174
                 }
               ],
-              "thoughtsTokenCount": 144,
+              "thoughtsTokenCount": 12,
               "serviceTier": "standard"
             },
-            "modelVersion": "gemini-3.6-flash",
-            "responseId": "6ZhfavzROfrlxN8PiZKjuQE"
+            "modelVersion": "gemini-3.7-flash",
+            "responseId": "Zyd-avejMcCV39IPsMbN4QE"
           },
           {
             "candidates": [
@@ -128,13 +150,7 @@
                 "content": {
                   "parts": [
                     {
-                      "functionCall": {
-                        "name": "calculate",
-                        "args": {
-                          "expression": "42 * 17"
-                        },
-                        "id": "4D4s8UVW"
-                      }
+                      "text": " **18°C and sunny**."
                     }
                   ],
                   "role": "model"
@@ -143,20 +159,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 135,
-              "candidatesTokenCount": 37,
-              "totalTokenCount": 316,
+              "promptTokenCount": 174,
+              "candidatesTokenCount": 14,
+              "totalTokenCount": 200,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 135
+                  "tokenCount": 174
                 }
               ],
-              "thoughtsTokenCount": 144,
+              "thoughtsTokenCount": 12,
               "serviceTier": "standard"
             },
-            "modelVersion": "gemini-3.6-flash",
-            "responseId": "6ZhfavzROfrlxN8PiZKjuQE"
+            "modelVersion": "gemini-3.7-flash",
+            "responseId": "Zyd-avejMcCV39IPsMbN4QE"
           },
           {
             "candidates": [
@@ -164,7 +180,8 @@
                 "content": {
                   "parts": [
                     {
-                      "text": ""
+                      "text": "",
+                      "thoughtSignature": "Eq4BCqsBARFNMg8glYzBGyccNTTKsj42HMaRebHTFXyVLiuwOPZZlYwvDZ0s4vpPxIgvjpilZhtb9v9dM1SmzbPGkVEgnuDN3E22/PRW4+RbX7m1TyyyMCHhjE2wTP3uXo6bW8FFHOYqKpM52V6/vlXRVT9cy83q7xv5lihZw2ck4f4CYQmkkKeNn40qg+M7VkUiqmGbfQA5Inl1tvsJcJ0Y/+9TcXcdPbo3Z44rCwyO"
                     }
                   ],
                   "role": "model"
@@ -174,20 +191,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 135,
-              "candidatesTokenCount": 37,
-              "totalTokenCount": 316,
+              "promptTokenCount": 174,
+              "candidatesTokenCount": 14,
+              "totalTokenCount": 200,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 135
+                  "tokenCount": 174
                 }
               ],
-              "thoughtsTokenCount": 144,
+              "thoughtsTokenCount": 12,
               "serviceTier": "standard"
             },
-            "modelVersion": "gemini-3.6-flash",
-            "responseId": "6ZhfavzROfrlxN8PiZKjuQE"
+            "modelVersion": "gemini-3.7-flash",
+            "responseId": "Zyd-avejMcCV39IPsMbN4QE"
           }
         ],
         "byte_segments": [],
@@ -202,8 +219,7 @@
                 "Server": "scaffolding on HTTPServer2",
                 "X-XSS-Protection": "0",
                 "X-Frame-Options": "SAMEORIGIN",
-                "X-Content-Type-Options": "nosniff",
-                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+                "X-Content-Type-Options": "nosniff"
               }
             },
             "candidates": [
@@ -211,14 +227,7 @@
                 "content": {
                   "parts": [
                     {
-                      "function_call": {
-                        "id": "bmOCFA5H",
-                        "args": {
-                          "location": "Paris, France"
-                        },
-                        "name": "get_weather"
-                      },
-                      "thought_signature": "EpAFCo0FARFNMg9AszMEsHN8QvngPwaxMYt1EMPowZw7BhYQs3kZNwGScGglClw6eQZh9YP24TXbHMsbuPoqUlyMIWY0CdPT6YaAt8HcqJPZlYowWZp6CQAMJLJY8yKEEAwNRxvWS9n3yJyWoFSpfw6v_vFMReduibBJ28RPEY6FrvVfAowbqOnTZrOo1yk1e-Hhox64J0VZitOeWZtBoqge6rJZ9t_VHRGsO3M7J857-L_KVhtFapv8199pmqKq_eWj2ALZPn_UUdwA5IWn3xxboiKUmgr5fOhTqJhH080zyqk_aa6a04Cc6TBQQDA-ZPHFg4jA-2gimUDCdsqaxea_ImRCCfGbfXpqfhE4cGzRko0RKugPg0POypn4dn_SOYj65jeVKLtaosjsf0a-qjZ1ANiiQcN9SI02f_Gu5agtUSni9RTh7QNZU8M7DJZt6AYJP662x0abOzQUPk-YlHtV-ulX1lb5KmHv7PI_XrxMbqnc6HPVPsQefrIxBwg5k5inRYsB43p4ygxrlBEkvdhNHQC63htwYNeTy96LjksGNON8hJxHIxkl_0RDzE5vfxr14N_QQ4-yvjLHqEt9TgjkwFWSZA4ET9NPFJNsgeSeONUrEyVyB5FsuIPHmjVr_AG2hdsqIYh8V4j0NEDGdOgBVTV2XvGR3-wKFxpnolzBvGdqWqGVVhPfOOwabqiQwfGPSE8qH34WI2kWgkdcDSxRx2KBwsWGMvMKQXQWHE1QZY8DEJ_sZVlLCje8YfzB_hspLoLxY7e8MAaS_ELE42FZtlZfQF1tcVhIXTrhGPtp-B76Km3paDB7x_tj0vz1QIKUTjalGILwW5t8zjCftTGwryAnjn8stvLXAY4hnW7psHI="
+                      "text": "The current weather in Paris is"
                     }
                   ],
                   "role": "model"
@@ -226,19 +235,19 @@
                 "index": 0
               }
             ],
-            "model_version": "gemini-3.6-flash",
-            "response_id": "6ZhfavzROfrlxN8PiZKjuQE",
+            "model_version": "gemini-3.7-flash",
+            "response_id": "Zyd-avejMcCV39IPsMbN4QE",
             "usage_metadata": {
-              "candidates_token_count": 18,
-              "prompt_token_count": 135,
+              "candidates_token_count": 6,
+              "prompt_token_count": 174,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 135
+                  "token_count": 174
                 }
               ],
-              "thoughts_token_count": 144,
-              "total_token_count": 297
+              "thoughts_token_count": 12,
+              "total_token_count": 192
             }
           },
           {
@@ -251,8 +260,7 @@
                 "Server": "scaffolding on HTTPServer2",
                 "X-XSS-Protection": "0",
                 "X-Frame-Options": "SAMEORIGIN",
-                "X-Content-Type-Options": "nosniff",
-                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+                "X-Content-Type-Options": "nosniff"
               }
             },
             "candidates": [
@@ -260,13 +268,7 @@
                 "content": {
                   "parts": [
                     {
-                      "function_call": {
-                        "id": "4D4s8UVW",
-                        "args": {
-                          "expression": "42 * 17"
-                        },
-                        "name": "calculate"
-                      }
+                      "text": " **18°C and sunny**."
                     }
                   ],
                   "role": "model"
@@ -274,19 +276,19 @@
                 "index": 0
               }
             ],
-            "model_version": "gemini-3.6-flash",
-            "response_id": "6ZhfavzROfrlxN8PiZKjuQE",
+            "model_version": "gemini-3.7-flash",
+            "response_id": "Zyd-avejMcCV39IPsMbN4QE",
             "usage_metadata": {
-              "candidates_token_count": 37,
-              "prompt_token_count": 135,
+              "candidates_token_count": 14,
+              "prompt_token_count": 174,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 135
+                  "token_count": 174
                 }
               ],
-              "thoughts_token_count": 144,
-              "total_token_count": 316
+              "thoughts_token_count": 12,
+              "total_token_count": 200
             }
           },
           {
@@ -299,8 +301,7 @@
                 "Server": "scaffolding on HTTPServer2",
                 "X-XSS-Protection": "0",
                 "X-Frame-Options": "SAMEORIGIN",
-                "X-Content-Type-Options": "nosniff",
-                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
+                "X-Content-Type-Options": "nosniff"
               }
             },
             "candidates": [
@@ -308,7 +309,8 @@
                 "content": {
                   "parts": [
                     {
-                      "text": ""
+                      "text": "",
+                      "thought_signature": "Eq4BCqsBARFNMg8glYzBGyccNTTKsj42HMaRebHTFXyVLiuwOPZZlYwvDZ0s4vpPxIgvjpilZhtb9v9dM1SmzbPGkVEgnuDN3E22_PRW4-RbX7m1TyyyMCHhjE2wTP3uXo6bW8FFHOYqKpM52V6_vlXRVT9cy83q7xv5lihZw2ck4f4CYQmkkKeNn40qg-M7VkUiqmGbfQA5Inl1tvsJcJ0Y_-9TcXcdPbo3Z44rCwyO"
                     }
                   ],
                   "role": "model"
@@ -317,19 +319,19 @@
                 "index": 0
               }
             ],
-            "model_version": "gemini-3.6-flash",
-            "response_id": "6ZhfavzROfrlxN8PiZKjuQE",
+            "model_version": "gemini-3.7-flash",
+            "response_id": "Zyd-avejMcCV39IPsMbN4QE",
             "usage_metadata": {
-              "candidates_token_count": 37,
-              "prompt_token_count": 135,
+              "candidates_token_count": 14,
+              "prompt_token_count": 174,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 135
+                  "token_count": 174
                 }
               ],
-              "thoughts_token_count": 144,
-              "total_token_count": 316
+              "thoughts_token_count": 12,
+              "total_token_count": 200
             }
           }
         ]

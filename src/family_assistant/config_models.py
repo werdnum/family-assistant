@@ -1388,7 +1388,7 @@ class AppConfig(BaseSettings):
     )
 
     # Model configuration
-    model: str = "gemini/gemini-3.6-flash"
+    model: str = "gemini/gemini-3.7-flash"
     embedding_model: str = "gemini/gemini-embedding-001"
     embedding_dimensions: int = 1536
     # Optional explicit embedding provider selection. When None, the provider is

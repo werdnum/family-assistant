@@ -419,4 +419,46 @@ interactions:
       status:
         code: 200
         message: OK
+  - request:
+      body: '{"contents": [{"parts": [{"text": "Look at this URL https://github.com/simonw/llm-openrouter/releases/tag/0.5 and tell me what example prompt is mentioned for testing reasoning options support."}], "role": "user"}], "tools": [{"urlContext": {}}], "generationConfig": {"mediaResolution": "MEDIA_RESOLUTION_HIGH"}}'
+      headers:
+        Content-Type:
+          - application/json
+        user-agent:
+          - google-genai-sdk/2.10.0 gl-python/3.13.12
+        x-goog-api-client:
+          - google-genai-sdk/2.10.0 gl-python/3.13.12
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent
+    response:
+      body:
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"In the release notes for version 0.5, the example command provided is:\\n\\n```bash\\nllm -m openrouter/openai/gpt-5 'prove dogs exist' -o reasoning_effort medium\\n```\\n\\nThe example prompt mentioned is **`'prove dogs exist'`**.\",\n            \"thoughtSignature\": \"EoMECoAEARFNMg+HIi3zg2zoRokUZwPrt1NuKiG9ANCL2PoG7aul2zo0ZgE1ulU/YwLcAlOieTnEOi+xcuup2wRKmzVzf7F/krTfMhFoXW272O3ZVBX8yDHdUkHLqlo597FPi4SKAiJ4Gc3LfavZK5LeTJ/wD7qqzshpF3w/d7Zz81QptDZs09+QbhDxRVsQZBHUnsUrj7rpHJ9V5K9Nh/OHlJTTfz1oUJuYM/hqoO9Y9bPKNFgEmZOkYpz/fj6PUjS90CaRTQ7XNeZh/JSfRmEC3gJUo/uXWhnkJFuSauZRjv2J7ZiAYKQ89ZtBP5P/ldqrNe9oUAt9rfEsu0wpm1vVdHb41wafJbGjcmhE2u2LvPUP/kgmO7yE13LC8aISxMBaFkhxJj6KT+vc78+u8B+FDBP9/wKYEjxGL28/Xy728OJQsLMl+bGwbDYFgg3Zs3uq/e3RaK5fQAIGO8/JZ6aOlxT1flISnRhvCRQ3pEA0rwSsMzgIODJV6MjLIJ07UqKfrtC7o1ZrGuwuS/DZ7X02qHilxlQo+T7DM4d09PrhzlSuDVyLUbEnlb7WYynf1Z1lypj54/XXF6riIzjAT499JYpOaNTCzsCuIIyjrM9eK5703NTsDeeEIqBZ8wfI7INDDqy2fCo9amRR+vY278R79YCPRWKtSXjWqz/IdsvtBiUbHpA=\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0,\n      \"groundingMetadata\": {\n        \"groundingChunks\": [\n          {\n            \"web\": {\n              \"uri\": \"https://github.com/simonw/llm-openrouter/releases/tag/0.5\",\n              \"title\": \"Release 0.5 · simonw/llm-openrouter · GitHub\"\n            }\n          }\n        ],\n        \"groundingSupports\": [\n          {\n            \"segment\": {\n              \"startIndex\": 162,\n              \"endIndex\": 218,\n              \"text\": \"The example prompt mentioned is **`'prove dogs exist'`**\"\n            },\n            \"groundingChunkIndices\": [\n              0\n            ]\n          }\n        ]\n      },\n      \"urlContextMetadata\": {\n        \"urlMetadata\": [\n          {\n            \"retrievedUrl\": \"https://github.com/simonw/llm-openrouter/releases/tag/0.5\",\n            \"urlRetrievalStatus\": \"URL_RETRIEVAL_STATUS_SUCCESS\"\n          }\n        ]\n      }\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 125,\n    \"candidatesTokenCount\": 99,\n    \"totalTokenCount\": 7463,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 125\n      }\n    ],\n    \"toolUsePromptTokenCount\": 7047,\n    \"toolUsePromptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 7047\n      }\n    ],\n    \"thoughtsTokenCount\": 192,\n    \"serviceTier\": \"standard\"\n  },\n  \"modelVersion\": \"gemini-3.7-flash\",\n  \"responseId\": \"hSd-av30BYDSjMcPtOmzwAE\"\n}\n"
+      headers:
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json; charset=UTF-8
+        Date:
+          - Thu, 13 Aug 2026 20:22:32 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=3598
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-Gemini-Service-Tier:
+          - standard
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
 version: 1

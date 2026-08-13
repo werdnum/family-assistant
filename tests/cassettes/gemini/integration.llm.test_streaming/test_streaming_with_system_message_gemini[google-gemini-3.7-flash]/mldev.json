@@ -1,5 +1,5 @@
 {
-  "replay_id": "integration.llm.test_streaming/test_google_streaming_pydantic_validation_reproducer/mldev",
+  "replay_id": "integration.llm.test_streaming/test_streaming_with_system_message_gemini[google-gemini-3.7-flash]/mldev",
   "interactions": [
     {
       "request": {
@@ -17,7 +17,7 @@
               {
                 "parts": [
                   {
-                    "text": "Calculate 5 + 3"
+                    "text": "System: You are a helpful assistant that responds in a very concise manner."
                   }
                 ],
                 "role": "user"
@@ -25,73 +25,10 @@
               {
                 "parts": [
                   {
-                    "functionCall": {
-                      "id": "call_test_123",
-                      "args": {
-                        "expression": "5 + 3"
-                      },
-                      "name": "calculate"
-                    },
-                    "thoughtSignature": "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="
-                  }
-                ],
-                "role": "model"
-              },
-              {
-                "parts": [
-                  {
-                    "functionResponse": {
-                      "id": "call_test_123",
-                      "name": "calculate",
-                      "response": {
-                        "result": 8
-                      }
-                    }
+                    "text": "What is the capital of France? Reply in exactly one word."
                   }
                 ],
                 "role": "user"
-              }
-            ],
-            "tools": [
-              {
-                "functionDeclarations": [
-                  {
-                    "description": "Get current weather for a location",
-                    "name": "get_weather",
-                    "parameters": {
-                      "properties": {
-                        "location": {
-                          "description": "The city and country",
-                          "type": "STRING"
-                        },
-                        "unit": {
-                          "description": "Temperature unit",
-                          "type": "STRING"
-                        }
-                      },
-                      "required": [
-                        "location"
-                      ],
-                      "type": "OBJECT"
-                    }
-                  },
-                  {
-                    "description": "Perform mathematical calculations",
-                    "name": "calculate",
-                    "parameters": {
-                      "properties": {
-                        "expression": {
-                          "description": "Mathematical expression to evaluate",
-                          "type": "STRING"
-                        }
-                      },
-                      "required": [
-                        "expression"
-                      ],
-                      "type": "OBJECT"
-                    }
-                  }
-                ]
               }
             ],
             "generationConfig": {
@@ -119,7 +56,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "5 + 3 = 8"
+                      "text": "Paris"
                     }
                   ],
                   "role": "model"
@@ -128,20 +65,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 148,
-              "candidatesTokenCount": 7,
-              "totalTokenCount": 165,
+              "promptTokenCount": 30,
+              "candidatesTokenCount": 1,
+              "totalTokenCount": 152,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 148
+                  "tokenCount": 30
                 }
               ],
-              "thoughtsTokenCount": 10,
+              "thoughtsTokenCount": 121,
               "serviceTier": "standard"
             },
             "modelVersion": "gemini-3.7-flash",
-            "responseId": "aCd-as_POb-PjrEPyKKT-A0"
+            "responseId": "Yid-aom3PJ7ajrEPgN_D6As"
           },
           {
             "candidates": [
@@ -150,7 +87,7 @@
                   "parts": [
                     {
                       "text": "",
-                      "thoughtSignature": "EqQBCqEBARFNMg88DeQGpUzMqf1Wu4bTFLOtyWNxQCCpDmXqmJjAIlo9teFIBLpb+gMI1CO1l6EwiaUWyxXKdO9SOIopyIAlU3WhITqc1nAnZKDACN5mKw4Bz5CmQuQyzUhhPNaSknA0HX54XvKEza1xRa9B0l+muS+b3ZkObLDx8U0KV6Djlum7mJUIt0gHcUjlW2Pk4Dy4EZSP9TDRSS0XSmuEAf0="
+                      "thoughtSignature": "EtQECtEEARFNMg9GJsW0mA3k8tY8fAfDYvVsfG2CX80kLUzIzLVsE1MvI4E2e9MhAaP3GBdpueEjj/7WBan6WmhpTx7vjKdtVgG/bJaz2bTaWPdA7EQjAP4e9wjTmCiDThWuUGGHeZkCmu8/ZFYWJ4khbYx5UGaVk0yOfN6eAJkN0U1kDRzZbqnlmPm+MKanxOeh3RRUVA/RM2BO5NEiCtRGS6ebrZN4pWC0GNAf0DCIo/zT1SLEnghjA+PZWvCx1vxtaFbpKaiXGLyaylSBvo8f5QE7znuIfIps62d/+l5/mZTaFS1aCmBnhDxCGUcRmlcLiRtb7qFAjRM2lsGKS5ymH7bSZSYUZyqWwqn4AvWpW2V3eucAnC8ofDgUpBCYm6dgWonHb//p2OdzPlwjG2DjUWlIEnBM3dIi/IjfAZBzgVPVEEOHQO3dAXBNzo2b9T7EHpKqkI5ShJLxH1nmId207oRE3kUBRNAboQVzd4e0kEU5dNqDb5WQj7mOV/8Ou1U6Uh1DZ1w8eOwLtQgVISIJpYpISJlbRXn2gGKukVOGKACNgQpQAxlgF/yzJT6qkEYc/2gWTR6/SLgA82XOK2Qj/zFwtu6uoR1MFsyb+rtVXhYT4IhyFoeAysW8RN2yPV7eMFUjN/zcXGiGp1Di6UPKYnoyw6gTKkLFYukVkINd707nNaupeYgIJmsCgoJzM2JX8HLr31MMYXrZNuaOXDFwjpr4sO3mdMLESgyu1bKFKRV8p3Q20FjX/+eNO2QGNgy75imPozpguHLNegyH2YB3btA9SoI="
                     }
                   ],
                   "role": "model"
@@ -160,20 +97,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 148,
-              "candidatesTokenCount": 7,
-              "totalTokenCount": 165,
+              "promptTokenCount": 30,
+              "candidatesTokenCount": 1,
+              "totalTokenCount": 152,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 148
+                  "tokenCount": 30
                 }
               ],
-              "thoughtsTokenCount": 10,
+              "thoughtsTokenCount": 121,
               "serviceTier": "standard"
             },
             "modelVersion": "gemini-3.7-flash",
-            "responseId": "aCd-as_POb-PjrEPyKKT-A0"
+            "responseId": "Yid-aom3PJ7ajrEPgN_D6As"
           }
         ],
         "byte_segments": [],
@@ -196,7 +133,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "5 + 3 = 8"
+                      "text": "Paris"
                     }
                   ],
                   "role": "model"
@@ -205,18 +142,18 @@
               }
             ],
             "model_version": "gemini-3.7-flash",
-            "response_id": "aCd-as_POb-PjrEPyKKT-A0",
+            "response_id": "Yid-aom3PJ7ajrEPgN_D6As",
             "usage_metadata": {
-              "candidates_token_count": 7,
-              "prompt_token_count": 148,
+              "candidates_token_count": 1,
+              "prompt_token_count": 30,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 148
+                  "token_count": 30
                 }
               ],
-              "thoughts_token_count": 10,
-              "total_token_count": 165
+              "thoughts_token_count": 121,
+              "total_token_count": 152
             }
           },
           {
@@ -238,7 +175,7 @@
                   "parts": [
                     {
                       "text": "",
-                      "thought_signature": "EqQBCqEBARFNMg88DeQGpUzMqf1Wu4bTFLOtyWNxQCCpDmXqmJjAIlo9teFIBLpb-gMI1CO1l6EwiaUWyxXKdO9SOIopyIAlU3WhITqc1nAnZKDACN5mKw4Bz5CmQuQyzUhhPNaSknA0HX54XvKEza1xRa9B0l-muS-b3ZkObLDx8U0KV6Djlum7mJUIt0gHcUjlW2Pk4Dy4EZSP9TDRSS0XSmuEAf0="
+                      "thought_signature": "EtQECtEEARFNMg9GJsW0mA3k8tY8fAfDYvVsfG2CX80kLUzIzLVsE1MvI4E2e9MhAaP3GBdpueEjj_7WBan6WmhpTx7vjKdtVgG_bJaz2bTaWPdA7EQjAP4e9wjTmCiDThWuUGGHeZkCmu8_ZFYWJ4khbYx5UGaVk0yOfN6eAJkN0U1kDRzZbqnlmPm-MKanxOeh3RRUVA_RM2BO5NEiCtRGS6ebrZN4pWC0GNAf0DCIo_zT1SLEnghjA-PZWvCx1vxtaFbpKaiXGLyaylSBvo8f5QE7znuIfIps62d_-l5_mZTaFS1aCmBnhDxCGUcRmlcLiRtb7qFAjRM2lsGKS5ymH7bSZSYUZyqWwqn4AvWpW2V3eucAnC8ofDgUpBCYm6dgWonHb__p2OdzPlwjG2DjUWlIEnBM3dIi_IjfAZBzgVPVEEOHQO3dAXBNzo2b9T7EHpKqkI5ShJLxH1nmId207oRE3kUBRNAboQVzd4e0kEU5dNqDb5WQj7mOV_8Ou1U6Uh1DZ1w8eOwLtQgVISIJpYpISJlbRXn2gGKukVOGKACNgQpQAxlgF_yzJT6qkEYc_2gWTR6_SLgA82XOK2Qj_zFwtu6uoR1MFsyb-rtVXhYT4IhyFoeAysW8RN2yPV7eMFUjN_zcXGiGp1Di6UPKYnoyw6gTKkLFYukVkINd707nNaupeYgIJmsCgoJzM2JX8HLr31MMYXrZNuaOXDFwjpr4sO3mdMLESgyu1bKFKRV8p3Q20FjX_-eNO2QGNgy75imPozpguHLNegyH2YB3btA9SoI="
                     }
                   ],
                   "role": "model"
@@ -248,18 +185,18 @@
               }
             ],
             "model_version": "gemini-3.7-flash",
-            "response_id": "aCd-as_POb-PjrEPyKKT-A0",
+            "response_id": "Yid-aom3PJ7ajrEPgN_D6As",
             "usage_metadata": {
-              "candidates_token_count": 7,
-              "prompt_token_count": 148,
+              "candidates_token_count": 1,
+              "prompt_token_count": 30,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 148
+                  "token_count": 30
                 }
               ],
-              "thoughts_token_count": 10,
-              "total_token_count": 165
+              "thoughts_token_count": 121,
+              "total_token_count": 152
             }
           }
         ]

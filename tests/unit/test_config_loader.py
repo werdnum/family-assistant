@@ -485,7 +485,7 @@ class TestAppConfigBackwardCompat:
     def test_no_args_gives_field_defaults(self) -> None:
         """AppConfig() with no args produces field defaults only."""
         config = AppConfig()
-        assert config.model == "gemini/gemini-3.6-flash"
+        assert config.model == "gemini/gemini-3.7-flash"
         assert config.database_url == "sqlite+aiosqlite:///family_assistant.db"
         assert config.telegram_token is None
 
@@ -493,7 +493,7 @@ class TestAppConfigBackwardCompat:
         """AppConfig(field=value) overrides field defaults."""
         config = AppConfig(telegram_token="test-token")
         assert config.telegram_token == "test-token"
-        assert config.model == "gemini/gemini-3.6-flash"
+        assert config.model == "gemini/gemini-3.7-flash"
 
     def test_model_validate(self) -> None:
         """AppConfig.model_validate({...}) works as before."""
@@ -897,7 +897,7 @@ class TestResolveServiceProfile:
             "processing_config": {
                 "timezone": "UTC",
                 "retry_config": {
-                    "primary": {"provider": "google", "model": "gemini-3.6-flash"},
+                    "primary": {"provider": "google", "model": "gemini-3.7-flash"},
                     "fallback": {"provider": "openai", "model": "gpt-5.5"},
                 },
             },
@@ -919,7 +919,7 @@ class TestResolveServiceProfile:
             "processing_config": {
                 "timezone": "UTC",
                 "retry_config": {
-                    "primary": {"provider": "google", "model": "gemini-3.6-flash"},
+                    "primary": {"provider": "google", "model": "gemini-3.7-flash"},
                 },
             },
             "tools_config": {},
@@ -941,7 +941,7 @@ class TestResolveServiceProfile:
     def test_profile_without_model_inherits_retry_config(self) -> None:
         """A profile declaring no model keeps the inherited default retry chain."""
         default_retry = {
-            "primary": {"provider": "google", "model": "gemini-3.6-flash"},
+            "primary": {"provider": "google", "model": "gemini-3.7-flash"},
         }
         default_settings: dict[str, Any] = {
             "processing_config": {"timezone": "UTC", "retry_config": default_retry},
@@ -1377,7 +1377,7 @@ class TestLoadConfig:
                 load_dotenv_file=False,
             )
 
-        assert config.model == "gemini/gemini-3.6-flash"
+        assert config.model == "gemini/gemini-3.7-flash"
         assert config.database_url == "sqlite+aiosqlite:///family_assistant.db"
 
     def test_defaults_yaml_overrides_field_defaults(self, tmp_path: Path) -> None:
@@ -2640,7 +2640,7 @@ def test_operator_supplied_retry_chain_is_kept(tmp_path: Path) -> None:
         '      llm_model: "claude-sonnet-5"\n'
         "      retry_config:\n"
         '        primary: {provider: "anthropic", model: "claude-sonnet-5"}\n'
-        '        fallback: {provider: "google", model: "gemini-3.6-flash"}\n',
+        '        fallback: {provider: "google", model: "gemini-3.7-flash"}\n',
     )
 
     assert processing_config.retry_config is not None
