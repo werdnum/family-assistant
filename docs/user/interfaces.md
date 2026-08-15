@@ -54,7 +54,8 @@ list. On iPhone or iPad with the Family Assistant app installed, links from
 `assistant.andrewgarrett.dev` open the transcript in a native read-only view; pull down to refresh
 it. Selecting share again replaces the old link; select the stop-sharing icon to make the current
 link unavailable. The transcript reflects messages added after the link was created when the
-recipient refreshes it.
+recipient refreshes it. Tool calls appear as collapsed groups, the same way they do in your own
+chat; the recipient can expand a group to see what the assistant ran and what came back.
 
 Treat the link as private within your household. It is meant to stop another authorized user from
 casually browsing your history, not to protect a conversation from someone who obtains the link and
