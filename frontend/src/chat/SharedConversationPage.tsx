@@ -1,10 +1,12 @@
 import { ArrowLeft, LockKeyhole } from 'lucide-react';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import type { BackendAttachment, BackendConversationMessage } from './types';
+import type { BackendAttachment, BackendConversationMessage, BackendToolCall } from './types';
 import { MarkdownText } from './MarkdownText';
+import { ToolGroupShell } from './ToolGroupShell';
+import { getToolIconInfo } from './toolIconMapping';
 
 function messageText(message: BackendConversationMessage): string {
   if (typeof message.content === 'string') {
@@ -18,6 +20,94 @@ function messageText(message: BackendConversationMessage): string {
   }
   return '';
 }
+
+interface SharedToolCall {
+  id: string;
+  name: string;
+  argsText: string;
+  resultText: string;
+}
+
+interface ToolResult {
+  text: string;
+  attachments: BackendAttachment[];
+}
+
+function toolCallName(toolCall: BackendToolCall): string {
+  return toolCall.function?.name || toolCall.name || 'unknown';
+}
+
+function toolCallArgsText(toolCall: BackendToolCall): string {
+  const args = toolCall.function?.arguments ?? toolCall.arguments;
+  if (args === undefined || args === null) {
+    return '';
+  }
+  return typeof args === 'string' ? args : JSON.stringify(args, null, 2);
+}
+
+/**
+ * Index every tool result by the call it answers, so results can be folded into
+ * the collapsed group for that call rather than dumped into the transcript.
+ */
+function collectToolResults(messages: BackendConversationMessage[]): Map<string, ToolResult> {
+  const results = new Map<string, ToolResult>();
+  for (const message of messages) {
+    if (message.role === 'tool' && message.tool_call_id) {
+      results.set(message.tool_call_id, {
+        text: messageText(message),
+        attachments: message.attachments ?? [],
+      });
+    }
+  }
+  return results;
+}
+
+function buildSharedToolCalls(
+  message: BackendConversationMessage,
+  toolResults: Map<string, ToolResult>
+): SharedToolCall[] {
+  return (message.tool_calls ?? []).map((toolCall) => ({
+    id: toolCall.id,
+    name: toolCallName(toolCall),
+    argsText: toolCallArgsText(toolCall),
+    resultText: toolResults.get(toolCall.id)?.text ?? '',
+  }));
+}
+
+const SharedToolGroup: React.FC<{ toolCalls: SharedToolCall[] }> = ({ toolCalls }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  return (
+    <ToolGroupShell
+      toolNames={toolCalls.map((toolCall) => toolCall.name)}
+      toolCount={toolCalls.length}
+      isExpanded={isExpanded}
+      onOpenChange={setIsExpanded}
+    >
+      {toolCalls.map((toolCall) => {
+        const { icon: Icon } = getToolIconInfo(toolCall.name);
+        return (
+          <div key={toolCall.id} className="rounded-md border border-border/50 p-2">
+            <div className="flex items-center gap-2 text-xs font-medium">
+              <Icon className="h-3.5 w-3.5" />
+              {toolCall.name}
+            </div>
+            {toolCall.argsText && (
+              <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs text-muted-foreground">
+                {toolCall.argsText}
+              </pre>
+            )}
+            {toolCall.resultText && (
+              <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs">
+                {toolCall.resultText}
+              </pre>
+            )}
+          </div>
+        );
+      })}
+    </ToolGroupShell>
+  );
+};
 
 function isConversationResponse(
   value: unknown
@@ -61,10 +151,32 @@ const SharedAttachments: React.FC<{ attachments?: BackendAttachment[] }> = ({ at
   );
 };
 
-const SharedMessage: React.FC<{ message: BackendConversationMessage }> = ({ message }) => {
+const SharedMessage: React.FC<{
+  message: BackendConversationMessage;
+  toolResults: Map<string, ToolResult>;
+}> = ({ message, toolResults }) => {
   const isUser = message.role === 'user';
-  const text = messageText(message);
-  if (!text && !message.attachments?.length && !message.tool_calls?.length) {
+  // A tool result only reaches here when no tool call in the transcript claimed
+  // it; show it collapsed rather than dropping it or dumping it as prose.
+  const isOrphanToolResult = message.role === 'tool';
+  const text = isOrphanToolResult ? '' : messageText(message);
+  const toolCalls = isOrphanToolResult
+    ? [
+        {
+          id: message.internal_id,
+          name: 'unknown',
+          argsText: '',
+          resultText: messageText(message),
+        },
+      ]
+    : buildSharedToolCalls(message, toolResults);
+  // Attachments produced by this message's tools belong with the response, not
+  // inside the collapsed group — they are usually the point of the answer.
+  const attachments = [
+    ...(message.attachments ?? []),
+    ...toolCalls.flatMap((toolCall) => toolResults.get(toolCall.id)?.attachments ?? []),
+  ];
+  if (!text && !attachments.length && !toolCalls.length) {
     return null;
   }
   return (
@@ -82,15 +194,8 @@ const SharedMessage: React.FC<{ message: BackendConversationMessage }> = ({ mess
               : message.role}
         </div>
         {text && <MarkdownText text={text} />}
-        {message.tool_calls?.map((toolCall) => (
-          <details key={toolCall.id} className="mt-2 text-sm">
-            <summary>Tool: {toolCall.function?.name || toolCall.name || 'unknown'}</summary>
-            <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs">
-              {String(toolCall.function?.arguments || toolCall.arguments || '')}
-            </pre>
-          </details>
-        ))}
-        <SharedAttachments attachments={message.attachments} />
+        {toolCalls.length > 0 && <SharedToolGroup toolCalls={toolCalls} />}
+        <SharedAttachments attachments={attachments} />
       </Card>
     </div>
   );
@@ -103,6 +208,19 @@ const SharedConversationPage: React.FC = () => {
     'loading' | 'ready' | 'not-found' | 'authentication-required' | 'error'
   >('loading');
   const [requestVersion, setRequestVersion] = useState(0);
+
+  const toolResults = useMemo(() => collectToolResults(messages), [messages]);
+  const visibleMessages = useMemo(() => {
+    const claimedResultIds = new Set(
+      messages.flatMap((message) => (message.tool_calls ?? []).map((toolCall) => toolCall.id))
+    );
+    return messages.filter(
+      (message) =>
+        message.role !== 'tool' ||
+        !message.tool_call_id ||
+        !claimedResultIds.has(message.tool_call_id)
+    );
+  }, [messages]);
 
   useEffect(() => {
     setLoadState('loading');
@@ -199,7 +317,9 @@ const SharedConversationPage: React.FC = () => {
           </Card>
         )}
         {loadState === 'ready' &&
-          messages.map((message) => <SharedMessage key={message.internal_id} message={message} />)}
+          visibleMessages.map((message) => (
+            <SharedMessage key={message.internal_id} message={message} toolResults={toolResults} />
+          ))}
       </main>
     </div>
   );
