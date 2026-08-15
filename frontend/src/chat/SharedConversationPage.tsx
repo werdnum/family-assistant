@@ -62,6 +62,54 @@ function collectToolResults(messages: BackendConversationMessage[]): Map<string,
   return results;
 }
 
+function isToolOnlyAssistantMessage(message: BackendConversationMessage): boolean {
+  return (
+    message.role === 'assistant' &&
+    (message.tool_calls?.length ?? 0) > 0 &&
+    messageText(message).trim() === ''
+  );
+}
+
+/**
+ * Two rows belong to the same turn unless both name a turn and the names
+ * differ. History predating turn ids leaves them unset, and treating that as a
+ * boundary would stop merging entirely on older transcripts.
+ */
+function sameTurn(a: BackendConversationMessage, b: BackendConversationMessage): boolean {
+  return !a.turn_id || !b.turn_id || a.turn_id === b.turn_id;
+}
+
+/**
+ * An agentic turn persists one assistant row per LLM iteration. Merge the
+ * tool-only ones into a single group, as the live thread and the iOS shared
+ * view do, so one turn reads as one box. Assistant text ends a run, and so
+ * does a turn boundary — the rows that would otherwise separate two turns
+ * (subconversation and internal trigger rows) are not sent to this client.
+ */
+function mergeToolOnlyAssistantMessages(
+  messages: BackendConversationMessage[]
+): BackendConversationMessage[] {
+  const merged: BackendConversationMessage[] = [];
+  for (const message of messages) {
+    const previous = merged[merged.length - 1];
+    if (
+      previous &&
+      isToolOnlyAssistantMessage(previous) &&
+      isToolOnlyAssistantMessage(message) &&
+      sameTurn(previous, message)
+    ) {
+      merged[merged.length - 1] = {
+        ...previous,
+        tool_calls: [...(previous.tool_calls ?? []), ...(message.tool_calls ?? [])],
+        attachments: [...(previous.attachments ?? []), ...(message.attachments ?? [])],
+      };
+      continue;
+    }
+    merged.push(message);
+  }
+  return merged;
+}
+
 function buildSharedToolCalls(
   message: BackendConversationMessage,
   toolResults: Map<string, ToolResult>
@@ -159,16 +207,14 @@ const SharedMessage: React.FC<{
   // A tool result only reaches here when no tool call in the transcript claimed
   // it; show it collapsed rather than dropping it or dumping it as prose.
   const isOrphanToolResult = message.role === 'tool';
+  const orphanResultText = isOrphanToolResult ? messageText(message) : '';
   const text = isOrphanToolResult ? '' : messageText(message);
+  // An orphan with no output at all has nothing to collapse, so synthesizing a
+  // call for it would render an empty group instead of skipping the message.
   const toolCalls = isOrphanToolResult
-    ? [
-        {
-          id: message.internal_id,
-          name: 'unknown',
-          argsText: '',
-          resultText: messageText(message),
-        },
-      ]
+    ? orphanResultText
+      ? [{ id: message.internal_id, name: 'unknown', argsText: '', resultText: orphanResultText }]
+      : []
     : buildSharedToolCalls(message, toolResults);
   // Attachments produced by this message's tools belong with the response, not
   // inside the collapsed group — they are usually the point of the answer.
@@ -214,11 +260,15 @@ const SharedConversationPage: React.FC = () => {
     const claimedResultIds = new Set(
       messages.flatMap((message) => (message.tool_calls ?? []).map((toolCall) => toolCall.id))
     );
-    return messages.filter(
-      (message) =>
-        message.role !== 'tool' ||
-        !message.tool_call_id ||
-        !claimedResultIds.has(message.tool_call_id)
+    // Merge after filtering: the tool results between two tool-only assistant
+    // rows are gone by then, so the rows are genuinely adjacent.
+    return mergeToolOnlyAssistantMessages(
+      messages.filter(
+        (message) =>
+          message.role !== 'tool' ||
+          !message.tool_call_id ||
+          !claimedResultIds.has(message.tool_call_id)
+      )
     );
   }, [messages]);
 

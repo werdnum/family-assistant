@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
@@ -99,6 +99,218 @@ describe('SharedConversationPage', () => {
     expect(screen.getByText('get_note')).toBeInTheDocument();
     expect(screen.getByText('{"title":"Gifts"}')).toBeInTheDocument();
     expect(screen.getByText('Raw tool output')).toBeInTheDocument();
+  });
+
+  it('merges a multi-iteration agentic turn into one group', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get('/api/v1/shared-conversations/agentic/messages', () =>
+        HttpResponse.json({
+          messages: [
+            {
+              internal_id: '1',
+              role: 'assistant',
+              timestamp: '2026-08-10T12:00:00Z',
+              content: '',
+              tool_calls: [
+                { id: 'call_1', type: 'function', function: { name: 'get_note', arguments: '{}' } },
+              ],
+            },
+            {
+              internal_id: '2',
+              role: 'tool',
+              timestamp: '2026-08-10T12:00:01Z',
+              tool_call_id: 'call_1',
+              content: 'note body',
+            },
+            {
+              internal_id: '3',
+              role: 'assistant',
+              timestamp: '2026-08-10T12:00:02Z',
+              content: '',
+              tool_calls: [
+                {
+                  id: 'call_2',
+                  type: 'function',
+                  function: { name: 'list_notes', arguments: '{}' },
+                },
+              ],
+            },
+            {
+              internal_id: '4',
+              role: 'tool',
+              timestamp: '2026-08-10T12:00:03Z',
+              tool_call_id: 'call_2',
+              content: 'note list',
+            },
+            {
+              internal_id: '5',
+              role: 'assistant',
+              timestamp: '2026-08-10T12:00:04Z',
+              content: 'Done.',
+            },
+          ],
+        })
+      )
+    );
+    renderSharedPage('agentic');
+
+    expect(await screen.findByText('Done.')).toBeInTheDocument();
+
+    // One turn reads as one box, not one per LLM iteration.
+    expect(screen.getAllByTestId('tool-group')).toHaveLength(1);
+    expect(screen.getByText('2 notes')).toBeInTheDocument();
+
+    await user.click(screen.getByTestId('tool-group-trigger'));
+
+    expect(screen.getByText('get_note')).toBeInTheDocument();
+    expect(screen.getByText('list_notes')).toBeInTheDocument();
+  });
+
+  it('keeps assistant text as a boundary between tool groups', async () => {
+    server.use(
+      http.get('/api/v1/shared-conversations/boundary/messages', () =>
+        HttpResponse.json({
+          messages: [
+            {
+              internal_id: '1',
+              role: 'assistant',
+              timestamp: '2026-08-10T12:00:00Z',
+              content: '',
+              tool_calls: [
+                { id: 'call_1', type: 'function', function: { name: 'get_note', arguments: '{}' } },
+              ],
+            },
+            {
+              internal_id: '2',
+              role: 'assistant',
+              timestamp: '2026-08-10T12:00:01Z',
+              content: 'Checking your calendar next.',
+            },
+            {
+              internal_id: '3',
+              role: 'assistant',
+              timestamp: '2026-08-10T12:00:02Z',
+              content: '',
+              tool_calls: [
+                {
+                  id: 'call_2',
+                  type: 'function',
+                  function: { name: 'search_calendar_events', arguments: '{}' },
+                },
+              ],
+            },
+          ],
+        })
+      )
+    );
+    renderSharedPage('boundary');
+
+    expect(await screen.findByText('Checking your calendar next.')).toBeInTheDocument();
+    expect(screen.getAllByTestId('tool-group')).toHaveLength(2);
+  });
+
+  it('does not merge tool-only rows from different turns', async () => {
+    server.use(
+      http.get('/api/v1/shared-conversations/turns/messages', () =>
+        HttpResponse.json({
+          messages: [
+            {
+              internal_id: '1',
+              role: 'assistant',
+              turn_id: 'turn_a',
+              timestamp: '2026-08-10T12:00:00Z',
+              content: '',
+              tool_calls: [
+                { id: 'call_1', type: 'function', function: { name: 'get_note', arguments: '{}' } },
+              ],
+            },
+            {
+              internal_id: '2',
+              role: 'assistant',
+              turn_id: 'turn_b',
+              timestamp: '2026-08-10T12:00:01Z',
+              content: '',
+              tool_calls: [
+                {
+                  id: 'call_2',
+                  type: 'function',
+                  function: { name: 'list_notes', arguments: '{}' },
+                },
+              ],
+            },
+          ],
+        })
+      )
+    );
+    renderSharedPage('turns');
+
+    await waitFor(() => expect(screen.getAllByTestId('tool-group')).toHaveLength(2));
+  });
+
+  it('still merges tool-only rows on history that predates turn ids', async () => {
+    server.use(
+      http.get('/api/v1/shared-conversations/no-turns/messages', () =>
+        HttpResponse.json({
+          messages: [
+            {
+              internal_id: '1',
+              role: 'assistant',
+              timestamp: '2026-08-10T12:00:00Z',
+              content: '',
+              tool_calls: [
+                { id: 'call_1', type: 'function', function: { name: 'get_note', arguments: '{}' } },
+              ],
+            },
+            {
+              internal_id: '2',
+              role: 'assistant',
+              turn_id: null,
+              timestamp: '2026-08-10T12:00:01Z',
+              content: '',
+              tool_calls: [
+                {
+                  id: 'call_2',
+                  type: 'function',
+                  function: { name: 'list_notes', arguments: '{}' },
+                },
+              ],
+            },
+          ],
+        })
+      )
+    );
+    renderSharedPage('no-turns');
+
+    await waitFor(() => expect(screen.getAllByTestId('tool-group')).toHaveLength(1));
+  });
+
+  it('skips an orphan tool result that carries no output', async () => {
+    server.use(
+      http.get('/api/v1/shared-conversations/empty-orphan/messages', () =>
+        HttpResponse.json({
+          messages: [
+            {
+              internal_id: '1',
+              role: 'tool',
+              timestamp: '2026-08-10T12:00:00Z',
+              tool_call_id: 'call_missing',
+              content: '',
+            },
+            {
+              internal_id: '2',
+              role: 'assistant',
+              timestamp: '2026-08-10T12:00:01Z',
+              content: 'All done.',
+            },
+          ],
+        })
+      )
+    );
+    renderSharedPage('empty-orphan');
+
+    expect(await screen.findByText('All done.')).toBeInTheDocument();
+    expect(screen.queryByTestId('tool-group')).not.toBeInTheDocument();
   });
 
   it('summarises a single tool call without mangling the category name', async () => {
