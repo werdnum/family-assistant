@@ -68,3 +68,26 @@ def convert_to_telegram_markdown(text: str) -> tuple[str, str | None]:
             exc_info=True,
         )
         return text, None
+
+
+def convert_to_telegram_markdown_within_limit(
+    text: str, limit: int
+) -> tuple[str, str | None]:
+    """Convert to MarkdownV2 only while the escaped result still fits ``limit``.
+
+    Escaping adds a backslash before every reserved character, so text that fits
+    raw can overflow once converted. Telegram would reject the converted message
+    outright, so text that no longer fits is sent as the plain text it started
+    as -- formatting lost, but delivered.
+
+    Args:
+        text: Plain text or markdown to convert.
+        limit: Maximum length the returned text may have.
+
+    Returns:
+        Tuple of (text_to_send, parse_mode), as ``convert_to_telegram_markdown``.
+    """
+    converted, parse_mode = convert_to_telegram_markdown(text)
+    if parse_mode and len(converted) <= limit:
+        return converted, parse_mode
+    return text, None

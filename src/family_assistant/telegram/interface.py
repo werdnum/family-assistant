@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import mimetypes
@@ -12,7 +13,14 @@ from telegram.error import BadRequest
 
 from family_assistant.interfaces import ChatInterface
 from family_assistant.storage.database import Database
-from family_assistant.telegram.markdown_utils import convert_to_telegram_markdown
+from family_assistant.telegram.chunking import (
+    CHUNK_SEND_DELAY_SECONDS,
+    TELEGRAM_SINGLE_MESSAGE_LIMIT,
+    split_message_text,
+)
+from family_assistant.telegram.markdown_utils import (
+    convert_to_telegram_markdown_within_limit,
+)
 
 if TYPE_CHECKING:
     from telegram.ext import Application
@@ -69,7 +77,9 @@ class TelegramChatInterface(ChatInterface):
             on_behalf_of_user_id: Acting user for owner-scoped attachment reads.
 
         Returns:
-            The Telegram message_id of the sent message as a string, or None if sending failed.
+            The Telegram message_id of the first message sent as a string, or None
+            if sending failed. Text over Telegram's length cap goes out as several
+            messages; the first one is the reply target callers record.
         """
         # Telegram delivery does not persist history rows itself; taint state
         # travels with whichever caller records the message.
@@ -84,22 +94,18 @@ class TelegramChatInterface(ChatInterface):
                 f"Unsupported parse_mode '{parse_mode}' for Telegram. Sending as plain text."
             )
 
-        # Convert to Telegram MarkdownV2 with bug fixes if requested
-        if tg_parse_mode == ParseMode.MARKDOWN_V2:
-            text_to_send, parse_mode_str = convert_to_telegram_markdown(text)
-            final_parse_mode = ParseMode.MARKDOWN_V2 if parse_mode_str else None
-        else:
-            text_to_send = text
-            final_parse_mode = tg_parse_mode
-
         try:
             chat_id_int = int(conversation_id)
             reply_to_msg_id_int = (
                 int(reply_to_interface_id) if reply_to_interface_id else None
             )
+        except ValueError:
+            logger.error(
+                f"Invalid conversation_id '{conversation_id}' or reply_to_interface_id '{reply_to_interface_id}' for Telegram. Must be integer convertible."
+            )
+            return None
 
-            force_reply_markup = ForceReply(selective=False)
-
+        try:
             if attachment_ids:
                 await self._send_attachments(
                     chat_id_int,
@@ -108,51 +114,86 @@ class TelegramChatInterface(ChatInterface):
                     on_behalf_of_user_id=on_behalf_of_user_id,
                 )
 
-            sent_msg = await self.application.bot.send_message(
-                chat_id=chat_id_int,
-                text=text_to_send,
-                parse_mode=final_parse_mode,
-                reply_to_message_id=reply_to_msg_id_int,
-                reply_markup=force_reply_markup,
-            )
-
-            return str(sent_msg.message_id)
-        except ValueError:
-            logger.error(
-                f"Invalid conversation_id '{conversation_id}' or reply_to_interface_id '{reply_to_interface_id}' for Telegram. Must be integer convertible."
-            )
-            return None
-        except BadRequest as parse_err:
-            # If Telegram rejects the message due to parse errors, fall back to plain text
-            if "Can't parse entities" in str(parse_err) and final_parse_mode:
+            chunks = split_message_text(text)
+            if not chunks:
                 logger.warning(
-                    f"Telegram rejected MarkdownV2 message (parse error): {parse_err}. Retrying with plain text.",
-                    exc_info=False,
-                )
-                try:
-                    sent_msg = await self.application.bot.send_message(
-                        chat_id=chat_id_int,
-                        text=text,
-                        parse_mode=None,
-                        reply_to_message_id=reply_to_msg_id_int,
-                        reply_markup=force_reply_markup,
-                    )
-                    return str(sent_msg.message_id)
-                except Exception as fallback_err:
-                    logger.exception(
-                        f"TelegramChatInterface failed to send plain text message to {conversation_id}: {fallback_err}"
-                    )
-                    return None
-            else:
-                logger.exception(
-                    f"TelegramChatInterface failed to send message to {conversation_id}: {parse_err}"
+                    f"TelegramChatInterface has no text to send to {conversation_id}."
                 )
                 return None
+            if len(chunks) > 1:
+                logger.info(
+                    f"Message to {conversation_id} exceeds Telegram's length cap. "
+                    f"Sending as {len(chunks)} messages."
+                )
+
+            first_message_id: str | None = None
+            for index, chunk in enumerate(chunks):
+                is_first = index == 0
+                message_id = await self._send_text_chunk(
+                    chat_id=chat_id_int,
+                    text=chunk,
+                    parse_mode=tg_parse_mode,
+                    reply_to_message_id=reply_to_msg_id_int if is_first else None,
+                    reply_markup=ForceReply(selective=False) if is_first else None,
+                )
+                if is_first:
+                    first_message_id = message_id
+                if index < len(chunks) - 1:
+                    await asyncio.sleep(CHUNK_SEND_DELAY_SECONDS)
+            return first_message_id
         except Exception as e:
             logger.exception(
                 f"TelegramChatInterface failed to send message to {conversation_id}: {e}"
             )
             return None
+
+    async def _send_text_chunk(
+        self,
+        chat_id: int,
+        text: str,
+        parse_mode: ParseMode | None,
+        reply_to_message_id: int | None,
+        reply_markup: ForceReply | None,
+    ) -> str:
+        """Send one already-sized piece of a message, formatting it if asked.
+
+        The conversion happens per piece so that a piece whose escaped form no
+        longer fits, or which Telegram refuses to parse, degrades to its own
+        plain text rather than taking the whole message down with it.
+        """
+        if parse_mode == ParseMode.MARKDOWN_V2:
+            text_to_send, parse_mode_str = convert_to_telegram_markdown_within_limit(
+                text, TELEGRAM_SINGLE_MESSAGE_LIMIT
+            )
+            final_parse_mode = ParseMode.MARKDOWN_V2 if parse_mode_str else None
+        else:
+            text_to_send = text
+            final_parse_mode = parse_mode
+
+        try:
+            sent_msg = await self.application.bot.send_message(
+                chat_id=chat_id,
+                text=text_to_send,
+                parse_mode=final_parse_mode,
+                reply_to_message_id=reply_to_message_id,
+                reply_markup=reply_markup,
+            )
+        except BadRequest as parse_err:
+            if final_parse_mode is None or "Can't parse entities" not in str(parse_err):
+                raise
+            logger.warning(
+                f"Telegram rejected {final_parse_mode} message (parse error): {parse_err}. "
+                "Retrying with plain text.",
+                exc_info=False,
+            )
+            sent_msg = await self.application.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode=None,
+                reply_to_message_id=reply_to_message_id,
+                reply_markup=reply_markup,
+            )
+        return str(sent_msg.message_id)
 
     def _resize_image_if_needed(
         self, content: bytes, attachment_id: str
