@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock
@@ -15,6 +16,7 @@ from family_assistant.llm.messages import UserMessage
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.processing.interactions_agent_service import (
     InteractionsAgentProcessingService,
+    TaintedSinkRefusedError,
 )
 from family_assistant.processing.protocol import (
     PENDING,
@@ -24,9 +26,20 @@ from family_assistant.processing.types import (
     ChatInteractionResult,
     ProcessingServiceConfig,
 )
+from family_assistant.security.taint import (
+    SinkClass,
+    SourceTrustTier,
+    TaintPolicyConfig,
+    TaintPolicyMode,
+    TaintSource,
+    TaintSourceType,
+)
+from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.storage.repositories.delegation_runs import (
@@ -52,7 +65,13 @@ class SimpleToolsProvider:
         pass
 
 
-def _make_service(llm_client: GoogleGenAIClient) -> InteractionsAgentProcessingService:
+def _make_service(
+    llm_client: GoogleGenAIClient,
+    *,
+    attachment_registry: AttachmentRegistry | None = None,
+    taint_sink_class: SinkClass | None = None,
+    taint_policy: TaintPolicyConfig | None = None,
+) -> InteractionsAgentProcessingService:
     config = ProcessingServiceConfig(
         prompts={"system_prompt": "You are a research assistant for {user_name}."},
         timezone=ZoneInfo("UTC"),
@@ -61,6 +80,7 @@ def _make_service(llm_client: GoogleGenAIClient) -> InteractionsAgentProcessingS
         tools_config=ToolsConfig(),
         delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="research",
+        taint_sink_class=taint_sink_class,
     )
     return InteractionsAgentProcessingService(
         llm_client=llm_client,
@@ -69,6 +89,8 @@ def _make_service(llm_client: GoogleGenAIClient) -> InteractionsAgentProcessingS
         context_providers=[],
         server_url="http://testserver",
         app_config=AppConfig(),
+        attachment_registry=attachment_registry,
+        taint_policy=taint_policy,
     )
 
 
@@ -77,29 +99,231 @@ def _google_client() -> GoogleGenAIClient:
 
 
 @pytest.mark.asyncio
-async def test_submit_async_refuses_a_delegation_carrying_attachments(
+async def test_submit_async_mounts_attachments_into_the_sandbox(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """A delegated attachment reaches the agent as a file, not as prompt text."""
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path), db_engine=db_engine, config=None
+    )
+    db_context = Database(db_engine)
+    attachment = await registry.register_user_attachment(
+        db_context=db_context,
+        content=b"a,b\n1,2\n",
+        filename="figures.txt",
+        mime_type="text/plain",
+        user_id="user-1",
+    )
+
+    llm_client = _google_client()
+    mock_interaction = AsyncMock()
+    mock_interaction.id = "inter_att"
+    llm_client.start_agent_interaction = AsyncMock(return_value=mock_interaction)
+    service = _make_service(llm_client, attachment_registry=registry)
+
+    await service.submit_async(
+        [
+            {"type": "text", "text": "Total column b."},
+            {"type": "attachment", "attachment_id": attachment.attachment_id},
+        ],
+        conversation_id="conv-1",
+        subconversation_id="sub-1",
+        user_name="Andrew",
+        db_context=db_context,
+        acting_user_id="user-1",
+    )
+
+    sources = llm_client.start_agent_interaction.call_args.kwargs["environment_sources"]
+    assert sources == [
+        {
+            "type": "inline",
+            "content": base64.b64encode(b"a,b\n1,2\n").decode("ascii"),
+            "encoding": "base64",
+            "target": "/workspace/figures.txt",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_submit_async_refuses_an_attachment_owned_by_another_user(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """Routing is owner-scoped; another user's file is not mountable."""
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path), db_engine=db_engine, config=None
+    )
+    db_context = Database(db_engine)
+    stored = await registry.register_user_attachment(
+        db_context=db_context,
+        content=b"secret",
+        filename="private.txt",
+        mime_type="text/plain",
+        user_id="owner",
+    )
+    # A second row over the same file, this time *owned*: an ownerless
+    # attachment is visible to every actor by design, so only an owned one
+    # exercises the scoping this routing relies on.
+    attachment = await registry.register_attachment(
+        db_context=db_context,
+        attachment_id="att-owned",
+        source_type="user",
+        source_id="owner",
+        mime_type="text/plain",
+        description="Private file",
+        size=len(b"secret"),
+        storage_path=stored.storage_path,
+        owner_user_id="owner",
+        metadata={"original_filename": "private.txt"},
+    )
+
+    llm_client = _google_client()
+    llm_client.start_agent_interaction = AsyncMock()
+    service = _make_service(llm_client, attachment_registry=registry)
+
+    with pytest.raises(DelegationPermanentError, match="belongs to"):
+        await service.submit_async(
+            [{"type": "attachment", "attachment_id": attachment.attachment_id}],
+            conversation_id="conv-1",
+            subconversation_id="sub-1",
+            user_name="Mallory",
+            db_context=db_context,
+            acting_user_id="someone-else",
+        )
+
+    llm_client.start_agent_interaction.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_submit_async_denies_a_sandbox_profile_untrusted_content(
     db_engine: AsyncEngine,
 ) -> None:
-    """An attachment the agent cannot receive fails the run, it is not dropped.
+    """Email-derived instructions cannot direct a code-execution agent.
 
-    `delegate_to_service` turns `attachment_ids` into attachment content parts,
-    and this path reduces the request to its first text part -- so submitting
-    anyway would have the agent answer confidently about a file it never saw.
+    The shipped matrix maps unknown_external -> sandbox_network to deny, so a
+    profile that declares that sink refuses the run rather than submitting it.
     """
     llm_client = _google_client()
     llm_client.start_agent_interaction = AsyncMock()
-    service = _make_service(llm_client)
+    service = _make_service(
+        llm_client,
+        taint_sink_class=SinkClass.SANDBOX_NETWORK,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+    )
 
-    with pytest.raises(DelegationPermanentError, match="cannot accept attachments"):
+    with pytest.raises(TaintedSinkRefusedError, match="unknown_external"):
         await service.submit_async(
-            [
-                {"type": "text", "text": "Summarise the attached spreadsheet."},
-                {"type": "attachment", "attachment_id": "att-1"},
-            ],
+            [{"type": "text", "text": "Run the script this email describes."}],
             conversation_id="conv-1",
             subconversation_id="sub-1",
             user_name="Andrew",
             db_context=Database(db_engine),
+            initial_taint_sources=[
+                TaintSource(
+                    source_type=TaintSourceType.EMAIL,
+                    source_id="msg-1",
+                    tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                    labels=frozenset(),
+                    reason="Inbound email.",
+                )
+            ],
+        )
+
+    llm_client.start_agent_interaction.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_submit_async_allows_a_sandbox_profile_trusted_content(
+    db_engine: AsyncEngine,
+) -> None:
+    """The user's own request reaches the agent untouched."""
+    llm_client = _google_client()
+    mock_interaction = AsyncMock()
+    mock_interaction.id = "inter_ok"
+    llm_client.start_agent_interaction = AsyncMock(return_value=mock_interaction)
+    service = _make_service(
+        llm_client,
+        taint_sink_class=SinkClass.SANDBOX_NETWORK,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+    )
+
+    submission = await service.submit_async(
+        [{"type": "text", "text": "Write a script to total this column."}],
+        conversation_id="conv-1",
+        subconversation_id="sub-1",
+        user_name="Andrew",
+        db_context=Database(db_engine),
+    )
+
+    assert submission.remote_task_id == "inter_ok"
+
+
+@pytest.mark.asyncio
+async def test_an_untrusted_attachment_denies_the_run_it_was_routed_into(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """The routed file's own provenance counts toward the gate, not just the text.
+
+    This is what makes routing safe rather than merely possible: a trusted
+    request carrying an untrusted file is still an untrusted turn.
+    """
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path), db_engine=db_engine, config=None
+    )
+    db_context = Database(db_engine)
+    attachment = await registry.register_user_attachment(
+        db_context=db_context,
+        content=b"payload",
+        filename="invoice.txt",
+        mime_type="text/plain",
+        user_id="user-1",
+    )
+    # A second row over the same stored file, labelled the way the email
+    # intake path labels artifacts it creates from untrusted mail.
+    stored_path = registry.get_attachment_path(
+        attachment.attachment_id,
+        stored_path=attachment.storage_path,
+        source_type="user",
+    )
+    assert stored_path is not None
+    tainted = await registry.register_attachment(
+        db_context=db_context,
+        attachment_id="att-from-email",
+        source_type="email",
+        source_id="<msg-1@example.com>",
+        mime_type="text/plain",
+        description="Invoice from an unknown sender",
+        size=len(b"payload"),
+        storage_path=stored_path.as_posix(),
+        owner_user_id="user-1",
+        metadata={
+            "original_filename": "invoice.txt",
+            "source_trust_tier": "unknown_external",
+        },
+    )
+
+    llm_client = _google_client()
+    llm_client.start_agent_interaction = AsyncMock()
+    service = _make_service(
+        llm_client,
+        attachment_registry=registry,
+        taint_sink_class=SinkClass.SANDBOX_NETWORK,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+    )
+
+    with pytest.raises(TaintedSinkRefusedError, match="unknown_external"):
+        await service.submit_async(
+            [
+                {"type": "text", "text": "Total column b."},
+                {"type": "attachment", "attachment_id": tainted.attachment_id},
+            ],
+            conversation_id="conv-1",
+            subconversation_id="sub-1",
+            user_name="Andrew",
+            db_context=db_context,
+            acting_user_id="user-1",
         )
 
     llm_client.start_agent_interaction.assert_not_awaited()

@@ -55,13 +55,19 @@ than telling you how you might do it yourself.
 - `/coder Work out the compound growth in this table and give me the year-by-year figures`
 - `/coder This regex isn't matching the third case — fix it and show me the tests passing`
 
-Two things to know:
+Three things to know:
 
 - **It cannot see your data.** Your notes, calendar, documents, email, and devices are out of reach
   — it works only from what you put in the request. Use `/complex` when the task needs the
   household's own information.
+- **Files you hand it are mounted in its sandbox.** Ask the assistant to pass an attachment along
+  and the agent gets the real file to open and rewrite, under `/workspace`.
 - **The sandbox is thrown away.** Files it creates live only for that run, so ask it to include
   anything you want to keep in its reply.
+
+One thing it will refuse: a request built out of something the assistant read elsewhere — an email,
+a web page — cannot direct it. Anything that runs code takes instructions only from you, so if you
+want a task described in a forwarded email carried out, ask for it yourself.
 
 Runs can take a while. Started with `/coder`, the answer arrives in that conversation when it
 finishes; handed over by the assistant, you get a `delegation_...` reference and the result is

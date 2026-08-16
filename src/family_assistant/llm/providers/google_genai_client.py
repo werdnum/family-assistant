@@ -10,7 +10,7 @@ import os
 import re
 import time
 import uuid
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1718,6 +1718,7 @@ class GoogleGenAIClient(BaseLLMClient):
         messages: Sequence[LLMMessage],
         *,
         previous_interaction_id: str | None = None,
+        environment_sources: Sequence[Mapping[str, Any]] | None = None,
     ) -> Interaction:
         """Start an Interactions agent run without waiting for it to finish.
 
@@ -1737,6 +1738,15 @@ class GoogleGenAIClient(BaseLLMClient):
         create_kwargs = self._build_agent_create_kwargs(
             messages, previous_interaction_id=previous_interaction_id
         )
+        if environment_sources:
+            # A fresh sandbox with the caller's files mounted into it. Only the
+            # submit path can carry these: the interactive path goes through the
+            # provider-agnostic `generate_response_stream`, which has nowhere to
+            # put an environment.
+            create_kwargs["environment"] = {
+                "type": "remote",
+                "sources": list(environment_sources),
+            }
         try:
             return cast(
                 "Interaction",

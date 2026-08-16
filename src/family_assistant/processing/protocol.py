@@ -146,6 +146,7 @@ class PollableDelegationService(Protocol):
         user_name: str,
         db_context: Database,
         initial_taint_sources: Sequence[TaintSource] | None = None,
+        acting_user_id: str | None = None,
     ) -> RemoteSubmission:
         """Submit without a client-supplied task id; the remote assigns one.
 
@@ -155,7 +156,9 @@ class PollableDelegationService(Protocol):
         ``db_context`` are available for implementations (e.g. local services
         with no network task of their own) that need to render a prompt
         template or look up prior delegation state; remote implementations may
-        ignore them.
+        ignore them. ``acting_user_id`` is the run's owner, for an
+        implementation that resolves owner-scoped artifacts (attachments)
+        rather than only text.
         """
         ...
 

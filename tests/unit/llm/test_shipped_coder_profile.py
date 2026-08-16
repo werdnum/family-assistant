@@ -23,6 +23,17 @@ from family_assistant.llm.providers.google_genai_client import (
     GoogleGenAIClient,
     is_interactions_agent_model,
 )
+from family_assistant.security.taint import (
+    SinkClass,
+    SourceTrustTier,
+    TaintPolicyConfig,
+    TaintPolicyEvaluator,
+    TaintPolicyMode,
+    TaintPolicyOutcome,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+)
 
 
 def _shipped_profile(profile_id: str) -> ServiceProfile:
@@ -63,6 +74,35 @@ def test_shipped_coder_profile_grants_no_family_assistant_tools() -> None:
         "jq_query",
         "report_technical_problem",
     }
+
+
+def test_shipped_coder_profile_is_a_sandbox_network_sink() -> None:
+    """The profile declares the sink that gates reaching it at all.
+
+    Without the declaration, a delegation to it is classified as an ordinary
+    delegation and untrusted content could direct a code-execution agent --
+    the thing the shipped matrix already denies for `spawn_worker`.
+    """
+    processing_config = _shipped_profile("coder").processing_config
+    assert processing_config.taint_sink_class is SinkClass.SANDBOX_NETWORK
+
+
+def test_the_shipped_matrix_denies_a_sandbox_run_untrusted_content() -> None:
+    """The declaration is only worth anything if the matrix backs it."""
+    evaluator = TaintPolicyEvaluator(TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE))
+    state = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.EMAIL,
+            source_id="msg-1",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="Inbound email.",
+        )
+    )
+
+    evaluation = evaluator.evaluate(state=state, sink_class=SinkClass.SANDBOX_NETWORK)
+
+    assert evaluation.effective_outcome is TaintPolicyOutcome.DENY
 
 
 def test_shipped_coder_config_reaches_the_agent_config_payload() -> None:

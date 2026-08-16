@@ -553,11 +553,14 @@ class TaintPolicyEvaluator:
         descriptor: ToolDescriptor,
         state: TurnTaintState,
         arguments: Mapping[str, object] | None = None,
+        delegation_sink_classes: Mapping[str, SinkClass] | None = None,
     ) -> TaintPolicyEvaluation:
         """Resolve a tool sink class from metadata and evaluate it."""
         return self.evaluate(
             state=state,
-            sink_class=resolve_tool_sink_class(descriptor, arguments),
+            sink_class=resolve_tool_sink_class(
+                descriptor, arguments, delegation_sink_classes
+            ),
         )
 
     def _configured_outcome(
@@ -695,14 +698,27 @@ def _home_assistant_action_sink_class(
 def resolve_tool_sink_class(
     descriptor: ToolDescriptor,
     arguments: Mapping[str, object] | None = None,
+    delegation_sink_classes: Mapping[str, SinkClass] | None = None,
 ) -> SinkClass:
     """Resolve a conservative sink class from tool metadata tags.
 
     ``arguments`` lets a tool that spans several sink classes be classified by
     the call rather than by its registration, which the taint design requires
     for Home Assistant actions. Omitting it keeps the tag-only classification.
+
+    ``delegation_sink_classes`` extends the same idea to delegation: handing a
+    turn to a profile is as privileged as whatever that profile does, so a
+    delegation to a profile that declares a sink (a code-execution sandbox, say)
+    is classified as that sink rather than as a generic delegation. A target
+    that declares nothing keeps the tag-only classification.
     """
     tag_values = {str(getattr(tag, "value", tag)) for tag in descriptor.tags}
+    if "delegation" in tag_values and delegation_sink_classes:
+        target = (arguments or {}).get("target_service_id")
+        if isinstance(target, str):
+            declared = delegation_sink_classes.get(target)
+            if declared is not None:
+                return declared
     if "sensitive_data" in tag_values and "read_only" in tag_values:
         return SinkClass.SENSITIVE_READ_BROADENING
     if "code_execution" in tag_values or "worker" in tag_values:

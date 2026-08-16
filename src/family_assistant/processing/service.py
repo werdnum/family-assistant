@@ -23,7 +23,7 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
-from family_assistant.security.taint import TurnTaintState
+from family_assistant.security.taint import TaintPolicyConfig, TurnTaintState
 from family_assistant.utils.clock import Clock, SystemClock
 from family_assistant.utils.text_normalization import normalize_latex_to_unicode
 
@@ -180,6 +180,7 @@ class ProcessingService:
         on_demand_view: OnDemandToolsView | None = None,
         credential_resolvers: Mapping[str, OAuthCredentialResolver] | None = None,
         api_backend: ApiBackend | None = None,
+        taint_policy: TaintPolicyConfig | None = None,
     ) -> None:
         self._llm_client = llm_client
         self.tools_provider = tools_provider
@@ -196,6 +197,10 @@ class ProcessingService:
         self.event_sources = event_sources
         self.credential_resolvers = credential_resolvers
         self.api_backend = api_backend
+        # Only read by a subclass whose profile declares a `taint_sink_class`;
+        # an ordinary profile is not a sink in its own right and evaluates
+        # taint per tool, inside the tools provider.
+        self.taint_policy = taint_policy or TaintPolicyConfig()
 
         # Compose helpers
         self.attachment_processor = AttachmentProcessor(

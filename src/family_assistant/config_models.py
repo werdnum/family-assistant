@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 from .config_sources import DeepMergedYamlSource
 from .delegation_security import DelegationSecurityLevel
-from .security.taint import TaintPolicyConfig
+from .security.taint import SinkClass, TaintPolicyConfig
 from .tools.policy import (
     ToolPolicyConfig,
     ToolPolicyDecision,
@@ -205,6 +205,13 @@ class ProcessingConfig(BaseModel):
     # pointing anywhere else is rejected at startup rather than silently
     # ignoring this.
     antigravity_config: AntigravityConfig | None = None
+    # The runtime-taint sink class a whole turn on this profile counts as.
+    # Set it on a profile whose turn is itself a privileged operation -- a
+    # sandbox that runs code, say -- so the taint matrix gates reaching the
+    # profile at all, the way it already gates the equivalent tool. Unset (the
+    # default) means the profile is not a sink in its own right and only its
+    # tools are evaluated.
+    taint_sink_class: SinkClass | None = None
 
     max_iterations: int = 5
     context_pruning_min_turns: int = 3

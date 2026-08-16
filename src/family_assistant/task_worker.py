@@ -1443,6 +1443,7 @@ class TaskWorker:
                 user_name=run["user_name"] or exec_context.user_name,
                 db_context=exec_context.db_context,
                 initial_taint_sources=_taint_sources_from_delegation_run(run),
+                acting_user_id=run["user_id"],
             )
         except Exception as exc:
             await self._handle_submit_failure(
@@ -1563,6 +1564,7 @@ class TaskWorker:
                 user_name=run["user_name"] or exec_context.user_name,
                 db_context=exec_context.db_context,
                 initial_taint_sources=_taint_sources_from_delegation_run(run),
+                acting_user_id=run["user_id"],
             )
         except Exception as exc:
             await self._handle_submit_failure(

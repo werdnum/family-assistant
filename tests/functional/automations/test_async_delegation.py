@@ -2382,8 +2382,15 @@ class FakePollableService:
         user_name: str,
         db_context: object,
         initial_taint_sources: object | None = None,
+        acting_user_id: str | None = None,
     ) -> RemoteSubmission:
-        _ = (content_parts, initial_taint_sources, user_name, db_context)
+        _ = (
+            content_parts,
+            initial_taint_sources,
+            user_name,
+            db_context,
+            acting_user_id,
+        )
         error = self._submit_error
         if self._submit_errors is not None:
             error = self._submit_errors.pop(0) if self._submit_errors else None
@@ -2820,6 +2827,53 @@ async def test_pollable_delegation_polls_to_completion(
     assert run["result_text"] == "remote done"
     chat_interface.send_message.assert_awaited_once()
     assert "remote done" in chat_interface.send_message.await_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_a_pollable_run_that_persists_no_history_is_tainted_conservatively(
+    db_engine: AsyncEngine,
+) -> None:
+    """A sandbox result must not re-enter the conversation as trusted text.
+
+    An Interactions-agent run (Deep Research, `coder`) is submitted and polled;
+    it never runs a local LLM loop, so it writes no assistant row into its
+    subconversation. `_delegation_result_taint_metadata` therefore finds no
+    result taint and falls back to unknown_external -- which is the correct,
+    conservative answer for text a sandbox produced after reading the web.
+
+    Pinned here because the safe behaviour comes from that fallback rather than
+    from anything the pollable path does on purpose: a later change that starts
+    persisting assistant rows for these runs must not silently downgrade a
+    sandbox result to the trusted-empty parent baseline.
+    """
+    target = FakePollableService(
+        poll_results=[ChatInteractionResult.success(text_reply="sandbox output")]
+    )
+    processing_service = _source_processing_service(
+        cast("FakeDelegatableService", target)
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    delegation_id = await _start_background_delegation(
+        db_engine, processing_service, chat_interface
+    )
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegation_poll(
+        _tool_context(db_context, processing_service, chat_interface),
+        _delegation_payload(delegation_id),
+    )
+
+    chat_interface.send_message.assert_awaited_once()
+    _, send_kwargs = chat_interface.send_message.await_args
+    assert send_kwargs["taint_metadata"] is not None
+    assert send_kwargs["taint_metadata"]["max_tier"] == "unknown_external"
 
 
 class _NoToolsProvider:

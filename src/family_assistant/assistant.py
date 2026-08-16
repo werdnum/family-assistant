@@ -1043,6 +1043,15 @@ class Assistant:
         if user_dir:
             all_skills.extend(load_skills_from_directory(user_dir))
         note_registry = NoteRegistry(all_skills) if all_skills else None
+        # Built before the loop because it spans profiles: a delegation is
+        # classified by what its *target* profile does, so every profile's
+        # declared sink has to be known when any profile's tool provider is
+        # constructed.
+        delegation_sink_classes = {
+            candidate.id: candidate.processing_config.taint_sink_class
+            for candidate in resolved_profiles
+            if candidate.processing_config.taint_sink_class is not None
+        }
         for profile_conf in resolved_profiles:
             profile_id = profile_conf.id
 
@@ -1193,13 +1202,15 @@ class Assistant:
                 policy_engine=policy_engine,
                 confirmation_timeout=confirmation_timeout,
             )
+            merged_taint_policy = merge_taint_policy_config(
+                base=self.config.taint_policy,
+                profile=profile_conf.taint_policy,
+            )
             profile_tools_provider = TaintTrackingToolsProvider(
                 policy_provider,
-                taint_policy=merge_taint_policy_config(
-                    base=self.config.taint_policy,
-                    profile=profile_conf.taint_policy,
-                ),
+                taint_policy=merged_taint_policy,
                 confirmation_timeout=confirmation_timeout,
+                delegation_sink_classes=delegation_sink_classes,
             )
             on_demand_tool_names = profile_tools_conf.get_on_demand_tool_names()
             on_demand_mcp_ids = set(profile_tools_conf.get_on_demand_mcp_server_ids())
@@ -1330,6 +1341,7 @@ class Assistant:
                 ]
 
             service_config = ProcessingServiceConfig(
+                taint_sink_class=profile_proc_conf.taint_sink_class,
                 prompts=profile_proc_conf.prompts,
                 timezone=ZoneInfo(profile_proc_conf.timezone),
                 max_history_messages=profile_proc_conf.max_history_messages,
@@ -1433,6 +1445,7 @@ class Assistant:
                 on_demand_view=profile_on_demand_view,
                 credential_resolvers=self.credential_resolvers,
                 api_backend=self.api_backend,
+                taint_policy=merged_taint_policy,
             )
 
             # Render once now so a template referencing a placeholder that no

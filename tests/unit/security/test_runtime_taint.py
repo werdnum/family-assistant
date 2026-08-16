@@ -1141,6 +1141,58 @@ async def test_post_epoch_row_keeps_anonymous_manual_artifact(
     assert [source.source_type for source in state.sources] == [TaintSourceType.MANUAL]
 
 
+def _tool_descriptor(name: str, *tags: ToolTag) -> ToolDescriptor:
+    return ToolDescriptor(
+        name=name,
+        definition=cast(
+            "ToolDefinition",
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": f"Run {name}.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        ),
+        tags=frozenset(tags),
+        origin="local",
+    )
+
+
+def test_delegating_to_a_sandbox_profile_resolves_to_its_sink_not_delegation() -> None:
+    """Handing a turn to a profile is as privileged as what that profile does.
+
+    Without this, delegating to a code-execution profile is classified as an
+    ordinary delegation, so untrusted content could reach a sandbox simply by
+    going through `delegate_to_service` instead of `spawn_worker`.
+    """
+    descriptor = _tool_descriptor("delegate_to_service", ToolTag.DELEGATION)
+
+    assert (
+        resolve_tool_sink_class(
+            descriptor,
+            {"target_service_id": "coder"},
+            {"coder": SinkClass.SANDBOX_NETWORK},
+        )
+        is SinkClass.SANDBOX_NETWORK
+    )
+
+
+def test_delegating_to_an_ordinary_profile_keeps_the_tag_classification() -> None:
+    """A target that declares no sink does not become one."""
+    descriptor = _tool_descriptor("delegate_to_service", ToolTag.DELEGATION)
+
+    assert (
+        resolve_tool_sink_class(
+            descriptor,
+            {"target_service_id": "research"},
+            {"coder": SinkClass.SANDBOX_NETWORK},
+        )
+        is not SinkClass.SANDBOX_NETWORK
+    )
+
+
 def test_tool_sink_resolution_uses_nonlocal_sinks_for_private_reads_and_writes() -> (
     None
 ):

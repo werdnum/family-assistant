@@ -1823,6 +1823,45 @@ service_profiles:
 
 ______________________________________________________________________
 
+### taint_sink_class
+
+Per-profile `processing_config` value declaring the runtime-taint sink class that a **whole turn**
+on this profile counts as.
+
+| Property  | Value                                              |
+| --------- | -------------------------------------------------- |
+| Required  | No                                                 |
+| Default   | unset (the profile is not a sink in its own right) |
+| Sensitive | No                                                 |
+| Values    | any `SinkClass` name, e.g. `sandbox_network`       |
+
+Runtime taint normally gates individual **tools**: `spawn_worker` is classified `sandbox_network`,
+so the shipped matrix denies it when the turn carries `unknown_external` content. A profile whose
+entire turn is the privileged operation — an agent that runs code in a sandbox — has no such tool to
+gate, and delegating to it would otherwise be classified as an ordinary delegation.
+
+Declaring a sink here changes two things. `delegate_to_service` calls naming this profile as
+`target_service_id` are evaluated as that sink rather than as a generic delegation, so the caller is
+refused (or asked to confirm) before a delegation run is created. And the profile itself evaluates
+the sink against the turn's incoming taint before it runs, covering the entry points a tool gate
+does not see: slash commands, A2A requests and `wake_llm` automations. The profile gate has nobody
+to ask, so it refuses a `confirm` outcome as well as a `deny`.
+
+Attachments routed into such a profile contribute their own recorded provenance to that evaluation,
+so an untrusted file raises the turn's tier even when the request text is trusted.
+
+The shipped `coder` profile declares `sandbox_network`. See
+[interactions-agent-taint-and-attachments.md](../design/interactions-agent-taint-and-attachments.md).
+
+```yaml
+service_profiles:
+  - id: "coder"
+    processing_config:
+      taint_sink_class: "sandbox_network"
+```
+
+______________________________________________________________________
+
 ## Configuration File Reference
 
 ### config.yaml

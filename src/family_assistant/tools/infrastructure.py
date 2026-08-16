@@ -1106,6 +1106,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
         wrapped_provider: ToolsProvider,
         taint_policy: TaintPolicyConfig | None = None,
         confirmation_timeout: float = 3600.0,
+        delegation_sink_classes: Mapping[str, SinkClass] | None = None,
     ) -> None:
         if not isinstance(wrapped_provider, ToolDescriptorProvider):
             msg = (
@@ -1118,6 +1119,10 @@ class TaintTrackingToolsProvider(ToolsProvider):
         self._taint_policy_config = taint_policy or TaintPolicyConfig()
         self._taint_evaluator = TaintPolicyEvaluator(self._taint_policy_config)
         self.confirmation_timeout = confirmation_timeout
+        # Profile id -> the sink class a whole turn on that profile counts as,
+        # so a delegation is evaluated as what the target does rather than as a
+        # generic delegation. Spans profiles, so it is built once at startup.
+        self._delegation_sink_classes = dict(delegation_sink_classes or {})
 
     async def get_tool_definitions(
         self,
@@ -1241,6 +1246,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 descriptor=descriptor,
                 state=state,
                 arguments=arguments,
+                delegation_sink_classes=self._delegation_sink_classes,
             )
             logger.info(
                 "Runtime taint policy evaluated: tool=%s call_id=%s sink=%s "
