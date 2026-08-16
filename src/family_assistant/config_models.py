@@ -97,6 +97,26 @@ class CameraConfig(BaseModel):
     cameras_config: dict[str, ReolinkCameraItemConfig] = Field(default_factory=dict)
 
 
+class AntigravityConfig(BaseModel):
+    """Runtime configuration for a Google Antigravity managed-agent profile.
+
+    Only meaningful on a profile whose ``llm_model`` is the Antigravity agent
+    id: the agent id selects the managed agent, and these fields select the
+    model it reasons with and cap what a single run may spend.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # The agent's reasoning model. Pinned rather than left to the API default
+    # so an upstream default change is a config change here, not a silent
+    # behaviour change in a profile users have calibrated their prompts to.
+    model: str = "gemini-3.7-flash"
+    # Ceiling on the tokens one agent run may consume. Unset means the API's
+    # own default; the agent plans and executes autonomously in a sandbox, so
+    # this is the only bound on how long it iterates other than wall clock.
+    max_total_tokens: int | None = Field(default=None, gt=0)
+
+
 # The `name` of every context provider the assistant can attach to a profile.
 # Duplicated here rather than imported so config validation does not depend on
 # the provider module; `test_context_provider_names_match_config` keeps the two
@@ -180,6 +200,11 @@ class ProcessingConfig(BaseModel):
             )
             raise ValueError(msg)
         return v
+
+    # Only read when llm_model is the Antigravity managed agent; a profile
+    # pointing anywhere else is rejected at startup rather than silently
+    # ignoring this.
+    antigravity_config: AntigravityConfig | None = None
 
     max_iterations: int = 5
     context_pruning_min_turns: int = 3

@@ -1,4 +1,4 @@
-"""Tests for DeepResearchProcessingService's submit/poll/cancel primitives."""
+"""Tests for InteractionsAgentProcessingService's submit/poll/cancel primitives."""
 
 from __future__ import annotations
 
@@ -13,10 +13,13 @@ from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm.messages import UserMessage
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
-from family_assistant.processing.deep_research_service import (
-    DeepResearchProcessingService,
+from family_assistant.processing.interactions_agent_service import (
+    InteractionsAgentProcessingService,
 )
-from family_assistant.processing.protocol import PENDING
+from family_assistant.processing.protocol import (
+    PENDING,
+    DelegationPermanentError,
+)
 from family_assistant.processing.types import (
     ChatInteractionResult,
     ProcessingServiceConfig,
@@ -49,7 +52,7 @@ class SimpleToolsProvider:
         pass
 
 
-def _make_service(llm_client: GoogleGenAIClient) -> DeepResearchProcessingService:
+def _make_service(llm_client: GoogleGenAIClient) -> InteractionsAgentProcessingService:
     config = ProcessingServiceConfig(
         prompts={"system_prompt": "You are a research assistant for {user_name}."},
         timezone=ZoneInfo("UTC"),
@@ -59,7 +62,7 @@ def _make_service(llm_client: GoogleGenAIClient) -> DeepResearchProcessingServic
         delegation_security_level=DelegationSecurityLevel.CONFIRM,
         id="research",
     )
-    return DeepResearchProcessingService(
+    return InteractionsAgentProcessingService(
         llm_client=llm_client,
         tools_provider=SimpleToolsProvider(),
         service_config=config,
@@ -74,6 +77,35 @@ def _google_client() -> GoogleGenAIClient:
 
 
 @pytest.mark.asyncio
+async def test_submit_async_refuses_a_delegation_carrying_attachments(
+    db_engine: AsyncEngine,
+) -> None:
+    """An attachment the agent cannot receive fails the run, it is not dropped.
+
+    `delegate_to_service` turns `attachment_ids` into attachment content parts,
+    and this path reduces the request to its first text part -- so submitting
+    anyway would have the agent answer confidently about a file it never saw.
+    """
+    llm_client = _google_client()
+    llm_client.start_agent_interaction = AsyncMock()
+    service = _make_service(llm_client)
+
+    with pytest.raises(DelegationPermanentError, match="cannot accept attachments"):
+        await service.submit_async(
+            [
+                {"type": "text", "text": "Summarise the attached spreadsheet."},
+                {"type": "attachment", "attachment_id": "att-1"},
+            ],
+            conversation_id="conv-1",
+            subconversation_id="sub-1",
+            user_name="Andrew",
+            db_context=Database(db_engine),
+        )
+
+    llm_client.start_agent_interaction.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_submit_async_renders_prompt_and_starts_interaction(
     db_engine: AsyncEngine,
 ) -> None:
@@ -81,9 +113,7 @@ async def test_submit_async_renders_prompt_and_starts_interaction(
     llm_client = _google_client()
     mock_interaction = AsyncMock()
     mock_interaction.id = "inter_new"
-    llm_client.start_deep_research_interaction = AsyncMock(
-        return_value=mock_interaction
-    )
+    llm_client.start_agent_interaction = AsyncMock(return_value=mock_interaction)
     service = _make_service(llm_client)
 
     db_context = Database(db_engine)
@@ -99,7 +129,7 @@ async def test_submit_async_renders_prompt_and_starts_interaction(
     assert submission.remote_context_id is None
     assert submission.terminal_result is None
 
-    call_args = llm_client.start_deep_research_interaction.call_args
+    call_args = llm_client.start_agent_interaction.call_args
     messages = call_args.args[0]
     assert any(
         m.role == "system" and "for Andrew" in (m.content or "") for m in messages
@@ -119,9 +149,7 @@ async def test_submit_async_chains_onto_prior_completed_run(
     llm_client = _google_client()
     mock_interaction = AsyncMock()
     mock_interaction.id = "inter_followup"
-    llm_client.start_deep_research_interaction = AsyncMock(
-        return_value=mock_interaction
-    )
+    llm_client.start_agent_interaction = AsyncMock(return_value=mock_interaction)
     service = _make_service(llm_client)
 
     db_context = Database(db_engine)
@@ -155,7 +183,7 @@ async def test_submit_async_chains_onto_prior_completed_run(
         db_context=db_context,
     )
 
-    call_args = llm_client.start_deep_research_interaction.call_args
+    call_args = llm_client.start_agent_interaction.call_args
     assert call_args.kwargs["previous_interaction_id"] == "inter_original"
 
 
@@ -284,7 +312,7 @@ def test_turn_context_block_is_kept_out_of_the_research_query() -> None:
     """
     client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
 
-    kwargs = client._build_deep_research_create_kwargs([
+    kwargs = client._build_agent_create_kwargs([
         UserMessage(content="Compare heat pump models for a cold climate."),
         UserMessage(
             content="<turn_context>\nCurrent time: 2026-07-25 10:00:00 UTC\n</turn_context>",

@@ -1,15 +1,17 @@
-"""Pollable local ProcessingService for Google Deep Research profiles.
+"""Pollable local ProcessingService for Google Interactions API agents.
 
-Deep Research turns can run for many minutes (longer for the "max" tier).
-When delegated to via ``delegate_to_service``, the default inline delegation
-path (``handle_chat_interaction``) would block a TaskWorker slot for the
-entire run. This subclass additionally implements ``PollableDelegationService``
-so the delegation worker submits the interaction and polls it to terminal on
-a schedule instead — the same submit-then-poll pattern already used for
-remote A2A targets, applied here to a local target with a long-running
-provider call. Direct (non-delegated) usage via ``/research``/``/research_max``
-is unaffected: ``handle_chat_interaction`` (inherited, unchanged) still
-streams the interaction live for that interactive path.
+A Deep Research or Antigravity turn can run for many minutes (longer for the
+research "max" tier, and for an Antigravity run that plans and executes a
+multi-step task in its sandbox). When delegated to via
+``delegate_to_service``, the default inline delegation path
+(``handle_chat_interaction``) would block a TaskWorker slot for the entire
+run. This subclass additionally implements ``PollableDelegationService`` so
+the delegation worker submits the interaction and polls it to terminal on a
+schedule instead — the same submit-then-poll pattern already used for remote
+A2A targets, applied here to a local target with a long-running provider
+call. Direct (non-delegated) usage via ``/research``/``/research_max``/
+``/coder`` is unaffected: ``handle_chat_interaction`` (inherited,
+unchanged) still streams the interaction live for that interactive path.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from family_assistant.llm.providers.google_genai_client import (
 )
 from family_assistant.processing.protocol import (
     PENDING,
+    DelegationPermanentError,
     DelegationTransientError,
     PendingPoll,
     RemoteSubmission,
@@ -42,29 +45,31 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class DeepResearchProcessingService(ProcessingService):
-    """A ``ProcessingService`` for a Deep Research profile, also pollable.
+class InteractionsAgentProcessingService(ProcessingService):
+    """A ``ProcessingService`` for an Interactions API agent, also pollable.
 
     Only constructed (see ``assistant.py``'s registry setup) for profiles
-    whose resolved model is a Deep Research model — ``PollableDelegationService``
-    is a ``runtime_checkable`` Protocol, so defining these methods unconditionally
-    on the base ``ProcessingService`` would incorrectly make every local
-    profile "pollable"; scoping the subclass to Deep Research profiles keeps
-    ordinary local delegation targets on the existing inline path.
+    whose resolved model names an Interactions agent —
+    ``PollableDelegationService`` is a ``runtime_checkable`` Protocol, so
+    defining these methods unconditionally on the base ``ProcessingService``
+    would incorrectly make every local profile "pollable"; scoping the
+    subclass to these profiles keeps ordinary local delegation targets on the
+    existing inline path.
     """
 
-    # Deep Research collapses the prompt into a single `input` string and the
-    # client drops scaffolding on the way, so the block never reaches the model
-    # on either the interactive or the submit-then-poll path.
+    # These agents collapse the prompt into a single `input` string (plus, for
+    # Antigravity, a `system_instruction`) and the client drops scaffolding on
+    # the way, so the block never reaches the model on either the interactive
+    # or the submit-then-poll path.
     sends_turn_context_block: bool = False
 
     def format_system_prompt(self, *, user_name: str) -> str:
         """Fold the clock into the prompt, since no block survives to carry it.
 
-        Research grounded on live web results needs a date more than most work
+        Work grounded on live web results needs a date more than most work
         does -- "the latest on X this week" is unanswerable without one. Putting
         it in the prompt is what the rest of the codebase moved away from, but
-        the reason not to is a cache prefix, and a single-shot Deep Research
+        the reason not to is a cache prefix, and a single-shot agent
         submission has none.
         """
         prompt = super().format_system_prompt(user_name=user_name)
@@ -74,7 +79,7 @@ class DeepResearchProcessingService(ProcessingService):
         client = self.llm_client
         if not isinstance(client, GoogleGenAIClient):
             raise TypeError(
-                "DeepResearchProcessingService requires a GoogleGenAIClient, "
+                "InteractionsAgentProcessingService requires a GoogleGenAIClient, "
                 f"got {type(client).__name__}"
             )
         return client
@@ -82,13 +87,47 @@ class DeepResearchProcessingService(ProcessingService):
     def remote_context_id(
         self, conversation_id: str, subconversation_id: str | None
     ) -> str | None:
-        """Deep Research has no separate context-grouping concept.
+        """The Interactions API has no separate context-grouping concept.
 
         Continuation is chained explicitly via ``previous_interaction_id``
         (see ``submit_async``), not via a context id known ahead of submit.
         """
         _ = (conversation_id, subconversation_id)
         return None
+
+    def _reject_unsupported_content_parts(
+        self, content_parts: list[ContentPartDict]
+    ) -> None:
+        """Fail a delegation whose attachments this path cannot carry.
+
+        ``delegate_to_service`` turns ``attachment_ids`` into ``attachment``
+        content parts, and the interactive path resolves those into injection
+        messages. This path does not: the interaction takes a single ``input``
+        string, and ``_extract_user_content_for_history`` reduces the request
+        to its first text part, so an attachment would vanish between the
+        caller and the agent. Since the agent would then answer confidently
+        about a file it never saw -- the worst outcome for a profile whose job
+        includes transforming data -- the delegation fails instead, with a
+        message telling the caller what to do about it.
+
+        ``DelegationPermanentError`` rather than a transient one: re-submitting
+        the same parts would drop them again.
+        """
+        unsupported = sorted({
+            str(part.get("type"))
+            for part in content_parts
+            if part.get("type") != "text"
+        })
+        if not unsupported:
+            return
+        raise DelegationPermanentError(
+            f"Profile '{self.service_config.id}' cannot accept attachments: it "
+            f"runs a Google Interactions API agent, which takes a single text "
+            f"request, so the {', '.join(unsupported)} part(s) sent with this "
+            "delegation would be dropped. Read the attachment yourself (e.g. "
+            "with read_text_attachment) and include its content in the request "
+            "text, or delegate to a profile that accepts attachments."
+        )
 
     async def submit_async(
         self,
@@ -100,18 +139,22 @@ class DeepResearchProcessingService(ProcessingService):
         db_context: Database,
         initial_taint_sources: Sequence[TaintSource] | None = None,
     ) -> RemoteSubmission:
-        """Start a Deep Research interaction without blocking on its result.
+        """Start the agent interaction without blocking on its result.
 
         Builds the same system prompt as a direct turn (via the inherited
         ``format_system_prompt``) plus the delegated content as input text.
-        No ``<turn_context>`` block is appended: research profiles aggregate no
+        No ``<turn_context>`` block is appended: these profiles aggregate no
         context, and a single-shot submission has no cache prefix to protect.
         Chains onto the prior delegation's
         interaction (if this is a resumed run — see
         ``DelegationRunsRepository.get_latest_completed_run``), and submits
         in the background.
+
+        Refuses a delegation carrying attachments rather than submitting one
+        that ignores them -- see ``_reject_unsupported_content_parts``.
         """
         _ = initial_taint_sources
+        self._reject_unsupported_content_parts(content_parts)
         system_prompt = self.format_system_prompt(user_name=user_name)
         user_text = self._extract_user_content_for_history(content_parts)
         messages: list[LLMMessage] = []
@@ -129,12 +172,12 @@ class DeepResearchProcessingService(ProcessingService):
             if prior_run is not None:
                 previous_interaction_id = prior_run["remote_task_id"]
 
-        interaction = await self._google_client().start_deep_research_interaction(
+        interaction = await self._google_client().start_agent_interaction(
             messages, previous_interaction_id=previous_interaction_id
         )
         if not interaction.id:
             raise DelegationTransientError(
-                "Deep Research interaction create response carried no interaction id"
+                "Interactions API create response carried no interaction id"
             )
         return RemoteSubmission(
             remote_task_id=interaction.id,
@@ -163,8 +206,8 @@ class DeepResearchProcessingService(ProcessingService):
             )
         if is_interaction_terminal_error_status(interaction.status):
             return ChatInteractionResult.error(
-                text_reply=f"Deep research {interaction.status}.",
-                error_traceback=f"Deep Research interaction {remote_task_id} ended with status {interaction.status!r}.",
+                text_reply=f"The {self.service_config.id} run {interaction.status}.",
+                error_traceback=f"Interaction {remote_task_id} ended with status {interaction.status!r}.",
             )
         return PENDING
 
@@ -174,7 +217,7 @@ class DeepResearchProcessingService(ProcessingService):
             await self._google_client().cancel_agent_interaction(remote_task_id)
         except Exception as exc:
             logger.warning(
-                "Failed to cancel Deep Research interaction %s on '%s': %s",
+                "Failed to cancel interaction %s on '%s': %s",
                 remote_task_id,
                 self.service_config.id,
                 exc,

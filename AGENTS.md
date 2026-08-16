@@ -294,6 +294,20 @@ supervision requirements based on input trust level:
    only the current turn's artifacts, and `report_technical_problem` persists model-supplied text.
    The profile therefore reaches no tools at all. Deliberately has no `retry_config`: falling back
    to a provider that cannot read the media would return a confident description of nothing.
+7. **Coder Profile [C]**: a coding agent — writes and runs code, works with files, reads the web —
+   on Google's Antigravity managed agent (`antigravity-preview-05-2026` reasoning with
+   `gemini-3.7-flash`), in a Google-hosted throwaway sandbox. Used via `/coder` or delegation. It
+   acts but reads nothing of the household's: no aggregated context, and the agent runs server-side
+   with no FA tool surface, so it works only from the request text. As with `media_analyst`, a
+   deny-by-default `tools_policy` does not achieve that alone -- the three globally granted tools
+   are withheld via `excluded_global_tools`, so the profile is not advertised as holding tools it
+   says it has none of; and it has no `retry_config`, because a fallback chat model would answer
+   from its own knowledge instead of running the task. **Three ways to reach a coding agent, and
+   they are not interchangeable**: `coder` for self-contained code and computation, with the result
+   returned into the conversation; `spawn_worker` when the agent must read or write the *shared
+   workspace* in our own sandbox; `complex_tasks` when the task needs FA context (notes, calendar,
+   documents). See
+   [docs/design/gemini-antigravity-managed-agent.md](docs/design/gemini-antigravity-managed-agent.md).
 
 The Rule of Two addresses prompt injection specifically; it complements rather than replaces
 least-privilege access, input validation, and defense in depth.

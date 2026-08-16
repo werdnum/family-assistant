@@ -24,8 +24,8 @@ from family_assistant.processing import (
     PollableDelegationService,
     RemoteSubmission,
 )
-from family_assistant.processing.deep_research_service import (
-    DeepResearchProcessingService,
+from family_assistant.processing.interactions_agent_service import (
+    InteractionsAgentProcessingService,
 )
 from family_assistant.processing.types import (
     ChatInteractionResult,
@@ -2843,12 +2843,12 @@ class _NoToolsProvider:
 
 def _deep_research_target_service(
     llm_client: GoogleGenAIClient,
-) -> DeepResearchProcessingService:
-    """A real DeepResearchProcessingService, registered as a delegation target.
+) -> InteractionsAgentProcessingService:
+    """A real InteractionsAgentProcessingService, registered as a delegation target.
 
-    Proves DeepResearchProcessingService actually satisfies the
+    Proves InteractionsAgentProcessingService actually satisfies the
     PollableDelegationService protocol end-to-end through TaskWorker, not just
-    in isolation (see tests/unit/processing/test_deep_research_service.py).
+    in isolation (see tests/unit/processing/test_interactions_agent_service.py).
     """
     config = ProcessingServiceConfig(
         prompts={"system_prompt": "You are a research assistant for {user_name}."},
@@ -2860,7 +2860,7 @@ def _deep_research_target_service(
         id="target_profile",
         allowed_delegation_sources=["source_profile"],
     )
-    return DeepResearchProcessingService(
+    return InteractionsAgentProcessingService(
         llm_client=llm_client,
         tools_provider=_NoToolsProvider(),
         service_config=config,
@@ -2904,9 +2904,7 @@ async def test_deep_research_delegation_polls_to_completion_and_notifies(
     )
     submitted_interaction = AsyncMock()
     submitted_interaction.id = "inter_e2e_1"
-    llm_client.start_deep_research_interaction = AsyncMock(
-        return_value=submitted_interaction
-    )
+    llm_client.start_agent_interaction = AsyncMock(return_value=submitted_interaction)
     pending_interaction = AsyncMock()
     pending_interaction.status = "in_progress"
     completed_interaction = AsyncMock()
@@ -2938,7 +2936,7 @@ async def test_deep_research_delegation_polls_to_completion_and_notifies(
     assert run is not None
     assert run["status"] == "awaiting_remote"
     assert run["remote_task_id"] == "inter_e2e_1"
-    llm_client.start_deep_research_interaction.assert_awaited_once()
+    llm_client.start_agent_interaction.assert_awaited_once()
     chat_interface.send_message.assert_not_awaited()
 
     poll_payload = _delegation_payload(delegation_id)
