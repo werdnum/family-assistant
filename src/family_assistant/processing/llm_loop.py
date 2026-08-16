@@ -29,6 +29,7 @@ from family_assistant.tools import (
 )
 
 from .attachments import AttachmentSelectionError
+from .protocol import TaintedSinkRefusedError
 from .utils import (
     _map_stream_error_to_exception,
     messages_have_thought_signatures,
@@ -183,6 +184,7 @@ class LLMStreamingLoop:
         mid_turn_input_provider: MidTurnInputProvider | None = None,
         initial_taint_sources: Sequence[TaintSource] | None = None,
         taint_tracker: TurnTaintTracker | None = None,
+        sink_preconfirmed: bool = False,
     ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
@@ -217,6 +219,7 @@ class LLMStreamingLoop:
             mid_turn_input_provider=mid_turn_input_provider,
             initial_taint_sources=initial_taint_sources,
             taint_tracker=taint_tracker,
+            sink_preconfirmed=sink_preconfirmed,
         ):
             if message is not None:
                 turn_messages.append(message)
@@ -251,6 +254,7 @@ class LLMStreamingLoop:
         mid_turn_input_provider: MidTurnInputProvider | None = None,
         initial_taint_sources: Sequence[TaintSource] | None = None,
         taint_tracker: TurnTaintTracker | None = None,
+        sink_preconfirmed: bool = False,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """
         Streaming version of process_message that yields LLMStreamEvent objects as they are generated.
@@ -288,6 +292,17 @@ class LLMStreamingLoop:
         initial_taint_state = merge_history_taint(messages)
         for source in initial_taint_sources or ():
             initial_taint_state = initial_taint_state.add_source(source)
+        # The one point where the turn's whole taint is known: the prompt's own
+        # sources, the aggregated context's, and the history's. A profile that
+        # declares a sink is gated here rather than at an entry point, where a
+        # trusted prompt carrying an email-derived attachment or tainted history
+        # would still read as trusted.
+        if processing_service is not None:
+            sink_refusal = processing_service.sink_refusal_reason(
+                initial_taint_state, preconfirmed=sink_preconfirmed
+            )
+            if sink_refusal is not None:
+                raise TaintedSinkRefusedError(sink_refusal)
         if taint_tracker is None:
             taint_tracker = InMemoryTurnTaintTracker(initial_taint_state)
         else:

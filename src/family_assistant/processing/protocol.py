@@ -95,6 +95,16 @@ class DelegationPermanentError(DelegationTransientError):
     """
 
 
+class TaintedSinkRefusedError(DelegationPermanentError):
+    """The turn's taint bars it from a profile that is itself a sink.
+
+    A ``DelegationPermanentError`` so a delegated run fails fast with the
+    reason rather than polling: re-submitting the same content would be
+    refused identically. The chat entry points catch it and render the reason
+    to the user instead of letting it surface as an internal error.
+    """
+
+
 class DelegationTaskNotFoundError(DelegationPermanentError):
     """The target reports no such task (e.g. HTTP 404 or an unknown-id error).
 

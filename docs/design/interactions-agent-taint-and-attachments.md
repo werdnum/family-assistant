@@ -45,34 +45,36 @@ A profile declares its sink in config (`processing_config.taint_sink_class`), `c
 `sandbox_network`, and the resolver consults a profile-id → sink map built once at startup. A
 profile that declares nothing keeps today's classification, so nothing else moves.
 
-### 2. The profile evaluates its own sink, as the choke point
+### 2. The profile evaluates its own sink, at the point the whole turn is known
 
 The tool-level classification only covers delegation. A profile is also reachable by slash command,
 by an A2A inbound request, and by a `wake_llm` automation — and an automation fired by an incoming
-email carries exactly the taint this is meant to catch. So `InteractionsAgentProcessingService`
-evaluates its declared sink against the turn's incoming taint before submitting, on both the
-delegated and the interactive path.
+email carries exactly the taint this is meant to catch.
 
-This is not redundant with the tool gate; they cover different entry points, and what each does with
-a `confirm` outcome differs because only one of them has somebody to ask:
+**Where the check runs is load-bearing.** The turn's taint is not fully known at an entry point: a
+trusted "go ahead" pulls in the aggregated context during preparation, and history taint is merged
+later still. Checking the trigger's own sources would let a trusted prompt hand the sandbox an
+email-derived attachment or a tainted earlier message — precisely what the gate exists to stop. So
+the check lives in `LLMStreamingLoop.run_stream`, immediately after `merge_history_taint` builds the
+state the loop itself uses for tool gating. That is the single point where history, context and
+trigger taint are all present, and it is shared by the streaming and non-streaming paths (`run`
+delegates to `run_stream`) and by every profile, not just this subclass. Refusal raises
+`TaintedSinkRefusedError`; the two chat entry points catch it and render the reason rather than
+letting it read as an internal fault.
+
+The submit-then-poll path never runs the loop, so it evaluates what it has — the parent turn's
+sources plus the attachments it is about to mount — in `submit_async`.
+
+What each gate does with a `confirm` outcome differs, because only one of them has somebody to ask:
 
 - **Tool gate** — runs before a delegation run row exists and offers the *confirmation*, because it
   has the confirmation machinery and a live caller. This is where `confirm` is resolved.
 - **Profile gate** — the security boundary, and the only gate on entry points that are not tool
-  calls.
-  - On a **delegated submit** it refuses `deny` only. `delegate_to_service` is the sole creator of a
-    delegation run, and its gate classifies the call by this same declared sink, so a `confirm`
-    reaching submit has already been approved upstream — refusing it again would fail every approved
-    delegation. `deny` is never confirmable, so no upstream approval for it can exist and it is
-    still refused here.
-  - On a **direct turn** (slash command, A2A request, `wake_llm` automation) it refuses `confirm` as
-    well: nothing offered a confirmation on those paths, and a poll-driven or automated turn has
-    nobody to ask.
-
-The gate lives on `ProcessingService`, not on the Interactions subclass, and runs at the top of both
-`handle_chat_interaction` and `handle_chat_interaction_stream`. The web path streams, so a gate on
-the non-streaming call alone would be no gate at all; and putting it on the base class means a
-`taint_sink_class` declared on any future profile is enforced rather than silently ignored.
+  calls. It refuses `deny` always: `deny` is never confirmable, so no upstream approval for it can
+  exist. It refuses `confirm` only when the turn was *not* already gated — a `sink_preconfirmed`
+  flag, set by `delegate_to_service` on both the inline and submit paths it owns, marks the turns
+  whose `confirm` a user already answered. Without it, every approved delegation would be refused at
+  the second gate.
 
 `submit_async` already receives the parent turn's taint as `initial_taint_sources` — the delegation
 run persists `taint_state_json` and the worker rehydrates it. The original implementation discarded
@@ -103,9 +105,9 @@ routing the user's own file is allowed without one.
 4. **`assistant.py`** — builds the map from config before the per-profile loop (it spans profiles)
    and passes the merged taint policy into the processing service so the profile gate has an
    evaluator.
-5. **`processing/service.py`** — `sink_refusal_reason()` on the base class, called from both chat
-   entry points, with `allow_confirmable` distinguishing a pre-gated delegated submit from a direct
-   turn.
+5. **`processing/service.py`** / **`processing/llm_loop.py`** — `sink_refusal_reason()` on the base
+   class, called from `run_stream` against the merged turn state, with `preconfirmed` threaded from
+   `delegate_to_service`; both chat entry points catch `TaintedSinkRefusedError` and render it.
 6. **`processing/interactions_agent_service.py`** — `_refuse_denied_sink()` applies it to the
    delegated submit; `_build_environment_sources()` replaces the blanket refusal, giving each
    mounted file a unique `target` (a repeated filename gains a `-2` suffix, since the sandbox holds

@@ -381,6 +381,12 @@ async def _synchronous_delegation_result(
             confirmation_ui_managers=exec_context.confirmation_ui_managers,
             request_confirmation_callback=exec_context.request_confirmation_callback,
             subconversation_id=subconversation_id,
+            # This call already passed the delegate_to_service tool gate, which
+            # classifies the call by the target profile's declared sink and put
+            # any `confirm` outcome to the user. Without this the profile gate
+            # would refuse the same outcome a second time, failing every
+            # approved inline delegation.
+            sink_preconfirmed=True,
             initial_taint_sources=_taint_sources_from_metadata(
                 _current_taint_metadata(exec_context)
             ),

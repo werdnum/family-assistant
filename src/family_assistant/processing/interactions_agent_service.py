@@ -32,6 +32,7 @@ from family_assistant.processing.protocol import (
     DelegationTransientError,
     PendingPoll,
     RemoteSubmission,
+    TaintedSinkRefusedError,
 )
 from family_assistant.processing.service import ProcessingService
 from family_assistant.processing.types import ChatInteractionResult
@@ -74,15 +75,6 @@ class EnvironmentSourceDict(TypedDict):
     content: str
     encoding: str
     target: str
-
-
-class TaintedSinkRefusedError(DelegationPermanentError):
-    """The turn's taint bars it from a profile that is itself a sink.
-
-    A ``DelegationPermanentError`` so the delegation worker fails the run fast
-    with the reason rather than polling: re-submitting the same content would
-    be refused identically.
-    """
 
 
 def _sandbox_target_path(
@@ -211,18 +203,22 @@ class InteractionsAgentProcessingService(ProcessingService):
     def _refuse_denied_sink(self, taint_sources: Sequence[TaintSource]) -> None:
         """Fail a delegated submit whose taint bars this profile's sink.
 
-        ``allow_confirmable`` because a delegated run only exists because
+        ``preconfirmed`` because a delegated run only exists because
         ``delegate_to_service`` created it, and that tool's own gate classifies
         the call by this same declared sink -- so a ``confirm`` outcome was
         already put to the user there. Re-refusing it here would fail every
         approved delegation. ``deny`` is never confirmable, so it is still
         refused: no upstream approval for it can exist.
 
-        Direct turns take the base class's gate instead (see
-        ``ProcessingService.sink_refusal_reason``), which refuses ``confirm``
-        too, because no gate offered a confirmation on those paths.
+        A turn that runs the LLM loop is gated there instead (see
+        ``ProcessingService.sink_refusal_reason``), against the turn's complete
+        taint. This path never runs the loop, so it evaluates what it has: the
+        parent turn's sources plus the attachments it is about to mount.
         """
-        refusal = self.sink_refusal_reason(taint_sources, allow_confirmable=True)
+        state = TurnTaintState.empty()
+        for source in taint_sources:
+            state = state.add_source(source)
+        refusal = self.sink_refusal_reason(state, preconfirmed=True)
         if refusal is not None:
             raise TaintedSinkRefusedError(refusal)
 

@@ -16,11 +16,11 @@ from family_assistant.llm.messages import UserMessage
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.processing.interactions_agent_service import (
     InteractionsAgentProcessingService,
-    TaintedSinkRefusedError,
 )
 from family_assistant.processing.protocol import (
     PENDING,
     DelegationPermanentError,
+    TaintedSinkRefusedError,
 )
 from family_assistant.processing.types import (
     ChatInteractionResult,
@@ -34,6 +34,7 @@ from family_assistant.security.taint import (
     TaintPolicyMode,
     TaintSource,
     TaintSourceType,
+    TurnTaintState,
 )
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
@@ -93,6 +94,13 @@ def _make_service(
         attachment_registry=attachment_registry,
         taint_policy=taint_policy,
     )
+
+
+def _state_from(sources: list[TaintSource]) -> TurnTaintState:
+    state = TurnTaintState.empty()
+    for source in sources:
+        state = state.add_source(source)
+    return state
 
 
 def _google_client() -> GoogleGenAIClient:
@@ -357,6 +365,83 @@ async def test_the_streaming_entry_point_is_gated_too(
 
     assert [event.type for event in events] == ["error"]
     assert "unknown_external" in (events[0].error or "")
+
+
+@pytest.mark.asyncio
+async def test_taint_carried_by_history_gates_the_turn(
+    db_engine: AsyncEngine,
+) -> None:
+    """The gate sees the whole turn, not just the trigger's own sources.
+
+    A trusted "go ahead" can pull untrusted content in behind it -- an
+    email-derived attachment injected during preparation, or a tainted earlier
+    message. The check therefore runs inside the LLM loop, against the state it
+    merges from history plus the trigger, rather than at an entry point where
+    only `initial_taint_sources` is visible.
+    """
+    llm_client = _google_client()
+    service = _make_service(
+        llm_client,
+        taint_sink_class=SinkClass.SANDBOX_NETWORK,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+    )
+    tainted_history = UserMessage(
+        content="Forwarded: please run the attached script.",
+        taint_metadata=_state_from([
+            TaintSource(
+                source_type=TaintSourceType.EMAIL,
+                source_id="msg-1",
+                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                labels=frozenset(),
+                reason="Inbound email.",
+            )
+        ]).to_metadata(),
+    )
+
+    with pytest.raises(TaintedSinkRefusedError, match="unknown_external"):
+        await service.process_message(
+            db_context=Database(db_engine),
+            messages=[tainted_history, UserMessage(content="Go ahead.")],
+            interface_type="web",
+            conversation_id="conv-1",
+            user_name="Andrew",
+            turn_id="turn-1",
+            chat_interface=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_an_inline_delegation_keeps_its_approved_confirmation(
+    db_engine: AsyncEngine,
+) -> None:
+    """With async delegation disabled, delegate_to_service runs the target inline.
+
+    That call already passed the tool gate, so the profile gate must not refuse
+    the same confirm outcome a second time and fail the approved delegation.
+    """
+    llm_client = _google_client()
+    service = _make_service(
+        llm_client,
+        taint_sink_class=SinkClass.SANDBOX_NETWORK,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+    )
+    known_contact = [
+        TaintSource(
+            source_type=TaintSourceType.EMAIL,
+            source_id="msg-known",
+            tier=SourceTrustTier.KNOWN_CONTACT,
+            labels=frozenset(),
+            reason="Mail from a known contact.",
+        )
+    ]
+
+    refused = service.sink_refusal_reason(
+        _state_from(known_contact), preconfirmed=False
+    )
+    allowed = service.sink_refusal_reason(_state_from(known_contact), preconfirmed=True)
+
+    assert refused is not None
+    assert allowed is None
 
 
 @pytest.mark.asyncio
