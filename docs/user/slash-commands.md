@@ -16,19 +16,19 @@ chat sends it as ordinary text and does not switch modes.
 
 Which commands exist depends on how your deployment is configured; these are the standard ones.
 
-| Command                     | Use it for                                                                              |
-| --------------------------- | --------------------------------------------------------------------------------------- |
-| `/browse`                   | Web tasks needing navigation, forms, logins, or JavaScript-heavy pages                  |
-| `/browse_visual`            | Sites the DOM-based browser can't handle; drives the page visually                      |
-| `/research`                 | In-depth research on a topic — the right default for research questions                 |
-| `/research_max`             | The most thorough multi-source research, when depth matters more than speed             |
-| `/complex`                  | Multi-step reasoning and planning that needs a long chain of work                       |
-| `/antigravity`              | Self-contained tasks it should carry out — writing and running code, working with files |
-| `/visualize` or `/chart`    | Charts and graphs from data you provide or attach                                       |
-| `/artist`                   | Generating or editing images and video                                                  |
-| `/camera` or `/investigate` | Searching and reviewing security camera footage                                         |
-| `/engineer`                 | Read-only diagnostics: "why did the assistant do that?"                                 |
-| `/interrupt`                | (Telegram) stop the request currently being processed in that chat                      |
+| Command                     | Use it for                                                                         |
+| --------------------------- | ---------------------------------------------------------------------------------- |
+| `/browse`                   | Web tasks needing navigation, forms, logins, or JavaScript-heavy pages             |
+| `/browse_visual`            | Sites the DOM-based browser can't handle; drives the page visually                 |
+| `/research`                 | In-depth research on a topic — the right default for research questions            |
+| `/research_max`             | The most thorough multi-source research, when depth matters more than speed        |
+| `/complex`                  | Multi-step reasoning and planning that needs a long chain of work                  |
+| `/coder`                    | Writing and running code, data crunching, and other self-contained computing tasks |
+| `/visualize` or `/chart`    | Charts and graphs from data you provide or attach                                  |
+| `/artist`                   | Generating or editing images and video                                             |
+| `/camera` or `/investigate` | Searching and reviewing security camera footage                                    |
+| `/engineer`                 | Read-only diagnostics: "why did the assistant do that?"                            |
+| `/interrupt`                | (Telegram) stop the request currently being processed in that chat                 |
 
 If you type a command the assistant doesn't recognise, it replies saying so.
 
@@ -40,19 +40,20 @@ If you type a command the assistant doesn't recognise, it replies saying so.
 - **`/research` for most research; `/research_max` when thoroughness beats turnaround.**
 - **`/complex` when a task needs sustained reasoning** over your notes, calendar, documents, and
   other assistant data.
-- **`/antigravity` when the task is work to be done rather than a question to be answered,** and
-  everything it needs is in your request. It runs in a sandbox described below.
+- **`/coder` when you want code written and run, not explained,** and everything it needs is in your
+  request. It works in a sandbox described below.
 - **`/engineer` for diagnosing the assistant itself,** not for getting work done — it deliberately
   cannot change data or send messages. See [troubleshooting.md](troubleshooting.md).
 
-## Sandbox tasks (`/antigravity`)
+## Coding and computing (`/coder`)
 
-`/antigravity` hands the task to an agent that works in a private Linux sandbox: it can write and
-run code, create and read files, and search and read the web, and it keeps going until the task is
-finished rather than telling you how you might do it.
+`/coder` hands the job to a coding agent working in a private Linux sandbox: it writes code, runs
+it, reads the files it creates, and searches the web — and keeps going until the task is done rather
+than telling you how you might do it yourself.
 
-- `/antigravity Write a Python script that converts this CSV layout into the JSON shape below, and show me it running on a sample`
-- `/antigravity Work out the compound growth in this table and give me the year-by-year figures`
+- `/coder Write a Python script that converts this CSV layout into the JSON shape below, and show me it running on a sample`
+- `/coder Work out the compound growth in this table and give me the year-by-year figures`
+- `/coder This regex isn't matching the third case — fix it and show me the tests passing`
 
 Two things to know:
 
@@ -62,7 +63,7 @@ Two things to know:
 - **The sandbox is thrown away.** Files it creates live only for that run, so ask it to include
   anything you want to keep in its reply.
 
-Runs can take a while. Started with `/antigravity`, the answer arrives in that conversation when it
+Runs can take a while. Started with `/coder`, the answer arrives in that conversation when it
 finishes; handed over by the assistant, you get a `delegation_...` reference and the result is
 posted back when it's ready.
 

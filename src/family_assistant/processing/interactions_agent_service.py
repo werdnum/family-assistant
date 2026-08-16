@@ -10,7 +10,7 @@ the delegation worker submits the interaction and polls it to terminal on a
 schedule instead — the same submit-then-poll pattern already used for remote
 A2A targets, applied here to a local target with a long-running provider
 call. Direct (non-delegated) usage via ``/research``/``/research_max``/
-``/antigravity`` is unaffected: ``handle_chat_interaction`` (inherited,
+``/coder`` is unaffected: ``handle_chat_interaction`` (inherited,
 unchanged) still streams the interaction live for that interactive path.
 """
 

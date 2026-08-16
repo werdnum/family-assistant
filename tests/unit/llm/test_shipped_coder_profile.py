@@ -1,4 +1,4 @@
-"""The shipped `antigravity` profile must reach the managed agent, not a chat model.
+"""The shipped `coder` profile must reach the managed agent, not a chat model.
 
 Three things can break silently between `defaults.yaml` and an actual agent
 run: the profile could name a model that routes to `generateContent` instead of
@@ -10,7 +10,7 @@ plausible-looking answer rather than an error, so each is pinned here.
 
 import pytest
 
-from family_assistant.assistant import validate_antigravity_profile
+from family_assistant.assistant import validate_antigravity_agent_config
 from family_assistant.config_loader import load_config
 from family_assistant.config_models import (
     ProcessingConfig,
@@ -35,19 +35,19 @@ def _shipped_profile(profile_id: str) -> ServiceProfile:
     return matches[0]
 
 
-def test_shipped_antigravity_profile_runs_gemini_37_flash_on_the_agent() -> None:
+def test_shipped_coder_profile_runs_gemini_37_flash_on_the_agent() -> None:
     """The profile names the managed agent and pins its reasoning model."""
-    profile = _shipped_profile("antigravity")
+    profile = _shipped_profile("coder")
     processing_config = profile.processing_config
 
     assert processing_config.provider == "google"
     assert is_interactions_agent_model(processing_config.llm_model or "") is True
     assert processing_config.antigravity_config is not None
     assert processing_config.antigravity_config.model == "gemini-3.7-flash"
-    assert "/antigravity" in profile.slash_commands
+    assert "/coder" in profile.slash_commands
 
 
-def test_shipped_antigravity_profile_grants_no_family_assistant_tools() -> None:
+def test_shipped_coder_profile_grants_no_family_assistant_tools() -> None:
     """The agent works only from the request; it holds no [B] access.
 
     A deny-by-default `tools_policy` is not enough on its own: `global_tools_policy`
@@ -55,7 +55,7 @@ def test_shipped_antigravity_profile_grants_no_family_assistant_tools() -> None:
     policy occupies, so the three globally granted tools have to be withheld
     explicitly or the profile is advertised as holding them.
     """
-    profile = _shipped_profile("antigravity")
+    profile = _shipped_profile("coder")
     assert profile.tools_policy is not None
     assert profile.tools_policy.default_decision == "deny"
     assert set(profile.excluded_global_tools) == {
@@ -65,9 +65,9 @@ def test_shipped_antigravity_profile_grants_no_family_assistant_tools() -> None:
     }
 
 
-def test_shipped_antigravity_config_reaches_the_agent_config_payload() -> None:
+def test_shipped_coder_config_reaches_the_agent_config_payload() -> None:
     """Feeding the shipped values to the client produces the API's agent_config."""
-    processing_config = _shipped_profile("antigravity").processing_config
+    processing_config = _shipped_profile("coder").processing_config
     assert processing_config.antigravity_config is not None
 
     client = GoogleGenAIClient(
@@ -85,10 +85,10 @@ def test_shipped_antigravity_config_reaches_the_agent_config_payload() -> None:
     }
 
 
-def test_shipped_antigravity_profile_passes_its_own_startup_validation() -> None:
+def test_shipped_coder_profile_passes_its_own_startup_validation() -> None:
     """What ships must survive the guard that rejects unrunnable combinations."""
-    profile = _shipped_profile("antigravity")
-    validate_antigravity_profile(
+    profile = _shipped_profile("coder")
+    validate_antigravity_agent_config(
         profile.id, profile.processing_config, profile.processing_config.llm_model or ""
     )
 
@@ -96,7 +96,7 @@ def test_shipped_antigravity_profile_passes_its_own_startup_validation() -> None
 def test_antigravity_config_on_a_non_agent_profile_is_rejected() -> None:
     """Settings that would be silently discarded fail at startup instead."""
     with pytest.raises(ValueError, match="not an Antigravity managed agent"):
-        validate_antigravity_profile(
+        validate_antigravity_agent_config(
             "misconfigured",
             ProcessingConfig(
                 llm_model="gemini-3.7-flash",
@@ -109,7 +109,7 @@ def test_antigravity_config_on_a_non_agent_profile_is_rejected() -> None:
 def test_antigravity_profile_with_retry_config_is_rejected() -> None:
     """A fallback chat model would answer instead of running the task."""
     with pytest.raises(ValueError, match="retry_config, which is unsupported"):
-        validate_antigravity_profile(
+        validate_antigravity_agent_config(
             "misconfigured",
             ProcessingConfig(
                 llm_model="antigravity-preview-05-2026",
@@ -131,7 +131,7 @@ def test_antigravity_named_only_inside_a_retry_chain_is_rejected() -> None:
     inline path with the API's default reasoning model.
     """
     with pytest.raises(ValueError, match="retry_config, which is unsupported"):
-        validate_antigravity_profile(
+        validate_antigravity_agent_config(
             "misconfigured",
             ProcessingConfig(
                 provider="google",
@@ -150,7 +150,7 @@ def test_antigravity_profile_on_a_non_google_provider_is_rejected(
 ) -> None:
     """Another provider's client would send the agent id as a chat model."""
     with pytest.raises(ValueError, match="must be 'google'"):
-        validate_antigravity_profile(
+        validate_antigravity_agent_config(
             "misconfigured",
             ProcessingConfig(
                 llm_model="antigravity-preview-05-2026",

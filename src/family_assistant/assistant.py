@@ -359,7 +359,7 @@ def _antigravity_models_in_retry_config(retry_config: RetryConfig | None) -> lis
     return [model for model in chain if model and is_antigravity_model(model)]
 
 
-def validate_antigravity_profile(
+def validate_antigravity_agent_config(
     profile_id: str,
     processing_config: ProcessingConfig,
     llm_model: str,
@@ -1086,7 +1086,7 @@ class Assistant:
                             f"but provider is '{resolved_provider}' (must be 'google')"
                         )
 
-                validate_antigravity_profile(
+                validate_antigravity_agent_config(
                     profile_id, profile_proc_conf, profile_llm_model
                 )
 

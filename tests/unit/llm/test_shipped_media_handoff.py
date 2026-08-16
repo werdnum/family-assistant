@@ -226,6 +226,23 @@ def test_shipped_config_admits_the_media_the_handoff_transcribes() -> None:
     assert {"image/png", "application/pdf"} <= allowed
 
 
+# A test config replaces `global_tools_policy` wholesale, which strands the
+# exclusions of every shipped profile that withholds a grant -- validation
+# rejects an exclusion naming a tool nothing grants. These tests are about how
+# one profile's exclusion is matched against the grants, not about narrowing the
+# grant set, so they keep shipping the three global grants alongside whatever
+# rule they are actually exercising.
+_SHIPPED_GLOBAL_GRANTS = (
+    "    - match:\n"
+    "        names:\n"
+    '          - "read_text_attachment"\n'
+    '          - "jq_query"\n'
+    '          - "report_technical_problem"\n'
+    '      decision: "allow"\n'
+    "      priority: 50\n"
+)
+
+
 def test_an_exclusion_that_withholds_nothing_is_rejected(tmp_path: Path) -> None:
     """A misspelled exclusion must not validate as a working security control.
 
@@ -263,8 +280,7 @@ def test_two_overlapping_globs_are_not_rejected(tmp_path: Path) -> None:
         "        names:\n"
         '          - "read_*"\n'
         '      decision: "allow"\n'
-        "      priority: 50\n"
-        "service_profiles:\n"
+        "      priority: 50\n" + _SHIPPED_GLOBAL_GRANTS + "service_profiles:\n"
         '  - id: "media_analyst"\n'
         "    excluded_global_tools:\n"
         '      - "*_attachment"\n'
@@ -336,8 +352,7 @@ def test_an_exclusion_matching_a_confirm_rule_is_accepted(tmp_path: Path) -> Non
         "        names:\n"
         '          - "spawn_worker"\n'
         '      decision: "confirm"\n'
-        "      priority: 50\n"
-        "service_profiles:\n"
+        "      priority: 50\n" + _SHIPPED_GLOBAL_GRANTS + "service_profiles:\n"
         '  - id: "media_analyst"\n'
         "    excluded_global_tools:\n"
         '      - "spawn_worker"\n'

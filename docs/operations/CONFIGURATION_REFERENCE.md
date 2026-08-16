@@ -1806,13 +1806,13 @@ must not set `retry_config` — a fallback would be an ordinary chat completion 
 model's own knowledge instead of running the task, which is why that combination is rejected at
 startup. It needs `GEMINI_API_KEY` like any other Google profile.
 
-The shipped `antigravity` profile denies all tools: the agent works in a Google-hosted sandbox with
-no access to household data. See
+The shipped profile using it is `coder` (slash command `/coder`), which holds no tools at all: the
+agent works in a Google-hosted sandbox with no access to household data. See
 [gemini-antigravity-managed-agent.md](../design/gemini-antigravity-managed-agent.md).
 
 ```yaml
 service_profiles:
-  - id: "antigravity"
+  - id: "coder"
     processing_config:
       provider: "google"
       llm_model: "antigravity-preview-05-2026"
