@@ -53,15 +53,26 @@ email carries exactly the taint this is meant to catch. So `InteractionsAgentPro
 evaluates its declared sink against the turn's incoming taint before submitting, on both the
 delegated and the interactive path.
 
-This is not redundant with the tool gate; they cover different entry points and fail differently:
+This is not redundant with the tool gate; they cover different entry points, and what each does with
+a `confirm` outcome differs because only one of them has somebody to ask:
 
-- **Tool gate** — runs before a delegation run row exists, and can offer a *confirmation* to the
-  caller, because it has the confirmation machinery. This is where the `confirm` outcome is actually
-  usable.
-- **Profile gate** — the security boundary. It has no confirmation channel (a poll-driven submit has
-  no one to ask), so it treats `confirm` and `deny` alike: refuse, with a message naming the tier
-  that caused it. A `confirm`-able request is expected to have been confirmed at the call site;
-  reaching the profile gate un-confirmed means it arrived by a path that never offered one.
+- **Tool gate** — runs before a delegation run row exists and offers the *confirmation*, because it
+  has the confirmation machinery and a live caller. This is where `confirm` is resolved.
+- **Profile gate** — the security boundary, and the only gate on entry points that are not tool
+  calls.
+  - On a **delegated submit** it refuses `deny` only. `delegate_to_service` is the sole creator of a
+    delegation run, and its gate classifies the call by this same declared sink, so a `confirm`
+    reaching submit has already been approved upstream — refusing it again would fail every approved
+    delegation. `deny` is never confirmable, so no upstream approval for it can exist and it is
+    still refused here.
+  - On a **direct turn** (slash command, A2A request, `wake_llm` automation) it refuses `confirm` as
+    well: nothing offered a confirmation on those paths, and a poll-driven or automated turn has
+    nobody to ask.
+
+The gate lives on `ProcessingService`, not on the Interactions subclass, and runs at the top of both
+`handle_chat_interaction` and `handle_chat_interaction_stream`. The web path streams, so a gate on
+the non-streaming call alone would be no gate at all; and putting it on the base class means a
+`taint_sink_class` declared on any future profile is enforced rather than silently ignored.
 
 `submit_async` already receives the parent turn's taint as `initial_taint_sources` — the delegation
 run persists `taint_state_json` and the worker rehydrates it. The original implementation discarded
@@ -92,11 +103,16 @@ routing the user's own file is allowed without one.
 4. **`assistant.py`** — builds the map from config before the per-profile loop (it spans profiles)
    and passes the merged taint policy into the processing service so the profile gate has an
    evaluator.
-5. **`processing/interactions_agent_service.py`** — `_evaluate_sink()` gates both entry points;
-   `_build_environment_sources()` replaces the blanket refusal.
-6. **`llm/providers/google_genai_client.py`** — `start_agent_interaction(..., environment_sources=)`
+5. **`processing/service.py`** — `sink_refusal_reason()` on the base class, called from both chat
+   entry points, with `allow_confirmable` distinguishing a pre-gated delegated submit from a direct
+   turn.
+6. **`processing/interactions_agent_service.py`** — `_refuse_denied_sink()` applies it to the
+   delegated submit; `_build_environment_sources()` replaces the blanket refusal, giving each
+   mounted file a unique `target` (a repeated filename gains a `-2` suffix, since the sandbox holds
+   one file per path).
+7. **`llm/providers/google_genai_client.py`** — `start_agent_interaction(..., environment_sources=)`
    attaches `environment: {"type": "remote", "sources": [...]}`.
-7. **`defaults.yaml`** — `coder` declares `taint_sink_class: sandbox_network`.
+8. **`defaults.yaml`** — `coder` declares `taint_sink_class: sandbox_network`.
 
 ## Non-goals
 

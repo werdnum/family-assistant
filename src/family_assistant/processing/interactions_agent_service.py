@@ -19,7 +19,7 @@ from __future__ import annotations
 import base64
 import logging
 import re
-from typing import TYPE_CHECKING, TypedDict, cast
+from typing import TYPE_CHECKING, TypedDict
 
 from family_assistant.llm.messages import UserMessage
 from family_assistant.llm.providers.google_genai_client import (
@@ -37,8 +37,6 @@ from family_assistant.processing.service import ProcessingService
 from family_assistant.processing.types import ChatInteractionResult
 from family_assistant.security.taint import (
     SourceTrustTier,
-    TaintPolicyEvaluator,
-    TaintPolicyOutcome,
     TaintSource,
     TaintSourceType,
     TurnTaintState,
@@ -87,14 +85,32 @@ class TaintedSinkRefusedError(DelegationPermanentError):
     """
 
 
-def _sandbox_target_path(attachment_id: str, metadata: AttachmentMetadata) -> str:
-    """Mount path for one attachment, safe against traversal in its filename."""
+def _sandbox_target_path(
+    attachment_id: str, metadata: AttachmentMetadata, taken: set[str]
+) -> str:
+    """Mount path for one attachment: readable, traversal-safe, and unique.
+
+    Two attachments can share an ``original_filename``, and two different names
+    can sanitize to the same one. A repeated ``target`` would leave the sandbox
+    holding one file where the task expects two, so a colliding name gains a
+    ``-2``/``-3`` suffix before its extension. The first file of a given name
+    keeps it, so the common single-attachment case reads naturally.
+    """
     raw_name = str(metadata.metadata.get("original_filename") or "").strip()
     basename = raw_name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
     cleaned = _UNSAFE_FILENAME_CHARS.sub("_", basename).lstrip(".")
     if not cleaned:
         cleaned = f"attachment-{attachment_id}"
-    return f"{_SANDBOX_MOUNT_DIR}/{cleaned}"
+
+    candidate = cleaned
+    if candidate in taken:
+        stem, dot, suffix = cleaned.partition(".")
+        counter = 2
+        while candidate in taken:
+            candidate = f"{stem}-{counter}{dot}{suffix}"
+            counter += 1
+    taken.add(candidate)
+    return f"{_SANDBOX_MOUNT_DIR}/{candidate}"
 
 
 def _attachment_taint_sources(
@@ -192,57 +208,23 @@ class InteractionsAgentProcessingService(ProcessingService):
         _ = (conversation_id, subconversation_id)
         return None
 
-    def _evaluate_sink(self, taint_sources: Sequence[TaintSource]) -> None:
-        """Gate the whole turn on the profile's declared runtime-taint sink.
+    def _refuse_denied_sink(self, taint_sources: Sequence[TaintSource]) -> None:
+        """Fail a delegated submit whose taint bars this profile's sink.
 
-        A turn on a profile that runs code in a sandbox is itself a privileged
-        operation, so it is evaluated the way the equivalent *tool* already is:
-        the shipped matrix denies ``sandbox_network`` at ``unknown_external``
-        and confirms it below that. Without this, content the assistant
-        derived from an email could be handed to a code-execution agent simply
-        by delegating instead of calling ``spawn_worker``.
+        ``allow_confirmable`` because a delegated run only exists because
+        ``delegate_to_service`` created it, and that tool's own gate classifies
+        the call by this same declared sink -- so a ``confirm`` outcome was
+        already put to the user there. Re-refusing it here would fail every
+        approved delegation. ``deny`` is never confirmable, so it is still
+        refused: no upstream approval for it can exist.
 
-        ``confirm`` is refused here rather than confirmed. This gate has nobody
-        to ask -- a submit-then-poll run has no live caller -- and the entry
-        point that *can* ask is the ``delegate_to_service`` tool, which
-        classifies the call by this same declared sink. Reaching this gate with
-        a confirmable outcome means the turn arrived by a path that never
-        offered a confirmation, so refusing is the conservative answer.
+        Direct turns take the base class's gate instead (see
+        ``ProcessingService.sink_refusal_reason``), which refuses ``confirm``
+        too, because no gate offered a confirmation on those paths.
         """
-        sink_class = self.service_config.taint_sink_class
-        if sink_class is None:
-            return
-
-        state = TurnTaintState.empty()
-        for source in taint_sources:
-            state = state.add_source(source)
-        evaluation = TaintPolicyEvaluator(self.taint_policy).evaluate(
-            state=state, sink_class=sink_class
-        )
-        logger.info(
-            "Profile sink taint policy evaluated: profile=%s sink=%s requested=%s "
-            "effective=%s mode=%s max_tier=%s",
-            self.service_config.id,
-            evaluation.sink_class.value,
-            evaluation.requested_outcome.value,
-            evaluation.effective_outcome.value,
-            evaluation.mode.value,
-            state.max_tier.config_value,
-        )
-        if evaluation.effective_outcome in {
-            TaintPolicyOutcome.ALLOW,
-            TaintPolicyOutcome.AUDIT,
-        }:
-            return
-        raise TaintedSinkRefusedError(
-            f"Profile '{self.service_config.id}' refused this request: it runs "
-            f"code in a sandbox ({sink_class.value}), and the request carries "
-            f"{state.max_tier.config_value} content, which the runtime taint "
-            f"policy resolves to '{evaluation.effective_outcome.value}'. "
-            "Content derived from email, web pages or other untrusted sources "
-            "cannot direct a code-execution agent. Ask the user to make the "
-            "request themselves if it is genuinely wanted."
-        )
+        refusal = self.sink_refusal_reason(taint_sources, allow_confirmable=True)
+        if refusal is not None:
+            raise TaintedSinkRefusedError(refusal)
 
     async def _build_environment_sources(
         self,
@@ -268,6 +250,7 @@ class InteractionsAgentProcessingService(ProcessingService):
         """
         sources: list[EnvironmentSourceDict] = []
         taint_sources: list[TaintSource] = []
+        taken_names: set[str] = set()
         total_bytes = 0
 
         for part in content_parts:
@@ -317,7 +300,7 @@ class InteractionsAgentProcessingService(ProcessingService):
                 "type": "inline",
                 "content": base64.b64encode(content).decode("ascii"),
                 "encoding": "base64",
-                "target": _sandbox_target_path(attachment_id, metadata),
+                "target": _sandbox_target_path(attachment_id, metadata, taken_names),
             })
             taint_sources.extend(
                 _attachment_taint_sources(attachment_id, metadata.metadata)
@@ -354,7 +337,7 @@ class InteractionsAgentProcessingService(ProcessingService):
         environment_sources, attachment_taint = await self._build_environment_sources(
             content_parts, db_context=db_context, acting_user_id=acting_user_id
         )
-        self._evaluate_sink((*(initial_taint_sources or ()), *attachment_taint))
+        self._refuse_denied_sink((*(initial_taint_sources or ()), *attachment_taint))
 
         system_prompt = self.format_system_prompt(user_name=user_name)
         user_text = self._extract_user_content_for_history(content_parts)
@@ -387,30 +370,6 @@ class InteractionsAgentProcessingService(ProcessingService):
             remote_context_id=None,
             terminal_result=None,
         )
-
-    async def handle_chat_interaction(
-        self,
-        *args: object,
-        **kwargs: object,
-    ) -> ChatInteractionResult:
-        """Gate the interactive path on the same sink before the turn runs.
-
-        Delegation is not the only way in: a slash command, an A2A request and
-        a ``wake_llm`` automation all reach a profile directly, and an
-        automation fired by an incoming email carries exactly the taint this
-        gate exists to catch. Refusing returns an error result rather than
-        raising, because there is a user waiting on this path.
-        """
-        raw_sources = kwargs.get("initial_taint_sources")
-        sources = cast("Sequence[TaintSource]", raw_sources) if raw_sources else ()
-        try:
-            self._evaluate_sink(sources)
-        except TaintedSinkRefusedError as exc:
-            return ChatInteractionResult.error(
-                text_reply=str(exc),
-                error_traceback=f"Runtime taint policy refused the turn: {exc}",
-            )
-        return await super().handle_chat_interaction(*args, **kwargs)  # pyright: ignore[reportArgumentType, reportCallIssue]
 
     async def poll_async(
         self,

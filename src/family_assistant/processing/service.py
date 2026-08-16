@@ -23,7 +23,12 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
-from family_assistant.security.taint import TaintPolicyConfig, TurnTaintState
+from family_assistant.security.taint import (
+    TaintPolicyConfig,
+    TaintPolicyEvaluator,
+    TaintPolicyOutcome,
+    TurnTaintState,
+)
 from family_assistant.utils.clock import Clock, SystemClock
 from family_assistant.utils.text_normalization import normalize_latex_to_unicode
 
@@ -224,6 +229,67 @@ class ProcessingService:
             app_config,
             self.tool_executor,
             self.attachment_processor,
+        )
+
+    def sink_refusal_reason(
+        self,
+        taint_sources: Sequence[TaintSource] | None,
+        *,
+        allow_confirmable: bool = False,
+    ) -> str | None:
+        """Refusal text when the turn's taint bars this profile's declared sink.
+
+        A profile whose whole turn is a privileged operation -- an agent that
+        runs code in a sandbox -- declares a ``taint_sink_class``, and the turn
+        is then evaluated the way the equivalent *tool* already is. Returns
+        ``None`` (proceed) for a profile that declares no sink, which is every
+        ordinary profile.
+
+        ``allow_confirmable`` distinguishes the two kinds of entry point. A
+        delegated submit is always preceded by ``delegate_to_service``, whose
+        tool gate classifies the call by this same declared sink and *can* ask
+        the user; by the time the run reaches submit, a ``confirm`` outcome has
+        already been resolved there, and refusing it again would fail every
+        approved delegation. A direct turn (slash command, A2A request,
+        ``wake_llm`` automation) passed no such gate, so ``confirm`` is refused
+        along with ``deny`` -- this path has nobody to ask. ``deny`` is refused
+        either way: it is never confirmable, so no upstream approval can exist.
+        """
+        sink_class = self.service_config.taint_sink_class
+        if sink_class is None:
+            return None
+
+        state = TurnTaintState.empty()
+        for source in taint_sources or ():
+            state = state.add_source(source)
+        evaluation = TaintPolicyEvaluator(self.taint_policy).evaluate(
+            state=state, sink_class=sink_class
+        )
+        logger.info(
+            "Profile sink taint policy evaluated: profile=%s sink=%s requested=%s "
+            "effective=%s mode=%s max_tier=%s allow_confirmable=%s",
+            self.service_config.id,
+            evaluation.sink_class.value,
+            evaluation.requested_outcome.value,
+            evaluation.effective_outcome.value,
+            evaluation.mode.value,
+            state.max_tier.config_value,
+            allow_confirmable,
+        )
+        permitted = {TaintPolicyOutcome.ALLOW, TaintPolicyOutcome.AUDIT}
+        if allow_confirmable:
+            permitted |= {TaintPolicyOutcome.CONFIRM}
+        if evaluation.effective_outcome in permitted:
+            return None
+
+        return (
+            f"Profile '{self.service_config.id}' refused this request: it runs "
+            f"code in a sandbox ({sink_class.value}), and the request carries "
+            f"{state.max_tier.config_value} content, which the runtime taint "
+            f"policy resolves to '{evaluation.effective_outcome.value}'. "
+            "Content derived from email, web pages or other untrusted sources "
+            "cannot direct a code-execution agent. Ask the user to make the "
+            "request themselves if it is genuinely wanted."
         )
 
     @property
@@ -1157,6 +1223,13 @@ class ProcessingService:
             f"Starting handle_chat_interaction for conversation {conversation_id}, turn {turn_id}"
         )
 
+        refusal = self.sink_refusal_reason(initial_taint_sources)
+        if refusal is not None:
+            return ChatInteractionResult.error(
+                text_reply=refusal,
+                error_traceback=f"Runtime taint policy refused the turn: {refusal}",
+            )
+
         thread_root_id_for_turn: int | None = None
         try:
             # --- 1-2. Persist user trigger + build LLM-ready messages ---
@@ -1343,6 +1416,18 @@ class ProcessingService:
         """
         if turn_id is None:
             turn_id = str(uuid.uuid4())
+
+        refusal = self.sink_refusal_reason(initial_taint_sources)
+        if refusal is not None:
+            # Before the span opens and before any row is written: a refused
+            # turn should leave nothing behind but the refusal itself.
+            yield LLMStreamEvent(
+                type="error",
+                error=refusal,
+                metadata={"error_id": str(uuid.uuid4())},
+            )
+            return
+
         span = tracer.start_span(
             "conversation.process",
             attributes={

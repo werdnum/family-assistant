@@ -24,6 +24,7 @@ from family_assistant.processing.protocol import (
 )
 from family_assistant.processing.types import (
     ChatInteractionResult,
+    ChatInteractionStatus,
     ProcessingServiceConfig,
 )
 from family_assistant.security.taint import (
@@ -146,6 +147,58 @@ async def test_submit_async_mounts_attachments_into_the_sandbox(
 
 
 @pytest.mark.asyncio
+async def test_attachments_sharing_a_filename_get_distinct_mount_targets(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """Two files named the same must not collapse onto one sandbox path.
+
+    The sandbox can hold one file per target, so a repeated target silently
+    loses an input of a multi-file task.
+    """
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path), db_engine=db_engine, config=None
+    )
+    db_context = Database(db_engine)
+    first = await registry.register_user_attachment(
+        db_context=db_context,
+        content=b"first",
+        filename="data.txt",
+        mime_type="text/plain",
+        user_id="user-1",
+    )
+    second = await registry.register_user_attachment(
+        db_context=db_context,
+        content=b"second",
+        filename="data.txt",
+        mime_type="text/plain",
+        user_id="user-1",
+    )
+
+    llm_client = _google_client()
+    mock_interaction = AsyncMock()
+    mock_interaction.id = "inter_two"
+    llm_client.start_agent_interaction = AsyncMock(return_value=mock_interaction)
+    service = _make_service(llm_client, attachment_registry=registry)
+
+    await service.submit_async(
+        [
+            {"type": "attachment", "attachment_id": first.attachment_id},
+            {"type": "attachment", "attachment_id": second.attachment_id},
+        ],
+        conversation_id="conv-1",
+        subconversation_id="sub-1",
+        user_name="Andrew",
+        db_context=db_context,
+        acting_user_id="user-1",
+    )
+
+    sources = llm_client.start_agent_interaction.call_args.kwargs["environment_sources"]
+    targets = [source["target"] for source in sources]
+    assert targets == ["/workspace/data.txt", "/workspace/data-2.txt"]
+
+
+@pytest.mark.asyncio
 async def test_submit_async_refuses_an_attachment_owned_by_another_user(
     db_engine: AsyncEngine,
     tmp_path: Path,
@@ -193,6 +246,117 @@ async def test_submit_async_refuses_an_attachment_owned_by_another_user(
         )
 
     llm_client.start_agent_interaction.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_submit_async_allows_a_confirmable_tier_already_gated_at_the_tool(
+    db_engine: AsyncEngine,
+) -> None:
+    """An approved delegation must not be refused again at the profile gate.
+
+    known_contact resolves to `confirm`, and `delegate_to_service` -- the only
+    creator of a delegation run -- puts that to the user before the run exists.
+    Refusing it here as well would fail every approved delegation.
+    """
+    llm_client = _google_client()
+    mock_interaction = AsyncMock()
+    mock_interaction.id = "inter_confirmed"
+    llm_client.start_agent_interaction = AsyncMock(return_value=mock_interaction)
+    service = _make_service(
+        llm_client,
+        taint_sink_class=SinkClass.SANDBOX_NETWORK,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+    )
+
+    submission = await service.submit_async(
+        [{"type": "text", "text": "Reformat the numbers Dana sent."}],
+        conversation_id="conv-1",
+        subconversation_id="sub-1",
+        user_name="Andrew",
+        db_context=Database(db_engine),
+        initial_taint_sources=[
+            TaintSource(
+                source_type=TaintSourceType.EMAIL,
+                source_id="msg-known",
+                tier=SourceTrustTier.KNOWN_CONTACT,
+                labels=frozenset(),
+                reason="Mail from a known contact.",
+            )
+        ],
+    )
+
+    assert submission.remote_task_id == "inter_confirmed"
+
+
+@pytest.mark.asyncio
+async def test_a_direct_turn_refuses_a_confirmable_tier_no_gate_offered(
+    db_engine: AsyncEngine,
+) -> None:
+    """A direct turn passed no tool gate, so `confirm` has nobody behind it."""
+    llm_client = _google_client()
+    service = _make_service(
+        llm_client,
+        taint_sink_class=SinkClass.SANDBOX_NETWORK,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+    )
+
+    result = await service.handle_chat_interaction(
+        db_context=Database(db_engine),
+        interface_type="web",
+        conversation_id="conv-1",
+        trigger_content_parts=[{"type": "text", "text": "Run this."}],
+        trigger_interface_message_id=None,
+        user_name="Andrew",
+        initial_taint_sources=[
+            TaintSource(
+                source_type=TaintSourceType.EMAIL,
+                source_id="msg-known",
+                tier=SourceTrustTier.KNOWN_CONTACT,
+                labels=frozenset(),
+                reason="Mail from a known contact.",
+            )
+        ],
+    )
+
+    assert result.status is ChatInteractionStatus.ERROR
+    assert "known_contact" in result.text_reply
+
+
+@pytest.mark.asyncio
+async def test_the_streaming_entry_point_is_gated_too(
+    db_engine: AsyncEngine,
+) -> None:
+    """The web path streams, so a gate only on the non-streaming call is no gate."""
+    llm_client = _google_client()
+    service = _make_service(
+        llm_client,
+        taint_sink_class=SinkClass.SANDBOX_NETWORK,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+    )
+
+    events = [
+        event
+        async for event in service.handle_chat_interaction_stream(
+            db_context=Database(db_engine),
+            interface_type="web",
+            conversation_id="conv-1",
+            trigger_content_parts=[{"type": "text", "text": "Run this."}],
+            trigger_interface_message_id=None,
+            user_name="Andrew",
+            initial_taint_sources=[
+                TaintSource(
+                    source_type=TaintSourceType.EMAIL,
+                    source_id="msg-1",
+                    tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                    labels=frozenset(),
+                    reason="Inbound email.",
+                )
+            ],
+        )
+    ]
+
+    assert [event.type for event in events] == ["error"]
+    assert "unknown_external" in (events[0].error or "")
 
 
 @pytest.mark.asyncio
