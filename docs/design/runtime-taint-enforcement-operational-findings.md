@@ -19,9 +19,9 @@ other, demonstrating a live artifact-to-artifact feedback loop.
 
 The minimal correction is ambient prompt-admission control:
 
-- A stored note at or above `taint_policy.high_taint_tier` must not contribute content, titles, or
-  skill-catalog metadata to ambient prompt context unless an authenticated user has explicitly
-  reviewed that exact prompt-visible material.
+- A stored note at or above `taint_policy.high_taint_tier` must not contribute content, titles,
+  attachment references, or skill-catalog metadata to ambient prompt context unless an authenticated
+  user has explicitly reviewed that exact prompt-visible material.
 - The note remains stored, searchable, and explicitly retrievable. Explicit retrieval restores its
   provenance normally, so subsequent sinks remain protected.
 - Review state is derived from the existing `include_in_prompt` intent and provenance metadata. The
@@ -207,6 +207,7 @@ implicit because database-backed skills are currently always advertised.
 The notes context provider must omit all prompt-visible material from `blocked_by_taint` artifacts:
 
 - regular-note title and content from the included-notes section;
+- regular-note attachment IDs, descriptions, and MIME types;
 - blocked regular-note titles from the excluded-notes section; and
 - database-skill name and description from the skill catalog.
 
@@ -259,12 +260,16 @@ chrome. A chat or push confirmation must not render attacker-controlled note con
 part of the application's own instruction.
 
 The review can be stored inside `provenance_metadata_json` and bound to a canonical hash of every
-prompt-visible field: title and content for a regular note, or skill name and description for a
-database-backed skill. If attachments or other fields later become ambient, they join the hash.
-Original source provenance remains available for audit. Prompt admission treats a matching review as
-the user's attestation that the exact material is safe for ambient use. Any prompt-visible change
-invalidates the review automatically. An authenticated Notes UI save may combine editing and review
-when the user explicitly selects ambient inclusion for the resulting content.
+prompt-visible field: title, content, ordered attachment IDs, and each attachment's rendered
+description and MIME type for a regular note; or skill name and description for a database-backed
+skill. Admission must resolve attachment metadata from the same snapshot used to construct prompt
+context. A newly resolvable attachment or any association or rendered-metadata change therefore
+invalidates the review before it reaches the prompt. Any other field that becomes ambient later must
+join the hash. Original source provenance remains available for audit. Prompt admission treats a
+matching review as the user's attestation that the exact material is safe for ambient use. Any
+prompt-visible change invalidates the review automatically. An authenticated Notes UI save may
+combine editing and review when the user explicitly selects ambient inclusion for the resulting
+content.
 
 The attestation is repository-managed security metadata. No model-influenced write path, import, or
 generic provenance mapping may set or preserve a review for changed content. The repository must
@@ -388,8 +393,8 @@ aggregate diagnostics surface.
 
 ## Acceptance criteria
 
-- A high-tier database artifact without a valid review contributes no title, content, skill name,
-  skill description, or taint to initial turn context.
+- A high-tier database artifact without a valid review contributes no title, content, attachment
+  reference or metadata, skill name, skill description, or taint to initial turn context.
 - The same note remains explicitly discoverable and retrievable; retrieval restores its provenance.
 - A note or skill write that becomes blocked tells the user whether current or stored provenance is
   responsible.
