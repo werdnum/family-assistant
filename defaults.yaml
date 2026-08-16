@@ -289,8 +289,12 @@ indexing_pipeline_config:
 mcp_config:
   mcpServers:
     time:
-      command: "uvx"
-      args: ["mcp-server-time", "--local-timezone=Australia/Sydney"]
+      # Invoke the installed entry point rather than `uvx mcp-server-time`. The MCP SDK spawns
+      # stdio servers with a whitelisted environment (HOME, LOGNAME, PATH, SHELL, TERM, USER), so
+      # `uvx` cannot see UV_TOOL_DIR and would re-resolve the package from PyPI at every startup —
+      # picking up whatever versions resolve today, inside the MCP initialization timeout.
+      command: "mcp-server-time"
+      args: ["--local-timezone=Australia/Sydney"]
     brave:
       command: "deno"
       args:

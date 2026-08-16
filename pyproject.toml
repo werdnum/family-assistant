@@ -283,6 +283,10 @@ cmd = "scripts/run-tests.sh --skip-lint --db postgres -xvs"
 help = "Run tests with SQLite database backend only"
 cmd = "scripts/run-tests.sh --skip-lint --db sqlite -m 'not postgres' -xq"
 
+[tool.poe.tasks.check-mcp]
+help = "Connect to the configured MCP servers and report which ones fail to start"
+cmd = "python scripts/check_mcp_servers.py --all"
+
 [tool.poe.tasks.ui-dev]
 help = "Run Vite development server for frontend"
 shell = "npm run --prefix frontend dev"
