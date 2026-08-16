@@ -1894,6 +1894,22 @@ Expansion applies to every string value: stdio `command`, `args`, and `env` entr
 of a remote SSE or Streamable HTTP server. For example, `"url": "${MCP_HTTP_ORIGIN}/mcp"` keeps a
 deployment-specific origin out of `config.yaml`.
 
+#### The environment a stdio server actually receives
+
+A stdio server is spawned with a whitelisted environment — `HOME`, `LOGNAME`, `PATH`, `SHELL`,
+`TERM`, `USER` — plus whatever the entry's own `env` block declares. Nothing else from the
+application's environment reaches the child process.
+
+This rules out launchers that rely on ambient configuration. `uvx <package>` cannot see
+`UV_TOOL_DIR`, so it will not find a pre-installed tool environment and re-resolves the package from
+PyPI on every connection, inside the initialization timeout and onto whatever versions resolve that
+day. Install the server and invoke its entry point by name instead, or pass what it needs through
+`env`.
+
+A server that fails to start does not make the application unhealthy — it is logged, marked
+`failed`, and its tools are simply absent. Run `poe check-mcp` (or
+`python scripts/check_mcp_servers.py <server-id>`) to get a verdict per server.
+
 #### tool_metadata (taint classification)
 
 Configure `tool_metadata` for MCP servers whose protocol annotations do not describe their security

@@ -23,6 +23,29 @@ is the suppressed count. Enablement comes from `ruff check --show-settings`, so 
 Runs from `format-and-lint.sh` and as a pre-commit hook; takes filenames only so pre-commit can pass
 them, and always counts the whole repository. The root `AGENTS.md` covers what to do when it fails.
 
+### `check_mcp_servers.py`
+
+Connects to the MCP servers named on the command line (or `--all`) through the same
+`MCPToolsProvider` the application uses, and exits nonzero if any of them fails to come back
+connected with at least one tool. Available as `poe check-mcp`.
+
+This exists because a failed MCP server is otherwise invisible: the provider logs it, marks the
+server `failed`, and the app keeps serving without those tools, so `/health` stays green.
+`container-smoke-test.sh` runs it inside the built image so a release cannot ship a server that does
+not start there.
+
+Note that MCP stdio servers are spawned with a whitelisted environment — `HOME`, `LOGNAME`, `PATH`,
+`SHELL`, `TERM`, `USER` — so a command cannot depend on anything else being exported to it. That is
+why the servers are invoked by entry-point name rather than through `uvx`, which would need
+`UV_TOOL_DIR` to find the environment the image installed and instead re-resolves from PyPI at every
+startup.
+
+### `container-smoke-test.sh`
+
+Runs a built image, waits for `/health`, then verifies the MCP servers in `$MCP_SERVERS` (default
+`time`) start inside it. Invoked by the `smoke-test` job in `build-containers.yml` via
+`.github/actions/smoke-test-action`, which gates the push of the main image.
+
 ### `run_pytest_adaptive.py`
 
 Default pytest runner used by `scripts/run-tests.sh`. It collects nodeids, runs serial pytest shards
