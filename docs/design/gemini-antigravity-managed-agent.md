@@ -85,6 +85,13 @@ files, and is reached as a conversation.
   a UI question we have no requirement for yet.
 - **Passing Family Assistant tools as `function` declarations.** The agent supports caller-supplied
   tools; handing it ours would undo the Rule of Two stance above.
+- **Carrying attachments.** An interaction takes one text `input`, so a delegation's
+  `attachment_ids` and any multimodal injection are refused rather than dropped — the caller is told
+  to inline the content as text (`read_text_attachment` does this for text, CSV and JSON) or to pick
+  a profile that reads attachments. Resolving them here instead would mean threading an acting-user
+  id through `submit_async` for owner-scoped access, and would still leave images and PDFs
+  unrepresentable. Mounting real files is what the agent's `environment.sources` is for, which is
+  the custom-environment decision above.
 
 ## Open questions
 

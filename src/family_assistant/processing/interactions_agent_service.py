@@ -26,6 +26,7 @@ from family_assistant.llm.providers.google_genai_client import (
 )
 from family_assistant.processing.protocol import (
     PENDING,
+    DelegationPermanentError,
     DelegationTransientError,
     PendingPoll,
     RemoteSubmission,
@@ -94,6 +95,40 @@ class InteractionsAgentProcessingService(ProcessingService):
         _ = (conversation_id, subconversation_id)
         return None
 
+    def _reject_unsupported_content_parts(
+        self, content_parts: list[ContentPartDict]
+    ) -> None:
+        """Fail a delegation whose attachments this path cannot carry.
+
+        ``delegate_to_service`` turns ``attachment_ids`` into ``attachment``
+        content parts, and the interactive path resolves those into injection
+        messages. This path does not: the interaction takes a single ``input``
+        string, and ``_extract_user_content_for_history`` reduces the request
+        to its first text part, so an attachment would vanish between the
+        caller and the agent. Since the agent would then answer confidently
+        about a file it never saw -- the worst outcome for a profile whose job
+        includes transforming data -- the delegation fails instead, with a
+        message telling the caller what to do about it.
+
+        ``DelegationPermanentError`` rather than a transient one: re-submitting
+        the same parts would drop them again.
+        """
+        unsupported = sorted({
+            str(part.get("type"))
+            for part in content_parts
+            if part.get("type") != "text"
+        })
+        if not unsupported:
+            return
+        raise DelegationPermanentError(
+            f"Profile '{self.service_config.id}' cannot accept attachments: it "
+            f"runs a Google Interactions API agent, which takes a single text "
+            f"request, so the {', '.join(unsupported)} part(s) sent with this "
+            "delegation would be dropped. Read the attachment yourself (e.g. "
+            "with read_text_attachment) and include its content in the request "
+            "text, or delegate to a profile that accepts attachments."
+        )
+
     async def submit_async(
         self,
         content_parts: list[ContentPartDict],
@@ -114,8 +149,12 @@ class InteractionsAgentProcessingService(ProcessingService):
         interaction (if this is a resumed run — see
         ``DelegationRunsRepository.get_latest_completed_run``), and submits
         in the background.
+
+        Refuses a delegation carrying attachments rather than submitting one
+        that ignores them -- see ``_reject_unsupported_content_parts``.
         """
         _ = initial_taint_sources
+        self._reject_unsupported_content_parts(content_parts)
         system_prompt = self.format_system_prompt(user_name=user_name)
         user_text = self._extract_user_content_for_history(content_parts)
         messages: list[LLMMessage] = []

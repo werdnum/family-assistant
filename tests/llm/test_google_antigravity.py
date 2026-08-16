@@ -9,7 +9,13 @@ from pydantic import TypeAdapter
 
 from family_assistant.llm import LLMStreamEvent
 from family_assistant.llm.base import InvalidRequestError
-from family_assistant.llm.messages import LLMMessage, SystemMessage, UserMessage
+from family_assistant.llm.messages import (
+    ImageUrlContentPart,
+    LLMMessage,
+    SystemMessage,
+    TextContentPart,
+    UserMessage,
+)
 from family_assistant.llm.providers.google_genai_client import (
     GoogleGenAIClient,
     is_antigravity_model,
@@ -227,3 +233,51 @@ async def test_start_agent_interaction_submits_antigravity_without_streaming(
     assert call_kwargs["agent"] == ANTIGRAVITY_AGENT_ID
     assert call_kwargs["agent_config"]["model"] == "gemini-3.7-flash"
     assert call_kwargs["previous_interaction_id"] == "inter_ag_prev"
+
+
+def test_media_injected_as_provider_parts_is_refused_not_dropped() -> None:
+    """An image or PDF injection has no text form the agent could receive.
+
+    The Google adapter injects multimodal attachments as provider `parts`,
+    which this path cannot serialize into the single `input` string — so the
+    turn fails rather than asking the agent about a file it never got.
+    """
+    client = GoogleGenAIClient(api_key="test", model=ANTIGRAVITY_AGENT_ID)
+    injected = UserMessage(content="[System: File from previous tool response]")
+    injected.parts = [{"inline_data": {"mime_type": "image/png"}}]
+
+    with pytest.raises(InvalidRequestError, match="cannot read attachments"):
+        client._build_agent_create_kwargs([
+            UserMessage(content="Crop the attached image."),
+            injected,
+        ])
+
+
+def test_image_url_content_part_is_refused_not_dropped() -> None:
+    """The same holds for an image_url part reaching the agent path."""
+    client = GoogleGenAIClient(api_key="test", model=ANTIGRAVITY_AGENT_ID)
+
+    with pytest.raises(InvalidRequestError, match="cannot read image_url"):
+        client._build_agent_create_kwargs([
+            UserMessage(
+                content=[
+                    TextContentPart(type="text", text="What is in this picture?"),
+                    ImageUrlContentPart(
+                        type="image_url", image_url={"url": "https://example.com/a.png"}
+                    ),
+                ]
+            )
+        ])
+
+
+def test_text_shaped_attachment_injection_still_reaches_the_agent() -> None:
+    """A CSV/JSON/text attachment is injected as text, so it must still pass."""
+    client = GoogleGenAIClient(api_key="test", model=ANTIGRAVITY_AGENT_ID)
+
+    kwargs = client._build_agent_create_kwargs([
+        UserMessage(content="Transform the attached CSV."),
+        UserMessage(content="[System: File from previous tool response]\na,b\n1,2"),
+    ])
+
+    assert "Transform the attached CSV." in kwargs["input"]
+    assert "a,b" in kwargs["input"]

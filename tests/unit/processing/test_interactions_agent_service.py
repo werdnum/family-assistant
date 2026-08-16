@@ -16,7 +16,10 @@ from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.processing.interactions_agent_service import (
     InteractionsAgentProcessingService,
 )
-from family_assistant.processing.protocol import PENDING
+from family_assistant.processing.protocol import (
+    PENDING,
+    DelegationPermanentError,
+)
 from family_assistant.processing.types import (
     ChatInteractionResult,
     ProcessingServiceConfig,
@@ -71,6 +74,35 @@ def _make_service(llm_client: GoogleGenAIClient) -> InteractionsAgentProcessingS
 
 def _google_client() -> GoogleGenAIClient:
     return GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
+
+
+@pytest.mark.asyncio
+async def test_submit_async_refuses_a_delegation_carrying_attachments(
+    db_engine: AsyncEngine,
+) -> None:
+    """An attachment the agent cannot receive fails the run, it is not dropped.
+
+    `delegate_to_service` turns `attachment_ids` into attachment content parts,
+    and this path reduces the request to its first text part -- so submitting
+    anyway would have the agent answer confidently about a file it never saw.
+    """
+    llm_client = _google_client()
+    llm_client.start_agent_interaction = AsyncMock()
+    service = _make_service(llm_client)
+
+    with pytest.raises(DelegationPermanentError, match="cannot accept attachments"):
+        await service.submit_async(
+            [
+                {"type": "text", "text": "Summarise the attached spreadsheet."},
+                {"type": "attachment", "attachment_id": "att-1"},
+            ],
+            conversation_id="conv-1",
+            subconversation_id="sub-1",
+            user_name="Andrew",
+            db_context=Database(db_engine),
+        )
+
+    llm_client.start_agent_interaction.assert_not_awaited()
 
 
 @pytest.mark.asyncio

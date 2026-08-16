@@ -1524,6 +1524,8 @@ class GoogleGenAIClient(BaseLLMClient):
                 # Stop at the first non-user message
                 break
 
+            self._reject_unrepresentable_input(msg)
+
             msg_text = ""
             if isinstance(msg.content, str):
                 msg_text = msg.content
@@ -1540,6 +1542,41 @@ class GoogleGenAIClient(BaseLLMClient):
                 user_input_parts.insert(0, msg_text)
 
         return "\n\n".join(user_input_parts)
+
+    def _reject_unrepresentable_input(self, msg: LLMMessage) -> None:
+        """Refuse a message whose non-text payload the agent cannot receive.
+
+        An Interactions agent takes one ``input`` string, so anything that is
+        not text -- an image or PDF injected as provider ``parts``, an image
+        URL part -- is unrepresentable. Dropping it silently would hand the
+        agent a request that names a file it never received and let it answer
+        confidently about nothing, so the turn fails instead. Text-shaped
+        attachments (``text/*``, JSON, CSV) are unaffected: the base adapter
+        injects those as text, which this path carries.
+        """
+        if getattr(msg, "parts", None):
+            raise InvalidRequestError(
+                f"{self._agent_label} cannot read attachments: this request "
+                "carries media the agent has no way to receive. Send the "
+                "content as text, or use a profile that reads attachments.",
+                provider="google",
+                model=self.model_name,
+            )
+        if isinstance(msg.content, list):
+            unsupported = sorted({
+                part.type
+                for part in msg.content
+                if not isinstance(part, str | TextContentPart)
+                and getattr(part, "type", None) is not None
+            })
+            if unsupported:
+                raise InvalidRequestError(
+                    f"{self._agent_label} cannot read {', '.join(unsupported)} "
+                    "content: the agent takes a single text request. Send the "
+                    "content as text, or use a profile that reads attachments.",
+                    provider="google",
+                    model=self.model_name,
+                )
 
     def _extract_agent_system_prompt(self, messages: Sequence[LLMMessage]) -> str:
         """Concatenate every system message into one instruction string."""
