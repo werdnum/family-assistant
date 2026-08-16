@@ -53,10 +53,13 @@ agent in *our* sandbox; this one is entirely Google-hosted and is reached as a c
    default, so an upstream default change is a visible config change rather than a silent behaviour
    change under a prompt users have calibrated.
 4. **`assistant.py`** — `is_interactions_agent_model` (not just Deep Research) selects the pollable
-   subclass, and `validate_antigravity_profile` rejects two configurations that would otherwise fail
-   as plausible-looking answers: `antigravity_config` on a profile that is not the agent (silently
-   discarded), and `retry_config` on one that is (a fallback chat model answering from its own
-   knowledge instead of running the task).
+   subclass, and `validate_antigravity_profile` rejects three configurations that would otherwise
+   fail as plausible-looking answers rather than as errors: `antigravity_config` on a profile that
+   is not the agent (silently discarded); the agent named anywhere in a `retry_config` chain (as a
+   fallback it never runs, and as a primary the retry format carries no `antigravity_config` and —
+   with `llm_model` unset — hides the agent from the pollable-service selection, so a delegated run
+   quietly takes the inline path); and a non-Google `provider` beside the agent's model id, which
+   would build an OpenAI or Anthropic client and send the agent id as an ordinary chat model.
 5. **`google-genai` bumped to `>=2.18.1`** — 2.10.0's `agent_config` union knows only
    `deep-research` and `dynamic`, so an `antigravity` config is rejected client-side before it can
    be sent.

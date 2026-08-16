@@ -22,6 +22,7 @@ from family_assistant.config_models import (
     DEFAULT_REMOTE_MAX_ASYNC_SECONDS,
     AppConfig,  # Used at runtime
     ProcessingConfig,  # Used at runtime
+    RetryConfig,  # Used at runtime
 )
 from family_assistant.config_models import (  # Used at runtime
     CalendarConfig as PydanticCalendarConfig,
@@ -348,6 +349,16 @@ async def task_wrapper_handle_log_message(
     await original_handle_log_message(exec_context.db_context, payload)
 
 
+def _antigravity_models_in_retry_config(retry_config: RetryConfig | None) -> list[str]:
+    """Antigravity model ids named anywhere in a retry chain."""
+    if retry_config is None:
+        return []
+    chain = [retry_config.primary.model]
+    if retry_config.fallback is not None:
+        chain.append(retry_config.fallback.model)
+    return [model for model in chain if model and is_antigravity_model(model)]
+
+
 def validate_antigravity_profile(
     profile_id: str,
     processing_config: ProcessingConfig,
@@ -355,12 +366,20 @@ def validate_antigravity_profile(
 ) -> None:
     """Reject Antigravity profile settings that would fail silently at runtime.
 
-    Raises ``ValueError`` when ``antigravity_config`` is attached to a profile
-    that does not run the managed agent (the settings would simply be
-    discarded), or when an Antigravity profile carries a ``retry_config``: the
-    agent only exists on the Interactions API, so a fallback reached through
-    ``RetryingLLMClient`` would answer from the fallback model's own knowledge
-    instead of running the task, which reads as success.
+    The agent exists only on the Interactions API, reached through the Google
+    client, so three configurations produce a plausible-looking answer instead
+    of an error and are refused here:
+
+    - ``antigravity_config`` on a profile that is not the agent, where the
+      settings would simply be discarded;
+    - the agent anywhere in a ``retry_config`` chain -- as a fallback it would
+      never run, and as a primary the profile is built from the retry format,
+      which carries neither ``antigravity_config`` nor (when ``llm_model`` is
+      left unset) the model id the pollable-service selection reads, so a
+      delegated run would silently take the inline path;
+    - a non-Google ``provider`` alongside the agent's model id, which builds an
+      OpenAI or Anthropic client and sends the agent id as an ordinary chat
+      model.
     """
     is_antigravity_profile = is_antigravity_model(llm_model)
     if processing_config.antigravity_config and not is_antigravity_profile:
@@ -368,11 +387,26 @@ def validate_antigravity_profile(
             f"Profile '{profile_id}' sets antigravity_config but its model is "
             f"'{llm_model}', which is not an Antigravity managed agent"
         )
-    if is_antigravity_profile and processing_config.retry_config is not None:
+
+    retry_chain_models = _antigravity_models_in_retry_config(
+        processing_config.retry_config
+    )
+    if retry_chain_models or (
+        is_antigravity_profile and processing_config.retry_config is not None
+    ):
+        named = ", ".join(retry_chain_models) or llm_model
         raise ValueError(
-            f"Profile '{profile_id}' uses the Antigravity managed agent with "
-            "retry_config, which is unsupported (the agent requires the single "
-            "Google GenAI client)"
+            f"Profile '{profile_id}' uses the Antigravity managed agent "
+            f"('{named}') with retry_config, which is unsupported (the agent "
+            "requires the single Google GenAI client). Set it as llm_model with "
+            "no retry_config instead."
+        )
+
+    if is_antigravity_profile and processing_config.provider != "google":
+        raise ValueError(
+            f"Profile '{profile_id}' uses the Antigravity managed agent but "
+            f"provider is '{processing_config.provider}' (must be 'google' -- the "
+            "agent only exists on Google's Interactions API)"
         )
 
 

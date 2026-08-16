@@ -102,10 +102,48 @@ def test_antigravity_profile_with_retry_config_is_rejected() -> None:
             "misconfigured",
             ProcessingConfig(
                 llm_model="antigravity-preview-05-2026",
+                provider="google",
                 retry_config=RetryConfig(
                     primary=RetryModelConfig(model="antigravity-preview-05-2026"),
                     fallback=RetryModelConfig(model="gemini-3.7-flash"),
                 ),
+            ),
+            "antigravity-preview-05-2026",
+        )
+
+
+def test_antigravity_named_only_inside_a_retry_chain_is_rejected() -> None:
+    """`llm_model` unset leaves the profile on the app default, hiding the agent.
+
+    The retry format carries no `antigravity_config`, and the pollable-service
+    selection reads `llm_model` -- so a delegated run would quietly take the
+    inline path with the API's default reasoning model.
+    """
+    with pytest.raises(ValueError, match="retry_config, which is unsupported"):
+        validate_antigravity_profile(
+            "misconfigured",
+            ProcessingConfig(
+                provider="google",
+                retry_config=RetryConfig(
+                    primary=RetryModelConfig(model="antigravity-preview-05-2026"),
+                    fallback=RetryModelConfig(model="gemini-3.7-flash"),
+                ),
+            ),
+            "gemini-3.7-flash",  # the application default, not the agent
+        )
+
+
+@pytest.mark.parametrize("provider", ["openai", "anthropic", None])
+def test_antigravity_profile_on_a_non_google_provider_is_rejected(
+    provider: str | None,
+) -> None:
+    """Another provider's client would send the agent id as a chat model."""
+    with pytest.raises(ValueError, match="must be 'google'"):
+        validate_antigravity_profile(
+            "misconfigured",
+            ProcessingConfig(
+                llm_model="antigravity-preview-05-2026",
+                provider=provider,
             ),
             "antigravity-preview-05-2026",
         )
