@@ -587,6 +587,12 @@ async def get_mcp_server_status(
     whether a session is currently active. Tokens are omitted; URLs and stdio
     commands are included verbatim so the engineer can correlate against the
     deployment config.
+
+    ``reconnect_attempts`` and ``next_reconnect_in_seconds`` describe the
+    retry backoff: a server that has been down for a while is retried less
+    and less often (up to half an hour between attempts), so a failed server
+    with a long window ahead of it is being paced, not ignored.
+    ``reconnect_mcp_server`` bypasses that window.
     """
     logger.info("get_mcp_server_status: dumping live MCP server statuses")
 
