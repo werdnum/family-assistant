@@ -48,10 +48,21 @@ def test_shipped_antigravity_profile_runs_gemini_37_flash_on_the_agent() -> None
 
 
 def test_shipped_antigravity_profile_grants_no_family_assistant_tools() -> None:
-    """The agent works only from the request; it holds no [B] access."""
+    """The agent works only from the request; it holds no [B] access.
+
+    A deny-by-default `tools_policy` is not enough on its own: `global_tools_policy`
+    is injected at the `profile` layer, which outranks the `defaults` layer this
+    policy occupies, so the three globally granted tools have to be withheld
+    explicitly or the profile is advertised as holding them.
+    """
     profile = _shipped_profile("antigravity")
     assert profile.tools_policy is not None
     assert profile.tools_policy.default_decision == "deny"
+    assert set(profile.excluded_global_tools) == {
+        "read_text_attachment",
+        "jq_query",
+        "report_technical_problem",
+    }
 
 
 def test_shipped_antigravity_config_reaches_the_agent_config_payload() -> None:

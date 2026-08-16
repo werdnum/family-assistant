@@ -297,12 +297,14 @@ supervision requirements based on input trust level:
 7. **Antigravity Profile [C]**: hands a self-contained task to Google's Antigravity managed agent
    (`antigravity-preview-05-2026`, reasoning with `gemini-3.7-flash`), which plans and executes it —
    code, files, web — inside a Google-hosted sandbox. Used via `/antigravity` or delegation. It acts
-   but reads nothing of the household's: no tools, no aggregated context, and the agent runs
-   server-side with no FA tool surface, so it works only from the request text. Like `media_analyst`
-   it has no `retry_config`, because a fallback chat model would answer from its own knowledge
-   instead of running the task. Same distinction as above: `complex_tasks` when the task needs FA
-   context, `spawn_worker` for a coding agent in *our* sandbox, `antigravity` for standalone work in
-   Google's. See
+   but reads nothing of the household's: no aggregated context, and the agent runs server-side with
+   no FA tool surface, so it works only from the request text. As with `media_analyst`, a
+   deny-by-default `tools_policy` does not achieve that alone -- the three globally granted tools
+   are withheld via `excluded_global_tools`, so the profile is not advertised as holding tools it
+   says it has none of. Like `media_analyst` it has no `retry_config`, because a fallback chat model
+   would answer from its own knowledge instead of running the task. Same distinction as above:
+   `complex_tasks` when the task needs FA context, `spawn_worker` for a coding agent in *our*
+   sandbox, `antigravity` for standalone work in Google's. See
    [docs/design/gemini-antigravity-managed-agent.md](docs/design/gemini-antigravity-managed-agent.md).
 
 The Rule of Two addresses prompt injection specifically; it complements rather than replaces

@@ -943,6 +943,18 @@ service_profiles:
         system_prompt: "You are an autonomous task agent working for {user_name}. You run in an isolated sandbox with code execution, file access and web search; you have no access to {user_name}'s notes, calendar, documents or devices, so work only from what is in the request. Carry the task through to a finished result rather than describing how it could be done, and report what you did along with the result. Your final text response will be sent directly to {user_name}."
     tools_policy:
       default_decision: "deny"
+    # This profile's own deny cannot refuse the three tools global_tools_policy
+    # grants everywhere: global rules land in the `profile` policy layer, which
+    # outranks the `defaults` layer this policy occupies. Without the exclusion
+    # the profile is advertised over /api/profiles as holding tools its own
+    # description says it does not have. The agent could not call them anyway
+    # -- no tool declarations are sent to the Interactions API -- but the
+    # advertised surface has to match the claim, and it stops the grant
+    # becoming live if tools are ever plumbed through.
+    excluded_global_tools:
+      - "read_text_attachment"
+      - "jq_query"
+      - "report_technical_problem"
     slash_commands:
       - "/antigravity"
   - id: "data_visualization"

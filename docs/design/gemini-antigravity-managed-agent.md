@@ -26,9 +26,11 @@ holds no Family Assistant tools. Making it a profile also means the classifier a
 `delegate_to_service` can reach it without new machinery.
 
 Under the Rule of Two the profile is **[C] only**: it can act (in its own sandbox, and via the web)
-but reaches no household data — `tools_policy` denies everything, and the agent runs server-side
-with no Family Assistant tool surface at all. It is not `spawn_worker`, which launches a coding
-agent in *our* sandbox; this one is entirely Google-hosted and is reached as a conversation.
+but reaches no household data — the agent runs server-side with no Family Assistant tool surface at
+all, and the profile itself holds none: `tools_policy` denies by default and `excluded_global_tools`
+withholds the three `global_tools_policy` grants, which a profile's own policy cannot refuse from
+the lower-ranked `defaults` layer. It is not `spawn_worker`, which launches a coding agent in *our*
+sandbox; this one is entirely Google-hosted and is reached as a conversation.
 
 ## Implementation
 
