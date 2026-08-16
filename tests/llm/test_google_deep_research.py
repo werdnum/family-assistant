@@ -15,7 +15,12 @@ from family_assistant.llm.base import (
 )
 from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.llm.messages import AssistantMessage, SystemMessage, UserMessage
-from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
+from family_assistant.llm.providers.google_genai_client import (
+    GoogleGenAIClient,
+    is_antigravity_model,
+    is_deep_research_model,
+    is_interactions_agent_model,
+)
 from family_assistant.processing.protocol import (
     DelegationPermanentError,
     DelegationTaskNotFoundError,
@@ -610,8 +615,9 @@ async def test_deep_research_unknown_error_code_yields_generic(
 )
 def test_is_deep_research_model_matches_all_tiers(model_id: str) -> None:
     """Both the legacy preview and the 04-2026 regular/max tiers should route to deep research."""
-    client = GoogleGenAIClient(api_key="test", model=model_id)
-    assert client._is_deep_research_model(model_id) is True
+    assert is_deep_research_model(model_id) is True
+    assert is_interactions_agent_model(model_id) is True
+    assert is_antigravity_model(model_id) is False
 
 
 @pytest.mark.asyncio
@@ -702,7 +708,7 @@ async def test_deep_research_image_delta_is_skipped(
 
 
 @pytest.mark.asyncio
-async def test_start_deep_research_interaction_does_not_stream(
+async def test_start_agent_interaction_does_not_stream(
     mock_genai_client: MagicMock,
 ) -> None:
     """The non-blocking submit calls create with stream=False and returns immediately."""
@@ -713,7 +719,7 @@ async def test_start_deep_research_interaction_does_not_stream(
     mock_interaction.status = "in_progress"
     mock_genai_client.aio.interactions.create = AsyncMock(return_value=mock_interaction)
 
-    result = await client.start_deep_research_interaction([
+    result = await client.start_agent_interaction([
         UserMessage(content="Research quantum computing.")
     ])
 
@@ -726,7 +732,7 @@ async def test_start_deep_research_interaction_does_not_stream(
 
 
 @pytest.mark.asyncio
-async def test_start_deep_research_interaction_passes_previous_interaction_id(
+async def test_start_agent_interaction_passes_previous_interaction_id(
     mock_genai_client: MagicMock,
 ) -> None:
     """An explicit previous_interaction_id overrides history scanning."""
@@ -736,7 +742,7 @@ async def test_start_deep_research_interaction_passes_previous_interaction_id(
     mock_interaction.id = "inter_submit_2"
     mock_genai_client.aio.interactions.create = AsyncMock(return_value=mock_interaction)
 
-    await client.start_deep_research_interaction(
+    await client.start_agent_interaction(
         [UserMessage(content="Follow-up question.")],
         previous_interaction_id="inter_chain_from",
     )
@@ -796,7 +802,7 @@ async def test_get_agent_interaction_maps_404_to_task_not_found(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("status_code", [400, 401, 403])
-async def test_start_deep_research_interaction_maps_4xx_to_permanent(
+async def test_start_agent_interaction_maps_4xx_to_permanent(
     mock_genai_client: MagicMock,
     status_code: int,
 ) -> None:
@@ -808,7 +814,7 @@ async def test_start_deep_research_interaction_maps_4xx_to_permanent(
     mock_genai_client.aio.interactions.create = AsyncMock(side_effect=sdk_error)
 
     with pytest.raises(DelegationPermanentError):
-        await client.start_deep_research_interaction([UserMessage(content="Test")])
+        await client.start_agent_interaction([UserMessage(content="Test")])
 
 
 @pytest.mark.asyncio

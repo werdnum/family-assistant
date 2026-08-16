@@ -3264,6 +3264,8 @@ async def get_available_profiles(
                 description = "Research specialist using advanced models for deep information gathering"
             elif profile_id == "research_max":
                 description = "Research specialist using the Deep Research Max tier for the most comprehensive multi-source investigations"
+            elif profile_id == "antigravity":
+                description = "Autonomous agent that carries out multi-step tasks in a sandbox with code execution, file access and web search"
             elif profile_id == "event_handler":
                 description = (
                     "Automated event handler for script and system integration"

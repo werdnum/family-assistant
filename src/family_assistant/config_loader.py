@@ -720,6 +720,7 @@ PROFILE_OVERRIDABLE_PROCESSING_KEYS: tuple[str, ...] = (
     "allow_wake_llm",
     "enable_computer_use",
     "computer_use_excluded_functions",
+    "antigravity_config",
     "excluded_context_providers",
     "include_aggregated_context",
     "poll_interval_seconds",

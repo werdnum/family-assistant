@@ -138,6 +138,29 @@ def is_deep_research_model(model: str) -> bool:
     return "deep-research" in model
 
 
+def is_antigravity_model(model: str) -> bool:
+    """Check if a model identifier corresponds to an Antigravity managed agent.
+
+    A prefix match rather than an equality test against the current preview
+    id, so a later ``antigravity-*`` revision routes through the same path
+    without a code change -- the same stance ``is_deep_research_model`` takes
+    on the Deep Research tiers. The ``models/`` prefix the client attaches to
+    every model id is stripped first, so this holds for both the configured
+    id and the client's own ``model_name``.
+    """
+    return model.removeprefix("models/").startswith("antigravity")
+
+
+def is_interactions_agent_model(model: str) -> bool:
+    """Whether a model identifier names an Interactions API agent.
+
+    These do not go through ``generateContent`` at all: they are submitted to
+    ``interactions.create`` with an ``agent=`` rather than a ``model=``, and
+    run server-side until they reach a terminal state.
+    """
+    return is_deep_research_model(model) or is_antigravity_model(model)
+
+
 def _normalize_thought_signature(raw_value: bytes | None) -> bytes | None:
     """
     Ensure thought signatures are raw bytes.
@@ -241,6 +264,8 @@ class GoogleGenAIClient(BaseLLMClient):
         enable_google_search: bool = False,
         enable_computer_use: bool = False,
         computer_use_excluded_functions: list[str] | None = None,
+        antigravity_model: str | None = None,
+        antigravity_max_total_tokens: int | None = None,
         debug_messages: bool | None = None,
         debug_config: dict[str, str | None] | None = None,
         **kwargs: Any,  # noqa: ANN401 # Accepts arbitrary Google GenAI API parameters
@@ -257,6 +282,8 @@ class GoogleGenAIClient(BaseLLMClient):
             enable_google_search: Enable Google Search grounding for real-time information
             enable_computer_use: Enable native Gemini computer use tools (explicit opt-in)
             computer_use_excluded_functions: List of computer use function names to exclude
+            antigravity_model: Reasoning model for an Antigravity managed-agent model id
+            antigravity_max_total_tokens: Token ceiling for one Antigravity agent run
             debug_messages: Enable detailed message logging. If None, reads from DEBUG_LLM_MESSAGES env var.
             debug_config: SDK DebugConfig dict for record/replay in tests (client_mode, replay_id, replays_directory)
             **kwargs: Default parameters for generation
@@ -286,6 +313,8 @@ class GoogleGenAIClient(BaseLLMClient):
         self.enable_google_search = enable_google_search
         self.enable_computer_use = enable_computer_use
         self.computer_use_excluded_functions = computer_use_excluded_functions
+        self.antigravity_model = antigravity_model
+        self.antigravity_max_total_tokens = antigravity_max_total_tokens
 
         # Debug configuration - read from env var if not explicitly set
         if debug_messages is None:
@@ -984,9 +1013,17 @@ class GoogleGenAIClient(BaseLLMClient):
 
         return all_tools
 
-    def _is_deep_research_model(self, model: str) -> bool:
-        """Check if model identifier corresponds to deep research agent."""
-        return is_deep_research_model(model)
+    @property
+    def _agent_label(self) -> str:
+        """Human-readable name of the Interactions agent, for logs and errors."""
+        return (
+            "Antigravity" if is_antigravity_model(self._agent_name) else "Deep Research"
+        )
+
+    @property
+    def _agent_name(self) -> str:
+        """The bare agent id to send as ``agent=`` on an Interactions call."""
+        return self.model_name.replace("models/", "")
 
     async def generate_response(
         self,
@@ -1465,114 +1502,155 @@ class GoogleGenAIClient(BaseLLMClient):
         # Validate user input before processing
         self._validate_user_input(messages)
 
-        if self._is_deep_research_model(self.model_name):
-            return self._generate_deep_research_stream(messages)
+        if is_interactions_agent_model(self.model_name):
+            return self._generate_agent_interaction_stream(messages)
         return self._generate_response_stream(messages, tools, tool_choice)
 
-    def _build_deep_research_create_kwargs(
+    def _extract_agent_input_text(self, messages: Sequence[LLMMessage]) -> str:
+        """Collapse the trailing run of user messages into one input string.
+
+        Interactions agents take a single ``input`` string rather than a
+        message list, so scaffolding is dropped rather than serialized: the
+        turn-context block would otherwise be appended verbatim to the request
+        the agent is asked to carry out.
+        """
+        # Collect all contiguous trailing user messages for input
+        # This handles cases where user sends multiple messages in a row
+        user_input_parts: list[str] = []
+        for msg in reversed(messages):
+            if is_turn_scaffolding(msg):
+                continue
+            if msg.role != "user":
+                # Stop at the first non-user message
+                break
+
+            msg_text = ""
+            if isinstance(msg.content, str):
+                msg_text = msg.content
+            elif isinstance(msg.content, list):
+                text_fragments = []
+                for part in msg.content:
+                    if isinstance(part, TextContentPart):
+                        text_fragments.append(part.text)
+                    elif isinstance(part, str):
+                        text_fragments.append(part)
+                msg_text = "\n".join(text_fragments)
+
+            if msg_text:
+                user_input_parts.insert(0, msg_text)
+
+        return "\n\n".join(user_input_parts)
+
+    def _extract_agent_system_prompt(self, messages: Sequence[LLMMessage]) -> str:
+        """Concatenate every system message into one instruction string."""
+        system_prompt = ""
+        for msg in messages:
+            if msg.role == "system" and msg.content:
+                system_prompt += f"{_system_prefixed_content(msg.content)}\n\n"
+        return system_prompt
+
+    def _resolve_previous_interaction_id(
+        self, messages: Sequence[LLMMessage], explicit: str | None
+    ) -> str | None:
+        """Find the interaction to continue from, preferring an explicit id.
+
+        An explicit value (e.g. a delegation run's stored interaction id) wins;
+        otherwise it is scanned out of the last assistant message's provider
+        metadata, which is where the interactive chat path records it.
+        """
+        if explicit is not None:
+            return explicit
+
+        for msg in reversed(messages):
+            if (
+                msg.role == "assistant"
+                and isinstance(msg, AssistantMessage)
+                and msg.provider_metadata
+            ):
+                pm = msg.provider_metadata
+                if isinstance(pm, GeminiProviderMetadata) and pm.interaction_id:
+                    return pm.interaction_id
+                if isinstance(pm, dict) and pm.get("interaction_id"):
+                    return cast("str | None", pm.get("interaction_id"))
+        return None
+
+    def _build_agent_create_kwargs(
         self,
         messages: Sequence[LLMMessage],
         *,
         previous_interaction_id: str | None = None,
         # ast-grep-ignore: no-dict-any - **kwargs for the Interactions SDK's create()
     ) -> dict[str, Any]:
-        """Build ``interactions.create`` kwargs for a Deep Research call.
+        """Build ``interactions.create`` kwargs for an Interactions agent call.
 
-        Extracts the input text from the trailing run of user messages plus
-        any system prompt, and resolves ``previous_interaction_id`` for
-        multi-turn continuation. If not given explicitly, it's scanned from
-        the last assistant message's provider metadata (the interactive chat
-        path's own history); an explicit value (e.g. from a delegation run's
-        stored interaction id) overrides that scan. Does not set ``stream``
-        — callers choose streaming (interactive) or not (submit-then-poll).
+        Shapes the input for whichever agent ``model_name`` names — Deep
+        Research or Antigravity — and resolves ``previous_interaction_id`` for
+        multi-turn continuation. Does not set ``stream`` — callers choose
+        streaming (interactive) or not (submit-then-poll).
         """
-        resolved_previous_interaction_id = previous_interaction_id
+        resolved_previous_interaction_id = self._resolve_previous_interaction_id(
+            messages, previous_interaction_id
+        )
+        input_text = self._extract_agent_input_text(messages)
+        system_prompt = self._extract_agent_system_prompt(messages)
 
-        # Collect all contiguous trailing user messages for input
-        # This handles cases where user sends multiple messages in a row
-        user_input_parts = []
-        for msg in reversed(messages):
-            # Scaffolding is prompt machinery, not part of the research question.
-            # Deep Research collapses these messages into a single `input` string,
-            # so letting the turn-context block through would append it verbatim
-            # to the query the model is asked to research.
-            if is_turn_scaffolding(msg):
-                continue
-            if msg.role == "user":
-                # Extract text content from message
-                msg_text = ""
-                if isinstance(msg.content, str):
-                    msg_text = msg.content
-                elif isinstance(msg.content, list):
-                    text_fragments = []
-                    for part in msg.content:
-                        if isinstance(part, TextContentPart):
-                            text_fragments.append(part.text)
-                        elif isinstance(part, str):
-                            text_fragments.append(part)
-                    msg_text = "\n".join(text_fragments)
+        # ast-grep-ignore: no-dict-any - **kwargs for the Interactions SDK's create()
+        create_kwargs: dict[str, Any] = {
+            "agent": self._agent_name,
+            "background": True,
+        }
 
-                if msg_text:
-                    user_input_parts.insert(0, msg_text)
-            else:
-                # Stop at the first non-user message
-                break
+        if is_antigravity_model(self._agent_name):
+            create_kwargs["agent_config"] = self._antigravity_agent_config()
+            # Antigravity takes a first-class system_instruction, so the prompt
+            # stays out of the task the agent plans against instead of being
+            # read as part of it.
+            if system_prompt.strip():
+                create_kwargs["system_instruction"] = system_prompt.strip()
+        else:
+            create_kwargs["agent_config"] = {
+                "type": "deep-research",
+                "thinking_summaries": "auto",
+                "visualization": "auto",
+            }
+            # Deep Research exposes no system_instruction, so the prompt is
+            # folded into the single input string.
+            if system_prompt:
+                input_text = system_prompt + input_text
 
-        input_text = "\n\n".join(user_input_parts)
-
-        if resolved_previous_interaction_id is None:
-            # Check for previous interaction ID in assistant history
-            # Iterate through messages to find the last assistant message with provider metadata
-            for msg in reversed(messages):
-                if (
-                    msg.role == "assistant"
-                    and isinstance(msg, AssistantMessage)
-                    and msg.provider_metadata
-                ):
-                    pm = msg.provider_metadata
-                    if isinstance(pm, GeminiProviderMetadata) and pm.interaction_id:
-                        resolved_previous_interaction_id = pm.interaction_id
-                        break
-                    elif isinstance(pm, dict) and pm.get("interaction_id"):
-                        resolved_previous_interaction_id = pm.get("interaction_id")
-                        break
-
-        # Prepend system prompt if present (Deep Research takes input string)
-        system_prompt = ""
-        for msg in messages:
-            if msg.role == "system" and msg.content:
-                system_prompt += f"{_system_prefixed_content(msg.content)}\n\n"
-
-        if system_prompt:
-            input_text = system_prompt + input_text
+        create_kwargs["input"] = input_text
 
         if not input_text:
             raise InvalidRequestError(
-                "Deep Research requires non-empty input",
+                f"{self._agent_label} requires non-empty input",
                 provider="google",
                 model=self.model_name,
             )
 
         logger.info(
-            f"Starting Deep Research interaction. Model: {self.model_name}, "
+            f"Starting {self._agent_label} interaction. Model: {self.model_name}, "
             f"Prev ID: {resolved_previous_interaction_id}"
         )
 
-        agent_name = self.model_name.replace("models/", "")
-
-        create_kwargs = {
-            "input": input_text,
-            "agent": agent_name,
-            "background": True,
-            "agent_config": {
-                "type": "deep-research",
-                "thinking_summaries": "auto",
-                "visualization": "auto",
-            },
-        }
         if resolved_previous_interaction_id:
             create_kwargs["previous_interaction_id"] = resolved_previous_interaction_id
         return create_kwargs
+
+    # ast-grep-ignore: no-dict-any - agent_config payload for the Interactions SDK
+    def _antigravity_agent_config(self) -> dict[str, Any]:
+        """Build the ``agent_config`` block for an Antigravity agent run.
+
+        ``model`` and ``max_total_tokens`` are omitted when unset so the API's
+        own defaults apply, rather than this client pinning a model the
+        operator never chose.
+        """
+        # ast-grep-ignore: no-dict-any - agent_config payload for the Interactions SDK
+        agent_config: dict[str, Any] = {"type": "antigravity"}
+        if self.antigravity_model:
+            agent_config["model"] = self.antigravity_model
+        if self.antigravity_max_total_tokens is not None:
+            agent_config["max_total_tokens"] = self.antigravity_max_total_tokens
+        return agent_config
 
     def _classify_agent_delegation_error(self, e: Exception) -> Exception:
         """Map an Interactions API exception to the delegation error taxonomy.
@@ -1598,30 +1676,28 @@ class GoogleGenAIClient(BaseLLMClient):
             return DelegationTransientError(str(e))
         return e
 
-    async def start_deep_research_interaction(
+    async def start_agent_interaction(
         self,
         messages: Sequence[LLMMessage],
         *,
         previous_interaction_id: str | None = None,
     ) -> Interaction:
-        """Start a Deep Research interaction without waiting for it to finish.
+        """Start an Interactions agent run without waiting for it to finish.
 
         Used by the pollable-delegation path: submits in the background and
         returns immediately with the interaction's initial (non-terminal)
-        state instead of streaming until the whole research run completes.
-        Raises the generic delegation error taxonomy
+        state instead of streaming until the whole run completes. Raises the
+        generic delegation error taxonomy
         (``DelegationTransientError``/``DelegationPermanentError``/
         ``DelegationTaskNotFoundError``) rather than ``LLMProviderError``.
 
-        Deep-Research-specific (via ``_build_deep_research_create_kwargs``'s
-        ``agent_config``), unlike ``get_agent_interaction``/
-        ``cancel_agent_interaction`` below: submitting an interaction needs
-        agent-specific input shaping, but polling/cancelling one by id
-        doesn't — a future non-Deep-Research Interactions API agent (e.g.
-        Antigravity) would need its own ``start_*`` but could reuse those two
-        as-is.
+        Which agent runs follows from ``model_name`` — submitting needs
+        agent-specific input shaping (see ``_build_agent_create_kwargs``),
+        while ``get_agent_interaction``/``cancel_agent_interaction`` below
+        need none, because polling or cancelling by id is the same call
+        whatever produced the id.
         """
-        create_kwargs = self._build_deep_research_create_kwargs(
+        create_kwargs = self._build_agent_create_kwargs(
             messages, previous_interaction_id=previous_interaction_id
         )
         try:
@@ -1639,7 +1715,7 @@ class GoogleGenAIClient(BaseLLMClient):
 
         Generic by design — polling by id needs no agent-specific knowledge.
         Raises the generic delegation error taxonomy on failure (see
-        ``start_deep_research_interaction``).
+        ``start_agent_interaction``).
         """
         try:
             return cast(
@@ -1653,29 +1729,35 @@ class GoogleGenAIClient(BaseLLMClient):
         """Best-effort cancellation of any Interactions API agent run.
 
         Generic by design (see ``get_agent_interaction``). Callers (e.g.
-        ``DeepResearchProcessingService.cancel_async``) are expected to
+        ``InteractionsAgentProcessingService.cancel_async``) are expected to
         swallow any exception this raises, mirroring
         ``RemoteA2AService.cancel_async``.
         """
         await self.client.aio.interactions.cancel(interaction_id)
 
-    async def _generate_deep_research_stream(
+    async def _generate_agent_interaction_stream(
         self,
         messages: Sequence[LLMMessage],
     ) -> AsyncIterator[LLMStreamEvent]:
         """
-        Handle Deep Research agent interactions using the Interactions API.
+        Handle Interactions API agent runs (Deep Research, Antigravity).
 
-        Deep Research requires background execution and polling/streaming via interactions.create.
+        These agents require background execution and polling/streaming via
+        interactions.create. Deltas the agent emits that have no text form
+        (images today, and any future step type) are skipped rather than
+        rendered, so the interactive transcript stays the agent's prose.
         """
+        agent_label = self._agent_label
         start_time = time.monotonic()
         request_timestamp = datetime.now(UTC)
-        request_id = f"google_deep_research_{uuid.uuid4().hex[:16]}"
+        request_id = (
+            f"google_{agent_label.lower().replace(' ', '_')}_{uuid.uuid4().hex[:16]}"
+        )
         message_dicts = [message_to_json_dict(msg) for msg in messages]
 
         content_yielded = False
         try:
-            create_kwargs = self._build_deep_research_create_kwargs(messages)
+            create_kwargs = self._build_agent_create_kwargs(messages)
             create_kwargs["stream"] = True
 
             stream = cast(
@@ -1697,7 +1779,7 @@ class GoogleGenAIClient(BaseLLMClient):
                 # Capture Interaction ID
                 if event_type in {"interaction.created", "interaction.start"}:
                     interaction_id = chunk.interaction.id
-                    logger.info(f"Deep Research interaction started: {interaction_id}")
+                    logger.info(f"{agent_label} interaction started: {interaction_id}")
 
                 elif event_type in {"step.delta", "content.delta"}:
                     if chunk.delta.type == "text":
@@ -1714,11 +1796,11 @@ class GoogleGenAIClient(BaseLLMClient):
                         # Image deltas (e.g. visualization charts) are not yet surfaced as
                         # attachments; skip them so text output is unaffected.
                         logger.debug(
-                            "Ignoring Deep Research image delta (visualization not yet wired)"
+                            f"Ignoring {agent_label} image delta (visualization not yet wired)"
                         )
 
                 elif event_type in {"interaction.completed", "interaction.complete"}:
-                    logger.info("Deep Research interaction complete")
+                    logger.info(f"{agent_label} interaction complete")
 
                 elif event_type == "interaction.status_update":
                     status = getattr(chunk, "status", None) or getattr(
@@ -1726,7 +1808,7 @@ class GoogleGenAIClient(BaseLLMClient):
                     )
                     if status in _INTERACTION_TERMINAL_ERROR_STATUSES:
                         raise ServiceUnavailableError(
-                            f"Deep Research interaction {status}",
+                            f"{agent_label} interaction {status}",
                             provider="google",
                             model=self.model_name,
                         )
@@ -1738,7 +1820,7 @@ class GoogleGenAIClient(BaseLLMClient):
                         error_obj
                     )
                     logger.error(
-                        f"Deep Research stream error: code={error_code} msg={error_message}"
+                        f"{agent_label} stream error: code={error_code} msg={error_message}"
                     )
 
                     # Map error code to typed exception
@@ -1792,7 +1874,7 @@ class GoogleGenAIClient(BaseLLMClient):
                     )
                 )
             except Exception as record_err:
-                logger.debug(f"Failed to record Deep Research request: {record_err}")
+                logger.debug(f"Failed to record {agent_label} request: {record_err}")
 
             yield LLMStreamEvent(type="done", metadata=done_metadata)
 
@@ -1815,7 +1897,7 @@ class GoogleGenAIClient(BaseLLMClient):
                 )
             except Exception as record_err:
                 logger.debug(
-                    f"Failed to record Deep Research request error: {record_err}"
+                    f"Failed to record {agent_label} request error: {record_err}"
                 )
 
             # If the exception is already a typed LLMProviderError (e.g. raised by
@@ -1825,7 +1907,7 @@ class GoogleGenAIClient(BaseLLMClient):
             else:
                 typed_error = self._map_interactions_error(e)
             logger.exception(
-                f"Google Deep Research error ({type(typed_error).__name__}): {e}"
+                f"Google {agent_label} error ({type(typed_error).__name__}): {e}"
             )
 
             # If no content has been yielded, raise typed exception so

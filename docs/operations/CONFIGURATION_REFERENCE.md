@@ -1782,6 +1782,47 @@ service_profiles:
 
 ______________________________________________________________________
 
+### antigravity_config
+
+Per-profile `processing_config` block tuning the Google Antigravity managed agent. Read only when
+`llm_model` names the agent (`antigravity-preview-05-2026` or a later `antigravity-*` revision);
+setting it on any other profile is a startup error rather than a silently discarded block.
+
+| Property  | Value                                          |
+| --------- | ---------------------------------------------- |
+| Required  | No                                             |
+| Default   | `model: gemini-3.7-flash`, no token cap        |
+| Sensitive | No                                             |
+| Values    | `model` (string), `max_total_tokens` (int > 0) |
+
+`model` is the model the agent reasons with — the Gemini 3.x Flash family, `gemini-3.7-flash` being
+the current default. It is pinned in `defaults.yaml` rather than left to the API, so an upstream
+default change shows up as a config change. `max_total_tokens` caps what a single run may spend;
+unset leaves the API's own default, which together with `max_async_seconds` is the only bound on how
+long an autonomous run iterates.
+
+The agent runs server-side on the Interactions API, so the profile must use `provider: "google"` and
+must not set `retry_config` — a fallback would be an ordinary chat completion answering from the
+model's own knowledge instead of running the task, which is why that combination is rejected at
+startup. It needs `GEMINI_API_KEY` like any other Google profile.
+
+The shipped `antigravity` profile denies all tools: the agent works in a Google-hosted sandbox with
+no access to household data. See
+[gemini-antigravity-managed-agent.md](../design/gemini-antigravity-managed-agent.md).
+
+```yaml
+service_profiles:
+  - id: "antigravity"
+    processing_config:
+      provider: "google"
+      llm_model: "antigravity-preview-05-2026"
+      antigravity_config:
+        model: "gemini-3.7-flash"
+        max_total_tokens: 250000
+```
+
+______________________________________________________________________
+
 ## Configuration File Reference
 
 ### config.yaml

@@ -21,6 +21,7 @@ from family_assistant import embeddings
 from family_assistant.config_models import (
     DEFAULT_REMOTE_MAX_ASYNC_SECONDS,
     AppConfig,  # Used at runtime
+    ProcessingConfig,  # Used at runtime
 )
 from family_assistant.config_models import (  # Used at runtime
     CalendarConfig as PydanticCalendarConfig,
@@ -62,15 +63,18 @@ from family_assistant.indexing.message_history_indexer import (
 from family_assistant.indexing.notes_indexer import NotesIndexer
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.llm.factory import LLMClientFactory
-from family_assistant.llm.providers.google_genai_client import is_deep_research_model
+from family_assistant.llm.providers.google_genai_client import (
+    is_antigravity_model,
+    is_interactions_agent_model,
+)
 from family_assistant.paths import PACKAGE_ROOT
 from family_assistant.processing import (
     DelegatableService,
     ProcessingService,
     ProcessingServiceConfig,
 )
-from family_assistant.processing.deep_research_service import (
-    DeepResearchProcessingService,
+from family_assistant.processing.interactions_agent_service import (
+    InteractionsAgentProcessingService,
 )
 from family_assistant.security.taint import TaintMetadata, merge_taint_policy_config
 from family_assistant.services.api_backend import HttpApiBackend
@@ -342,6 +346,34 @@ async def task_wrapper_handle_log_message(
         )
         return
     await original_handle_log_message(exec_context.db_context, payload)
+
+
+def validate_antigravity_profile(
+    profile_id: str,
+    processing_config: ProcessingConfig,
+    llm_model: str,
+) -> None:
+    """Reject Antigravity profile settings that would fail silently at runtime.
+
+    Raises ``ValueError`` when ``antigravity_config`` is attached to a profile
+    that does not run the managed agent (the settings would simply be
+    discarded), or when an Antigravity profile carries a ``retry_config``: the
+    agent only exists on the Interactions API, so a fallback reached through
+    ``RetryingLLMClient`` would answer from the fallback model's own knowledge
+    instead of running the task, which reads as success.
+    """
+    is_antigravity_profile = is_antigravity_model(llm_model)
+    if processing_config.antigravity_config and not is_antigravity_profile:
+        raise ValueError(
+            f"Profile '{profile_id}' sets antigravity_config but its model is "
+            f"'{llm_model}', which is not an Antigravity managed agent"
+        )
+    if is_antigravity_profile and processing_config.retry_config is not None:
+        raise ValueError(
+            f"Profile '{profile_id}' uses the Antigravity managed agent with "
+            "retry_config, which is unsupported (the agent requires the single "
+            "Google GenAI client)"
+        )
 
 
 class Assistant:
@@ -1020,6 +1052,10 @@ class Assistant:
                             f"but provider is '{resolved_provider}' (must be 'google')"
                         )
 
+                validate_antigravity_profile(
+                    profile_id, profile_proc_conf, profile_llm_model
+                )
+
                 # Check if using retry_config format
                 if profile_proc_conf.retry_config is not None:
                     # Direct retry_config format - convert to dict for LLMClientFactory
@@ -1070,6 +1106,13 @@ class Assistant:
                     if profile_proc_conf.computer_use_excluded_functions:
                         client_config["computer_use_excluded_functions"] = (
                             profile_proc_conf.computer_use_excluded_functions
+                        )
+                    if profile_proc_conf.antigravity_config:
+                        client_config["antigravity_model"] = (
+                            profile_proc_conf.antigravity_config.model
+                        )
+                        client_config["antigravity_max_total_tokens"] = (
+                            profile_proc_conf.antigravity_config.max_total_tokens
                         )
 
                     logger.info(
@@ -1329,13 +1372,14 @@ class Assistant:
                             f"Failed to create camera backend for profile '{profile_id}'"
                         )
 
-            # Deep Research profiles get the pollable subclass so a delegated
-            # run submits/polls instead of holding a worker for the whole
-            # (potentially very long) research run. Direct chat use is
-            # unaffected — handle_chat_interaction is inherited unchanged.
+            # Interactions API agent profiles (Deep Research, Antigravity)
+            # get the pollable subclass so a delegated run submits/polls
+            # instead of holding a worker for the whole (potentially very
+            # long) run. Direct chat use is unaffected —
+            # handle_chat_interaction is inherited unchanged.
             processing_service_class = (
-                DeepResearchProcessingService
-                if is_deep_research_model(profile_llm_model)
+                InteractionsAgentProcessingService
+                if is_interactions_agent_model(profile_llm_model)
                 else ProcessingService
             )
             processing_service_instance = processing_service_class(

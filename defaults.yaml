@@ -928,6 +928,23 @@ service_profiles:
       default_decision: "deny"
     slash_commands:
       - "/research_max"
+  - id: "antigravity"
+    description: "Assistant profile backed by the Google Antigravity managed agent running Gemini 3.7 Flash. Plans and carries out multi-step tasks — writing and running code, working with files, searching and reading the web — inside an isolated Google-hosted Linux sandbox. It has no access to Family Assistant notes, calendar, documents or tools, so use it for self-contained work and use complex_tasks when the task needs the family's own data."
+    processing_config:
+      provider: "google"
+      llm_model: "antigravity-preview-05-2026"
+      antigravity_config:
+        model: "gemini-3.7-flash"
+      # An autonomous sandbox run can plan and execute for a long stretch, so
+      # give a delegated run the same headroom as the research max tier before
+      # it is reaped as orphaned.
+      max_async_seconds: 7200
+      prompts:
+        system_prompt: "You are an autonomous task agent working for {user_name}. You run in an isolated sandbox with code execution, file access and web search; you have no access to {user_name}'s notes, calendar, documents or devices, so work only from what is in the request. Carry the task through to a finished result rather than describing how it could be done, and report what you did along with the result. Your final text response will be sent directly to {user_name}."
+    tools_policy:
+      default_decision: "deny"
+    slash_commands:
+      - "/antigravity"
   - id: "data_visualization"
     description: "Assistant profile optimized for creating data visualizations and charts. Uses Vega/Vega-Lite to generate professional charts from user data."
     processing_config:
