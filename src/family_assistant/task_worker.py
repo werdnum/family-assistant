@@ -5,6 +5,7 @@ Task worker implementation for background processing.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import random
@@ -1272,7 +1273,7 @@ class TaskWorker:
             # A terminal run is re-entered only when a prior attempt's
             # notification delivery failed; retry it (keyed on notified_at).
             if run["notified_at"] is None:
-                await self._notify_delegation_if_needed(exec_context, run)
+                await self._deliver_terminal_delegation(exec_context, run, force=False)
             else:
                 logger.info(
                     "Delegation run %s already terminal (%s) and notified.",
@@ -1454,7 +1455,7 @@ class TaskWorker:
                 delegation_id,
             )
             return
-        await self._notify_delegation_if_needed(exec_context, terminal_run)
+        await self._deliver_terminal_delegation(exec_context, terminal_run, force=False)
 
     async def _submit_pollable_delegation(
         self,
@@ -2042,16 +2043,38 @@ class TaskWorker:
         thing, because retrying what was just refused for a settled reason only
         produces the same refusal every hour forever.
         """
+        with contextlib.suppress(DelegationNotificationError):
+            await self._deliver_terminal_delegation(exec_context, run, force=True)
+
+    async def _deliver_terminal_delegation(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+        *,
+        force: bool,
+    ) -> None:
+        """Deliver a terminal run, advancing stages while failures are permanent.
+
+        A permanent failure is not worth retrying by definition, so it advances
+        here rather than waiting for something else to notice -- both the task
+        that finished the run and the hourly cleanup come through here, so a
+        result refused for a settled reason reaches the model that can do
+        something about it on the same pass.
+
+        A transient failure is raised instead: retrying the same text is the
+        right answer, and each caller already has its own way of arranging that
+        (the task retries, the cleanup leaves the run for a later pass).
+        """
         while True:
             try:
-                await self._notify_delegation_if_needed(exec_context, run, force=True)
+                await self._notify_delegation_if_needed(exec_context, run, force=force)
                 return
             except DelegationNotificationError as failure:
                 next_run = await self._record_delegation_notify_failure(
                     exec_context, run, failure
                 )
                 if next_run is None:
-                    return
+                    raise
                 run = next_run
 
     async def _record_delegation_notify_failure(
@@ -2254,7 +2277,7 @@ class TaskWorker:
             completed_at=clock.now(),
         )
         if run is not None:
-            await self._notify_delegation_if_needed(exec_context, run)
+            await self._deliver_terminal_delegation(exec_context, run, force=False)
 
     def _chat_interface_for_interface(
         self,
@@ -2496,6 +2519,7 @@ class TaskWorker:
                 clock,
                 wake_turn_id,
                 undelivered["thread_root_id"],
+                stage=stage,
             )
 
         # Phase 1: Commit the wakeup message before the LLM turn.
@@ -2565,6 +2589,7 @@ class TaskWorker:
             clock,
             wake_turn_id,
             data_message_internal_id,
+            stage=stage,
         )
 
     async def _deliver_delegation_wake_response(
@@ -2576,6 +2601,8 @@ class TaskWorker:
         clock: Clock,
         wake_turn_id: str,
         thread_root_id: int | None,
+        *,
+        stage: DelegationNotifyStage = "initial",
     ) -> int | None:
         """Deliver a wake turn's response, then record it and mark notified.
 
@@ -2584,7 +2611,10 @@ class TaskWorker:
         profile a second time.
         """
         sent_message_id = await self._send_source_profile_delegation_response(
-            run, result, chat_interface
+            run,
+            result,
+            chat_interface,
+            include_result_attachments=stage != "failed_forward",
         )
 
         async def _deliver_and_notify(txn: DatabaseTransaction) -> int | None:
@@ -2740,6 +2770,8 @@ class TaskWorker:
         run: DelegationRunDict,
         result: ChatInteractionResult,
         chat_interface: ChatInterface | None,
+        *,
+        include_result_attachments: bool = True,
     ) -> str | None:
         """Deliver the source profile's response, before anything is recorded.
 
@@ -2754,7 +2786,10 @@ class TaskWorker:
                 f"Source profile '{run['source_profile_id']}' failed while handling "
                 f"delegation {run['delegation_id']} wakeup."
             )
-        if not (result.text_reply or self._source_delivery_attachment_ids(run, result)):
+        delivery_attachment_ids = self._source_delivery_attachment_ids(
+            run, result, include_result_attachments=include_result_attachments
+        )
+        if not (result.text_reply or delivery_attachment_ids):
             raise DelegationNotificationError(
                 f"Source profile '{run['source_profile_id']}' produced no response "
                 f"for delegation {run['delegation_id']}."
@@ -2772,7 +2807,7 @@ class TaskWorker:
                 conversation_id=run["conversation_id"],
                 text=result.text_reply or "Delegated task finished.",
                 parse_mode=None,
-                attachment_ids=self._source_delivery_attachment_ids(run, result),
+                attachment_ids=delivery_attachment_ids,
                 on_behalf_of_user_id=run["user_id"],
             )
         except ChatDeliveryError as delivery_error:
@@ -2787,13 +2822,22 @@ class TaskWorker:
     def _source_delivery_attachment_ids(
         run: DelegationRunDict,
         result: ChatInteractionResult,
+        *,
+        include_result_attachments: bool = True,
     ) -> list[str] | None:
-        """Return source-response plus delegated-result attachment IDs."""
+        """Return source-response plus delegated-result attachment IDs.
+
+        A fail-forward reply passes ``include_result_attachments=False``: the
+        delegated result's own attachments went out with the delivery that was
+        just refused, and an attachment can be the reason it was refused -- the
+        email interface rejects any attachment at all. Re-attaching them would
+        guarantee the same refusal however well the model rewrote the text.
+        """
+        candidates = list(result.attachment_ids or [])
+        if include_result_attachments:
+            candidates += run["result_attachment_ids_json"] or []
         attachment_ids: list[str] = []
-        for attachment_id in [
-            *(result.attachment_ids or []),
-            *(run["result_attachment_ids_json"] or []),
-        ]:
+        for attachment_id in candidates:
             if attachment_id not in attachment_ids:
                 attachment_ids.append(attachment_id)
         return attachment_ids or None

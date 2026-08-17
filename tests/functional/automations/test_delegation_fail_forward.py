@@ -32,6 +32,7 @@ from .test_async_delegation import (
     FakeDelegatableService,
     FakeWakeCapableSourceService,
     _create_run,
+    _payload,
     _tool_context,
 )
 
@@ -306,6 +307,82 @@ async def test_a_run_that_gave_up_still_leaves_its_result_in_the_conversation(
         conversation_id=TEST_CONVERSATION_ID, limit=50
     )
     assert any("the delegated work, in full" in (row["content"] or "") for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_the_fail_forward_reply_drops_the_attachments_just_refused(
+    db_engine: AsyncEngine,
+) -> None:
+    """An attachment can be why the delivery was refused.
+
+    The email interface rejects any attachment at all, so re-attaching the
+    delegated result's own files to the rewritten reply would earn the same
+    refusal however well the model rewrote the text.
+    """
+    processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.side_effect = [
+        ChatDeliveryError("attachments are not supported", transient=False),
+        "delivered_after_fail_forward",
+    ]
+    db_context = Database(engine=db_engine)
+    clock = SystemClock()
+    await _create_run(db_context, delegation_id="delegation_with_attachments")
+    await db_context.delegation_runs.mark_handed_off(
+        "delegation_with_attachments", clock.now()
+    )
+    await db_context.delegation_runs.mark_completed(
+        delegation_id="delegation_with_attachments",
+        result_text="the delegated work, in full",
+        result_attachment_ids=["attachment-that-was-refused"],
+        completed_at=clock.now(),
+    )
+
+    await _run_cleanup(
+        db_engine, cast("ProcessingService", processing_service), chat_interface
+    )
+
+    first_send, second_send = chat_interface.send_message.await_args_list
+    assert first_send.kwargs["attachment_ids"] == ["attachment-that-was-refused"]
+    assert second_send.kwargs["attachment_ids"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_permanent_failure_on_the_finishing_task_fails_forward_immediately(
+    db_engine: AsyncEngine,
+) -> None:
+    """The task that finished the run should not have to wait for the cleanup.
+
+    A permanent failure is not worth retrying by definition, so waiting an hour
+    for the cleanup to notice just delays the only thing that can help.
+    """
+    processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.side_effect = [
+        ChatDeliveryError("Message is too long", transient=False),
+        "delivered_after_fail_forward",
+    ]
+    await _terminal_run(db_engine, "delegation_finishing_task")
+
+    worker = _worker(
+        db_engine, cast("ProcessingService", processing_service), chat_interface
+    )
+    await worker.handle_delegated_profile_run(
+        _tool_context(
+            Database(engine=db_engine),
+            cast("ProcessingService", processing_service),
+            chat_interface,
+        ),
+        _payload("delegation_finishing_task"),
+    )
+
+    assert processing_service.wake_call_count == 2
+    run = await Database(engine=db_engine).delegation_runs.get_by_delegation_id(
+        "delegation_finishing_task"
+    )
+    assert run is not None
+    assert run["notified_at"] is not None
+    assert run["notify_stage"] == "failed_forward"
 
 
 @pytest.mark.asyncio
