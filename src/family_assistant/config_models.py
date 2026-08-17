@@ -97,12 +97,105 @@ class CameraConfig(BaseModel):
     cameras_config: dict[str, ReolinkCameraItemConfig] = Field(default_factory=dict)
 
 
+class AntigravityEgressCredentialConfig(BaseModel):
+    """A credential the sandbox's egress proxy injects on matching requests.
+
+    Names a *kind* of credential, never a value: the secret material is read
+    from the process environment when a run is submitted, so a leaked config
+    file discloses which domains get a credential rather than the credential.
+    The sandbox never receives it either -- the proxy adds the header on the
+    way out, so nothing the agent can print or write to a file contains it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # `github_app`: mint a short-lived installation access token from the
+    # GitHub App named by GITHUB_APP_ID / GITHUB_APP_INSTALLATION_ID and the
+    # private key at GITHUB_APP_PRIVATE_KEY_PATH (or inline in
+    # GITHUB_APP_PRIVATE_KEY). `bearer`: use the static token in `token_env`.
+    type: Literal["github_app", "bearer"]
+    header_name: str = "Authorization"
+    # `bearer` renders "Bearer <token>"; `basic` renders
+    # "Basic base64(x-access-token:<token>)", which is how GitHub authenticates
+    # git-over-HTTPS as opposed to its REST API. Getting this wrong surfaces as
+    # a 401 midway through an agent run rather than as a config error, so it is
+    # chosen per rule rather than guessed from the domain.
+    scheme: Literal["bearer", "basic"] = "bearer"
+    # Required by (and only meaningful to) `type: "bearer"`.
+    token_env: str | None = None
+
+    @model_validator(mode="after")
+    def validate_credential(self) -> AntigravityEgressCredentialConfig:
+        if self.type == "bearer" and not self.token_env:
+            msg = "Antigravity egress credential of type 'bearer' requires 'token_env'"
+            raise ValueError(msg)
+        if self.type != "bearer" and self.token_env:
+            msg = (
+                f"Antigravity egress credential of type '{self.type}' does not "
+                "read 'token_env'"
+            )
+            raise ValueError(msg)
+        return self
+
+
+class AntigravityEgressRuleConfig(BaseModel):
+    """One domain rule for the Antigravity sandbox's egress proxy."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Supports wildcards ("*.githubusercontent.com"); "*" matches every domain,
+    # which is how the API spells "restrict nothing, but still inject headers
+    # on the rules that carry a credential".
+    domain: str
+    # Static headers injected alongside any credential. For non-secret values
+    # only -- a secret belongs in `credential`, which reads the environment.
+    headers: dict[str, str] = Field(default_factory=dict)
+    credential: AntigravityEgressCredentialConfig | None = None
+
+
+class AntigravityEnvironmentConfig(BaseModel):
+    """The sandbox environment one Antigravity run gets.
+
+    Today this is the egress policy: whether the sandbox reaches the network at
+    all, which domains it may reach, and which credentials the proxy attaches
+    on the way out. Mounted files are not configured here -- they come from a
+    delegation's attachments (see ``InteractionsAgentProcessingService``).
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # `default` sends no network block, leaving the API's own policy (all
+    # outbound traffic allowed, no injection). `disabled` cuts the sandbox off
+    # entirely. `allowlist` sends `allowlist` and nothing else is reachable.
+    network: Literal["default", "disabled", "allowlist"] = "default"
+    allowlist: list[AntigravityEgressRuleConfig] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_network(self) -> AntigravityEnvironmentConfig:
+        if self.network == "allowlist" and not self.allowlist:
+            msg = (
+                "Antigravity environment sets network: 'allowlist' with an "
+                "empty allowlist, which leaves the sandbox unable to reach "
+                "anything. Use network: 'disabled' to mean that deliberately."
+            )
+            raise ValueError(msg)
+        if self.network != "allowlist" and self.allowlist:
+            msg = (
+                f"Antigravity environment sets an allowlist but network is "
+                f"'{self.network}', so the allowlist would be discarded. Set "
+                "network: 'allowlist' to apply it."
+            )
+            raise ValueError(msg)
+        return self
+
+
 class AntigravityConfig(BaseModel):
     """Runtime configuration for a Google Antigravity managed-agent profile.
 
     Only meaningful on a profile whose ``llm_model`` is the Antigravity agent
     id: the agent id selects the managed agent, and these fields select the
-    model it reasons with and cap what a single run may spend.
+    model it reasons with, cap what a single run may spend, and describe the
+    sandbox environment it runs in.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -115,6 +208,11 @@ class AntigravityConfig(BaseModel):
     # own default; the agent plans and executes autonomously in a sandbox, so
     # this is the only bound on how long it iterates other than wall clock.
     max_total_tokens: int | None = Field(default=None, gt=0)
+    # Unset means a fresh default sandbox with unrestricted egress and no
+    # credentials, which is what the profile ships as. Configuring a credential
+    # here widens the profile's Rule of Two class -- see
+    # docs/design/antigravity-environment-and-credentials.md.
+    environment: AntigravityEnvironmentConfig | None = None
 
 
 # The `name` of every context provider the assistant can attach to a profile.
