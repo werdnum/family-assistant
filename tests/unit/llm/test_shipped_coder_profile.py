@@ -104,14 +104,19 @@ def test_shipped_coder_profile_is_a_sandbox_network_sink() -> None:
     assert processing_config.taint_sink_class is SinkClass.SANDBOX_NETWORK
 
 
-def test_shipped_coder_profile_enforces_its_taint_policy() -> None:
-    """Declaring the sink decides nothing unless the profile also enforces.
+def test_shipped_coder_profile_does_not_override_the_rollout_mode() -> None:
+    """The sink declaration rides the deployment's rollout; it does not preempt it.
 
-    The shipped deployment-wide `taint_policy.mode` is `observe`, which
-    downgrades every confirm and deny to audit -- so under it both the tool
-    gate and the profile gate would let an emailed instruction reach the
-    sandbox. A profile may tighten the deployment policy (never relax it), and
-    this one enforces from the start rather than waiting for the rollout.
+    A profile-level `enforce` would apply the context-free tier x sink matrix to
+    this one profile while the deployment is still measuring that matrix's
+    false-positive rate -- and it is the friction that keeps the rollout in
+    `observe` in the first place (see
+    docs/design/runtime-taint-enforcement-operational-findings.md). Worse for
+    this cell specifically: ambient high-tier prompt notes raise whole profiles
+    to `unknown_external` irrespective of the request, so an override would
+    refuse ordinary `/coder` turns, and the correction that document proposes
+    for interactive `unknown_external -> sandbox_network` is confirmation
+    rather than the hard denial an override produces.
     """
     config = load_config(
         config_file_path="nonexistent-so-only-defaults.yaml",
@@ -119,25 +124,11 @@ def test_shipped_coder_profile_enforces_its_taint_policy() -> None:
     )
     profile = next(p for p in config.service_profiles if p.id == "coder")
 
-    assert config.taint_policy.mode is TaintPolicyMode.OBSERVE
     merged = merge_taint_policy_config(
         base=config.taint_policy, profile=profile.taint_policy
     )
-    assert merged.mode is TaintPolicyMode.ENFORCE
 
-    evaluation = TaintPolicyEvaluator(merged).evaluate(
-        state=TurnTaintState.empty().add_source(
-            TaintSource(
-                source_type=TaintSourceType.EMAIL,
-                source_id="msg-1",
-                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
-                labels=frozenset(),
-                reason="Inbound email.",
-            )
-        ),
-        sink_class=SinkClass.SANDBOX_NETWORK,
-    )
-    assert evaluation.effective_outcome is TaintPolicyOutcome.DENY
+    assert merged.mode is config.taint_policy.mode
 
 
 def test_the_shipped_matrix_denies_a_sandbox_run_untrusted_content() -> None:
