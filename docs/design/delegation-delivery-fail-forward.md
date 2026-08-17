@@ -59,10 +59,13 @@ class ChatDeliveryError(RuntimeError):
   catching `BadRequest` alone would leave it classified transient and retrying forever.
 - **Web**: a failed database write is transient; a conversation that does not resolve is not.
 - **Email**: the transport is Mailgun over HTTP (`MailgunOutboundEmailClient`), not SMTP, so the
-  classification is by HTTP status and network failure — connection errors, timeouts, 429 and 5xx
-  transient; 4xx (bad address, rejected payload, auth) not. `httpx.HTTPError` is currently wrapped
-  in a bare `OutboundEmailDeliveryError` that discards the status, so that wrapper has to carry the
-  status through before `EmailChatInterface` can classify anything.
+  classification is by HTTP status and network failure — connection errors, timeouts, 5xx and the
+  retryable 4xx statuses transient; every other 4xx (bad address, rejected payload, auth) permanent.
+  "Retryable 4xx" means 408, 425 and 429, which the codebase already names as `_RETRYABLE_4XX` in
+  `a2a/client.py`; that set moves somewhere shared rather than being written out twice.
+  `httpx.HTTPError` is currently wrapped in a bare `OutboundEmailDeliveryError` that discards the
+  status, so that wrapper has to carry the status through before `EmailChatInterface` can classify
+  anything.
 
 Per the project's no-backwards-compatibility rule the `| None` return goes away entirely, and the
 six call sites are updated to catch `ChatDeliveryError` where they currently test for `None`
@@ -92,9 +95,15 @@ In `_notify_delegation_if_needed` / `_deliver_delegation_wake_response`:
 Bounding, so a failing channel cannot spin:
 
 - **One fail-forward turn per delegation run**, tracked by a new `notify_stage` column on
-  `delegation_runs` (`initial` → `failed_forward` → `gave_up`), with an Alembic migration. The stage
-  is what bounds the turns; a plain per-attempt counter would not, because delivery attempts and
-  fail-forward turns advance at different rates.
+  `delegation_runs` (`initial` → `failed_forward` → `canned_pending` → `gave_up`), with an Alembic
+  migration. The stage is what bounds the turns; a plain per-attempt counter would not, because
+  delivery attempts and fail-forward turns advance at different rates.
+- **Each stage is committed when it is entered, before the send it describes.** `canned_pending`
+  exists for the mixed case: the fail-forward reply failed permanently but the canned notice then
+  failed transiently. Without it the run would still read `failed_forward`, and every hourly retry
+  would re-send the reply already known to be undeliverable before reaching the canned notice again
+  — more sends per pass than the bound claims. Committing the stage first means a retry resumes at
+  the send that has not yet succeeded.
 - **The fail-forward turn's id is stable**, derived from the delegation id and the stage
   (`uuid5(ns, f"{delegation_id}:failed_forward")`), never from an attempt count. The wake checkpoint
   (`get_undelivered_terminal_reply`) resumes at delivery by turn id, so an id that moved with each
@@ -149,3 +158,5 @@ produce one failure log per hour per stuck run. Optional; separable from the mil
   an unrecognised error would.
 - A run failing transiently past the age cut-off stops retrying and enters fail-forward, rather than
   retrying for as long as the outage lasts.
+- The mixed case: a permanent failure on the fail-forward reply followed by a transient failure on
+  the canned notice resumes at the canned notice, and never re-sends the fail-forward reply.
