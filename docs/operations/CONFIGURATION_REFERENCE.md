@@ -1846,14 +1846,23 @@ credential that cannot be resolved — a missing variable, an unreadable key, a 
 fails the run rather than submitting it unauthenticated, which would otherwise surface as a 404 on a
 private repository from inside the agent.
 
-**Injecting a credential widens the profile's Rule of Two class.** The shipped `coder` is `[C]`
-only. GitHub App access adds `[B]`, and the agent already reads the open web (`[A]`). What keeps
-that safe is `taint_sink_class: "sandbox_network"` with `taint_policy.mode: "enforce"` (see below),
-which stops content the assistant derived from an email from directing the agent at all. What does
-*not* is a `{domain: "*"}` rule: with allow-all egress the agent can fetch an attacker-controlled
-page mid-run while the proxy is still attaching a GitHub credential. Enumerating every reachable
-domain instead of using `*` closes that; using `*` is a deliberate trade for a coding agent that
-installs packages from arbitrary indexes. See
+**Injecting a credential widens the profile's Rule of Two class**, and how far is mostly set outside
+this file. The shipped `coder` is `[C]` only; GitHub App access adds `[B]`, and the agent already
+reads the open web (`[A]`). Three layers bound that, in the order they take effect:
+
+1. **The credential's scope.** An App installation token reaches only the repositories the App is
+   installed on, only with the permissions granted, and expires in about an hour. Scoping the
+   installation is the primary control — it sets the blast radius before any runtime gate applies,
+   so widening the App's installation or permissions is a security change in its own right.
+2. **The taint gate.** `taint_sink_class: "sandbox_network"` with `taint_policy.mode: "enforce"`
+   (see below) stops content the assistant derived from an email from directing the agent at all.
+3. **The egress policy here.** A closed allowlist also stops the agent reading an
+   attacker-controlled page mid-run while the proxy attaches a credential; a `{domain: "*"}` rule
+   does not. Allow-all is the shape the API documents for "restrict nothing, inject on some" and
+   what a coding agent installing packages from arbitrary indexes needs — a risk/benefit call
+   against the scope set in (1), not a question with one right answer.
+
+See
 [antigravity-environment-and-credentials.md](../design/antigravity-environment-and-credentials.md).
 
 The agent runs server-side on the Interactions API, so the profile must use `provider: "google"` and

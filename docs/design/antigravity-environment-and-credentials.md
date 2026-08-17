@@ -82,21 +82,28 @@ no household data. Injecting a GitHub App credential adds **[B]** — the App ca
 repositories it is installed on, which are sensitive systems even though they are not the
 household's notes. The profile also reads the open web, which is **[A]**.
 
-That is all three, and it is a real widening, so it is worth being explicit about what holds the
-line and what does not.
+That is all three on paper. What the three letters do not capture is *how much* [B] — and that is
+the axis the mitigation actually runs along here, so it is worth being explicit about each layer.
 
-- **What holds it:** `taint_sink_class: "sandbox_network"` with `taint_policy.mode: "enforce"`. The
+- **The credential's own scope.** A GitHub App installation token is not an account credential. It
+  reaches only the repositories the App is installed on, only with the permissions that installation
+  was granted, and it expires in about an hour. Choosing a *scoped* credential over a personal
+  access token is the primary mitigation for the [B] this adds: it sets the blast radius before any
+  runtime gate is consulted, and it is the layer that still holds if every other one fails. Widening
+  the App's installation or its permission grants is therefore a security change of the same weight
+  as anything in this document, even though it happens entirely outside this repository.
+- **The taint gate.** `taint_sink_class: "sandbox_network"` with `taint_policy.mode: "enforce"`. The
   shipped matrix denies this sink at `unknown_external` and confirms below that, so content the
   assistant derived from an email cannot direct the agent — whether it arrives as request text or as
   a routed attachment. The [A] the profile holds is therefore *the agent's own web reads*, not the
   caller's untrusted input; the caller is gated before a run exists.
-- **What does not:** an allowlist containing `{"domain": "*"}`. With allow-all egress the agent can
-  fetch an attacker-controlled page mid-run and act on what it says while the proxy is still
-  injecting a GitHub credential on GitHub-bound requests. Nothing in this design prevents that, and
-  a closed allowlist (every reachable domain enumerated) is the configuration that would. The
-  allow-all shape is what the API itself documents for "restrict nothing, inject on some", it is
-  what a coding agent that installs packages from arbitrary indexes needs, and it is a deliberate
-  operator choice — but it is the operator's exposure, not a mitigated one.
+- **What the egress policy does and does not add.** A closed allowlist — every reachable domain
+  enumerated — would also stop the agent reading an attacker-controlled page mid-run while the proxy
+  is still attaching a GitHub credential. An allowlist containing `{"domain": "*"}` does not; that
+  shape is what the API documents for "restrict nothing, inject on some", and it is what a coding
+  agent that installs packages from arbitrary indexes needs. Which one a deployment picks is a
+  risk/benefit call against the scope already set above, not a question with one right answer: the
+  residual exposure of allow-all is bounded by what the installation can reach in the first place.
 
 Because this is a deployment decision rather than a property of the software, **`defaults.yaml`
 ships no `environment` block at all**. Out of the box `coder` is exactly what it was: an
