@@ -325,16 +325,22 @@ as configuration rather than inventing new machinery.
 
 Worked example — the error-triage automation ("scan error logs nightly, file issues for real
 problems"): an engineer-profile scheduled task whose grant is `create_github_issue`, this repository
-only, three per day, **schema-constrained body**. The repository is public, so a free-form issue
-body is genuine egress twice over — an exfiltration channel for injected content and a privacy leak
-for log excerpts on a perfectly clean run. The schema closes both: the public body carries only
-closed fields (error class, exception type, fingerprint hash, counts, first/last-seen, component) —
-a `low_bandwidth_external` sink by construction — while free-form detail (stack traces, log
-excerpts) goes to a private artifact the issue references. Free-form text crossing a trust boundary
-is where both injection and exfiltration live; typed data crossing it is boring in both directions.
-The same grant shape covers interactive browsing sessions (an origin-scoped grant confirmed once at
-session start), which is what keeps browser workflows to one confirmation per task instead of one
-per navigation.
+only, three per day, **server-rendered body**. The repository is public, so a free-form issue body
+is genuine egress twice over — an exfiltration channel for injected content and a privacy leak for
+log excerpts on a perfectly clean run. Schema *typing* alone does not close that: a string field
+named `component` is still free-form if the model fills it, and an injected log entry could encode
+whatever it likes there. So the model's authority shrinks to **selection**: it names the error group
+to file (by id), and the server renders the public body entirely from the referenced record —
+component from the known-component enum, exception class as parsed from the log record, fingerprint
+computed server-side as a hash, counts and timestamps from the store. No model-composed string
+reaches the public body at all, which is what makes it a `low_bandwidth_external` sink by
+construction (the model's channel is its choice among error groups — a few bits). Free-form detail
+(stack traces, log excerpts) goes to a private artifact the issue references. Free-form text
+crossing a trust boundary is where both injection and exfiltration live; server-derived data
+crossing it is boring in both directions — and "typed" must always cash out as *derived or validated
+against the bounded source*, never as "a string field with a reassuring name." The same grant shape
+covers interactive browsing sessions (an origin-scoped grant confirmed once at session start), which
+is what keeps browser workflows to one confirmation per task instead of one per navigation.
 
 ### The adjudicator (contingent tier)
 
