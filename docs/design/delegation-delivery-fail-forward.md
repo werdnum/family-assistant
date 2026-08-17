@@ -52,8 +52,11 @@ class ChatDeliveryError(RuntimeError):
 
 `transient` is the interface's judgement about whether the identical send could succeed later:
 
-- **Telegram**: `NetworkError`, `TimedOut`, `RetryAfter` and 5xx are transient; `BadRequest`
-  (message too long, chat not found, bot blocked, invalid parse) is not.
+- **Telegram**: `NetworkError`, `TimedOut` and `RetryAfter` are transient; `BadRequest` (message too
+  long, chat not found, invalid parse) and `Forbidden` are not. `Forbidden` needs naming separately
+  — it is the bot being blocked or removed, which is the most common permanently undeliverable case
+  of all, and in PTB it is a sibling of `BadRequest` under `TelegramError`, not a subclass, so
+  catching `BadRequest` alone would leave it classified transient and retrying forever.
 - **Web**: a failed database write is transient; a conversation that does not resolve is not.
 - **Email**: the transport is Mailgun over HTTP (`MailgunOutboundEmailClient`), not SMTP, so the
   classification is by HTTP status and network failure — connection errors, timeouts, 429 and 5xx
@@ -74,9 +77,13 @@ is independently testable and independently useful (the hourly warning finally s
 
 In `_notify_delegation_if_needed` / `_deliver_delegation_wake_response`:
 
-- **Transient failure** — unchanged. Leave `notified_at` NULL; the hourly cleanup retries the same
-  text. Waking the model to rewrite a message because the network blipped would burn a turn and
-  change a reply that was fine.
+- **Transient failure** — leave `notified_at` NULL; the hourly cleanup retries the same text, as
+  today. Waking the model to rewrite a message because the network blipped would burn a turn and
+  change a reply that was fine. But "transient" cannot mean "forever": a run whose transient
+  failures keep coming for longer than `DELEGATION_NOTIFY_TRANSIENT_MAX_AGE` (a day) is reclassified
+  as permanent and enters fail-forward. Something that has not recovered in a day is not a blip, and
+  without this an outage that never ends reproduces exactly the unbounded retry loop this document
+  exists to remove.
 - **Permanent failure** — run one more source-profile turn whose trigger says the reply could not be
   delivered, names the interface and the reason, and states that the text is already saved in the
   conversation history. Its reply is delivered like any other. The model has its normal tools, so
@@ -106,8 +113,10 @@ Bounding, so a failing channel cannot spin:
   visible somewhere a human looks (the technical-problem report is the minimum; surfacing them in
   the web UI is worth considering separately).
 
-Net effect: at most three sends and one extra LLM turn per undeliverable run, and no run that
-retries indefinitely.
+Net effect, once a failure is classified permanent: at most three sends and one extra LLM turn, then
+a terminal state. Transient failures still retry on their own schedule and are not covered by that
+count — they are bounded only by the age cut-off above, which is what stops any run retrying
+indefinitely.
 
 ## Milestone 3: back off transient retries
 
@@ -136,3 +145,7 @@ produce one failure log per hour per stuck run. Optional; separable from the mil
   rather than notified; no path attempts more than the bounded number of sends.
 - The checkpoint bound specifically: a transient failure while delivering the fail-forward reply
   resumes at delivery on the next pass and does not run a second model turn.
+- `Forbidden` (bot blocked) classifies permanent and reaches fail-forward, rather than retrying as
+  an unrecognised error would.
+- A run failing transiently past the age cut-off stops retrying and enters fail-forward, rather than
+  retrying for as long as the outage lasts.
