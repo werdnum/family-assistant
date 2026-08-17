@@ -177,6 +177,20 @@ async def test_unchanged_tool_list_does_not_invalidate_downstream_caches() -> No
 
 
 @pytest.mark.asyncio
+async def test_a_reordered_tool_list_is_not_a_change() -> None:
+    """A server that shuffles its list must not churn the caches every cycle."""
+    provider = _provider(SERVER_ID)
+    _register(provider, SERVER_ID, [_tool("search"), _tool("fetch")])
+    provider._sessions[SERVER_ID] = _session([_tool("fetch"), _tool("search")])
+    version = provider.descriptors_version
+
+    await provider._run_health_checks()
+
+    assert provider.descriptors_version == version
+    assert _tool_names(provider) == {"search", "fetch"}
+
+
+@pytest.mark.asyncio
 async def test_refresh_does_not_steal_a_tool_name_from_another_server() -> None:
     """The first server to claim a duplicated name keeps it."""
     provider = _provider(OTHER_SERVER_ID, SERVER_ID)

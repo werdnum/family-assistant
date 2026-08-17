@@ -1056,18 +1056,17 @@ class MCPToolsProvider:
         # name another server owns doesn't look like a change on every cycle.
         # Descriptors rather than definitions, because the annotation-derived
         # tags that drive policy matching live only on the descriptor: a tool
-        # that keeps its schema but stops being read-only has changed.
-        registrable = [
-            descriptor
-            for descriptor in descriptors
-            if self._tool_map.get(descriptor.name) in {None, server_id}
-        ]
-        previous = self._registered_descriptors(server_id)
-        if registrable == previous:
+        # that keeps its schema but stops being read-only has changed. Keyed by
+        # name rather than ordered, so a server that shuffles its list is not a
+        # change either.
+        prospective = self._prospective_registration(server_id, descriptors)
+        previous = {
+            descriptor.name: descriptor
+            for descriptor in self._registered_descriptors(server_id)
+        }
+        if prospective == previous:
             return
 
-        previous_names = {descriptor.name for descriptor in previous}
-        current_names = {descriptor.name for descriptor in registrable}
         self._unregister_server_tools(server_id)
         self._register_server_tools(server_id, definitions, descriptors)
         self._bump_descriptors_version()
@@ -1075,10 +1074,26 @@ class MCPToolsProvider:
             "MCP server '%s' reported a changed tool list on health check: "
             "now %d tool(s) (added: %s; removed: %s)",
             server_id,
-            len(registrable),
-            ", ".join(sorted(current_names - previous_names)) or "none",
-            ", ".join(sorted(previous_names - current_names)) or "none",
+            len(prospective),
+            ", ".join(sorted(prospective.keys() - previous.keys())) or "none",
+            ", ".join(sorted(previous.keys() - prospective.keys())) or "none",
         )
+
+    def _prospective_registration(
+        self, server_id: str, descriptors: Sequence[ToolDescriptor]
+    ) -> dict[str, ToolDescriptor]:
+        """The descriptors ``_register_server_tools`` would keep, keyed by name.
+
+        Mirrors registration's two rules — a name another server owns stays
+        with that server, and the first of a repeated name wins — so that
+        comparing against it never reports a change registration can't make.
+        """
+        prospective: dict[str, ToolDescriptor] = {}
+        for descriptor in descriptors:
+            if self._tool_map.get(descriptor.name) not in {None, server_id}:
+                continue
+            prospective.setdefault(descriptor.name, descriptor)
+        return prospective
 
     async def _teardown_server(self, server_id: str) -> None:
         """Drop a server's session and unregister the tools it provided."""
