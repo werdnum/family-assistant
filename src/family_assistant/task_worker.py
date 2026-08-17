@@ -93,6 +93,7 @@ if TYPE_CHECKING:
     from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
+from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.processing.utils import get_file_extension_from_mime_type
 from family_assistant.services.deferred_tool_confirmation import (
     build_deferred_confirmation_callback,
@@ -512,7 +513,16 @@ class DelegationNotificationError(RuntimeError):
 
     Rolls back the isolated notification transaction so ``notified_at`` stays
     NULL and the run is retried instead of being recorded as delivered.
+
+    ``transient`` says whether sending the same thing again could work. It
+    defaults to True so that anything unclassified keeps the retry behaviour it
+    has always had; a permanent failure is what diverts the run into
+    fail-forward instead of retrying something already known to be refused.
     """
+
+    def __init__(self, message: str, *, transient: bool = True) -> None:
+        super().__init__(message)
+        self.transient = transient
 
 
 async def _schedule_reminder_follow_up(
@@ -688,6 +698,18 @@ async def _deliver_llm_callback_reply(
             on_behalf_of_user_id=owner_user_id,
             taint_metadata=delivery_taint_metadata,
         )
+    except ChatDeliveryError as delivery_error:
+        # Letting this task complete would leave the reply undelivered with
+        # nothing said about it; raising leaves it undelivered so a retry
+        # resumes at the checkpoint and sends it, rather than dropping it.
+        logger.exception(
+            f"Failed to send LLM callback response to {interface_type}:{conversation_id}: "
+            f"{delivery_error}"
+        )
+        raise RuntimeError(
+            f"Failed to send LLM callback response to "
+            f"{interface_type}:{conversation_id}: {delivery_error}"
+        ) from delivery_error
     except Exception as e:
         logger.exception(
             f"Failed to send LLM callback response to {interface_type}:{conversation_id}: {e}"
@@ -695,16 +717,6 @@ async def _deliver_llm_callback_reply(
         raise RuntimeError(
             f"Failed to send LLM callback response to {interface_type}:{conversation_id} via chat interface."
         ) from e
-
-    if sent_message_id is None:
-        # A None return is how the ChatInterface contract reports a failed
-        # delivery. Returning here would let the task complete with nothing
-        # sent; raising leaves the reply undelivered so a retry resumes at the
-        # checkpoint and sends it, rather than dropping it silently.
-        raise RuntimeError(
-            f"Chat interface reported no delivery for the LLM callback reply to "
-            f"{interface_type}:{conversation_id}."
-        )
 
     logger.info(
         f"Sent LLM response for callback to {interface_type}:{conversation_id}."
@@ -2156,19 +2168,21 @@ class TaskWorker:
             )
             if chat_interface is None:
                 raise RuntimeError(f"No chat interface available for {interface_type}")
-            sent_message_id = await chat_interface.send_message(
-                conversation_id=run["conversation_id"],
-                text=message_text,
-                parse_mode=None,
-                attachment_ids=run["result_attachment_ids_json"] or None,
-                on_behalf_of_user_id=run["user_id"],
-                taint_metadata=notification_taint_metadata,
-            )
-            if sent_message_id is None:
+            try:
+                sent_message_id = await chat_interface.send_message(
+                    conversation_id=run["conversation_id"],
+                    text=message_text,
+                    parse_mode=None,
+                    attachment_ids=run["result_attachment_ids_json"] or None,
+                    on_behalf_of_user_id=run["user_id"],
+                    taint_metadata=notification_taint_metadata,
+                )
+            except ChatDeliveryError as delivery_error:
                 raise DelegationNotificationError(
                     f"Failed to deliver delegation notification for "
-                    f"{run['delegation_id']} via {interface_type}."
-                )
+                    f"{run['delegation_id']} via {interface_type}: {delivery_error}",
+                    transient=delivery_error.transient,
+                ) from delivery_error
 
         async def _record_notification(txn: DatabaseTransaction) -> int | None:
             message_internal_id = await txn.message_history.add_message(
@@ -2543,19 +2557,21 @@ class TaskWorker:
             raise RuntimeError(
                 f"No chat interface available for {run['interface_type']}"
             )
-        sent_message_id = await chat_interface.send_message(
-            conversation_id=run["conversation_id"],
-            text=result.text_reply or "Delegated task finished.",
-            parse_mode=None,
-            attachment_ids=self._source_delivery_attachment_ids(run, result),
-            on_behalf_of_user_id=run["user_id"],
-        )
-        if sent_message_id is None:
+        try:
+            return await chat_interface.send_message(
+                conversation_id=run["conversation_id"],
+                text=result.text_reply or "Delegated task finished.",
+                parse_mode=None,
+                attachment_ids=self._source_delivery_attachment_ids(run, result),
+                on_behalf_of_user_id=run["user_id"],
+            )
+        except ChatDeliveryError as delivery_error:
             raise DelegationNotificationError(
                 f"Failed to deliver source profile response for delegation "
-                f"{run['delegation_id']} via {run['interface_type']}."
-            )
-        return sent_message_id
+                f"{run['delegation_id']} via {run['interface_type']}: "
+                f"{delivery_error}",
+                transient=delivery_error.transient,
+            ) from delivery_error
 
     @staticmethod
     def _source_delivery_attachment_ids(
@@ -4811,7 +4827,7 @@ async def _notify_confirmation_execution_result(
         # The execution context's tracker holds the confirmation's recorded
         # taint state plus the executed tool's result taint.
         result_taint_metadata = _confirmation_result_taint_metadata(context, request)
-        sent_message_id = await chat_interface.send_message(
+        await chat_interface.send_message(
             conversation_id=delivery_conversation_id,
             text=message,
             reply_to_interface_id=reply_to_interface_id,
@@ -4819,10 +4835,11 @@ async def _notify_confirmation_execution_result(
             on_behalf_of_user_id=context.user_id,
             taint_metadata=result_taint_metadata,
         )
-        if sent_message_id is None:
-            raise ConfirmationNotificationError(
-                f"Confirmation {request['id']} result notification was not delivered"
-            )
+    except ChatDeliveryError as delivery_error:
+        raise ConfirmationNotificationError(
+            f"Confirmation {request['id']} result notification was not delivered: "
+            f"{delivery_error}"
+        ) from delivery_error
     except ConfirmationNotificationError:
         raise
     except Exception as exc:

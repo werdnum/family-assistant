@@ -11,6 +11,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
+from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.llm.messages import AssistantMessage, MessageReasoningInfo
 from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.security.taint import (
@@ -696,20 +697,24 @@ async def send_message_to_user_tool(
         # Use the ChatInterface to send the message.
         # Assuming the target_chat_id is for the same interface type as the current context.
         # The TelegramChatInterface will handle converting target_chat_id to int.
-        sent_message_id_str = await chat_interface.send_message(
-            conversation_id=str(target_chat_id),  # Pass as string
-            text=message_content,
-            attachment_ids=validated_attachment_ids,
-            on_behalf_of_user_id=exec_context.user_id,
-            taint_metadata=message_taint_metadata,
-            # parse_mode can be added if needed, default is plain text
-        )
-
-        if not sent_message_id_str:
-            logger.error(
-                f"Failed to send message to chat_id {target_chat_id} via ChatInterface."
+        try:
+            sent_message_id_str = await chat_interface.send_message(
+                conversation_id=str(target_chat_id),  # Pass as string
+                text=message_content,
+                attachment_ids=validated_attachment_ids,
+                on_behalf_of_user_id=exec_context.user_id,
+                taint_metadata=message_taint_metadata,
+                # parse_mode can be added if needed, default is plain text
             )
-            return f"Error: Could not send message to Chat ID {target_chat_id} (sending failed)."
+        except ChatDeliveryError as delivery_error:
+            logger.error(
+                f"Failed to send message to chat_id {target_chat_id} via "
+                f"ChatInterface: {delivery_error}"
+            )
+            return (
+                f"Error: Could not send message to Chat ID {target_chat_id} "
+                f"({delivery_error})."
+            )
 
         attachment_msg = ""
         if validated_attachment_ids:

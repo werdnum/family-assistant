@@ -10,8 +10,10 @@ from typing import TYPE_CHECKING, Protocol
 import httpx
 
 from family_assistant.email_intake.security import normalize_email_address
+from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.storage.database import Database
 from family_assistant.storage.email import received_emails_table
+from family_assistant.utils.http_status import is_transient_http_status
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -24,7 +26,17 @@ logger = logging.getLogger(__name__)
 
 
 class OutboundEmailDeliveryError(RuntimeError):
-    """Raised when a recipient-locked email reply cannot be delivered."""
+    """Raised when a recipient-locked email reply cannot be delivered.
+
+    ``transient`` says whether sending the identical message again could
+    succeed. It defaults to False because most of these are settled facts --
+    an unconfigured from-address, an unknown conversation, an unauthorized
+    sender -- and only the delivery attempt itself knows better.
+    """
+
+    def __init__(self, message: str, *, transient: bool = False) -> None:
+        super().__init__(message)
+        self.transient = transient
 
 
 class OutboundEmailClient(Protocol):
@@ -132,8 +144,19 @@ class MailgunOutboundEmailClient:
                 timeout=self._timeout_seconds,
             )
             response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
+            raise OutboundEmailDeliveryError(
+                f"Mailgun email delivery failed with HTTP {status_code}",
+                transient=is_transient_http_status(status_code),
+            ) from exc
         except httpx.HTTPError as exc:
-            raise OutboundEmailDeliveryError("Mailgun email delivery failed") from exc
+            # No response at all -- connection refused, DNS, timeout. The
+            # request may not have reached Mailgun, and the condition is of the
+            # moment either way.
+            raise OutboundEmailDeliveryError(
+                f"Mailgun email delivery failed: {exc}", transient=True
+            ) from exc
 
         try:
             payload: object = response.json()
@@ -174,20 +197,40 @@ class EmailChatInterface:
         attachment_ids: list[str] | None = None,
         on_behalf_of_user_id: str | None = None,
         taint_metadata: TaintMetadata | None = None,
-    ) -> str | None:
-        """Send a reply to the original authenticated inbound email sender."""
+    ) -> str:
+        """Send a reply to the original authenticated inbound email sender.
+
+        Raises:
+            ChatDeliveryError: The reply was not sent. Delivery failures carry
+                the transport's own judgement of whether a retry could work;
+                everything decided before the send (no outbound client, no
+                from-address, an unknown or unauthorized conversation) is
+                permanent.
+        """
         _ = parse_mode
         _ = reply_to_interface_id
         _ = on_behalf_of_user_id
         _ = taint_metadata
         if attachment_ids:
-            raise OutboundEmailDeliveryError(
-                "Email replies with attachments are not supported"
+            raise ChatDeliveryError(
+                "Email replies with attachments are not supported", transient=False
             )
         if self._outbound_client is None:
-            logger.info("Email outbound delivery is not configured")
-            return None
+            raise ChatDeliveryError(
+                "Email outbound delivery is not configured", transient=False
+            )
 
+        try:
+            return await self._send_reply(self._outbound_client, conversation_id, text)
+        except OutboundEmailDeliveryError as delivery_error:
+            raise ChatDeliveryError(
+                str(delivery_error), transient=delivery_error.transient
+            ) from delivery_error
+
+    async def _send_reply(
+        self, outbound_client: OutboundEmailClient, conversation_id: str, text: str
+    ) -> str:
+        """Resolve the reply target and send, in the transport's own error terms."""
         target = await self._resolve_target(conversation_id)
         from_address = self._config.outbound_from_address
         if not from_address:
@@ -199,7 +242,7 @@ class EmailChatInterface:
         if not subject.lower().startswith("re:"):
             subject = f"Re: {subject}"
 
-        return await self._outbound_client.send_email(
+        return await outbound_client.send_email(
             to_address=target.to_address,
             from_address=from_address,
             subject=subject,

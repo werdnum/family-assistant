@@ -10,9 +10,16 @@ from typing import TYPE_CHECKING
 from PIL import Image
 from telegram import ForceReply, InputMediaPhoto, Message
 from telegram.constants import ParseMode
-from telegram.error import BadRequest, RetryAfter
+from telegram.error import (
+    BadRequest,
+    ChatMigrated,
+    Forbidden,
+    InvalidToken,
+    RetryAfter,
+    TelegramError,
+)
 
-from family_assistant.interfaces import ChatInterface
+from family_assistant.interfaces import ChatDeliveryError, ChatInterface
 from family_assistant.storage.database import Database
 from family_assistant.telegram.chunking import (
     CHUNK_SEND_DELAY_SECONDS,
@@ -34,6 +41,24 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 TELEGRAM_PHOTO_SIZE_LIMIT = 10 * 1024 * 1024  # 10MB
+
+
+def _is_transient_telegram_error(error: TelegramError) -> bool:
+    """Whether sending the same message again could succeed.
+
+    ``BadRequest`` (too long, chat not found, unparseable) and ``Forbidden``
+    (blocked or removed) are decided by what was sent or by the chat itself,
+    and are refused identically on every retry -- `Forbidden` is a sibling of
+    `BadRequest` here rather than a subclass, so it has to be named. An invalid
+    token and a migrated chat are equally settled for this configuration and
+    this chat id. Everything else, `NetworkError` and the `TimedOut` and
+    `RetryAfter` cases among it, is a condition of the moment.
+
+    Unrecognised errors count as transient: retrying costs a message, while
+    wrongly giving up loses the delivery, and the caller's age cut-off stops a
+    misclassification from retrying forever.
+    """
+    return not isinstance(error, BadRequest | Forbidden | InvalidToken | ChatMigrated)
 
 
 def _flood_control_delay_seconds(flood_control: RetryAfter) -> float:
@@ -74,7 +99,7 @@ class TelegramChatInterface(ChatInterface):
         attachment_ids: list[str] | None = None,
         on_behalf_of_user_id: str | None = None,
         taint_metadata: TaintMetadata | None = None,
-    ) -> str | None:
+    ) -> str:
         """
         Sends a message to the specified Telegram chat.
 
@@ -87,9 +112,15 @@ class TelegramChatInterface(ChatInterface):
             on_behalf_of_user_id: Acting user for owner-scoped attachment reads.
 
         Returns:
-            The Telegram message_id of the first message sent as a string, or None
-            if sending failed. Text over Telegram's length cap goes out as several
-            messages; the first one is the reply target callers record.
+            The Telegram message_id of the first message sent. Text over
+            Telegram's length cap goes out as several messages; the first one is
+            the reply target callers record.
+
+        Raises:
+            ChatDeliveryError: Nothing was delivered, or a later piece of a split
+                message was refused. A partial delivery reports as a failure
+                rather than returning the first id, so the caller re-sends the
+                whole text instead of silently losing the tail.
         """
         # Telegram delivery does not persist history rows itself; taint state
         # travels with whichever caller records the message.
@@ -109,11 +140,18 @@ class TelegramChatInterface(ChatInterface):
             reply_to_msg_id_int = (
                 int(reply_to_interface_id) if reply_to_interface_id else None
             )
-        except ValueError:
-            logger.error(
-                f"Invalid conversation_id '{conversation_id}' or reply_to_interface_id '{reply_to_interface_id}' for Telegram. Must be integer convertible."
+        except ValueError as invalid_id:
+            raise ChatDeliveryError(
+                f"Invalid conversation_id '{conversation_id}' or reply_to_interface_id "
+                f"'{reply_to_interface_id}' for Telegram. Must be integer convertible.",
+                transient=False,
+            ) from invalid_id
+
+        chunks = split_message_text(text)
+        if not chunks:
+            raise ChatDeliveryError(
+                f"There was no text to send to {conversation_id}.", transient=False
             )
-            return None
 
         try:
             if attachment_ids:
@@ -124,12 +162,6 @@ class TelegramChatInterface(ChatInterface):
                     on_behalf_of_user_id=on_behalf_of_user_id,
                 )
 
-            chunks = split_message_text(text)
-            if not chunks:
-                logger.warning(
-                    f"TelegramChatInterface has no text to send to {conversation_id}."
-                )
-                return None
             if len(chunks) > 1:
                 logger.info(
                     f"Message to {conversation_id} exceeds Telegram's length cap. "
@@ -150,12 +182,22 @@ class TelegramChatInterface(ChatInterface):
                     first_message_id = message_id
                 if index < len(chunks) - 1:
                     await asyncio.sleep(CHUNK_SEND_DELAY_SECONDS)
-            return first_message_id
-        except Exception as e:
-            logger.exception(
-                f"TelegramChatInterface failed to send message to {conversation_id}: {e}"
+        except TelegramError as telegram_error:
+            raise ChatDeliveryError(
+                f"Telegram refused a message to {conversation_id}: {telegram_error}",
+                transient=_is_transient_telegram_error(telegram_error),
+            ) from telegram_error
+        except Exception as unexpected:
+            raise ChatDeliveryError(
+                f"Failed to send message to {conversation_id}: {unexpected}",
+                transient=True,
+            ) from unexpected
+
+        if first_message_id is None:
+            raise ChatDeliveryError(
+                f"Telegram accepted no message for {conversation_id}.", transient=False
             )
-            return None
+        return first_message_id
 
     async def _send_text_chunk(
         self,

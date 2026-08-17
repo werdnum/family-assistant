@@ -13,7 +13,7 @@ from sqlalchemy import select, update
 
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
-from family_assistant.interfaces import ChatInterface
+from family_assistant.interfaces import ChatDeliveryError, ChatInterface
 from family_assistant.llm.messages import AssistantMessage, SystemMessage, UserMessage
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.processing import (
@@ -826,18 +826,20 @@ async def test_notification_uses_delegated_result_taint_not_trusted_parent(
 async def test_failed_delivery_is_not_recorded_as_notified(
     db_engine: AsyncEngine,
 ) -> None:
-    """A chat delivery that fails (send_message -> None) leaves the run unnotified.
+    """A transient chat delivery failure leaves the run unnotified.
 
-    ChatInterface.send_message returns None when delivery fails (invalid chat,
-    Bot API error, ...). The terminal run must stay notified_at NULL so it is
-    retried, and no notification row may be written for a message that was
-    never delivered. The delegated turn's own history is durable either way --
-    it happened.
+    ChatInterface.send_message raises ChatDeliveryError when delivery fails
+    (Bot API error, network, ...). A transient one must leave the terminal run
+    at notified_at NULL so it is retried, and no notification row may be
+    written for a message that was never delivered. The delegated turn's own
+    history is durable either way -- it happened.
     """
     target_service = FakeDelegatableService()
     processing_service = _source_processing_service(target_service)
     chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.return_value = None
+    chat_interface.send_message.side_effect = ChatDeliveryError(
+        "delivery failed", transient=True
+    )
 
     clock = SystemClock()
     db_context = Database(engine=db_engine)
@@ -892,7 +894,10 @@ async def test_source_wake_delivery_failure_falls_back_without_recording_deliver
     target_service = FakeDelegatableService()
     processing_service = FakeWakeCapableSourceService(target_service)
     chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.side_effect = [None, "fallback_external_message_id"]
+    chat_interface.send_message.side_effect = [
+        ChatDeliveryError("wake delivery failed", transient=True),
+        "fallback_external_message_id",
+    ]
 
     clock = SystemClock()
     db_context = Database(engine=db_engine)
@@ -970,7 +975,11 @@ async def test_source_wake_retry_resumes_at_delivery_without_rerunning_the_turn(
     target_service = FakeDelegatableService()
     processing_service = FakeWakeCapableSourceService(target_service)
     chat_interface = AsyncMock(spec=ChatInterface)
-    chat_interface.send_message.side_effect = [None, None, "delivered_on_retry"]
+    chat_interface.send_message.side_effect = [
+        ChatDeliveryError("wake delivery failed", transient=True),
+        ChatDeliveryError("fallback delivery failed", transient=True),
+        "delivered_on_retry",
+    ]
 
     clock = SystemClock()
     db_context = Database(engine=db_engine)
