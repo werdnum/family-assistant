@@ -20,6 +20,10 @@ from family_assistant.llm.messages import (
     MessageAttachmentMetadata,
     UserMessage,
 )
+from family_assistant.security.taint import (
+    TurnTaintState,
+    artifact_taint_sources,
+)
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from family_assistant.tools.types import ToolAttachment, ToolDefinition
@@ -135,6 +139,21 @@ class AttachmentProcessor:
                 injection_msg = self.llm_client.create_attachment_injection(
                     tool_attachment
                 )
+                # The injected message *is* the attachment's content as the
+                # model sees it, so it has to carry the attachment's taint.
+                # Without this the turn reads as trusted no matter what the
+                # file's provenance says -- and a text/CSV/JSON attachment is
+                # injected as text, so its content reaches the model directly.
+                attachment_sources = artifact_taint_sources(
+                    attachment_metadata.metadata,
+                    source_id=attachment_id,
+                    reason="Attachment injected into the turn.",
+                )
+                if attachment_sources and injection_msg.taint_metadata is None:
+                    attachment_state = TurnTaintState.empty()
+                    for source in attachment_sources:
+                        attachment_state = attachment_state.add_source(source)
+                    injection_msg.taint_metadata = attachment_state.to_metadata()
                 injection_messages.append(injection_msg)
                 injected_attachments.append(
                     MessageAttachmentMetadata(

@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from family_assistant.config_models import ToolsConfig
     from family_assistant.llm import LLMStreamEvent
     from family_assistant.llm.messages import MessageReasoningInfo, ToolMessage
+    from family_assistant.security.taint import SinkClass
     from family_assistant.skills.registry import NoteRegistry
 
 logger = logging.getLogger(__name__)
@@ -241,6 +242,10 @@ class ProcessingServiceConfig:
     # same name, but optional here since most local profiles aren't pollable).
     poll_interval_seconds: float | None = None
     max_async_seconds: float | None = None
+    # The runtime-taint sink class a whole turn on this profile counts as. Set
+    # on a profile whose turn is itself a privileged operation (a sandbox that
+    # runs code), so reaching the profile at all is gated by the taint matrix.
+    taint_sink_class: SinkClass | None = None
 
     def __post_init__(self) -> None:
         """Validate runtime invariants for processing config."""

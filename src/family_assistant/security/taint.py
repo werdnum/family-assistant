@@ -176,6 +176,16 @@ class TurnTaintState:
     fresh_high_taint_seen_at_sequence: int | None
     history_high_taint_present: bool
     sequence: int = 0
+    approved_sinks: frozenset[str] = frozenset()
+    """Sink classes a human has approved for *this* taint, by policy value.
+
+    Travels with the taint rather than beside it, because it is a fact about
+    the same content: "someone was shown this and said yes to sandbox_network".
+    A gate downstream of the one that asked can then read the approval instead
+    of inferring, from the shape of the call path, that an approval was
+    probably sought. Serialized with the rest of the state, so it survives the
+    delegation boundary the way the sources do.
+    """
 
     @classmethod
     def empty(cls) -> TurnTaintState:
@@ -188,6 +198,14 @@ class TurnTaintState:
             history_high_taint_present=False,
             sequence=0,
         )
+
+    def approve_sink(self, sink_class: SinkClass) -> TurnTaintState:
+        """Record that this turn's taint was cleared for one sink class."""
+        return replace(self, approved_sinks=self.approved_sinks | {sink_class.value})
+
+    def is_sink_approved(self, sink_class: SinkClass) -> bool:
+        """Whether an approval for this sink travelled with the taint."""
+        return sink_class.value in self.approved_sinks
 
     def add_source(
         self,
@@ -249,6 +267,7 @@ class TurnTaintState:
                 }
                 for source in self.sources[-max_sources:]
             ],
+            "approved_sinks": sorted(self.approved_sinks),
         }
 
     @classmethod
@@ -302,6 +321,17 @@ class TurnTaintState:
             )
         if from_history and state.max_tier >= SourceTrustTier.UNKNOWN_EXTERNAL:
             state = replace(state, history_high_taint_present=True)
+        # Approvals are not carried across a *history* read: a human clearing
+        # one turn's content for a sandbox says nothing about a later turn that
+        # merely quotes it. They travel only on the delegation boundary, where
+        # the same turn continues under another profile.
+        if not from_history:
+            raw_approved = metadata.get("approved_sinks")
+            if isinstance(raw_approved, list):
+                state = replace(
+                    state,
+                    approved_sinks=frozenset(str(entry) for entry in raw_approved),
+                )
         return state
 
     @classmethod
@@ -337,6 +367,7 @@ class TaintMetadata(TypedDict, total=False):
     history_high_taint_present: bool
     fresh_high_taint_seen_at_sequence: int | None
     sources: list[TaintMetadataSource]
+    approved_sinks: list[str]
 
 
 class TurnTaintTracker(Protocol):
@@ -404,6 +435,10 @@ def merge_taint_state_into_tracker(
         )
     if state.history_high_taint_present and not merged.history_high_taint_present:
         merged = replace(merged, history_high_taint_present=True)
+    if state.approved_sinks and not from_history:
+        merged = replace(
+            merged, approved_sinks=merged.approved_sinks | state.approved_sinks
+        )
     tracker.replace(merged)
     return merged
 
@@ -553,11 +588,14 @@ class TaintPolicyEvaluator:
         descriptor: ToolDescriptor,
         state: TurnTaintState,
         arguments: Mapping[str, object] | None = None,
+        delegation_sink_classes: Mapping[str, SinkClass] | None = None,
     ) -> TaintPolicyEvaluation:
         """Resolve a tool sink class from metadata and evaluate it."""
         return self.evaluate(
             state=state,
-            sink_class=resolve_tool_sink_class(descriptor, arguments),
+            sink_class=resolve_tool_sink_class(
+                descriptor, arguments, delegation_sink_classes
+            ),
         )
 
     def _configured_outcome(
@@ -695,14 +733,27 @@ def _home_assistant_action_sink_class(
 def resolve_tool_sink_class(
     descriptor: ToolDescriptor,
     arguments: Mapping[str, object] | None = None,
+    delegation_sink_classes: Mapping[str, SinkClass] | None = None,
 ) -> SinkClass:
     """Resolve a conservative sink class from tool metadata tags.
 
     ``arguments`` lets a tool that spans several sink classes be classified by
     the call rather than by its registration, which the taint design requires
     for Home Assistant actions. Omitting it keeps the tag-only classification.
+
+    ``delegation_sink_classes`` extends the same idea to delegation: handing a
+    turn to a profile is as privileged as whatever that profile does, so a
+    delegation to a profile that declares a sink (a code-execution sandbox, say)
+    is classified as that sink rather than as a generic delegation. A target
+    that declares nothing keeps the tag-only classification.
     """
     tag_values = {str(getattr(tag, "value", tag)) for tag in descriptor.tags}
+    if "delegation" in tag_values and delegation_sink_classes:
+        target = (arguments or {}).get("target_service_id")
+        if isinstance(target, str):
+            declared = delegation_sink_classes.get(target)
+            if declared is not None:
+                return declared
     if "sensitive_data" in tag_values and "read_only" in tag_values:
         return SinkClass.SENSITIVE_READ_BROADENING
     if "code_execution" in tag_values or "worker" in tag_values:
@@ -983,6 +1034,54 @@ def strip_legacy_labeled_echoes(metadata: object) -> TaintMetadata | None:
     if persisted_max_tier > state.max_tier:
         state = replace(state, max_tier=persisted_max_tier)
     return state.to_metadata()
+
+
+def artifact_taint_sources(
+    provenance: Mapping[str, object] | None,
+    *,
+    source_id: str,
+    source_type: TaintSourceType = TaintSourceType.ATTACHMENT,
+    reason: str = "Stored artifact provenance.",
+) -> tuple[TaintSource, ...]:
+    """Read an artifact's stored provenance as taint sources.
+
+    An artifact produced from untrusted input is labelled where it is created
+    (see ``email_intake/taint.py``), so an artifact carrying no provenance is
+    one no untrusted path touched and contributes nothing. Defaulting the
+    unlabelled case to ``unknown_external`` instead would taint every ordinary
+    user upload.
+    """
+    if provenance is None:
+        return ()
+
+    raw_state = provenance.get("taint_metadata")
+    if raw_state is not None:
+        state = TurnTaintState.from_metadata(raw_state)
+        if state.sources:
+            return state.sources
+
+    raw_tier = provenance.get("source_trust_tier")
+    if raw_tier is None:
+        return ()
+    try:
+        tier = SourceTrustTier.from_value(raw_tier)
+    except ValueError:
+        tier = SourceTrustTier.UNKNOWN_EXTERNAL
+    raw_labels = provenance.get("provenance_labels")
+    labels = (
+        frozenset(str(label) for label in raw_labels)
+        if isinstance(raw_labels, list)
+        else frozenset()
+    )
+    return (
+        TaintSource(
+            source_type=source_type,
+            source_id=source_id,
+            tier=tier,
+            labels=labels,
+            reason=reason,
+        ),
+    )
 
 
 def merge_history_taint(messages: Sequence[object]) -> TurnTaintState:

@@ -933,18 +933,34 @@ service_profiles:
     slash_commands:
       - "/research_max"
   - id: "coder"
-    description: "Coding agent. Writes and runs code, works with files, and reads the web to get a self-contained programming or computation task DONE — write and test a script, transform or analyse data, debug a snippet, work out a result — returning the finished output rather than instructions. Runs on the Google Antigravity managed agent (Gemini 3.7 Flash) in a throwaway Google-hosted Linux sandbox, so it sees nothing but the text of the request: no notes, calendar, documents, Home Assistant or other Family Assistant tools, and no shared workspace. It cannot receive attachments either — read a file's content first (e.g. with read_text_attachment) and include it in the request text. Choose it over spawn_worker when the task needs no files from the shared workspace and you want the result back in the conversation; choose spawn_worker when the agent must read or write shared workspace files, and complex_tasks when the task needs the family's own data."
+    description: "Coding agent. Writes and runs code, works with files, and reads the web to get a self-contained programming or computation task DONE — write and test a script, transform or analyse data, debug a snippet, work out a result — returning the finished output rather than instructions. Runs on the Google Antigravity managed agent (Gemini 3.7 Flash) in a throwaway Google-hosted Linux sandbox, so it sees nothing but the text of the request: no notes, calendar, documents, Home Assistant or other Family Assistant tools, and no shared workspace. Attachments you pass are mounted as files in its sandbox under /workspace, so hand it the file rather than pasting the contents. Choose it over spawn_worker when the task needs no files from the shared workspace and you want the result back in the conversation; choose spawn_worker when the agent must read or write shared workspace files, and complex_tasks when the task needs the family's own data."
     processing_config:
       provider: "google"
       llm_model: "antigravity-preview-05-2026"
       antigravity_config:
         model: "gemini-3.7-flash"
+      # A whole turn here runs code in a sandbox with network access, which is
+      # the same privilege spawn_worker holds -- so it is gated the same way,
+      # by the runtime taint matrix rather than by trusting the caller. The
+      # shipped matrix denies this at unknown_external and confirms it below
+      # that, so content the assistant derived from an email cannot direct the
+      # agent, whether it arrives as request text or as a routed attachment.
+      taint_sink_class: "sandbox_network"
       # An autonomous sandbox run can plan and execute for a long stretch, so
       # give a delegated run the same headroom as the research max tier before
       # it is reaped as orphaned.
       max_async_seconds: 7200
       prompts:
         system_prompt: "You are a coding agent working for {user_name}. You run in an isolated sandbox with code execution, a scratch filesystem and web access; you have no access to {user_name}'s notes, calendar, documents or devices, so work only from what is in the request. Write the code, run it, and check the output before you answer — carry the task through to a finished result rather than describing how it could be done. The sandbox is discarded when you finish, so include any code, data or files that matter in your reply. Report what you did along with the result; your final text response will be sent directly to {user_name}."
+    # ...and that gate has to hold whatever rollout stage the deployment is at.
+    # The shipped taint_policy.mode is `observe`, which downgrades every
+    # confirm/deny to audit -- under it the sink above would decide nothing and
+    # an emailed instruction would reach the sandbox anyway. A profile may
+    # tighten the deployment policy (never relax it), and this one is new, so
+    # nobody has a workflow built on it being permissive: it enforces from the
+    # start rather than waiting for the deployment-wide switch.
+    taint_policy:
+      mode: "enforce"
     tools_policy:
       default_decision: "deny"
     # This profile's own deny cannot refuse the three tools global_tools_policy

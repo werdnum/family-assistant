@@ -1823,6 +1823,55 @@ service_profiles:
 
 ______________________________________________________________________
 
+### taint_sink_class
+
+Per-profile `processing_config` value declaring the runtime-taint sink class that a **whole turn**
+on this profile counts as.
+
+| Property  | Value                                              |
+| --------- | -------------------------------------------------- |
+| Required  | No                                                 |
+| Default   | unset (the profile is not a sink in its own right) |
+| Sensitive | No                                                 |
+| Values    | any `SinkClass` name, e.g. `sandbox_network`       |
+
+Runtime taint normally gates individual **tools**: `spawn_worker` is classified `sandbox_network`,
+so the shipped matrix denies it when the turn carries `unknown_external` content. A profile whose
+entire turn is the privileged operation — an agent that runs code in a sandbox — has no such tool to
+gate, and delegating to it would otherwise be classified as an ordinary delegation.
+
+Declaring a sink here changes two things. `delegate_to_service` calls naming this profile as
+`target_service_id` are evaluated as that sink rather than as a generic delegation, so the caller is
+refused (or asked to confirm) before a delegation run is created. And the profile itself evaluates
+the sink against the turn's taint before every model call, covering the entry points a tool gate
+does not see: slash commands, A2A requests and `wake_llm` automations. On a profile that declares a
+sink and also holds tools, that per-call evaluation is what stops a tool result from raising the
+turn's tier and then being fed to the model anyway. The profile gate has nobody to ask, so it
+refuses a `confirm` outcome as well as a `deny`.
+
+Attachments routed into such a profile contribute their own recorded provenance to that evaluation,
+so an untrusted file raises the turn's tier even when the request text is trusted.
+
+**Pair it with `taint_policy.mode: enforce` on the same profile.** The deployment-wide
+`taint_policy.mode` defaults to `observe`, which downgrades every `confirm` and `deny` to `audit` —
+under it a declared sink decides nothing and both gates let the turn through. A profile may tighten
+the deployment policy (never relax it: `enforce` → `observe` is a startup error), and a sink
+declaration is a security boundary rather than a rollout dial, so declare both together.
+
+The shipped `coder` profile does. See
+[interactions-agent-taint-and-attachments.md](../design/interactions-agent-taint-and-attachments.md).
+
+```yaml
+service_profiles:
+  - id: "coder"
+    processing_config:
+      taint_sink_class: "sandbox_network"
+    taint_policy:
+      mode: "enforce"
+```
+
+______________________________________________________________________
+
 ## Configuration File Reference
 
 ### config.yaml

@@ -5,6 +5,7 @@ import logging
 import uuid
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
@@ -247,6 +248,8 @@ def _processing_service(
     llm_client: RuleBasedMockLLMClient,
     *,
     max_history_messages: int = 20,
+    taint_sink_class: SinkClass | None = None,
+    taint_policy: TaintPolicyConfig | None = None,
 ) -> ProcessingService:
     return ProcessingService(
         llm_client=llm_client,
@@ -260,10 +263,12 @@ def _processing_service(
             delegation_security_level=DelegationSecurityLevel.CONFIRM,
             id="runtime-taint-test",
             max_iterations=4,
+            taint_sink_class=taint_sink_class,
         ),
         context_providers=[],
         server_url="http://testserver",
         app_config=AppConfig(),
+        taint_policy=taint_policy,
     )
 
 
@@ -1141,6 +1146,223 @@ async def test_post_epoch_row_keeps_anonymous_manual_artifact(
     assert [source.source_type for source in state.sources] == [TaintSourceType.MANUAL]
 
 
+def _tool_descriptor(name: str, *tags: ToolTag) -> ToolDescriptor:
+    return ToolDescriptor(
+        name=name,
+        definition=cast(
+            "ToolDefinition",
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": f"Run {name}.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        ),
+        tags=frozenset(tags),
+        origin="local",
+    )
+
+
+def test_an_approval_is_recorded_on_the_turn_taint_for_a_delegation() -> None:
+    """The gate that asks writes the answer onto the taint it asked about.
+
+    A downstream gate on the target profile then reads evidence rather than
+    inferring, from the shape of the call path, that somebody was probably
+    asked.
+    """
+    tracker = InMemoryTurnTaintTracker()
+    provider = TaintTrackingToolsProvider(
+        LocalToolsProvider(registrations=[]),
+        delegation_sink_classes={"coder": SinkClass.SANDBOX_NETWORK},
+    )
+    context = cast("ToolExecutionContext", SimpleNamespace(taint_tracker=tracker))
+
+    provider._record_sink_approval(
+        context,
+        _tool_descriptor("delegate_to_service", ToolTag.DELEGATION),
+        SinkClass.SANDBOX_NETWORK,
+    )
+
+    assert tracker.snapshot().is_sink_approved(SinkClass.SANDBOX_NETWORK)
+
+
+def test_an_ordinary_tool_call_records_no_approval() -> None:
+    """A non-delegation tool *is* the sink; clearing the turn would over-grant."""
+    tracker = InMemoryTurnTaintTracker()
+    provider = TaintTrackingToolsProvider(LocalToolsProvider(registrations=[]))
+    context = cast("ToolExecutionContext", SimpleNamespace(taint_tracker=tracker))
+
+    provider._record_sink_approval(
+        context,
+        _tool_descriptor("spawn_worker", ToolTag.CODE_EXECUTION),
+        SinkClass.SANDBOX_NETWORK,
+    )
+
+    assert not tracker.snapshot().is_sink_approved(SinkClass.SANDBOX_NETWORK)
+
+
+def _delegation_provider(mode: TaintPolicyMode) -> TaintTrackingToolsProvider:
+    return TaintTrackingToolsProvider(
+        LocalToolsProvider(
+            registrations=[
+                ToolRegistration(
+                    definition=cast(
+                        "ToolDefinition",
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "delegate_to_service",
+                                "description": "Hand the turn to another profile.",
+                                "parameters": {"type": "object", "properties": {}},
+                            },
+                        },
+                    ),
+                    implementation=_worker_tool,
+                    metadata=make_local_tool_metadata([
+                        ToolTag.DELEGATION,
+                        ToolTag.OUTPUT_UNSPECIFIED,
+                    ]),
+                )
+            ]
+        ),
+        taint_policy=TaintPolicyConfig(mode=mode),
+        delegation_sink_classes={"coder": SinkClass.SANDBOX_NETWORK},
+    )
+
+
+def _tracker_at(tier: SourceTrustTier) -> InMemoryTurnTaintTracker:
+    tracker = InMemoryTurnTaintTracker()
+    tracker.add_source(
+        TaintSource(
+            source_type=TaintSourceType.EMAIL,
+            source_id=f"mail-{tier.config_value}",
+            tier=tier,
+            labels=frozenset(),
+            reason="Inbound mail.",
+        )
+    )
+    return tracker
+
+
+@pytest.mark.asyncio
+async def test_observe_mode_delegation_records_no_approval(
+    db_engine: AsyncEngine,
+) -> None:
+    """A downgraded confirm asked nobody, so it clears nothing.
+
+    Observe mode converts confirm/deny into audit and lets the call through.
+    Treating that dry-run pass as an approval would hand a target profile that
+    is itself enforcing the one piece of evidence its gate trusts.
+    """
+    tracker = _tracker_at(SourceTrustTier.KNOWN_CONTACT)
+    context = _minimal_context(Database(db_engine), tracker)
+
+    await _delegation_provider(TaintPolicyMode.OBSERVE).execute_tool(
+        "delegate_to_service",
+        {"target_service_id": "coder"},
+        context,
+        "call_observe",
+    )
+
+    assert not tracker.snapshot().is_sink_approved(SinkClass.SANDBOX_NETWORK)
+
+
+@pytest.mark.asyncio
+async def test_an_unconfirmed_delegation_records_no_approval(
+    db_engine: AsyncEngine,
+) -> None:
+    """Not needing a confirmation is not the same fact as getting one.
+
+    A profile may tighten the matrix, so the target's gate can ask about a
+    sink this one waved through. Recording passage as approval would answer
+    that question on the user's behalf, without anything ever being shown.
+    """
+    tracker = _tracker_at(SourceTrustTier.TRUSTED_USER)
+    context = _minimal_context(Database(db_engine), tracker)
+
+    await _delegation_provider(TaintPolicyMode.ENFORCE).execute_tool(
+        "delegate_to_service",
+        {"target_service_id": "coder"},
+        context,
+        "call_allowed",
+    )
+
+    assert not tracker.snapshot().is_sink_approved(SinkClass.SANDBOX_NETWORK)
+
+
+@pytest.mark.asyncio
+async def test_an_approved_confirmation_records_the_approval(
+    db_engine: AsyncEngine,
+) -> None:
+    """The approval the target gate reads comes from a user actually saying yes."""
+    tracker = _tracker_at(SourceTrustTier.KNOWN_CONTACT)
+
+    async def _approve(**_kwargs: object) -> ConfirmationOutcome:
+        return ConfirmationOutcome(kind="approved", result=None)
+
+    context = replace(
+        _minimal_context(Database(db_engine), tracker),
+        request_confirmation_callback=_approve,
+    )
+
+    await _delegation_provider(TaintPolicyMode.ENFORCE).execute_tool(
+        "delegate_to_service",
+        {"target_service_id": "coder"},
+        context,
+        "call_confirmed",
+    )
+
+    assert tracker.snapshot().is_sink_approved(SinkClass.SANDBOX_NETWORK)
+
+
+def test_an_approval_survives_serialization_but_not_a_history_read() -> None:
+    """It travels with the turn's own taint, not into later turns quoting it."""
+    approved = TurnTaintState.empty().approve_sink(SinkClass.SANDBOX_NETWORK)
+
+    carried = TurnTaintState.from_metadata(approved.to_metadata())
+    via_history = TurnTaintState.from_metadata(
+        approved.to_metadata(), from_history=True
+    )
+
+    assert carried.is_sink_approved(SinkClass.SANDBOX_NETWORK)
+    assert not via_history.is_sink_approved(SinkClass.SANDBOX_NETWORK)
+
+
+def test_delegating_to_a_sandbox_profile_resolves_to_its_sink_not_delegation() -> None:
+    """Handing a turn to a profile is as privileged as what that profile does.
+
+    Without this, delegating to a code-execution profile is classified as an
+    ordinary delegation, so untrusted content could reach a sandbox simply by
+    going through `delegate_to_service` instead of `spawn_worker`.
+    """
+    descriptor = _tool_descriptor("delegate_to_service", ToolTag.DELEGATION)
+
+    assert (
+        resolve_tool_sink_class(
+            descriptor,
+            {"target_service_id": "coder"},
+            {"coder": SinkClass.SANDBOX_NETWORK},
+        )
+        is SinkClass.SANDBOX_NETWORK
+    )
+
+
+def test_delegating_to_an_ordinary_profile_keeps_the_tag_classification() -> None:
+    """A target that declares no sink does not become one."""
+    descriptor = _tool_descriptor("delegate_to_service", ToolTag.DELEGATION)
+
+    assert (
+        resolve_tool_sink_class(
+            descriptor,
+            {"target_service_id": "research"},
+            {"coder": SinkClass.SANDBOX_NETWORK},
+        )
+        is not SinkClass.SANDBOX_NETWORK
+    )
+
+
 def test_tool_sink_resolution_uses_nonlocal_sinks_for_private_reads_and_writes() -> (
     None
 ):
@@ -1451,6 +1673,40 @@ def test_home_assistant_action_without_a_usable_domain_stays_conservative() -> N
             resolve_tool_sink_class(descriptor, arguments)
             is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
         ), arguments
+
+
+@pytest.mark.asyncio
+async def test_a_tool_result_can_close_the_sink_mid_turn(
+    db_engine: AsyncEngine,
+) -> None:
+    """On a sink-declaring profile the model itself is the sink, every call.
+
+    A profile may declare a sink and still hold tools. Gating only the turn's
+    opening state would let a tool that reads the web or a mailbox raise the
+    tier and then feed that content straight back to the model on the next
+    iteration -- the crossing the declaration exists to stop.
+    """
+    llm_client = _first_call_then_final("untrusted_tool")
+    service = _processing_service(
+        llm_client,
+        taint_sink_class=SinkClass.SANDBOX_NETWORK,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+    )
+
+    result = await service.handle_chat_interaction(
+        db_context=Database(db_engine),
+        interface_type="web",
+        conversation_id="sink-midturn",
+        trigger_content_parts=[{"type": "text", "text": "Do the thing."}],
+        trigger_interface_message_id=None,
+        user_name="Test User",
+    )
+
+    assert result.status.value == "error"
+    assert "unknown_external" in (result.text_reply or "")
+    # The tool ran and its result came back; what is refused is the *next*
+    # model call, which is what would carry that result into the sink.
+    assert len(llm_client.get_calls()) == 1
 
 
 def test_evaluate_tool_threads_arguments_into_sink_resolution() -> None:

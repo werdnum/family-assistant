@@ -23,7 +23,7 @@ if TYPE_CHECKING:
         RemoteServiceConfig,
         RequestConfirmationCallback,
     )
-    from family_assistant.security.taint import TaintSource
+    from family_assistant.security.taint import TaintSource, TurnTaintState
     from family_assistant.storage.database import Database
     from family_assistant.telegram.protocols import ConfirmationUIManager
 
@@ -95,6 +95,16 @@ class DelegationPermanentError(DelegationTransientError):
     """
 
 
+class TaintedSinkRefusedError(DelegationPermanentError):
+    """The turn's taint bars it from a profile that is itself a sink.
+
+    A ``DelegationPermanentError`` so a delegated run fails fast with the
+    reason rather than polling: re-submitting the same content would be
+    refused identically. The chat entry points catch it and render the reason
+    to the user instead of letting it surface as an internal error.
+    """
+
+
 class DelegationTaskNotFoundError(DelegationPermanentError):
     """The target reports no such task (e.g. HTTP 404 or an unknown-id error).
 
@@ -146,6 +156,8 @@ class PollableDelegationService(Protocol):
         user_name: str,
         db_context: Database,
         initial_taint_sources: Sequence[TaintSource] | None = None,
+        acting_user_id: str | None = None,
+        initial_taint_state: TurnTaintState | None = None,
     ) -> RemoteSubmission:
         """Submit without a client-supplied task id; the remote assigns one.
 
@@ -155,7 +167,9 @@ class PollableDelegationService(Protocol):
         ``db_context`` are available for implementations (e.g. local services
         with no network task of their own) that need to render a prompt
         template or look up prior delegation state; remote implementations may
-        ignore them.
+        ignore them. ``acting_user_id`` is the run's owner, for an
+        implementation that resolves owner-scoped artifacts (attachments)
+        rather than only text.
         """
         ...
 

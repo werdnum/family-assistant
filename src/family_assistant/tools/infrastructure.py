@@ -35,6 +35,7 @@ from family_assistant.security.taint import (
     TurnTaintState,
     derive_tool_result_taint_source,
     merge_taint_state_into_tracker,
+    resolve_tool_sink_class,
 )
 from family_assistant.tools.attachment_utils import (
     is_attachment_id,
@@ -1106,6 +1107,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
         wrapped_provider: ToolsProvider,
         taint_policy: TaintPolicyConfig | None = None,
         confirmation_timeout: float = 3600.0,
+        delegation_sink_classes: Mapping[str, SinkClass] | None = None,
     ) -> None:
         if not isinstance(wrapped_provider, ToolDescriptorProvider):
             msg = (
@@ -1118,6 +1120,41 @@ class TaintTrackingToolsProvider(ToolsProvider):
         self._taint_policy_config = taint_policy or TaintPolicyConfig()
         self._taint_evaluator = TaintPolicyEvaluator(self._taint_policy_config)
         self.confirmation_timeout = confirmation_timeout
+        # Profile id -> the sink class a whole turn on that profile counts as,
+        # so a delegation is evaluated as what the target does rather than as a
+        # generic delegation. Spans profiles, so it is built once at startup.
+        self._delegation_sink_classes = dict(delegation_sink_classes or {})
+
+    def _record_sink_approval(
+        self,
+        context: ToolExecutionContext,
+        descriptor: ToolDescriptor,
+        sink_class: SinkClass,
+    ) -> None:
+        """Record that a human approved this turn's content for a sink.
+
+        Called only where a confirmation was actually shown and approved --
+        never for an outcome that simply did not require one. Those are
+        different facts: this turn's policy not asking says nothing about a
+        target profile whose own matrix tightens the same sink to `confirm`,
+        and recording passage as approval would answer that profile's question
+        on a user's behalf.
+
+        Only for a delegation: an ordinary tool call *is* the sink, and marking
+        the turn would hand a later, unrelated gate an approval it never asked
+        for. A delegation is different -- the same content continues under the
+        target profile, whose own gate would otherwise have to infer whether
+        this one asked. Recording it on the taint means the evidence travels
+        with the content it is about, and is persisted with the delegation run.
+        """
+        tracker = context.taint_tracker
+        if tracker is None:
+            return
+        if "delegation" not in {
+            str(getattr(tag, "value", tag)) for tag in descriptor.tags
+        }:
+            return
+        tracker.replace(tracker.snapshot().approve_sink(sink_class))
 
     async def get_tool_definitions(
         self,
@@ -1237,10 +1274,11 @@ class TaintTrackingToolsProvider(ToolsProvider):
             state = context.taint_tracker.snapshot()
             if context.taint_policy_snapshot is not None and not argument_taint_merged:
                 state = context.taint_policy_snapshot
-            evaluation = self._taint_evaluator.evaluate_tool(
-                descriptor=descriptor,
-                state=state,
-                arguments=arguments,
+            sink_class = resolve_tool_sink_class(
+                descriptor, arguments, self._delegation_sink_classes
+            )
+            evaluation = self._taint_evaluator.evaluate(
+                state=state, sink_class=sink_class
             )
             logger.info(
                 "Runtime taint policy evaluated: tool=%s call_id=%s sink=%s "
@@ -1309,6 +1347,9 @@ class TaintTrackingToolsProvider(ToolsProvider):
                             state_before_execution=state_before_confirmation,
                         )
                     return confirmation_result
+                # A ``None`` result means the user approved. Record that on the
+                # taint, so the evidence travels with the content it is about.
+                self._record_sink_approval(context, descriptor, sink_class)
 
         state_before_execution = (
             context.taint_tracker.snapshot()

@@ -721,6 +721,7 @@ PROFILE_OVERRIDABLE_PROCESSING_KEYS: tuple[str, ...] = (
     "enable_computer_use",
     "computer_use_excluded_functions",
     "antigravity_config",
+    "taint_sink_class",
     "excluded_context_providers",
     "include_aggregated_context",
     "poll_interval_seconds",
