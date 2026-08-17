@@ -294,9 +294,19 @@ permanently destroy household data with no gate; the configuration reference alr
 `DESTRUCTIVE`-tagged calls resolve to a `destructive_artifact_write` sink with a `confirm` floor at
 every externally authored tier, joining egress and actuation in the lean core's floored set. Static
 tool policy already confirms calendar deletes profile-wide; the taint floor extends the same
-protection to the rest of the destructive surface, but only on tainted turns. Ordinary additive
-writes (`add_or_update_note`, event creation) stay `audit` — reversible, visible, and the
-overwhelmingly common case.
+protection to the rest of the destructive surface, but only on tainted turns.
+
+The tag alone does not draw the line correctly, because destruction hides in overwrites too:
+`add_or_update_note` *replaces* an existing note's content when not appending, and
+`modify_calendar_event` replaces event fields — neither carries `DESTRUCTIVE`. Gating them per call
+is possible (the resolver already switches on arguments for Home Assistant domains), but the cheaper
+and substitutive fix is to make overwrites *actually reversible*: retain the prior revision on
+replace at the repository layer, so an overwrite is an additive operation with an undo rather than a
+destruction. Then the floored class is genuinely "operations that cannot be undone," the tag stays
+honest, and truly additive writes (`add_or_update_note` with revision retention, event creation)
+stay `audit` — reversible, visible, and the overwhelmingly common case. Where revision retention is
+impractical for a store, that store's overwrite operations resolve to the destructive sink by
+argument instead.
 
 "Floor: confirm" means the adjudicator's verdict space in that cell is {confirm, deny} — it chooses
 how hard to gate, never whether to gate, with no exceptions: no model verdict, probe result, or
@@ -331,10 +341,15 @@ such tasks either fail closed (confirm with no channel) or demand a bespoke prof
 
 A **standing grant** is that captured decision: attached to the task definition, granted at creation
 through trusted chrome, revoked with the task, absent-fails-closed. It names the full capability
-tuple — tool/operation, destination, payload scope, rate — and the chokepoint enforces it as an
-envelope; calls inside the envelope proceed unattended, calls outside fall back to today's behavior.
-`TurnTaintState.approved_sinks` already serializes and travels across delegation; this surfaces it
-as configuration rather than inventing new machinery.
+tuple — tool/operation, destination, payload scope, rate — and the chokepoint enforces **every
+field** of that envelope; calls inside it proceed unattended, calls outside fall back to today's
+behavior. This requires a dedicated serialized grant record. The existing
+`TurnTaintState.approved_sinks` is precedent for how approvals serialize and travel across
+delegation, but it must not be the implementation: it is a `frozenset[str]` of sink-class names, and
+`is_sink_approved()` admits *every* call in the class — a grant for one operation would authorize
+unrelated operations sharing its sink. The grant record carries the tuple explicitly and the
+chokepoint validates tool, destination, payload conformance, and rate per call, denying on any field
+mismatch.
 
 Worked example — the error-triage automation ("scan error logs nightly, file issues for real
 problems"): an engineer-profile scheduled task whose grant is `create_github_issue`, this repository
@@ -507,17 +522,19 @@ flash-model check; selection is an implementation detail). A detection:
 
 The same jamming logic bounds the confirmation side. Exact-fingerprint coalescing survives probe
 labeling (identical concurrent calls collapsing into one card never authorizes anything new), and
-the escalation counters cap the per-turn total: after a small number of confirmation requests on a
-labeled turn — the same K as deny-and-continue's counter — remaining gated calls deny-and-continue
-into a single end-of-turn summary instead of raising further cards. A probe false positive on a
-many-call turn therefore costs a handful of confirmations bounded by K, never one per call; per-turn
-confirmation counts on labeled turns are a standing metric so the bound is measured rather than
-assumed.
+after K interactive confirmation requests on a labeled turn, further probe-induced escalations
+**defer rather than deny**: the remaining gated calls coalesce into a single batched confirmation
+through the existing durable-confirmation machinery (the deferred-execution path email intake
+already uses — the calls run when the batch is approved, each item individually decidable on the
+card). Conversion to denial would make the probe the sole reason a valid workflow fails, which is
+exactly the availability boundary it must never become; deferral keeps the invariant intact while
+still capping live interruptions at K. Per-turn confirmation counts on labeled turns are a standing
+metric so the bound is measured rather than assumed.
 
 No probe verdict ever relaxes anything, so its adaptive-attack failure mode (missing a novel
-payload) degrades to exactly the system without a probe; no probe verdict ever denies on its own;
-and no probe false positive can raise more than K confirmations in a turn. Cheap detections of
-commodity spray attacks get deterministic hardening plus a visible audit trail.
+payload) degrades to exactly the system without a probe; no probe verdict ever denies or causes a
+denial on its own; and no probe false positive can raise more than K live interruptions in a turn.
+Cheap detections of commodity spray attacks get deterministic hardening plus a visible audit trail.
 
 ### Persistent artifacts: content-derived provenance and attested healing
 
