@@ -61,7 +61,10 @@ from family_assistant.security.taint import (
     TurnTaintState,
     coerce_taint_metadata,
 )
-from family_assistant.storage.delegation_runs import TERMINAL_DELEGATION_STATUSES
+from family_assistant.storage.delegation_runs import (
+    TERMINAL_DELEGATION_STATUSES,
+    DelegationNotifyStage,
+)
 from family_assistant.tools.services import short_error_summary
 from family_assistant.tools.types import CalendarConfig, EventSourcesById
 
@@ -262,14 +265,43 @@ def _turn_id_for_task(task_id: str) -> str:
 _DELEGATION_WAKE_TURN_NAMESPACE = uuid.UUID("2b6b7f52-0f8a-4a6f-9b3d-7c5e1a0d8f24")
 
 
-def _turn_id_for_delegation_wake(delegation_id: str) -> str:
+def _turn_id_for_delegation_wake(
+    delegation_id: str, stage: DelegationNotifyStage = "initial"
+) -> str:
     """The turn id every attempt at waking the source profile shares.
 
     A run notifies at most once (``notified_at``), so the delegation id is the
     identity of the wake turn, and every retry of the notification lands on the
     same turn rather than generating a fresh one.
+
+    The stage is part of that identity because a fail-forward turn is a
+    different turn from the one whose reply could not be delivered: sharing an
+    id would make the checkpoint resume the undelivered reply instead of asking
+    the model what to do about it. The stage is persisted rather than counted,
+    so a retried *delivery* still lands on the same turn and never re-runs the
+    model. ``initial`` keeps the original derivation so runs already in flight
+    resume onto the turn they started.
     """
-    return str(uuid.uuid5(_DELEGATION_WAKE_TURN_NAMESPACE, delegation_id))
+    if stage == "initial":
+        return str(uuid.uuid5(_DELEGATION_WAKE_TURN_NAMESPACE, delegation_id))
+    return str(uuid.uuid5(_DELEGATION_WAKE_TURN_NAMESPACE, f"{delegation_id}:{stage}"))
+
+
+_NEXT_NOTIFY_STAGE: dict[DelegationNotifyStage, DelegationNotifyStage] = {
+    "initial": "failed_forward",
+    "failed_forward": "canned_pending",
+    "canned_pending": "gave_up",
+    "gave_up": "gave_up",
+}
+"""What to try after a permanently undeliverable attempt at each stage."""
+
+
+DELEGATION_NOTIFY_TRANSIENT_MAX_AGE = timedelta(days=1)
+"""How long delivery may keep failing transiently before it counts as permanent.
+
+Something that has not recovered in a day is not a blip, and leaving it
+uncapped reproduces the unbounded retry loop this machinery exists to remove.
+"""
 
 
 class LlmCallbackPayload(TypedDict, total=False):
@@ -1982,19 +2014,93 @@ class TaskWorker:
         """Force-notify a terminal run, isolating per-run delivery failures.
 
         A delivery failure for one run must not abort the rest of a cleanup
-        batch. The run stays terminal with ``notified_at`` NULL, so the next
-        cleanup pass re-attempts it via ``find_terminal_unnotified`` rather than
-        stranding it (or its siblings).
+        batch. A transient one leaves the run terminal with ``notified_at``
+        NULL, so the next cleanup pass re-attempts it via
+        ``find_terminal_unnotified`` rather than stranding it (or its siblings).
+        A permanent one advances the run's delivery stage and tries the next
+        thing, because retrying what was just refused for a settled reason only
+        produces the same refusal every hour forever.
         """
-        try:
-            await self._notify_delegation_if_needed(exec_context, run, force=True)
-        except DelegationNotificationError:
+        while True:
+            try:
+                await self._notify_delegation_if_needed(exec_context, run, force=True)
+                return
+            except DelegationNotificationError as failure:
+                next_run = await self._record_delegation_notify_failure(
+                    exec_context, run, failure
+                )
+                if next_run is None:
+                    return
+                run = next_run
+
+    async def _record_delegation_notify_failure(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+        failure: DelegationNotificationError,
+    ) -> DelegationRunDict | None:
+        """Count the failure and return the run to retry now, or None to stop.
+
+        Returning None leaves the run for a later pass (a transient failure) or
+        ends it (nothing left to try).
+        """
+        clock = exec_context.clock or self.clock
+        now = clock.now()
+        delegation_id = run["delegation_id"]
+        counted = await exec_context.db_context.delegation_runs.record_notify_failure(
+            delegation_id, now=now
+        )
+        run = counted or run
+
+        if failure.transient and not self._transient_delivery_has_run_out(run, now):
             logger.warning(
                 "Could not deliver delegation notification for %s; leaving it "
                 "unnotified for a later retry.",
-                run["delegation_id"],
-                exc_info=True,
+                delegation_id,
+                exc_info=failure,
             )
+            return None
+
+        next_stage = _NEXT_NOTIFY_STAGE[run["notify_stage"]]
+        advanced = await exec_context.db_context.delegation_runs.advance_notify_stage(
+            delegation_id,
+            stage=next_stage,
+            now=now,
+            notify_error=str(failure),
+        )
+        if next_stage == "gave_up":
+            # Not marked notified: it never reached the requester, and a run that
+            # silently counts as delivered is the failure this machinery removes.
+            # Logged at error level so it lands in error_logs, where a human (or
+            # the engineer profile) can find it.
+            logger.error(
+                "Gave up delivering delegation %s over %s after %d attempts: %s. "
+                "The result is in the conversation's history but the requester "
+                "was never reached.",
+                delegation_id,
+                run["interface_type"],
+                run["notify_attempts"],
+                failure,
+            )
+            return None
+
+        logger.warning(
+            "Delivery of delegation %s failed permanently (%s); advancing to %s.",
+            delegation_id,
+            failure,
+            next_stage,
+        )
+        return advanced
+
+    @staticmethod
+    def _transient_delivery_has_run_out(run: DelegationRunDict, now: datetime) -> bool:
+        """Whether transient failures have gone on too long to still count as one."""
+        first_failed_at = run["notify_first_failed_at"]
+        if first_failed_at is None:
+            return False
+        return (
+            now - _as_aware_utc(first_failed_at) > DELEGATION_NOTIFY_TRANSIENT_MAX_AGE
+        )
 
     def _build_delegation_confirmation_callback(
         self,
@@ -2127,15 +2233,31 @@ class TaskWorker:
 
         clock = exec_context.clock or self.clock
         source_service = self._source_service_for_delegation(exec_context, run)
-        if source_service is not None:
+        stage = run["notify_stage"]
+        # At canned_pending the model has already been asked and its answer was
+        # refused too, so only the short standard notice is left to try.
+        if source_service is not None and stage != "canned_pending":
             try:
                 await self._wake_source_profile_for_delegation(
                     exec_context,
                     run,
                     source_service,
                     clock,
+                    stage=stage,
                 )
                 return
+            except DelegationNotificationError as wake_failure:
+                if not wake_failure.transient:
+                    # Falling back to the canned notice here would send a second
+                    # message down a channel that just refused one for a settled
+                    # reason. The stage machine decides what to try next.
+                    raise
+                logger.exception(
+                    "Failed to wake source profile '%s' for completed delegation %s; "
+                    "falling back to direct completion notification.",
+                    run["source_profile_id"],
+                    run["delegation_id"],
+                )
             except Exception:
                 logger.exception(
                     "Failed to wake source profile '%s' for completed delegation %s; "
@@ -2238,15 +2360,26 @@ class TaskWorker:
         run: DelegationRunDict,
         source_service: ProcessingService,
         clock: Clock,
+        stage: DelegationNotifyStage = "initial",
     ) -> int | None:
-        """Wake the delegating profile with a terminal delegation result."""
+        """Wake the delegating profile with a terminal delegation result.
+
+        At the ``failed_forward`` stage the same profile is woken again, with
+        the delivery failure rather than the result: its own reply could not be
+        delivered, and it is the only thing here that can decide what to send
+        instead.
+        """
         chat_interface = self._chat_interface_for_interface(
             exec_context,
             run["interface_type"],
         )
-        trigger_text = self._delegation_wakeup_text(run)
+        trigger_text = (
+            self._delegation_delivery_failure_wakeup_text(run)
+            if stage == "failed_forward"
+            else self._delegation_wakeup_text(run)
+        )
         source_subconversation_id = run["source_subconversation_id"]
-        wake_turn_id = _turn_id_for_delegation_wake(run["delegation_id"])
+        wake_turn_id = _turn_id_for_delegation_wake(run["delegation_id"], stage)
 
         # --- Delivery checkpoint ---
         # Under commit-as-you-go this turn's messages and its tools' writes are
@@ -2619,6 +2752,23 @@ class TaskWorker:
             "The failure detail is provided as lower-priority data in this turn's "
             "message history. Tell the user that the delegated work failed and summarize "
             "the useful details. Do not expose tracebacks unless the user is debugging."
+        )
+
+    def _delegation_delivery_failure_wakeup_text(self, run: DelegationRunDict) -> str:
+        """Build the trigger that hands an undeliverable reply back to the model."""
+        reason = run["notify_error"] or "the channel refused it"
+        return (
+            "System: your reply to a delegated task could not be delivered.\n\n"
+            f"Delegation reference: {run['delegation_id']}\n"
+            f"Interface: {run['interface_type']}\n"
+            f"Reason: {reason}\n\n"
+            "The reply you wrote is saved in this conversation's history, so it "
+            "is not lost, but the user has not seen it and sending it again "
+            "would fail the same way. Decide what to do instead: say the same "
+            "thing in a form this channel will accept, save the full text where "
+            "they can find it and point them at it, or tell them the result "
+            "could not be delivered here. Whatever you reply now is what gets "
+            "sent to them."
         )
 
     def _delegation_wakeup_data_text(self, run: DelegationRunDict) -> str:

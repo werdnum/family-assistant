@@ -21,6 +21,24 @@ TERMINAL_DELEGATION_STATUSES: frozenset[DelegationRunStatus] = frozenset({
     "failed",
 })
 
+DelegationNotifyStage = Literal[
+    "initial",
+    "failed_forward",
+    "canned_pending",
+    "gave_up",
+]
+"""How far a terminal run has got through trying to reach the requester.
+
+``initial`` is the run's own result. ``failed_forward`` means that could not be
+delivered and the delegating profile was asked what to do instead.
+``canned_pending`` means that answer could not be delivered either and only the
+short standard notice is left. ``gave_up`` means nothing reached them.
+
+The stage is what bounds the work: it is committed when entered, before the
+send it describes, so a retry resumes at the send that has not yet succeeded
+rather than repeating one already known to fail.
+"""
+
 delegation_runs_table = Table(
     "delegation_runs",
     metadata,
@@ -55,6 +73,15 @@ delegation_runs_table = Table(
     Column("result_message_internal_id", Integer, nullable=True),
     Column("error", Text, nullable=True),
     Column("notified_at", DateTime(timezone=True), nullable=True),
+    Column("notify_stage", String(20), nullable=False, server_default="initial"),
+    Column("notify_attempts", Integer, nullable=False, server_default="0"),
+    # Why delivery last failed, kept apart from ``error`` so a completed
+    # run's result is not overwritten by a transport problem.
+    Column("notify_error", Text, nullable=True),
+    # When delivery first failed, so a transient failure that never recovers
+    # can be reclassified as permanent instead of retrying for as long as the
+    # outage lasts.
+    Column("notify_first_failed_at", DateTime(timezone=True), nullable=True),
     # Remote (A2A) task identifiers for the submit-then-poll async path. Null
     # for local delegations, which have no remote task to poll.
     Column("remote_task_id", String(255), nullable=True),

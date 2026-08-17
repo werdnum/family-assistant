@@ -7,9 +7,11 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NotRequired, Required, TypedDict, cast
 
 from sqlalchemy import insert, select, update
+from sqlalchemy.sql import functions as func
 
 from family_assistant.storage.delegation_runs import (
     TERMINAL_DELEGATION_STATUSES,
+    DelegationNotifyStage,
     DelegationRunStatus,
     delegation_runs_table,
 )
@@ -78,6 +80,10 @@ class DelegationRunDict(TypedDict):
     result_message_internal_id: int | None
     error: str | None
     notified_at: datetime | None
+    notify_stage: DelegationNotifyStage
+    notify_attempts: int
+    notify_error: str | None
+    notify_first_failed_at: datetime | None
     remote_task_id: str | None
     remote_context_id: str | None
     poll_attempts: int
@@ -477,10 +483,64 @@ class DelegationRunsRepository(BaseRepository):
                 delegation_runs_table.c.status.in_(list(TERMINAL_DELEGATION_STATUSES))
             )
             .where(delegation_runs_table.c.notified_at.is_(None))
+            .where(delegation_runs_table.c.notify_stage != "gave_up")
             .where(delegation_runs_table.c.completed_at < completed_before)
         )
         rows = await self._db.fetch_all(stmt)
         return [self._row_to_dict(row) for row in rows]
+
+    async def record_notify_failure(
+        self, delegation_id: str, *, now: datetime
+    ) -> DelegationRunDict | None:
+        """Count a failed delivery attempt and stamp when they started.
+
+        ``notify_first_failed_at`` is only set once, so it measures how long
+        this run has been failing rather than when it last failed -- which is
+        what decides that a transient failure has gone on too long to still be
+        treated as one.
+        """
+        stmt = (
+            update(delegation_runs_table)
+            .where(delegation_runs_table.c.delegation_id == delegation_id)
+            .values(
+                notify_attempts=delegation_runs_table.c.notify_attempts + 1,
+                notify_first_failed_at=func.coalesce(
+                    delegation_runs_table.c.notify_first_failed_at, now
+                ),
+                updated_at=now,
+            )
+            .returning(delegation_runs_table)
+        )
+        result = await self._execute_with_logging("record_notify_failure", stmt)
+        row = result.one_or_none()
+        return self._row_to_dict(dict(row)) if row is not None else None
+
+    async def advance_notify_stage(
+        self,
+        delegation_id: str,
+        *,
+        stage: DelegationNotifyStage,
+        now: datetime,
+        notify_error: str | None = None,
+    ) -> DelegationRunDict | None:
+        """Move a run to its next delivery stage, committed before that send.
+
+        Recording the stage first is what bounds the work: a retry that arrives
+        after the stage was entered but before its send succeeded resumes at
+        that send, rather than repeating the one that already failed.
+        """
+        values: dict[str, object] = {"notify_stage": stage, "updated_at": now}
+        if notify_error is not None:
+            values["notify_error"] = notify_error
+        stmt = (
+            update(delegation_runs_table)
+            .where(delegation_runs_table.c.delegation_id == delegation_id)
+            .values(**values)
+            .returning(delegation_runs_table)
+        )
+        result = await self._execute_with_logging("advance_notify_stage", stmt)
+        row = result.one_or_none()
+        return self._row_to_dict(dict(row)) if row is not None else None
 
     async def _update_run(
         self, delegation_id: str, **values: object
@@ -554,6 +614,10 @@ class DelegationRunsRepository(BaseRepository):
             result_message_internal_id=row.get("result_message_internal_id"),
             error=row.get("error"),
             notified_at=row.get("notified_at"),
+            notify_stage=row.get("notify_stage") or "initial",
+            notify_attempts=row.get("notify_attempts") or 0,
+            notify_error=row.get("notify_error"),
+            notify_first_failed_at=row.get("notify_first_failed_at"),
             remote_task_id=row.get("remote_task_id"),
             remote_context_id=row.get("remote_context_id"),
             poll_attempts=row.get("poll_attempts") or 0,
