@@ -312,12 +312,16 @@ there (it would confirm-gate every light switch on tainted turns), and fail-open
 today. The only honest source of truth is the operator: deployment config carries a **high-impact
 entity list** — entity ids (and the scenes/scripts that can reach them) that actuate doors, gates,
 locks, or alarms through semantically opaque domains — and listed entities resolve to the
-high-impact sink regardless of domain. This is an irreducible enumeration: the semantics live in the
-household's wiring, so no resolver can infer them, and the list's saving graces are that it is
-small, reviewable in one screen, prompted for at setup ("which entities can open or unlock
-something?"), and that forgetting an entry degrades to today's behavior rather than below it.
-Physical-safety actuation otherwise gets the same rule as egress: a classifier false-negative must
-never be able to do it alone.
+high-impact sink regardless of domain. The check applies to the *resolved entity set*, not the
+argument surface: `call_home_assistant_action` also accepts `target.device_id` and `target.area_id`,
+so the resolver expands device and area targets to their entities (via the HA registry data the
+entity tools already fetch) before consulting the list, and a target it cannot expand fails closed
+to the high-impact sink — otherwise addressing the garage relay by area would walk straight past an
+entity-id list. This is an irreducible enumeration: the semantics live in the household's wiring, so
+no resolver can infer them, and the list's saving graces are that it is small, reviewable in one
+screen, prompted for at setup ("which entities can open or unlock something?"), and that forgetting
+an entry degrades to today's behavior rather than below it. Physical-safety actuation otherwise gets
+the same rule as egress: a classifier false-negative must never be able to do it alone.
 
 Destructive artifact writes are the third occupant of a soft cell. The resolver maps deletes and
 rewrites (`delete_note`, `delete_script`, `delete_automation`, calendar deletion) into
@@ -341,12 +345,16 @@ incidental existing tags is not enough — `schedule_future_callback` carries on
 and `SCHEDULING`, so an `AUTOMATION`/`STATE_PERSISTING` key would miss one-time callbacks, which are
 executable persistence all the same — and so is **activation**: `enable_automation` merely flips a
 flag, but flipping it makes a stored executable live, so enabling from a tainted turn plants future
-execution as surely as creating does. The class gets its own explicit tag (`EXECUTABLE_PERSISTENCE`,
-on `create_automation`, `update_automation`, `enable_automation`, script saves,
+execution as surely as creating does — and so does **deactivation**, in the other direction:
+`disable_automation` from a tainted turn switches off whatever the automation guarded (an alarm
+response, a leak alert), which is auto mode's "degrade security" category, and re-enabling later
+does not un-miss the night the alarm was off. The class is therefore defined as *mutating the set of
+future executions, in either direction*. It gets its own explicit tag (`EXECUTABLE_PERSISTENCE`, on
+`create_automation`, `update_automation`, `enable_automation`, `disable_automation`, script saves,
 `schedule_future_callback`, `schedule_action`, `modify_pending_callback`), and — because a tag list
 is exactly the kind of enumeration that rots — a conformance rule ties it to the mechanism: a tool
-whose implementation enqueues an LLM-waking task *or activates a stored artifact that later fires
-one* must carry the tag, checked by the existing ast-grep conformance machinery, so a future
+whose implementation enqueues an LLM-waking task *or activates or deactivates a stored artifact that
+fires one* must carry the tag, checked by the existing ast-grep conformance machinery, so a future
 scheduling or activation tool fails lint rather than silently joining the audit-only cell. The
 durable fix, which belongs with the artifact-provenance work in the contingent tier, is the same
 rule delegation runs already follow: persist the creation turn's taint on the automation and seed
