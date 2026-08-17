@@ -1157,6 +1157,9 @@ class Assistant:
                         client_config["antigravity_max_total_tokens"] = (
                             profile_proc_conf.antigravity_config.max_total_tokens
                         )
+                        client_config["antigravity_environment"] = (
+                            profile_proc_conf.antigravity_config.environment
+                        )
 
                     logger.info(
                         "Creating LLM client for profile '%s' with model='%s'%s",

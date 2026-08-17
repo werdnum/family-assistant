@@ -59,6 +59,22 @@ def test_shipped_coder_profile_runs_gemini_37_flash_on_the_agent() -> None:
     assert "/coder" in profile.slash_commands
 
 
+def test_shipped_coder_profile_configures_no_sandbox_credentials() -> None:
+    """Out of the box the sandbox holds no credential, so the profile keeps [C] only.
+
+    `antigravity_config.environment` can inject a credential into the sandbox's
+    egress proxy — a GitHub App token, say — which adds [B] to a profile that
+    already reads the open web. That is a deployment's decision to make in its
+    own config, so shipping it enabled here would hand every deployment the
+    widening silently.
+    """
+    profile = _shipped_profile("coder")
+    antigravity_config = profile.processing_config.antigravity_config
+
+    assert antigravity_config is not None
+    assert antigravity_config.environment is None
+
+
 def test_shipped_coder_profile_grants_no_family_assistant_tools() -> None:
     """The agent works only from the request; it holds no [B] access.
 

@@ -8,6 +8,7 @@ import pytest
 from pydantic import TypeAdapter
 
 from family_assistant.llm import LLMStreamEvent
+from family_assistant.llm.antigravity_egress import EgressNetworkPayload
 from family_assistant.llm.base import InvalidRequestError
 from family_assistant.llm.messages import (
     ImageUrlContentPart,
@@ -281,3 +282,140 @@ def test_text_shaped_attachment_injection_still_reaches_the_agent() -> None:
 
     assert "Transform the attached CSV." in kwargs["input"]
     assert "a,b" in kwargs["input"]
+
+
+def _egress_client(network: EgressNetworkPayload) -> GoogleGenAIClient:
+    """A client whose egress resolver returns a fixed network payload."""
+
+    class _FixedResolver:
+        async def resolve_network(self) -> EgressNetworkPayload | None:
+            return network
+
+    return GoogleGenAIClient(
+        api_key="test",
+        model=ANTIGRAVITY_AGENT_ID,
+        antigravity_model="gemini-3.7-flash",
+        antigravity_egress_resolver=_FixedResolver(),
+    )
+
+
+@pytest.mark.asyncio
+async def test_egress_policy_reaches_the_interactive_path(
+    mock_genai_client: MagicMock,
+) -> None:
+    """The stream path previously had nowhere to put an environment at all.
+
+    Egress policy is static profile config rather than per-turn data, so a
+    credential configured for `/coder` has to apply when a user runs the slash
+    command directly, not only when a delegation submits.
+    """
+    client = _egress_client({
+        "allowlist": [
+            {"domain": "*"},
+            {
+                "domain": "api.github.com",
+                "transform": [{"Authorization": "Bearer ghs_x"}],
+            },
+        ]
+    })
+    mock_genai_client.aio.interactions.create = AsyncMock(
+        return_value=_completing_stream("inter_ag_env", "Done.")
+    )
+
+    await _drain_stream(client, [UserMessage(content="Open a PR.")])
+
+    call_kwargs = mock_genai_client.aio.interactions.create.call_args.kwargs
+    assert call_kwargs["environment"] == {
+        "type": "remote",
+        "network": {
+            "allowlist": [
+                {"domain": "*"},
+                {
+                    "domain": "api.github.com",
+                    "transform": [{"Authorization": "Bearer ghs_x"}],
+                },
+            ]
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_submit_path_merges_mounted_sources_with_egress_policy(
+    mock_genai_client: MagicMock,
+) -> None:
+    """One environment block carries both, rather than either overwriting the other."""
+    client = _egress_client("disabled")
+    mock_interaction = MagicMock()
+    mock_interaction.id = "inter_ag_env_submit"
+    mock_genai_client.aio.interactions.create = AsyncMock(return_value=mock_interaction)
+
+    await client.start_agent_interaction(
+        [UserMessage(content="Analyse the file.")],
+        environment_sources=[
+            {
+                "type": "inline",
+                "content": "YSxiCjEsMg==",
+                "encoding": "base64",
+                "target": "/workspace/data.csv",
+            }
+        ],
+    )
+
+    call_kwargs = mock_genai_client.aio.interactions.create.call_args.kwargs
+    assert call_kwargs["environment"] == {
+        "type": "remote",
+        "sources": [
+            {
+                "type": "inline",
+                "content": "YSxiCjEsMg==",
+                "encoding": "base64",
+                "target": "/workspace/data.csv",
+            }
+        ],
+        "network": "disabled",
+    }
+
+
+@pytest.mark.asyncio
+async def test_no_environment_block_without_sources_or_egress_policy(
+    mock_genai_client: MagicMock,
+) -> None:
+    """The shipped profile gets a default sandbox, not an empty environment object."""
+    client = GoogleGenAIClient(
+        api_key="test",
+        model=ANTIGRAVITY_AGENT_ID,
+        antigravity_model="gemini-3.7-flash",
+    )
+    mock_interaction = MagicMock()
+    mock_interaction.id = "inter_ag_plain"
+    mock_genai_client.aio.interactions.create = AsyncMock(return_value=mock_interaction)
+
+    await client.start_agent_interaction([UserMessage(content="Do the thing.")])
+
+    call_kwargs = mock_genai_client.aio.interactions.create.call_args.kwargs
+    assert "environment" not in call_kwargs
+
+
+@pytest.mark.asyncio
+async def test_environment_with_egress_validates_against_the_sdk_request_model() -> (
+    None
+):
+    """The transform shape is what the installed SDK accepts, not just a dict we like."""
+    client = _egress_client({
+        "allowlist": [
+            {
+                "domain": "github.com",
+                "transform": [{"Authorization": "Basic eC1hY2Nlc3M="}],
+            }
+        ]
+    })
+
+    kwargs = client._build_agent_create_kwargs([UserMessage(content="Clone the repo.")])
+    kwargs["environment"] = await client._build_agent_environment()
+
+    body = _CREATE_INTERACTION_ADAPTER.validate_python({**kwargs, "stream": False})
+    assert body.environment.type == "remote"
+    assert body.environment.network.allowlist[0].domain == "github.com"
+    assert body.environment.network.allowlist[0].transform == [
+        {"Authorization": "Basic eC1hY2Nlc3M="}
+    ]
