@@ -97,11 +97,13 @@ Is the threat worth any of this? An honest accounting for a single-family deploy
   adaptive attacks bypassing 12 published defenses at >90% — so improving base rates justify
   *thinner* deterministic floors, not their removal.
 - **The valuable deterministic wins are cheap here.** The deployment's genuinely dangerous sinks are
-  few and already typed: `attacker_addressable_egress`, `arbitrary_external_message`,
-  `sandbox_network`. `send_message_to_user` already server-validates recipients (`KNOWN_USER_COMM`),
-  which is exactly the capability-style constraint that makes a sink safe by construction. Keeping
-  hard floors on a handful of cells costs almost no friction because benign traffic rarely lands
-  there — the production audit shows the friction lives in the *middle* cells.
+  few and mostly typed already: `attacker_addressable_egress`, `arbitrary_external_message`,
+  `sandbox_network` — with one known mis-typing, high-impact home actuation (locks, alarm panels)
+  currently hiding inside the always-allowed `home_local`, which the proposal splits out.
+  `send_message_to_user` already server-validates recipients (`KNOWN_USER_COMM`), which is exactly
+  the capability-style constraint that makes a sink safe by construction. Keeping hard floors on a
+  handful of cells costs almost no friction because benign traffic rarely lands there — the
+  production audit shows the friction lives in the *middle* cells.
 - **The realistic loss is bounded but not trivial:** exfiltration of household notes, calendar, and
   mail; unwanted outbound messages; home actuation. Worth defending; not worth an unusable
   assistant. A defense the operator disables protects nothing — PR #1111's framing, and the
@@ -211,16 +213,17 @@ and conflating them breaks the merge in both directions:
 The default matrix change, relative to [runtime-taint-machinery.md](runtime-taint-machinery.md)'s
 shipped defaults:
 
-| max_tier × sink                                  | today (would-be) | proposed                   |
-| ------------------------------------------------ | ---------------- | -------------------------- |
-| `unknown_external × sensitive_read_broadening`   | confirm          | adjudicate                 |
-| `unknown_external × known_user_message`          | confirm          | adjudicate                 |
-| `unknown_external × artifact_write`              | audit            | adjudicate                 |
-| `unknown_external × arbitrary_external_message`  | confirm          | adjudicate, floor: confirm |
-| `unknown_external × attacker_addressable_egress` | confirm          | adjudicate, floor: confirm |
-| `unknown_external × sandbox_network`             | deny             | per PR #1111: confirm      |
-| middle tiers × egress sinks                      | confirm          | adjudicate, floor: confirm |
-| middle tiers, non-egress gated cells             | audit/confirm    | adjudicate                 |
+| max_tier × sink                                  | today (would-be)        | proposed                              |
+| ------------------------------------------------ | ----------------------- | ------------------------------------- |
+| `unknown_external × sensitive_read_broadening`   | confirm                 | adjudicate                            |
+| `unknown_external × known_user_message`          | confirm                 | adjudicate                            |
+| `unknown_external × artifact_write`              | audit                   | adjudicate                            |
+| `unknown_external × arbitrary_external_message`  | confirm                 | adjudicate, floor: confirm            |
+| `unknown_external × attacker_addressable_egress` | confirm                 | adjudicate, floor: confirm            |
+| `unknown_external × sandbox_network`             | deny                    | per PR #1111: confirm                 |
+| external tiers × high-impact home actuation      | allow (in `home_local`) | adjudicate, floor: confirm (new sink) |
+| middle tiers × egress sinks                      | confirm                 | adjudicate, floor: confirm            |
+| middle tiers, non-egress gated cells             | audit/confirm           | adjudicate                            |
 
 Every externally authored tier keeps a `confirm` floor on the egress sinks
 (`arbitrary_external_message`, `attacker_addressable_egress`, `sandbox_network`): a DMARC-passing
@@ -231,6 +234,17 @@ adjudication is reserved for the noisy non-egress cells, where the floors downst
 What the middle tiers buy is a gentler experience everywhere else, not a softer exfiltration path;
 and since those tiers have never fired in production (empty allowlists), keeping their egress floors
 costs nothing observed today.
+
+Egress is not the only irreversible sink hiding in a soft cell. `call_home_assistant_action`
+classifies `lock`, `alarm_control_panel`, `valve`, and `siren` as `home_local`, and the default
+matrix allows `home_local` at every tier — so today (and under the table above, unamended) an
+injected email in an ordinary mixed turn can unlock a door with no gate at all; the existing
+configuration reference already warns operators about exactly this cell. The sink resolver already
+switches on the `domain` argument, so the fix is a resolver split, not new machinery: high-impact
+actuation domains (locks, alarm panels, valves, sirens, garage-class covers) move to their own sink
+class with `adjudicate(floor: confirm)` at every externally authored tier, while ordinary
+`home_local` (lights, media, climate) stays `allow`. Physical-safety actuation gets the same rule as
+egress: a classifier false-negative must never be able to do it alone.
 
 "Floor: confirm" means the adjudicator's verdict space in that cell is {confirm, deny} — it chooses
 how hard to gate, never whether to gate, with no exceptions: no model verdict, probe result, or
@@ -472,10 +486,18 @@ story, where notes have a partial one. The fix is the same mechanism, not a spec
 writes stamp per-event provenance exactly as note writes do (content-derived, turn-maximum
 fallback), reads restore it the way note reads restore theirs, and the ingestion probe's screening
 of the original email is remembered by that provenance rather than needing a second probe at read
-time. Until per-event provenance exists, the honest interim tag for calendar search output is
-untrusted-when-any-event-is-unattested — the current blanket `OUTPUT_TRUSTED` is an assumption the
-write gates do not actually support. The same audit applies to any other stored surface read back as
-trusted: workspace files, automations, script bodies.
+time. One property of the calendar makes the fallback rule permanent rather than transitional: the
+store is live CalDAV, and organizers, other calendar clients, and server sync write to it without
+ever passing Family Assistant's write path, so there will always be events no stamp ever covered and
+events whose content changed after stamping. Per-event provenance must therefore be bound to a
+content hash of the prompt-visible fields, and every read must treat an event with absent provenance
+— or a hash that no longer matches the live CalDAV content — as untrusted, permanently, not as a
+migration interim. An externally created event the household actually trusts can be promoted the
+same way as any artifact: human attestation through the review mechanism, invalidated on the next
+external edit. The current blanket `OUTPUT_TRUSTED` is an assumption the write gates do not actually
+support; the same audit applies to any other stored surface read back as trusted — workspace files,
+automations, script bodies — with the same question asked of each: can anything other than a gated
+Family Assistant write path mutate this store?
 
 **Let adjudication absorb the rest at read time.** Restored artifact taint stops being expensive
 once the middle cells are adjudicated: reading a tainted note no longer cascades into blanket
