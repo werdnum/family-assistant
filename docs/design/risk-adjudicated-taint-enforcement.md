@@ -53,7 +53,10 @@ The intended end state: the taint machinery keeps doing what deterministic syste
 provenance, routing, and floors — and stops doing what they are bad at: guessing intent. Measured
 against the production audit data, the expected interactive friction drops from ~200 would-confirm
 events per day to an explicit budget of roughly one confirmation per day, while the exfiltration
-sinks gain protection they do not have today (observe mode blocks nothing).
+sinks gain protection they do not have today (observe mode blocks nothing). Crucially, most of the
+mechanism in this document is **contingent**: a lean core (floors, sink corrections, standing grants
+— see the complexity-budget section) ships first and may already meet the budget, in which case the
+adjudicator and everything after it stays unbuilt.
 
 ## Why enforcement actually stalled
 
@@ -179,9 +182,45 @@ and burns out fastest.
 5. **Friction is a budget, not a vibe.** Enforcement ships against an explicit target measured in
    approval episodes per week, using the audit pipeline that already exists.
 
+## Complexity budget: the lean core, and everything else on evidence
+
+Every mechanism in this document is a liability as well as a defense: more moving parts, more
+interactions, more edge cases for a future change to break without noticing. The review history of
+this very document demonstrates the failure mode — repeated rounds of hole-patching on the clever
+parts, while the simple invariants never needed a patch. Two rules follow.
+
+**Additive mechanism is gated on measured need; substitutive mechanism is preferred.** Some
+proposals here *replace* complexity that already exists in its most dangerous form — the
+someone-must-remember form. Standing grants replace bespoke per-automation profiles (the pattern
+that cost ~2,100 lines for one cron job). Proven provenance replaces per-store trust audits. Closed
+schemas replace filter enumeration. Those earn their place by subtraction. Purely additive mechanism
+— the adjudicator, the probe, artifact healing — must instead be justified by a measured number, not
+an anticipated one.
+
+**The lean core ships first, and may be enough.** The production friction data was dominated by
+ambient poison (fixed by PR #1111 and the epoch) and by confirm-gating sensitive *reads* (fixed by
+policy choice: audit the reads, gate the egress — the loss event is what leaves, not what is read).
+After both corrections, the residual confirm volume is turns that contain genuinely external content
+*and* attempt egress or actuation. In a household that is plausibly a handful of episodes per week,
+not 200 per day. The lean core is therefore: PR #1111 and the epoch; the sink corrections (home
+actuation split, calendar de-trusting, tag hygiene); a matrix of confirm floors on egress and
+actuation with audit everywhere else; task-scoped standing grants; then flip to `enforce` and
+measure. Only if the measured confirm volume exceeds the friction budget does the contingent tier
+get built — the adjudicator first, and only for the cells the data indicts; probe, content-derived
+stamping, and healing on the same terms. The good outcome is that most of the contingent tier is
+never built.
+
+The sections below therefore describe two kinds of material: the lean core, and a fully designed
+contingent tier that exists on paper so that, if the numbers demand it, it is built coherently
+rather than improvised — but whose default disposition is *unbuilt*.
+
 ## Proposed design
 
-### The `adjudicate` outcome
+### The `adjudicate` outcome (contingent tier; floors are lean core)
+
+In the lean core, the cells shown as `adjudicate` below are simply `audit`, and the cells shown with
+a `confirm` floor are plain `confirm` — the floors ship first, the judge only if the friction gate
+trips. Everything in this section describes the contingent upgrade.
 
 Extend `TaintPolicyOutcome` with `adjudicate`, parameterized by a **verdict floor** — the weakest
 verdict the adjudicator may return in that cell. Two distinct comparisons need two distinct ranks,
@@ -268,14 +307,50 @@ household recipients, and a sensitive read only *broadens exposure* — actual l
 subsequent egress call, which is exactly where the floors sit. This is defense in depth used
 deliberately: soften the cheap, noisy, inner gate because the outer gate is hard.
 
-### The adjudicator
+### Task-scoped standing grants (lean core)
+
+Authorization should attach to human-authored intent at whatever altitude that intent actually
+exists. Interactive requests have per-call judgment and confirmation. Ambient always-on ingestion
+has no covering intent, so it gets structural confinement. Between them sits the altitude the
+current system cannot express at all: the recurring workflow the operator authored once. A scheduled
+task's creation *is* an attended human decision with full context; nothing captures it, so today
+such tasks either fail closed (confirm with no channel) or demand a bespoke profile.
+
+A **standing grant** is that captured decision: attached to the task definition, granted at creation
+through trusted chrome, revoked with the task, absent-fails-closed. It names the full capability
+tuple — tool/operation, destination, payload scope, rate — and the chokepoint enforces it as an
+envelope; calls inside the envelope proceed unattended, calls outside fall back to today's behavior.
+`TurnTaintState.approved_sinks` already serializes and travels across delegation; this surfaces it
+as configuration rather than inventing new machinery.
+
+Worked example — the error-triage automation ("scan error logs nightly, file issues for real
+problems"): an engineer-profile scheduled task whose grant is `create_github_issue`, this repository
+only, three per day, **schema-constrained body**. The repository is public, so a free-form issue
+body is genuine egress twice over — an exfiltration channel for injected content and a privacy leak
+for log excerpts on a perfectly clean run. The schema closes both: the public body carries only
+closed fields (error class, exception type, fingerprint hash, counts, first/last-seen, component) —
+a `low_bandwidth_external` sink by construction — while free-form detail (stack traces, log
+excerpts) goes to a private artifact the issue references. Free-form text crossing a trust boundary
+is where both injection and exfiltration live; typed data crossing it is boring in both directions.
+The same grant shape covers interactive browsing sessions (an origin-scoped grant confirmed once at
+session start), which is what keeps browser workflows to one confirmation per task instead of one
+per navigation.
+
+### The adjudicator (contingent tier)
 
 A dedicated, non-agentic model invocation — one call, structured verdict, no tools — run from
 `TaintTrackingToolsProvider` when evaluation yields `adjudicate`. Configured like a processing
 profile (provider, model, retry) but it is not a profile: it has no tool surface, no context
 providers, and its prompt is assembled by code, not configuration.
 
-**Inputs, assembled deterministically:**
+**Inputs, assembled deterministically — as a closed schema, not a filtered stream.** The judge's
+context is a typed structure whose fields are enumerated here exhaustively; a field is either
+closed-vocabulary or carries a provenance proof, and nothing outside the schema can render by
+construction. This is deliberately an allow-list posture: the review history of this document shows
+that specifying what to *filter out* loses — every round found another unfiltered channel
+(arguments, then reasons, then titles, then tool descriptions). A future field leaks only if someone
+affirmatively adds it to the schema, and one property test — no rendered string without a trust
+proof — holds structurally forever.
 
 - The current turn's user messages and recent trusted-tier conversation turns — selected by the
   per-row taint metadata we already persist: rows whose stored tier is `trusted_user` qualify;
@@ -340,7 +415,7 @@ flash-class call each, cost is negligible; latency lands only on gated calls, no
 two-stage screen (single-token fast pass, reasoning pass on flags) is an optimization to add only if
 verdict quality or latency demands it.
 
-### Argument provenance matching
+### Argument provenance matching (contingent tier)
 
 A deterministic computation, not a policy relaxation: whether the destination-bearing argument of an
 egress call — URL, address, recipient, entity id — is an exact whole-value match
@@ -372,7 +447,7 @@ machinery, which already resolves attachment ids in arguments against stored pro
 precedent and likely the home for it. Sink resolvers declare which argument is destination-bearing;
 a sink with no declaration gets no match, so its floor-cell confirmations never coalesce.
 
-### Deny-and-continue
+### Deny-and-continue (contingent tier)
 
 Today a taint denial raises `ToolPolicyDeniedError` and the turn effectively dead-ends; under
 enforcement this converts injected *and* false-positive gates alike into failed tasks, which is the
@@ -388,7 +463,7 @@ Hard `deny` floors (unattended `sandbox_network`, malformed-payload refusals fro
 `confirmation_payload_block_reason`) keep raising: those exist precisely so no continuation pressure
 erodes them.
 
-### Escalate-only injection probe
+### Escalate-only injection probe (contingent tier)
 
 At the two ingestion chokepoints that already exist — `derive_tool_result_taint_source` for
 `OUTPUT_UNTRUSTED` tool results, and email intake — run a cheap injection screen (options:
@@ -413,6 +488,10 @@ own, so its false positives cost at most one extra confirmation. Cheap detection
 attacks get deterministic hardening plus a visible audit trail.
 
 ### Persistent artifacts: content-derived provenance and attested healing
+
+*(Tier split: the store corrections below — calendar de-trusting, the externally-mutable-store audit
+question — are lean core; the stamping, healing, attribution, and attestation mechanics are
+contingent tier.)*
 
 Notes and other stored artifacts are the second engine of the production friction, and in the audit
 data they fired *first*: the two poisoned prompt-included notes put every turn at `unknown_external`
@@ -560,29 +639,35 @@ Enforcement ships against numbers, not vibes, using the audit pipeline that exis
 
 ## Rollout sequence
 
-Each phase independently shippable and valuable:
+The lean core, in order, each phase independently shippable:
 
 1. **Land PR #1111** (prompt admission, sandbox confirm, `operator_minimum` fix, epoch set on
-   production). Re-run the audit so later phases calibrate against traffic without ambient floors.
-2. **Calibration:** middle-tier allowlists, tag hygiene, Trino fix. Cheap, shrinks the
-   `unknown_external` population honestly.
-3. **Content-derived artifact provenance:** stamp writes from content origin with turn-maximum
-   fallback, revision-scoped healing, lossless attribution storage, and the attestation extension of
-   PR #1111's review. Valuable while still in `observe` — it stops new artifact poisoning and the
-   feedback loop before enforcement exists, and cleans the traffic the shadow phase measures.
-4. **Adjudicator in shadow:** implement `adjudicate` and the judge *with its complete input
-   contract* — trusted-row selection, the argument rendering filter, provenance-digest
-   tier-filtering, and the provenance-matching machinery those filters depend on. The filter is not
-   an enhancement to schedule later: a judge without it reads attacker prose, and a judge
-   retrofitted with it later is a materially different judge than the one the shadow phase
-   calibrated. Run under `observe` (verdicts logged, nothing blocked) and evaluate against the
-   shadow-phase gates. This phase risks nothing and produces the data that decides everything after
-   it.
-5. **Enforce with the proposed matrix**, deny-and-continue, escalation counters, updated
-   `require_taint_enforcement`. Gmail/Drive tools register for the first time.
-6. **Destination-bound confirmation reuse** (the positive-authorization path through floor cells),
-   reusing the phase-4 matching machinery as the approval fingerprint.
-7. **Injection probe**, escalate-only, once there's an enforcement layer for it to harden.
+   production). Re-run the audit so later decisions calibrate against traffic without ambient
+   floors.
+2. **Sink and tag corrections:** high-impact home actuation split out of `home_local`; calendar (and
+   any other externally mutable store) de-trusted; middle-tier allowlists; tag hygiene; Trino fix.
+   Config-level work that removes the known fail-open cells.
+3. **Standing grants**, minimal form: grant storage on task definitions and browse sessions,
+   envelope enforcement at the existing chokepoint, schema-constrained bodies for public sinks.
+4. **Enforce the lean matrix:** confirm floors on egress and actuation, audit everywhere else,
+   updated `require_taint_enforcement`. Gmail/Drive tools register for the first time.
+5. **Measure against the friction budget for 30 days.**
+
+**The gate:** if the measured confirm volume fits the budget and no household task category became
+unusable — stop. The design is complete at phase 5 and the contingent tier stays on paper. Only if
+the numbers exceed the budget does the contingent tier proceed, smallest-first and only for the
+cells the data indicts:
+
+6. **Adjudicator in shadow**, implemented *with its complete input contract* — the closed context
+   schema, trusted-row selection, argument rendering filter, provenance-digest tier-filtering, and
+   the matching machinery those filters depend on. A judge without its filter reads attacker prose,
+   and a judge retrofitted with it later is a different judge than the one calibrated. Run under
+   `observe`, evaluate against the shadow-phase gates, then enforce with deny-and-continue and
+   escalation counters.
+7. **Content-derived artifact provenance** (stamping, healing, lossless attribution, attestation
+   extension) if artifact-restored taint is what the measurements indict.
+8. **Capability-scoped confirmation reuse** beyond the minimal grant form, and the **injection
+   probe**, escalate-only, once there is an enforcement layer for it to harden.
 
 ## Acceptance criteria
 
