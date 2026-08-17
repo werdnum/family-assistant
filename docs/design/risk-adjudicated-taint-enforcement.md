@@ -977,8 +977,13 @@ untagged fixture tool.
 actuation sink (lock/alarm/valve/siren domains; `cover` by device class, fail-closed; device/area
 target expansion via the HA registry; operator high-impact entity list from deployment config,
 setup-prompted) and `destructive_artifact_write` (via `DESTRUCTIVE` and `EXECUTABLE_PERSISTENCE`
-resolution order). Document the entity list in `CONFIGURATION_REFERENCE.md`. *Verify:* resolver unit
-tests per target form (entity/device/area/unresolvable) and per family.
+resolution order). `mqtt_publish` joins the actuation floor with the list *inverted*: its topic
+space is unbounded and can command the same locks and valves over ESPHome, so a danger-list would
+fail open for every topic the operator forgot — instead it resolves high-impact by default at
+externally authored tiers, with an operator allowlist of known-benign topic prefixes (telemetry,
+sensor publishing) that stay `home_local`. Document both lists in `CONFIGURATION_REFERENCE.md`.
+*Verify:* resolver unit tests per target form (entity/device/area/unresolvable) and per family,
+including MQTT topic-prefix allowlisting and the unlisted-topic default.
 
 **M4 — Store and tag hygiene.** Calendar (and any store mutable outside FA's write path) de-trusted:
 `search_calendar_events` loses `OUTPUT_TRUSTED` pending per-event provenance; reclassify the known
@@ -989,16 +994,20 @@ provider, implements no `get_context_taint_sources()` — an injected invitation
 default profile with a trusted turn state and bypass every floor. Blanket-tainting the provider
 would recreate the ambient-poison problem, so it gets PR #1111's prompt-admission rule instead —
 keyed on a minimal per-event provenance slice pulled into this milestone: each event stores the
-writing turn's tier at write time (one metadata field, no content matching). An intake confirmation
-*authorizes the write*; it does not change who authored the stored text — the calendar section above
-says exactly this — so an event saved from an externally-tainted turn (an emailed invitation,
-however approved) keeps external provenance. Events written from clean FA turns render normally;
-external-tier and externally synced events render as structural stubs (count, time span — no
-attacker-authored text) until a content-hash-bound review attests them, and any event text the
-provider *does* render contributes its taint source. *Verify:* tag-audit test asserting no
-`OUTPUT_TRUSTED` on tools reading externally mutable stores; context-provider tests that an
-unattested CalDAV event *and* an email-intake-created event render as stubs contributing no prose;
-audit data shows middle tiers firing.
+writing turn's tier at write time (one metadata field, no content matching); on
+`modify_calendar_event` the stored tier is the *maximum* of the existing event's tier and the
+modifying turn's, because partial modification retains unspecified fields — a clean turn changing an
+externally authored event's time must not promote its retained hostile description. In the lean
+core, modification never promotes; only attestation does. An intake confirmation *authorizes the
+write*; it does not change who authored the stored text — the calendar section above says exactly
+this — so an event saved from an externally-tainted turn (an emailed invitation, however approved)
+keeps external provenance. Events written from clean FA turns render normally; external-tier and
+externally synced events render as structural stubs (count, time span — no attacker-authored text)
+until a content-hash-bound review attests them, and any event text the provider *does* render
+contributes its taint source. *Verify:* tag-audit test asserting no `OUTPUT_TRUSTED` on tools
+reading externally mutable stores; context-provider tests that an unattested CalDAV event *and* an
+email-intake-created event render as stubs contributing no prose; audit data shows middle tiers
+firing.
 
 **M5 — Overwrite reversibility.** Repository-layer revision retention on note replace (prior
 revision kept on non-append `add_or_update_note`); calendar-event field replacement retains prior
