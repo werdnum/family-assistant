@@ -531,11 +531,18 @@ owns the page gains no *reach*: the disclosure budget was composed in the cleane
 *before* the riskiest untrusted input got a voice, and nothing the page says can expand it. Losing
 read access at exactly the point the agent starts encountering hostile input is the original
 prompt-injection defense — the reason processing profiles exist — and treating the handed payload as
-protected context would negate it. The one case that needs a guard — a *tainted* parent steered into
-stuffing private data into a browser task — is guarded where the decision is made:
-`delegate_to_service` is itself a sink, evaluated in the parent's context under the parent's taint
-state with the payload visible. The exposure decision is governed at the boundary it crosses, not
-re-litigated inside the child.
+protected context would negate it. This generalizes to a single rule, which is the maintainer's
+governing view: **the (re-)delegation itself is the chokepoint.** The browser session responds to
+its controlling context, not ad hoc to the world, and its *only* inlet is the delegation boundary —
+the initial payload and every subsequent follow-up relayed into the running session are crossings of
+the same boundary, each evaluated in the controlling context under its taint state, with its
+knowledge of what is private and what the request actually was. That covers the tainted-parent case
+(`delegate_to_service` is itself a sink, evaluated with the payload visible) and equally the
+mid-session case: a private value supplied after hostile pages have rendered still enters through
+the same gate, judged where both the information and the intent are visible. The child's exemption
+is sound not because nothing private ever enters it, but because nothing enters it except through a
+guarded gate — the exposure decision is governed at the boundary it crosses, never re-litigated
+inside the blind child.
 
 Where browser risk actually concentrates is authenticated sessions (cookie jars — a hostile page
 driving actions on logged-in accounts) and purchases, and those are governed by their existing
