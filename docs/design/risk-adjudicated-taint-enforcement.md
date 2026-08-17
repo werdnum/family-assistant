@@ -1037,7 +1037,12 @@ section above says exactly this — so an event saved from an externally-tainted
 invitation, however approved) keeps external provenance. Events written from clean FA turns render
 normally; external-tier and externally synced events render as structural stubs (count, time span —
 no attacker-authored text) until a content-hash-bound review attests them, and any event text the
-provider *does* render contributes its taint source. *Verify:* tag-audit test asserting no
+provider *does* render contributes its taint source. That calendar attestation — review promoting
+the event's stored tier, bound to the content hash — is part of *this* milestone, not the contingent
+tier: without it, a reviewed external event would render its prose while keeping its external tier
+and taint every ambient turn, recreating the poison this milestone removes. The contingent-tier
+attestation work is the *generalization* of the same operation to all artifacts (notes, workspace
+files); the calendar-scoped version ships lean. *Verify:* tag-audit test asserting no
 `OUTPUT_TRUSTED` on tools reading externally mutable stores; context-provider tests that an
 unattested CalDAV event *and* an email-intake-created event render as stubs contributing no prose;
 audit data shows middle tiers firing.
