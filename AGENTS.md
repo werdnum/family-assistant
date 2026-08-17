@@ -345,6 +345,25 @@ least-privilege access, input validation, and defense in depth.
   reasonable behaviour suffices; that trades disproportionate complexity for negligible benefit and
   tends to spawn the machinery-edge-case spiral (see the cost/benefit gate in
   `REVIEW_GUIDELINES.md`).
+- **Design docs are approach-level documents.** When review surfaces an edge case in a design doc,
+  respond by increasing altitude — restate the rule so the general case covers it — rather than
+  appending a paragraph for that case. Defer construction detail (field names, wire formats,
+  plumbing) to the implementing PRs, where the type checker, tests and conformance rules verify it
+  instead of prose; a design doc's work plan should name each milestone's outcome and how it will be
+  verified, and leave the construction to the PR. See "Reviewing Design Documents" in
+  `REVIEW_GUIDELINES.md` for the reviewer-side counterpart.
+- **Prefer enforcement chokepoints over enumeration.** A design that depends on finding every
+  instance of something (every call site, every tool that writes, every path that renders untrusted
+  text) will decay as the code evolves. Route all instances through one place — a shared serializer,
+  a required registry, a type, a conformance rule — so a missed instance fails loudly instead of
+  slipping through. Arrange mechanisms so neglect degrades availability (visible failure, gets
+  fixed) rather than safety (silent widening, gets exploited), and check that every gate leaves a
+  satisfiable path for ordinary use: a gate that blocks normal workflows gets turned off and then
+  protects nothing.
+- **Record accepted trade-offs where reviewers will find them.** When you and the user deliberately
+  accept a residual risk or simplification, write it down in the change or its design doc (e.g. a
+  "Deliberate simplifications" section) with the rationale. A documented, reasoned acceptance closes
+  the thread; an undocumented one gets re-litigated every review round.
 - **Never leave tests broken.** Fix all test failures rather than dismissing them as 'unrelated' or
   'pre-existing' — you are responsible for failures in or near the code you changed. For flakiness
   in areas completely unrelated to your change, see "Debugging and Change Verification" below.
