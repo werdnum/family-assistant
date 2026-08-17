@@ -288,8 +288,21 @@ provides: `cover` spans blinds and garage doors, and classifying by domain alone
 confirm-gates every blind or leaves garage doors always-allowed. For `cover` the resolver must
 inspect the entity target (`service_data`/`entity_id`) and its Home Assistant device class — garage
 and gate device classes land in the high-impact sink, shades and blinds stay `home_local`, and an
-entity whose device class cannot be resolved fails closed to high-impact. Physical-safety actuation
-gets the same rule as egress: a classifier false-negative must never be able to do it alone.
+entity whose device class cannot be resolved fails closed to high-impact.
+
+Some allowlisted domains carry no machine-resolvable semantics at all: a `switch` entity is a
+garage-door relay or a fairy-light strip depending entirely on the operator's wiring, and `button`,
+`input_button`, `scene`, and `script` launchers can front anything. Fail-closed is the wrong default
+there (it would confirm-gate every light switch on tainted turns), and fail-open is what exists
+today. The only honest source of truth is the operator: deployment config carries a **high-impact
+entity list** — entity ids (and the scenes/scripts that can reach them) that actuate doors, gates,
+locks, or alarms through semantically opaque domains — and listed entities resolve to the
+high-impact sink regardless of domain. This is an irreducible enumeration: the semantics live in the
+household's wiring, so no resolver can infer them, and the list's saving graces are that it is
+small, reviewable in one screen, prompted for at setup ("which entities can open or unlock
+something?"), and that forgetting an entry degrades to today's behavior rather than below it.
+Physical-safety actuation otherwise gets the same rule as egress: a classifier false-negative must
+never be able to do it alone.
 
 Destructive artifact writes are the third occupant of a soft cell. The resolver maps deletes and
 rewrites (`delete_note`, `delete_script`, `delete_automation`, calendar deletion) into
@@ -528,8 +541,14 @@ call returns a structured tool result stating what was blocked, why, and what sa
 ("ask the user", "use the household recipient", "drop the external destination"). The model
 continues. Escalation counters — 3 consecutive gated-and-rejected calls, or a configured per-turn
 total — convert to a single human confirmation summarizing the pattern, or end the turn with an
-explanation in unattended contexts. Counters live in `TurnTaintState`, which already threads through
-the loop and serializes across delegation.
+explanation in unattended contexts. Counters live in `TurnTaintState` — with the caveat the temporal
+fields already established: `to_metadata()`/`from_metadata()` and `merge_taint_state_into_tracker()`
+enumerate fields explicitly, so the counters must be added to the serialized schema and given merge
+semantics, or a delegated or resumed run silently restarts them and the escalation promise
+evaporates. Semantics: a delegated run inherits the parent's counts; on result merge the parent
+takes the maximum of its own and the child's totals (never a sum of independent branches, which
+would double-count parallel work); and a delegated-run escalation test joins the acceptance criteria
+alongside the temporal-evidence one.
 
 Hard `deny` floors (unattended `sandbox_network`, malformed-payload refusals from
 `confirmation_payload_block_reason`) keep raising: those exist precisely so no continuation pressure
