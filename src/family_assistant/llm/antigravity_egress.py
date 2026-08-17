@@ -52,10 +52,16 @@ GITHUB_API_BASE_URL = "https://api.github.com"
 _APP_JWT_LIFETIME = timedelta(minutes=9)
 _APP_JWT_BACKDATE = timedelta(seconds=60)
 
-# How long before a minted installation token expires it stops being reused.
-# An agent run holds whatever header the proxy was given for its whole life, so
-# this only has to cover the gap between minting and the request going out.
-_INSTALLATION_TOKEN_REFRESH_MARGIN = timedelta(minutes=5)
+# How long a minted installation token stays reusable. Deliberately far shorter
+# than the token's own ~1h life: the proxy is handed a fixed header that it uses
+# for the whole of an agent run, so a run inherits whatever lifetime was left at
+# submit. Caching by "not yet expired" would let a two-hour run start on a token
+# with minutes to live and lose GitHub partway through -- including on the final
+# push, after all the work. Reuse therefore only spans one submission, where a
+# config naming `github_app` on several domains resolves them within
+# milliseconds and all of them should carry the same token. Every new run mints
+# fresh and so gets the longest window the credential can give it.
+_INSTALLATION_TOKEN_REUSE_WINDOW = timedelta(seconds=60)
 
 _GITHUB_GIT_BASIC_USERNAME = "x-access-token"
 
@@ -116,13 +122,18 @@ def _read_github_app_private_key(env: Mapping[str, str]) -> str:
 
 
 class GitHubAppInstallationTokenSource:
-    """Mints and caches GitHub App installation access tokens.
+    """Mints GitHub App installation access tokens, one per agent run.
 
     The App private key never leaves this process: it signs a short-lived JWT,
     which is exchanged with GitHub for an installation token, and only that
-    token is handed to the egress proxy. Tokens live about an hour and are
-    reused until shortly before they expire, so a busy profile makes roughly
-    one GitHub call an hour rather than one per run.
+    token is handed to the egress proxy.
+
+    Reuse spans a single submission rather than the token's whole life (see
+    ``_INSTALLATION_TOKEN_REUSE_WINDOW``), because the proxy holds one fixed
+    header for the duration of a run. A run therefore always starts with the
+    longest window the credential can give it -- though a run that outlives
+    the token entirely still loses GitHub partway through, which no amount of
+    caching policy here can fix.
     """
 
     def __init__(
@@ -140,8 +151,9 @@ class GitHubAppInstallationTokenSource:
         self._api_base_url = api_base_url.rstrip("/")
         self._cached_token: str | None = None
         self._cached_expiry: datetime | None = None
-        # Concurrent runs on the same profile would otherwise each mint a
-        # token, and GitHub rate-limits App JWT exchanges.
+        self._cached_minted_at: datetime | None = None
+        # Two rules naming `github_app` resolve concurrently within one submit;
+        # without this they would mint two tokens and carry different ones.
         self._lock = asyncio.Lock()
 
     def _client(self) -> httpx.AsyncClient:
@@ -216,21 +228,29 @@ class GitHubAppInstallationTokenSource:
         return token, _parse_expiry(payload.get("expires_at"))
 
     async def token(self) -> str:
-        """Return a valid installation access token, minting one if needed."""
+        """Return an installation access token, minting one per run.
+
+        A token is reused only for the moments a single submission takes to
+        resolve its rules; anything older is re-minted so the run it is about
+        to be frozen into starts with a full lifetime.
+        """
         async with self._lock:
             now = self._clock.now()
             if (
                 self._cached_token is not None
+                and self._cached_minted_at is not None
                 and self._cached_expiry is not None
-                and now < self._cached_expiry - _INSTALLATION_TOKEN_REFRESH_MARGIN
+                and now - self._cached_minted_at < _INSTALLATION_TOKEN_REUSE_WINDOW
+                and now < self._cached_expiry
             ):
                 return self._cached_token
 
             token, expires_at = await self._mint()
             self._cached_token = token
-            # A response without a usable `expires_at` is cached for the
-            # documented hour rather than not at all; re-minting per run would
-            # spend the App's rate limit to gain nothing.
+            self._cached_minted_at = now
+            # A response without a usable `expires_at` is treated as the
+            # documented hour; the reuse window above means this only bounds
+            # the few seconds one submission spans.
             self._cached_expiry = expires_at or (now + timedelta(hours=1))
             logger.info(
                 "Minted GitHub App installation token, valid until %s",

@@ -62,11 +62,22 @@ RS256 JWT, and exchanges it for an installation access token. The App private ke
 process; only the ~1-hour installation token reaches Google, and only as a proxy transform. A config
 file that leaked would disclose which domains get a credential, not the credential.
 
-**The token is cached against the clock, not the run.** Installation tokens carry an `expires_at`;
-the resolver reuses one until 5 minutes before it expires and mints a fresh one after that. A busy
-profile therefore makes one GitHub API call an hour rather than one per delegated run, and a run
-that outlives its token is not a problem the resolver has to solve — the proxy holds the header it
-was given, and the agent's own long-running work is bounded by `max_async_seconds` anyway.
+**A token is minted per run, not held across runs.** The proxy is handed one fixed header and uses
+it for the whole of a run, so a run inherits whatever lifetime was left at submit — it cannot be
+refreshed once the interaction is created. Caching by "not yet expired" would therefore let a long
+run start on a token with minutes to live and lose GitHub partway through, including on a final push
+after all the work. Reuse instead spans only the moments one submission takes to resolve its rules
+(a config naming `github_app` on both `github.com` and `api.github.com` resolves them within
+milliseconds, and both must carry the same token); every new run mints fresh and so gets the longest
+window the credential can give it.
+
+That still leaves a ceiling: **a run longer than the token's ~1 hour loses GitHub access partway
+through**, and nothing in this design can prevent that, because the header is frozen at submit. The
+shipped `max_async_seconds` for `coder` is 7200, twice the token's life. A deployment that wants
+GitHub to hold for the whole of every run should lower `max_async_seconds` below an hour on the
+credentialed profile; one that prefers long runs should expect the agent to report GitHub failures
+late in a very long task. This is a genuine trade rather than a bug to fix here — refreshing would
+need the API to accept a credential callback, which it does not.
 
 **`scheme` exists because git and the REST API disagree.** GitHub's REST API takes
 `Authorization: Bearer <token>`. Git-over-HTTPS against `github.com` is authenticated as HTTP Basic

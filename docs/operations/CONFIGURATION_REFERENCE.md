@@ -1840,11 +1840,17 @@ key and set:
 | `GITHUB_APP_PRIVATE_KEY`      | The PEM contents inline, used in preference to the path if set. |
 
 The App private key never leaves the process: it signs a short-lived JWT which is exchanged for an
-installation access token, and only that ~1-hour token is handed to the proxy. Tokens are cached
-until 5 minutes before they expire, so a busy profile makes about one GitHub call an hour. A
-credential that cannot be resolved — a missing variable, an unreadable key, a revoked installation —
-fails the run rather than submitting it unauthenticated, which would otherwise surface as a 404 on a
-private repository from inside the agent.
+installation access token, and only that ~1-hour token is handed to the proxy. A credential that
+cannot be resolved — a missing variable, an unreadable key, a revoked installation — fails the run
+rather than submitting it unauthenticated, which would otherwise surface as a 404 on a private
+repository from inside the agent.
+
+**Runs longer than the token cannot keep GitHub access.** The proxy is given one fixed header at
+submit and there is no way to refresh it mid-run, so a token is minted fresh per run to give each
+one the longest possible window — but a run that outlasts it (~1 hour) starts failing GitHub calls,
+possibly on a final push. `max_async_seconds` for the shipped `coder` profile is `7200`. Set it
+below an hour on a credentialed profile if GitHub must hold for the whole of every run; leave it
+high if long runs matter more and late-run GitHub failures are acceptable.
 
 **Injecting a credential widens the profile's Rule of Two class**, and how far is mostly set outside
 this file. The shipped `coder` is `[C]` only; GitHub App access adds `[B]`, and the agent already

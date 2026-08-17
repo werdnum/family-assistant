@@ -297,22 +297,50 @@ async def test_github_app_basic_scheme_encodes_for_git_over_https(
     }
 
 
-async def test_installation_token_is_reused_until_it_nears_expiry(
+async def test_one_submissions_rules_share_a_single_token(
     rsa_private_key_pem: str,
 ) -> None:
-    """A busy profile makes roughly one GitHub call an hour, not one per run."""
+    """A config naming github_app on several domains must not split tokens."""
+    stub = _GitHubStub()
+    resolver = AntigravityEgressResolver(
+        AntigravityEnvironmentConfig.model_validate({
+            "network": "allowlist",
+            "allowlist": [
+                {
+                    "domain": "github.com",
+                    "credential": {"type": "github_app", "scheme": "basic"},
+                },
+                {"domain": "api.github.com", "credential": {"type": "github_app"}},
+            ],
+        }),
+        github_app_tokens=_token_source(
+            stub, _github_env(rsa_private_key_pem), MockClock(_NOW)
+        ),
+    )
+
+    await resolver.resolve_network()
+
+    assert len(stub.requests) == 1
+
+
+async def test_each_run_mints_a_full_lifetime_token(
+    rsa_private_key_pem: str,
+) -> None:
+    """The proxy freezes one header for a whole run, so a stale token is a trap.
+
+    Reusing by "not yet expired" would let a long run start on a token with
+    minutes left and lose GitHub partway through -- including on a final push,
+    after all the work. A later run therefore re-mints rather than inheriting
+    the remaining life of an earlier one's token.
+    """
     stub = _GitHubStub(expires_in=timedelta(hours=1))
     clock = MockClock(_NOW)
     source = _token_source(stub, _github_env(rsa_private_key_pem), clock)
 
     assert await source.token() == "ghs_installation_token"
-    clock.advance(timedelta(minutes=50))
-    assert await source.token() == "ghs_installation_token"
-    assert len(stub.requests) == 1
 
-    # Past the refresh margin (5 minutes before the 1h expiry), a fresh mint.
     stub.token = "ghs_second_token"
-    clock.advance(timedelta(minutes=10))
+    clock.advance(timedelta(minutes=50))
     assert await source.token() == "ghs_second_token"
     assert len(stub.requests) == 2
 
