@@ -180,12 +180,20 @@ and burns out fastest.
 
 ### The `adjudicate` outcome
 
-Extend `TaintPolicyOutcome` with `adjudicate`, placed in the strictness lattice as
-`allow < audit < adjudicate < redact = confirm < deny`. All existing clamp semantics
-(`operator_minimum`, tighten-only profile merging) apply unchanged. In `observe` mode, `adjudicate`
-downgrades to `audit` like every other gating outcome — which gives a free shadow phase: run the
-adjudicator, log its verdict, block nothing, and measure its error rates against the exact traffic
-that stalled the rollout.
+Extend `TaintPolicyOutcome` with `adjudicate`, parameterized by a **verdict floor** — the weakest
+verdict the adjudicator may return in that cell. A bare `adjudicate` (floor `allow`) sits between
+`audit` and `confirm` in the strictness lattice; for every clamp comparison (tighten-only profile
+merging, `require_taint_enforcement`), an `adjudicate` cell ranks at its floor, so
+`adjudicate(floor: confirm)` satisfies a `confirm` minimum. Evaluation order matters: matrix cell →
+adjudicator verdict (bounded below by the cell's floor) → `operator_minimum` applied to the
+*verdict*. Running adjudication before the operator clamp is what lets the evaluator hand
+`adjudicate` to the provider at all — applying `operator_minimum` first, as `evaluate()` does today,
+would convert the cell to `confirm` before the judge ever ran. Applying it after keeps its semantics
+exactly as strong as today: an operator-configured minimum can never be weakened by a judge verdict,
+and never by argument provenance matching either. In `observe` mode, `adjudicate` downgrades to
+`audit` like every other gating outcome — which gives a free shadow phase: run the adjudicator, log
+its verdict, block nothing, and measure its error rates against the exact traffic that stalled the
+rollout.
 
 The default matrix change, relative to [runtime-taint-machinery.md](runtime-taint-machinery.md)'s
 shipped defaults:
@@ -201,9 +209,12 @@ shipped defaults:
 | middle tiers, egress sinks                       | confirm          | adjudicate                 |
 
 "Floor: confirm" means the adjudicator's verdict space in that cell is {confirm, deny} — it chooses
-how hard to gate, never whether to gate — except when argument provenance matching (below)
-deterministically passes, in which case `allow` becomes available to it. Floors are expressed
-through `operator_minimum`, which already exists.
+how hard to gate, never whether to gate. Argument provenance matching (below) is the one exception:
+a cell may explicitly declare it, and when the deterministic match passes, `allow` enters the
+verdict space. The exception is part of the cell's declared policy — visible in configuration, and
+acceptable to `require_taint_enforcement` precisely because the relaxation path is deterministic —
+not a runtime override; and because `operator_minimum` applies after adjudication, an operator
+minimum of `confirm` on a cell makes that cell's exception inert rather than being weakened by it.
 
 The two cells that dominated the production friction data (`sensitive_read_broadening`,
 `known_user_message` — i.e. reading notes/calendar and messaging the household after external
@@ -227,12 +238,23 @@ providers, and its prompt is assembled by code, not configuration.
   anything else is summarized as a one-line provenance stub ("\<tool result from
   `gmail_get_message`, tier unknown_external, sender x@y>"). The attacker's text is *represented* to
   the judge but never *rendered* to it.
-- The tool call: name, full arguments, resolved sink class, and the tool's own description.
+- The tool call: name, resolved sink class, the tool's own description, and a **provenance-filtered
+  rendering of the arguments**. Structural fields — destinations, recipients, entity ids, enums,
+  numbers, short identifiers — render verbatim. A free-form value renders verbatim only when it
+  provably originates from trusted-tier content (the same matching used for argument provenance
+  below); otherwise it is replaced by a stub carrying its provenance, length, and content type
+  ("body: 4 kB, derived from `gmail_get_message` (unknown_external) and three `get_note` reads").
+  Attacker-authored prose never renders to the judge.
 - A provenance digest of the turn: which sources are present, their tiers, types, and reasons — the
   `TurnTaintState.sources` tuple we already carry, including the temporal fields
   (`fresh_high_taint_seen_at_sequence`, `sensitive_reads`) that are currently recorded but consumed
   by nothing. Ordering matters and the judge should see it: a sensitive read *after* fresh untrusted
-  content is the dangerous shape; the same read before it is not.
+  content is the dangerous shape; the same read before it is not. Today the temporal fields do not
+  survive the metadata round trip — `TurnTaintState.to_metadata()` omits `sensitive_reads`, and
+  `from_metadata()` does not restore `fresh_high_taint_seen_at_sequence` — so an adjudicator in a
+  delegated run would see no ordering evidence. Extending the serialized schema with the temporal
+  records and sequence, with merge semantics that continue the parent's sequence monotonically
+  across the delegation boundary, is part of implementing this input.
 - The profile id and the matrix cell that delegated the decision, including its floor.
 
 **Verdicts:** `allow` (with one-line reason, audited), `confirm` (escalate to the existing durable
@@ -241,13 +263,18 @@ confirmation machinery, judge's reason included in the rendered prompt so the hu
 `confirm`. Every verdict writes a `taint_audit_events` row with the verdict, reason, and latency;
 the existing diagnostics endpoint grows verdict counts.
 
-**Why the payload alone can't win.** Tool arguments may embed untrusted text (a summary being sent,
-a quoted email). That is fine and is the same property auto mode relies on: the judge evaluates the
-*action* — destination, capability, scope — against the trusted request, treating argument content
-as data inside fenced boundaries (the `_neutralize_untrusted_evidence_boundaries` pattern from email
-intake generalizes here). An injection must therefore produce a call that is benign *in isolation*
-relative to what the user actually asked — at which point it has been constrained into approximately
-the actions the user wanted anyway.
+**The judge is itself an injection target, so it never reads the attacker.** The naive design — show
+the judge the full arguments and rely on fencing — would hand untrusted natural language a second
+audience whose verdict gates exactly the sinks it wants opened; boundary neutralization (the
+`_neutralize_untrusted_evidence_boundaries` pattern) stops forged tags, not persuasion. Hence the
+filtered rendering above: the judge decides on structure and alignment — does this destination,
+recipient, capability, and scope follow from what the trusted user asked? — plus provenance stubs
+whose signal survives redaction: a 14 kB free-form body assembled from a dozen `get_note` reads and
+headed for an external destination is exactly as alarming as its contents, without reading them. An
+injection must therefore produce a call whose *structure* is benign relative to what the user
+actually asked — at which point it has been constrained into approximately the actions the user
+wanted anyway. The accepted cost is that the judge cannot do content-level payload inspection; that
+job belongs to the escalate-only probe at ingestion (below), not to the gate.
 
 **Cost and latency.** Production audit data: 337 would-gate calls over 7 days (~48/day). At one
 flash-class call each, cost is negligible; latency lands only on gated calls, not the hot path. A
@@ -384,8 +411,12 @@ Each phase independently shippable and valuable:
   never to `allow`.
 - No code path allows probe output or judge output to lower a tier, remove a source, relax a floor,
   or write provenance.
-- Judge context provably excludes untrusted-tier rendered content (unit-testable via the same
-  row-selection function the assembler uses).
+- Judge context provably excludes untrusted-tier rendered content — in conversation rows and in
+  argument values alike (unit-testable via the same row-selection and argument-filtering functions
+  the assembler uses).
+- Adjudication in a delegated run sees the same temporal evidence (sensitive-read records,
+  fresh-taint ordering) as it would in the parent turn: the serialized taint schema carries it
+  across the delegation round trip.
 - Every verdict, escalation, and probe detection is auditable after the fact with reasons.
 
 ## References
