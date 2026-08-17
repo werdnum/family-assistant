@@ -2083,6 +2083,14 @@ class TaskWorker:
             return None
 
         next_stage = _NEXT_NOTIFY_STAGE[run["notify_stage"]]
+        if (
+            next_stage == "failed_forward"
+            and self._source_service_for_delegation(exec_context, run) is None
+        ):
+            # Nothing to hand the failure to -- the delegating profile is not
+            # loaded here. Asking it what to send instead would just re-send the
+            # standard notice that was refused a moment ago.
+            next_stage = "canned_pending"
         advanced = await exec_context.db_context.delegation_runs.advance_notify_stage(
             delegation_id,
             stage=next_stage,
