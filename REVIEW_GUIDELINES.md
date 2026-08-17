@@ -129,10 +129,11 @@ give rare scenarios ideal behavior when reasonable behavior suffices.
   defaults — the difference is whether the operator made a visible, deliberate choice.
 - **Don't substitute your judgement for the operator's or developer's.** The reviewer's job is to
   surface consequences the author may not have weighed: state the risk, the exposure, and who can
-  trigger it. Which trade-off to accept is the author's and operator's decision. Once a finding has
-  been considered and rejected with a recorded rationale, that is a valid resolution — do not
-  re-raise it in later rounds, or re-derive the same objection from a different angle, unless you
-  have new facts that invalidate the recorded rationale.
+  trigger it. Which trade-off to accept is the decision owner's call — the developer, or the
+  operator for operator-owned posture. Once a finding has been rejected with a recorded rationale
+  that reflects the decision owner's acceptance (not merely an implementing agent's own judgement),
+  that is a valid resolution — do not re-raise it in later rounds, or re-derive the same objection
+  from a different angle, unless you have new facts that invalidate the recorded rationale.
 
 ## Chokepoints over Enumeration
 
