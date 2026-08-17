@@ -54,8 +54,8 @@ provenance, routing, and floors — and stops doing what they are bad at: guessi
 against the production audit data, the expected interactive friction drops from ~200 would-confirm
 events per day to an explicit budget of roughly one confirmation per day, while the exfiltration
 sinks gain protection they do not have today (observe mode blocks nothing). Crucially, most of the
-mechanism in this document is **contingent**: a lean core (floors, sink corrections, standing grants
-— see the complexity-budget section) ships first and may already meet the budget, in which case the
+mechanism in this document is **contingent**: a lean core (floors and sink corrections — see the
+complexity-budget section) ships first and may already meet the budget, in which case the
 adjudicator and everything after it stays unbuilt.
 
 ## Why enforcement actually stalled
@@ -191,11 +191,15 @@ parts, while the simple invariants never needed a patch. Two rules follow.
 
 **Additive mechanism is gated on measured need; substitutive mechanism is preferred.** Some
 proposals here *replace* complexity that already exists in its most dangerous form — the
-someone-must-remember form. Standing grants replace bespoke per-automation profiles (the pattern
-that cost ~2,100 lines for one cron job). Proven provenance replaces per-store trust audits. Closed
-schemas replace filter enumeration. Those earn their place by subtraction. Purely additive mechanism
-— the adjudicator, the probe, artifact healing — must instead be justified by a measured number, not
-an anticipated one.
+someone-must-remember form. Sink-safety-by-construction plus deferred confirmations replace bespoke
+per-automation profiles (the pattern that cost ~2,100 lines for one cron job) *and* pre-declared
+grant envelopes. Proven provenance replaces per-store trust audits. Closed schemas replace filter
+enumeration. Those earn their place by subtraction. A corollary ordering principle: **post-facto
+judgment of concrete actions beats pre-declaration of permitted action sets** — an envelope must
+predict, and its errors are friction (too narrow) or standing injectable authorization (too wide),
+while a post-facto decision observes the actual action and authorizes one instance. Purely additive
+mechanism — the adjudicator, the probe, artifact healing — must instead be justified by a measured
+number, not an anticipated one.
 
 **The lean core ships first, and may be enough.** The production friction data was dominated by
 ambient poison (fixed by PR #1111 and the epoch) and by confirm-gating sensitive *reads* (fixed by
@@ -206,10 +210,11 @@ plausibly a handful of episodes per week, not 200 per day. The lean core is ther
 the epoch; the sink corrections (home actuation split, destructive-write split,
 executable-persistence split, calendar de-trusting, tag hygiene); a matrix of confirm floors on
 egress, actuation, destructive writes, and executable-artifact creation with audit everywhere else;
-task-scoped standing grants; then flip to `enforce` and measure. Only if the measured confirm volume
-exceeds the friction budget does the contingent tier get built — the adjudicator first, and only for
-the cells the data indicts; probe, content-derived stamping, and healing on the same terms. The good
-outcome is that most of the contingent tier is never built.
+sink-safety-by-construction and deferred confirmations for unattended work; then flip to `enforce`
+and measure. Only if the measured confirm volume exceeds the friction budget does the contingent
+tier get built — the adjudicator first, and only for the cells the data indicts; probe,
+content-derived stamping, and healing on the same terms. The good outcome is that most of the
+contingent tier is never built.
 
 The sections below therefore describe two kinds of material: the lean core, and a fully designed
 contingent tier that exists on paper so that, if the numbers demand it, it is built coherently
@@ -378,52 +383,73 @@ household recipients, and a sensitive read only *broadens exposure* — actual l
 subsequent egress call, which is exactly where the floors sit. This is defense in depth used
 deliberately: soften the cheap, noisy, inner gate because the outer gate is hard.
 
-### Task-scoped standing grants (lean core)
+### Unattended work and approvals: post-facto over pre-declaration (lean core / contingent split)
 
 Authorization should attach to human-authored intent at whatever altitude that intent actually
 exists. Interactive requests have per-call judgment and confirmation. Ambient always-on ingestion
-has no covering intent, so it gets structural confinement. Between them sits the altitude the
-current system cannot express at all: the recurring workflow the operator authored once. A scheduled
-task's creation *is* an attended human decision with full context; nothing captures it, so today
-such tasks either fail closed (confirm with no channel) or demand a bespoke profile.
+has no covering intent, so it gets structural confinement. Between them sits the recurring workflow
+the operator authored once — a scheduled task whose creation *is* an attended human decision — and
+the obvious-seeming way to capture that decision is a **pre-declared grant envelope**: at creation
+time, list the tools, destinations, payload scopes, and rates the task may use, and enforce the
+envelope unattended.
 
-A **standing grant** is that captured decision: attached to the task definition, granted at creation
-through trusted chrome, revoked with the task, absent-fails-closed. It names the full capability
-tuple — tool/operation, destination, payload scope, rate — and the chokepoint enforces **every
-field** of that envelope; calls inside it proceed unattended, calls outside fall back to today's
-behavior. This requires a dedicated serialized grant record. The existing
-`TurnTaintState.approved_sinks` is precedent for how approvals serialize and travel across
-delegation, but it must not be the implementation: it is a `frozenset[str]` of sink-class names, and
-`is_sink_approved()` admits *every* call in the class — a grant for one operation would authorize
-unrelated operations sharing its sink. The grant record carries the tuple explicitly and the
-chokepoint validates tool, destination, payload conformance, and rate per call, denying on any field
-mismatch.
+This design rejects that, deliberately. Pre-declaration must *predict* a set of future actions, and
+both prediction errors are bad: too narrow re-creates the friction it exists to remove, and too wide
+is **standing authorization an injected action can fit inside** — attack surface that persists for
+the task's lifetime and authorizes actions no human ever concretely saw. (The CaMeL-style variant,
+where the model voluntarily downgrades its own access up front, avoids injection of the declaration
+itself but is still blind at declaration time — which is exactly where the over-provisioning
+pressure comes from.) Post-facto blinded judgment inverts every one of those properties: "is this a
+reasonable action in this context?" is asked about the *one concrete action actually being
+attempted*, with the attacker's text stubbed out, and a verdict authorizes that instance and nothing
+durable. Observation beats prediction. Auto mode's operating point (0.4% FPR judging concrete
+actions) is evidence that the post-facto question is also the *answerable* one.
+
+What replaces envelopes, in priority order:
+
+1. **Sink safety by construction, plus rate limits** (lean core) — where the unattended workflow's
+   output can be made structurally harmless, no approval machinery is needed at all. The
+   error-triage example below needs exactly this and nothing more.
+2. **Deferred durable confirmations** (lean core, already built) — an unattended task whose call
+   hits a floor cell creates a deferred confirmation and completes later, the same path email intake
+   uses today. Floor cells never needed envelopes; they needed a confirmation channel that tolerates
+   absence.
+3. **The adjudicator** (contingent) — post-facto judgment for the non-floor middle, unattended
+   contexts included.
+4. **Capability-scoped reuse of actual approvals** (contingent, behind the judge) — when the same
+   concrete capability recurs, the human's *real* approval of a real instance becomes durable for
+   that exact capability tuple (tool, destination, payload scope), per PR #1111. This is post-facto
+   too: the thing being reused was observed and approved, not predicted. The reuse record must carry
+   the full tuple — `TurnTaintState.approved_sinks` is precedent for serialization but not the
+   implementation, being a sink-class `frozenset` whose `is_sink_approved()` would admit every call
+   in the class — and the chokepoint validates every field per call.
 
 Worked example — the error-triage automation ("scan error logs nightly, file issues for real
-problems"): an engineer-profile scheduled task whose grant is `create_github_issue`, this repository
-only, three per day, **server-rendered body**. The repository is public, so a free-form issue body
-is genuine egress twice over — an exfiltration channel for injected content and a privacy leak for
-log excerpts on a perfectly clean run. Schema *typing* alone does not close that: a string field
-named `component` is still free-form if the model fills it, and an injected log entry could encode
-whatever it likes there. So the model's authority shrinks to **selection**: it names the error group
-to file (by id), and the server renders the public body entirely from the referenced record —
-component from the known-component enum, exception class as parsed from the log record, fingerprint
-computed server-side as a hash, counts and timestamps from the store. No model-composed string
-reaches the public body at all, which is what makes it a `low_bandwidth_external` sink by
+problems"): an engineer-profile scheduled task allowed `create_github_issue`, this repository only,
+rate-limited to three per day, **server-rendered body**. The repository is public, so a free-form
+issue body is genuine egress twice over — an exfiltration channel for injected content and a privacy
+leak for log excerpts on a perfectly clean run. Schema *typing* alone does not close that: a string
+field named `component` is still free-form if the model fills it, and an injected log entry could
+encode whatever it likes there. So the model's authority shrinks to **selection**: it names the
+error group to file (by id), and the server renders the public body entirely from the referenced
+record — component from the known-component enum, exception class as parsed from the log record,
+fingerprint computed server-side as a hash, counts and timestamps from the store. No model-composed
+string reaches the public body at all, which is what makes it a `low_bandwidth_external` sink by
 construction (the model's channel is its choice among error groups — a few bits). Free-form detail
 (stack traces, log excerpts) goes to a private artifact the issue references. Free-form text
 crossing a trust boundary is where both injection and exfiltration live; server-derived data
 crossing it is boring in both directions — and "typed" must always cash out as *derived or validated
-against the bounded source*, never as "a string field with a reassuring name." The same grant shape
-covers interactive browsing sessions — an origin-scoped grant confirmed once at session start, which
-is what keeps browser workflows to one confirmation per task instead of one per navigation — with
-one enforcement caveat the tool chokepoint cannot meet: `browser_click` and form submission carry no
-destination argument, and the navigation happens before the resulting URL is known, so a hostile
-page on the approved origin could redirect or submit cross-origin under the grant. An origin grant
-is therefore enforced at the **browser/network layer** — the backend blocks cross-origin
-navigations, redirects, and requests before they are sent (route interception in the existing
-Playwright backend) — and where that enforcement is unavailable, per-navigation confirmation remains
-instead. A grant the chokepoint cannot actually enforce must not be grantable.
+against the bounded source*, never as "a string field with a reassuring name." Interactive browsing
+sessions are the reuse pattern, not an envelope: the first navigation to an origin confirms as a
+real, observed action, and that approval reuses origin-scoped for the session — one confirmation per
+task instead of one per navigation, grounded in an instance the human saw. One enforcement caveat
+the tool chokepoint cannot meet: `browser_click` and form submission carry no destination argument,
+and the navigation happens before the resulting URL is known, so a hostile page on the approved
+origin could redirect or submit cross-origin under the reused approval. Origin-scoped reuse is
+therefore enforced at the **browser/network layer** — the backend blocks cross-origin navigations,
+redirects, and requests before they are sent (route interception in the existing Playwright backend)
+— and where that enforcement is unavailable, per-navigation confirmation remains instead. An
+approval the chokepoint cannot actually enforce must not be reusable.
 
 ### The adjudicator (contingent tier)
 
@@ -781,8 +807,9 @@ The lean core, in order, each phase independently shippable:
    `DESTRUCTIVE`-tagged writes and executable/scheduled artifact creation split out of
    `artifact_write`; calendar (and any other externally mutable store) de-trusted; middle-tier
    allowlists; tag hygiene; Trino fix. Config-level work that removes the known fail-open cells.
-3. **Standing grants**, minimal form: grant storage on task definitions and browse sessions,
-   envelope enforcement at the existing chokepoint, schema-constrained bodies for public sinks.
+3. **Unattended-work enablement, without pre-approval:** server-rendered bodies and rate limits for
+   the error-triage class (sink safety by construction), and deferred durable confirmations for
+   floor-cell calls from unattended tasks — both reusing machinery that exists. No grant envelopes.
 4. **Enforce the lean matrix:** confirm floors on all four floored families — egress, high-impact
    actuation, destructive writes, and executable persistence — audit everywhere else, updated
    `require_taint_enforcement`. Gmail/Drive tools register for the first time.
@@ -801,8 +828,10 @@ cells the data indicts:
    escalation counters.
 7. **Content-derived artifact provenance** (stamping, healing, lossless attribution, attestation
    extension) if artifact-restored taint is what the measurements indict.
-8. **Capability-scoped confirmation reuse** beyond the minimal grant form, and the **injection
-   probe**, escalate-only, once there is an enforcement layer for it to harden.
+8. **Post-facto capability-scoped approval reuse** (a real approval of a real instance becomes
+   durable for its exact capability tuple; origin-scoped browser reuse with network-layer
+   enforcement), and the **injection probe**, escalate-only, once there is an enforcement layer for
+   it to harden.
 
 ## Acceptance criteria
 
