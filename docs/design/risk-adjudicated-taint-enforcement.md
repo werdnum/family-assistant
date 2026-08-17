@@ -733,19 +733,24 @@ anything new), and after K interactive confirmation requests on a labeled turn, 
 probe-induced escalations **defer rather than deny** — with the deferral restricted to what the
 deferred path can honestly execute: *independent terminal* gated calls become deferred durable
 confirmations — the single-call records and deferred-execution path email intake already uses,
-surfaced together in the existing pending-confirmations tray rather than interrupting live. A
-*dependent* gated call (one whose result later reasoning needs) cannot ride that path — the
-placeholder would corrupt the workflow — so the first post-K dependent call instead takes the
-escalation endpoint already defined for the counters: the turn ends cleanly with a summarizing
-confirmation of what remains, and the human resumes or drops it. That is suspension pending human
-input at turn granularity, not a denial; live interruptions stay bounded. This is deliberately *not*
-a coalesced multi-item approval card: `confirmation_requests` stores one tool call per record, which
-is the right granularity anyway, since each deferred call must stay individually decidable. A true
-batch card would need new schema, UI, and executor, and is at most a contingent UX refinement if
-tray volume ever warrants it. Conversion to denial would make the probe the sole reason a valid
-workflow fails, which is exactly the availability boundary it must never become; deferral keeps the
-invariant intact while capping *live* interruptions at K. Per-turn confirmation counts on labeled
-turns are a standing metric so the bound is measured rather than assumed.
+surfaced together in the existing pending-confirmations tray rather than interrupting live.
+"Terminal" is a **static per-tool declaration, not an inference**: the chokepoint cannot observe
+whether later reasoning will consume a result (the loop feeds every result back), so
+deferral-eligibility is an explicit small list — the same shape as the confirmation-renderer
+registry — of operations whose results are ignorable by construction (fire-and-forget sends,
+server-rendered filings), defaulting to not-eligible. A gated call outside that list cannot ride the
+deferred path — the placeholder would corrupt the workflow — so the first such post-K call instead
+takes the escalation endpoint already defined for the counters: the turn ends cleanly with a
+summarizing confirmation of what remains, and the human resumes or drops it. That is suspension
+pending human input at turn granularity, not a denial; live interruptions stay bounded. This is
+deliberately *not* a coalesced multi-item approval card: `confirmation_requests` stores one tool
+call per record, which is the right granularity anyway, since each deferred call must stay
+individually decidable. A true batch card would need new schema, UI, and executor, and is at most a
+contingent UX refinement if tray volume ever warrants it. Conversion to denial would make the probe
+the sole reason a valid workflow fails, which is exactly the availability boundary it must never
+become; deferral keeps the invariant intact while capping *live* interruptions at K. Per-turn
+confirmation counts on labeled turns are a standing metric so the bound is measured rather than
+assumed.
 
 No probe verdict ever relaxes anything, so its adaptive-attack failure mode (missing a novel
 payload) degrades to exactly the system without a probe; no probe verdict ever denies or causes a
@@ -980,44 +985,54 @@ rule (`.ast-grep/rules/`) binding the tag to LLM-waking task enqueues and stored
 activation/deactivation. *Verify:* unit test enumerating tagged tools; conformance rule fails on an
 untagged fixture tool.
 
-**M3 — Sink resolver splits.** In `security/taint.py`'s `resolve_tool_sink_class`: high-impact
-actuation sink (lock/alarm/valve/siren domains; `cover` by device class, fail-closed; device/area
-target expansion via the HA registry; operator high-impact entity list from deployment config,
-setup-prompted) and `destructive_artifact_write` (via `DESTRUCTIVE` and `EXECUTABLE_PERSISTENCE`
-resolution order). `mqtt_publish` joins the actuation floor with the list *inverted*: its topic
-space is unbounded and can command the same locks and valves over ESPHome, so a danger-list would
-fail open for every topic the operator forgot — instead it resolves high-impact by default at
-externally authored tiers, with an operator allowlist of known-benign topic prefixes (telemetry,
-sensor publishing) that stay `home_local`. Document both lists in `CONFIGURATION_REFERENCE.md`.
-*Verify:* resolver unit tests per target form (entity/device/area/unresolvable) and per family,
-including MQTT topic-prefix allowlisting and the unlisted-topic default.
+**M3 — Sink resolver splits.** This milestone includes the metadata path the resolution needs:
+`resolve_tool_sink_class` is synchronous and the HA entity cache exposes neither `device_class` nor
+`area_id`, so the cache is extended with both and an async pre-policy resolution step (in
+`TaintTrackingToolsProvider.execute_tool`, which is already async) computes the resolved entity set
+before the synchronous resolver runs — with unresolvable targets failing closed as already
+specified. In `security/taint.py`'s `resolve_tool_sink_class`: high-impact actuation sink
+(lock/alarm/valve/siren domains; `cover` by device class, fail-closed; device/area target expansion
+via the HA registry; operator high-impact entity list from deployment config, setup-prompted) and
+`destructive_artifact_write` (via `DESTRUCTIVE` and `EXECUTABLE_PERSISTENCE` resolution order).
+`mqtt_publish` joins the actuation floor with the list *inverted*: its topic space is unbounded and
+can command the same locks and valves over ESPHome, so a danger-list would fail open for every topic
+the operator forgot — instead it resolves high-impact by default at externally authored tiers, with
+an operator allowlist of known-benign topic prefixes (telemetry, sensor publishing) that stay
+`home_local`. Document both lists in `CONFIGURATION_REFERENCE.md`. *Verify:* resolver unit tests per
+target form (entity/device/area/unresolvable) and per family, including MQTT topic-prefix
+allowlisting and the unlisted-topic default.
 
 **M4 — Store and tag hygiene.** Calendar (and any store mutable outside FA's write path) de-trusted:
-`search_calendar_events` loses `OUTPUT_TRUSTED` pending per-event provenance; reclassify the known
-mis-tagged pure-transform tools; Trino descriptor fix; populate middle-tier sender allowlists from
-connector evidence. The de-trust must also cover the *ambient* path, which the tool tag does not
-touch: `CalendarContextProvider` injects event text into every prompt and, unlike the notes
-provider, implements no `get_context_taint_sources()` — an injected invitation would reach the
-default profile with a trusted turn state and bypass every floor. Blanket-tainting the provider
-would recreate the ambient-poison problem, so it gets PR #1111's prompt-admission rule instead —
-keyed on a minimal per-event provenance slice pulled into this milestone: each event stores the
-writing turn's tier at write time, **bound to a content hash of the prompt-visible fields** — the
-hash is not deferrable to the contingent tier, because the calendar section's permanent-fallback
-rule exists precisely for this store: CalDAV is externally mutable, so a trusted-stamped event an
-organizer later edits must read back as external, and a missing or mismatched hash means external.
-On `modify_calendar_event` the stored tier is the *maximum* of the existing event's tier and the
-modifying turn's, because partial modification retains unspecified fields — a clean turn changing an
-externally authored event's time must not promote its retained hostile description. In the lean
-core, modification never promotes; only attestation does. An intake confirmation *authorizes the
-write*; it does not change who authored the stored text — the calendar section above says exactly
-this — so an event saved from an externally-tainted turn (an emailed invitation, however approved)
-keeps external provenance. Events written from clean FA turns render normally; external-tier and
-externally synced events render as structural stubs (count, time span — no attacker-authored text)
-until a content-hash-bound review attests them, and any event text the provider *does* render
-contributes its taint source. *Verify:* tag-audit test asserting no `OUTPUT_TRUSTED` on tools
-reading externally mutable stores; context-provider tests that an unattested CalDAV event *and* an
-email-intake-created event render as stubs contributing no prose; audit data shows middle tiers
-firing.
+`search_calendar_events` moves from `OUTPUT_TRUSTED` to a new **`OUTPUT_DYNAMIC`** mode — not to the
+bare-untag state, which would make the unspecified-output fallback stamp every ordinary calendar
+search `unknown_external` and, taint being monotonic, poison exactly the turns this design exists to
+keep clean. `OUTPUT_DYNAMIC` suppresses the descriptor-level fallback because the tool supplies
+complete per-item provenance itself: turn taint derives solely from the merged per-event records,
+and an item *lacking* provenance contributes external — fail-closed per item rather than per call.
+Reclassify the known mis-tagged pure-transform tools; Trino descriptor fix; populate middle-tier
+sender allowlists from connector evidence. The de-trust must also cover the *ambient* path, which
+the tool tag does not touch: `CalendarContextProvider` injects event text into every prompt and,
+unlike the notes provider, implements no `get_context_taint_sources()` — an injected invitation
+would reach the default profile with a trusted turn state and bypass every floor. Blanket-tainting
+the provider would recreate the ambient-poison problem, so it gets PR #1111's prompt-admission rule
+instead — keyed on a minimal per-event provenance slice pulled into this milestone: each event
+stores the writing turn's tier at write time, **bound to a content hash of the prompt-visible
+fields** — the hash is not deferrable to the contingent tier, because the calendar section's
+permanent-fallback rule exists precisely for this store: CalDAV is externally mutable, so a
+trusted-stamped event an organizer later edits must read back as external, and a missing or
+mismatched hash means external. On `modify_calendar_event` the stored tier is the *maximum* of the
+existing event's tier and the modifying turn's, because partial modification retains unspecified
+fields — a clean turn changing an externally authored event's time must not promote its retained
+hostile description. In the lean core, modification never promotes; only attestation does. An intake
+confirmation *authorizes the write*; it does not change who authored the stored text — the calendar
+section above says exactly this — so an event saved from an externally-tainted turn (an emailed
+invitation, however approved) keeps external provenance. Events written from clean FA turns render
+normally; external-tier and externally synced events render as structural stubs (count, time span —
+no attacker-authored text) until a content-hash-bound review attests them, and any event text the
+provider *does* render contributes its taint source. *Verify:* tag-audit test asserting no
+`OUTPUT_TRUSTED` on tools reading externally mutable stores; context-provider tests that an
+unattested CalDAV event *and* an email-intake-created event render as stubs contributing no prose;
+audit data shows middle tiers firing.
 
 **M5 — Overwrite reversibility.** Repository-layer revision retention on note replace (prior
 revision kept on non-append `add_or_update_note`); calendar-event field replacement retains prior
