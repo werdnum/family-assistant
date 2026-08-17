@@ -27,7 +27,9 @@ from family_assistant.services.user_identity import (
     UserIdentityResolutionError,
     UserIdentityResolver,
 )
-from family_assistant.telegram.markdown_utils import convert_to_telegram_markdown
+from family_assistant.telegram.markdown_utils import (
+    convert_to_telegram_markdown_within_limit,
+)
 from family_assistant.telegram.protocols import ConfirmationUIManager
 from family_assistant.tools.types import ConfirmationOutcome
 
@@ -108,10 +110,10 @@ def confirmation_text_and_parse_mode(
     if prompt_text_to_send != prompt_text:
         # Already truncated; send as plain text (see _send_confirmation_message).
         return prompt_text_to_send, None
-    converted_text, parse_mode_str = convert_to_telegram_markdown(prompt_text_to_send)
-    if parse_mode_str and len(converted_text) <= TELEGRAM_CONFIRMATION_MESSAGE_LIMIT:
-        return converted_text, ParseMode.MARKDOWN_V2
-    return prompt_text_to_send, None
+    text_to_send, parse_mode_str = convert_to_telegram_markdown_within_limit(
+        prompt_text_to_send, TELEGRAM_CONFIRMATION_MESSAGE_LIMIT
+    )
+    return text_to_send, ParseMode.MARKDOWN_V2 if parse_mode_str else None
 
 
 class TelegramConfirmationUIManager(ConfirmationUIManager):

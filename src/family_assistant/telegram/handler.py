@@ -32,7 +32,6 @@ from telegram.ext import (
     filters,
 )
 
-from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.llm.messages import (
     ContentPartDict,
     image_url_content,
@@ -47,6 +46,11 @@ from family_assistant.services.user_identity import (
 )
 from family_assistant.storage.message_history import (
     message_history_table,  # For error handling db update
+)
+from family_assistant.telegram.chunking import (
+    CHUNK_SEND_DELAY_SECONDS,
+    TELEGRAM_MAX_MESSAGE_LENGTH,
+    split_message_text,
 )
 from family_assistant.telegram.markdown_utils import convert_to_telegram_markdown
 from family_assistant.telegram.types import AttachmentData, TriggerAttachment
@@ -67,8 +71,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
-
-TELEGRAM_MAX_MESSAGE_LENGTH = 4000
 
 
 @dataclass
@@ -176,14 +178,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         )
         self._active_mid_turns: dict[int, TelegramMidTurnController] = {}
         self._active_processing_tasks: dict[int, asyncio.Task[None]] = {}
-
-        # Store storage functions needed directly by the handler (e.g., history)
-        # Storage operations are now accessed via Database
-        self.text_chunker = TextChunker(
-            chunk_size=TELEGRAM_MAX_MESSAGE_LENGTH,
-            chunk_overlap=50,  # Small overlap to maintain context across messages
-            separators=("\n\n", "\n", ". ", " ", ""),
-        )
 
     def _resolve_telegram_user(
         self, telegram_user_id: int
@@ -304,49 +298,32 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         reply_markup: ForceReply | None = None,
     ) -> Message | None:
         """Sends a message, splitting it into chunks if it's too long."""
-        first_sent_message: Message | None = None
-        if not text:  # Do not send empty messages
+        chunks = split_message_text(text)
+        if not chunks:  # Do not send empty messages
             logger.warning(
                 f"Attempted to send empty message to chat {chat_id}. Aborting."
             )
             return None
-
-        if len(text) > TELEGRAM_MAX_MESSAGE_LENGTH:
+        if len(chunks) > 1:
             logger.info(
-                f"Message to chat {chat_id} exceeds {TELEGRAM_MAX_MESSAGE_LENGTH} chars. Splitting."
+                f"Message to chat {chat_id} exceeds {TELEGRAM_MAX_MESSAGE_LENGTH} chars. "
+                f"Sending as {len(chunks)} messages."
             )
-            chunks = self.text_chunker._chunk_text_natively(text)
-            if not chunks:
-                logger.warning(
-                    f"TextChunker returned no chunks for a long message to chat {chat_id}. Original text length: {len(text)}"
-                )
-                return None
 
-            for i, chunk_text in enumerate(chunks):
-                current_reply_to_id = reply_to_message_id if i == 0 else None
-                current_reply_markup = reply_markup if i == 0 else None
-                sent_msg = await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=chunk_text,
-                    parse_mode=parse_mode,
-                    reply_to_message_id=current_reply_to_id,
-                    reply_markup=current_reply_markup,
-                )
-                if i == 0:
-                    first_sent_message = sent_msg
-                if len(chunks) > 1 and i < len(chunks) - 1:
-                    await asyncio.sleep(0.2)  # 200ms delay
-            return first_sent_message
-        else:
-            # Message is within limit, send as a single part
+        first_sent_message: Message | None = None
+        for i, chunk_text in enumerate(chunks):
             sent_msg = await context.bot.send_message(
                 chat_id=chat_id,
-                text=text,
+                text=chunk_text,
                 parse_mode=parse_mode,
-                reply_to_message_id=reply_to_message_id,
-                reply_markup=reply_markup,
+                reply_to_message_id=reply_to_message_id if i == 0 else None,
+                reply_markup=reply_markup if i == 0 else None,
             )
-            return sent_msg
+            if i == 0:
+                first_sent_message = sent_msg
+            if i < len(chunks) - 1:
+                await asyncio.sleep(CHUNK_SEND_DELAY_SECONDS)
+        return first_sent_message
 
     @contextlib.asynccontextmanager
     async def _typing_notifications(
