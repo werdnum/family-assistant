@@ -991,12 +991,18 @@ revision kept on non-append `add_or_update_note`); calendar-event field replacem
 values or resolves to the destructive sink by argument. *Verify:* repository tests for
 retain-and-undo; resolver test for the fallback path.
 
-**M6 — Serialized taint schema extension.** `TurnTaintState.to_metadata()`/`from_metadata()` and
-`merge_taint_state_into_tracker()` carry `sensitive_reads`, `fresh_high_taint_seen_at_sequence`, and
-the escalation counters (inherit-baseline, delta merge); `merge_history_taint()` folds
-protected-history state; rows in the window lacking the metadata fail closed, epoch-patterned.
-Blocks M7. *Verify:* round-trip and delegation-merge unit tests, including the parallel fan-out
-counter case and a `/browse`-after-note-quote history test.
+**M6 — Serialized taint schema extension, with envelope separation.** The extension must not ride
+the shared `to_metadata()` representation wholesale: `_note_provenance_from_taint()` stores
+`state.to_metadata()` on artifacts and `get_note_tool()` restores it, so naively adding temporal
+fields and counters would replay stale read-ordering and rejection counts out of unrelated notes —
+the same category of leak as persisting probe labels. Three envelopes with explicit field sets:
+**delegation** carries the full temporal record and escalation counters (inherit-baseline, delta
+merge); **history rows** carry the had-sensitive-reads fact for the protected-history clause
+(`merge_history_taint()` folds it; rows in the window lacking it fail closed, epoch-patterned);
+**artifact provenance** carries sources and tier only — temporal fields and counters stripped.
+Blocks M7. *Verify:* round-trip and merge unit tests per envelope, the parallel fan-out counter
+case, a `/browse`-after-note-quote history test, and an assertion that artifact provenance written
+from a counter-bearing turn contains no temporal or counter fields.
 
 **M7 — Disclosure-floor binding condition.** Implement the acquisition-not-possession condition
 (profile excludes ambient context ∧ no sensitive reads ∧ no protected history, fail-closed) in the
@@ -1016,8 +1022,10 @@ model-composed string reaches it.
 tiers, `known_user_message` pinned `audit` permanently, everything else audit); registration-check
 update in `oauth_integration_state.py` (every lean-core floor, every external tier, `audit` accepted
 on `sensitive_read_broadening`); flip `taint_policy.mode: enforce`; Gmail/Drive register. Requires
-M1–M7. *Verify:* replayed injection fixtures at every floor cell; the full acceptance-criteria list;
-`poe test`.
+M1–M7. *Verify:* replayed injection fixtures at every floor cell; the **lean-core** acceptance
+criteria only (floors, binding condition, registration, serialization, artifact writes — the
+contingent-tier criteria for judge, probe, matching, and stamping attach to their own milestones if
+ever built, and the 30-day friction criterion is M10's); `poe test`.
 
 **M10 — Measure.** Standing metrics from `taint_audit_events` (confirmations/day p50/p95 by cell and
 profile, deferred-outbox volume, task-completion after gating); 30-day comparison against the
