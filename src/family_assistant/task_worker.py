@@ -2341,8 +2341,19 @@ class TaskWorker:
             return
 
         clock = exec_context.clock or self.clock
-        source_service = self._source_service_for_delegation(exec_context, run)
         stage = run["notify_stage"]
+        if stage == "gave_up":
+            # Everything that could be sent has been refused. ``notified_at``
+            # stays NULL to say so, which is exactly what a durable task retry
+            # re-enters on -- so this has to be the end of the line here too,
+            # the way the cleanup query already excludes it.
+            logger.info(
+                "Delegation %s was already given up on; not delivering again.",
+                run["delegation_id"],
+            )
+            return
+
+        source_service = self._source_service_for_delegation(exec_context, run)
         # At canned_pending the model has already been asked and its answer was
         # refused too, so only the short standard notice is left to try.
         if source_service is not None and stage != "canned_pending":
@@ -2356,10 +2367,16 @@ class TaskWorker:
                 )
                 return
             except DelegationNotificationError as wake_failure:
-                if not wake_failure.transient:
-                    # Falling back to the canned notice here would send a second
-                    # message down a channel that just refused one for a settled
-                    # reason. The stage machine decides what to try next.
+                if not wake_failure.transient or stage == "failed_forward":
+                    # A permanent failure: falling back to the canned notice
+                    # would send a second message down a channel that just
+                    # refused one for a settled reason.
+                    #
+                    # Any failure at failed_forward: the fallback here is the
+                    # standard notice, which carries the result and attachments
+                    # that were permanently refused to get the run to this
+                    # stage. Sending that instead of retrying the rewrite the
+                    # model just produced turns a hiccup into an escalation.
                     raise
                 logger.exception(
                     "Failed to wake source profile '%s' for completed delegation %s; "

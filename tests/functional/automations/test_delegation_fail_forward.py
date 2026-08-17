@@ -454,6 +454,73 @@ async def test_a_delivered_pointer_has_something_to_point_at(
 
 
 @pytest.mark.asyncio
+async def test_a_transient_failure_delivering_the_rewrite_keeps_the_rewrite(
+    db_engine: AsyncEngine,
+) -> None:
+    """A hiccup delivering the rewrite must not escalate to what was refused.
+
+    The fallback at that point is the standard notice, which carries the result
+    and attachments already refused permanently -- sending those instead of
+    retrying the model's deliverable rewrite would turn a blip into the end of
+    the line.
+    """
+    processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.side_effect = [
+        ChatDeliveryError("Message is too long", transient=False),
+        ChatDeliveryError("connection reset", transient=True),
+    ]
+    await _terminal_run(db_engine, "delegation_rewrite_hiccup")
+
+    await _run_cleanup(
+        db_engine, cast("ProcessingService", processing_service), chat_interface
+    )
+
+    # The result, then the rewrite. Not a third send of the refused result.
+    assert chat_interface.send_message.await_count == 2
+    run = await Database(engine=db_engine).delegation_runs.get_by_delegation_id(
+        "delegation_rewrite_hiccup"
+    )
+    assert run is not None
+    assert run["notify_stage"] == "failed_forward"
+    assert run["notified_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_given_up_run_is_not_redelivered_by_a_task_retry(
+    db_engine: AsyncEngine,
+) -> None:
+    """notified_at stays NULL to say nobody was reached, and a retry re-enters on it.
+
+    The cleanup query already excludes the state; the task path has to as well,
+    or a worker that died after giving up would wake the model again.
+    """
+    processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "should_not_be_sent"
+    await _terminal_run(db_engine, "delegation_already_given_up")
+    db_context = Database(engine=db_engine)
+    await db_context.delegation_runs.advance_notify_stage(
+        "delegation_already_given_up", stage="gave_up", now=datetime.now(UTC)
+    )
+
+    worker = _worker(
+        db_engine, cast("ProcessingService", processing_service), chat_interface
+    )
+    await worker.handle_delegated_profile_run(
+        _tool_context(
+            Database(engine=db_engine),
+            cast("ProcessingService", processing_service),
+            chat_interface,
+        ),
+        _payload("delegation_already_given_up"),
+    )
+
+    chat_interface.send_message.assert_not_awaited()
+    assert processing_service.wake_call_count == 0
+
+
+@pytest.mark.asyncio
 async def test_a_gave_up_run_is_not_picked_up_again(db_engine: AsyncEngine) -> None:
     """Otherwise the hourly pass resumes exactly the loop this replaced."""
     processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
@@ -498,6 +565,14 @@ async def test_a_transient_failure_delivering_the_fail_forward_reply_does_not_re
     )
     assert processing_service.wake_call_count == 2
 
+    # Move past the backoff so the next pass is due at all.
+    await Database(engine=db_engine).execute(
+        update(delegation_runs_table)
+        .where(
+            delegation_runs_table.c.delegation_id == "delegation_resumes_at_delivery"
+        )
+        .values(notify_last_failed_at=datetime.now(UTC) - timedelta(hours=2))
+    )
     await _run_cleanup(
         db_engine, cast("ProcessingService", processing_service), chat_interface
     )
