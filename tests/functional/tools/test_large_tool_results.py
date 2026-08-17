@@ -19,6 +19,7 @@ from family_assistant.storage.database import Database
 from family_assistant.tools.attachments import read_text_attachment_tool
 from family_assistant.tools.execute_script import execute_script_tool
 from family_assistant.tools.types import (
+    ToolAttachment,
     ToolExecutionContext,
     ToolResult,
 )
@@ -100,9 +101,10 @@ async def test_large_tool_result_auto_attachment(
     assert result.llm_message.content is not None
     assert "was too large and was saved as attachment" in result.llm_message.content
     assert "read_text_attachment" in result.llm_message.content
-    assert result.auto_attachment_ids is not None
-    assert len(result.auto_attachment_ids) == 1
-    att_id = result.auto_attachment_ids[0]
+    assert not result.auto_attachment_ids
+    assert result.large_result_attachment_ids is not None
+    assert len(result.large_result_attachment_ids) == 1
+    att_id = result.large_result_attachment_ids[0]
 
     # Verify attachment content
     saved_content = await attachment_registry.get_attachment_content(
@@ -134,8 +136,9 @@ async def test_large_tool_result_auto_attachment(
 
     assert result.llm_message.content is not None
     assert "jq_query" in result.llm_message.content
-    assert result.auto_attachment_ids is not None
-    att_id = result.auto_attachment_ids[0]
+    assert not result.auto_attachment_ids
+    assert result.large_result_attachment_ids is not None
+    att_id = result.large_result_attachment_ids[0]
     metadata = await attachment_registry.get_attachment(db, att_id, acting_user_id=None)
     assert metadata is not None
     assert metadata.mime_type == "application/json"
@@ -167,7 +170,8 @@ async def test_large_tool_result_auto_attachment(
     assert result.llm_message.content is not None
     # read_text_attachment should NOT be converted to attachment
     assert "was too large" not in result.llm_message.content
-    assert result.auto_attachment_ids is None or len(result.auto_attachment_ids) == 0
+    assert not result.auto_attachment_ids
+    assert not result.large_result_attachment_ids
     # The original content should be preserved
     assert large_read_result == result.llm_message.content
 
@@ -429,7 +433,16 @@ async def test_stream_done_event_attachment_metadata_visible_same_transaction(
             },
         }
     ]
-    mock_tools_provider.execute_tool.return_value = "E" * (20 * 1024 + 100)
+    mock_tools_provider.execute_tool.return_value = ToolResult(
+        text="log excerpt",
+        attachments=[
+            ToolAttachment(
+                content=b"E" * 1024,
+                mime_type="text/plain",
+                description="Error log excerpt",
+            )
+        ],
+    )
 
     service = ProcessingService(
         llm_client=llm_client,
@@ -471,7 +484,125 @@ async def test_stream_done_event_attachment_metadata_visible_same_transaction(
     assert len(attachments) == 1
     assert attachments[0]["id"] == attachment_ids[0]
     assert attachments[0]["mime_type"] == "text/plain"
-    assert attachments[0]["name"] == "Large output from read_error_logs"
+    assert attachments[0]["name"] == "Error log excerpt"
+
+
+@pytest.mark.asyncio
+async def test_large_result_attachment_not_sent_with_response(
+    db_engine: AsyncEngine, tmp_path: Path
+) -> None:
+    """Auto-converted large results are working data, not response attachments."""
+    storage_path = tmp_path / "attachments"
+    storage_path.mkdir()
+    attachment_registry = AttachmentRegistry(
+        storage_path=str(storage_path),
+        db_engine=db_engine,
+        config={
+            "max_file_size": 100 * 1024 * 1024,
+            "max_multimodal_size": 20 * 1024 * 1024,
+        },
+    )
+
+    service_config = ProcessingServiceConfig(
+        prompts={},
+        timezone=ZoneInfo("UTC"),
+        max_history_messages=10,
+        history_max_age_hours=1.0,
+        tools_config=ToolsConfig(),
+        delegation_security_level=DelegationSecurityLevel.UNRESTRICTED,
+        id="test-profile",
+    )
+
+    app_config = Mock()
+    app_config.attachment_selection_threshold = 5
+    app_config.max_response_attachments = 3
+    app_config.attachment_config = Mock()
+    app_config.attachment_config.large_tool_result_threshold_kb = 20
+
+    llm_client = RuleBasedMockLLMClient(
+        rules=[
+            (
+                lambda kwargs: (
+                    not any(
+                        getattr(message, "role", None) == "tool"
+                        for message in kwargs["messages"]
+                    )
+                ),
+                LLMOutput(
+                    content=None,
+                    tool_calls=[
+                        ToolCallItem(
+                            id="call_large_result",
+                            type="function",
+                            function=ToolCallFunction(
+                                name="read_error_logs", arguments="{}"
+                            ),
+                        )
+                    ],
+                ),
+            ),
+            (
+                lambda kwargs: any(
+                    getattr(message, "role", None) == "tool"
+                    for message in kwargs["messages"]
+                ),
+                LLMOutput(content="final answer"),
+            ),
+        ]
+    )
+
+    mock_tools_provider = AsyncMock()
+    mock_tools_provider.get_tool_definitions.return_value = [
+        {
+            "type": "function",
+            "function": {
+                "name": "read_error_logs",
+                "description": "Read error logs.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+    mock_tools_provider.execute_tool.return_value = "E" * (20 * 1024 + 100)
+
+    service = ProcessingService(
+        llm_client=llm_client,
+        tools_provider=mock_tools_provider,
+        service_config=service_config,
+        context_providers=[],
+        server_url="http://localhost:8000",
+        app_config=app_config,
+        attachment_registry=attachment_registry,
+        clock=SystemClock(),
+    )
+
+    done_event = None
+    tool_result_content = ""
+    db = Database(engine=db_engine)
+    async for event, _message in service.llm_loop.run_stream(
+        db_context=db,
+        messages=[
+            SystemMessage(content="system"),
+            UserMessage(content="show me the logs"),
+        ],
+        interface_type="test",
+        conversation_id="conv_large_not_attached",
+        user_name="test_user",
+        turn_id="turn_large_not_attached",
+        chat_interface=None,
+        processing_service=service,
+    ):
+        if event.type == "tool_result":
+            tool_result_content = event.tool_result or ""
+        if event.type == "done":
+            done_event = event
+
+    # The model still learns the attachment ID so it can query the content.
+    assert "was too large and was saved as attachment" in tool_result_content
+
+    assert done_event is not None
+    assert done_event.metadata is not None
+    assert done_event.metadata.get("attachment_ids") is None
+    assert done_event.metadata.get("attachments") is None
 
 
 @pytest.mark.asyncio
@@ -548,9 +679,10 @@ async def test_large_tool_result_data_field_triggers_auto_attachment(
 
     assert result.llm_message.content is not None
     assert "was too large and was saved as attachment" in result.llm_message.content
-    assert result.auto_attachment_ids is not None
-    assert len(result.auto_attachment_ids) == 1
-    att_id = result.auto_attachment_ids[0]
+    assert not result.auto_attachment_ids
+    assert result.large_result_attachment_ids is not None
+    assert len(result.large_result_attachment_ids) == 1
+    att_id = result.large_result_attachment_ids[0]
 
     saved_content = await attachment_registry.get_attachment_content(
         db, att_id, acting_user_id=None

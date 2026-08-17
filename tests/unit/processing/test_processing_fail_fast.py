@@ -1099,3 +1099,22 @@ async def test_tool_executor_rejects_missing_tool_call_id() -> None:
             chat_interface=None,
             request_confirmation_callback=None,
         )
+
+
+def test_large_result_attachments_are_not_queued_for_display() -> None:
+    """Auto-converted oversized results stay out of the response attachments."""
+    result = ToolExecutionResult(
+        stream_event=LLMStreamEvent(type="tool_result", tool_call_id="call-1"),
+        llm_message=ToolMessage(
+            tool_call_id="call-1",
+            content="ok",
+            name="example_tool",
+        ),
+        auto_attachment_ids=["chart-1"],
+        large_result_attachment_ids=["large-1"],
+    )
+    pending_attachment_ids: list[str] = []
+
+    result.apply_attachment_updates(pending_attachment_ids)
+
+    assert pending_attachment_ids == ["chart-1"]
