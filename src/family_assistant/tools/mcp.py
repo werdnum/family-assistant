@@ -291,6 +291,22 @@ class MCPToolsProvider:
 
         return descriptors
 
+    async def _list_all_tools(self, session: ClientSession) -> list[Any]:
+        """Read a server's complete tool list, following pagination cursors.
+
+        ``tools/list`` is paginated, so the first page alone is not the
+        server's answer: reconciling against it would treat everything past
+        that page as withdrawn.
+        """
+        tools: list[Any] = []
+        cursor: str | None = None
+        while True:
+            response = await session.list_tools(cursor=cursor)
+            tools.extend(response.tools)
+            cursor = response.nextCursor
+            if cursor is None:
+                return tools
+
     async def _log_mcp_initialization_progress(
         self, stop_event: asyncio.Event, start_time: float
     ) -> None:
@@ -509,8 +525,7 @@ class MCPToolsProvider:
                 f"Initialized session with MCP server '{server_id}' ({transport_type}). Status: {self._server_statuses[server_id]}."
             )
 
-            response = await session.list_tools()
-            server_tools = response.tools
+            server_tools = await self._list_all_tools(session)
             logger.info(f"Server '{server_id}' provides {len(server_tools)} tools.")
 
             # Format MCP tools to OpenAI dict format (sanitization moved to LLM layer)
@@ -566,7 +581,6 @@ class MCPToolsProvider:
         self._server_statuses = {
             sid: MCP_SERVER_STATUS_PENDING for sid in self._mcp_server_configs
         }
-        all_tool_names = set()  # To detect duplicates across servers
 
         # --- Create connection tasks ---
         connection_tasks = [
@@ -679,31 +693,14 @@ class MCPToolsProvider:
                     session,
                     discovered_tools,
                     descriptors_for_server,
-                    tool_map_for_server,
+                    _tool_map_for_server,
                 ) = res_item
                 if session:
                     # Status should be CONNECTED from _connect_and_discover_mcp
                     self._sessions[server_id] = session
-
-                    # Check for duplicates before adding
-                    for tool_def, descriptor in zip(
-                        discovered_tools, descriptors_for_server, strict=False
-                    ):
-                        tool_name = descriptor.name
-                        if tool_name:
-                            if tool_name in all_tool_names:
-                                logger.warning(
-                                    f"Duplicate tool name '{tool_name}' found on server '{server_id}'. "
-                                    f"It will be ignored from this server. Previous source: '{self._tool_map.get(tool_name)}'."
-                                )
-                                # Remove from tool_map_for_server to prevent overwriting
-                                tool_map_for_server.pop(tool_name, None)
-                            else:
-                                all_tool_names.add(tool_name)
-                                self._definitions.append(tool_def)
-                                self._descriptors.append(descriptor)
-
-                    self._tool_map.update(tool_map_for_server)
+                    self._register_server_tools(
+                        server_id, discovered_tools, descriptors_for_server
+                    )
                 else:
                     logger.warning(
                         f"Connection/discovery for MCP server '{server_id}' completed but yielded no active session. Result: {res_item}"
@@ -746,7 +743,7 @@ class MCPToolsProvider:
     def _format_mcp_definitions_to_dicts(
         # self, definitions: List[Dict[str, Any]] # Original signature
         self,
-        definitions: list[Any],  # MCP list_tools returns list of Tool objects
+        definitions: Sequence[Any],  # MCP list_tools returns Tool objects
     ) -> list[ToolDefinition]:
         """
         Accepts a list of MCP Tool objects.
@@ -868,7 +865,9 @@ class MCPToolsProvider:
             try:
                 # Simple health check - list tools to verify connection
                 # Using a short timeout to avoid blocking too long
-                await asyncio.wait_for(session.list_tools(), timeout=5.0)
+                server_tools = await asyncio.wait_for(
+                    self._list_all_tools(session), timeout=5.0
+                )
             except TimeoutError:
                 logger.warning(f"Health check timeout for server '{server_id}'")
                 # Don't reconnect on timeout - server might just be slow
@@ -890,6 +889,7 @@ class MCPToolsProvider:
             else:
                 logger.debug(f"Health check passed for server '{server_id}'")
                 self._reset_reconnect_backoff(server_id)
+                self._refresh_server_tools(server_id, server_tools)
 
     async def _retry_disconnected_servers(self, server_ids: Sequence[str]) -> None:
         """Reconnect failed/cancelled servers whose backoff window has elapsed."""
@@ -982,6 +982,119 @@ class MCPToolsProvider:
             self._reset_reconnect_backoff(server_id)
         return reconnected
 
+    def _registered_descriptors(self, server_id: str) -> list[ToolDescriptor]:
+        """Return the descriptors currently registered on behalf of a server."""
+        return [
+            descriptor
+            for descriptor in self._descriptors
+            if descriptor.mcp_server_id == server_id
+        ]
+
+    def _unregister_server_tools(self, server_id: str) -> None:
+        """Forget the tools a server provided, leaving its session untouched."""
+        tools_to_remove = {
+            name for name, sid in self._tool_map.items() if sid == server_id
+        }
+        for tool_name in tools_to_remove:
+            del self._tool_map[tool_name]
+
+        self._definitions = [
+            d
+            for d in self._definitions
+            if d.get("function", {}).get("name") not in tools_to_remove
+        ]
+        self._descriptors = [
+            descriptor
+            for descriptor in self._descriptors
+            if descriptor.mcp_server_id != server_id
+        ]
+
+    def _register_server_tools(
+        self,
+        server_id: str,
+        definitions: Sequence[ToolDefinition],
+        descriptors: Sequence[ToolDescriptor],
+    ) -> None:
+        """Register a server's discovered tools, skipping names already taken.
+
+        Callers unregister the server's previous tools first, so a name still
+        in the map belongs to a different server and keeps its owner.
+        """
+        for definition, descriptor in zip(definitions, descriptors, strict=False):
+            tool_name = descriptor.name
+            if tool_name in self._tool_map:
+                logger.warning(
+                    "Skipping duplicate tool '%s' from server '%s' "
+                    "(already provided by '%s')",
+                    tool_name,
+                    server_id,
+                    self._tool_map[tool_name],
+                )
+                continue
+            self._definitions.append(definition)
+            self._descriptors.append(descriptor)
+            self._tool_map[tool_name] = server_id
+
+    def _refresh_server_tools(
+        self, server_id: str, server_tools: Sequence[Any]
+    ) -> None:
+        """Reconcile a server's cached tools with what it just reported.
+
+        A server that answered the initial ``list_tools`` with the wrong list —
+        most damagingly an empty one — would otherwise keep it for the life of
+        the process: the connection is healthy, so nothing reconnects it, and
+        nothing else re-reads its tools. The health check already asks for that
+        list, so it is also what keeps the cache honest.
+        """
+        definitions = self._format_mcp_definitions_to_dicts(server_tools)
+        descriptors = self._build_mcp_descriptors(
+            server_id=server_id,
+            definitions=definitions,
+            discovered_tools=server_tools,
+        )
+        # Compare what registration would produce, not the raw report, so a
+        # name another server owns doesn't look like a change on every cycle.
+        # Descriptors rather than definitions, because the annotation-derived
+        # tags that drive policy matching live only on the descriptor: a tool
+        # that keeps its schema but stops being read-only has changed. Keyed by
+        # name rather than ordered, so a server that shuffles its list is not a
+        # change either.
+        prospective = self._prospective_registration(server_id, descriptors)
+        previous = {
+            descriptor.name: descriptor
+            for descriptor in self._registered_descriptors(server_id)
+        }
+        if prospective == previous:
+            return
+
+        self._unregister_server_tools(server_id)
+        self._register_server_tools(server_id, definitions, descriptors)
+        self._bump_descriptors_version()
+        logger.info(
+            "MCP server '%s' reported a changed tool list on health check: "
+            "now %d tool(s) (added: %s; removed: %s)",
+            server_id,
+            len(prospective),
+            ", ".join(sorted(prospective.keys() - previous.keys())) or "none",
+            ", ".join(sorted(previous.keys() - prospective.keys())) or "none",
+        )
+
+    def _prospective_registration(
+        self, server_id: str, descriptors: Sequence[ToolDescriptor]
+    ) -> dict[str, ToolDescriptor]:
+        """The descriptors ``_register_server_tools`` would keep, keyed by name.
+
+        Mirrors registration's two rules — a name another server owns stays
+        with that server, and the first of a repeated name wins — so that
+        comparing against it never reports a change registration can't make.
+        """
+        prospective: dict[str, ToolDescriptor] = {}
+        for descriptor in descriptors:
+            if self._tool_map.get(descriptor.name) not in {None, server_id}:
+                continue
+            prospective.setdefault(descriptor.name, descriptor)
+        return prospective
+
     async def _teardown_server(self, server_id: str) -> None:
         """Drop a server's session and unregister the tools it provided."""
         # Close existing session and connection if any
@@ -994,24 +1107,7 @@ class MCPToolsProvider:
             except Exception as e:
                 logger.warning(f"Error removing old session for '{server_id}': {e}")
 
-        # Remove tools from this server from the tool map
-        tools_to_remove = [
-            name for name, sid in self._tool_map.items() if sid == server_id
-        ]
-        for tool_name in tools_to_remove:
-            del self._tool_map[tool_name]
-
-        # Remove definitions from this server
-        self._definitions = [
-            d
-            for d in self._definitions
-            if d.get("function", {}).get("name") not in tools_to_remove
-        ]
-        self._descriptors = [
-            descriptor
-            for descriptor in self._descriptors
-            if descriptor.mcp_server_id != server_id
-        ]
+        self._unregister_server_tools(server_id)
         # The descriptor set shrank; nothing here puts it back.
         self._bump_descriptors_version()
 
@@ -1039,22 +1135,9 @@ class MCPToolsProvider:
 
             if session:
                 self._sessions[server_id] = session
-                for tool_def, descriptor in zip(
-                    discovered_tools, discovered_descriptors, strict=False
-                ):
-                    tool_name = descriptor.name
-                    if tool_name in self._tool_map:
-                        logger.warning(
-                            "Skipping duplicate tool '%s' from reconnected server '%s' "
-                            "(already provided by '%s')",
-                            tool_name,
-                            server_id,
-                            self._tool_map[tool_name],
-                        )
-                        continue
-                    self._definitions.append(tool_def)
-                    self._descriptors.append(descriptor)
-                    self._tool_map[tool_name] = server_id
+                self._register_server_tools(
+                    server_id, discovered_tools, discovered_descriptors
+                )
                 self._bump_descriptors_version()
                 logger.info(
                     f"Successfully reconnected MCP server '{server_id}' with {len(discovered_tools)} tools"

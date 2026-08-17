@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock
 
 import pytest
+from mcp.types import ListToolsResult
 
 from family_assistant.tools import MCPServerConfig, MCPToolsProvider
 from family_assistant.tools.mcp import (
@@ -35,7 +36,8 @@ def _provider(**kwargs: float) -> MCPToolsProvider:
 def _make_session(*, healthy: bool = True) -> ClientSession:
     """A stand-in session whose health check passes or reports a dead transport."""
     list_tools = AsyncMock(
-        side_effect=None if healthy else ConnectionError("connection closed by peer")
+        return_value=ListToolsResult(tools=[]),
+        side_effect=None if healthy else ConnectionError("connection closed by peer"),
     )
     return cast("ClientSession", SimpleNamespace(list_tools=list_tools))
 
