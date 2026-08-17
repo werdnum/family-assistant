@@ -237,10 +237,12 @@ and conflating them breaks the merge in both directions:
   therefore ranks strictly *above* `audit` — a profile cannot replace it with `audit` and skip the
   judge (ranking it at its `allow` floor would permit exactly that weakening) — while replacing a
   base `audit` cell with any `adjudicate` is accepted as the tightening it is, and
-  `adjudicate(floor: confirm)` deliberately ranks *equal* to plain `confirm`: a profile substituting
-  always-ask-the-human for judge-with-confirm-floor keeps a human gate on every call, which is at
-  least as strong — that swap is a friction-mode preference, and the tighten-only merge guards
-  security, not friction modes.
+  `adjudicate(floor: confirm)` deliberately ranks *equal* to plain `confirm`: both hold the cell at
+  the floor, and which decider holds it — judge or human — is an operator preference the
+  tighten-only merge does not police. Neither direction is a security downgrade, and the evidence
+  does not crown the human: interactive review caught 13.6% of dangerous commands in Anthropic's
+  study against the classifier's 89%, and rubber-stamping degrades the human further while the judge
+  does not fatigue.
 - **Verdict-floor rank** (verdict bounding, `operator_minimum`, `require_taint_enforcement`): the
   floor itself, so `adjudicate(floor: confirm)` satisfies a `confirm` minimum and a bare
   `adjudicate`'s verdicts are bounded only by its own floor. Evaluation order matters: matrix cell →
@@ -379,17 +381,25 @@ argument instead.
 
 "Floor: confirm" means the adjudicator's verdict space in that cell is {confirm, deny} — it chooses
 how hard to gate, never whether to gate, with no exceptions: no model verdict, probe result, or
-provenance computation ever adds `allow` to a floor cell. The only path past a floor-cell
-confirmation is a prior *human* approval covering the same capability — and capability means the
-full tuple PR #1111 enumerates (tool/operation, destination, payload or data scope), never the
-destination alone. Destination-only binding would let an approved benign message to X authorize a
-later, materially different payload to X composed under injected instructions. Default reuse scope
-is therefore the exact tool-and-argument fingerprint: retries and concurrent duplicates coalesce
-into one confirmation; anything else re-confirms. A broader grant — "further messages to X for the
-rest of this task" — is an explicit human choice that the confirmation UI states plainly, is bounded
-to the task, and is suspended for probe-labeled turns. That is positive authorization by an
-authenticated decision, not by mention. And because `operator_minimum` applies after adjudication,
-an operator minimum can only ever tighten a floor-cell verdict further.
+provenance computation ever adds `allow` to a floor cell. That is the *shipping* posture, not dogma:
+the floor verdict-space is itself an evidence-gated dial. PR #1121's lesson governs here — what it
+reverted was a gate that decided without a satisfiable path, refusing ordinary use ahead of
+measurement — and the maintainer position is explicitly more willing than this document's default to
+let a clean-context judge *approve*, auto-mode style, where the human alternative is a
+13.6%-catch-rate rubber stamp. Widening a specific floor cell's verdict space to include `allow` is
+therefore an operator decision unlocked by shadow-phase evidence of judge quality on that cell — the
+same evidence-gated promotion pattern as the outbox — made in configuration, visible, and per cell.
+The only path past a floor-cell confirmation is a prior *human* approval covering the same
+capability — and capability means the full tuple PR #1111 enumerates (tool/operation, destination,
+payload or data scope), never the destination alone. Destination-only binding would let an approved
+benign message to X authorize a later, materially different payload to X composed under injected
+instructions. Default reuse scope is therefore the exact tool-and-argument fingerprint: retries and
+concurrent duplicates coalesce into one confirmation; anything else re-confirms. A broader grant —
+"further messages to X for the rest of this task" — is an explicit human choice that the
+confirmation UI states plainly, is bounded to the task, and is suspended for probe-labeled turns.
+That is positive authorization by an authenticated decision, not by mention. And because
+`operator_minimum` applies after adjudication, an operator minimum can only ever tighten a
+floor-cell verdict further.
 
 The two cells that dominated the production friction data are handled differently, by maintainer
 decision. `sensitive_read_broadening` becomes adjudicated with a full verdict space: a sensitive
