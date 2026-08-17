@@ -957,13 +957,21 @@ service_profiles:
     # nothing yet, which is deliberate: a profile-level `enforce` here would
     # apply the context-free tier x sink matrix to this one profile while the
     # deployment is still measuring its false-positive rate, and that matrix is
-    # what the rollout is stalled on. See
-    # docs/design/runtime-taint-enforcement-operational-findings.md --
-    # ambient high-tier prompt notes put whole profiles at unknown_external
-    # regardless of the request, and the intended correction for this very cell
-    # is interactive confirmation, not the hard denial an override would give.
-    # The declaration takes effect deployment-wide, in one step, when the mode
-    # is switched.
+    # what the rollout is stalled on (see
+    # docs/design/runtime-taint-enforcement-operational-findings.md). It would
+    # also refuse more than untrusted input: the matrix confirms rather than
+    # denies at known_contact and recognized_machine, but the calling profile's
+    # tool gate is still in observe, so it never asks and no approval is ever
+    # recorded -- an override turns those tiers into refusals with nothing that
+    # could satisfy them. The correction that document proposes for this very
+    # cell moves interactive unknown_external the other way, from denial to
+    # confirmation. The declaration takes effect deployment-wide, in one step,
+    # when the mode is switched.
+    #
+    # A deployment that injects credentials into the sandbox via
+    # antigravity_config.environment is adding [B] to a profile that reads the
+    # open web, and is making that widening itself; it should set
+    # taint_policy.mode to match, since under observe nothing here gates.
     tools_policy:
       default_decision: "deny"
     # This profile's own deny cannot refuse the three tools global_tools_policy

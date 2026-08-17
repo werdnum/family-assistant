@@ -1941,9 +1941,9 @@ so an untrusted file raises the turn's tier even when the request text is truste
 than decides until the deployment switches to `enforce`. Do not reach for a profile-level
 `taint_policy.mode: enforce` to get there sooner. A profile may tighten the deployment policy, but
 doing it here applies the shipped matrix to one profile ahead of the friction measurement that keeps
-the rollout in `observe`, and ambient high-tier prompt notes can hold a profile at
-`unknown_external` on every turn — so the override refuses ordinary interactive use, not only the
-untrusted input it is aimed at. See
+the rollout in `observe` — and it refuses more than the untrusted input it is aimed at, because the
+tiers the matrix only wants *confirmed* have no confirmation path while the calling profile's tool
+gate is still observing and therefore never asks. See
 [runtime-taint-enforcement-operational-findings.md](../design/runtime-taint-enforcement-operational-findings.md).
 
 The shipped `coder` profile declares the sink and leaves the mode to the deployment. See

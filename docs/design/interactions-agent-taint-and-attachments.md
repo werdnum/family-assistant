@@ -93,14 +93,19 @@ Three reasons, all from
 - The rollout is in `observe` because the shipped matrix is too false-positive-prone to enable, not
   because nobody got round to it. Enforcing it on one profile applies exactly the matrix under
   measurement, ahead of the measurement.
-- Stored notes at `unknown_external` marked `include_in_prompt` put whole profiles at the top tier
-  on every turn regardless of the request. `coder` does not exclude the notes context provider, so
-  an override there refuses ordinary `/coder` turns, not just email-derived ones.
 - The correction proposed for this very cell is to turn interactive
   `unknown_external → sandbox_network` from hard denial *into* confirmation. An override moves it
-  the opposite way, and — because the calling profile's tool gate is still in `observe` and so never
-  asks — it also refuses the `known_contact` and `recognized_machine` tiers outright, with no
-  confirmation path to satisfy.
+  the opposite way.
+- Worse, it refuses tiers the matrix only wants confirmed. `known_contact` and `recognized_machine`
+  resolve to `confirm`, which the profile gate permits only on a recorded approval — and the
+  approval comes from the *calling* profile's tool gate, which is still in `observe` and so never
+  asks. An override turns those tiers into refusals with nothing that could satisfy them, leaving
+  `trusted_user` as the only tier that reaches the sandbox.
+
+Stored `include_in_prompt` notes at `unknown_external`, the systemic cause that document identifies,
+reach this profile only indirectly: `coder` sets `include_aggregated_context: false`, so it never
+receives the notes context itself, but a `/coder` turn in a conversation whose earlier turns did
+inherits that tier through `merge_history_taint`.
 
 The declaration is still what makes the sink real: it takes effect deployment-wide, in one step,
 when the mode is switched. Enforcement posture belongs to the deployment, and stays a single control
