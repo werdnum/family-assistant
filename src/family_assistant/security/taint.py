@@ -1036,6 +1036,54 @@ def strip_legacy_labeled_echoes(metadata: object) -> TaintMetadata | None:
     return state.to_metadata()
 
 
+def artifact_taint_sources(
+    provenance: Mapping[str, object] | None,
+    *,
+    source_id: str,
+    source_type: TaintSourceType = TaintSourceType.ATTACHMENT,
+    reason: str = "Stored artifact provenance.",
+) -> tuple[TaintSource, ...]:
+    """Read an artifact's stored provenance as taint sources.
+
+    An artifact produced from untrusted input is labelled where it is created
+    (see ``email_intake/taint.py``), so an artifact carrying no provenance is
+    one no untrusted path touched and contributes nothing. Defaulting the
+    unlabelled case to ``unknown_external`` instead would taint every ordinary
+    user upload.
+    """
+    if provenance is None:
+        return ()
+
+    raw_state = provenance.get("taint_metadata")
+    if raw_state is not None:
+        state = TurnTaintState.from_metadata(raw_state)
+        if state.sources:
+            return state.sources
+
+    raw_tier = provenance.get("source_trust_tier")
+    if raw_tier is None:
+        return ()
+    try:
+        tier = SourceTrustTier.from_value(raw_tier)
+    except ValueError:
+        tier = SourceTrustTier.UNKNOWN_EXTERNAL
+    raw_labels = provenance.get("provenance_labels")
+    labels = (
+        frozenset(str(label) for label in raw_labels)
+        if isinstance(raw_labels, list)
+        else frozenset()
+    )
+    return (
+        TaintSource(
+            source_type=source_type,
+            source_id=source_id,
+            tier=tier,
+            labels=labels,
+            reason=reason,
+        ),
+    )
+
+
 def merge_history_taint(messages: Sequence[object]) -> TurnTaintState:
     """Build an initial turn state from included message history."""
     state = TurnTaintState.empty()

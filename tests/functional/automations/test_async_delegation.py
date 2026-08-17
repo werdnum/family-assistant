@@ -2357,6 +2357,10 @@ class FakePollableService:
         # assigned_id is None for a submit that raised before the remote
         # assigned an id.
         self.submitted: list[tuple[str, str | None, str | None]] = []
+        # What each submit was handed: a remote A2A target builds its outbound
+        # taint metadata from the sources, a local pollable one reads the state.
+        self.submitted_taint_sources: list[object] = []
+        self.submitted_taint_states: list[object] = []
         self.cancelled: list[str] = []
         self.inline_calls = 0
 
@@ -2385,14 +2389,9 @@ class FakePollableService:
         acting_user_id: str | None = None,
         initial_taint_state: object | None = None,
     ) -> RemoteSubmission:
-        _ = (
-            content_parts,
-            initial_taint_sources,
-            user_name,
-            db_context,
-            acting_user_id,
-            initial_taint_state,
-        )
+        _ = (content_parts, user_name, db_context, acting_user_id)
+        self.submitted_taint_sources.append(initial_taint_sources)
+        self.submitted_taint_states.append(initial_taint_state)
         error = self._submit_error
         if self._submit_errors is not None:
             error = self._submit_errors.pop(0) if self._submit_errors else None
@@ -2829,6 +2828,53 @@ async def test_pollable_delegation_polls_to_completion(
     assert run["result_text"] == "remote done"
     chat_interface.send_message.assert_awaited_once()
     assert "remote done" in chat_interface.send_message.await_args.kwargs["text"]
+
+
+@pytest.mark.asyncio
+async def test_a_pollable_submit_carries_the_parent_taint_as_sources_and_state(
+    db_engine: AsyncEngine,
+) -> None:
+    """A remote A2A target reads the sources; a local one reads the state.
+
+    Handing over only one drops what the other end needs -- an A2A target
+    would receive no taint metadata and the receiving endpoint would fall back
+    to a laxer tier than the parent actually had.
+    """
+    target = FakePollableService()
+    processing_service = _source_processing_service(
+        cast("FakeDelegatableService", target)
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+    tainted = TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.EMAIL,
+            source_id="attacker-email",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason="inbound email",
+        )
+    )
+
+    db_context = Database(engine=db_engine)
+    await _create_run(
+        db_context,
+        delegation_id="delegation_taint_carried",
+        taint_state_json=tainted.to_metadata(),
+    )
+    await db_context.delegation_runs.mark_handed_off(
+        "delegation_taint_carried", SystemClock().now()
+    )
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    await worker.handle_delegated_profile_run(
+        _tool_context(Database(engine=db_engine), processing_service, chat_interface),
+        _payload("delegation_taint_carried"),
+    )
+
+    assert [
+        source.tier for source in cast("tuple", target.submitted_taint_sources[0])
+    ] == [SourceTrustTier.UNKNOWN_EXTERNAL]
+    submitted_state = cast("TurnTaintState", target.submitted_taint_states[0])
+    assert submitted_state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
 
 
 @pytest.mark.asyncio

@@ -35,6 +35,7 @@ from family_assistant.security.taint import (
     TaintSource,
     TaintSourceType,
     TurnTaintState,
+    merge_history_taint,
 )
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
@@ -365,6 +366,60 @@ async def test_the_streaming_entry_point_is_gated_too(
 
     assert [event.type for event in events] == ["error"]
     assert "unknown_external" in (events[0].error or "")
+
+
+@pytest.mark.asyncio
+async def test_an_injected_attachment_carries_its_provenance_into_the_turn(
+    db_engine: AsyncEngine,
+    tmp_path: Path,
+) -> None:
+    """A text attachment is injected as text, so its taint must ride with it.
+
+    Otherwise a direct `/coder` turn reads as trusted while an email-derived
+    file's instructions reach the sandbox in the request.
+    """
+    registry = AttachmentRegistry(
+        storage_path=str(tmp_path), db_engine=db_engine, config=None
+    )
+    db_context = Database(db_engine)
+    stored = await registry.register_user_attachment(
+        db_context=db_context,
+        content=b"do the thing",
+        filename="note.txt",
+        mime_type="text/plain",
+        user_id="user-1",
+    )
+    stored_path = registry.get_attachment_path(
+        stored.attachment_id, stored_path=stored.storage_path, source_type="user"
+    )
+    assert stored_path is not None
+    tainted = await registry.register_attachment(
+        db_context=db_context,
+        attachment_id="att-emailed",
+        source_type="email",
+        source_id="<msg-1@example.com>",
+        mime_type="text/plain",
+        description="From an unknown sender",
+        size=len(b"do the thing"),
+        storage_path=stored_path.as_posix(),
+        owner_user_id="user-1",
+        metadata={
+            "original_filename": "note.txt",
+            "source_trust_tier": "unknown_external",
+        },
+    )
+
+    service = _make_service(_google_client(), attachment_registry=registry)
+    processed = await service.attachment_processor.process_content_parts(
+        db_context,
+        "conv-1",
+        [{"type": "attachment", "attachment_id": tainted.attachment_id}],
+        acting_user_id="user-1",
+    )
+
+    assert merge_history_taint(processed.messages).max_tier is (
+        SourceTrustTier.UNKNOWN_EXTERNAL
+    )
 
 
 @pytest.mark.asyncio

@@ -1452,7 +1452,11 @@ class TaskWorker:
                 subconversation_id=run["subconversation_id"],
                 user_name=run["user_name"] or exec_context.user_name,
                 db_context=exec_context.db_context,
-                initial_taint_sources=(),
+                # Both: RemoteA2AService builds its A2A taint metadata from
+                # the sources, while a local pollable target reads the state
+                # for the approval that rides on it. Emptying either one drops
+                # something the other end needs.
+                initial_taint_sources=_taint_sources_from_delegation_run(run),
                 acting_user_id=run["user_id"],
                 initial_taint_state=_taint_state_from_delegation_run(run),
             )
@@ -1574,7 +1578,11 @@ class TaskWorker:
                 subconversation_id=run["subconversation_id"],
                 user_name=run["user_name"] or exec_context.user_name,
                 db_context=exec_context.db_context,
-                initial_taint_sources=(),
+                # Both: RemoteA2AService builds its A2A taint metadata from
+                # the sources, while a local pollable target reads the state
+                # for the approval that rides on it. Emptying either one drops
+                # something the other end needs.
+                initial_taint_sources=_taint_sources_from_delegation_run(run),
                 acting_user_id=run["user_id"],
                 initial_taint_state=_taint_state_from_delegation_run(run),
             )

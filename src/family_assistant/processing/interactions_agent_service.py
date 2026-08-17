@@ -325,8 +325,15 @@ class InteractionsAgentProcessingService(ProcessingService):
         environment_sources, attachment_taint = await self._build_environment_sources(
             content_parts, db_context=db_context, acting_user_id=acting_user_id
         )
-        state = initial_taint_state or TurnTaintState.empty()
-        for source in (*(initial_taint_sources or ()), *attachment_taint):
+        # The state carries the parent's sources *and* any approval recorded on
+        # it, so it wins outright where both are supplied -- re-adding the
+        # sources would only duplicate them in the audit trail.
+        state = initial_taint_state
+        if state is None:
+            state = TurnTaintState.empty()
+            for source in initial_taint_sources or ():
+                state = state.add_source(source)
+        for source in attachment_taint:
             state = state.add_source(source)
         self._refuse_denied_sink(state)
 
