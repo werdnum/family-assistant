@@ -39,6 +39,7 @@ _HEAD_REVISION_COLUMNS = (
     "notify_attempts",
     "notify_error",
     "notify_first_failed_at",
+    "notify_last_failed_at",
 )
 
 _alembic_version_table = sa.Table(
