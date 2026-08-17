@@ -973,6 +973,14 @@ independently shippable unit that leaves the system working; order within a phas
 where noted. Contingent-tier milestones (phases 6–8) are deliberately not decomposed here — they are
 planned only if the phase-5 gate trips, against the measurements that tripped it.
 
+**Level of detail:** implementation specifics named in this document — field names, cache
+extensions, serialization envelopes, per-tool registries, async plumbing — are approach-level
+guidance, not a specification. The authoritative statement of each mechanism is the implementing PR,
+where conformance rules, the type checker, and tests verify correctness in ways prose cannot, and
+where review can pick apart real code instead of predictions about it. Edge cases that concern *how*
+an agreed mechanism is built, rather than *whether* it is the right mechanism, are deliberately
+deferred to those PRs.
+
 **M1 — Prerequisites land.** Merge PR #1111; set `taint_policy.history_taint_epoch` on the
 production deployment. Re-run the taint-audit aggregation for a fresh baseline. *Verify:*
 `GET /api/diagnostics/taint-audit` shows ambient-floor sources gone from new turns.
