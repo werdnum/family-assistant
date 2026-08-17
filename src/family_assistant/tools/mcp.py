@@ -4,6 +4,9 @@ import asyncio
 import contextlib
 import logging
 import os  # Import os for environment variable resolution
+import random
+import time
+from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -56,6 +59,81 @@ MCP_SERVER_STATUS_CONNECTED = "connected"
 MCP_SERVER_STATUS_FAILED = "failed"
 MCP_SERVER_STATUS_CANCELLED = "cancelled"
 
+# Reconnect pacing defaults. The first retry after a server drops is immediate
+# (the next health check cycle); each further attempt without the server being
+# seen healthy doubles the wait, up to half an hour.
+DEFAULT_RECONNECT_BACKOFF_BASE_SECONDS = 30.0
+DEFAULT_RECONNECT_BACKOFF_MAX_SECONDS = 30 * 60.0
+
+# 2**63 seconds already dwarfs any sane cap; clamping the exponent keeps a
+# long-lived process from overflowing the float multiplication below.
+_MAX_BACKOFF_EXPONENT = 63
+
+
+def reconnect_backoff_delay(
+    attempts: int,
+    *,
+    base_seconds: float,
+    max_seconds: float,
+) -> float:
+    """Truncated exponential backoff with equal jitter.
+
+    ``attempts`` counts reconnect attempts made since the server was last seen
+    healthy. Half of each interval is fixed and half is random, so the wait
+    always grows with the attempt count while staying decorrelated from the
+    other servers' schedules (and from other instances talking to the same
+    remote endpoint).
+    """
+    if attempts < 1:
+        return 0.0
+    exponent = min(attempts - 1, _MAX_BACKOFF_EXPONENT)
+    ceiling = min(max_seconds, base_seconds * float(2**exponent))
+    return random.uniform(ceiling / 2, ceiling)
+
+
+# MCP transports report a lost connection as a grab bag of exception types, so
+# the message text is most of what we have to go on.
+_CONNECTION_ERROR_PHRASES = (
+    "connection",
+    "closed",
+    "reset",
+    "broken pipe",
+    "eof",
+    "disconnected",
+    "not connected",
+)
+
+
+def _is_connection_error(error: Exception, *, include_timeouts: bool = False) -> bool:
+    """Whether ``error`` looks like the transport went away rather than the server misbehaving.
+
+    Timeouts are opt-in: a health check that times out may just be talking to a
+    slow server, while a tool call that times out has already burned the
+    caller's patience and is worth a reconnect.
+    """
+    if isinstance(error, anyio.ClosedResourceError):
+        return True
+    error_str = str(error).lower()
+    phrases = (
+        (*_CONNECTION_ERROR_PHRASES, "timeout")
+        if include_timeouts
+        else _CONNECTION_ERROR_PHRASES
+    )
+    return any(phrase in error_str for phrase in phrases)
+
+
+@dataclass
+class _ReconnectBackoff:
+    """Per-server retry pacing for the health check loop.
+
+    ``attempts`` is reset only by a passing health check, not by a successful
+    reconnect: a server that accepts a connection and then drops it again is
+    just as much in need of pacing as one that refuses outright.
+    """
+
+    attempts: int = 0
+    next_attempt_at: float = 0.0
+
 
 class MCPServerStatus(TypedDict):
     """Diagnostic snapshot describing one MCP server's connection state.
@@ -73,6 +151,8 @@ class MCPServerStatus(TypedDict):
     session_active: bool
     tool_count: int
     tools: list[str]
+    reconnect_attempts: int
+    next_reconnect_in_seconds: float | None
 
 
 class MCPToolsProvider:
@@ -88,10 +168,17 @@ class MCPToolsProvider:
         mcp_server_configs: Mapping[str, MCPServerConfig],
         initialization_timeout_seconds: int = 60,  # Default 1 minute
         health_check_interval_seconds: int = 30,  # Default 30 seconds
+        reconnect_backoff_base_seconds: float = DEFAULT_RECONNECT_BACKOFF_BASE_SECONDS,
+        reconnect_backoff_max_seconds: float = DEFAULT_RECONNECT_BACKOFF_MAX_SECONDS,
     ) -> None:
         self._mcp_server_configs = dict(mcp_server_configs)
         self._initialization_timeout_seconds = initialization_timeout_seconds
         self._health_check_interval_seconds = health_check_interval_seconds
+        self._reconnect_backoff_base_seconds = reconnect_backoff_base_seconds
+        self._reconnect_backoff_max_seconds = reconnect_backoff_max_seconds
+        self._reconnect_backoff: dict[str, _ReconnectBackoff] = {
+            server_id: _ReconnectBackoff() for server_id in self._mcp_server_configs
+        }
         self._sessions: dict[str, ClientSession] = {}
         self._tool_map: dict[str, str] = {}  # Map tool name -> server_id
         self._definitions: list[ToolDefinition] = []
@@ -109,6 +196,8 @@ class MCPToolsProvider:
             f"MCPToolsProvider created for {len(self._mcp_server_configs)} configured servers. "
             f"Initialization timeout: {self._initialization_timeout_seconds}s. "
             f"Health check interval: {self._health_check_interval_seconds}s. "
+            f"Reconnect backoff: {self._reconnect_backoff_base_seconds}s base, "
+            f"{self._reconnect_backoff_max_seconds}s max. "
             f"Initialization pending."
         )
 
@@ -122,8 +211,9 @@ class MCPToolsProvider:
 
         Returns a mapping of ``server_id`` to an ``MCPServerStatus`` describing
         the current connection state, transport, configured connection
-        details (no tokens), session activity, and the tools currently
-        provided by that server.
+        details (no tokens), session activity, the tools currently provided by
+        that server, and where the server sits in the reconnect backoff
+        schedule.
 
         Designed to be called by engineer-profile diagnostic tools without
         requiring any further reconnection or I/O.
@@ -137,8 +227,10 @@ class MCPToolsProvider:
             tools_by_server.setdefault(server_id, []).append(tool_name)
 
         snapshot: dict[str, MCPServerStatus] = {}
+        now = time.monotonic()
         for server_id, config in self._mcp_server_configs.items():
             tools = sorted(tools_by_server.get(server_id, []))
+            backoff = self._reconnect_backoff[server_id]
             snapshot[server_id] = MCPServerStatus(
                 status=self._server_statuses.get(server_id, MCP_SERVER_STATUS_PENDING),
                 transport=config.get("transport", "stdio"),
@@ -148,6 +240,12 @@ class MCPToolsProvider:
                 session_active=server_id in self._sessions,
                 tool_count=len(tools),
                 tools=tools,
+                reconnect_attempts=backoff.attempts,
+                next_reconnect_in_seconds=(
+                    round(max(0.0, backoff.next_attempt_at - now), 1)
+                    if backoff.attempts
+                    else None
+                ),
             )
         return snapshot
 
@@ -744,75 +842,8 @@ class MCPToolsProvider:
                     if status in {MCP_SERVER_STATUS_FAILED, MCP_SERVER_STATUS_CANCELLED}
                 ]
 
-                # Check each connected server
-                for server_id, session in list(self._sessions.items()):
-                    if not self._health_check_enabled:
-                        break
-
-                    try:
-                        # Simple health check - list tools to verify connection
-                        # Using a short timeout to avoid blocking too long
-                        await asyncio.wait_for(session.list_tools(), timeout=5.0)
-                        logger.debug(f"Health check passed for server '{server_id}'")
-
-                    except TimeoutError:
-                        logger.warning(f"Health check timeout for server '{server_id}'")
-                        # Don't reconnect on timeout - server might just be slow
-
-                    except Exception as e:
-                        logger.warning(
-                            f"Health check failed for server '{server_id}': {e}"
-                        )
-
-                        # Check if it's a connection error
-                        error_str = str(e).lower()
-                        is_connection_error = any(
-                            phrase in error_str
-                            for phrase in [
-                                "connection",
-                                "closed",
-                                "reset",
-                                "broken pipe",
-                                "eof",
-                                "disconnected",
-                                "not connected",
-                            ]
-                        )
-
-                        if is_connection_error:
-                            logger.info(
-                                f"Detected connection issue for server '{server_id}', attempting reconnection..."
-                            )
-                            self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
-
-                            # Try to reconnect
-                            reconnected = await self._reconnect_server(server_id)
-                            if reconnected:
-                                logger.info(
-                                    f"Successfully reconnected server '{server_id}' during health check"
-                                )
-                            else:
-                                logger.error(
-                                    f"Failed to reconnect server '{server_id}' during health check"
-                                )
-
-                # Retry servers that were failed/cancelled before this cycle started
-                for server_id in servers_to_retry:
-                    if not self._health_check_enabled:
-                        break
-
-                    logger.info(
-                        f"Retrying previously {self._server_statuses[server_id]} server '{server_id}'..."
-                    )
-                    reconnected = await self._reconnect_server(server_id)
-                    if reconnected:
-                        logger.info(
-                            f"Successfully connected previously failed server '{server_id}'"
-                        )
-                    else:
-                        logger.warning(
-                            f"Retry failed for server '{server_id}', will try again next cycle"
-                        )
+                await self._run_health_checks()
+                await self._retry_disconnected_servers(servers_to_retry)
 
             except asyncio.CancelledError:
                 logger.info("Health check loop cancelled")
@@ -823,27 +854,136 @@ class MCPToolsProvider:
 
         logger.info("Health check loop stopped")
 
+    async def _run_health_checks(self) -> None:
+        """Ping every live session, reconnecting the ones that have died.
+
+        A passing check is the only thing that clears a server's reconnect
+        backoff: a successful reconnect proves the endpoint accepted one
+        connection, whereas surviving a full interval proves it is usable.
+        """
+        for server_id, session in list(self._sessions.items()):
+            if not self._health_check_enabled:
+                return
+
+            try:
+                # Simple health check - list tools to verify connection
+                # Using a short timeout to avoid blocking too long
+                await asyncio.wait_for(session.list_tools(), timeout=5.0)
+            except TimeoutError:
+                logger.warning(f"Health check timeout for server '{server_id}'")
+                # Don't reconnect on timeout - server might just be slow
+            except Exception as e:
+                logger.warning(f"Health check failed for server '{server_id}': {e}")
+                if not _is_connection_error(e):
+                    continue
+
+                logger.info(
+                    f"Detected connection issue for server '{server_id}', dropping session"
+                )
+                self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
+                # Drop the dead session even if the backoff window defers the
+                # reconnect, so it isn't pinged again on every later cycle.
+                await self._teardown_server(server_id)
+                await self._attempt_scheduled_reconnect(
+                    server_id, reason="health check"
+                )
+            else:
+                logger.debug(f"Health check passed for server '{server_id}'")
+                self._reset_reconnect_backoff(server_id)
+
+    async def _retry_disconnected_servers(self, server_ids: Sequence[str]) -> None:
+        """Reconnect failed/cancelled servers whose backoff window has elapsed."""
+        for server_id in server_ids:
+            if not self._health_check_enabled:
+                return
+            await self._attempt_scheduled_reconnect(
+                server_id, reason=f"previously {self._server_statuses[server_id]}"
+            )
+
+    async def _attempt_scheduled_reconnect(
+        self, server_id: str, *, reason: str
+    ) -> bool:
+        """Reconnect ``server_id`` unless it is still inside its backoff window.
+
+        Every attempt extends the window, whether or not it succeeded; only a
+        subsequent passing health check resets it. Returns whether a
+        reconnection actually happened, so a deferred attempt and a failed one
+        both report ``False``.
+        """
+        backoff = self._reconnect_backoff[server_id]
+        now = time.monotonic()
+        if now < backoff.next_attempt_at:
+            logger.debug(
+                "Deferring reconnect of MCP server '%s' (%s): backing off for another "
+                "%.0fs after %d attempt(s)",
+                server_id,
+                reason,
+                backoff.next_attempt_at - now,
+                backoff.attempts,
+            )
+            return False
+
+        logger.info(
+            "Reconnect attempt %d for MCP server '%s' (%s)",
+            backoff.attempts + 1,
+            server_id,
+            reason,
+        )
+        reconnected = await self._reconnect_server(server_id)
+
+        backoff.attempts += 1
+        delay = reconnect_backoff_delay(
+            backoff.attempts,
+            base_seconds=self._reconnect_backoff_base_seconds,
+            max_seconds=self._reconnect_backoff_max_seconds,
+        )
+        backoff.next_attempt_at = time.monotonic() + delay
+        if reconnected:
+            logger.info(
+                "Successfully reconnected MCP server '%s' on attempt %d",
+                server_id,
+                backoff.attempts,
+            )
+        else:
+            logger.warning(
+                "Reconnect attempt %d for MCP server '%s' failed; next attempt in ~%.0fs",
+                backoff.attempts,
+                server_id,
+                delay,
+            )
+        return reconnected
+
+    def _reset_reconnect_backoff(self, server_id: str) -> None:
+        """Forget a server's retry history after it has been seen healthy."""
+        backoff = self._reconnect_backoff[server_id]
+        if backoff.attempts:
+            logger.info(
+                "MCP server '%s' is healthy again; clearing reconnect backoff "
+                "after %d attempt(s)",
+                server_id,
+                backoff.attempts,
+            )
+        backoff.attempts = 0
+        backoff.next_attempt_at = 0.0
+
     async def reconnect_server(self, server_id: str) -> bool:
         """Public wrapper around the internal reconnect routine.
 
         Used by diagnostic tools (e.g. the engineer profile's
         ``reconnect_mcp_server``) so callers don't have to reach into a
-        private method.
+        private method. An operator asking for a reconnect knows something the
+        backoff schedule doesn't, so this ignores the current window and, on
+        success, clears it.
         """
         if server_id not in self._mcp_server_configs:
             raise KeyError(server_id)
-        return await self._reconnect_server(server_id)
+        reconnected = await self._reconnect_server(server_id)
+        if reconnected:
+            self._reset_reconnect_backoff(server_id)
+        return reconnected
 
-    async def _reconnect_server(self, server_id: str) -> bool:
-        """Attempts to reconnect a single MCP server."""
-        logger.info(f"Attempting to reconnect MCP server '{server_id}'...")
-
-        # Get the server config
-        server_conf = self._mcp_server_configs.get(server_id)
-        if not server_conf:
-            logger.error(f"No configuration found for server '{server_id}'")
-            return False
-
+    async def _teardown_server(self, server_id: str) -> None:
+        """Drop a server's session and unregister the tools it provided."""
         # Close existing session and connection if any
         if server_id in self._sessions:
             try:
@@ -872,8 +1012,20 @@ class MCPToolsProvider:
             for descriptor in self._descriptors
             if descriptor.mcp_server_id != server_id
         ]
-        # The descriptor set shrank; a failed reconnect below leaves it that way.
+        # The descriptor set shrank; nothing here puts it back.
         self._bump_descriptors_version()
+
+    async def _reconnect_server(self, server_id: str) -> bool:
+        """Attempts to reconnect a single MCP server."""
+        logger.info(f"Attempting to reconnect MCP server '{server_id}'...")
+
+        # Get the server config
+        server_conf = self._mcp_server_configs.get(server_id)
+        if not server_conf:
+            logger.error(f"No configuration found for server '{server_id}'")
+            return False
+
+        await self._teardown_server(server_id)
 
         # Attempt reconnection
         try:
@@ -983,29 +1135,7 @@ class MCPToolsProvider:
                         f"Attempting to reconnect..."
                     )
 
-                    # Check if this looks like a connection error
-                    error_str = str(e).lower()
-                    is_connection_error = any(
-                        phrase in error_str
-                        for phrase in [
-                            "connection",
-                            "closed",
-                            "reset",
-                            "broken pipe",
-                            "eof",
-                            "timeout",
-                            "disconnected",
-                            "not connected",
-                        ]
-                    )
-
-                    # Explicitly check for AnyIO ClosedResourceError which may not have a descriptive message
-                    if not is_connection_error and isinstance(
-                        e, anyio.ClosedResourceError
-                    ):
-                        is_connection_error = True
-
-                    if is_connection_error:
+                    if _is_connection_error(e, include_timeouts=True):
                         # Try to reconnect
                         reconnected = await self._reconnect_server(server_id)
                         if reconnected:
