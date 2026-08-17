@@ -55,7 +55,7 @@ than telling you how you might do it yourself.
 - `/coder Work out the compound growth in this table and give me the year-by-year figures`
 - `/coder This regex isn't matching the third case — fix it and show me the tests passing`
 
-Three things to know:
+Four things to know:
 
 - **It cannot see your data.** Your notes, calendar, documents, email, and devices are out of reach
   — it works only from what you put in the request. Use `/complex` when the task needs the
@@ -64,6 +64,12 @@ Three things to know:
   and the agent gets the real file to open and rewrite, under `/workspace`.
 - **The sandbox is thrown away.** Files it creates live only for that run, so ask it to include
   anything you want to keep in its reply.
+- **It may have GitHub access.** Where the setup grants it, the agent can clone your repositories,
+  read code and issues, and push branches or open pull requests as part of a task — ask for it the
+  same way you'd ask for anything else:
+  `/coder Clone werdnum/family-assistant, work out why the calendar tests are flaky, and open a PR with the fix`.
+  It signs in as the assistant's own GitHub identity, not as you. If it reports that it can't reach
+  GitHub, the access isn't configured.
 
 One thing it will refuse: a request built out of something the assistant read elsewhere — an email,
 a web page — cannot direct it. Anything that runs code takes instructions only from you, so if you

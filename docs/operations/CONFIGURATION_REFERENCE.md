@@ -1788,18 +1788,73 @@ Per-profile `processing_config` block tuning the Google Antigravity managed agen
 `llm_model` names the agent (`antigravity-preview-05-2026` or a later `antigravity-*` revision);
 setting it on any other profile is a startup error rather than a silently discarded block.
 
-| Property  | Value                                          |
-| --------- | ---------------------------------------------- |
-| Required  | No                                             |
-| Default   | `model: gemini-3.7-flash`, no token cap        |
-| Sensitive | No                                             |
-| Values    | `model` (string), `max_total_tokens` (int > 0) |
+| Property  | Value                                                                   |
+| --------- | ----------------------------------------------------------------------- |
+| Required  | No                                                                      |
+| Default   | `model: gemini-3.7-flash`, no token cap, no environment                 |
+| Sensitive | No (credentials are named by env var, never written here)               |
+| Values    | `model` (string), `max_total_tokens` (int > 0), `environment` (mapping) |
 
 `model` is the model the agent reasons with — the Gemini 3.x Flash family, `gemini-3.7-flash` being
 the current default. It is pinned in `defaults.yaml` rather than left to the API, so an upstream
 default change shows up as a config change. `max_total_tokens` caps what a single run may spend;
 unset leaves the API's own default, which together with `max_async_seconds` is the only bound on how
 long an autonomous run iterates.
+
+#### `environment`: sandbox egress and injected credentials
+
+`environment` describes the sandbox a run gets. Today that is its egress policy: which domains the
+sandbox may reach, and which credentials the API's egress proxy attaches on the way out. **The
+sandbox never receives a credential** — the agent issues an unauthenticated request and the proxy
+adds the header, so nothing the agent can print, log or write to a file contains the token.
+
+| Key         | Values                                                                  |
+| ----------- | ----------------------------------------------------------------------- |
+| `network`   | `default` (send no policy), `disabled` (no network at all), `allowlist` |
+| `allowlist` | list of rules; required by, and only valid with, `allowlist`            |
+
+Each allowlist rule takes `domain` (wildcards allowed; `*` matches everything), an optional
+`headers` mapping of **non-secret** static headers, and an optional `credential`:
+
+| Key           | Values                                                                   |
+| ------------- | ------------------------------------------------------------------------ |
+| `type`        | `github_app` (mints a token) or `bearer` (reads `token_env`)             |
+| `header_name` | Header to inject; defaults to `Authorization`                            |
+| `scheme`      | `bearer` (default) or `basic`                                            |
+| `token_env`   | Env var holding the token; required by `bearer`, rejected on other types |
+
+`scheme` matters because GitHub authenticates its REST API and git-over-HTTPS differently: `bearer`
+renders `Authorization: Bearer <token>` (the REST API), and `basic` renders
+`Authorization: Basic base64("x-access-token:<token>")` (git). Applying one to both fails as a 401
+in the middle of an agent run rather than as a config error, so each domain names its own.
+
+`type: "github_app"` reads the same environment variables the k8s-agent and ai-worker deployments
+already use, so a cluster that runs a GitHub App needs no new secret plumbing — mount the existing
+key and set:
+
+| Variable                      | Purpose                                                         |
+| ----------------------------- | --------------------------------------------------------------- |
+| `GITHUB_APP_ID`               | The App's numeric id (JWT `iss`). Required.                     |
+| `GITHUB_APP_INSTALLATION_ID`  | The installation to mint a token for. Required.                 |
+| `GITHUB_APP_PRIVATE_KEY_PATH` | Path to the App's PEM private key (a mounted secret).           |
+| `GITHUB_APP_PRIVATE_KEY`      | The PEM contents inline, used in preference to the path if set. |
+
+The App private key never leaves the process: it signs a short-lived JWT which is exchanged for an
+installation access token, and only that ~1-hour token is handed to the proxy. Tokens are cached
+until 5 minutes before they expire, so a busy profile makes about one GitHub call an hour. A
+credential that cannot be resolved — a missing variable, an unreadable key, a revoked installation —
+fails the run rather than submitting it unauthenticated, which would otherwise surface as a 404 on a
+private repository from inside the agent.
+
+**Injecting a credential widens the profile's Rule of Two class.** The shipped `coder` is `[C]`
+only. GitHub App access adds `[B]`, and the agent already reads the open web (`[A]`). What keeps
+that safe is `taint_sink_class: "sandbox_network"` with `taint_policy.mode: "enforce"` (see below),
+which stops content the assistant derived from an email from directing the agent at all. What does
+*not* is a `{domain: "*"}` rule: with allow-all egress the agent can fetch an attacker-controlled
+page mid-run while the proxy is still attaching a GitHub credential. Enumerating every reachable
+domain instead of using `*` closes that; using `*` is a deliberate trade for a coding agent that
+installs packages from arbitrary indexes. See
+[antigravity-environment-and-credentials.md](../design/antigravity-environment-and-credentials.md).
 
 The agent runs server-side on the Interactions API, so the profile must use `provider: "google"` and
 must not set `retry_config` — a fallback would be an ordinary chat completion answering from the
@@ -1819,6 +1874,20 @@ service_profiles:
       antigravity_config:
         model: "gemini-3.7-flash"
         max_total_tokens: 250000
+        environment:
+          network: "allowlist"
+          allowlist:
+            # Everything else the agent needs (package indexes, docs, the web).
+            - domain: "*"
+            # git clone/push authenticates as HTTP Basic...
+            - domain: "github.com"
+              credential:
+                type: "github_app"
+                scheme: "basic"
+            # ...while the REST API takes a bearer token.
+            - domain: "api.github.com"
+              credential:
+                type: "github_app"
 ```
 
 ______________________________________________________________________

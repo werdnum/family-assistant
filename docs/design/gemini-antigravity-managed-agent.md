@@ -79,7 +79,12 @@ files, and is reached as a conversation.
 - **Custom environments.** `environment` (git/GCS/inline sources, network allowlists) and registered
   managed agents via `agents.create()` are left unset, so each run gets a fresh default sandbox.
   Mounting the household's own files into a sandbox would give the profile [B] as well as [C], which
-  is a separate decision, not a configuration detail.
+  is a separate decision, not a configuration detail. *(Partly superseded: inline sources carry
+  delegated attachments per
+  [interactions-agent-taint-and-attachments.md](interactions-agent-taint-and-attachments.md), and
+  the network allowlist is configurable per
+  [antigravity-environment-and-credentials.md](antigravity-environment-and-credentials.md) — which
+  takes up the [B] question this paragraph defers. Registered environments remain a non-goal.)*
 - **Surfacing intermediate steps.** Code-execution and file-operation steps are skipped in the
   stream just as Deep Research images are; the transcript stays the agent's prose. Rendering them is
   a UI question we have no requirement for yet.

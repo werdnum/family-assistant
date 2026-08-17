@@ -308,6 +308,13 @@ supervision requirements based on input trust level:
    workspace* in our own sandbox; `complex_tasks` when the task needs FA context (notes, calendar,
    documents). See
    [docs/design/gemini-antigravity-managed-agent.md](docs/design/gemini-antigravity-managed-agent.md).
+   **[C] is the shipped configuration, not a fixed property.** `antigravity_config.environment` can
+   attach a credential — a GitHub App token, say — to the sandbox's egress proxy, which adds [B] to
+   a profile that already reads the open web. `defaults.yaml` ships no `environment` block precisely
+   so that widening is a deployment's explicit choice; where a deployment makes it, the profile's
+   `taint_sink_class: "sandbox_network"` under `taint_policy.mode: "enforce"` is what keeps
+   untrusted content from directing an agent holding real credentials. See
+   [docs/design/antigravity-environment-and-credentials.md](docs/design/antigravity-environment-and-credentials.md).
 
 The Rule of Two addresses prompt injection specifically; it complements rather than replaces
 least-privilege access, input validation, and defense in depth.
