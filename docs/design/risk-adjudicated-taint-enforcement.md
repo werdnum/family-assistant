@@ -182,22 +182,31 @@ and burns out fastest.
 ### The `adjudicate` outcome
 
 Extend `TaintPolicyOutcome` with `adjudicate`, parameterized by a **verdict floor** — the weakest
-verdict the adjudicator may return in that cell. A bare `adjudicate` (floor `allow`) sits between
-`audit` and `confirm` in the strictness lattice; for every clamp comparison (tighten-only profile
-merging, `require_taint_enforcement`), an `adjudicate` cell ranks at its floor, so
-`adjudicate(floor: confirm)` satisfies a `confirm` minimum. Evaluation order matters: matrix cell →
-adjudicator verdict (bounded below by the cell's floor) → `operator_minimum` applied to the
-*verdict*. Running adjudication before the operator clamp is what lets the evaluator hand
-`adjudicate` to the provider at all — applying `operator_minimum` first, as `evaluate()` does today,
-would convert the cell to `confirm` before the judge ever ran. Applying it after keeps its semantics
-exactly as strong as today: an operator-configured minimum can never be weakened by a judge verdict,
-and never by argument provenance matching either. In `observe` mode the evaluator still returns
-`adjudicate` and the provider still invokes the judge — only the verdict's *effect* is downgraded to
-`audit`, so it is logged and nothing blocks. Downgrading the outcome itself before the provider saw
-it would silently skip the judge and leave nothing to calibrate; preserving the outcome while
-suppressing enforcement is what gives the free shadow phase: real verdicts against the exact traffic
-that stalled the rollout, at zero user-visible cost. A deployment that wants observe mode without
-judge latency or spend can set the cell to plain `audit` explicitly.
+verdict the adjudicator may return in that cell. Two distinct comparisons need two distinct ranks,
+and conflating them breaks the merge in both directions:
+
+- **Configured-outcome rank** (tighten-only profile merging):
+  `merge_rank(adjudicate(F)) = max(rank between audit and confirm, rank(F))`. A bare `adjudicate`
+  therefore ranks strictly *above* `audit` — a profile cannot replace it with `audit` and skip the
+  judge (ranking it at its `allow` floor would permit exactly that weakening) — while replacing a
+  base `audit` cell with any `adjudicate` is accepted as the tightening it is, and
+  `adjudicate(floor: confirm)` ranks at `confirm`.
+- **Verdict-floor rank** (verdict bounding, `operator_minimum`, `require_taint_enforcement`): the
+  floor itself, so `adjudicate(floor: confirm)` satisfies a `confirm` minimum and a bare
+  `adjudicate`'s verdicts are bounded only by its own floor. Evaluation order matters: matrix cell →
+  adjudicator verdict (bounded below by the cell's floor) → `operator_minimum` applied to the
+  *verdict*. Running adjudication before the operator clamp is what lets the evaluator hand
+  `adjudicate` to the provider at all — applying `operator_minimum` first, as `evaluate()` does
+  today, would convert the cell to `confirm` before the judge ever ran. Applying it after keeps its
+  semantics exactly as strong as today: an operator-configured minimum can never be weakened by a
+  judge verdict, and never by argument provenance matching either. In `observe` mode the evaluator
+  still returns `adjudicate` and the provider still invokes the judge — only the verdict's *effect*
+  is downgraded to `audit`, so it is logged and nothing blocks. Downgrading the outcome itself
+  before the provider saw it would silently skip the judge and leave nothing to calibrate;
+  preserving the outcome while suppressing enforcement is what gives the free shadow phase: real
+  verdicts against the exact traffic that stalled the rollout, at zero user-visible cost. A
+  deployment that wants observe mode without judge latency or spend can set the cell to plain
+  `audit` explicitly.
 
 The default matrix change, relative to [runtime-taint-machinery.md](runtime-taint-machinery.md)'s
 shipped defaults:
@@ -452,6 +461,22 @@ diagnosis, and the judge's provenance digest all need attribution that survives 
 epoch-amnesty postmortem is the cautionary tale — by the time the policy questions were asked, the
 data needed to answer them had been rounded away.
 
+**Calendar events are artifacts too — and today they launder.** `search_calendar_events` is tagged
+`OUTPUT_TRUSTED`, which rests entirely on its write paths being gated: the events themselves can be
+externally authored (an emailed invitation's title and description, confirm-approved into the
+calendar by a human during email intake). A confirmation attests what the human read in the rendered
+prompt, but the stored text is still attacker-composed, and reading it back later contributes no
+provenance at all — externally authored prose enters an otherwise trusted turn with no label, no
+advisory, and no matrix consequence. This is the one write-path artifact class with *no* provenance
+story, where notes have a partial one. The fix is the same mechanism, not a special case: calendar
+writes stamp per-event provenance exactly as note writes do (content-derived, turn-maximum
+fallback), reads restore it the way note reads restore theirs, and the ingestion probe's screening
+of the original email is remembered by that provenance rather than needing a second probe at read
+time. Until per-event provenance exists, the honest interim tag for calendar search output is
+untrusted-when-any-event-is-unattested — the current blanket `OUTPUT_TRUSTED` is an assumption the
+write gates do not actually support. The same audit applies to any other stored surface read back as
+trusted: workspace files, automations, script bodies.
+
 **Let adjudication absorb the rest at read time.** Restored artifact taint stops being expensive
 once the middle cells are adjudicated: reading a tainted note no longer cascades into blanket
 confirmations, because the judge sees *which* artifact contributed the taint — id, tier, age, review
@@ -523,13 +548,18 @@ Each phase independently shippable and valuable:
    fallback, revision-scoped healing, lossless attribution storage, and the attestation extension of
    PR #1111's review. Valuable while still in `observe` — it stops new artifact poisoning and the
    feedback loop before enforcement exists, and cleans the traffic the shadow phase measures.
-4. **Adjudicator in shadow:** implement `adjudicate` + the judge; run under `observe` (verdicts
-   logged, nothing blocked). Evaluate against the shadow-phase gates. This phase risks nothing and
-   produces the data that decides everything after it.
+4. **Adjudicator in shadow:** implement `adjudicate` and the judge *with its complete input
+   contract* — trusted-row selection, the argument rendering filter, provenance-digest
+   tier-filtering, and the provenance-matching machinery those filters depend on. The filter is not
+   an enhancement to schedule later: a judge without it reads attacker prose, and a judge
+   retrofitted with it later is a materially different judge than the one the shadow phase
+   calibrated. Run under `observe` (verdicts logged, nothing blocked) and evaluate against the
+   shadow-phase gates. This phase risks nothing and produces the data that decides everything after
+   it.
 5. **Enforce with the proposed matrix**, deny-and-continue, escalation counters, updated
    `require_taint_enforcement`. Gmail/Drive tools register for the first time.
 6. **Destination-bound confirmation reuse** (the positive-authorization path through floor cells),
-   with argument provenance matching as judge input, rendering filter, and approval fingerprint.
+   reusing the phase-4 matching machinery as the approval fingerprint.
 7. **Injection probe**, escalate-only, once there's an enforcement layer for it to harden.
 
 ## Acceptance criteria
