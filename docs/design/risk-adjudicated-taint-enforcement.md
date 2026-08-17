@@ -201,14 +201,14 @@ an anticipated one.
 ambient poison (fixed by PR #1111 and the epoch) and by confirm-gating sensitive *reads* (fixed by
 policy choice: audit the reads, gate the egress — the loss event is what leaves, not what is read).
 After both corrections, the residual confirm volume is turns that contain genuinely external content
-*and* attempt egress or actuation. In a household that is plausibly a handful of episodes per week,
-not 200 per day. The lean core is therefore: PR #1111 and the epoch; the sink corrections (home
-actuation split, calendar de-trusting, tag hygiene); a matrix of confirm floors on egress and
-actuation with audit everywhere else; task-scoped standing grants; then flip to `enforce` and
-measure. Only if the measured confirm volume exceeds the friction budget does the contingent tier
-get built — the adjudicator first, and only for the cells the data indicts; probe, content-derived
-stamping, and healing on the same terms. The good outcome is that most of the contingent tier is
-never built.
+*and* attempt egress, actuation, or destruction. In a household that is plausibly a handful of
+episodes per week, not 200 per day. The lean core is therefore: PR #1111 and the epoch; the sink
+corrections (home actuation split, destructive-write split, calendar de-trusting, tag hygiene); a
+matrix of confirm floors on egress, actuation, and destructive writes with audit everywhere else;
+task-scoped standing grants; then flip to `enforce` and measure. Only if the measured confirm volume
+exceeds the friction budget does the contingent tier get built — the adjudicator first, and only for
+the cells the data indicts; probe, content-derived stamping, and healing on the same terms. The good
+outcome is that most of the contingent tier is never built.
 
 The sections below therefore describe two kinds of material: the lean core, and a fully designed
 contingent tier that exists on paper so that, if the numbers demand it, it is built coherently
@@ -284,6 +284,19 @@ actuation domains (locks, alarm panels, valves, sirens, garage-class covers) mov
 class with `adjudicate(floor: confirm)` at every externally authored tier, while ordinary
 `home_local` (lights, media, climate) stays `allow`. Physical-safety actuation gets the same rule as
 egress: a classifier false-negative must never be able to do it alone.
+
+Destructive artifact writes are the third occupant of a soft cell. The resolver maps deletes and
+rewrites (`delete_note`, `delete_script`, `delete_automation`, calendar deletion) into
+`artifact_write`, which the lean core sets to `audit` — so an injected email in a mixed turn could
+permanently destroy household data with no gate; the configuration reference already warns that
+"`delete_note` runs unconfirmed on that path." Tools already carry a `DESTRUCTIVE` tag
+(`email_intake` denies on it), so this too is a resolver split rather than new machinery:
+`DESTRUCTIVE`-tagged calls resolve to a `destructive_artifact_write` sink with a `confirm` floor at
+every externally authored tier, joining egress and actuation in the lean core's floored set. Static
+tool policy already confirms calendar deletes profile-wide; the taint floor extends the same
+protection to the rest of the destructive surface, but only on tainted turns. Ordinary additive
+writes (`add_or_update_note`, event creation) stay `audit` — reversible, visible, and the
+overwhelmingly common case.
 
 "Floor: confirm" means the adjudicator's verdict space in that cell is {confirm, deny} — it chooses
 how hard to gate, never whether to gate, with no exceptions: no model verdict, probe result, or
@@ -663,9 +676,10 @@ The lean core, in order, each phase independently shippable:
 1. **Land PR #1111** (prompt admission, sandbox confirm, `operator_minimum` fix, epoch set on
    production). Re-run the audit so later decisions calibrate against traffic without ambient
    floors.
-2. **Sink and tag corrections:** high-impact home actuation split out of `home_local`; calendar (and
-   any other externally mutable store) de-trusted; middle-tier allowlists; tag hygiene; Trino fix.
-   Config-level work that removes the known fail-open cells.
+2. **Sink and tag corrections:** high-impact home actuation split out of `home_local`;
+   `DESTRUCTIVE`-tagged writes split out of `artifact_write`; calendar (and any other externally
+   mutable store) de-trusted; middle-tier allowlists; tag hygiene; Trino fix. Config-level work that
+   removes the known fail-open cells.
 3. **Standing grants**, minimal form: grant storage on task definitions and browse sessions,
    envelope enforcement at the existing chokepoint, schema-constrained bodies for public sinks.
 4. **Enforce the lean matrix:** confirm floors on egress and actuation, audit everywhere else,
