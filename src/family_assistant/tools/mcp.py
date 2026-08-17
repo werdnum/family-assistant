@@ -291,6 +291,22 @@ class MCPToolsProvider:
 
         return descriptors
 
+    async def _list_all_tools(self, session: ClientSession) -> list[Any]:
+        """Read a server's complete tool list, following pagination cursors.
+
+        ``tools/list`` is paginated, so the first page alone is not the
+        server's answer: reconciling against it would treat everything past
+        that page as withdrawn.
+        """
+        tools: list[Any] = []
+        cursor: str | None = None
+        while True:
+            response = await session.list_tools(cursor=cursor)
+            tools.extend(response.tools)
+            cursor = response.nextCursor
+            if cursor is None:
+                return tools
+
     async def _log_mcp_initialization_progress(
         self, stop_event: asyncio.Event, start_time: float
     ) -> None:
@@ -509,8 +525,7 @@ class MCPToolsProvider:
                 f"Initialized session with MCP server '{server_id}' ({transport_type}). Status: {self._server_statuses[server_id]}."
             )
 
-            response = await session.list_tools()
-            server_tools = response.tools
+            server_tools = await self._list_all_tools(session)
             logger.info(f"Server '{server_id}' provides {len(server_tools)} tools.")
 
             # Format MCP tools to OpenAI dict format (sanitization moved to LLM layer)
@@ -850,7 +865,9 @@ class MCPToolsProvider:
             try:
                 # Simple health check - list tools to verify connection
                 # Using a short timeout to avoid blocking too long
-                response = await asyncio.wait_for(session.list_tools(), timeout=5.0)
+                server_tools = await asyncio.wait_for(
+                    self._list_all_tools(session), timeout=5.0
+                )
             except TimeoutError:
                 logger.warning(f"Health check timeout for server '{server_id}'")
                 # Don't reconnect on timeout - server might just be slow
@@ -872,7 +889,7 @@ class MCPToolsProvider:
             else:
                 logger.debug(f"Health check passed for server '{server_id}'")
                 self._reset_reconnect_backoff(server_id)
-                self._refresh_server_tools(server_id, response.tools)
+                self._refresh_server_tools(server_id, server_tools)
 
     async def _retry_disconnected_servers(self, server_ids: Sequence[str]) -> None:
         """Reconnect failed/cancelled servers whose backoff window has elapsed."""

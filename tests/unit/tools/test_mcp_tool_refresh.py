@@ -41,6 +41,24 @@ def _session(tools: Sequence[Tool]) -> ClientSession:
     return cast("ClientSession", SimpleNamespace(list_tools=list_tools))
 
 
+def _paginated_session(pages: Sequence[Sequence[Tool]]) -> ClientSession:
+    """A stand-in session that hands out its tool list one page at a time."""
+    results = [
+        ListToolsResult(
+            tools=list(page),
+            nextCursor=str(index + 1) if index + 1 < len(pages) else None,
+        )
+        for index, page in enumerate(pages)
+    ]
+
+    async def list_tools(cursor: str | None = None) -> ListToolsResult:
+        return results[int(cursor) if cursor else 0]
+
+    return cast(
+        "ClientSession", SimpleNamespace(list_tools=AsyncMock(wraps=list_tools))
+    )
+
+
 def _provider(*server_ids: str) -> MCPToolsProvider:
     configs: dict[str, MCPServerConfig] = {
         server_id: {"transport": "stdio", "command": "echo"} for server_id in server_ids
@@ -82,6 +100,20 @@ async def test_tools_appear_when_a_server_starts_reporting_them() -> None:
 
     assert _tool_names(provider) == {"search"}
     assert provider.get_tool_to_server_mapping() == {"search": SERVER_ID}
+
+
+@pytest.mark.asyncio
+async def test_a_paginated_tool_list_is_read_to_the_end() -> None:
+    """Reconciling against page one alone would retire every later page."""
+    provider = _provider(SERVER_ID)
+    provider._sessions[SERVER_ID] = _paginated_session([
+        [_tool("search")],
+        [_tool("fetch")],
+    ])
+
+    await provider._run_health_checks()
+
+    assert _tool_names(provider) == {"search", "fetch"}
 
 
 @pytest.mark.asyncio
