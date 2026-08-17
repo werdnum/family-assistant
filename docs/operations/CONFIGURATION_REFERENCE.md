@@ -1843,9 +1843,11 @@ gate, and delegating to it would otherwise be classified as an ordinary delegati
 Declaring a sink here changes two things. `delegate_to_service` calls naming this profile as
 `target_service_id` are evaluated as that sink rather than as a generic delegation, so the caller is
 refused (or asked to confirm) before a delegation run is created. And the profile itself evaluates
-the sink against the turn's incoming taint before it runs, covering the entry points a tool gate
-does not see: slash commands, A2A requests and `wake_llm` automations. The profile gate has nobody
-to ask, so it refuses a `confirm` outcome as well as a `deny`.
+the sink against the turn's taint before every model call, covering the entry points a tool gate
+does not see: slash commands, A2A requests and `wake_llm` automations. On a profile that declares a
+sink and also holds tools, that per-call evaluation is what stops a tool result from raising the
+turn's tier and then being fed to the model anyway. The profile gate has nobody to ask, so it
+refuses a `confirm` outcome as well as a `deny`.
 
 Attachments routed into such a profile contribute their own recorded provenance to that evaluation,
 so an untrusted file raises the turn's tier even when the request text is trusted.

@@ -248,6 +248,8 @@ def _processing_service(
     llm_client: RuleBasedMockLLMClient,
     *,
     max_history_messages: int = 20,
+    taint_sink_class: SinkClass | None = None,
+    taint_policy: TaintPolicyConfig | None = None,
 ) -> ProcessingService:
     return ProcessingService(
         llm_client=llm_client,
@@ -261,10 +263,12 @@ def _processing_service(
             delegation_security_level=DelegationSecurityLevel.CONFIRM,
             id="runtime-taint-test",
             max_iterations=4,
+            taint_sink_class=taint_sink_class,
         ),
         context_providers=[],
         server_url="http://testserver",
         app_config=AppConfig(),
+        taint_policy=taint_policy,
     )
 
 
@@ -1669,6 +1673,40 @@ def test_home_assistant_action_without_a_usable_domain_stays_conservative() -> N
             resolve_tool_sink_class(descriptor, arguments)
             is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
         ), arguments
+
+
+@pytest.mark.asyncio
+async def test_a_tool_result_can_close_the_sink_mid_turn(
+    db_engine: AsyncEngine,
+) -> None:
+    """On a sink-declaring profile the model itself is the sink, every call.
+
+    A profile may declare a sink and still hold tools. Gating only the turn's
+    opening state would let a tool that reads the web or a mailbox raise the
+    tier and then feed that content straight back to the model on the next
+    iteration -- the crossing the declaration exists to stop.
+    """
+    llm_client = _first_call_then_final("untrusted_tool")
+    service = _processing_service(
+        llm_client,
+        taint_sink_class=SinkClass.SANDBOX_NETWORK,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+    )
+
+    result = await service.handle_chat_interaction(
+        db_context=Database(db_engine),
+        interface_type="web",
+        conversation_id="sink-midturn",
+        trigger_content_parts=[{"type": "text", "text": "Do the thing."}],
+        trigger_interface_message_id=None,
+        user_name="Test User",
+    )
+
+    assert result.status.value == "error"
+    assert "unknown_external" in (result.text_reply or "")
+    # The tool ran and its result came back; what is refused is the *next*
+    # model call, which is what would carry that result into the sink.
+    assert len(llm_client.get_calls()) == 1
 
 
 def test_evaluate_tool_threads_arguments_into_sink_resolution() -> None:

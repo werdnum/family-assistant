@@ -49,18 +49,21 @@ profile that declares nothing keeps today's classification, so nothing else move
 
 The tool-level classification only covers delegation. A profile is also reachable by slash command,
 by an A2A inbound request, and by a `wake_llm` automation — and an automation fired by an incoming
-email carries exactly the taint this is meant to catch.
+email carries exactly the taint this is meant to catch. And a profile may declare a sink and still
+hold tools, in which case the model *is* the sink on every call, not only the first: a tool that
+reads the web or a mailbox mid-turn raises the tier of what the next call would carry into it.
 
 **Where the check runs is load-bearing.** The turn's taint is not fully known at an entry point: a
 trusted "go ahead" pulls in the aggregated context during preparation, and history taint is merged
 later still. Checking the trigger's own sources would let a trusted prompt hand the sandbox an
 email-derived attachment or a tainted earlier message — precisely what the gate exists to stop. So
-the check lives in `LLMStreamingLoop.run_stream`, immediately after `merge_history_taint` builds the
-state the loop itself uses for tool gating. That is the single point where history, context and
-trigger taint are all present, and it is shared by the streaming and non-streaming paths (`run`
-delegates to `run_stream`) and by every profile, not just this subclass. Refusal raises
-`TaintedSinkRefusedError`; the two chat entry points catch it and render the reason rather than
-letting it read as an internal fault.
+the check lives in `LLMStreamingLoop.run_stream`, against the tracker `merge_history_taint` seeds —
+the same state the loop uses for tool gating — and it runs at the top of every iteration, so a tool
+result that raises the tier closes the sink before the next model call. That is the single point
+where history, context and trigger taint are all present, and it is shared by the streaming and
+non-streaming paths (`run` delegates to `run_stream`) and by every profile, not just this subclass.
+Refusal raises `TaintedSinkRefusedError`; the two chat entry points catch it and render the reason
+rather than letting it read as an internal fault.
 
 The submit-then-poll path never runs the loop, so it evaluates what it has — the parent turn's
 sources plus the attachments it is about to mount — in `submit_async`.

@@ -289,19 +289,32 @@ class LLMStreamingLoop:
         initial_taint_state = merge_history_taint(messages)
         for source in initial_taint_sources or ():
             initial_taint_state = initial_taint_state.add_source(source)
-        # The one point where the turn's whole taint is known: the prompt's own
-        # sources, the aggregated context's, and the history's. A profile that
-        # declares a sink is gated here rather than at an entry point, where a
-        # trusted prompt carrying an email-derived attachment or tainted history
-        # would still read as trusted.
-        if processing_service is not None:
-            sink_refusal = processing_service.sink_refusal_reason(initial_taint_state)
-            if sink_refusal is not None:
-                raise TaintedSinkRefusedError(sink_refusal)
         if taint_tracker is None:
             taint_tracker = InMemoryTurnTaintTracker(initial_taint_state)
         else:
             merge_taint_state_into_tracker(taint_tracker, initial_taint_state)
+        turn_taint_tracker = taint_tracker
+
+        def refuse_if_sink_denied() -> None:
+            """Gate a sink-declaring profile on the turn's taint as it stands.
+
+            The loop is the one place where the whole turn's taint is known --
+            the prompt's own sources, the aggregated context's and the
+            history's -- so this is where a profile that declares a sink is
+            gated rather than at an entry point, where a trusted prompt
+            carrying an email-derived attachment or tainted history would still
+            read as trusted. It runs before every model call, not only the
+            first: on such a profile the model *is* the sink, and a tool that
+            reads the web or a mailbox mid-turn raises the tier of what the
+            next call would carry into it.
+            """
+            if processing_service is None:
+                return
+            sink_refusal = processing_service.sink_refusal_reason(
+                turn_taint_tracker.snapshot()
+            )
+            if sink_refusal is not None:
+                raise TaintedSinkRefusedError(sink_refusal)
 
         async def refresh_on_demand_tools() -> tuple[list[ToolDefinition], str | None]:
             """Re-compute the tool list and system prompt addition for this turn.
@@ -347,6 +360,7 @@ class LLMStreamingLoop:
 
         # Tool call loop
         while current_iteration <= max_iterations:
+            refuse_if_sink_denied()
             if (
                 mid_turn_input_provider is not None
                 and mid_turn_input_provider.should_interrupt()
