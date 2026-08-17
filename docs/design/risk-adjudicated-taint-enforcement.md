@@ -201,10 +201,11 @@ an anticipated one.
 ambient poison (fixed by PR #1111 and the epoch) and by confirm-gating sensitive *reads* (fixed by
 policy choice: audit the reads, gate the egress — the loss event is what leaves, not what is read).
 After both corrections, the residual confirm volume is turns that contain genuinely external content
-*and* attempt egress, actuation, or destruction. In a household that is plausibly a handful of
-episodes per week, not 200 per day. The lean core is therefore: PR #1111 and the epoch; the sink
-corrections (home actuation split, destructive-write split, calendar de-trusting, tag hygiene); a
-matrix of confirm floors on egress, actuation, and destructive writes with audit everywhere else;
+*and* attempt egress, actuation, destruction, or executable persistence. In a household that is
+plausibly a handful of episodes per week, not 200 per day. The lean core is therefore: PR #1111 and
+the epoch; the sink corrections (home actuation split, destructive-write split,
+executable-persistence split, calendar de-trusting, tag hygiene); a matrix of confirm floors on
+egress, actuation, destructive writes, and executable-artifact creation with audit everywhere else;
 task-scoped standing grants; then flip to `enforce` and measure. Only if the measured confirm volume
 exceeds the friction budget does the contingent tier get built — the adjudicator first, and only for
 the cells the data indicts; probe, content-derived stamping, and healing on the same terms. The good
@@ -296,6 +297,19 @@ every externally authored tier, joining egress and actuation in the lean core's 
 tool policy already confirms calendar deletes profile-wide; the taint floor extends the same
 protection to the rest of the destructive surface, but only on tainted turns.
 
+Executable persistence is the fourth floored family, and the sneakiest: `create_automation`,
+`update_automation`, script saves, and `wake_llm`-style scheduled callbacks resolve to
+`artifact_write` today, yet what they store is *future execution* — and `task_worker.py`
+reconstructs a fired automation as a system trigger with no memory of the creation turn's taint, so
+an injected email could plant a callback under an audit-only cell and have its payload run later,
+outside every floor, in a clean-looking turn. Creation of executable or scheduled artifacts
+therefore joins the floored set (`confirm` at externally authored tiers, via the existing
+`AUTOMATION`/`STATE_PERSISTING` tags — another resolver split). The durable fix, which belongs with
+the artifact-provenance work in the contingent tier, is the same rule delegation runs already
+follow: persist the creation turn's taint on the automation and seed every later firing with it
+until a human attests the automation — persistence must never launder taint through time. The floor
+is the lean-core stopgap that makes the laundering impossible before that machinery exists.
+
 The tag alone does not draw the line correctly, because destruction hides in overwrites too:
 `add_or_update_note` *replaces* an existing note's content when not appending, and
 `modify_calendar_event` replaces event fields — neither carries `DESTRUCTIVE`. Gating them per call
@@ -386,11 +400,14 @@ that specifying what to *filter out* loses — every round found another unfilte
 affirmatively adds it to the schema, and one property test — no rendered string without a trust
 proof — holds structurally forever.
 
-- The current turn's user messages and recent trusted-tier conversation turns — selected by the
-  per-row taint metadata we already persist: rows whose stored tier is `trusted_user` qualify;
-  anything else is summarized as a one-line provenance stub ("\<tool result from
-  `gmail_get_message`, tier unknown_external>"). The attacker's text is *represented* to the judge
-  but never *rendered* to it.
+- Trusted-tier conversation content, current turn included — selected **by taint metadata, never by
+  message role**. Message position confers nothing: in email intake the sender-controlled email body
+  arrives as trigger content represented as a `UserMessage`, so "render the current turn's user
+  messages" would hand the judge the attacker's email verbatim. The same per-part tier selection
+  applies uniformly — rows and trigger parts whose stored tier is `trusted_user` render; anything
+  else is summarized as a one-line provenance stub ("\<tool result from `gmail_get_message`, tier
+  unknown_external>", "\<email trigger, sender unverified, tier unknown_external>"). The attacker's
+  text is *represented* to the judge but never *rendered* to it.
 - The tool call: name, resolved sink class, tool description — rendered only for local tools, whose
   descriptions are deployment-controlled; an MCP tool's description is remote-server content
   (`_format_mcp_definitions_to_dicts` copies it verbatim), so MCP tools render as server id plus
@@ -694,9 +711,9 @@ The lean core, in order, each phase independently shippable:
    production). Re-run the audit so later decisions calibrate against traffic without ambient
    floors.
 2. **Sink and tag corrections:** high-impact home actuation split out of `home_local`;
-   `DESTRUCTIVE`-tagged writes split out of `artifact_write`; calendar (and any other externally
-   mutable store) de-trusted; middle-tier allowlists; tag hygiene; Trino fix. Config-level work that
-   removes the known fail-open cells.
+   `DESTRUCTIVE`-tagged writes and executable/scheduled artifact creation split out of
+   `artifact_write`; calendar (and any other externally mutable store) de-trusted; middle-tier
+   allowlists; tag hygiene; Trino fix. Config-level work that removes the known fail-open cells.
 3. **Standing grants**, minimal form: grant storage on task definitions and browse sessions,
    envelope enforcement at the existing chokepoint, schema-constrained bodies for public sinks.
 4. **Enforce the lean matrix:** confirm floors on egress and actuation, audit everywhere else,
