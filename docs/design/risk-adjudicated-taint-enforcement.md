@@ -394,8 +394,11 @@ capability — and capability means the full tuple PR #1111 enumerates (tool/ope
 payload or data scope), never the destination alone. Destination-only binding would let an approved
 benign message to X authorize a later, materially different payload to X composed under injected
 instructions. Default reuse scope is therefore the exact tool-and-argument fingerprint: retries and
-concurrent duplicates coalesce into one confirmation; anything else re-confirms. A broader grant —
-"further messages to X for the rest of this task" — is an explicit human choice that the
+concurrent duplicates coalesce into one confirmation; anything else re-confirms. Coalescing must
+preserve **multiplicity**: the loop executes identical batch calls as separate concurrent tasks, so
+the shared card states the count ("send this message ×3") and approval authorizes exactly that many
+executions — approving what is displayed as one action must never release N side effects. A broader
+grant — "further messages to X for the rest of this task" — is an explicit human choice that the
 confirmation UI states plainly, is bounded to the task, and is suspended for probe-labeled turns.
 That is positive authorization by an authenticated decision, not by mention. And because
 `operator_minimum` applies after adjudication, an operator minimum can only ever tighten a
@@ -703,24 +706,24 @@ detail). A detection:
   otherwise a sender who *wants* to jam the assistant just includes an obvious injection phrase.
 
 The same jamming logic bounds the confirmation side. Exact-fingerprint coalescing survives probe
-labeling (identical concurrent calls collapsing into one card never authorizes anything new), and
-after K interactive confirmation requests on a labeled turn, further probe-induced escalations
-**defer rather than deny** — with the deferral restricted to what the deferred path can honestly
-execute: *independent terminal* gated calls become deferred durable confirmations — the single-call
-records and deferred-execution path email intake already uses, surfaced together in the existing
-pending-confirmations tray rather than interrupting live. A *dependent* gated call (one whose result
-later reasoning needs) cannot ride that path — the placeholder would corrupt the workflow — so the
-first post-K dependent call instead takes the escalation endpoint already defined for the counters:
-the turn ends cleanly with a summarizing confirmation of what remains, and the human resumes or
-drops it. That is suspension pending human input at turn granularity, not a denial; live
-interruptions stay bounded. This is deliberately *not* a coalesced multi-item approval card:
-`confirmation_requests` stores one tool call per record, which is the right granularity anyway,
-since each deferred call must stay individually decidable. A true batch card would need new schema,
-UI, and executor, and is at most a contingent UX refinement if tray volume ever warrants it.
-Conversion to denial would make the probe the sole reason a valid workflow fails, which is exactly
-the availability boundary it must never become; deferral keeps the invariant intact while capping
-*live* interruptions at K. Per-turn confirmation counts on labeled turns are a standing metric so
-the bound is measured rather than assumed.
+labeling (identical concurrent calls collapsing into one count-stating card never authorizes
+anything new), and after K interactive confirmation requests on a labeled turn, further
+probe-induced escalations **defer rather than deny** — with the deferral restricted to what the
+deferred path can honestly execute: *independent terminal* gated calls become deferred durable
+confirmations — the single-call records and deferred-execution path email intake already uses,
+surfaced together in the existing pending-confirmations tray rather than interrupting live. A
+*dependent* gated call (one whose result later reasoning needs) cannot ride that path — the
+placeholder would corrupt the workflow — so the first post-K dependent call instead takes the
+escalation endpoint already defined for the counters: the turn ends cleanly with a summarizing
+confirmation of what remains, and the human resumes or drops it. That is suspension pending human
+input at turn granularity, not a denial; live interruptions stay bounded. This is deliberately *not*
+a coalesced multi-item approval card: `confirmation_requests` stores one tool call per record, which
+is the right granularity anyway, since each deferred call must stay individually decidable. A true
+batch card would need new schema, UI, and executor, and is at most a contingent UX refinement if
+tray volume ever warrants it. Conversion to denial would make the probe the sole reason a valid
+workflow fails, which is exactly the availability boundary it must never become; deferral keeps the
+invariant intact while capping *live* interruptions at K. Per-turn confirmation counts on labeled
+turns are a standing metric so the bound is measured rather than assumed.
 
 No probe verdict ever relaxes anything, so its adaptive-attack failure mode (missing a novel
 payload) degrades to exactly the system without a probe; no probe verdict ever denies or causes a
