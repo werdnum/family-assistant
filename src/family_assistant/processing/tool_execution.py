@@ -4,7 +4,7 @@ import json
 import logging
 import traceback
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, cast
 
 from opentelemetry import trace
@@ -76,6 +76,23 @@ class _PrecomputedToolResult:
 
     result: ToolResult | str
     action_attempted: bool
+
+
+@dataclass(frozen=True)
+class _ToolOutput:
+    """Rendered tool output: stream payload, LLM message, and attachment IDs.
+
+    ``auto_attachment_ids`` are queued for display in the assistant's reply;
+    ``large_result_attachment_ids`` are the auto-converted oversized results,
+    which stay out of the display queue because they are working data for the
+    model rather than something the user asked to see.
+    """
+
+    content_for_stream: str
+    llm_message: ToolMessage
+    stream_metadata: StreamEventMetadata | None
+    auto_attachment_ids: list[str]
+    large_result_attachment_ids: list[str]
 
 
 def _argument_attachment_ids(value: object) -> set[str]:
@@ -679,10 +696,13 @@ class ToolExecutor:
         taint_metadata: TaintMetadata | None,
         acting_user_id: str | None,
         arguments: dict[str, object] | None,
-    ) -> tuple[str, ToolMessage, StreamEventMetadata | None, list[str]]:
+    ) -> _ToolOutput:
         """Convert ToolResult into stream payload, message, and attachment IDs."""
         content_for_stream = result.get_text()
-        content_for_stream, auto_attachment_ids = await self._handle_large_text_result(
+        (
+            content_for_stream,
+            large_result_attachment_ids,
+        ) = await self._handle_large_text_result(
             db_context=db_context,
             content=content_for_stream,
             function_name=function_name,
@@ -692,7 +712,8 @@ class ToolExecutor:
             acting_user_id=acting_user_id,
             arguments=arguments,
         )
-        if auto_attachment_ids:
+        auto_attachment_ids: list[str] = []
+        if large_result_attachment_ids:
             # Result data is now persisted as attachment; keep content as hint text.
             result.text = content_for_stream
             result.data = None
@@ -738,7 +759,13 @@ class ToolExecutor:
                 update={"attachments": attachments_data}
             )
 
-        return content_for_stream, llm_message, stream_metadata, auto_attachment_ids
+        return _ToolOutput(
+            content_for_stream=content_for_stream,
+            llm_message=llm_message,
+            stream_metadata=stream_metadata,
+            auto_attachment_ids=auto_attachment_ids,
+            large_result_attachment_ids=large_result_attachment_ids,
+        )
 
     async def _build_output_for_string_result(
         self,
@@ -751,10 +778,13 @@ class ToolExecutor:
         taint_metadata: TaintMetadata | None,
         acting_user_id: str | None,
         arguments: dict[str, object] | None,
-    ) -> tuple[str, ToolMessage, StreamEventMetadata | None, list[str]]:
+    ) -> _ToolOutput:
         """Convert plain string-like tool output into stream/message payload."""
         content_for_stream = str(result)
-        content_for_stream, auto_attachment_ids = await self._handle_large_text_result(
+        (
+            content_for_stream,
+            large_result_attachment_ids,
+        ) = await self._handle_large_text_result(
             db_context=db_context,
             content=content_for_stream,
             function_name=function_name,
@@ -764,15 +794,16 @@ class ToolExecutor:
             acting_user_id=acting_user_id,
             arguments=arguments,
         )
-        return (
-            content_for_stream,
-            ToolMessage(
+        return _ToolOutput(
+            content_for_stream=content_for_stream,
+            llm_message=ToolMessage(
                 tool_call_id=call_id,
                 content=content_for_stream,
                 name=function_name,
             ),
-            None,
-            auto_attachment_ids,
+            stream_metadata=None,
+            auto_attachment_ids=[],
+            large_result_attachment_ids=large_result_attachment_ids,
         )
 
     async def execute(
@@ -1050,12 +1081,7 @@ class ToolExecutor:
                 result_taint_metadata = (
                     tool_execution_context.tool_result_taint_metadata.get(call_id)
                 )
-                (
-                    content_for_stream,
-                    llm_message,
-                    stream_metadata,
-                    auto_attachment_ids,
-                ) = await self._build_output_for_tool_result(
+                output = await self._build_output_for_tool_result(
                     db_context=db_context,
                     result=result,
                     function_name=function_name,
@@ -1070,12 +1096,7 @@ class ToolExecutor:
                 result_taint_metadata = (
                     tool_execution_context.tool_result_taint_metadata.get(call_id)
                 )
-                (
-                    content_for_stream,
-                    llm_message,
-                    stream_metadata,
-                    auto_attachment_ids,
-                ) = await self._build_output_for_string_result(
+                output = await self._build_output_for_string_result(
                     db_context=db_context,
                     result=result,
                     function_name=function_name,
@@ -1086,9 +1107,17 @@ class ToolExecutor:
                     arguments=arguments,
                 )
                 if result_taint_metadata is not None:
-                    llm_message = llm_message.model_copy(
-                        update={"taint_metadata": result_taint_metadata}
+                    output = replace(
+                        output,
+                        llm_message=output.llm_message.model_copy(
+                            update={"taint_metadata": result_taint_metadata}
+                        ),
                     )
+
+            content_for_stream = output.content_for_stream
+            llm_message = output.llm_message
+            stream_metadata = output.stream_metadata
+            auto_attachment_ids = output.auto_attachment_ids
 
             if function_name == "attach_to_response":
                 (
@@ -1114,5 +1143,6 @@ class ToolExecutor:
                 auto_attachment_ids=auto_attachment_ids
                 if auto_attachment_ids
                 else None,
+                large_result_attachment_ids=output.large_result_attachment_ids or None,
                 explicit_attachment_ids=explicit_attachment_ids,
             )

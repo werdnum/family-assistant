@@ -177,6 +177,10 @@ class ToolExecutionResult:
     llm_message: ToolMessage
     auto_attachment_ids: list[str] | None = None  # list of attachment IDs
     explicit_attachment_ids: list[str] | None = None
+    # Oversized results auto-converted to attachments. Recorded for the model
+    # (which is told the IDs in the tool result) but never queued for display:
+    # from the user's perspective these are working data, not a deliverable.
+    large_result_attachment_ids: list[str] | None = None
 
     def apply_attachment_updates(self, pending_attachment_ids: list[str]) -> None:
         """Apply attachment queue updates from this tool result to pending IDs."""

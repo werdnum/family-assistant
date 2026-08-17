@@ -647,7 +647,7 @@ Call attach_to_response with your selected attachment IDs."""
         file_extension = get_file_extension_from_mime_type(mime_type)
         attachment_metadata: dict[str, object] = {
             "tool_call_id": call_id,
-            "auto_display": True,
+            "auto_display": False,
             "large_result_auto_convert": True,
         }
         if taint_metadata is not None:
@@ -690,6 +690,11 @@ Call attach_to_response with your selected attachment IDs."""
                 f"        print(line)\n"
                 f"```"
             )
+
+        hint += (
+            "\nThis attachment is working data: it is NOT shown to the user. "
+            f"If they asked for the file itself, call attach_to_response(attachment_ids=['{att_id}'])."
+        )
 
         new_content = f"Tool result from '{tool_name}' was too large and was saved as attachment {att_id}.{hint}"
         logger.info(

@@ -89,6 +89,11 @@ conversation. That means you can refer back to something you sent earlier, and t
 pass an attachment from one tool to another — take a camera snapshot and then analyse it, edit an
 image and then send the result, extract information from a document and save it as a note.
 
+**Bulky tool output:** when a tool produces more data than fits in the conversation — a long log, a
+big export — it is stored as an attachment and the assistant works from that instead of pasting it
+all out. Those stay behind the scenes rather than being sent to you; ask for the file and the
+assistant will attach it.
+
 **Who can see them:** attachments belong to you, not to a single conversation. Other people can't
 read what you upload, but you can — a later chat can pull up a file you sent earlier, and files
 attached to a note stay reachable whenever that note comes up. Each attachment records the

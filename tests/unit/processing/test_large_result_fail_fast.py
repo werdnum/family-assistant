@@ -251,12 +251,7 @@ async def test_tool_result_attachment_registration_persists_taint_metadata() -> 
         },
     )
 
-    (
-        _,
-        llm_message,
-        stream_metadata,
-        attachment_ids,
-    ) = await executor._build_output_for_tool_result(
+    output = await executor._build_output_for_tool_result(
         db_context=Mock(),
         result=ToolResult(
             text="small result",
@@ -277,9 +272,9 @@ async def test_tool_result_attachment_registration_persists_taint_metadata() -> 
         arguments=None,
     )
 
-    assert attachment_ids == ["att_explicit_1"]
-    assert llm_message.taint_metadata == taint_metadata
-    assert stream_metadata == {
+    assert output.auto_attachment_ids == ["att_explicit_1"]
+    assert output.llm_message.taint_metadata == taint_metadata
+    assert output.stream_metadata == {
         "attachments": [
             {
                 "type": "tool_result",
