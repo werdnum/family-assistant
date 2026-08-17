@@ -327,14 +327,18 @@ class GoogleGenAIClient(BaseLLMClient):
         self.antigravity_model = antigravity_model
         self.antigravity_max_total_tokens = antigravity_max_total_tokens
         self.antigravity_environment = antigravity_environment
+        # Only a resolver this client built is closed by it; an injected one
+        # belongs to whoever passed it in.
+        self._owned_antigravity_egress: AntigravityEgressResolver | None = None
         if antigravity_egress_resolver is not None:
             self._antigravity_egress: EgressNetworkResolver | None = (
                 antigravity_egress_resolver
             )
         elif antigravity_environment is not None:
-            self._antigravity_egress = AntigravityEgressResolver(
+            self._owned_antigravity_egress = AntigravityEgressResolver(
                 antigravity_environment
             )
+            self._antigravity_egress = self._owned_antigravity_egress
         else:
             self._antigravity_egress = None
 
@@ -372,6 +376,8 @@ class GoogleGenAIClient(BaseLLMClient):
                 api_client.close()
         except Exception as e:
             logger.debug(f"Error closing API client: {e}")
+        if self._owned_antigravity_egress is not None:
+            await self._owned_antigravity_egress.aclose()
 
     async def __aenter__(self) -> "GoogleGenAIClient":
         """Enter async context manager."""
