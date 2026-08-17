@@ -356,16 +356,17 @@ response, a leak alert), which is auto mode's "degrade security" category, and r
 does not un-miss the night the alarm was off. The class is therefore defined as *mutating the set of
 future executions, in either direction*. It gets its own explicit tag (`EXECUTABLE_PERSISTENCE`, on
 `create_automation`, `update_automation`, `enable_automation`, `disable_automation`, script saves,
-`schedule_future_callback`, `schedule_action`, `modify_pending_callback`), and — because a tag list
-is exactly the kind of enumeration that rots — a conformance rule ties it to the mechanism: a tool
-whose implementation enqueues an LLM-waking task *or activates or deactivates a stored artifact that
-fires one* must carry the tag, checked by the existing ast-grep conformance machinery, so a future
-scheduling or activation tool fails lint rather than silently joining the audit-only cell. The
-durable fix, which belongs with the artifact-provenance work in the contingent tier, is the same
-rule delegation runs already follow: persist the creation turn's taint on the automation and seed
-every later firing with it until a human attests the automation — persistence must never launder
-taint through time. The floor is the lean-core stopgap that makes the laundering impossible before
-that machinery exists.
+`schedule_reminder`, `schedule_future_callback`, `schedule_action`, `modify_pending_callback` —
+`schedule_reminder` included because it too enqueues an `llm_callback`, the exact mechanism the
+conformance rule keys on), and — because a tag list is exactly the kind of enumeration that rots — a
+conformance rule ties it to the mechanism: a tool whose implementation enqueues an LLM-waking task
+*or activates or deactivates a stored artifact that fires one* must carry the tag, checked by the
+existing ast-grep conformance machinery, so a future scheduling or activation tool fails lint rather
+than silently joining the audit-only cell. The durable fix, which belongs with the
+artifact-provenance work in the contingent tier, is the same rule delegation runs already follow:
+persist the creation turn's taint on the automation and seed every later firing with it until a
+human attests the automation — persistence must never launder taint through time. The floor is the
+lean-core stopgap that makes the laundering impossible before that machinery exists.
 
 The tag alone does not draw the line correctly, because destruction hides in overwrites too:
 `add_or_update_note` *replaces* an existing note's content when not appending, and
@@ -507,12 +508,20 @@ Instead, the egress floors gain a deterministic **binding condition**: the
 `arbitrary_external_message` and `attacker_addressable_egress` floors apply only when the turn holds
 something to protect — fail-closed, so the floor binds *unless* the profile excludes ambient context
 by construction **and** the turn has recorded no sensitive reads **and** carries no protected
-history. In the browser profiles that condition is statically true, so browsing stays exactly as
-free as today; this also gives the recorded-but-unconsumed `sensitive_reads` state its first
-deterministic lean-core consumer. Mixed-turn browsing from a [B]-bearing profile (the default
-assistant, with notes and calendar in context) keeps the floor, and its sanctioned escape is the
-idiom that already exists: delegate the browsing task to the browser profile — one decision, not one
-per navigation.
+history. The third clause needs a persisted signal that does not exist today: a `/browse` issued
+mid-conversation inherits history, and a trusted-tier assistant row that quoted a note is currently
+indistinguishable from harmless prose, because `to_metadata()` does not persist `sensitive_reads`.
+The fix is the serialization extension this document already requires for delegation and counters,
+applied to history rows too: rows written in turns with sensitive reads carry that fact in their
+metadata, `merge_history_taint()` folds it into the condition, and a row in the included window
+*lacking* the metadata fails closed (binds the floor) — the epoch pattern covers the legacy
+transition. In the browser profiles the condition is statically true for fresh conversations, so
+browsing stays exactly as free as today, while `/browse` continuing a conversation whose history
+quotes private data correctly keeps the floor; this also gives the recorded-but-unconsumed
+`sensitive_reads` state its first deterministic lean-core consumer. Mixed-turn browsing from a
+[B]-bearing profile (the default assistant, with notes and calendar in context) keeps the floor, and
+its sanctioned escape is the idiom that already exists: delegate the browsing task to the browser
+profile — one decision, not one per navigation.
 
 The condition deliberately tests **acquisition capability, not possession**. A delegated browsing
 task carries whatever the parent put in the request — an address to look up, a name to book under —
