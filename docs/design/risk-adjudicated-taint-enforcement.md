@@ -987,13 +987,18 @@ connector evidence. The de-trust must also cover the *ambient* path, which the t
 touch: `CalendarContextProvider` injects event text into every prompt and, unlike the notes
 provider, implements no `get_context_taint_sources()` — an injected invitation would reach the
 default profile with a trusted turn state and bypass every floor. Blanket-tainting the provider
-would recreate the ambient-poison problem, so it gets PR #1111's prompt-admission rule instead:
-events created through FA's confirm-gated write path count as attested by that approval and render
-normally; externally synced or unattested events render as structural stubs (count, time span — no
-attacker-authored text) until reviewed, and any event text the provider *does* render contributes
-its taint source. *Verify:* tag-audit test asserting no `OUTPUT_TRUSTED` on tools reading externally
-mutable stores; context-provider test that an unattested CalDAV event renders as a stub and
-contributes no prose; audit data shows middle tiers firing.
+would recreate the ambient-poison problem, so it gets PR #1111's prompt-admission rule instead —
+keyed on a minimal per-event provenance slice pulled into this milestone: each event stores the
+writing turn's tier at write time (one metadata field, no content matching). An intake confirmation
+*authorizes the write*; it does not change who authored the stored text — the calendar section above
+says exactly this — so an event saved from an externally-tainted turn (an emailed invitation,
+however approved) keeps external provenance. Events written from clean FA turns render normally;
+external-tier and externally synced events render as structural stubs (count, time span — no
+attacker-authored text) until a content-hash-bound review attests them, and any event text the
+provider *does* render contributes its taint source. *Verify:* tag-audit test asserting no
+`OUTPUT_TRUSTED` on tools reading externally mutable stores; context-provider tests that an
+unattested CalDAV event *and* an email-intake-created event render as stubs contributing no prose;
+audit data shows middle tiers firing.
 
 **M5 — Overwrite reversibility.** Repository-layer revision retention on note replace (prior
 revision kept on non-append `add_or_update_note`); calendar-event field replacement retains prior
@@ -1018,10 +1023,15 @@ counter fields.
 
 **M7 — Disclosure-floor binding condition.** Implement the acquisition-not-possession condition
 (profile excludes ambient context ∧ no sensitive reads ∧ no protected history, fail-closed) in the
-evaluator path for `arbitrary_external_message`/`attacker_addressable_egress`. *Verify:* both
-directions of the acceptance criterion — browser-profile turn unfloored, context-bearing turn
-floored, indeterminate input floored, and post-handback/cookie-jar credential-bearing sessions
-re-floored via recorded sensitive reads.
+evaluator path for `arbitrary_external_message`/`attacker_addressable_egress`. The second clause is
+only sound if every acquisition path records: `jq_query` resolves any acting-user-owned attachment,
+is granted globally (so the browser profile reaches it), and today records no sensitive read and
+carries no `SENSITIVE_DATA` tag — it gains `record_sensitive_read` on attachment resolution, as
+`read_text_attachment` and the document tools already do, and a test walks each exempt profile's
+tool inventory asserting that every tool able to resolve acting-user data records sensitive reads.
+*Verify:* both directions of the acceptance criterion — browser-profile turn unfloored,
+context-bearing turn floored, indeterminate input floored, and post-handback/cookie-jar
+credential-bearing sessions re-floored via recorded sensitive reads.
 
 **M8 — Error-triage automation (outbox).** Server-rendered issue body (model selects error-group id;
 server renders component/exception/fingerprint/counts from the record), private artifact for
