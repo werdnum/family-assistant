@@ -152,6 +152,27 @@ async def test_a_transient_failure_is_left_for_a_later_retry(
 
 
 @pytest.mark.asyncio
+async def test_a_failing_run_is_not_retried_every_hour(db_engine: AsyncEngine) -> None:
+    """A channel refusing for hours is not persuaded by asking again on the hour."""
+    processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.side_effect = ChatDeliveryError(
+        "connection reset", transient=True
+    )
+    await _terminal_run(db_engine, "delegation_backoff")
+    await _run_cleanup(
+        db_engine, cast("ProcessingService", processing_service), chat_interface
+    )
+    sends_after_first_failure = chat_interface.send_message.await_count
+
+    await _run_cleanup(
+        db_engine, cast("ProcessingService", processing_service), chat_interface
+    )
+
+    assert chat_interface.send_message.await_count == sends_after_first_failure
+
+
+@pytest.mark.asyncio
 async def test_a_transient_failure_that_never_recovers_stops_being_treated_as_one(
     db_engine: AsyncEngine,
 ) -> None:

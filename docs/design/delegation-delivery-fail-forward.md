@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed.
+Implemented.
 
 ## The problem
 
@@ -80,13 +80,15 @@ is independently testable and independently useful (the hourly warning finally s
 
 In `_notify_delegation_if_needed` / `_deliver_delegation_wake_response`:
 
-- **Transient failure** — leave `notified_at` NULL; the hourly cleanup retries the same text, as
-  today. Waking the model to rewrite a message because the network blipped would burn a turn and
-  change a reply that was fine. But "transient" cannot mean "forever": a run whose transient
-  failures keep coming for longer than `DELEGATION_NOTIFY_TRANSIENT_MAX_AGE` (a day) is reclassified
-  as permanent and enters fail-forward. Something that has not recovered in a day is not a blip, and
-  without this an outage that never ends reproduces exactly the unbounded retry loop this document
-  exists to remove.
+- **Transient failure** — leave `notified_at` NULL; the cleanup retries the same text, as today,
+  including the existing fallback to the standard notice when it is the *wake* that failed. (A
+  permanent wake failure skips that fallback: sending a second message down a channel that just
+  refused one for a settled reason only produces a second refusal.) Waking the model to rewrite a
+  message because the network blipped would burn a turn and change a reply that was fine. But
+  "transient" cannot mean "forever": a run whose transient failures keep coming for longer than
+  `DELEGATION_NOTIFY_TRANSIENT_MAX_AGE` (a day) is reclassified as permanent and enters
+  fail-forward. Something that has not recovered in a day is not a blip, and without this an outage
+  that never ends reproduces exactly the unbounded retry loop this document exists to remove.
 - **Permanent failure** — run one more source-profile turn whose trigger says the reply could not be
   delivered, names the interface and the reason, and states that the text is already saved in the
   conversation history. Its reply is delivered like any other. The model has its normal tools, so
@@ -96,8 +98,10 @@ Bounding, so a failing channel cannot spin:
 
 - **One fail-forward turn per delegation run**, tracked by a new `notify_stage` column on
   `delegation_runs` (`initial` → `failed_forward` → `canned_pending` → `gave_up`), with an Alembic
-  migration. The stage is what bounds the turns; a plain per-attempt counter would not, because
-  delivery attempts and fail-forward turns advance at different rates.
+  migration alongside `notify_attempts`, `notify_first_failed_at`, and `notify_error` (the delivery
+  failure is kept apart from `error` so a completed run's own result is not overwritten by a
+  transport problem). The stage is what bounds the turns; a plain per-attempt counter would not,
+  because delivery attempts and fail-forward turns advance at different rates.
 - **Each stage is committed when it is entered, before the send it describes.** `canned_pending`
   exists for the mixed case: the fail-forward reply failed permanently but the canned notice then
   failed transiently. Without it the run would still read `failed_forward`, and every hourly retry
@@ -129,9 +133,11 @@ indefinitely.
 
 ## Milestone 3: back off transient retries
 
-Transient retries stay hourly today because the cleanup job is hourly. With a per-run attempt count
-recorded alongside `notify_stage`, stretch them (1h, 2h, 4h, capped daily) so a long outage does not
-produce one failure log per hour per stuck run. Optional; separable from the milestones above.
+The cleanup pass still runs hourly, but a run that has been failing is only attempted once its wait
+has elapsed: the wait doubles from the first failure, capped, so a day-long outage costs a handful
+of attempts rather than twenty-four. This needed no extra state — `notify_attempts` and
+`notify_first_failed_at` already say how long a run has been failing and how often it has been
+tried.
 
 ## What this does not change
 

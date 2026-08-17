@@ -303,6 +303,23 @@ Something that has not recovered in a day is not a blip, and leaving it
 uncapped reproduces the unbounded retry loop this machinery exists to remove.
 """
 
+_DELEGATION_NOTIFY_BACKOFF_MAX_DOUBLINGS = 5
+
+
+def _delegation_notify_retry_due(run: DelegationRunDict, now: datetime) -> bool:
+    """Whether a run that has been failing is due for another attempt.
+
+    The cleanup pass runs hourly, but a channel that has been refusing for
+    hours will not be persuaded by asking every hour: the wait doubles from the
+    first failure, so a day-long outage costs a handful of attempts instead of
+    twenty-four. A run that has never failed is always due.
+    """
+    first_failed_at = run["notify_first_failed_at"]
+    if first_failed_at is None or run["notify_attempts"] == 0:
+        return True
+    doublings = min(run["notify_attempts"], _DELEGATION_NOTIFY_BACKOFF_MAX_DOUBLINGS)
+    return now - _as_aware_utc(first_failed_at) >= timedelta(hours=2**doublings)
+
 
 class LlmCallbackPayload(TypedDict, total=False):
     """Payload for llm_callback tasks.
@@ -1907,11 +1924,15 @@ class TaskWorker:
         # force-notify whose delivery failed leaves a terminal run notified_at
         # NULL with no owning task left to retry it. The completed_at gate keeps
         # this from racing a live inline caller within its short handoff window.
-        unnotified = (
-            await exec_context.db_context.delegation_runs.find_terminal_unnotified(
-                completed_before=created_before
+        unnotified = [
+            run
+            for run in (
+                await exec_context.db_context.delegation_runs.find_terminal_unnotified(
+                    completed_before=created_before
+                )
             )
-        )
+            if _delegation_notify_retry_due(run, now)
+        ]
         if unnotified:
             logger.warning(
                 "Recovering %d terminal delegation run(s) left unnotified.",
