@@ -303,12 +303,20 @@ Executable persistence is the fourth floored family, and the sneakiest: `create_
 reconstructs a fired automation as a system trigger with no memory of the creation turn's taint, so
 an injected email could plant a callback under an audit-only cell and have its payload run later,
 outside every floor, in a clean-looking turn. Creation of executable or scheduled artifacts
-therefore joins the floored set (`confirm` at externally authored tiers, via the existing
-`AUTOMATION`/`STATE_PERSISTING` tags — another resolver split). The durable fix, which belongs with
-the artifact-provenance work in the contingent tier, is the same rule delegation runs already
-follow: persist the creation turn's taint on the automation and seed every later firing with it
-until a human attests the automation — persistence must never launder taint through time. The floor
-is the lean-core stopgap that makes the laundering impossible before that machinery exists.
+therefore joins the floored set (`confirm` at externally authored tiers). Keying this on the
+incidental existing tags is not enough — `schedule_future_callback` carries only `STATE_CHANGING`
+and `SCHEDULING`, so an `AUTOMATION`/`STATE_PERSISTING` key would miss one-time callbacks, which are
+executable persistence all the same. The class gets its own explicit tag (`EXECUTABLE_PERSISTENCE`,
+on `create_automation`, `update_automation`, script saves, `schedule_future_callback`,
+`schedule_action`, `modify_pending_callback`), and — because a tag list is exactly the kind of
+enumeration that rots — a conformance rule ties it to the mechanism: a tool whose implementation
+enqueues an LLM-waking task must carry the tag, checked by the existing ast-grep conformance
+machinery, so a future scheduling tool fails lint rather than silently joining the audit-only cell.
+The durable fix, which belongs with the artifact-provenance work in the contingent tier, is the same
+rule delegation runs already follow: persist the creation turn's taint on the automation and seed
+every later firing with it until a human attests the automation — persistence must never launder
+taint through time. The floor is the lean-core stopgap that makes the laundering impossible before
+that machinery exists.
 
 The tag alone does not draw the line correctly, because destruction hides in overwrites too:
 `add_or_update_note` *replaces* an existing note's content when not appending, and
@@ -540,13 +548,16 @@ flash-model check; selection is an implementation detail). A detection:
 The same jamming logic bounds the confirmation side. Exact-fingerprint coalescing survives probe
 labeling (identical concurrent calls collapsing into one card never authorizes anything new), and
 after K interactive confirmation requests on a labeled turn, further probe-induced escalations
-**defer rather than deny**: the remaining gated calls coalesce into a single batched confirmation
-through the existing durable-confirmation machinery (the deferred-execution path email intake
-already uses — the calls run when the batch is approved, each item individually decidable on the
-card). Conversion to denial would make the probe the sole reason a valid workflow fails, which is
-exactly the availability boundary it must never become; deferral keeps the invariant intact while
-still capping live interruptions at K. Per-turn confirmation counts on labeled turns are a standing
-metric so the bound is measured rather than assumed.
+**defer rather than deny**: each remaining gated call becomes a deferred durable confirmation — the
+single-call records and deferred-execution path email intake already uses, surfaced together in the
+existing pending-confirmations tray rather than interrupting live. This is deliberately *not* a
+coalesced multi-item approval card: `confirmation_requests` stores one tool call per record, which
+is the right granularity anyway, since each deferred call must stay individually decidable. A true
+batch card would need new schema, UI, and executor, and is at most a contingent UX refinement if
+tray volume ever warrants it. Conversion to denial would make the probe the sole reason a valid
+workflow fails, which is exactly the availability boundary it must never become; deferral keeps the
+invariant intact while capping *live* interruptions at K. Per-turn confirmation counts on labeled
+turns are a standing metric so the bound is measured rather than assumed.
 
 No probe verdict ever relaxes anything, so its adaptive-attack failure mode (missing a novel
 payload) degrades to exactly the system without a probe; no probe verdict ever denies or causes a
