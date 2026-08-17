@@ -994,8 +994,11 @@ provider, implements no `get_context_taint_sources()` — an injected invitation
 default profile with a trusted turn state and bypass every floor. Blanket-tainting the provider
 would recreate the ambient-poison problem, so it gets PR #1111's prompt-admission rule instead —
 keyed on a minimal per-event provenance slice pulled into this milestone: each event stores the
-writing turn's tier at write time (one metadata field, no content matching); on
-`modify_calendar_event` the stored tier is the *maximum* of the existing event's tier and the
+writing turn's tier at write time, **bound to a content hash of the prompt-visible fields** — the
+hash is not deferrable to the contingent tier, because the calendar section's permanent-fallback
+rule exists precisely for this store: CalDAV is externally mutable, so a trusted-stamped event an
+organizer later edits must read back as external, and a missing or mismatched hash means external.
+On `modify_calendar_event` the stored tier is the *maximum* of the existing event's tier and the
 modifying turn's, because partial modification retains unspecified fields — a clean turn changing an
 externally authored event's time must not promote its retained hostile description. In the lean
 core, modification never promotes; only attestation does. An intake confirmation *authorizes the
