@@ -188,6 +188,40 @@ async def test_a_failing_run_is_not_retried_every_hour(db_engine: AsyncEngine) -
 
 
 @pytest.mark.asyncio
+async def test_a_burst_of_task_retries_does_not_delay_the_next_cleanup(
+    db_engine: AsyncEngine,
+) -> None:
+    """The finishing task retries within seconds; that is not a long outage.
+
+    Counting those attempts towards the backoff would read a minute of trouble
+    as hours of it and leave the result undelivered for most of a day.
+    """
+    processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "delivered_once_the_channel_returned"
+    await _terminal_run(db_engine, "delegation_retry_burst")
+    db_context = Database(engine=db_engine)
+    # Four failures milliseconds apart, as the finishing task's own retries
+    # produce, an hour and a half ago.
+    burst_at = datetime.now(UTC) - timedelta(minutes=90)
+    for _ in range(4):
+        await db_context.delegation_runs.record_notify_failure(
+            "delegation_retry_burst", now=burst_at
+        )
+
+    await _run_cleanup(
+        db_engine, cast("ProcessingService", processing_service), chat_interface
+    )
+
+    run = await Database(engine=db_engine).delegation_runs.get_by_delegation_id(
+        "delegation_retry_burst"
+    )
+    assert run is not None
+    assert run["notify_attempts"] == 4
+    assert run["notified_at"] is not None
+
+
+@pytest.mark.asyncio
 async def test_a_transient_failure_that_never_recovers_stops_being_treated_as_one(
     db_engine: AsyncEngine,
 ) -> None:

@@ -42,10 +42,15 @@ def upgrade() -> None:
         "delegation_runs",
         sa.Column("notify_first_failed_at", sa.DateTime(timezone=True), nullable=True),
     )
+    op.add_column(
+        "delegation_runs",
+        sa.Column("notify_last_failed_at", sa.DateTime(timezone=True), nullable=True),
+    )
 
 
 def downgrade() -> None:
     """Drop the delivery-stage tracking columns."""
+    op.drop_column("delegation_runs", "notify_last_failed_at")
     op.drop_column("delegation_runs", "notify_first_failed_at")
     op.drop_column("delegation_runs", "notify_error")
     op.drop_column("delegation_runs", "notify_attempts")

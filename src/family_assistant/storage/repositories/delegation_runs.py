@@ -84,6 +84,7 @@ class DelegationRunDict(TypedDict):
     notify_attempts: int
     notify_error: str | None
     notify_first_failed_at: datetime | None
+    notify_last_failed_at: datetime | None
     remote_task_id: str | None
     remote_context_id: str | None
     poll_attempts: int
@@ -497,7 +498,8 @@ class DelegationRunsRepository(BaseRepository):
         ``notify_first_failed_at`` is only set once, so it measures how long
         this run has been failing rather than when it last failed -- which is
         what decides that a transient failure has gone on too long to still be
-        treated as one.
+        treated as one. ``notify_last_failed_at`` moves every time, so the wait
+        before the next attempt can be measured from the most recent one.
         """
         stmt = (
             update(delegation_runs_table)
@@ -507,6 +509,7 @@ class DelegationRunsRepository(BaseRepository):
                 notify_first_failed_at=func.coalesce(
                     delegation_runs_table.c.notify_first_failed_at, now
                 ),
+                notify_last_failed_at=now,
                 updated_at=now,
             )
             .returning(delegation_runs_table)
@@ -618,6 +621,7 @@ class DelegationRunsRepository(BaseRepository):
             notify_attempts=row.get("notify_attempts") or 0,
             notify_error=row.get("notify_error"),
             notify_first_failed_at=row.get("notify_first_failed_at"),
+            notify_last_failed_at=row.get("notify_last_failed_at"),
             remote_task_id=row.get("remote_task_id"),
             remote_context_id=row.get("remote_context_id"),
             poll_attempts=row.get("poll_attempts") or 0,

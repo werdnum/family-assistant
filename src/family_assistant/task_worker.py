@@ -304,22 +304,40 @@ Something that has not recovered in a day is not a blip, and leaving it
 uncapped reproduces the unbounded retry loop this machinery exists to remove.
 """
 
-_DELEGATION_NOTIFY_BACKOFF_MAX_DOUBLINGS = 5
+_DELEGATION_NOTIFY_MIN_BACKOFF = timedelta(hours=1)
+_DELEGATION_NOTIFY_MAX_BACKOFF = timedelta(hours=8)
 
 
 def _delegation_notify_retry_due(run: DelegationRunDict, now: datetime) -> bool:
     """Whether a run that has been failing is due for another attempt.
 
     The cleanup pass runs hourly, but a channel that has been refusing for
-    hours will not be persuaded by asking every hour: the wait doubles from the
-    first failure, so a day-long outage costs a handful of attempts instead of
-    twenty-four. A run that has never failed is always due.
+    hours will not be persuaded by asking every hour, so the next attempt waits
+    as long as the run has already been failing -- an hour at the least, and no
+    more than ``_DELEGATION_NOTIFY_MAX_BACKOFF``.
+
+    The wait is measured in elapsed time rather than counted in attempts on
+    purpose. A run that finishes during a brief outage burns several attempts
+    in seconds on the finishing task's own fast retries, and a count-based
+    backoff would read that burst as a long-running outage and then leave the
+    result undelivered for most of a day. A run that has never failed is always
+    due.
     """
-    first_failed_at = run["notify_first_failed_at"]
-    if first_failed_at is None or run["notify_attempts"] == 0:
+    last_failed_at = run["notify_last_failed_at"]
+    if last_failed_at is None:
         return True
-    doublings = min(run["notify_attempts"], _DELEGATION_NOTIFY_BACKOFF_MAX_DOUBLINGS)
-    return now - _as_aware_utc(first_failed_at) >= timedelta(hours=2**doublings)
+    last_failure = _as_aware_utc(last_failed_at)
+    first_failure = _as_aware_utc(run["notify_first_failed_at"] or last_failed_at)
+    # How long it had been failing *when it last tried* -- not how long it has
+    # been failing now. Measuring the wait against a span that grows at the
+    # same rate as the wait itself never elapses: a run whose failures are a
+    # few milliseconds apart would sit until the cap.
+    failing_for = last_failure - first_failure
+    wait = min(
+        max(failing_for, _DELEGATION_NOTIFY_MIN_BACKOFF),
+        _DELEGATION_NOTIFY_MAX_BACKOFF,
+    )
+    return now - last_failure >= wait
 
 
 class LlmCallbackPayload(TypedDict, total=False):

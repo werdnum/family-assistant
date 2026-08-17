@@ -82,6 +82,7 @@ delegation_runs_table = Table(
     # can be reclassified as permanent instead of retrying for as long as the
     # outage lasts.
     Column("notify_first_failed_at", DateTime(timezone=True), nullable=True),
+    Column("notify_last_failed_at", DateTime(timezone=True), nullable=True),
     # Remote (A2A) task identifiers for the submit-then-poll async path. Null
     # for local delegations, which have no remote task to poll.
     Column("remote_task_id", String(255), nullable=True),
