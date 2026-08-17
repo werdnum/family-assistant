@@ -381,6 +381,77 @@ payload) degrades to exactly the system without a probe; and no probe verdict ev
 own, so its false positives cost at most one extra confirmation. Cheap detections of commodity spray
 attacks get deterministic hardening plus a visible audit trail.
 
+### Persistent artifacts: content-derived provenance and attested healing
+
+Notes and other stored artifacts are the second engine of the production friction, and in the audit
+data they fired *first*: the two poisoned prompt-included notes put every turn at `unknown_external`
+before any email or web page was touched, and one of them had been re-stamped from the other — a
+pure artifact-to-artifact feedback loop. PR #1111's prompt-admission rule governs where high-tier
+artifacts may *land* (ambient context); this section addresses how artifacts *acquire* taint, why
+they never lose it, and how to shrink both without weakening what artifact provenance is for.
+
+Four mechanisms combine into the current behavior:
+
+1. **Whole-turn stamping.** A write persists the *turn's* maximum tier, not the *content's* origin.
+   An unrelated web search earlier in the turn poisons an evergreen preference note the user
+   dictated verbatim.
+2. **Sticky provenance.** Clean-turn edits preserve earlier stored provenance — deliberately, since
+   new content may derive from old — so one poisoned write is permanent absent deletion.
+3. **Global restore-on-read.** `get_note` (and listing, and prompt inclusion) merges stored
+   provenance into the turn, raising `max_tier` for everything after it. The escalation is correct
+   in direction but undiscriminating in effect: a grocery list saved from a recipe site months ago
+   gates the turn exactly like this morning's unread stranger email.
+4. **Destroyed attribution.** `to_metadata()` truncates to twelve sources and round-trips the rest
+   as anonymous `manual` entries, which is why the epoch-amnesty design found production attribution
+   "already destroyed" — per-artifact forensics or amnesty cannot be reconstructed after the fact.
+
+The fixes follow the same philosophy as the rest of this design — deterministic provenance,
+human-only trust promotion, judgment only where it is cheap to be wrong:
+
+**Stamp writes from content, not turns.** The artifact-write path (`add_or_update_note`,
+`workspace_write`, document ingestion) runs the same trusted-tier matching built for the judge's
+rendering filter over the *content argument*: content that provably originates from the current
+turn's trusted-tier text is stamped `trusted_user` even in a tainted turn; content that matches a
+specific untrusted source inherits *that source's* provenance, specifically rather than anonymously;
+content that matches nothing — model-composed, paraphrased, or derived from stored artifacts — falls
+back to today's turn-maximum stamp. The fallback is what makes this safe against laundering: a model
+paraphrase of an injected email fails the verbatim match and stays high-tier, so an attacker cannot
+wash content by asking the model to reword it. What the rule kills is exactly the observed
+false-positive class — collateral stamping of user-dictated content by unrelated taint, including
+the note-to-note feedback loop, because editing note B never matches tainted note A's content unless
+it actually copies it. Writes through the authenticated Notes UI (no model in the loop) remain
+trusted by construction, and stay the zero-friction path.
+
+**Heal per revision, deterministically.** Sticky provenance exists because an edit may derive from
+the tainted prior content — but derivation is checkable by the same matcher. If a clean-turn edit
+fully re-authors the content (new content matches current trusted-tier text, no overlap with the
+stored tainted content beyond trivial length), the revision's provenance replaces rather than
+merges. If any part fails the match, stickiness applies as today. Frequently edited evergreen notes
+heal through normal use instead of needing repeated review.
+
+**Make attestation the amnesty.** PR #1111's content-hash-bound review clears an artifact for
+*ambient* use; extend the same authenticated operation to rewrite stored provenance to
+`trusted_user` for the attested revision, so an explicit `get_note` of a reviewed note stops
+re-tainting turns too. Same invariants: bound to the canonical hash of every prompt-visible field,
+set only by an authenticated human through trusted chrome, invalidated by any change, untouchable by
+model-influenced write paths. Human attestation — not tier decay, not age, not a model verdict — is
+the only way stored provenance ever moves toward trusted.
+
+**Persist attribution losslessly.** Move artifact and row provenance to structured, deduplicated
+source records (an artifact-provenance table referenced by id, rather than twelve inline truncated
+sources). This is what keeps every other mechanism honest: per-artifact amnesty, the feedback-loop
+diagnosis, and the judge's provenance digest all need attribution that survives storage. The
+epoch-amnesty postmortem is the cautionary tale — by the time the policy questions were asked, the
+data needed to answer them had been rounded away.
+
+**Let adjudication absorb the rest at read time.** Restored artifact taint stops being expensive
+once the middle cells are adjudicated: reading a tainted note no longer cascades into blanket
+confirmations, because the judge sees *which* artifact contributed the taint — id, tier, age, review
+state, all closed-vocabulary or tier-filtered fields — and weighs it against the user's request.
+`max_tier` monotonicity and the egress floors are unchanged; a turn that read a tainted note still
+cannot reach an unapproved external destination without a human. The impact reduction is in the
+noise, not the tails.
+
 ### Calibration work that stays as-is
 
 Unchanged from PR #1111 and prior docs, restated as prerequisites: prompt-admission control for
@@ -440,14 +511,18 @@ Each phase independently shippable and valuable:
    production). Re-run the audit so later phases calibrate against traffic without ambient floors.
 2. **Calibration:** middle-tier allowlists, tag hygiene, Trino fix. Cheap, shrinks the
    `unknown_external` population honestly.
-3. **Adjudicator in shadow:** implement `adjudicate` + the judge; run under `observe` (verdicts
+3. **Content-derived artifact provenance:** stamp writes from content origin with turn-maximum
+   fallback, revision-scoped healing, lossless attribution storage, and the attestation extension of
+   PR #1111's review. Valuable while still in `observe` — it stops new artifact poisoning and the
+   feedback loop before enforcement exists, and cleans the traffic the shadow phase measures.
+4. **Adjudicator in shadow:** implement `adjudicate` + the judge; run under `observe` (verdicts
    logged, nothing blocked). Evaluate against the shadow-phase gates. This phase risks nothing and
    produces the data that decides everything after it.
-4. **Enforce with the proposed matrix**, deny-and-continue, escalation counters, updated
+5. **Enforce with the proposed matrix**, deny-and-continue, escalation counters, updated
    `require_taint_enforcement`. Gmail/Drive tools register for the first time.
-5. **Destination-bound confirmation reuse** (the positive-authorization path through floor cells),
+6. **Destination-bound confirmation reuse** (the positive-authorization path through floor cells),
    with argument provenance matching as judge input, rendering filter, and approval fingerprint.
-6. **Injection probe**, escalate-only, once there's an enforcement layer for it to harden.
+7. **Injection probe**, escalate-only, once there's an enforcement layer for it to harden.
 
 ## Acceptance criteria
 
@@ -470,6 +545,13 @@ Each phase independently shippable and valuable:
 - Adjudication in a delegated run sees the same temporal evidence (sensitive-read records,
   fresh-taint ordering) as it would in the parent turn: the serialized taint schema carries it
   across the delegation round trip.
+- An artifact written from content that verbatim-matches the current turn's trusted-tier text
+  carries trusted provenance even in a tainted turn; a model paraphrase of untrusted content fails
+  the match and keeps the turn-maximum stamp — laundering by rewording is impossible by
+  construction.
+- Stored artifact provenance moves toward trusted only through deterministic content-derived
+  stamping, deterministic revision-scoped healing, or an authenticated human attestation — never
+  through a model verdict, and attribution survives storage without truncation.
 - Every verdict, escalation, and probe detection is auditable after the fact with reasons.
 
 ## References
