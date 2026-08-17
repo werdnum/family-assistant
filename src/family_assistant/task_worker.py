@@ -2098,6 +2098,7 @@ class TaskWorker:
             notify_error=str(failure),
         )
         if next_stage == "gave_up":
+            await self._record_undelivered_delegation_result(exec_context, run, now)
             # Not marked notified: it never reached the requester, and a run that
             # silently counts as delivered is the failure this machinery removes.
             # Logged at error level so it lands in error_logs, where a human (or
@@ -2120,6 +2121,38 @@ class TaskWorker:
             next_stage,
         )
         return advanced
+
+    async def _record_undelivered_delegation_result(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+        now: datetime,
+    ) -> None:
+        """Put the result in the conversation even though nobody could be told.
+
+        A run that woke the source profile already has the reply in history --
+        the wake turn wrote it, which is what the delivery checkpoint resumes
+        from. A run with no source profile loaded here has written nothing,
+        because the direct path records only after a successful send. Without
+        this, giving up would leave the result on the delegation row alone,
+        while the error log and the user documentation both say it is in the
+        conversation.
+        """
+        if self._source_service_for_delegation(exec_context, run) is not None:
+            return
+        await exec_context.db_context.message_history.add_message(
+            AssistantMessage(
+                content=self._delegation_notification_text(run),
+                taint_metadata=await _delegation_result_taint_metadata(
+                    exec_context.db_context, run
+                ),
+            ),
+            interface_type=run["interface_type"],
+            conversation_id=run["conversation_id"],
+            timestamp=now,
+            user_id=run["user_id"],
+            attachments=self._delegation_notification_attachments(run),
+        )
 
     @staticmethod
     def _transient_delivery_has_run_out(run: DelegationRunDict, now: datetime) -> bool:
@@ -2295,8 +2328,19 @@ class TaskWorker:
                     run["delegation_id"],
                 )
 
-        message_text = self._delegation_notification_text(run)
-        attachments = self._delegation_notification_attachments(run)
+        # The standard notice quotes the whole result, which is no use at the
+        # stage reached *because* the result would not fit: it would be refused
+        # for the same reason. The last resort is a fixed short line with the
+        # attachments left off.
+        last_resort = stage == "canned_pending"
+        message_text = (
+            self._delegation_undeliverable_notice_text(run)
+            if last_resort
+            else self._delegation_notification_text(run)
+        )
+        attachments = (
+            None if last_resort else self._delegation_notification_attachments(run)
+        )
         interface_type = run["interface_type"]
 
         notification_taint_metadata = await _delegation_result_taint_metadata(
@@ -2324,7 +2368,11 @@ class TaskWorker:
                     conversation_id=run["conversation_id"],
                     text=message_text,
                     parse_mode=None,
-                    attachment_ids=run["result_attachment_ids_json"] or None,
+                    attachment_ids=(
+                        None
+                        if last_resort
+                        else run["result_attachment_ids_json"] or None
+                    ),
                     on_behalf_of_user_id=run["user_id"],
                     taint_metadata=notification_taint_metadata,
                 )
@@ -2826,6 +2874,20 @@ class TaskWorker:
             f"Original request: {run['request_text']}\n\n"
             "Failure detail:\n"
             f"{error_summary}"
+        )
+
+    def _delegation_undeliverable_notice_text(self, run: DelegationRunDict) -> str:
+        """Build the last-resort notice: short, plain, and carrying no result.
+
+        Everything richer has already been refused by this channel, so this
+        quotes neither the result nor the failure detail -- length and
+        formatting are the usual reasons a message is refused, and this one has
+        to get through.
+        """
+        return (
+            f"A delegated task ({run['delegation_id']}) finished, but its result "
+            "could not be delivered here. Ask me about it and I will send it in "
+            "a form this channel accepts."
         )
 
     def _delegation_notification_text(self, run: DelegationRunDict) -> str:

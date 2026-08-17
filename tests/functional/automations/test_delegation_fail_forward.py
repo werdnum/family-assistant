@@ -28,6 +28,7 @@ from family_assistant.task_worker import DelegationRunCleanupPayload, TaskWorker
 from family_assistant.utils.clock import SystemClock
 
 from .test_async_delegation import (
+    TEST_CONVERSATION_ID,
     FakeDelegatableService,
     FakeWakeCapableSourceService,
     _create_run,
@@ -40,6 +41,19 @@ if TYPE_CHECKING:
     from family_assistant.processing import ProcessingService
 
 _CLEANUP_PAYLOAD = DelegationRunCleanupPayload(running_timeout_seconds=0)
+
+
+class _NoSourceProfileService(FakeWakeCapableSourceService):
+    """A service that is not the delegating profile and knows of no registry.
+
+    Stands in for a worker process where the profile that made the delegation
+    is not loaded, so there is nobody to hand a delivery failure to.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(FakeDelegatableService())
+        self.service_config.id = "some_other_profile"
+        self.processing_services_registry = None
 
 
 class _TriggerRecordingSourceService(FakeWakeCapableSourceService):
@@ -236,6 +250,62 @@ async def test_an_undeliverable_run_ends_in_gave_up_rather_than_notified(
     # The result reply, the fail-forward reply, and the canned notice: no more.
     assert chat_interface.send_message.await_count == 3
     assert processing_service.wake_call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_the_last_resort_notice_carries_neither_result_nor_attachments(
+    db_engine: AsyncEngine,
+) -> None:
+    """The stage exists because the result would not fit; quoting it repeats that.
+
+    The standard completion notice embeds the whole delegated result, so using
+    it here would be refused for the same reason that got the run to this stage.
+    """
+    processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.side_effect = ChatDeliveryError(
+        "Message is too long", transient=False
+    )
+    await _terminal_run(db_engine, "delegation_last_resort")
+
+    await _run_cleanup(
+        db_engine, cast("ProcessingService", processing_service), chat_interface
+    )
+
+    last_send = chat_interface.send_message.await_args_list[-1].kwargs
+    assert "the delegated work, in full" not in last_send["text"]
+    assert "could not be delivered here" in last_send["text"]
+    assert last_send["attachment_ids"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_run_that_gave_up_still_leaves_its_result_in_the_conversation(
+    db_engine: AsyncEngine,
+) -> None:
+    """Nothing reached the user, so the result has to be somewhere they can ask for.
+
+    A run that woke the source profile already has its reply in history. One
+    with no source profile loaded writes nothing on the direct path, which
+    records only after a successful send.
+    """
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.side_effect = ChatDeliveryError(
+        "chat not found", transient=False
+    )
+    await _terminal_run(db_engine, "delegation_no_source_profile")
+    orphaned_service = _NoSourceProfileService()
+
+    await _run_cleanup(
+        db_engine, cast("ProcessingService", orphaned_service), chat_interface
+    )
+
+    assert orphaned_service.wake_call_count == 0
+
+    db_context = Database(engine=db_engine)
+    rows, _, _ = await db_context.message_history.get_conversation_messages_paginated(
+        conversation_id=TEST_CONVERSATION_ID, limit=50
+    )
+    assert any("the delegated work, in full" in (row["content"] or "") for row in rows)
 
 
 @pytest.mark.asyncio
