@@ -382,6 +382,18 @@ WARNING - Environment variable expansion failed in MCP config: ...
 **Cause**: MCP server process failed to start or missing environment variables. **Solution**: Check
 MCP configuration, verify required environment variables.
 
+#### MCP Tool List Changes
+
+```
+INFO - MCP server 'brave' reported a changed tool list on health check: now 3 tool(s) (added: brave_search; removed: none)
+```
+
+**Cause**: the tool list a server reports is re-read on every health check, so the tools the
+assistant can reach follow the server rather than being frozen at connect time. A server that came
+up reporting the wrong set — most damagingly an empty one — recovers on its own within one health
+check interval. **Solution**: none needed for a one-off. A server that flips its list back and forth
+every cycle is misbehaving; check that server's own logs.
+
 ### Debugging Tips
 
 1. **Enable DEBUG_LLM_MESSAGES** to see full LLM request/response cycles
