@@ -570,10 +570,12 @@ erodes them.
 
 ### Escalate-only injection probe (contingent tier)
 
-At the two ingestion chokepoints that already exist — `derive_tool_result_taint_source` for
-`OUTPUT_UNTRUSTED` tool results, and email intake — run a cheap injection screen (options:
-PromptGuard-class local model, the Gemini detector we already enable for computer use, or a
-flash-model check; selection is an implementation detail). A detection:
+At the two ingestion chokepoints that already exist — `derive_tool_result_taint_source` for any tool
+result whose *derived* tier is externally authored (which covers `OUTPUT_UNTRUSTED` and, via the
+conservative fallback, `OUTPUT_UNSPECIFIED` — the trigger keys on the derived source, not the tag),
+and email intake — run a cheap injection screen (options: PromptGuard-class local model, the Gemini
+detector we already enable for computer use, or a flash-model check; selection is an implementation
+detail). A detection:
 
 - adds a `suspected_injection` provenance label to the source (labels already exist on
   `TaintSource`),
