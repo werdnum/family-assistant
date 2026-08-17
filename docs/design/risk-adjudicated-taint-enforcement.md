@@ -283,7 +283,12 @@ must never be able to authorize outbound disclosure on its own at *any* external
 adjudication is reserved for the noisy non-egress cells, where the floors downstream still hold.
 What the middle tiers buy is a gentler experience everywhere else, not a softer exfiltration path;
 and since those tiers have never fired in production (empty allowlists), keeping their egress floors
-costs nothing observed today.
+costs nothing observed today. The disclosure floors (`arbitrary_external_message`,
+`attacker_addressable_egress`) additionally carry the **binding condition** defined in the
+unattended-work section: they apply only when the turn holds something to disclose, fail-closed —
+which is what keeps the no-[B] browser profiles browsing freely while the same navigation from a
+context-bearing profile confirms. `sandbox_network` and the actuation/destruction/persistence floors
+are unconditional; their harm does not depend on what the turn has read.
 
 Egress is not the only irreversible sink hiding in a soft cell. `call_home_assistant_action`
 classifies `lock`, `alarm_control_panel`, `valve`, and `siren` as `home_local`, and the default
@@ -439,25 +444,34 @@ construction (the model's channel is its choice among error groups — a few bit
 (stack traces, log excerpts) goes to a private artifact the issue references. Free-form text
 crossing a trust boundary is where both injection and exfiltration live; server-derived data
 crossing it is boring in both directions — and "typed" must always cash out as *derived or validated
-against the bounded source*, never as "a string field with a reassuring name." Interactive browsing
-sessions are the reuse pattern, not an envelope: the first navigation to an origin confirms as a
-real, observed action, and that approval reuses origin-scoped for the session — one confirmation per
-task instead of one per navigation, grounded in an instance the human saw. One enforcement caveat
-the tool chokepoint cannot meet: `browser_click` and form submission carry no destination argument,
-and the navigation happens before the resulting URL is known, so a hostile page on the approved
-origin could redirect or submit cross-origin under the reused approval. Origin-scoped reuse is
-therefore enforced at the **browser/network layer** (route interception in the existing Playwright
-backend), scoped to what the approval actually covers: the backend blocks cross-origin *top-level
-navigations, redirects, and form submissions* — the agent going somewhere — before they happen. A
-blanket block on all cross-origin requests would break ordinary pages, which load scripts, images,
-and API data from CDNs and sibling origins before a session is usable. That scoping leaves an open
-choice, flagged rather than decided here: subresource requests remain a low-grade exfiltration
-channel (an injected image URL carrying data in its path), but that channel exists whenever any
-hostile page is rendered at all, approval or no approval — so either it is accepted as a property of
-browsing generally, or the approval names a visible origin *set* and subresources outside it are
-blocked too, at the cost of per-site curation. Where network-layer enforcement is unavailable,
-per-navigation confirmation remains instead. An approval the chokepoint cannot actually enforce must
-not be reusable.
+against the bounded source*, never as "a string field with a reassuring name."
+
+**Browsing needs no origin machinery at all, because the egress floor should not bind where there is
+nothing to exfiltrate.** An earlier revision of this design proposed origin-scoped session approvals
+enforced by network-layer interception; that is withdrawn as a capability regression built on a
+wrong premise. Ordinary browsing is inherently cross-origin — search results, SSO redirects, payment
+hops — and the exfiltration floor's purpose is to protect sensitive context, which the dedicated
+browser profiles do not have: no aggregated context providers, no note or calendar tools, no
+sensitive reads. That is the Rule of Two doing its work through profile confinement, and it makes
+origin blocks there protection for an empty vault at the price of breaking the web.
+
+Instead, the egress floors gain a deterministic **binding condition**: the
+`arbitrary_external_message` and `attacker_addressable_egress` floors apply only when the turn holds
+something to protect — fail-closed, so the floor binds *unless* the profile excludes ambient context
+by construction **and** the turn has recorded no sensitive reads **and** carries no protected
+history. In the browser profiles that condition is statically true, so browsing stays exactly as
+free as today; this also gives the recorded-but-unconsumed `sensitive_reads` state its first
+deterministic lean-core consumer. Mixed-turn browsing from a [B]-bearing profile (the default
+assistant, with notes and calendar in context) keeps the floor, and its sanctioned escape is the
+idiom that already exists: delegate the browsing task to the browser profile — one decision, not one
+per navigation.
+
+Where browser risk actually concentrates is authenticated sessions (cookie jars — a hostile page
+driving actions on logged-in accounts) and purchases, and those are governed by their existing
+confirmation surfaces: browser handoff for login and payment, UCP checkout transfer, and the
+computer-use safety-decision flow. Care belongs there, not on anonymous navigation. If
+credential-bearing sessions ever warrant network-level hardening, that is a contingent-tier question
+scoped to those sessions alone.
 
 ### The adjudicator (contingent tier)
 
@@ -840,15 +854,18 @@ cells the data indicts:
 7. **Content-derived artifact provenance** (stamping, healing, lossless attribution, attestation
    extension) if artifact-restored taint is what the measurements indict.
 8. **Post-facto capability-scoped approval reuse** (a real approval of a real instance becomes
-   durable for its exact capability tuple; origin-scoped browser reuse with network-layer
-   enforcement), and the **injection probe**, escalate-only, once there is an enforcement layer for
-   it to harden.
+   durable for its exact capability tuple), and the **injection probe**, escalate-only, once there
+   is an enforcement layer for it to harden.
 
 ## Acceptance criteria
 
 - With enforcement on, the confirmation budget holds over 30 days of real traffic, and no task
   category the household actually uses (email triage, browsing, notes, calendar, home control)
   becomes unusable — the operator-frustration test, stated as a requirement.
+- The disclosure floors' binding condition is exercised in both directions: browsing in the no-[B]
+  browser profile proceeds unfloored, and the same navigation from a turn with aggregated context or
+  a recorded sensitive read confirms — with the condition failing closed when any input to it is
+  indeterminate.
 - Replayed injection fixtures attempting egress of note/calendar/email content are blocked or
   escalated in 100% of runs at the floor cells, independent of adjudicator verdicts and of any
   provenance-match result — the floors do this unconditionally; the judge is not load-bearing for
