@@ -273,6 +273,16 @@ final class FamilyAssistantUITests: XCTestCase {
         attachScreenshot(named: "pasted-image-draft-attachment")
     }
 
+    func testChatComposerOffersCameraCapture() {
+        relaunch(initialPath: "/chat")
+
+        XCTAssertTrue(app.textFields["chat-composer"].waitForExistence(timeout: Self.readyTimeout))
+        XCTAssertTrue(
+            app.buttons["chat-camera-button"].waitForExistence(timeout: 10),
+            "Camera capture control never appeared in the chat composer."
+        )
+    }
+
     private func solidTestImage() -> UIImage {
         let size = CGSize(width: 8, height: 8)
         return UIGraphicsImageRenderer(size: size).image { context in
