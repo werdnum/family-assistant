@@ -952,15 +952,18 @@ service_profiles:
       max_async_seconds: 7200
       prompts:
         system_prompt: "You are a coding agent working for {user_name}. You run in an isolated sandbox with code execution, a scratch filesystem and web access; you have no access to {user_name}'s notes, calendar, documents or devices, so work only from what is in the request. Write the code, run it, and check the output before you answer — carry the task through to a finished result rather than describing how it could be done. The sandbox is discarded when you finish, so include any code, data or files that matter in your reply. Report what you did along with the result; your final text response will be sent directly to {user_name}."
-    # ...and that gate has to hold whatever rollout stage the deployment is at.
-    # The shipped taint_policy.mode is `observe`, which downgrades every
-    # confirm/deny to audit -- under it the sink above would decide nothing and
-    # an emailed instruction would reach the sandbox anyway. A profile may
-    # tighten the deployment policy (never relax it), and this one is new, so
-    # nobody has a workflow built on it being permissive: it enforces from the
-    # start rather than waiting for the deployment-wide switch.
-    taint_policy:
-      mode: "enforce"
+    # ...and that gate follows the deployment's rollout stage rather than
+    # overriding it. Under the shipped `observe` mode the declaration decides
+    # nothing yet, which is deliberate: a profile-level `enforce` here would
+    # apply the context-free tier x sink matrix to this one profile while the
+    # deployment is still measuring its false-positive rate, and that matrix is
+    # what the rollout is stalled on. See
+    # docs/design/runtime-taint-enforcement-operational-findings.md --
+    # ambient high-tier prompt notes put whole profiles at unknown_external
+    # regardless of the request, and the intended correction for this very cell
+    # is interactive confirmation, not the hard denial an override would give.
+    # The declaration takes effect deployment-wide, in one step, when the mode
+    # is switched.
     tools_policy:
       default_decision: "deny"
     # This profile's own deny cannot refuse the three tools global_tools_policy

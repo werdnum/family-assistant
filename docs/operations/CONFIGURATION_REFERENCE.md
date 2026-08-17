@@ -1936,13 +1936,17 @@ refuses a `confirm` outcome as well as a `deny`.
 Attachments routed into such a profile contribute their own recorded provenance to that evaluation,
 so an untrusted file raises the turn's tier even when the request text is trusted.
 
-**Pair it with `taint_policy.mode: enforce` on the same profile.** The deployment-wide
-`taint_policy.mode` defaults to `observe`, which downgrades every `confirm` and `deny` to `audit` —
-under it a declared sink decides nothing and both gates let the turn through. A profile may tighten
-the deployment policy (never relax it: `enforce` → `observe` is a startup error), and a sink
-declaration is a security boundary rather than a rollout dial, so declare both together.
+**A declared sink takes effect when `taint_policy.mode` does.** The deployment-wide mode defaults to
+`observe`, which downgrades every `confirm` and `deny` to `audit`, so a declared sink records rather
+than decides until the deployment switches to `enforce`. Do not reach for a profile-level
+`taint_policy.mode: enforce` to get there sooner. A profile may tighten the deployment policy, but
+doing it here applies the shipped matrix to one profile ahead of the friction measurement that keeps
+the rollout in `observe`, and ambient high-tier prompt notes can hold a profile at
+`unknown_external` on every turn — so the override refuses ordinary interactive use, not only the
+untrusted input it is aimed at. See
+[runtime-taint-enforcement-operational-findings.md](../design/runtime-taint-enforcement-operational-findings.md).
 
-The shipped `coder` profile does. See
+The shipped `coder` profile declares the sink and leaves the mode to the deployment. See
 [interactions-agent-taint-and-attachments.md](../design/interactions-agent-taint-and-attachments.md).
 
 ```yaml
@@ -1950,8 +1954,6 @@ service_profiles:
   - id: "coder"
     processing_config:
       taint_sink_class: "sandbox_network"
-    taint_policy:
-      mode: "enforce"
 ```
 
 ______________________________________________________________________

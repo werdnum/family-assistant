@@ -82,14 +82,29 @@ and the difference is settled by evidence, not by inference:
   calls. It permits `confirm` exactly when an approval for its sink travelled with the taint, and
   refuses `deny` regardless — `deny` is never confirmable, so no approval for it can exist.
 
-**A profile that declares a sink must also enforce.** The deployment-wide `taint_policy.mode` ships
-as `observe`, which downgrades every `confirm` and `deny` to `audit`. Under it the matrix above
-decides nothing: both gates see an `audit` and let the turn through, so an emailed instruction
-reaches the sandbox and the declaration is decoration. `coder` therefore pins
-`taint_policy.mode: enforce` on the profile — a profile may tighten the deployment policy but never
-relax it (`merge_taint_policy_config` rejects `enforce` → `observe`), and a new profile has no
-existing workflow that depends on it being permissive. The same applies to any future profile that
-declares `taint_sink_class`: the declaration is a security boundary, not a rollout dial.
+**The declaration follows the rollout; it does not preempt it.** The deployment-wide
+`taint_policy.mode` ships as `observe`, which downgrades every `confirm` and `deny` to `audit`, so
+under it the matrix above records rather than decides. That is deliberate, and a profile-level
+`enforce` override on `coder` is the wrong way to close the gap — it was tried and reverted.
+
+Three reasons, all from
+[runtime-taint-enforcement-operational-findings.md](runtime-taint-enforcement-operational-findings.md):
+
+- The rollout is in `observe` because the shipped matrix is too false-positive-prone to enable, not
+  because nobody got round to it. Enforcing it on one profile applies exactly the matrix under
+  measurement, ahead of the measurement.
+- Stored notes at `unknown_external` marked `include_in_prompt` put whole profiles at the top tier
+  on every turn regardless of the request. `coder` does not exclude the notes context provider, so
+  an override there refuses ordinary `/coder` turns, not just email-derived ones.
+- The correction proposed for this very cell is to turn interactive
+  `unknown_external → sandbox_network` from hard denial *into* confirmation. An override moves it
+  the opposite way, and — because the calling profile's tool gate is still in `observe` and so never
+  asks — it also refuses the `known_contact` and `recognized_machine` tiers outright, with no
+  confirmation path to satisfy.
+
+The declaration is still what makes the sink real: it takes effect deployment-wide, in one step,
+when the mode is switched. Enforcement posture belongs to the deployment, and stays a single control
+point rather than a per-profile one.
 
 The downgrade is one of two ways a gate can pass without asking anybody — the other is a matrix that
 simply allows the sink. Neither is an approval, which is why the tool gate records one only from an
