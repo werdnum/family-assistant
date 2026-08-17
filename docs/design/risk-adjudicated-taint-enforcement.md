@@ -241,14 +241,19 @@ and conflating them breaks the merge in both directions:
   `adjudicate` to the provider at all — applying `operator_minimum` first, as `evaluate()` does
   today, would convert the cell to `confirm` before the judge ever ran. Applying it after keeps its
   semantics exactly as strong as today: an operator-configured minimum can never be weakened by a
-  judge verdict, and never by argument provenance matching either. In `observe` mode the evaluator
-  still returns `adjudicate` and the provider still invokes the judge — only the verdict's *effect*
-  is downgraded to `audit`, so it is logged and nothing blocks. Downgrading the outcome itself
-  before the provider saw it would silently skip the judge and leave nothing to calibrate;
-  preserving the outcome while suppressing enforcement is what gives the free shadow phase: real
-  verdicts against the exact traffic that stalled the rollout, at zero user-visible cost. A
-  deployment that wants observe mode without judge latency or spend can set the cell to plain
-  `audit` explicitly.
+  judge verdict, and never by argument provenance matching either. One asymmetry needs explicit
+  handling: the current lattice treats `redact` as incomparable, so naively applying a `redact`
+  minimum to a `deny` verdict would *replace* denial with execution-through-adapter — the clamp
+  weakening the verdict. Post-verdict clamping therefore composes on the strictness axis only —
+  `deny` always stands, a `redact` minimum attaches as a modifier to verdicts that permit execution
+  — or, simpler, adjudication is disallowed in cells whose minimum is `redact`. In `observe` mode
+  the evaluator still returns `adjudicate` and the provider still invokes the judge — only the
+  verdict's *effect* is downgraded to `audit`, so it is logged and nothing blocks. Downgrading the
+  outcome itself before the provider saw it would silently skip the judge and leave nothing to
+  calibrate; preserving the outcome while suppressing enforcement is what gives the free shadow
+  phase: real verdicts against the exact traffic that stalled the rollout, at zero user-visible
+  cost. A deployment that wants observe mode without judge latency or spend can set the cell to
+  plain `audit` explicitly.
 
 The default matrix change, relative to [runtime-taint-machinery.md](runtime-taint-machinery.md)'s
 shipped defaults:
@@ -410,8 +415,15 @@ construction (the model's channel is its choice among error groups — a few bit
 crossing a trust boundary is where both injection and exfiltration live; server-derived data
 crossing it is boring in both directions — and "typed" must always cash out as *derived or validated
 against the bounded source*, never as "a string field with a reassuring name." The same grant shape
-covers interactive browsing sessions (an origin-scoped grant confirmed once at session start), which
-is what keeps browser workflows to one confirmation per task instead of one per navigation.
+covers interactive browsing sessions — an origin-scoped grant confirmed once at session start, which
+is what keeps browser workflows to one confirmation per task instead of one per navigation — with
+one enforcement caveat the tool chokepoint cannot meet: `browser_click` and form submission carry no
+destination argument, and the navigation happens before the resulting URL is known, so a hostile
+page on the approved origin could redirect or submit cross-origin under the grant. An origin grant
+is therefore enforced at the **browser/network layer** — the backend blocks cross-origin
+navigations, redirects, and requests before they are sent (route interception in the existing
+Playwright backend) — and where that enforcement is unavailable, per-navigation confirmation remains
+instead. A grant the chokepoint cannot actually enforce must not be grantable.
 
 ### The adjudicator (contingent tier)
 
@@ -545,10 +557,12 @@ explanation in unattended contexts. Counters live in `TurnTaintState` — with t
 fields already established: `to_metadata()`/`from_metadata()` and `merge_taint_state_into_tracker()`
 enumerate fields explicitly, so the counters must be added to the serialized schema and given merge
 semantics, or a delegated or resumed run silently restarts them and the escalation promise
-evaporates. Semantics: a delegated run inherits the parent's counts; on result merge the parent
-takes the maximum of its own and the child's totals (never a sum of independent branches, which
-would double-count parallel work); and a delegated-run escalation test joins the acceptance criteria
-alongside the temporal-evidence one.
+evaporates. Semantics: a delegated run inherits the parent's counts as its baseline and reports back
+both baseline and final; the parent accumulates each child's *delta* (final minus baseline), which
+counts independent rejections in parallel branches correctly where a `max()` merge would undercount
+them (two children each rejecting once would both return N+1 and merge to N+1, letting repeated
+fan-out duck the escalation threshold indefinitely). A delegated-run escalation test — including a
+parallel fan-out case — joins the acceptance criteria alongside the temporal-evidence one.
 
 Hard `deny` floors (unattended `sandbox_network`, malformed-payload refusals from
 `confirmation_payload_block_reason`) keep raising: those exist precisely so no continuation pressure
@@ -624,17 +638,21 @@ human-only trust promotion, judgment only where it is cheap to be wrong:
 
 **Stamp writes from content, not turns.** The artifact-write path (`add_or_update_note`,
 `workspace_write`, document ingestion) runs the same trusted-tier matching built for the judge's
-rendering filter over the *content argument*: content that provably originates from the current
-turn's trusted-tier text is stamped `trusted_user` even in a tainted turn; content that matches a
-specific untrusted source inherits *that source's* provenance, specifically rather than anonymously;
-content that matches nothing — model-composed, paraphrased, or derived from stored artifacts — falls
-back to today's turn-maximum stamp. The fallback is what makes this safe against laundering: a model
-paraphrase of an injected email fails the verbatim match and stays high-tier, so an attacker cannot
-wash content by asking the model to reword it. What the rule kills is exactly the observed
-false-positive class — collateral stamping of user-dictated content by unrelated taint, including
-the note-to-note feedback loop, because editing note B never matches tainted note A's content unless
-it actually copies it. Writes through the authenticated Notes UI (no model in the loop) remain
-trusted by construction, and stay the zero-friction path.
+rendering filter over **every prompt-visible field independently** — title, content, attachment
+metadata; the same field set the attestation hash covers. Matching the body alone would launder: a
+mixed turn can save a note whose content exactly matches the user's dictation while its
+model-selected *title* comes from an injected email, and titles reach ambient context. Per field: a
+value that provably originates from the current turn's trusted-tier text is stamped `trusted_user`
+even in a tainted turn; a value that matches a specific untrusted source inherits *that source's*
+provenance, specifically rather than anonymously; a value that matches nothing — model-composed,
+paraphrased, or derived from stored artifacts — falls back to today's turn-maximum stamp. The
+artifact's effective tier is the maximum over its fields. The fallback is what makes this safe
+against laundering: a model paraphrase of an injected email fails the verbatim match and stays
+high-tier, so an attacker cannot wash content by asking the model to reword it. What the rule kills
+is exactly the observed false-positive class — collateral stamping of user-dictated content by
+unrelated taint, including the note-to-note feedback loop, because editing note B never matches
+tainted note A's content unless it actually copies it. Writes through the authenticated Notes UI (no
+model in the loop) remain trusted by construction, and stay the zero-friction path.
 
 **Heal per revision, deterministically.** Sticky provenance exists because an edit may derive from
 the tainted prior content — but derivation is checkable by the same matcher. If a clean-turn edit
