@@ -481,6 +481,20 @@ assistant, with notes and calendar in context) keeps the floor, and its sanction
 idiom that already exists: delegate the browsing task to the browser profile — one decision, not one
 per navigation.
 
+The condition deliberately tests **acquisition capability, not possession**. A delegated browsing
+task carries whatever the parent put in the request — an address to look up, a name to book under —
+and that payload does not re-floor the child, because it is not what the floor protects. The [AC]
+profile's security property was never "contains zero private bytes"; it is that the attacker who
+owns the page gains no *reach*: the disclosure budget was composed in the cleaner parent context
+*before* the riskiest untrusted input got a voice, and nothing the page says can expand it. Losing
+read access at exactly the point the agent starts encountering hostile input is the original
+prompt-injection defense — the reason processing profiles exist — and treating the handed payload as
+protected context would negate it. The one case that needs a guard — a *tainted* parent steered into
+stuffing private data into a browser task — is guarded where the decision is made:
+`delegate_to_service` is itself a sink, evaluated in the parent's context under the parent's taint
+state with the payload visible. The exposure decision is governed at the boundary it crosses, not
+re-litigated inside the child.
+
 Where browser risk actually concentrates is authenticated sessions (cookie jars — a hostile page
 driving actions on logged-in accounts) and purchases, and those are governed by their existing
 confirmation surfaces: browser handoff for login and payment, UCP checkout transfer, and the
