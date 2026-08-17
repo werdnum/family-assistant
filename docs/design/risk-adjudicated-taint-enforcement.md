@@ -789,9 +789,12 @@ provenance at all — externally authored prose enters an otherwise trusted turn
 advisory, and no matrix consequence. This is the one write-path artifact class with *no* provenance
 story, where notes have a partial one. The fix is the same mechanism, not a special case: calendar
 writes stamp per-event provenance exactly as note writes do (content-derived, turn-maximum
-fallback), reads restore it the way note reads restore theirs, and the ingestion probe's screening
-of the original email is remembered by that provenance rather than needing a second probe at read
-time. One property of the calendar makes the fallback rule permanent rather than transitional: the
+fallback), and reads restore it the way note reads restore theirs. What provenance remembers is the
+*tier* — the deterministic part; the probe's detection is deliberately turn-local and never persists
+(see the probe section), and no separate risk marker is needed, because the probe's trigger already
+keys on the derived tier of content entering a turn: reading back an event whose restored provenance
+is externally authored *is* such an entry, so a built probe re-screens it then, by its existing
+rule. One property of the calendar makes the fallback rule permanent rather than transitional: the
 store is live CalDAV, and organizers, other calendar clients, and server sync write to it without
 ever passing Family Assistant's write path, so there will always be events no stamp ever covered and
 events whose content changed after stamping. Per-event provenance must therefore be bound to a
