@@ -416,9 +416,16 @@ What replaces envelopes, in priority order:
    output can be made structurally harmless, no approval machinery is needed at all. The
    error-triage example below needs exactly this and nothing more.
 2. **Deferred durable confirmations** (lean core, already built) — an unattended task whose call
-   hits a floor cell creates a deferred confirmation and completes later, the same path email intake
-   uses today. Floor cells never needed envelopes; they needed a confirmation channel that tolerates
-   absence.
+   hits a floor cell creates a deferred confirmation, the same path email intake uses today, with an
+   honest limit: approval later executes *only the stored call* —
+   `create_deferred_tool_confirmation` returns a placeholder to the running agent and
+   `handle_confirmation_tool_execution` never resumes the agent loop with the result. This therefore
+   covers **independent terminal calls** (file the issue, send the message), which is what recurring
+   automations overwhelmingly end in; a multi-step workflow whose *later reasoning* depends on a
+   floor-gated call's result would need a persisted continuation/resume mechanism that does not
+   exist and is not promised here — such workflows structure the gated call last, or wait for the
+   contingent tier. Floor cells never needed envelopes; they needed a confirmation channel that
+   tolerates absence.
 3. **The adjudicator** (contingent) — post-facto judgment for the non-floor middle, unattended
    contexts included.
 4. **Capability-scoped reuse of actual approvals** (contingent, behind the judge) — when the same
