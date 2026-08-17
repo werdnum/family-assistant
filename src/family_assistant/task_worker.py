@@ -2132,6 +2132,13 @@ class TaskWorker:
             # loaded here. Asking it what to send instead would just re-send the
             # standard notice that was refused a moment ago.
             next_stage = "canned_pending"
+        if next_stage == "canned_pending":
+            # Everything from here on is a pointer rather than the result, and
+            # the pointer is worth nothing if the result is not somewhere to
+            # point at. Recorded on the way in, so it holds whether the notice
+            # is delivered or the run gives up. Every route to ``gave_up`` comes
+            # through here, so this runs exactly once.
+            await self._record_undelivered_delegation_result(exec_context, run, now)
         advanced = await exec_context.db_context.delegation_runs.advance_notify_stage(
             delegation_id,
             stage=next_stage,
@@ -2139,7 +2146,6 @@ class TaskWorker:
             notify_error=str(failure),
         )
         if next_stage == "gave_up":
-            await self._record_undelivered_delegation_result(exec_context, run, now)
             # Not marked notified: it never reached the requester, and a run that
             # silently counts as delivered is the failure this machinery removes.
             # Logged at error level so it lands in error_logs, where a human (or
@@ -2169,15 +2175,15 @@ class TaskWorker:
         run: DelegationRunDict,
         now: datetime,
     ) -> None:
-        """Put the result in the conversation even though nobody could be told.
+        """Put the result in the conversation before anything only points at it.
 
-        A run that woke the source profile already has the reply in history --
-        the wake turn wrote it, which is what the delivery checkpoint resumes
-        from. A run with no source profile loaded here has written nothing,
-        because the direct path records only after a successful send. Without
-        this, giving up would leave the result on the delegation row alone,
-        while the error log and the user documentation both say it is in the
-        conversation.
+        A run that woke the source profile already has the result in history --
+        the wake turn persists it as the data behind the trigger, and its reply
+        alongside, which is what the delivery checkpoint resumes from. A run
+        with no source profile loaded here has written nothing, because the
+        direct path records only after a successful send. Without this, both the
+        last-resort notice ("ask me about it") and the user documentation would
+        be pointing at something that is only on the delegation row.
         """
         if self._source_service_for_delegation(exec_context, run) is not None:
             return

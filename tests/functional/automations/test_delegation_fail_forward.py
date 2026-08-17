@@ -420,6 +420,40 @@ async def test_a_permanent_failure_on_the_finishing_task_fails_forward_immediate
 
 
 @pytest.mark.asyncio
+async def test_a_delivered_pointer_has_something_to_point_at(
+    db_engine: AsyncEngine,
+) -> None:
+    """The short notice says to ask for the result, so the result must be there.
+
+    A successful last-resort notice marks the run notified, which is the end of
+    the line: if the result were not in the conversation by then, nothing would
+    put it there and the notice would be pointing at nothing.
+    """
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.side_effect = [
+        ChatDeliveryError("Message is too long", transient=False),
+        "the_short_notice_got_through",
+    ]
+    await _terminal_run(db_engine, "delegation_pointer_only")
+
+    await _run_cleanup(
+        db_engine, cast("ProcessingService", _NoSourceProfileService()), chat_interface
+    )
+
+    run = await Database(engine=db_engine).delegation_runs.get_by_delegation_id(
+        "delegation_pointer_only"
+    )
+    assert run is not None
+    assert run["notified_at"] is not None
+    rows, _, _ = await Database(
+        engine=db_engine
+    ).message_history.get_conversation_messages_paginated(
+        conversation_id=TEST_CONVERSATION_ID, limit=50
+    )
+    assert any("the delegated work, in full" in (row["content"] or "") for row in rows)
+
+
+@pytest.mark.asyncio
 async def test_a_gave_up_run_is_not_picked_up_again(db_engine: AsyncEngine) -> None:
     """Otherwise the hourly pass resumes exactly the loop this replaced."""
     processing_service = _TriggerRecordingSourceService(FakeDelegatableService())
