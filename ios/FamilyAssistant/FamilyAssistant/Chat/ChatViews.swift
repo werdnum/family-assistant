@@ -703,6 +703,7 @@ struct StickyBottomScroll<Content: View>: View {
 private struct ChatComposerView: View {
     var viewModel: ChatViewModel
     @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var capturesPhoto = false
     @State private var importsFiles = false
     @State private var handledFocusRequestID: UUID?
     @FocusState private var isComposerFocused: Bool
@@ -752,6 +753,18 @@ private struct ChatComposerView: View {
             }
             HStack(alignment: .bottom, spacing: 4) {
                 if !viewModel.isStreaming {
+                    Button {
+                        capturesPhoto = true
+                    } label: {
+                        Image(systemName: "camera")
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 32, height: 36)
+                    }
+                    .disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
+                    .accessibilityLabel("Take Photo")
+                    .accessibilityIdentifier("chat-camera-button")
+
                     PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
                         Image(systemName: "photo")
                             .font(.title3)
@@ -878,6 +891,25 @@ private struct ChatComposerView: View {
                 }
             }
         }
+        .fullScreenCover(isPresented: $capturesPhoto) {
+            CameraImagePicker(isPresented: $capturesPhoto) { image in
+                do {
+                    let capturedImage = try CapturedChatImage(image: image)
+                    Task {
+                        await viewModel.addImageData(
+                            capturedImage.data,
+                            filename: "\(UUID().uuidString).\(capturedImage.filenameExtension)",
+                            mimeType: capturedImage.mimeType
+                        )
+                    }
+                } catch {
+                    viewModel.reportAttachmentImportError(
+                        "Could not import the captured photo. \(error.localizedDescription)"
+                    )
+                }
+            }
+            .ignoresSafeArea()
+        }
         .fileImporter(
             isPresented: $importsFiles,
             allowedContentTypes: [.jpeg, .png, .gif, .webP, .plainText, .markdown, .pdf],
@@ -912,6 +944,61 @@ private struct ChatComposerView: View {
             throw ChatAPIError.validation("Could not convert the selected photo to JPEG.")
         }
         return jpegData
+    }
+}
+
+struct CapturedChatImage: Equatable {
+    let data: Data
+    let mimeType = "image/jpeg"
+    let filenameExtension = "jpg"
+
+    init(image: UIImage) throws {
+        guard let data = image.jpegData(compressionQuality: 0.9) else {
+            throw ChatAPIError.validation("Could not convert the captured photo to JPEG.")
+        }
+        self.data = data
+    }
+}
+
+private struct CameraImagePicker: UIViewControllerRepresentable {
+    @Binding var isPresented: Bool
+    let onCapture: (UIImage) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.cameraCaptureMode = .photo
+        picker.allowsEditing = false
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        private let parent: CameraImagePicker
+
+        init(parent: CameraImagePicker) {
+            self.parent = parent
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            parent.isPresented = false
+        }
+
+        func imagePickerController(
+            _ picker: UIImagePickerController,
+            didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+        ) {
+            if let image = info[.originalImage] as? UIImage {
+                parent.onCapture(image)
+            }
+            parent.isPresented = false
+        }
     }
 }
 

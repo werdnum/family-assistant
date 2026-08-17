@@ -55,7 +55,7 @@ chat behavior rather than matching every pixel:
 - Markdown rendering via Swift Markdown plus native `AttributedString`
 - Tool-call cards and grouped completed tools
 - Pending approval banner and inline approve/reject actions
-- Image, PDF, plain text, and Markdown uploads up to 100 MB
+- Camera capture and image, PDF, plain text, and Markdown uploads up to 100 MB
 - Authenticated attachment previews/downloads
 - Live message update SSE connection and notification/deep-link routing
 - Native read-only shared-conversation transcripts opened from
@@ -274,7 +274,7 @@ all for App Functionality only:
 
 | Declared type         | Source                                                      |
 | --------------------- | ----------------------------------------------------------- |
-| Photos or Videos      | Image attachments picked in native Chat                     |
+| Photos or Videos      | Image attachments captured or picked in native Chat         |
 | Audio Data            | Voice mode streams microphone frames to the Gemini Live API |
 | Other User Content    | Chat messages, notes, PDF/text/Markdown attachments         |
 | User ID               | The account behind the API token                            |

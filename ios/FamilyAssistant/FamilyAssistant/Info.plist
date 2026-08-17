@@ -41,6 +41,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>Family Assistant uses the camera to take photos you choose to attach to chat messages.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Family Assistant uses the microphone for hands-free voice conversations with the assistant.</string>
 	<key>UIApplicationShortcutItems</key>

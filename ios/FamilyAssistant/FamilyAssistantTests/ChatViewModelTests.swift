@@ -9152,6 +9152,15 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertThrowsError(try PastedChatImage.transcodedToJPEG(data: Data("not an image".utf8)))
     }
 
+    func testCapturedImageEncodesAsSupportedJPEG() throws {
+        let captured = try CapturedChatImage(image: solidImage(size: CGSize(width: 4, height: 4)))
+
+        XCTAssertEqual(captured.mimeType, "image/jpeg")
+        XCTAssertEqual(captured.filenameExtension, "jpg")
+        XCTAssertNotNil(UIImage(data: captured.data))
+        XCTAssertTrue(ChatConstants.allowedAttachmentMIMETypes.contains(captured.mimeType))
+    }
+
     private func solidImage(size: CGSize) -> UIImage {
         UIGraphicsImageRenderer(size: size).image { context in
             UIColor.systemBlue.setFill()

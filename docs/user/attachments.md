@@ -9,8 +9,8 @@ move between tools and people.
   Telegram album counts as one message, so you get a single answer covering all the photos.
 - **Web interface:** attach files in chat, or add them to your searchable documents one at a time on
   the **Upload Document** page.
-- **iOS app:** attach from the composer, paste a copied image, or share a file into the app from
-  another app.
+- **iOS app:** take a photo with the camera, choose an image or file from the composer, paste a
+  copied image, or share a file into the app from another app.
 
 **Supported types** depend on where you're sending from:
 
