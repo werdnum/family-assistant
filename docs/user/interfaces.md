@@ -231,5 +231,10 @@ status of a delegation reference at any time.
 Delegations can also be continued, so a specialist keeps its earlier context — useful for a
 follow-up question to a previous research delegation.
 
+If the follow-up can't be delivered on the channel you asked from — a result too long for the chat
+app to accept, say — the assistant is told so and sends you something that does fit, such as a
+shorter summary or a note it saved with the full text. The complete result is kept in the
+conversation either way, so you can ask for any part of it.
+
 This is separate from spawned worker tasks, which are isolated coding or computing jobs identified
 by worker task IDs.

@@ -22,7 +22,6 @@ from family_assistant.storage.base import (
     POSTGRES_STATEMENT_TIMEOUT_MS,
     create_engine_with_sqlite_optimizations,
 )
-from family_assistant.storage.conversation_shares import conversation_shares_table
 from family_assistant.storage.database import Database, DatabaseTransaction
 from tests.helpers import wait_for_condition
 
@@ -30,7 +29,18 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
 _MARKER = "test_statement_cancellation_marker"
-_PREVIOUS_REVISION = "mh_conversation_owner_idx"
+# The revision before head: the test rewinds to it so a migration is actually
+# pending while the tight ceiling is in force. Both this and the head asserted
+# below move with each new migration.
+_PREVIOUS_REVISION = "conversation_shares"
+_HEAD_REVISION = "527b07ec550b"
+_HEAD_REVISION_COLUMNS = (
+    "notify_stage",
+    "notify_attempts",
+    "notify_error",
+    "notify_first_failed_at",
+    "notify_last_failed_at",
+)
 
 _alembic_version_table = sa.Table(
     "alembic_version",
@@ -182,7 +192,10 @@ async def test_migrations_still_run_under_a_ceiling_that_aborts_queries(
     db = Database(db_engine)
 
     async def regress_to_previous_revision(txn: DatabaseTransaction) -> None:
-        await txn.execute(sa.text("DROP TABLE conversation_shares"))
+        for column in _HEAD_REVISION_COLUMNS:
+            await txn.execute(
+                sa.text(f"ALTER TABLE delegation_runs DROP COLUMN {column}")
+            )
         await txn.execute(
             sa.update(_alembic_version_table).values(version_num=_PREVIOUS_REVISION)
         )
@@ -208,14 +221,17 @@ async def test_migrations_still_run_under_a_ceiling_that_aborts_queries(
     verification_engine = create_engine_with_sqlite_optimizations(url)
     try:
         async with verification_engine.connect() as conn:
-            tables = await conn.run_sync(
-                lambda sync_conn: sa.inspect(sync_conn).get_table_names()
+            columns = await conn.run_sync(
+                lambda sync_conn: {
+                    column["name"]
+                    for column in sa.inspect(sync_conn).get_columns("delegation_runs")
+                }
             )
             revision = await conn.scalar(
                 sa.select(_alembic_version_table.c.version_num)
             )
-        assert conversation_shares_table.name in tables
-        assert revision == "conversation_shares"
+        assert set(_HEAD_REVISION_COLUMNS) <= columns
+        assert revision == _HEAD_REVISION
     finally:
         await verification_engine.dispose()
 

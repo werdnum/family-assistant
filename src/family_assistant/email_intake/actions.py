@@ -8,11 +8,9 @@ from typing import TYPE_CHECKING, TypedDict, cast
 
 from sqlalchemy import select
 
-from family_assistant.email_intake.outbound import (
-    OutboundEmailDeliveryError,
-    email_conversation_id,
-)
+from family_assistant.email_intake.outbound import email_conversation_id
 from family_assistant.email_intake.taint import email_initial_taint_source
+from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.llm.messages import text_content
 from family_assistant.services.deferred_tool_confirmation import (
     create_deferred_tool_confirmation,
@@ -254,18 +252,14 @@ async def handle_email_intake_action(
                 "not support attachments yet. The text response was sent without them.]"
             )
         try:
-            sent_id = await email_interface.send_message(
+            await email_interface.send_message(
                 conversation_id=conversation_id,
                 text=text_reply,
                 attachment_ids=None,
             )
-        except OutboundEmailDeliveryError:
+        except ChatDeliveryError:
             logger.exception(
                 "Email intake response for row %s could not be delivered",
                 email_db_id,
             )
             return
-        if sent_id is None:
-            logger.info(
-                "Email intake response for row %s was not delivered", email_db_id
-            )

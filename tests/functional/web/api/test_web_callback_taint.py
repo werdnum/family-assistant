@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from sqlalchemy import select
 
+from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.llm.messages import AssistantMessage
 from family_assistant.processing.types import ChatInteractionResult
 from family_assistant.security.taint import (
@@ -175,7 +176,7 @@ class _FailingDeliveryInterface(WebChatInterface):
         super().__init__(db_engine, notifier=None, stream_hub=None)
         self.send_attempts = 0
 
-    async def send_message(self, *args: object, **kwargs: object) -> str | None:
+    async def send_message(self, *args: object, **kwargs: object) -> str:
         self.send_attempts += 1
         if self.send_attempts == 1:
             raise RuntimeError("transient delivery failure")
@@ -189,18 +190,18 @@ class _NoDeliveryIdInterface(WebChatInterface):
         super().__init__(db_engine, notifier=None, stream_hub=None)
         self.send_attempts = 0
 
-    async def send_message(self, *args: object, **kwargs: object) -> str | None:
+    async def send_message(self, *args: object, **kwargs: object) -> str:
         self.send_attempts += 1
         if self.send_attempts == 1:
-            return None
+            raise ChatDeliveryError("no delivery id", transient=True)
         return await super().send_message(*args, **kwargs)  # type: ignore[arg-type] # passthrough of the interface signature
 
 
 @pytest.mark.asyncio
-async def test_callback_treats_a_missing_delivery_id_as_a_failed_send(
+async def test_callback_treats_a_failed_delivery_as_a_failed_send(
     db_engine: AsyncEngine,
 ) -> None:
-    """Returning None is how the interface reports a failed delivery.
+    """A ChatDeliveryError is how the interface reports a failed delivery.
 
     Continuing past it would let the task complete with nothing sent and no
     retry, silently dropping the reply the turn already generated.
@@ -212,7 +213,7 @@ async def test_callback_treats_a_missing_delivery_id_as_a_failed_send(
     processing_service = TaintedReplyService()
     chat_interface = _NoDeliveryIdInterface(db_engine)
 
-    with pytest.raises(RuntimeError, match="reported no delivery"):
+    with pytest.raises(RuntimeError, match="Failed to send LLM callback response"):
         await handle_llm_callback(
             _exec_context(
                 Database(engine=db_engine), processing_service, chat_interface

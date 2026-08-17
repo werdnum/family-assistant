@@ -63,6 +63,7 @@ from family_assistant.indexing.message_history_indexer import (
 )
 from family_assistant.indexing.notes_indexer import NotesIndexer
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
+from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.llm.providers.google_genai_client import (
     is_antigravity_model,
@@ -315,15 +316,18 @@ class NullChatInterface:
         attachment_ids: list[str] | None = None,
         on_behalf_of_user_id: str | None = None,
         taint_metadata: TaintMetadata | None = None,
-    ) -> str | None:
-        """Does nothing, returns None."""
+    ) -> str:
+        """Delivers nothing: there is no interface configured to deliver to."""
         _ = taint_metadata
         logger.debug(
             "NullChatInterface: send_message called for conversation %s: %s",
             conversation_id,
             text,
         )
-        return None
+        raise ChatDeliveryError(
+            f"No chat interface is configured to deliver to {conversation_id}.",
+            transient=False,
+        )
 
 
 # --- Wrapper Functions for Type Compatibility ---

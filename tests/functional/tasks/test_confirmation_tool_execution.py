@@ -14,6 +14,7 @@ from sqlalchemy import select, update
 
 from family_assistant import task_worker as task_worker_module
 from family_assistant.embeddings import MockEmbeddingGenerator
+from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.llm.messages import UserMessage
 from family_assistant.security.taint import (
     SourceTrustTier,
@@ -278,7 +279,7 @@ class FailingChatInterface(RecordingChatInterface):
 
 
 class UndeliveredChatInterface(RecordingChatInterface):
-    """Fake chat interface that reports send failure with no exception."""
+    """Fake chat interface whose sends are refused."""
 
     async def send_message(
         self,
@@ -289,7 +290,7 @@ class UndeliveredChatInterface(RecordingChatInterface):
         attachment_ids: list[str] | None = None,
         on_behalf_of_user_id: str | None = None,
         taint_metadata: TaintMetadata | None = None,
-    ) -> str | None:
+    ) -> str:
         await super().send_message(
             conversation_id=conversation_id,
             text=text,
@@ -299,7 +300,7 @@ class UndeliveredChatInterface(RecordingChatInterface):
             on_behalf_of_user_id=on_behalf_of_user_id,
             taint_metadata=taint_metadata,
         )
-        return None
+        raise ChatDeliveryError("the interface refused the message", transient=True)
 
 
 class BlockingChatInterface(RecordingChatInterface):
