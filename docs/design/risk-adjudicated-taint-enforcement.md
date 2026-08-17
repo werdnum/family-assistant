@@ -280,11 +280,16 @@ classifies `lock`, `alarm_control_panel`, `valve`, and `siren` as `home_local`, 
 matrix allows `home_local` at every tier — so today (and under the table above, unamended) an
 injected email in an ordinary mixed turn can unlock a door with no gate at all; the existing
 configuration reference already warns operators about exactly this cell. The sink resolver already
-switches on the `domain` argument, so the fix is a resolver split, not new machinery: high-impact
-actuation domains (locks, alarm panels, valves, sirens, garage-class covers) move to their own sink
-class with `adjudicate(floor: confirm)` at every externally authored tier, while ordinary
-`home_local` (lights, media, climate) stays `allow`. Physical-safety actuation gets the same rule as
-egress: a classifier false-negative must never be able to do it alone.
+switches on the `domain` argument, so the fix is mostly a resolver split: high-impact actuation
+domains (locks, alarm panels, valves, sirens) move to their own sink class with
+`adjudicate(floor: confirm)` at every externally authored tier, while ordinary `home_local` (lights,
+media, climate) stays `allow`. One domain needs finer resolution than the current domain-only switch
+provides: `cover` spans blinds and garage doors, and classifying by domain alone either
+confirm-gates every blind or leaves garage doors always-allowed. For `cover` the resolver must
+inspect the entity target (`service_data`/`entity_id`) and its Home Assistant device class — garage
+and gate device classes land in the high-impact sink, shades and blinds stay `home_local`, and an
+entity whose device class cannot be resolved fails closed to high-impact. Physical-safety actuation
+gets the same rule as egress: a classifier false-negative must never be able to do it alone.
 
 Destructive artifact writes are the third occupant of a soft cell. The resolver maps deletes and
 rewrites (`delete_note`, `delete_script`, `delete_automation`, calendar deletion) into
@@ -306,13 +311,16 @@ outside every floor, in a clean-looking turn. Creation of executable or schedule
 therefore joins the floored set (`confirm` at externally authored tiers). Keying this on the
 incidental existing tags is not enough — `schedule_future_callback` carries only `STATE_CHANGING`
 and `SCHEDULING`, so an `AUTOMATION`/`STATE_PERSISTING` key would miss one-time callbacks, which are
-executable persistence all the same. The class gets its own explicit tag (`EXECUTABLE_PERSISTENCE`,
-on `create_automation`, `update_automation`, script saves, `schedule_future_callback`,
-`schedule_action`, `modify_pending_callback`), and — because a tag list is exactly the kind of
-enumeration that rots — a conformance rule ties it to the mechanism: a tool whose implementation
-enqueues an LLM-waking task must carry the tag, checked by the existing ast-grep conformance
-machinery, so a future scheduling tool fails lint rather than silently joining the audit-only cell.
-The durable fix, which belongs with the artifact-provenance work in the contingent tier, is the same
+executable persistence all the same — and so is **activation**: `enable_automation` merely flips a
+flag, but flipping it makes a stored executable live, so enabling from a tainted turn plants future
+execution as surely as creating does. The class gets its own explicit tag (`EXECUTABLE_PERSISTENCE`,
+on `create_automation`, `update_automation`, `enable_automation`, script saves,
+`schedule_future_callback`, `schedule_action`, `modify_pending_callback`), and — because a tag list
+is exactly the kind of enumeration that rots — a conformance rule ties it to the mechanism: a tool
+whose implementation enqueues an LLM-waking task *or activates a stored artifact that later fires
+one* must carry the tag, checked by the existing ast-grep conformance machinery, so a future
+scheduling or activation tool fails lint rather than silently joining the audit-only cell. The
+durable fix, which belongs with the artifact-provenance work in the contingent tier, is the same
 rule delegation runs already follow: persist the creation turn's taint on the automation and seed
 every later firing with it until a human attests the automation — persistence must never launder
 taint through time. The floor is the lean-core stopgap that makes the laundering impossible before
@@ -727,8 +735,9 @@ The lean core, in order, each phase independently shippable:
    allowlists; tag hygiene; Trino fix. Config-level work that removes the known fail-open cells.
 3. **Standing grants**, minimal form: grant storage on task definitions and browse sessions,
    envelope enforcement at the existing chokepoint, schema-constrained bodies for public sinks.
-4. **Enforce the lean matrix:** confirm floors on egress and actuation, audit everywhere else,
-   updated `require_taint_enforcement`. Gmail/Drive tools register for the first time.
+4. **Enforce the lean matrix:** confirm floors on all four floored families — egress, high-impact
+   actuation, destructive writes, and executable persistence — audit everywhere else, updated
+   `require_taint_enforcement`. Gmail/Drive tools register for the first time.
 5. **Measure against the friction budget for 30 days.**
 
 **The gate:** if the measured confirm volume fits the budget and no household task category became
