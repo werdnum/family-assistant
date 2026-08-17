@@ -983,8 +983,17 @@ tests per target form (entity/device/area/unresolvable) and per family.
 **M4 — Store and tag hygiene.** Calendar (and any store mutable outside FA's write path) de-trusted:
 `search_calendar_events` loses `OUTPUT_TRUSTED` pending per-event provenance; reclassify the known
 mis-tagged pure-transform tools; Trino descriptor fix; populate middle-tier sender allowlists from
-connector evidence. *Verify:* tag-audit test asserting no `OUTPUT_TRUSTED` on tools reading
-externally mutable stores; audit data shows middle tiers firing.
+connector evidence. The de-trust must also cover the *ambient* path, which the tool tag does not
+touch: `CalendarContextProvider` injects event text into every prompt and, unlike the notes
+provider, implements no `get_context_taint_sources()` — an injected invitation would reach the
+default profile with a trusted turn state and bypass every floor. Blanket-tainting the provider
+would recreate the ambient-poison problem, so it gets PR #1111's prompt-admission rule instead:
+events created through FA's confirm-gated write path count as attested by that approval and render
+normally; externally synced or unattested events render as structural stubs (count, time span — no
+attacker-authored text) until reviewed, and any event text the provider *does* render contributes
+its taint source. *Verify:* tag-audit test asserting no `OUTPUT_TRUSTED` on tools reading externally
+mutable stores; context-provider test that an unattested CalDAV event renders as a stub and
+contributes no prose; audit data shows middle tiers firing.
 
 **M5 — Overwrite reversibility.** Repository-layer revision retention on note replace (prior
 revision kept on non-append `add_or_update_note`); calendar-event field replacement retains prior
@@ -997,12 +1006,15 @@ the shared `to_metadata()` representation wholesale: `_note_provenance_from_tain
 fields and counters would replay stale read-ordering and rejection counts out of unrelated notes —
 the same category of leak as persisting probe labels. Three envelopes with explicit field sets:
 **delegation** carries the full temporal record and escalation counters (inherit-baseline, delta
-merge); **history rows** carry the had-sensitive-reads fact for the protected-history clause
-(`merge_history_taint()` folds it; rows in the window lacking it fail closed, epoch-patterned);
-**artifact provenance** carries sources and tier only — temporal fields and counters stripped.
-Blocks M7. *Verify:* round-trip and merge unit tests per envelope, the parallel fan-out counter
-case, a `/browse`-after-note-quote history test, and an assertion that artifact provenance written
-from a counter-bearing turn contains no temporal or counter fields.
+merge); **history rows** carry the protected-content fact for the protected-history clause — defined
+as *had sensitive reads ∨ had aggregated private context*, since a turn with the notes or calendar
+provider active can quote private data without any `SensitiveReadRecord`, and both disjuncts are
+deterministic from turn state and profile config (`merge_history_taint()` folds it; rows in the
+window lacking it fail closed, epoch-patterned); **artifact provenance** carries sources and tier
+only — temporal fields and counters stripped. Blocks M7. *Verify:* round-trip and merge unit tests
+per envelope, the parallel fan-out counter case, a `/browse`-after-note-quote history test, and an
+assertion that artifact provenance written from a counter-bearing turn contains no temporal or
+counter fields.
 
 **M7 — Disclosure-floor binding condition.** Implement the acquisition-not-possession condition
 (profile excludes ambient context ∧ no sensitive reads ∧ no protected history, fail-closed) in the
