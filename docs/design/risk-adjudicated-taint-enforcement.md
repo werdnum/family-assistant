@@ -237,7 +237,10 @@ and conflating them breaks the merge in both directions:
   therefore ranks strictly *above* `audit` — a profile cannot replace it with `audit` and skip the
   judge (ranking it at its `allow` floor would permit exactly that weakening) — while replacing a
   base `audit` cell with any `adjudicate` is accepted as the tightening it is, and
-  `adjudicate(floor: confirm)` ranks at `confirm`.
+  `adjudicate(floor: confirm)` deliberately ranks *equal* to plain `confirm`: a profile substituting
+  always-ask-the-human for judge-with-confirm-floor keeps a human gate on every call, which is at
+  least as strong — that swap is a friction-mode preference, and the tighten-only merge guards
+  security, not friction modes.
 - **Verdict-floor rank** (verdict bounding, `operator_minimum`, `require_taint_enforcement`): the
   floor itself, so `adjudicate(floor: confirm)` satisfies a `confirm` minimum and a bare
   `adjudicate`'s verdicts are bounded only by its own floor. Evaluation order matters: matrix cell →
@@ -266,7 +269,7 @@ shipped defaults:
 | max_tier × sink                                  | today (would-be)        | proposed                              |
 | ------------------------------------------------ | ----------------------- | ------------------------------------- |
 | `unknown_external × sensitive_read_broadening`   | confirm                 | adjudicate                            |
-| `unknown_external × known_user_message`          | confirm                 | adjudicate                            |
+| `unknown_external × known_user_message`          | confirm                 | audit (permanently — see below)       |
 | `unknown_external × artifact_write`              | audit                   | adjudicate                            |
 | `unknown_external × arbitrary_external_message`  | confirm                 | adjudicate, floor: confirm            |
 | `unknown_external × attacker_addressable_egress` | confirm                 | adjudicate, floor: confirm            |
@@ -388,13 +391,18 @@ to the task, and is suspended for probe-labeled turns. That is positive authoriz
 authenticated decision, not by mention. And because `operator_minimum` applies after adjudication,
 an operator minimum can only ever tighten a floor-cell verdict further.
 
-The two cells that dominated the production friction data (`sensitive_read_broadening`,
-`known_user_message` — i.e. reading notes/calendar and messaging the household after external
-content entered the turn) become adjudicated with a full verdict space, because their benign rate is
-overwhelming and their worst case is bounded: `known_user_message` reaches only server-validated
-household recipients, and a sensitive read only *broadens exposure* — actual loss still requires a
-subsequent egress call, which is exactly where the floors sit. This is defense in depth used
-deliberately: soften the cheap, noisy, inner gate because the outer gate is hard.
+The two cells that dominated the production friction data are handled differently, by maintainer
+decision. `sensitive_read_broadening` becomes adjudicated with a full verdict space: a sensitive
+read only *broadens exposure* — actual loss still requires a subsequent egress call, which is
+exactly where the floors sit. `known_user_message` is **permanently `audit`, at every tier, in both
+the lean core and the contingent tier** — household messaging is never restricted based on external
+content. It reaches only server-validated household recipients, so the attacker gains no reach, only
+an attributable in-channel voice that the recipient can question; that is not a real problem worth
+any friction. The only acceptable future touches on this cell are zero-friction ones: a lightweight
+provenance tag on delivered messages composed in externally-tainted turns ("includes content from an
+email"), and abuse screening via the escalate-only probe if it is ever built — both disclosure,
+neither restriction. This is defense in depth used deliberately: soften the cheap, noisy, inner
+cells because the outer gate is hard.
 
 ### Unattended work and approvals: post-facto over pre-declaration (lean core / contingent split)
 
