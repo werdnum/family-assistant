@@ -21,6 +21,7 @@ from family_assistant.email_intake.outbound import (
     OutboundEmailDeliveryError,
     email_conversation_id,
 )
+from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import AssistantMessage, ToolMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
@@ -438,7 +439,7 @@ async def test_email_interface_does_not_reply_to_visible_from_header_without_sen
     )
     email_db_id = await _store_email_without_envelope_sender(db_engine)
 
-    with pytest.raises(OutboundEmailDeliveryError, match="no deliverable sender"):
+    with pytest.raises(ChatDeliveryError, match="no deliverable sender"):
         await email_interface.send_message(
             conversation_id=email_conversation_id(email_db_id),
             text="No reply should be sent.",
@@ -570,7 +571,7 @@ async def test_email_interface_rejects_sender_not_mapped_to_target_user(
     )
     email_db_id = await _store_email_from_unmapped_sender(db_engine)
 
-    with pytest.raises(OutboundEmailDeliveryError, match="not an authorized sender"):
+    with pytest.raises(ChatDeliveryError, match="not an authorized sender"):
         await email_interface.send_message(
             conversation_id=email_conversation_id(email_db_id),
             text="No reply should be sent.",
