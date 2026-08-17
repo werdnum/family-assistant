@@ -965,13 +965,12 @@ class MCPToolsProvider:
             self._reset_reconnect_backoff(server_id)
         return reconnected
 
-    def _registered_definitions(self, server_id: str) -> list[ToolDefinition]:
-        """Return the definitions currently registered on behalf of a server."""
+    def _registered_descriptors(self, server_id: str) -> list[ToolDescriptor]:
+        """Return the descriptors currently registered on behalf of a server."""
         return [
-            definition
-            for definition in self._definitions
-            if self._tool_map.get(definition.get("function", {}).get("name"))
-            == server_id
+            descriptor
+            for descriptor in self._descriptors
+            if descriptor.mcp_server_id == server_id
         ]
 
     def _unregister_server_tools(self, server_id: str) -> None:
@@ -1031,30 +1030,29 @@ class MCPToolsProvider:
         list, so it is also what keeps the cache honest.
         """
         definitions = self._format_mcp_definitions_to_dicts(server_tools)
+        descriptors = self._build_mcp_descriptors(
+            server_id=server_id,
+            definitions=definitions,
+            discovered_tools=server_tools,
+        )
         # Compare what registration would produce, not the raw report, so a
         # name another server owns doesn't look like a change on every cycle.
+        # Descriptors rather than definitions, because the annotation-derived
+        # tags that drive policy matching live only on the descriptor: a tool
+        # that keeps its schema but stops being read-only has changed.
         registrable = [
-            definition
-            for definition in definitions
-            if self._tool_map.get(definition.get("function", {}).get("name"))
-            in {None, server_id}
+            descriptor
+            for descriptor in descriptors
+            if self._tool_map.get(descriptor.name) in {None, server_id}
         ]
-        previous = self._registered_definitions(server_id)
+        previous = self._registered_descriptors(server_id)
         if registrable == previous:
             return
 
-        previous_names = {d.get("function", {}).get("name") for d in previous}
-        current_names = {d.get("function", {}).get("name") for d in registrable}
+        previous_names = {descriptor.name for descriptor in previous}
+        current_names = {descriptor.name for descriptor in registrable}
         self._unregister_server_tools(server_id)
-        self._register_server_tools(
-            server_id,
-            definitions,
-            self._build_mcp_descriptors(
-                server_id=server_id,
-                definitions=definitions,
-                discovered_tools=server_tools,
-            ),
-        )
+        self._register_server_tools(server_id, definitions, descriptors)
         self._bump_descriptors_version()
         logger.info(
             "MCP server '%s' reported a changed tool list on health check: "

@@ -7,10 +7,11 @@ from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock
 
 import pytest
-from mcp.types import ListToolsResult, Tool
+from mcp.types import ListToolsResult, Tool, ToolAnnotations
 
 from family_assistant.tools import MCPServerConfig, MCPToolsProvider
 from family_assistant.tools.mcp import MCP_SERVER_STATUS_CONNECTED
+from family_assistant.tools.metadata import ToolTag
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -21,11 +22,16 @@ SERVER_ID = "drifting-server"
 OTHER_SERVER_ID = "other-server"
 
 
-def _tool(name: str, description: str = "does a thing") -> Tool:
+def _tool(
+    name: str,
+    description: str = "does a thing",
+    annotations: ToolAnnotations | None = None,
+) -> Tool:
     return Tool(
         name=name,
         description=description,
         inputSchema={"type": "object", "properties": {}},
+        annotations=annotations,
     )
 
 
@@ -102,6 +108,27 @@ async def test_changed_tool_schema_is_picked_up() -> None:
 
     definitions = await provider.get_tool_definitions()
     assert [d["function"]["description"] for d in definitions] == ["new"]
+
+
+@pytest.mark.asyncio
+async def test_changed_tool_annotations_are_picked_up() -> None:
+    """Tags drive policy, so a tool that stops being read-only has changed."""
+    provider = _provider(SERVER_ID)
+    _register(
+        provider,
+        SERVER_ID,
+        [_tool("search", annotations=ToolAnnotations(readOnlyHint=True))],
+    )
+    provider._sessions[SERVER_ID] = _session([
+        _tool("search", annotations=ToolAnnotations(destructiveHint=True))
+    ])
+
+    await provider._run_health_checks()
+
+    descriptors = await provider.get_tool_descriptors()
+    assert [descriptor.name for descriptor in descriptors] == ["search"]
+    assert ToolTag.READ_ONLY not in descriptors[0].tags
+    assert ToolTag.DESTRUCTIVE in descriptors[0].tags
 
 
 @pytest.mark.asyncio
