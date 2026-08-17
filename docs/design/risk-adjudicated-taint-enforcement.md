@@ -422,7 +422,7 @@ What replaces envelopes, in priority order:
 
 1. **Sink safety by construction, plus rate limits** (lean core) — where the unattended workflow's
    output can be made structurally harmless, no approval machinery is needed at all. The
-   error-triage example below needs exactly this and nothing more.
+   error-triage example below needs exactly this plus the outbox pattern from item 2.
 2. **Deferred durable confirmations** (lean core, already built) — an unattended task whose call
    hits a floor cell creates a deferred confirmation, the same path email intake uses today, with an
    honest limit: approval later executes *only the stored call* —
@@ -445,13 +445,25 @@ What replaces envelopes, in priority order:
    in the class — and the chokepoint validates every field per call.
 
 Worked example — the error-triage automation ("scan error logs nightly, file issues for real
-problems"): an engineer-profile scheduled task allowed `create_github_issue`, this repository only,
-rate-limited to three per day, **server-rendered body**. The repository is public, so a free-form
-issue body is genuine egress twice over — an exfiltration channel for injected content and a privacy
-leak for log excerpts on a perfectly clean run. Schema *typing* alone does not close that: a string
-field named `component` is still free-form if the model fills it, and an injected log entry could
-encode whatever it likes there. So the model's authority shrinks to **selection**: it names the
-error group to file (by id), and the server renders the public body entirely from the referenced
+problems"): an engineer-profile scheduled task using `create_github_issue`, this repository only,
+rate-limited to three per day, **server-rendered body**, delivered through an **outbox**. The
+engineer profile's documented contract — read-only, every side effect confirmed — stays exactly as
+written: the task's floor-gated issue filings become deferred durable confirmations, an outbox of "I
+found these real problems overnight" items reviewed asynchronously from the pending tray, not live
+interruptions. That is deliberately the endpoint rather than a compromise: the friction that
+corrodes is interruption and rubber-stamping under time pressure, neither of which an over-coffee
+outbox review has, and seeing what is about to be posted to a public repository before it lands is
+arguably a feature. If a month of outbox approvals turns out to be pure ritual — thirty of thirty
+approved unmodified — *that* is the evidence to promote this class to unattended via a one-sentence
+contract amendment (side effects require confirmation except server-rendered low-bandwidth sinks
+under a rate limit), a documentation-and-policy change made on measurement, exactly like the lean
+core's own gate. The rate limit and server-rendered body still do the security work either way: they
+bound what any single approval covers and keep the outbox low-stakes. The repository is public, so a
+free-form issue body is genuine egress twice over — an exfiltration channel for injected content and
+a privacy leak for log excerpts on a perfectly clean run. Schema *typing* alone does not close that:
+a string field named `component` is still free-form if the model fills it, and an injected log entry
+could encode whatever it likes there. So the model's authority shrinks to **selection**: it names
+the error group to file (by id), and the server renders the public body entirely from the referenced
 record — component from the known-component enum, exception class as parsed from the log record,
 fingerprint computed server-side as a hash, counts and timestamps from the store. No model-composed
 string reaches the public body at all, which is what makes it a `low_bandwidth_external` sink by
