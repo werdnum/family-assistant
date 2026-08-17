@@ -1199,18 +1199,8 @@ def test_an_ordinary_tool_call_records_no_approval() -> None:
     assert not tracker.snapshot().is_sink_approved(SinkClass.SANDBOX_NETWORK)
 
 
-@pytest.mark.asyncio
-async def test_observe_mode_delegation_records_no_approval(
-    db_engine: AsyncEngine,
-) -> None:
-    """A downgraded confirm asked nobody, so it clears nothing.
-
-    Observe mode converts confirm/deny into audit and lets the call through.
-    Reading the *effective* outcome would turn that dry-run pass into an
-    approval and hand it to a target profile that may itself be enforcing --
-    manufacturing the one piece of evidence the profile gate trusts.
-    """
-    provider = TaintTrackingToolsProvider(
+def _delegation_provider(mode: TaintPolicyMode) -> TaintTrackingToolsProvider:
+    return TaintTrackingToolsProvider(
         LocalToolsProvider(
             registrations=[
                 ToolRegistration(
@@ -1233,29 +1223,94 @@ async def test_observe_mode_delegation_records_no_approval(
                 )
             ]
         ),
-        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.OBSERVE),
+        taint_policy=TaintPolicyConfig(mode=mode),
         delegation_sink_classes={"coder": SinkClass.SANDBOX_NETWORK},
     )
+
+
+def _tracker_at(tier: SourceTrustTier) -> InMemoryTurnTaintTracker:
     tracker = InMemoryTurnTaintTracker()
     tracker.add_source(
         TaintSource(
             source_type=TaintSourceType.EMAIL,
-            source_id="contact-mail",
-            tier=SourceTrustTier.KNOWN_CONTACT,
+            source_id=f"mail-{tier.config_value}",
+            tier=tier,
             labels=frozenset(),
-            reason="Mail from a known contact.",
+            reason="Inbound mail.",
         )
     )
+    return tracker
+
+
+@pytest.mark.asyncio
+async def test_observe_mode_delegation_records_no_approval(
+    db_engine: AsyncEngine,
+) -> None:
+    """A downgraded confirm asked nobody, so it clears nothing.
+
+    Observe mode converts confirm/deny into audit and lets the call through.
+    Treating that dry-run pass as an approval would hand a target profile that
+    is itself enforcing the one piece of evidence its gate trusts.
+    """
+    tracker = _tracker_at(SourceTrustTier.KNOWN_CONTACT)
     context = _minimal_context(Database(db_engine), tracker)
 
-    await provider.execute_tool(
+    await _delegation_provider(TaintPolicyMode.OBSERVE).execute_tool(
         "delegate_to_service",
         {"target_service_id": "coder"},
         context,
-        "call_delegate",
+        "call_observe",
     )
 
     assert not tracker.snapshot().is_sink_approved(SinkClass.SANDBOX_NETWORK)
+
+
+@pytest.mark.asyncio
+async def test_an_unconfirmed_delegation_records_no_approval(
+    db_engine: AsyncEngine,
+) -> None:
+    """Not needing a confirmation is not the same fact as getting one.
+
+    A profile may tighten the matrix, so the target's gate can ask about a
+    sink this one waved through. Recording passage as approval would answer
+    that question on the user's behalf, without anything ever being shown.
+    """
+    tracker = _tracker_at(SourceTrustTier.TRUSTED_USER)
+    context = _minimal_context(Database(db_engine), tracker)
+
+    await _delegation_provider(TaintPolicyMode.ENFORCE).execute_tool(
+        "delegate_to_service",
+        {"target_service_id": "coder"},
+        context,
+        "call_allowed",
+    )
+
+    assert not tracker.snapshot().is_sink_approved(SinkClass.SANDBOX_NETWORK)
+
+
+@pytest.mark.asyncio
+async def test_an_approved_confirmation_records_the_approval(
+    db_engine: AsyncEngine,
+) -> None:
+    """The approval the target gate reads comes from a user actually saying yes."""
+    tracker = _tracker_at(SourceTrustTier.KNOWN_CONTACT)
+
+    async def _approve(**_kwargs: object) -> ConfirmationOutcome:
+        return ConfirmationOutcome(kind="approved", result=None)
+
+    context = replace(
+        _minimal_context(Database(db_engine), tracker),
+        request_confirmation_callback=_approve,
+    )
+
+    await _delegation_provider(TaintPolicyMode.ENFORCE).execute_tool(
+        "delegate_to_service",
+        {"target_service_id": "coder"},
+        context,
+        "call_confirmed",
+    )
+
+    assert tracker.snapshot().is_sink_approved(SinkClass.SANDBOX_NETWORK)
 
 
 def test_an_approval_survives_serialization_but_not_a_history_read() -> None:

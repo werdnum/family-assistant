@@ -69,8 +69,12 @@ What each gate does with a `confirm` outcome differs, because only one of them h
 and the difference is settled by evidence, not by inference:
 
 - **Tool gate** — runs before a delegation run row exists and puts the question to the user, because
-  it has the confirmation machinery and a live caller. When it clears a delegation, it records the
-  approval **on that turn's taint state** (`TurnTaintState.approved_sinks`).
+  it has the confirmation machinery and a live caller. When a user approves a delegation, it records
+  that **on that turn's taint state** (`TurnTaintState.approved_sinks`) — and only then. A
+  delegation the matrix waved through records nothing: not needing a confirmation and getting one
+  are different facts, and a profile may tighten the matrix, so the target's gate can ask about a
+  sink this one allowed. Recording passage as approval would answer that question on the user's
+  behalf without anything ever being shown.
 - **Profile gate** — the security boundary, and the only gate on entry points that are not tool
   calls. It permits `confirm` exactly when an approval for its sink travelled with the taint, and
   refuses `deny` regardless — `deny` is never confirmable, so no approval for it can exist.
@@ -84,9 +88,9 @@ relax it (`merge_taint_policy_config` rejects `enforce` → `observe`), and a ne
 existing workflow that depends on it being permissive. The same applies to any future profile that
 declares `taint_sink_class`: the declaration is a security boundary, not a rollout dial.
 
-The downgrade also decides what counts as an approval. The tool gate records one on the
-**requested** outcome, not the effective one — an observe-mode `confirm` asked nobody, and treating
-its `audit` pass as consent would manufacture the exact evidence an enforcing target profile trusts.
+The downgrade is one of two ways a gate can pass without asking anybody — the other is a matrix that
+simply allows the sink. Neither is an approval, which is why the tool gate records one only from an
+approved confirmation.
 
 Putting the approval on the taint is what keeps this from becoming a pile of mechanism. The
 alternative — a "this was pre-confirmed" flag threaded from the delegation tool down through six

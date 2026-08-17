@@ -1131,14 +1131,21 @@ class TaintTrackingToolsProvider(ToolsProvider):
         descriptor: ToolDescriptor,
         sink_class: SinkClass,
     ) -> None:
-        """Mark this turn's taint as cleared for a sink another profile will run.
+        """Record that a human approved this turn's content for a sink.
+
+        Called only where a confirmation was actually shown and approved --
+        never for an outcome that simply did not require one. Those are
+        different facts: this turn's policy not asking says nothing about a
+        target profile whose own matrix tightens the same sink to `confirm`,
+        and recording passage as approval would answer that profile's question
+        on a user's behalf.
 
         Only for a delegation: an ordinary tool call *is* the sink, and marking
-        the turn would hand a later, unrelated gate an approval nobody gave it.
-        A delegation is different -- the same content continues under the target
-        profile, whose own gate would otherwise have to infer whether this one
-        asked. Recording it on the taint means the evidence travels with the
-        content it is about, and is persisted with the delegation run.
+        the turn would hand a later, unrelated gate an approval it never asked
+        for. A delegation is different -- the same content continues under the
+        target profile, whose own gate would otherwise have to infer whether
+        this one asked. Recording it on the taint means the evidence travels
+        with the content it is about, and is persisted with the delegation run.
         """
         tracker = context.taint_tracker
         if tracker is None:
@@ -1311,15 +1318,6 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 state=state,
                 evaluation=evaluation,
             )
-            if evaluation.requested_outcome in {
-                TaintPolicyOutcome.ALLOW,
-                TaintPolicyOutcome.AUDIT,
-            }:
-                # The *requested* outcome, deliberately: in observe mode a
-                # confirm/deny is downgraded to audit, and treating that as an
-                # approval would manufacture consent nobody gave -- and hand it
-                # to a target profile that may itself be enforcing.
-                self._record_sink_approval(context, descriptor, sink_class)
             if evaluation.effective_outcome is TaintPolicyOutcome.DENY:
                 raise ToolPolicyDeniedError(name, evaluation.reason)
             if evaluation.effective_outcome is TaintPolicyOutcome.REDACT:
