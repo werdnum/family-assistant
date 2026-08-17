@@ -200,25 +200,16 @@ class InteractionsAgentProcessingService(ProcessingService):
         _ = (conversation_id, subconversation_id)
         return None
 
-    def _refuse_denied_sink(self, taint_sources: Sequence[TaintSource]) -> None:
+    def _refuse_denied_sink(self, state: TurnTaintState) -> None:
         """Fail a delegated submit whose taint bars this profile's sink.
-
-        ``preconfirmed`` because a delegated run only exists because
-        ``delegate_to_service`` created it, and that tool's own gate classifies
-        the call by this same declared sink -- so a ``confirm`` outcome was
-        already put to the user there. Re-refusing it here would fail every
-        approved delegation. ``deny`` is never confirmable, so it is still
-        refused: no upstream approval for it can exist.
 
         A turn that runs the LLM loop is gated there instead (see
         ``ProcessingService.sink_refusal_reason``), against the turn's complete
         taint. This path never runs the loop, so it evaluates what it has: the
-        parent turn's sources plus the attachments it is about to mount.
+        parent turn's state -- carrying any approval the delegation gate
+        recorded -- plus the attachments it is about to mount.
         """
-        state = TurnTaintState.empty()
-        for source in taint_sources:
-            state = state.add_source(source)
-        refusal = self.sink_refusal_reason(state, preconfirmed=True)
+        refusal = self.sink_refusal_reason(state)
         if refusal is not None:
             raise TaintedSinkRefusedError(refusal)
 
@@ -314,6 +305,7 @@ class InteractionsAgentProcessingService(ProcessingService):
         db_context: Database,
         initial_taint_sources: Sequence[TaintSource] | None = None,
         acting_user_id: str | None = None,
+        initial_taint_state: TurnTaintState | None = None,
     ) -> RemoteSubmission:
         """Start the agent interaction without blocking on its result.
 
@@ -333,7 +325,10 @@ class InteractionsAgentProcessingService(ProcessingService):
         environment_sources, attachment_taint = await self._build_environment_sources(
             content_parts, db_context=db_context, acting_user_id=acting_user_id
         )
-        self._refuse_denied_sink((*(initial_taint_sources or ()), *attachment_taint))
+        state = initial_taint_state or TurnTaintState.empty()
+        for source in (*(initial_taint_sources or ()), *attachment_taint):
+            state = state.add_source(source)
+        self._refuse_denied_sink(state)
 
         system_prompt = self.format_system_prompt(user_name=user_name)
         user_text = self._extract_user_content_for_history(content_parts)

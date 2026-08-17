@@ -2383,6 +2383,7 @@ class FakePollableService:
         db_context: object,
         initial_taint_sources: object | None = None,
         acting_user_id: str | None = None,
+        initial_taint_state: object | None = None,
     ) -> RemoteSubmission:
         _ = (
             content_parts,
@@ -2390,6 +2391,7 @@ class FakePollableService:
             user_name,
             db_context,
             acting_user_id,
+            initial_taint_state,
         )
         error = self._submit_error
         if self._submit_errors is not None:

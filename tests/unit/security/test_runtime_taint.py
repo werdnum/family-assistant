@@ -5,6 +5,7 @@ import logging
 import uuid
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from zoneinfo import ZoneInfo
 
@@ -1158,6 +1159,57 @@ def _tool_descriptor(name: str, *tags: ToolTag) -> ToolDescriptor:
         tags=frozenset(tags),
         origin="local",
     )
+
+
+def test_an_approval_is_recorded_on_the_turn_taint_for_a_delegation() -> None:
+    """The gate that asks writes the answer onto the taint it asked about.
+
+    A downstream gate on the target profile then reads evidence rather than
+    inferring, from the shape of the call path, that somebody was probably
+    asked.
+    """
+    tracker = InMemoryTurnTaintTracker()
+    provider = TaintTrackingToolsProvider(
+        LocalToolsProvider(registrations=[]),
+        delegation_sink_classes={"coder": SinkClass.SANDBOX_NETWORK},
+    )
+    context = cast("ToolExecutionContext", SimpleNamespace(taint_tracker=tracker))
+
+    provider._record_sink_approval(
+        context,
+        _tool_descriptor("delegate_to_service", ToolTag.DELEGATION),
+        SinkClass.SANDBOX_NETWORK,
+    )
+
+    assert tracker.snapshot().is_sink_approved(SinkClass.SANDBOX_NETWORK)
+
+
+def test_an_ordinary_tool_call_records_no_approval() -> None:
+    """A non-delegation tool *is* the sink; clearing the turn would over-grant."""
+    tracker = InMemoryTurnTaintTracker()
+    provider = TaintTrackingToolsProvider(LocalToolsProvider(registrations=[]))
+    context = cast("ToolExecutionContext", SimpleNamespace(taint_tracker=tracker))
+
+    provider._record_sink_approval(
+        context,
+        _tool_descriptor("spawn_worker", ToolTag.CODE_EXECUTION),
+        SinkClass.SANDBOX_NETWORK,
+    )
+
+    assert not tracker.snapshot().is_sink_approved(SinkClass.SANDBOX_NETWORK)
+
+
+def test_an_approval_survives_serialization_but_not_a_history_read() -> None:
+    """It travels with the turn's own taint, not into later turns quoting it."""
+    approved = TurnTaintState.empty().approve_sink(SinkClass.SANDBOX_NETWORK)
+
+    carried = TurnTaintState.from_metadata(approved.to_metadata())
+    via_history = TurnTaintState.from_metadata(
+        approved.to_metadata(), from_history=True
+    )
+
+    assert carried.is_sink_approved(SinkClass.SANDBOX_NETWORK)
+    assert not via_history.is_sink_approved(SinkClass.SANDBOX_NETWORK)
 
 
 def test_delegating_to_a_sandbox_profile_resolves_to_its_sink_not_delegation() -> None:

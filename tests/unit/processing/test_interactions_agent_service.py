@@ -257,14 +257,14 @@ async def test_submit_async_refuses_an_attachment_owned_by_another_user(
 
 
 @pytest.mark.asyncio
-async def test_submit_async_allows_a_confirmable_tier_already_gated_at_the_tool(
+async def test_submit_async_honours_an_approval_persisted_with_the_run(
     db_engine: AsyncEngine,
 ) -> None:
     """An approved delegation must not be refused again at the profile gate.
 
-    known_contact resolves to `confirm`, and `delegate_to_service` -- the only
-    creator of a delegation run -- puts that to the user before the run exists.
-    Refusing it here as well would fail every approved delegation.
+    The run persists the parent turn's taint state, approval and all, so the
+    submit path reads the answer a user actually gave instead of assuming one
+    from the fact that a delegation exists.
     """
     llm_client = _google_client()
     mock_interaction = AsyncMock()
@@ -282,7 +282,7 @@ async def test_submit_async_allows_a_confirmable_tier_already_gated_at_the_tool(
         subconversation_id="sub-1",
         user_name="Andrew",
         db_context=Database(db_engine),
-        initial_taint_sources=[
+        initial_taint_state=_state_from([
             TaintSource(
                 source_type=TaintSourceType.EMAIL,
                 source_id="msg-known",
@@ -290,7 +290,7 @@ async def test_submit_async_allows_a_confirmable_tier_already_gated_at_the_tool(
                 labels=frozenset(),
                 reason="Mail from a known contact.",
             )
-        ],
+        ]).approve_sink(SinkClass.SANDBOX_NETWORK),
     )
 
     assert submission.remote_task_id == "inter_confirmed"
@@ -411,13 +411,15 @@ async def test_taint_carried_by_history_gates_the_turn(
 
 
 @pytest.mark.asyncio
-async def test_an_inline_delegation_keeps_its_approved_confirmation(
+async def test_an_approval_travelling_with_the_taint_permits_a_confirm(
     db_engine: AsyncEngine,
 ) -> None:
-    """With async delegation disabled, delegate_to_service runs the target inline.
+    """The gate reads the approval off the taint rather than inferring one.
 
-    That call already passed the tool gate, so the profile gate must not refuse
-    the same confirm outcome a second time and fail the approved delegation.
+    known_contact resolves to `confirm`. Whoever put that question to the user
+    records the answer on this turn's taint, and it travels with the content --
+    so a gate downstream neither re-asks nor has to reason about which call
+    path it is on.
     """
     llm_client = _google_client()
     service = _make_service(
@@ -435,13 +437,13 @@ async def test_an_inline_delegation_keeps_its_approved_confirmation(
         )
     ]
 
-    refused = service.sink_refusal_reason(
-        _state_from(known_contact), preconfirmed=False
+    without_approval = service.sink_refusal_reason(_state_from(known_contact))
+    with_approval = service.sink_refusal_reason(
+        _state_from(known_contact).approve_sink(SinkClass.SANDBOX_NETWORK)
     )
-    allowed = service.sink_refusal_reason(_state_from(known_contact), preconfirmed=True)
 
-    assert refused is not None
-    assert allowed is None
+    assert without_approval is not None
+    assert with_approval is None
 
 
 @pytest.mark.asyncio

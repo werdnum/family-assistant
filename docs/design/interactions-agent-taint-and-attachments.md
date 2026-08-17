@@ -65,16 +65,24 @@ letting it read as an internal fault.
 The submit-then-poll path never runs the loop, so it evaluates what it has — the parent turn's
 sources plus the attachments it is about to mount — in `submit_async`.
 
-What each gate does with a `confirm` outcome differs, because only one of them has somebody to ask:
+What each gate does with a `confirm` outcome differs, because only one of them has somebody to ask —
+and the difference is settled by evidence, not by inference:
 
-- **Tool gate** — runs before a delegation run row exists and offers the *confirmation*, because it
-  has the confirmation machinery and a live caller. This is where `confirm` is resolved.
+- **Tool gate** — runs before a delegation run row exists and puts the question to the user, because
+  it has the confirmation machinery and a live caller. When it clears a delegation, it records the
+  approval **on that turn's taint state** (`TurnTaintState.approved_sinks`).
 - **Profile gate** — the security boundary, and the only gate on entry points that are not tool
-  calls. It refuses `deny` always: `deny` is never confirmable, so no upstream approval for it can
-  exist. It refuses `confirm` only when the turn was *not* already gated — a `sink_preconfirmed`
-  flag, set by `delegate_to_service` on both the inline and submit paths it owns, marks the turns
-  whose `confirm` a user already answered. Without it, every approved delegation would be refused at
-  the second gate.
+  calls. It permits `confirm` exactly when an approval for its sink travelled with the taint, and
+  refuses `deny` regardless — `deny` is never confirmable, so no approval for it can exist.
+
+Putting the approval on the taint is what keeps this from becoming a pile of mechanism. The
+alternative — a "this was pre-confirmed" flag threaded from the delegation tool down through six
+signatures to the loop — only ever *reconstructed* whether an approval was likely, and got it wrong
+whenever the caller's and target's policies differed (an observe-mode caller asks nothing, yet the
+flag would claim an approval). The approval is a fact about the same content the taint describes, so
+it travels with it: serialized into `taint_state_json` with the run, rehydrated by the worker, and
+read by whichever gate needs it. Approvals are deliberately *not* carried across a history read — a
+human clearing one turn says nothing about a later turn that merely quotes it.
 
 `submit_async` already receives the parent turn's taint as `initial_taint_sources` — the delegation
 run persists `taint_state_json` and the worker rehydrates it. The original implementation discarded
@@ -100,21 +108,24 @@ routing the user's own file is allowed without one.
 2. **`security/taint.py`** — `resolve_tool_sink_class` takes an optional
    `delegation_sink_classes: Mapping[str, SinkClass]`; a delegation tool whose `target_service_id`
    is in the map resolves to the declared sink.
-3. **`tools/infrastructure.py`** — `TaintTrackingToolsProvider` carries that map and passes it to
-   `evaluate_tool`.
+3. **`tools/infrastructure.py`** — `TaintTrackingToolsProvider` carries that map, and records an
+   approval on the turn's taint when it clears a delegation (outright or after a confirmation).
 4. **`assistant.py`** — builds the map from config before the per-profile loop (it spans profiles)
    and passes the merged taint policy into the processing service so the profile gate has an
    evaluator.
-5. **`processing/service.py`** / **`processing/llm_loop.py`** — `sink_refusal_reason()` on the base
-   class, called from `run_stream` against the merged turn state, with `preconfirmed` threaded from
-   `delegate_to_service`; both chat entry points catch `TaintedSinkRefusedError` and render it.
-6. **`processing/interactions_agent_service.py`** — `_refuse_denied_sink()` applies it to the
+5. **`security/taint.py`** — `TurnTaintState.approved_sinks`, with `approve_sink()` /
+   `is_sink_approved()`, serialized alongside the sources and merged by
+   `merge_taint_state_into_tracker`.
+6. **`processing/service.py`** / **`processing/llm_loop.py`** — `sink_refusal_reason()` on the base
+   class, called from `run_stream` against the merged turn state; both chat entry points catch
+   `TaintedSinkRefusedError` and render it.
+7. **`processing/interactions_agent_service.py`** — `_refuse_denied_sink()` applies it to the
    delegated submit; `_build_environment_sources()` replaces the blanket refusal, giving each
    mounted file a unique `target` (a repeated filename gains a `-2` suffix, since the sandbox holds
    one file per path).
-7. **`llm/providers/google_genai_client.py`** — `start_agent_interaction(..., environment_sources=)`
+8. **`llm/providers/google_genai_client.py`** — `start_agent_interaction(..., environment_sources=)`
    attaches `environment: {"type": "remote", "sources": [...]}`.
-8. **`defaults.yaml`** — `coder` declares `taint_sink_class: sandbox_network`.
+9. **`defaults.yaml`** — `coder` declares `taint_sink_class: sandbox_network`.
 
 ## Non-goals
 

@@ -23,7 +23,7 @@ if TYPE_CHECKING:
         RemoteServiceConfig,
         RequestConfirmationCallback,
     )
-    from family_assistant.security.taint import TaintSource
+    from family_assistant.security.taint import TaintSource, TurnTaintState
     from family_assistant.storage.database import Database
     from family_assistant.telegram.protocols import ConfirmationUIManager
 
@@ -157,6 +157,7 @@ class PollableDelegationService(Protocol):
         db_context: Database,
         initial_taint_sources: Sequence[TaintSource] | None = None,
         acting_user_id: str | None = None,
+        initial_taint_state: TurnTaintState | None = None,
     ) -> RemoteSubmission:
         """Submit without a client-supplied task id; the remote assigns one.
 

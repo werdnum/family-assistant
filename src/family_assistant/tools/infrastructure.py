@@ -35,6 +35,7 @@ from family_assistant.security.taint import (
     TurnTaintState,
     derive_tool_result_taint_source,
     merge_taint_state_into_tracker,
+    resolve_tool_sink_class,
 )
 from family_assistant.tools.attachment_utils import (
     is_attachment_id,
@@ -1124,6 +1125,30 @@ class TaintTrackingToolsProvider(ToolsProvider):
         # generic delegation. Spans profiles, so it is built once at startup.
         self._delegation_sink_classes = dict(delegation_sink_classes or {})
 
+    def _record_sink_approval(
+        self,
+        context: ToolExecutionContext,
+        descriptor: ToolDescriptor,
+        sink_class: SinkClass,
+    ) -> None:
+        """Mark this turn's taint as cleared for a sink another profile will run.
+
+        Only for a delegation: an ordinary tool call *is* the sink, and marking
+        the turn would hand a later, unrelated gate an approval nobody gave it.
+        A delegation is different -- the same content continues under the target
+        profile, whose own gate would otherwise have to infer whether this one
+        asked. Recording it on the taint means the evidence travels with the
+        content it is about, and is persisted with the delegation run.
+        """
+        tracker = context.taint_tracker
+        if tracker is None:
+            return
+        if "delegation" not in {
+            str(getattr(tag, "value", tag)) for tag in descriptor.tags
+        }:
+            return
+        tracker.replace(tracker.snapshot().approve_sink(sink_class))
+
     async def get_tool_definitions(
         self,
         *,
@@ -1242,11 +1267,11 @@ class TaintTrackingToolsProvider(ToolsProvider):
             state = context.taint_tracker.snapshot()
             if context.taint_policy_snapshot is not None and not argument_taint_merged:
                 state = context.taint_policy_snapshot
-            evaluation = self._taint_evaluator.evaluate_tool(
-                descriptor=descriptor,
-                state=state,
-                arguments=arguments,
-                delegation_sink_classes=self._delegation_sink_classes,
+            sink_class = resolve_tool_sink_class(
+                descriptor, arguments, self._delegation_sink_classes
+            )
+            evaluation = self._taint_evaluator.evaluate(
+                state=state, sink_class=sink_class
             )
             logger.info(
                 "Runtime taint policy evaluated: tool=%s call_id=%s sink=%s "
@@ -1286,6 +1311,11 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 state=state,
                 evaluation=evaluation,
             )
+            if evaluation.effective_outcome in {
+                TaintPolicyOutcome.ALLOW,
+                TaintPolicyOutcome.AUDIT,
+            }:
+                self._record_sink_approval(context, descriptor, sink_class)
             if evaluation.effective_outcome is TaintPolicyOutcome.DENY:
                 raise ToolPolicyDeniedError(name, evaluation.reason)
             if evaluation.effective_outcome is TaintPolicyOutcome.REDACT:
@@ -1315,6 +1345,9 @@ class TaintTrackingToolsProvider(ToolsProvider):
                             state_before_execution=state_before_confirmation,
                         )
                     return confirmation_result
+                # A ``None`` result means the user approved. Record that on the
+                # taint, so the evidence travels with the content it is about.
+                self._record_sink_approval(context, descriptor, sink_class)
 
         state_before_execution = (
             context.taint_tracker.snapshot()

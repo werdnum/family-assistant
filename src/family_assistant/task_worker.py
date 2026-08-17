@@ -132,9 +132,19 @@ def _taint_sources_from_delegation_run(
     run: DelegationRunDict,
 ) -> tuple[TaintSource, ...]:
     """Return parent taint sources persisted with an async delegation run."""
+    return _taint_state_from_delegation_run(run).sources
+
+
+def _taint_state_from_delegation_run(run: DelegationRunDict) -> TurnTaintState:
+    """Return the parent taint *state* persisted with a delegation run.
+
+    The state, not just its sources: a sink approval the delegation gate
+    recorded travels on it, and a target that is itself a sink needs that
+    evidence rather than a guess about whether anyone was asked.
+    """
     if run["taint_state_json"] is None:
-        return ()
-    return TurnTaintState.from_metadata(run["taint_state_json"]).sources
+        return TurnTaintState.empty()
+    return TurnTaintState.from_metadata(run["taint_state_json"])
 
 
 def _conservative_unknown_external_metadata(reason: str) -> TaintMetadata:
@@ -1442,8 +1452,9 @@ class TaskWorker:
                 subconversation_id=run["subconversation_id"],
                 user_name=run["user_name"] or exec_context.user_name,
                 db_context=exec_context.db_context,
-                initial_taint_sources=_taint_sources_from_delegation_run(run),
+                initial_taint_sources=(),
                 acting_user_id=run["user_id"],
+                initial_taint_state=_taint_state_from_delegation_run(run),
             )
         except Exception as exc:
             await self._handle_submit_failure(
@@ -1563,8 +1574,9 @@ class TaskWorker:
                 subconversation_id=run["subconversation_id"],
                 user_name=run["user_name"] or exec_context.user_name,
                 db_context=exec_context.db_context,
-                initial_taint_sources=_taint_sources_from_delegation_run(run),
+                initial_taint_sources=(),
                 acting_user_id=run["user_id"],
+                initial_taint_state=_taint_state_from_delegation_run(run),
             )
         except Exception as exc:
             await self._handle_submit_failure(

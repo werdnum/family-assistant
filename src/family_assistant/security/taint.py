@@ -176,6 +176,16 @@ class TurnTaintState:
     fresh_high_taint_seen_at_sequence: int | None
     history_high_taint_present: bool
     sequence: int = 0
+    approved_sinks: frozenset[str] = frozenset()
+    """Sink classes a human has approved for *this* taint, by policy value.
+
+    Travels with the taint rather than beside it, because it is a fact about
+    the same content: "someone was shown this and said yes to sandbox_network".
+    A gate downstream of the one that asked can then read the approval instead
+    of inferring, from the shape of the call path, that an approval was
+    probably sought. Serialized with the rest of the state, so it survives the
+    delegation boundary the way the sources do.
+    """
 
     @classmethod
     def empty(cls) -> TurnTaintState:
@@ -188,6 +198,14 @@ class TurnTaintState:
             history_high_taint_present=False,
             sequence=0,
         )
+
+    def approve_sink(self, sink_class: SinkClass) -> TurnTaintState:
+        """Record that this turn's taint was cleared for one sink class."""
+        return replace(self, approved_sinks=self.approved_sinks | {sink_class.value})
+
+    def is_sink_approved(self, sink_class: SinkClass) -> bool:
+        """Whether an approval for this sink travelled with the taint."""
+        return sink_class.value in self.approved_sinks
 
     def add_source(
         self,
@@ -249,6 +267,7 @@ class TurnTaintState:
                 }
                 for source in self.sources[-max_sources:]
             ],
+            "approved_sinks": sorted(self.approved_sinks),
         }
 
     @classmethod
@@ -302,6 +321,17 @@ class TurnTaintState:
             )
         if from_history and state.max_tier >= SourceTrustTier.UNKNOWN_EXTERNAL:
             state = replace(state, history_high_taint_present=True)
+        # Approvals are not carried across a *history* read: a human clearing
+        # one turn's content for a sandbox says nothing about a later turn that
+        # merely quotes it. They travel only on the delegation boundary, where
+        # the same turn continues under another profile.
+        if not from_history:
+            raw_approved = metadata.get("approved_sinks")
+            if isinstance(raw_approved, list):
+                state = replace(
+                    state,
+                    approved_sinks=frozenset(str(entry) for entry in raw_approved),
+                )
         return state
 
     @classmethod
@@ -337,6 +367,7 @@ class TaintMetadata(TypedDict, total=False):
     history_high_taint_present: bool
     fresh_high_taint_seen_at_sequence: int | None
     sources: list[TaintMetadataSource]
+    approved_sinks: list[str]
 
 
 class TurnTaintTracker(Protocol):
@@ -404,6 +435,10 @@ def merge_taint_state_into_tracker(
         )
     if state.history_high_taint_present and not merged.history_high_taint_present:
         merged = replace(merged, history_high_taint_present=True)
+    if state.approved_sinks and not from_history:
+        merged = replace(
+            merged, approved_sinks=merged.approved_sinks | state.approved_sinks
+        )
     tracker.replace(merged)
     return merged
 
