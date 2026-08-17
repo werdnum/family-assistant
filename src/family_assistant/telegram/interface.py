@@ -4,17 +4,19 @@ import asyncio
 import io
 import logging
 import mimetypes
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from PIL import Image
-from telegram import ForceReply, InputMediaPhoto
+from telegram import ForceReply, InputMediaPhoto, Message
 from telegram.constants import ParseMode
-from telegram.error import BadRequest
+from telegram.error import BadRequest, RetryAfter
 
 from family_assistant.interfaces import ChatInterface
 from family_assistant.storage.database import Database
 from family_assistant.telegram.chunking import (
     CHUNK_SEND_DELAY_SECONDS,
+    FLOOD_CONTROL_RETRIES,
     TELEGRAM_SINGLE_MESSAGE_LIMIT,
     split_message_text,
 )
@@ -32,6 +34,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 TELEGRAM_PHOTO_SIZE_LIMIT = 10 * 1024 * 1024  # 10MB
+
+
+def _flood_control_delay_seconds(flood_control: RetryAfter) -> float:
+    """Seconds to wait for a ``RetryAfter``, which carries either form."""
+    retry_after = flood_control.retry_after
+    if isinstance(retry_after, timedelta):
+        return retry_after.total_seconds()
+    return float(retry_after)
 
 
 class TelegramChatInterface(ChatInterface):
@@ -171,7 +181,7 @@ class TelegramChatInterface(ChatInterface):
             final_parse_mode = parse_mode
 
         try:
-            sent_msg = await self.application.bot.send_message(
+            sent_msg = await self._send_honouring_flood_control(
                 chat_id=chat_id,
                 text=text_to_send,
                 parse_mode=final_parse_mode,
@@ -186,7 +196,7 @@ class TelegramChatInterface(ChatInterface):
                 "Retrying with plain text.",
                 exc_info=False,
             )
-            sent_msg = await self.application.bot.send_message(
+            sent_msg = await self._send_honouring_flood_control(
                 chat_id=chat_id,
                 text=text,
                 parse_mode=None,
@@ -194,6 +204,47 @@ class TelegramChatInterface(ChatInterface):
                 reply_markup=reply_markup,
             )
         return str(sent_msg.message_id)
+
+    async def _send_honouring_flood_control(
+        self,
+        *,
+        chat_id: int,
+        text: str,
+        parse_mode: ParseMode | None,
+        reply_to_message_id: int | None,
+        reply_markup: ForceReply | None,
+    ) -> Message:
+        """Send one message, waiting out flood control when Telegram asks.
+
+        Telegram allows one message per second per chat and answers a burst past
+        that with ``RetryAfter`` saying how long to wait. Treating that as a
+        failed send would abandon the remaining pieces of a split message and
+        leave the caller to start over from the first piece, delivering the
+        opening twice and possibly never reaching the end -- so wait the stated
+        time and continue where we are.
+        """
+        attempts = 0
+        while True:
+            try:
+                return await self.application.bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    parse_mode=parse_mode,
+                    reply_to_message_id=reply_to_message_id,
+                    reply_markup=reply_markup,
+                )
+            except RetryAfter as flood_control:
+                attempts += 1
+                if attempts > FLOOD_CONTROL_RETRIES:
+                    raise
+                delay = _flood_control_delay_seconds(flood_control)
+                logger.warning(
+                    "Telegram flood control for chat %s: waiting %.1fs before retry %d.",
+                    chat_id,
+                    delay,
+                    attempts,
+                )
+                await asyncio.sleep(delay)
 
     def _resize_image_if_needed(
         self, content: bytes, attachment_id: str

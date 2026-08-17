@@ -11,6 +11,9 @@ TELEGRAM_MAX_MESSAGE_LENGTH = 4000
 CHUNK_SEND_DELAY_SECONDS = 0.2
 """Pacing between the pieces of a split message, to keep them in order."""
 
+FLOOD_CONTROL_RETRIES = 3
+"""How many times to wait out a ``RetryAfter`` before giving up on a piece."""
+
 _SEPARATORS: tuple[str, ...] = ("\n\n", "\n", ". ", " ")
 
 _MINIMUM_FILL_RATIO = 0.5

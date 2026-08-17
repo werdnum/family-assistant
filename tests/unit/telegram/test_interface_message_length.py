@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 
 import pytest
-from telegram.error import BadRequest
+from telegram.error import BadRequest, RetryAfter
 
 from family_assistant.telegram.chunking import TELEGRAM_SINGLE_MESSAGE_LIMIT
 from family_assistant.telegram.interface import TelegramChatInterface
@@ -38,9 +38,13 @@ class _SentMessage:
 class _FakeBot:
     """A bot that refuses over-long messages, the way Telegram does."""
 
-    def __init__(self, *, rejects_parse_mode: bool = False) -> None:
+    def __init__(
+        self, *, rejects_parse_mode: bool = False, flood_control_on_send: int = 0
+    ) -> None:
         self.sent: list[_SentMessage] = []
+        self.refused = 0
         self._rejects_parse_mode = rejects_parse_mode
+        self._flood_control_on_send = flood_control_on_send
 
     async def send_message(
         self,
@@ -53,6 +57,9 @@ class _FakeBot:
         _ = chat_id
         if len(text) > TELEGRAM_SINGLE_MESSAGE_LIMIT:
             raise BadRequest("Message is too long")
+        if len(self.sent) + 1 == self._flood_control_on_send and not self.refused:
+            self.refused += 1
+            raise RetryAfter(0)
         if self._rejects_parse_mode and parse_mode is not None:
             raise BadRequest("Can't parse entities: can't find end of the entity")
         self.sent.append(
@@ -123,6 +130,25 @@ async def test_a_piece_whose_escaping_overflows_the_cap_goes_out_as_plain_text()
 
     assert bot.sent[0].parse_mode is None
     assert bot.sent[0].text == "." * 4000
+
+
+@pytest.mark.asyncio
+async def test_flood_control_mid_message_waits_and_finishes_the_message() -> None:
+    """Telegram allows one message per second per chat; a split message bursts.
+
+    Treating the resulting RetryAfter as a failed send would abandon the
+    remaining pieces and leave the caller to start over from the first, sending
+    the opening twice and possibly never reaching the end.
+    """
+    bot = _FakeBot(flood_control_on_send=2)
+    text = _long_result()
+
+    message_id = await _interface(bot).send_message(conversation_id=_CHAT_ID, text=text)
+
+    assert message_id == "101"
+    assert bot.refused == 1
+    delivered = "\n\n".join(sent.text for sent in bot.sent)
+    assert delivered.split() == text.split()
 
 
 @pytest.mark.asyncio
