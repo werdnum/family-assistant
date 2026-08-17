@@ -3,13 +3,13 @@
 ## Status
 
 Proposed. Research review and design direction, for discussion before any implementation. Builds on
-the operational findings in
-[runtime-taint-enforcement-operational-findings.md](runtime-taint-enforcement-operational-findings.md)
-(PR #1111), which remains the prerequisite work; this document addresses the strategic question that
-PR #1111 deliberately did not: whether the enforcement model itself — a context-free tier-times-sink
-matrix whose only outcomes are allow, confirm, and deny — is the right shape, given what has been
-learned in production and what the rest of the industry has shipped since the taint design was
-written.
+the operational findings in [PR #1111](https://github.com/werdnum/family-assistant/pull/1111)
+(`docs/design/runtime-taint-enforcement-operational-findings.md`, which lands with that PR and is
+not yet on this branch's base); PR #1111 remains the prerequisite work. This document addresses the
+strategic question that PR #1111 deliberately did not: whether the enforcement model itself — a
+context-free tier-times-sink matrix whose only outcomes are allow, confirm, and deny — is the right
+shape, given what has been learned in production and what the rest of the industry has shipped since
+the taint design was written.
 
 ## Summary
 
@@ -41,9 +41,9 @@ This document proposes adapting that decomposition to Family Assistant's existin
 - The worst cells keep a deterministic floor the adjudicator cannot relax, consistent with the
   existing tighten-only clamp philosophy. In those cells the adjudicator only chooses *between*
   confirm and deny; skipping confirmation requires a prior human approval bound to the same
-  destination (capability-scoped reuse), never a model verdict. **Argument provenance matching** —
-  whether a destination provably originates from trusted-tier content — informs the judge and the
-  confirmation UX but relaxes nothing.
+  capability — tool, destination, and payload scope — never a model verdict. **Argument provenance
+  matching** — whether a destination provably originates from trusted-tier content — informs the
+  judge and the confirmation UX but relaxes nothing.
 - Denials become **deny-and-continue**: a structured tool result the model can route around, with
   human escalation after repeated blocks, instead of a hard error.
 - An **escalate-only injection probe** screens untrusted content at ingestion and can only raise
@@ -191,10 +191,13 @@ adjudicator verdict (bounded below by the cell's floor) → `operator_minimum` a
 `adjudicate` to the provider at all — applying `operator_minimum` first, as `evaluate()` does today,
 would convert the cell to `confirm` before the judge ever ran. Applying it after keeps its semantics
 exactly as strong as today: an operator-configured minimum can never be weakened by a judge verdict,
-and never by argument provenance matching either. In `observe` mode, `adjudicate` downgrades to
-`audit` like every other gating outcome — which gives a free shadow phase: run the adjudicator, log
-its verdict, block nothing, and measure its error rates against the exact traffic that stalled the
-rollout.
+and never by argument provenance matching either. In `observe` mode the evaluator still returns
+`adjudicate` and the provider still invokes the judge — only the verdict's *effect* is downgraded to
+`audit`, so it is logged and nothing blocks. Downgrading the outcome itself before the provider saw
+it would silently skip the judge and leave nothing to calibrate; preserving the outcome while
+suppressing enforcement is what gives the free shadow phase: real verdicts against the exact traffic
+that stalled the rollout, at zero user-visible cost. A deployment that wants observe mode without
+judge latency or spend can set the cell to plain `audit` explicitly.
 
 The default matrix change, relative to [runtime-taint-machinery.md](runtime-taint-machinery.md)'s
 shipped defaults:
@@ -223,12 +226,16 @@ costs nothing observed today.
 "Floor: confirm" means the adjudicator's verdict space in that cell is {confirm, deny} — it chooses
 how hard to gate, never whether to gate, with no exceptions: no model verdict, probe result, or
 provenance computation ever adds `allow` to a floor cell. The only path past a floor-cell
-confirmation is a prior *human* approval covering the same capability — the destination-bound,
-capability-scoped confirmation reuse designed in PR #1111. First use of a destination confirms; the
-approval binds to that destination and travels with the task; a different destination is a new
-approval. That is positive authorization by an authenticated decision, not by mention. And because
-`operator_minimum` applies after adjudication, an operator minimum can only ever tighten a
-floor-cell verdict further.
+confirmation is a prior *human* approval covering the same capability — and capability means the
+full tuple PR #1111 enumerates (tool/operation, destination, payload or data scope), never the
+destination alone. Destination-only binding would let an approved benign message to X authorize a
+later, materially different payload to X composed under injected instructions. Default reuse scope
+is therefore the exact tool-and-argument fingerprint: retries and concurrent duplicates coalesce
+into one confirmation; anything else re-confirms. A broader grant — "further messages to X for the
+rest of this task" — is an explicit human choice that the confirmation UI states plainly, is bounded
+to the task, and is suspended for probe-labeled turns. That is positive authorization by an
+authenticated decision, not by mention. And because `operator_minimum` applies after adjudication,
+an operator minimum can only ever tighten a floor-cell verdict further.
 
 The two cells that dominated the production friction data (`sensitive_read_broadening`,
 `known_user_message` — i.e. reading notes/calendar and messaging the household after external
@@ -329,10 +336,11 @@ What the match is for:
   the adjudicator in non-floor cells and for verdict *reasons* everywhere.
 - **Rendering.** The same machinery decides which argument values may render verbatim to the judge
   (trusted-tier origin) versus as stubs.
-- **Approval scoping.** The normalized destination value is the natural fingerprint for
-  capability-scoped confirmation reuse — the approval binds to exactly the value that matched, and
+- **Approval scoping.** The normalized destination value supplies the destination component of the
+  reuse fingerprint (tool/operation + destination + payload scope, per the floor-cell rules above) —
   whole-value matching (not substring containment) prevents an attacker smuggling exfiltrated data
-  around an approved destination, e.g. query parameters appended to an approved URL.
+  around an approved destination, e.g. query parameters appended to an approved URL, while the
+  payload component prevents an approved benign payload from covering a different one.
 
 This keeps CaMeL's value-provenance insight at the altitude this codebase can afford — per-argument,
 per-sink, exact-match, not per-token information flow (a stated non-goal in PR #1111, and still one)
@@ -533,8 +541,10 @@ Each phase independently shippable and valuable:
   escalated in 100% of runs at the floor cells, independent of adjudicator verdicts and of any
   provenance-match result — the floors do this unconditionally; the judge is not load-bearing for
   the tails. The fixture set includes negation cases ("never send to X" in the current request,
-  injection targeting X — must still confirm) and data-smuggling variants around an approved
-  destination (query parameters appended to an approved URL — must not reuse the approval).
+  injection targeting X — must still confirm), data-smuggling variants around an approved
+  destination (query parameters appended to an approved URL — must not reuse the approval), and
+  payload substitution against a default-scope approval (a different payload to an approved
+  destination — must re-confirm unless the human explicitly granted a task-bounded broader scope).
 - An adjudicator outage degrades every `adjudicate` cell to `confirm`, visibly in diagnostics —
   never to `allow`.
 - No code path allows probe output or judge output to lower a tier, remove a source, relax a floor,
