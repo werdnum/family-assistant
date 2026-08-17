@@ -1311,10 +1311,14 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 state=state,
                 evaluation=evaluation,
             )
-            if evaluation.effective_outcome in {
+            if evaluation.requested_outcome in {
                 TaintPolicyOutcome.ALLOW,
                 TaintPolicyOutcome.AUDIT,
             }:
+                # The *requested* outcome, deliberately: in observe mode a
+                # confirm/deny is downgraded to audit, and treating that as an
+                # approval would manufacture consent nobody gave -- and hand it
+                # to a target profile that may itself be enforcing.
                 self._record_sink_approval(context, descriptor, sink_class)
             if evaluation.effective_outcome is TaintPolicyOutcome.DENY:
                 raise ToolPolicyDeniedError(name, evaluation.reason)

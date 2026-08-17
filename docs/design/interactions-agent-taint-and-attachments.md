@@ -75,6 +75,19 @@ and the difference is settled by evidence, not by inference:
   calls. It permits `confirm` exactly when an approval for its sink travelled with the taint, and
   refuses `deny` regardless — `deny` is never confirmable, so no approval for it can exist.
 
+**A profile that declares a sink must also enforce.** The deployment-wide `taint_policy.mode` ships
+as `observe`, which downgrades every `confirm` and `deny` to `audit`. Under it the matrix above
+decides nothing: both gates see an `audit` and let the turn through, so an emailed instruction
+reaches the sandbox and the declaration is decoration. `coder` therefore pins
+`taint_policy.mode: enforce` on the profile — a profile may tighten the deployment policy but never
+relax it (`merge_taint_policy_config` rejects `enforce` → `observe`), and a new profile has no
+existing workflow that depends on it being permissive. The same applies to any future profile that
+declares `taint_sink_class`: the declaration is a security boundary, not a rollout dial.
+
+The downgrade also decides what counts as an approval. The tool gate records one on the
+**requested** outcome, not the effective one — an observe-mode `confirm` asked nobody, and treating
+its `audit` pass as consent would manufacture the exact evidence an enforcing target profile trusts.
+
 Putting the approval on the taint is what keeps this from becoming a pile of mechanism. The
 alternative — a "this was pre-confirmed" flag threaded from the delegation tool down through six
 signatures to the loop — only ever *reconstructed* whether an approval was likely, and got it wrong
@@ -125,7 +138,8 @@ routing the user's own file is allowed without one.
    one file per path).
 8. **`llm/providers/google_genai_client.py`** — `start_agent_interaction(..., environment_sources=)`
    attaches `environment: {"type": "remote", "sources": [...]}`.
-9. **`defaults.yaml`** — `coder` declares `taint_sink_class: sandbox_network`.
+9. **`defaults.yaml`** — `coder` declares `taint_sink_class: sandbox_network` and pins
+   `taint_policy.mode: enforce`, so the gate holds at any rollout stage.
 
 ## Non-goals
 

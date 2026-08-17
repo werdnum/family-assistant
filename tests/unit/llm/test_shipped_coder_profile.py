@@ -33,6 +33,7 @@ from family_assistant.security.taint import (
     TaintSource,
     TaintSourceType,
     TurnTaintState,
+    merge_taint_policy_config,
 )
 
 
@@ -85,6 +86,42 @@ def test_shipped_coder_profile_is_a_sandbox_network_sink() -> None:
     """
     processing_config = _shipped_profile("coder").processing_config
     assert processing_config.taint_sink_class is SinkClass.SANDBOX_NETWORK
+
+
+def test_shipped_coder_profile_enforces_its_taint_policy() -> None:
+    """Declaring the sink decides nothing unless the profile also enforces.
+
+    The shipped deployment-wide `taint_policy.mode` is `observe`, which
+    downgrades every confirm and deny to audit -- so under it both the tool
+    gate and the profile gate would let an emailed instruction reach the
+    sandbox. A profile may tighten the deployment policy (never relax it), and
+    this one enforces from the start rather than waiting for the rollout.
+    """
+    config = load_config(
+        config_file_path="nonexistent-so-only-defaults.yaml",
+        load_dotenv_file=False,
+    )
+    profile = next(p for p in config.service_profiles if p.id == "coder")
+
+    assert config.taint_policy.mode is TaintPolicyMode.OBSERVE
+    merged = merge_taint_policy_config(
+        base=config.taint_policy, profile=profile.taint_policy
+    )
+    assert merged.mode is TaintPolicyMode.ENFORCE
+
+    evaluation = TaintPolicyEvaluator(merged).evaluate(
+        state=TurnTaintState.empty().add_source(
+            TaintSource(
+                source_type=TaintSourceType.EMAIL,
+                source_id="msg-1",
+                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                labels=frozenset(),
+                reason="Inbound email.",
+            )
+        ),
+        sink_class=SinkClass.SANDBOX_NETWORK,
+    )
+    assert evaluation.effective_outcome is TaintPolicyOutcome.DENY
 
 
 def test_the_shipped_matrix_denies_a_sandbox_run_untrusted_content() -> None:

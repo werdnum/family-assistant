@@ -1850,7 +1850,13 @@ to ask, so it refuses a `confirm` outcome as well as a `deny`.
 Attachments routed into such a profile contribute their own recorded provenance to that evaluation,
 so an untrusted file raises the turn's tier even when the request text is trusted.
 
-The shipped `coder` profile declares `sandbox_network`. See
+**Pair it with `taint_policy.mode: enforce` on the same profile.** The deployment-wide
+`taint_policy.mode` defaults to `observe`, which downgrades every `confirm` and `deny` to `audit` —
+under it a declared sink decides nothing and both gates let the turn through. A profile may tighten
+the deployment policy (never relax it: `enforce` → `observe` is a startup error), and a sink
+declaration is a security boundary rather than a rollout dial, so declare both together.
+
+The shipped `coder` profile does. See
 [interactions-agent-taint-and-attachments.md](../design/interactions-agent-taint-and-attachments.md).
 
 ```yaml
@@ -1858,6 +1864,8 @@ service_profiles:
   - id: "coder"
     processing_config:
       taint_sink_class: "sandbox_network"
+    taint_policy:
+      mode: "enforce"
 ```
 
 ______________________________________________________________________

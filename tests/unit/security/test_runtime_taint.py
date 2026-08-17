@@ -1199,6 +1199,65 @@ def test_an_ordinary_tool_call_records_no_approval() -> None:
     assert not tracker.snapshot().is_sink_approved(SinkClass.SANDBOX_NETWORK)
 
 
+@pytest.mark.asyncio
+async def test_observe_mode_delegation_records_no_approval(
+    db_engine: AsyncEngine,
+) -> None:
+    """A downgraded confirm asked nobody, so it clears nothing.
+
+    Observe mode converts confirm/deny into audit and lets the call through.
+    Reading the *effective* outcome would turn that dry-run pass into an
+    approval and hand it to a target profile that may itself be enforcing --
+    manufacturing the one piece of evidence the profile gate trusts.
+    """
+    provider = TaintTrackingToolsProvider(
+        LocalToolsProvider(
+            registrations=[
+                ToolRegistration(
+                    definition=cast(
+                        "ToolDefinition",
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "delegate_to_service",
+                                "description": "Hand the turn to another profile.",
+                                "parameters": {"type": "object", "properties": {}},
+                            },
+                        },
+                    ),
+                    implementation=_worker_tool,
+                    metadata=make_local_tool_metadata([
+                        ToolTag.DELEGATION,
+                        ToolTag.OUTPUT_UNSPECIFIED,
+                    ]),
+                )
+            ]
+        ),
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.OBSERVE),
+        delegation_sink_classes={"coder": SinkClass.SANDBOX_NETWORK},
+    )
+    tracker = InMemoryTurnTaintTracker()
+    tracker.add_source(
+        TaintSource(
+            source_type=TaintSourceType.EMAIL,
+            source_id="contact-mail",
+            tier=SourceTrustTier.KNOWN_CONTACT,
+            labels=frozenset(),
+            reason="Mail from a known contact.",
+        )
+    )
+    context = _minimal_context(Database(db_engine), tracker)
+
+    await provider.execute_tool(
+        "delegate_to_service",
+        {"target_service_id": "coder"},
+        context,
+        "call_delegate",
+    )
+
+    assert not tracker.snapshot().is_sink_approved(SinkClass.SANDBOX_NETWORK)
+
+
 def test_an_approval_survives_serialization_but_not_a_history_read() -> None:
     """It travels with the turn's own taint, not into later turns quoting it."""
     approved = TurnTaintState.empty().approve_sink(SinkClass.SANDBOX_NETWORK)
