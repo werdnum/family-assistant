@@ -53,6 +53,8 @@ def _status(status: str, tool_count: int) -> MCPServerStatus:
         session_active=status == MCP_SERVER_STATUS_CONNECTED,
         tool_count=tool_count,
         tools=[f"tool_{index}" for index in range(tool_count)],
+        reconnect_attempts=0,
+        next_reconnect_in_seconds=None,
     )
 
 
