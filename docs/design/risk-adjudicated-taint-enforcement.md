@@ -540,9 +540,15 @@ re-litigated inside the child.
 Where browser risk actually concentrates is authenticated sessions (cookie jars — a hostile page
 driving actions on logged-in accounts) and purchases, and those are governed by their existing
 confirmation surfaces: browser handoff for login and payment, UCP checkout transfer, and the
-computer-use safety-decision flow. Care belongs there, not on anonymous navigation. If
-credential-bearing sessions ever warrant network-level hardening, that is a contingent-tier question
-scoped to those sessions alone.
+computer-use safety-decision flow. Care belongs there, not on anonymous navigation — and the binding
+condition participates deterministically: a session becomes **credential-bearing** at a known,
+discrete moment (`browser_claim_handback` resumes the tab and cookies after a human logged in;
+loading a saved cookie jar is the same moment), and from that point snapshots and extracts are
+*acquisitions* of private account data, so they record sensitive reads. The condition's second
+clause then re-binds the disclosure floors for the rest of the session by its ordinary rule — the
+no-[B] exemption is a statement about anonymous browsing, and it ends the moment the session stops
+being anonymous. If credential-bearing sessions ever warrant network-level hardening beyond that, it
+is a contingent-tier question scoped to those sessions alone.
 
 ### The adjudicator (contingent tier)
 
@@ -947,6 +953,75 @@ cells the data indicts:
 8. **Post-facto capability-scoped approval reuse** (a real approval of a real instance becomes
    durable for its exact capability tuple), and the **injection probe**, escalate-only, once there
    is an enforcement layer for it to harden.
+
+## Work plan
+
+Engineering decomposition of the lean core (rollout phases 1–5). Each milestone is a PR-sized,
+independently shippable unit that leaves the system working; order within a phase is flexible except
+where noted. Contingent-tier milestones (phases 6–8) are deliberately not decomposed here — they are
+planned only if the phase-5 gate trips, against the measurements that tripped it.
+
+**M1 — Prerequisites land.** Merge PR #1111; set `taint_policy.history_taint_epoch` on the
+production deployment. Re-run the taint-audit aggregation for a fresh baseline. *Verify:*
+`GET /api/diagnostics/taint-audit` shows ambient-floor sources gone from new turns.
+
+**M2 — Executable-persistence tag and conformance rule.** Add `EXECUTABLE_PERSISTENCE` to `ToolTag`
+(`tools/metadata.py`); tag `create_automation`, `update_automation`, `enable_automation`,
+`disable_automation`, script saves, `schedule_reminder`, `schedule_future_callback`,
+`schedule_action`, `modify_pending_callback` in `tools/__init__.py`; add the ast-grep conformance
+rule (`.ast-grep/rules/`) binding the tag to LLM-waking task enqueues and stored-executable
+activation/deactivation. *Verify:* unit test enumerating tagged tools; conformance rule fails on an
+untagged fixture tool.
+
+**M3 — Sink resolver splits.** In `security/taint.py`'s `resolve_tool_sink_class`: high-impact
+actuation sink (lock/alarm/valve/siren domains; `cover` by device class, fail-closed; device/area
+target expansion via the HA registry; operator high-impact entity list from deployment config,
+setup-prompted) and `destructive_artifact_write` (via `DESTRUCTIVE` and `EXECUTABLE_PERSISTENCE`
+resolution order). Document the entity list in `CONFIGURATION_REFERENCE.md`. *Verify:* resolver unit
+tests per target form (entity/device/area/unresolvable) and per family.
+
+**M4 — Store and tag hygiene.** Calendar (and any store mutable outside FA's write path) de-trusted:
+`search_calendar_events` loses `OUTPUT_TRUSTED` pending per-event provenance; reclassify the known
+mis-tagged pure-transform tools; Trino descriptor fix; populate middle-tier sender allowlists from
+connector evidence. *Verify:* tag-audit test asserting no `OUTPUT_TRUSTED` on tools reading
+externally mutable stores; audit data shows middle tiers firing.
+
+**M5 — Overwrite reversibility.** Repository-layer revision retention on note replace (prior
+revision kept on non-append `add_or_update_note`); calendar-event field replacement retains prior
+values or resolves to the destructive sink by argument. *Verify:* repository tests for
+retain-and-undo; resolver test for the fallback path.
+
+**M6 — Serialized taint schema extension.** `TurnTaintState.to_metadata()`/`from_metadata()` and
+`merge_taint_state_into_tracker()` carry `sensitive_reads`, `fresh_high_taint_seen_at_sequence`, and
+the escalation counters (inherit-baseline, delta merge); `merge_history_taint()` folds
+protected-history state; rows in the window lacking the metadata fail closed, epoch-patterned.
+Blocks M7. *Verify:* round-trip and delegation-merge unit tests, including the parallel fan-out
+counter case and a `/browse`-after-note-quote history test.
+
+**M7 — Disclosure-floor binding condition.** Implement the acquisition-not-possession condition
+(profile excludes ambient context ∧ no sensitive reads ∧ no protected history, fail-closed) in the
+evaluator path for `arbitrary_external_message`/`attacker_addressable_egress`. *Verify:* both
+directions of the acceptance criterion — browser-profile turn unfloored, context-bearing turn
+floored, indeterminate input floored, and post-handback/cookie-jar credential-bearing sessions
+re-floored via recorded sensitive reads.
+
+**M8 — Error-triage automation (outbox).** Server-rendered issue body (model selects error-group id;
+server renders component/exception/fingerprint/counts from the record), private artifact for
+free-form detail, rate limit, deferred durable confirmations surfacing in the pending tray.
+Engineer-profile contract untouched. Update user docs (`docs/user/`) for the outbox. *Verify:*
+functional test: scheduled run files pending confirmations; approval posts the rendered body; no
+model-composed string reaches it.
+
+**M9 — Enforce.** Lean matrix in `defaults.yaml` (four floored families at externally authored
+tiers, `known_user_message` pinned `audit` permanently, everything else audit); registration-check
+update in `oauth_integration_state.py` (every lean-core floor, every external tier, `audit` accepted
+on `sensitive_read_broadening`); flip `taint_policy.mode: enforce`; Gmail/Drive register. Requires
+M1–M7. *Verify:* replayed injection fixtures at every floor cell; the full acceptance-criteria list;
+`poe test`.
+
+**M10 — Measure.** Standing metrics from `taint_audit_events` (confirmations/day p50/p95 by cell and
+profile, deferred-outbox volume, task-completion after gating); 30-day comparison against the
+budget; written gate decision recorded in this document's status.
 
 ## Acceptance criteria
 
