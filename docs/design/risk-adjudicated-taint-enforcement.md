@@ -236,25 +236,31 @@ providers, and its prompt is assembled by code, not configuration.
 - The current turn's user messages and recent trusted-tier conversation turns — selected by the
   per-row taint metadata we already persist: rows whose stored tier is `trusted_user` qualify;
   anything else is summarized as a one-line provenance stub ("\<tool result from
-  `gmail_get_message`, tier unknown_external, sender x@y>"). The attacker's text is *represented* to
-  the judge but never *rendered* to it.
+  `gmail_get_message`, tier unknown_external>"). The attacker's text is *represented* to the judge
+  but never *rendered* to it.
 - The tool call: name, resolved sink class, the tool's own description, and a **provenance-filtered
   rendering of the arguments**. Structural fields — destinations, recipients, entity ids, enums,
   numbers, short identifiers — render verbatim. A free-form value renders verbatim only when it
-  provably originates from trusted-tier content (the same matching used for argument provenance
-  below); otherwise it is replaced by a stub carrying its provenance, length, and content type
-  ("body: 4 kB, derived from `gmail_get_message` (unknown_external) and three `get_note` reads").
-  Attacker-authored prose never renders to the judge.
+  provably originates from trusted-tier content (the same machinery as argument provenance matching
+  below, minus its stricter request scoping — rendering trusted text is safe wherever in the
+  conversation it came from); otherwise it is replaced by a stub carrying its provenance, length,
+  and content type ("body: 4 kB, derived from `gmail_get_message` (unknown_external) and three
+  `get_note` reads"). Attacker-authored prose never renders to the judge.
 - A provenance digest of the turn: which sources are present, their tiers, types, and reasons — the
-  `TurnTaintState.sources` tuple we already carry, including the temporal fields
-  (`fresh_high_taint_seen_at_sequence`, `sensitive_reads`) that are currently recorded but consumed
-  by nothing. Ordering matters and the judge should see it: a sensitive read *after* fresh untrusted
-  content is the dangerous shape; the same read before it is not. Today the temporal fields do not
-  survive the metadata round trip — `TurnTaintState.to_metadata()` omits `sensitive_reads`, and
-  `from_metadata()` does not restore `fresh_high_taint_seen_at_sequence` — so an adjudicator in a
-  delegated run would see no ordering evidence. Extending the serialized schema with the temporal
-  records and sequence, with merge semantics that continue the parent's sequence monotonically
-  across the delegation boundary, is part of implementing this input.
+  `TurnTaintState.sources` tuple we already carry — with digest fields tier-filtered like everything
+  else. `source_type`, tier, labels, sink classes, and tool names are closed-vocabulary and render
+  verbatim; free-text fields — `reason`, artifact titles, sender addresses, arbitrary identifiers —
+  render only for trusted-tier sources and are replaced by type-and-tier stubs otherwise, because
+  reasons already interpolate artifact-controlled text today (a tainted note's title reaches
+  `TaintSource.reason` via the note tools' provenance merging). The digest includes the temporal
+  fields (`fresh_high_taint_seen_at_sequence`, `sensitive_reads`) that are currently recorded but
+  consumed by nothing. Ordering matters and the judge should see it: a sensitive read *after* fresh
+  untrusted content is the dangerous shape; the same read before it is not. Today the temporal
+  fields do not survive the metadata round trip — `TurnTaintState.to_metadata()` omits
+  `sensitive_reads`, and `from_metadata()` does not restore `fresh_high_taint_seen_at_sequence` — so
+  an adjudicator in a delegated run would see no ordering evidence. Extending the serialized schema
+  with the temporal records and sequence, with merge semantics that continue the parent's sequence
+  monotonically across the delegation boundary, is part of implementing this input.
 - The profile id and the matrix cell that delegated the decision, including its floor.
 
 **Verdicts:** `allow` (with one-line reason, audited), `confirm` (escalate to the existing durable
@@ -284,11 +290,27 @@ verdict quality or latency demands it.
 ### Argument provenance matching
 
 The deterministic exception that lets floor cells stay hard without gating the honest case: when the
-destination-bearing argument of an egress call — URL, address, recipient, entity id — occurs
-verbatim (post-normalization) in trusted-tier content for the conversation, the floor relaxes to the
-adjudicator's full verdict space. "The user pasted this URL" is checkable without any model
-judgment, using string containment against the same trusted-tier row selection the adjudicator uses.
-Attacker-chosen destinations, by construction, do not appear in trusted-tier text.
+destination-bearing argument of an egress call — URL, address, recipient, entity id — is an exact
+whole-value match (post-normalization) for a destination in the **current request's** trusted-tier
+user messages, `allow` enters the adjudicator's verdict space. "The user pasted this URL in the
+request I am executing" is checkable without model judgment.
+
+Two containment traps shape the rule, both variants of the same mistake — treating *mention* as
+*authorization*:
+
+- **Scope.** Matching against the whole conversation's trusted text would let "never send anything
+  to attacker@example.com", or a weeks-old "summarize the mail from attacker@example.com", arm the
+  exception for that address indefinitely. The match window is the current request only.
+- **Match shape.** Substring containment would let an attacker smuggle exfiltrated data around a
+  user-mentioned destination (query parameters appended to a pasted URL). The match is
+  whole-argument-value and exact after normalization, so the value the call uses is precisely the
+  value the user typed.
+
+Even so, the exception only widens the judge's verdict space — it never auto-allows. The residual
+adversarial case (the current request mentions a destination while *forbidding* it, and an injection
+targets exactly that destination) deliberately leaves the judge load-bearing; the shadow-phase
+fixture set must cover such negation cases, and an operator who wants no judge in the floor cells at
+all leaves the exception off — its default.
 
 This is CaMeL's value-provenance insight at the altitude this codebase can afford: per-argument,
 per-sink, exact-match — not per-token information flow (a stated non-goal in PR #1111, and still
@@ -406,14 +428,17 @@ Each phase independently shippable and valuable:
   becomes unusable — the operator-frustration test, stated as a requirement.
 - Replayed injection fixtures attempting egress of note/calendar/email content are blocked or
   escalated in 100% of runs at the floor cells, independent of adjudicator verdicts (the floors do
-  this; the judge is not load-bearing for the tails).
+  this; the judge is not load-bearing for the tails). Where a cell declares the provenance
+  exception, the fixture set additionally covers negation cases ("never send to X" in the current
+  request) and data-smuggling variants around user-mentioned destinations, which request scoping and
+  whole-value matching must defeat.
 - An adjudicator outage degrades every `adjudicate` cell to `confirm`, visibly in diagnostics —
   never to `allow`.
 - No code path allows probe output or judge output to lower a tier, remove a source, relax a floor,
   or write provenance.
-- Judge context provably excludes untrusted-tier rendered content — in conversation rows and in
-  argument values alike (unit-testable via the same row-selection and argument-filtering functions
-  the assembler uses).
+- Judge context provably excludes untrusted-tier rendered content — in conversation rows, argument
+  values, and provenance-digest fields (reasons, titles, identifiers) alike (unit-testable via the
+  same row-selection and field-filtering functions the assembler uses).
 - Adjudication in a delegated run sees the same temporal evidence (sensitive-read records,
   fresh-taint ordering) as it would in the parent turn: the serialized taint schema carries it
   across the delegation round trip.
