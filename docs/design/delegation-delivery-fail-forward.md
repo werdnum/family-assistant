@@ -55,7 +55,11 @@ class ChatDeliveryError(RuntimeError):
 - **Telegram**: `NetworkError`, `TimedOut`, `RetryAfter` and 5xx are transient; `BadRequest`
   (message too long, chat not found, bot blocked, invalid parse) is not.
 - **Web**: a failed database write is transient; a conversation that does not resolve is not.
-- **Email**: SMTP 4xx transient, 5xx not.
+- **Email**: the transport is Mailgun over HTTP (`MailgunOutboundEmailClient`), not SMTP, so the
+  classification is by HTTP status and network failure — connection errors, timeouts, 429 and 5xx
+  transient; 4xx (bad address, rejected payload, auth) not. `httpx.HTTPError` is currently wrapped
+  in a bare `OutboundEmailDeliveryError` that discards the status, so that wrapper has to carry the
+  status through before `EmailChatInterface` can classify anything.
 
 Per the project's no-backwards-compatibility rule the `| None` return goes away entirely, and the
 six call sites are updated to catch `ChatDeliveryError` where they currently test for `None`
@@ -80,26 +84,36 @@ In `_notify_delegation_if_needed` / `_deliver_delegation_wake_response`:
 
 Bounding, so a failing channel cannot spin:
 
-- **One fail-forward turn per delegation run.** A new `notify_attempts` column on `delegation_runs`
-  (mirroring the existing `poll_attempts`), incremented per delivery attempt, with an Alembic
-  migration.
-- The wake checkpoint (`get_undelivered_terminal_reply`) is keyed on a turn id derived from the
-  delegation id, so the fail-forward turn derives its own id from `(delegation_id, attempt)` —
-  otherwise it would resume the undelivered first reply instead of running.
+- **One fail-forward turn per delegation run**, tracked by a new `notify_stage` column on
+  `delegation_runs` (`initial` → `failed_forward` → `gave_up`), with an Alembic migration. The stage
+  is what bounds the turns; a plain per-attempt counter would not, because delivery attempts and
+  fail-forward turns advance at different rates.
+- **The fail-forward turn's id is stable**, derived from the delegation id and the stage
+  (`uuid5(ns, f"{delegation_id}:failed_forward")`), never from an attempt count. The wake checkpoint
+  (`get_undelivered_terminal_reply`) resumes at delivery by turn id, so an id that moved with each
+  delivery attempt would stop resuming the reply it already generated — and a transient failure
+  delivering the fail-forward reply would then run the model again and repeat its tools, which is
+  exactly what the checkpoint exists to prevent.
 - **Floor.** If the fail-forward reply also fails permanently, send the short canned completion
-  notice (a length- and formatting-safe pointer to the conversation), mark the run notified, and
-  record the delivery failure as a technical problem. If even that fails, mark the run notified with
-  the error recorded rather than retrying forever — the content is in message history and visible in
-  the web UI either way.
+  notice (a length- and formatting-safe pointer to the conversation) and record the delivery failure
+  as a technical problem.
+- **Giving up is its own state, not "notified".** If even the canned notice fails permanently, the
+  run moves to `notify_stage = gave_up` with the error recorded. Retries stop, but the run is not
+  marked notified: it did not reach the requester, and a delegation that silently counts as
+  delivered is the failure this whole document is about. Note that "they can see it in the web UI"
+  does not hold for a Telegram- or email-originated run — the history rows keep that interface type,
+  and the web client lists `interface_type=web` conversations only — so `gave_up` runs need to be
+  visible somewhere a human looks (the technical-problem report is the minimum; surfacing them in
+  the web UI is worth considering separately).
 
 Net effect: at most three sends and one extra LLM turn per undeliverable run, and no run that
 retries indefinitely.
 
 ## Milestone 3: back off transient retries
 
-Transient retries stay hourly today because the cleanup job is hourly. Once `notify_attempts`
-exists, stretch them (1h, 2h, 4h, capped daily) so a long outage does not produce one failure log
-per hour per stuck run. Optional; separable from the milestones above.
+Transient retries stay hourly today because the cleanup job is hourly. With a per-run attempt count
+recorded alongside `notify_stage`, stretch them (1h, 2h, 4h, capped daily) so a long outage does not
+produce one failure log per hour per stuck run. Optional; separable from the milestones above.
 
 ## What this does not change
 
@@ -118,5 +132,7 @@ per hour per stuck run. Optional; separable from the milestones above.
 - Delegation-level, against the fake chat interfaces already used in
   `tests/functional/automations/`: a transient failure leaves the run unnotified for retry; a
   permanent failure runs exactly one fail-forward turn and delivers its reply; a permanent failure
-  on the fail-forward reply delivers the canned notice and marks the run notified; no path attempts
-  more than the bounded number of sends.
+  on the fail-forward reply delivers the canned notice; an all-channels-dead run ends in `gave_up`
+  rather than notified; no path attempts more than the bounded number of sends.
+- The checkpoint bound specifically: a transient failure while delivering the fail-forward reply
+  resumes at delivery on the next pass and does not run a second model turn.
