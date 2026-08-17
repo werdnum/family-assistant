@@ -683,12 +683,21 @@ competing).
 ### `require_taint_enforcement` semantics
 
 The Gmail/Drive registration floor currently demands `mode: enforce` plus ≥`confirm` on four sink
-classes. Update the check so an `adjudicate` cell satisfies it iff the cell carries a `confirm`
-floor (the two egress cells, `sandbox_network` per PR #1111's confirm-with-fail-closed) or is
-`sensitive_read_broadening` (whose protection is the downstream egress floor, per the
-defense-in-depth argument above). Without this, shipping adjudication would silently keep
-Gmail/Drive unregistered — the same "appears configured, actually inert" trap PR #1111 flagged for
-`operator_minimum`.
+classes (`oauth_integration_state.py` rejects every outcome below `confirm`). Both configurations
+this document proposes need the check updated, and for the same reason: the sink whose strictness
+the check *actually* relies on is downstream egress, not the read itself.
+
+- **Lean core (phase 4):** `sensitive_read_broadening` is `audit` — deliberately, per the
+  audit-the-reads-gate-the-egress argument — so the unmodified check would keep Gmail/Drive
+  unregistered even though rollout step 4 says they register. The check must accept `audit` on
+  `sensitive_read_broadening` *iff* the three egress cells hold ≥`confirm` (and, with the later
+  splits, destructive-write and executable-persistence floors are present).
+- **Contingent tier:** an `adjudicate` cell satisfies the check iff it carries a `confirm` floor
+  (the egress cells, `sandbox_network` per PR #1111's confirm-with-fail-closed) or is
+  `sensitive_read_broadening` under the same downstream-floor condition.
+
+Without either update, shipping the respective phase would silently keep Gmail/Drive unregistered —
+the same "appears configured, actually inert" trap PR #1111 flagged for `operator_minimum`.
 
 ## What we deliberately do not build
 
