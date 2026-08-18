@@ -17,6 +17,7 @@ span to its ring-buffer record.
 from __future__ import annotations
 
 import logging
+import os
 import time
 import uuid
 from datetime import UTC, datetime
@@ -40,6 +41,30 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = ["LLMCallTelemetry"]
+
+
+def _attachment_chars(messages: Sequence[LLMMessage]) -> int:
+    """Approximate what tool-result attachments add to the request.
+
+    ``message_to_json_dict`` deliberately drops ``transient_attachments``, and
+    providers only base64-encode them well after this point, so an image or PDF
+    of several megabytes would otherwise be invisible in the payload size --
+    which is exactly the case a slow first token most needs explained. Sized at
+    the base64 expansion the provider will apply.
+    """
+    total = 0
+    for message in messages:
+        for attachment in getattr(message, "transient_attachments", None) or []:
+            if attachment.content is not None:
+                total += len(attachment.content) * 4 // 3
+            elif attachment.file_path:
+                try:
+                    total += os.path.getsize(attachment.file_path) * 4 // 3
+                except OSError:
+                    # A path the provider will also fail to read; its size is
+                    # not worth failing a request over.
+                    continue
+    return total
 
 
 def _payload_chars(value: object) -> int:
@@ -113,7 +138,9 @@ class LLMCallTelemetry:
         self._content_chars = 0
         self._tool_call_count = 0
 
-        self._payload_chars = _payload_chars(self._message_dicts)
+        self._payload_chars = _payload_chars(self._message_dicts) + (
+            _attachment_chars(messages)
+        )
         self.span.set_attributes({
             "gen_ai.system": system,
             "gen_ai.operation.name": operation,
@@ -206,11 +233,21 @@ class LLMCallTelemetry:
 
     def finish_error(self, error: BaseException) -> None:
         """Close out a failed call: error status, span attributes, buffer record."""
-        self._set_completion_attributes()
-        self.span.set_status(StatusCode.ERROR, str(error))
         self.span.record_exception(error)
-        self.span.set_attribute("llm.error.type", type(error).__name__)
-        self._add_record(response=None, error=str(error))
+        self.finish_failure(str(error), error_type=type(error).__name__)
+
+    def finish_failure(self, message: str, *, error_type: str) -> None:
+        """Close out a call that failed without raising.
+
+        Some providers report a failure in-band -- an error frame on an
+        otherwise well-formed stream -- and the call returns normally. Those
+        turns are the ones worth finding later, so they get the same error
+        status and diagnostic record as a raised exception.
+        """
+        self._set_completion_attributes()
+        self.span.set_status(StatusCode.ERROR, message)
+        self.span.set_attribute("llm.error.type", error_type)
+        self._add_record(response=None, error=message)
 
     def _set_completion_attributes(self) -> None:
         attributes: dict[str, str | int | float] = {

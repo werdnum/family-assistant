@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 import family_assistant.llm.retrying_client as rc_module
 from family_assistant.llm import JsonObject, LLMMessage, LLMOutput
-from family_assistant.llm.base import ProviderConnectionError
+from family_assistant.llm.base import InvalidRequestError, ProviderConnectionError
 from family_assistant.llm.messages import SystemMessage, UserMessage
 from family_assistant.llm.retrying_client import RetryingLLMClient
 from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
@@ -386,3 +386,41 @@ class TestRetryingLLMClientSpans:
         assert isinstance(first_output_ms, float)
         assert isinstance(duration_ms, float)
         assert first_output_ms < duration_ms
+
+    @pytest.mark.asyncio
+    async def test_a_non_retriable_failure_does_not_invent_a_retry(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        """A non-retriable primary error skips straight to the fallback."""
+
+        class _NonRetriableClient(RuleBasedMockLLMClient):
+            async def generate_response(
+                self,
+                messages: list[LLMMessage],
+                tools: list[ToolDefinition] | None = None,
+                tool_choice: str | None = "auto",
+            ) -> LLMOutput:
+                raise InvalidRequestError(
+                    "bad request", provider="test", model="test-model"
+                )
+
+        client = RetryingLLMClient(
+            primary_client=_NonRetriableClient(
+                rules=[], default_response=LLMOutput(content="unused")
+            ),
+            primary_model="test-model",
+            fallback_client=RuleBasedMockLLMClient(
+                rules=[], default_response=LLMOutput(content="fallback response")
+            ),
+            fallback_model="fallback-model",
+        )
+        messages = [SystemMessage(content="system"), UserMessage(content="hello")]
+
+        await client.generate_response(messages=messages)
+
+        spans = span_exporter.get_finished_spans()
+        assert len(spans) == 1
+        assert spans[0].attributes is not None
+        # Two provider calls were made, not three.
+        assert spans[0].attributes["llm.attempts"] == 2
+        assert spans[0].attributes["llm.fallback_used"] is True

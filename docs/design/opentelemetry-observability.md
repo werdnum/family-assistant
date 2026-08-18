@@ -98,8 +98,9 @@ Two layers of spans cover a turn, and they answer different questions:
 | `llm.error.type`                | Exception class, on failure.                                       |
 | `gen_ai.usage.*`                | Token usage, including prompt-cache reads and writes.              |
 
-The retry spans add `llm.attempts`, `llm.fallback_used` and `llm.has_fallback`, and carry
-`llm.attempt` / `llm.fallback` / `llm.rate_limit_retry` events.
+The retry spans add `llm.attempts` (provider calls actually issued, so a non-retriable failure that
+goes straight to the fallback reports two, not three), `llm.fallback_used` and `llm.has_fallback`,
+and carry `llm.attempt` / `llm.fallback` / `llm.rate_limit_retry` events.
 
 The requested and resolved model are recorded separately on purpose: an alias or provider-side
 routing resolves to a dated snapshot, so a latency or quality change with no deploy behind it

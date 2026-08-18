@@ -22,9 +22,10 @@ from family_assistant.llm import (
     ToolCallFunction,
     ToolCallItem,
 )
-from family_assistant.llm.messages import SystemMessage, UserMessage
+from family_assistant.llm.messages import SystemMessage, ToolMessage, UserMessage
 from family_assistant.llm.request_buffer import LLMRequestBuffer, get_request_buffer
 from family_assistant.llm.utils.call_telemetry import LLMCallTelemetry
+from family_assistant.tools.types import ToolAttachment
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -218,6 +219,45 @@ class TestStreaming:
         assert buffer.get_recent()[0].time_to_first_output_ms is None
 
 
+class TestPayloadSize:
+    def test_tool_attachments_count_toward_the_payload(
+        self, exporter: InMemorySpanExporter, buffer: LLMRequestBuffer
+    ) -> None:
+        """Attachments are dropped from the serialized message but still upload."""
+        del buffer
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        span = provider.get_tracer("test").start_span("llm.provider.generate")
+        telemetry = LLMCallTelemetry(
+            span,
+            provider="testprovider",
+            system="testprovider",
+            requested_model="model-latest",
+            messages=[
+                ToolMessage(
+                    content="see attachment",
+                    tool_call_id="call_1",
+                    name="some_tool",
+                    _attachments=[
+                        ToolAttachment(mime_type="image/png", content=b"x" * 30_000)
+                    ],
+                )
+            ],
+            tools=None,
+            tool_choice="auto",
+            streaming=False,
+        )
+        telemetry.finish_success(None)
+        span.end()
+
+        attributes = _finished(exporter).attributes
+        assert attributes is not None
+        payload_chars = attributes["llm.request.payload_chars"]
+        assert isinstance(payload_chars, int)
+        # Base64 expands the 30kB image to ~40kB; the text alone is a few dozen.
+        assert payload_chars > 39_000
+
+
 class TestErrors:
     def test_failure_marks_the_span_and_records_the_error(
         self, exporter: InMemorySpanExporter, buffer: LLMRequestBuffer
@@ -235,3 +275,19 @@ class TestErrors:
         record = buffer.get_recent()[0]
         assert record.error == "boom"
         assert record.response is None
+
+    def test_an_in_band_failure_is_recorded_like_a_raised_one(
+        self, exporter: InMemorySpanExporter, buffer: LLMRequestBuffer
+    ) -> None:
+        """A provider that reports failure on the stream still leaves a record."""
+        telemetry = _telemetry(exporter, streaming=True)
+        telemetry.finish_failure("upstream refused", error_type="response.failed")
+        telemetry.span.end()
+
+        span = _finished(exporter)
+        assert span.status.status_code == StatusCode.ERROR
+        assert span.attributes is not None
+        assert span.attributes["llm.error.type"] == "response.failed"
+
+        record = buffer.get_recent()[0]
+        assert record.error == "upstream refused"

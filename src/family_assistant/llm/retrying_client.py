@@ -172,12 +172,18 @@ class RetryingLLMClient:
             )
 
             last_exception: Exception | None = None
+            # Counts provider calls actually issued, not the nominal slot: a
+            # non-retriable failure on the primary skips straight to the
+            # fallback, and reporting that as a third attempt would invent a
+            # retry that never happened.
+            attempts = 0
 
             # Attempt 1: Primary model
+            attempts += 1
             span.add_event(
                 "llm.attempt",
                 attributes={
-                    "attempt_number": 1,
+                    "attempt_number": attempts,
                     "model": self.primary_model,
                     "is_fallback": False,
                 },
@@ -193,7 +199,7 @@ class RetryingLLMClient:
                     span,
                     result,
                     model=self.primary_model,
-                    attempts=1,
+                    attempts=attempts,
                     is_fallback=False,
                 )
                 return result
@@ -217,10 +223,11 @@ class RetryingLLMClient:
 
             # Attempt 2: Retry Primary model (if Attempt 1 was a retriable error)
             if isinstance(last_exception, retriable_errors):
+                attempts += 1
                 span.add_event(
                     "llm.attempt",
                     attributes={
-                        "attempt_number": 2,
+                        "attempt_number": attempts,
                         "model": self.primary_model,
                         "is_fallback": False,
                     },
@@ -238,7 +245,7 @@ class RetryingLLMClient:
                         span,
                         result,
                         model=self.primary_model,
-                        attempts=2,
+                        attempts=attempts,
                         is_fallback=False,
                     )
                     return result
@@ -277,10 +284,11 @@ class RetryingLLMClient:
                         model=self.primary_model,
                     )
 
+                attempts += 1
                 span.add_event(
                     "llm.attempt",
                     attributes={
-                        "attempt_number": 3,
+                        "attempt_number": attempts,
                         "model": self.fallback_model or "",
                         "is_fallback": True,
                     },
@@ -296,7 +304,7 @@ class RetryingLLMClient:
                         span,
                         result,
                         model=self.fallback_model or "",
-                        attempts=3,
+                        attempts=attempts,
                         is_fallback=True,
                     )
                     return result
@@ -339,12 +347,17 @@ class RetryingLLMClient:
             },
         )
         stream_telemetry = _StreamTelemetry(span, self.primary_model)
+        # Counts provider calls actually issued: a failure with no rate-limit
+        # delay to wait out goes straight to the fallback, and the fallback is
+        # then the second attempt rather than the third.
+        attempts = 0
         try:
             with trace.use_span(span, end_on_exit=False):
+                attempts += 1
                 span.add_event(
                     "llm.attempt",
                     attributes={
-                        "attempt_number": 1,
+                        "attempt_number": attempts,
                         "model": self.primary_model,
                         "is_fallback": False,
                     },
@@ -363,7 +376,7 @@ class RetryingLLMClient:
                             yield event  # noqa: ASYNC119
                         events_yielded = True
                     stream_telemetry.finish(
-                        model=self.primary_model, attempts=1, is_fallback=False
+                        model=self.primary_model, attempts=attempts, is_fallback=False
                     )
                 except Exception as e:
                     logger.exception(
@@ -378,6 +391,7 @@ class RetryingLLMClient:
                             and e.retry_after is not None
                             and e.retry_after <= 60
                         ):
+                            attempts += 1
                             span.add_event(
                                 "llm.rate_limit_retry",
                                 attributes={
@@ -404,7 +418,7 @@ class RetryingLLMClient:
                                         yield event  # noqa: ASYNC119
                                 stream_telemetry.finish(
                                     model=self.primary_model,
-                                    attempts=2,
+                                    attempts=attempts,
                                     is_fallback=False,
                                 )
                                 return
@@ -436,6 +450,7 @@ class RetryingLLMClient:
                                 span.record_exception(e)
                                 raise
 
+                            attempts += 1
                             span.add_event(
                                 "llm.fallback",
                                 attributes={
@@ -459,7 +474,7 @@ class RetryingLLMClient:
                                         yield event  # noqa: ASYNC119
                                 stream_telemetry.finish(
                                     model=self.fallback_model or "",
-                                    attempts=3,
+                                    attempts=attempts,
                                     is_fallback=True,
                                 )
                             except Exception as fallback_error:
@@ -530,11 +545,13 @@ class RetryingLLMClient:
             )
 
             last_exception: Exception | None = None
+            # Counts provider calls actually issued; see generate_response.
+            attempts = 1
 
             span.add_event(
                 "llm.attempt",
                 attributes={
-                    "attempt_number": 1,
+                    "attempt_number": attempts,
                     "model": self.primary_model,
                     "is_fallback": False,
                 },
@@ -546,7 +563,7 @@ class RetryingLLMClient:
                 result = await invoke_primary()
                 span.set_attributes({
                     "gen_ai.response.model": self.primary_model,
-                    "llm.attempts": 1,
+                    "llm.attempts": attempts,
                     "llm.fallback_used": False,
                 })
                 return result
@@ -576,10 +593,11 @@ class RetryingLLMClient:
                 last_exception = e
 
             if isinstance(last_exception, retriable_errors):
+                attempts += 1
                 span.add_event(
                     "llm.attempt",
                     attributes={
-                        "attempt_number": 2,
+                        "attempt_number": attempts,
                         "model": self.primary_model,
                         "is_fallback": False,
                     },
@@ -591,7 +609,7 @@ class RetryingLLMClient:
                     result = await invoke_primary()
                     span.set_attributes({
                         "gen_ai.response.model": self.primary_model,
-                        "llm.attempts": 2,
+                        "llm.attempts": attempts,
                         "llm.fallback_used": False,
                     })
                     return result
@@ -622,10 +640,11 @@ class RetryingLLMClient:
                     )
                     raise last_exception
 
+                attempts += 1
                 span.add_event(
                     "llm.attempt",
                     attributes={
-                        "attempt_number": 3,
+                        "attempt_number": attempts,
                         "model": self.fallback_model or "",
                         "is_fallback": True,
                     },
@@ -637,7 +656,7 @@ class RetryingLLMClient:
                     result = await invoke_fallback()
                     span.set_attributes({
                         "gen_ai.response.model": self.fallback_model or "",
-                        "llm.attempts": 3,
+                        "llm.attempts": attempts,
                         "llm.fallback_used": True,
                     })
                     return result

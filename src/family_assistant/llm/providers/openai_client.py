@@ -1170,13 +1170,13 @@ class OpenAIClient(BaseLLMClient):
             processed_messages = self._process_tool_messages(list(messages))
 
             if self._uses_responses_api():
-                responses_stream_error = False
+                stream_error: LLMStreamEvent | None = None
                 with trace.use_span(span, end_on_exit=False):
                     async for event in self._generate_responses_stream(
                         processed_messages, tools, tool_choice
                     ):
                         if event.type == "error":
-                            responses_stream_error = True
+                            stream_error = event
                         if event.type == "done" and event.metadata:
                             telemetry.record_response_metadata(
                                 resolved_model=event.metadata.get("resolved_model"),
@@ -1184,8 +1184,20 @@ class OpenAIClient(BaseLLMClient):
                             telemetry.record_usage(event.metadata.get("reasoning_info"))
                         telemetry.observe_event(event)
                         yield event  # noqa: ASYNC119
-                if not responses_stream_error:
+                if stream_error is None:
                     telemetry.finish_success({"streaming": True})
+                else:
+                    # The Responses API reports a failed or incomplete run as a
+                    # frame on the stream rather than by raising, so without
+                    # this the turn that most needs explaining would be the one
+                    # missing from the diagnostics buffer.
+                    telemetry.finish_failure(
+                        stream_error.error or "OpenAI Responses stream failed",
+                        error_type=str(
+                            (stream_error.metadata or {}).get("error_id")
+                            or "responses_stream_error"
+                        ),
+                    )
                 return
 
             # Convert typed messages to dicts for SDK boundary
