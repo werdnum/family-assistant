@@ -120,7 +120,9 @@ async def test_openai_responses_stream_failure_is_recorded_when_the_consumer_sto
             yield SimpleNamespace(
                 type="response.failed",
                 response=SimpleNamespace(
-                    error=SimpleNamespace(message="upstream refused")
+                    error=SimpleNamespace(message="upstream refused"),
+                    id="resp_failed",
+                    model="gpt-5.6-sol-2026-05-01",
                 ),
             )
 
@@ -142,6 +144,9 @@ async def test_openai_responses_stream_failure_is_recorded_when_the_consumer_sto
     record = buffer.get_recent()[0]
     assert record.error == "upstream refused"
     assert record.response is None
+    # A failed turn is the one most likely to be taken to the provider.
+    assert record.response_id == "resp_failed"
+    assert record.resolved_model_id == "gpt-5.6-sol-2026-05-01"
 
 
 async def test_openai_responses_incomplete_run_is_not_recorded_as_a_success(

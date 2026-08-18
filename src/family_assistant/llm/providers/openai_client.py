@@ -421,7 +421,12 @@ class OpenAIClient(BaseLLMClient):
         return "unknown"
 
     def _stream_error_event(
-        self, error_message: str, *, error_id: str, error_type: str | None = None
+        self,
+        error_message: str,
+        *,
+        error_id: str,
+        error_type: str | None = None,
+        response: object = None,
     ) -> LLMStreamEvent:
         """Build a stream error event carrying the metadata consumers rely on.
 
@@ -430,18 +435,25 @@ class OpenAIClient(BaseLLMClient):
         a rate limit and a bad request. The Chat Completions path has always
         attached this; the Responses path did not, which stopped mattering only
         while Responses served a single model.
+
+        A failed run still identifies itself, so when the frame carries a
+        response its id and model ride along too -- a turn that failed is the
+        one most likely to be taken to the provider, and it cannot be without
+        the provider's own id.
         """
-        return LLMStreamEvent(
-            type="error",
-            error=error_message,
-            metadata={
-                "error_id": error_id,
-                "error_type": error_type
-                or self._classify_stream_error_type(error_message),
-                "provider": "openai",
-                "model": self.model,
-            },
-        )
+        metadata: StreamEventMetadata = {
+            "error_id": error_id,
+            "error_type": error_type or self._classify_stream_error_type(error_message),
+            "provider": "openai",
+            "model": self.model,
+        }
+        response_id = getattr(response, "id", None)
+        if isinstance(response_id, str):
+            metadata["response_id"] = response_id
+        resolved_model = getattr(response, "model", None)
+        if isinstance(resolved_model, str):
+            metadata["resolved_model"] = resolved_model
+        return LLMStreamEvent(type="error", error=error_message, metadata=metadata)
 
     @staticmethod
     def _to_chat_completions_message(message: LLMMessage) -> dict[str, object | None]:
@@ -1188,6 +1200,12 @@ class OpenAIClient(BaseLLMClient):
                     ):
                         if event.type == "error":
                             stream_error = event
+                            telemetry.record_response_metadata(
+                                resolved_model=(event.metadata or {}).get(
+                                    "resolved_model"
+                                ),
+                                response_id=(event.metadata or {}).get("response_id"),
+                            )
                             # Recorded before the yield, not after the loop: the
                             # consumer raises on this event, which closes this
                             # generator where it is suspended, so anything left
@@ -1472,6 +1490,7 @@ class OpenAIClient(BaseLLMClient):
                 yield self._stream_error_event(
                     message or f"OpenAI Responses request {event.type}",
                     error_id=event.type,
+                    response=event.response,
                 )
                 return
             elif event.type == "error":
