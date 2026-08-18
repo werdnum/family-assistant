@@ -505,3 +505,50 @@ class TestRetryingLLMClientSpans:
         assert spans[0].attributes is not None
         assert spans[0].attributes["llm.attempts"] == 3
         assert spans[0].attributes["llm.fallback_used"] is True
+
+    @pytest.mark.asyncio
+    async def test_a_streamed_fallback_appears_in_the_attempt_timeline(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        """An attempt count with no matching event cannot be traced back."""
+
+        class _FailingStreamClient(RuleBasedMockLLMClient):
+            def generate_response_stream(
+                self,
+                messages: list[LLMMessage],
+                tools: list[ToolDefinition] | None = None,
+                tool_choice: str | None = "auto",
+            ) -> AsyncIterator[LLMStreamEvent]:
+                async def _stream() -> AsyncIterator[LLMStreamEvent]:
+                    raise ProviderConnectionError(
+                        "Connection failed", provider="test", model="test-model"
+                    )
+                    yield  # pragma: no cover - unreachable, makes this a generator
+
+                return _stream()
+
+        client = RetryingLLMClient(
+            primary_client=_FailingStreamClient(
+                rules=[], default_response=LLMOutput(content="unused")
+            ),
+            primary_model="test-model",
+            fallback_client=RuleBasedMockLLMClient(
+                rules=[], default_response=LLMOutput(content="fallback response")
+            ),
+            fallback_model="fallback-model",
+        )
+        messages = [SystemMessage(content="system"), UserMessage(content="hello")]
+
+        async for _event in client.generate_response_stream(messages=messages):
+            pass
+
+        spans = span_exporter.get_finished_spans()
+        assert len(spans) == 1
+        assert spans[0].attributes is not None
+        assert spans[0].attributes["llm.attempts"] == 2
+
+        attempts = [e for e in spans[0].events if e.name == "llm.attempt"]
+        assert len(attempts) == 2
+        assert attempts[-1].attributes is not None
+        assert attempts[-1].attributes["model"] == "fallback-model"
+        assert attempts[-1].attributes["is_fallback"] is True

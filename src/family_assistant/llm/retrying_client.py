@@ -408,10 +408,12 @@ class RetryingLLMClient:
                             # cancelled during the backoff never issues this
                             # call, and llm.attempts counts calls issued.
                             attempts += 1
-                            span.set_attributes({
-                                "llm.attempts": attempts,
-                                "llm.fallback_used": False,
-                            })
+                            _note_attempt(
+                                span,
+                                attempts=attempts,
+                                model=self.primary_model,
+                                is_fallback=False,
+                            )
                             try:
                                 async for (
                                     event
@@ -455,10 +457,12 @@ class RetryingLLMClient:
                                 raise
 
                             attempts += 1
-                            span.set_attributes({
-                                "llm.attempts": attempts,
-                                "llm.fallback_used": True,
-                            })
+                            _note_attempt(
+                                span,
+                                attempts=attempts,
+                                model=self.fallback_model or "",
+                                is_fallback=True,
+                            )
                             span.add_event(
                                 "llm.fallback",
                                 attributes={
