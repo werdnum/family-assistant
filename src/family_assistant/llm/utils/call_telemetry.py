@@ -232,6 +232,35 @@ class LLMCallTelemetry:
         self._reasoning_info = reasoning_info
         set_usage_span_attributes(self.span, reasoning_info)
 
+    def finalize_usage(
+        self, reasoning_info: MessageReasoningInfo | None
+    ) -> MessageReasoningInfo:
+        """Stamp this call's measurements onto the usage a provider reported.
+
+        The returned dict is what the provider should hand to ``LLMOutput`` and
+        to the stream's terminal event, because it is what gets persisted with
+        the message: the reply then carries not only what it cost but how long
+        it took and which model actually served it.
+
+        Takes ``None`` and returns a dict, so a provider that reported no usage
+        at all -- a compatible endpoint that omits it on streamed turns, say --
+        still records its timings, which is exactly the case where they are
+        least available elsewhere.
+        """
+        self.record_usage(reasoning_info)
+        finalized: MessageReasoningInfo = reasoning_info if reasoning_info else {}
+        finalized["duration_ms"] = round(self.elapsed_ms, 1)
+        finalized["provider"] = self.provider
+        finalized["request_id"] = self.request_id
+        first_output_ms = self.time_to_first_output_ms
+        if first_output_ms is not None:
+            finalized["time_to_first_output_ms"] = round(first_output_ms, 1)
+        if self.resolved_model:
+            finalized["resolved_model"] = self.resolved_model
+        if self._finish_reason:
+            finalized["finish_reason"] = self._finish_reason
+        return finalized
+
     def record_output(self, output: LLMOutput) -> None:
         """Record the shape of a non-streamed response.
 

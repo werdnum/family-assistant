@@ -127,3 +127,27 @@ classification, duplicate detection — rather than a conversational turn, so th
 latency investigation starts from, and each provider implements them with its own validation-retry
 loop that would have to be instrumented separately. Route them through `LLMCallTelemetry` when one
 of those calls is what needs explaining.
+
+## What Is Persisted, and Where
+
+Spans go nowhere unless an OpenTelemetry exporter is configured, and the in-memory ring buffer holds
+only the last hundred calls and dies with the process. What survives a restart is the
+`reasoning_info` column on `message_history`, which already carried each reply's token usage and now
+also carries how the call went: `duration_ms`, `time_to_first_output_ms` (streamed turns only),
+`resolved_model`, `finish_reason`, `provider`, and the `request_id` that joins the row to its
+ring-buffer record and to the `llm.request.id` span attribute.
+
+`LLMCallTelemetry.finalize_usage` is where those are stamped on, so a provider gets them by handing
+its usage through one call rather than by remembering to add six fields. It takes `None` and returns
+a dict, which means a provider that reports no usage at all — a compatible endpoint that omits it on
+streamed turns — still records its timings.
+
+**One row per call, not per turn.** A turn is not a single provider call: a tool loop makes one per
+iteration, and each produces its own assistant message. Each of those messages carries the
+`reasoning_info` of the call that produced it, so a six-iteration turn records six calls' usage
+rather than the last call's six times over.
+
+Nothing new is stored for a call that produced no message — a failure, a retry, a fallback. Those
+remain visible on the span and in the ring buffer while the process lives. Recording them durably
+would need a store that is not keyed on messages; the case for one starts with noticing, from these
+rows, that a model's latency moved.

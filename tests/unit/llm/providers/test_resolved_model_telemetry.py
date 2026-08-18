@@ -183,3 +183,33 @@ async def test_openai_responses_incomplete_run_is_not_recorded_as_a_success(
     assert output.content == "half an ans"
     record = buffer.get_recent()[0]
     assert record.error == "OpenAI Responses request incomplete"
+
+
+async def test_the_usage_returned_to_the_caller_carries_the_measurements(
+    buffer: LLMRequestBuffer,
+) -> None:
+    """What gets persisted with the message is the dict the provider returns."""
+    del buffer
+    client = AnthropicClient(api_key="test-key", model="claude-sonnet-4-6")
+    response = SimpleNamespace(
+        content=[SimpleNamespace(type="text", text="hi")],
+        usage=SimpleNamespace(input_tokens=3, output_tokens=4),
+        model="claude-sonnet-4-6-20250929",
+        id="msg_abc",
+        stop_reason="end_turn",
+    )
+
+    with patch.object(
+        client.client.messages, "create", new=AsyncMock(return_value=response)
+    ):
+        output = await client.generate_response([UserMessage(content="hi")])
+
+    usage = output.reasoning_info
+    assert usage is not None
+    assert usage.get("prompt_tokens") == 3
+    assert usage.get("resolved_model") == "claude-sonnet-4-6-20250929"
+    assert usage.get("finish_reason") == "end_turn"
+    assert usage.get("provider") == "anthropic"
+    assert usage.get("duration_ms") is not None
+    # Non-streamed, so there is no first-token time to report.
+    assert "time_to_first_output_ms" not in usage

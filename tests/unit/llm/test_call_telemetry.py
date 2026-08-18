@@ -361,3 +361,54 @@ class TestErrors:
 
         record = buffer.get_recent()[0]
         assert record.error == "upstream refused"
+
+
+class TestUsageFinalization:
+    """What rides along with the message, as against what rides on the span."""
+
+    def test_measurements_are_stamped_onto_the_usage_a_provider_reports(
+        self, exporter: InMemorySpanExporter, buffer: LLMRequestBuffer
+    ) -> None:
+        del buffer
+        telemetry = _telemetry(exporter, streaming=True)
+        telemetry.record_response_metadata(
+            resolved_model="model-2026-08-01", finish_reason="stop"
+        )
+        telemetry.observe_event(LLMStreamEvent(type="content", content="hi"))
+
+        finalized = telemetry.finalize_usage({"prompt_tokens": 10})
+
+        assert finalized.get("prompt_tokens") == 10
+        assert finalized.get("resolved_model") == "model-2026-08-01"
+        assert finalized.get("finish_reason") == "stop"
+        assert finalized.get("provider") == "testprovider"
+        assert finalized.get("request_id") == telemetry.request_id
+        duration_ms = finalized.get("duration_ms")
+        first_output_ms = finalized.get("time_to_first_output_ms")
+        assert duration_ms is not None
+        assert first_output_ms is not None
+        assert first_output_ms <= duration_ms
+
+    def test_a_provider_reporting_no_usage_still_records_its_timings(
+        self, exporter: InMemorySpanExporter, buffer: LLMRequestBuffer
+    ) -> None:
+        """An endpoint that omits usage is where timings are least available."""
+        del buffer
+        telemetry = _telemetry(exporter)
+
+        finalized = telemetry.finalize_usage(None)
+
+        assert "prompt_tokens" not in finalized
+        assert finalized.get("duration_ms") is not None
+        assert finalized.get("provider") == "testprovider"
+
+    def test_a_non_streamed_call_reports_no_first_output_time(
+        self, exporter: InMemorySpanExporter, buffer: LLMRequestBuffer
+    ) -> None:
+        del buffer
+        telemetry = _telemetry(exporter)
+        telemetry.record_output(LLMOutput(content="answer"))
+
+        finalized = telemetry.finalize_usage(None)
+
+        assert "time_to_first_output_ms" not in finalized
