@@ -850,7 +850,9 @@ class OpenAIClient(BaseLLMClient):
             llm_output = LLMOutput(
                 content=response.output_text or None,
                 tool_calls=self._responses_tool_calls(response),
-                reasoning_info=self._responses_reasoning_info(response),
+                reasoning_info=telemetry.finalize_usage(
+                    self._responses_reasoning_info(response)
+                ),
                 provider_metadata={
                     "openai_response_output": [
                         item.model_dump(mode="json") for item in response.output
@@ -946,7 +948,7 @@ class OpenAIClient(BaseLLMClient):
         llm_output = LLMOutput(
             content=content,
             tool_calls=tool_calls,
-            reasoning_info=reasoning_info,
+            reasoning_info=telemetry.finalize_usage(reasoning_info),
             resolved_model=response.model,
         )
 
@@ -1223,7 +1225,11 @@ class OpenAIClient(BaseLLMClient):
                                 response_id=event.metadata.get("response_id"),
                                 finish_reason=event.metadata.get("finish_reason"),
                             )
-                            telemetry.record_usage(event.metadata.get("reasoning_info"))
+                            # Stamped onto the event the caller is about to
+                            # receive, which is the copy that gets persisted.
+                            event.metadata["reasoning_info"] = telemetry.finalize_usage(
+                                event.metadata.get("reasoning_info")
+                            )
                         telemetry.observe_event(event)
                         yield event  # noqa: ASYNC119
                 if stream_error is None:
@@ -1388,10 +1394,12 @@ class OpenAIClient(BaseLLMClient):
                 if reasoning_tokens is not None:
                     stream_reasoning_info["reasoning_tokens"] = reasoning_tokens
                 metadata["reasoning_info"] = stream_reasoning_info
-                telemetry.record_usage(stream_reasoning_info)
 
             if telemetry.resolved_model:
                 metadata["resolved_model"] = telemetry.resolved_model
+            metadata["reasoning_info"] = telemetry.finalize_usage(
+                metadata.get("reasoning_info")
+            )
             telemetry.finish_success({"streaming": True, "metadata": metadata})
 
             # Signal completion

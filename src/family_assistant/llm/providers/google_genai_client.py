@@ -1331,7 +1331,7 @@ class GoogleGenAIClient(BaseLLMClient):
                 llm_output = LLMOutput(
                     content=content,
                     tool_calls=tool_calls,
-                    reasoning_info=reasoning_info,
+                    reasoning_info=telemetry.finalize_usage(reasoning_info),
                     provider_metadata=None,  # Thought signatures are now on individual tool calls
                     resolved_model=response.model_version,
                 )
@@ -1947,7 +1947,9 @@ class GoogleGenAIClient(BaseLLMClient):
 
             if interaction_id:
                 telemetry.record_response_metadata(response_id=interaction_id)
-            telemetry.record_usage(done_metadata.get("reasoning_info"))
+            done_metadata["reasoning_info"] = telemetry.finalize_usage(
+                done_metadata.get("reasoning_info")
+            )
             telemetry.finish_success({"streaming": True, "metadata": done_metadata})
 
             yield LLMStreamEvent(type="done", metadata=done_metadata)
@@ -2258,7 +2260,6 @@ class GoogleGenAIClient(BaseLLMClient):
                 stream_reasoning_info = self._reasoning_info_from_usage_metadata(
                     latest_usage_metadata
                 )
-                telemetry.record_usage(stream_reasoning_info)
 
             # Add thought summaries to reasoning_info for debugging/introspection
             if thought_summaries:
@@ -2266,8 +2267,9 @@ class GoogleGenAIClient(BaseLLMClient):
                     stream_reasoning_info = MessageReasoningInfo()
                 stream_reasoning_info["thought_summaries"] = thought_summaries
 
-            if stream_reasoning_info is not None:
-                done_metadata["reasoning_info"] = stream_reasoning_info
+            done_metadata["reasoning_info"] = telemetry.finalize_usage(
+                stream_reasoning_info
+            )
 
             telemetry.finish_success({"streaming": True, "metadata": done_metadata})
 

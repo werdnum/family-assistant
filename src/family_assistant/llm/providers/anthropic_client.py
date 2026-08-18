@@ -1056,9 +1056,11 @@ class AnthropicClient(BaseLLMClient):
                     finish_reason=response.stop_reason,
                 )
 
-                reasoning_info: MessageReasoningInfo | None = None
-                if response.usage:
-                    reasoning_info = self._reasoning_info_from_usage(response.usage)
+                reasoning_info = telemetry.finalize_usage(
+                    self._reasoning_info_from_usage(response.usage)
+                    if response.usage
+                    else None
+                )
 
                 llm_output = LLMOutput(
                     content=content_text or None,
@@ -1329,13 +1331,6 @@ class AnthropicClient(BaseLLMClient):
                     )
                     if thinking_metadata:
                         metadata["provider_metadata"] = thinking_metadata
-                if final_message and final_message.usage:
-                    stream_reasoning_info = self._reasoning_info_from_usage(
-                        final_message.usage
-                    )
-                    metadata["reasoning_info"] = stream_reasoning_info
-                    telemetry.record_usage(stream_reasoning_info)
-
                 if final_message:
                     telemetry.record_response_metadata(
                         resolved_model=final_message.model,
@@ -1343,6 +1338,14 @@ class AnthropicClient(BaseLLMClient):
                         finish_reason=final_message.stop_reason,
                     )
                     metadata["resolved_model"] = final_message.model
+
+                # Finalized after the response metadata is recorded, so the
+                # measurements stamped onto it include the model that served.
+                metadata["reasoning_info"] = telemetry.finalize_usage(
+                    self._reasoning_info_from_usage(final_message.usage)
+                    if final_message and final_message.usage
+                    else None
+                )
 
                 telemetry.finish_success({"streaming": True, "metadata": metadata})
 

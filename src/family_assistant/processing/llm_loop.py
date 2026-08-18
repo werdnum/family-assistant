@@ -587,6 +587,10 @@ class LLMStreamingLoop:
                 tool_calls=effective_tool_calls,
                 provider_metadata=serialized_provider_metadata,
                 taint_metadata=taint_tracker.snapshot().to_metadata(),
+                # This iteration's call, not the turn's last one: each pass
+                # round the loop is its own provider call, and the row saved
+                # for this message is where that call's cost and timing live.
+                reasoning_info=serialized_reasoning_info,
             )
 
             # Yield a synthetic "done" event with the complete assistant message

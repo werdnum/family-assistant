@@ -1307,8 +1307,11 @@ class ProcessingService:
                         # rewriting it would break replay continuity.
                         turn_msg.content = normalize_latex_to_unicode(turn_msg.content)
 
+                    # Each assistant message carries the call that produced it.
+                    # Falling back to the turn's last call would attribute one
+                    # call's tokens to every iteration of a tool loop.
                     reasoning_info_for_msg = (
-                        final_reasoning_info
+                        turn_msg.reasoning_info
                         if isinstance(turn_msg, AssistantMessage)
                         else None
                     )
@@ -1521,10 +1524,13 @@ class ProcessingService:
                             recorded_on_tool_rows |= _tool_row_attachment_ids(
                                 stream_msg
                             )
+                            # Every assistant message in the turn carries its
+                            # own call's usage and timing, not just the one that
+                            # closes it -- the intermediate iterations of a tool
+                            # loop are calls too, and used to save nothing.
                             reasoning_info_for_stream = (
-                                event.metadata.get("reasoning_info")
-                                if _is_turn_closing_assistant_message(stream_msg)
-                                and event.metadata
+                                stream_msg.reasoning_info
+                                if isinstance(stream_msg, AssistantMessage)
                                 else None
                             )
                             # The turn's closing assistant message arrives on the

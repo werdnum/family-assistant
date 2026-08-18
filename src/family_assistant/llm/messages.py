@@ -80,10 +80,11 @@ class MessageAttachmentMetadata(TypedDict, total=False):
 
 
 class MessageReasoningInfo(TypedDict, total=False):
-    """Reasoning/usage metadata stored alongside messages.
+    """Per-call metadata stored alongside a message.
 
-    May contain token usage stats from LLM providers, or provenance
-    info when a message was sent on behalf of another turn.
+    Despite the name, this is what is known about the LLM call that produced
+    the message: token usage, how long it took and which model served it, or
+    provenance when a message was sent on behalf of another turn.
 
     Prompt-cache accounting differs by provider, so ``prompt_tokens`` is not a
     common denominator for a cache hit rate:
@@ -110,6 +111,25 @@ class MessageReasoningInfo(TypedDict, total=False):
     source_turn_id: str | None
     tool_name: str
     thought_summaries: list[dict[str, str | int]]
+
+    # How the call went, as against what it consumed. Stamped by
+    # LLMCallTelemetry so that the row persisted for a reply says not only what
+    # it cost but how long it took and which model actually served it.
+    duration_ms: float
+    """Wall-clock for the provider call behind this message."""
+    time_to_first_output_ms: float
+    """Until the first streamed token. Absent on a non-streamed call, where it
+    could only equal the duration."""
+    resolved_model: str
+    """The model the provider reported serving, which an alias or provider-side
+    routing can make different from the one configured."""
+    finish_reason: str
+    """Why the provider stopped."""
+    provider: str
+    """Which provider served it."""
+    request_id: str
+    """Joins this message to its diagnostics ring-buffer record and to the
+    ``llm.request.id`` span attribute."""
 
 
 # Re-export content part types and helpers for backward compatibility
@@ -248,6 +268,11 @@ class AssistantMessage(BaseModel):
     # ast-grep-ignore: no-dict-any - Accepts both dicts (for serialization) and provider metadata objects (e.g., GeminiProviderMetadata)
     provider_metadata: Any | None = None
     taint_metadata: TaintMetadata | None = None
+    # What the call that produced *this* message cost and how it went. Carried
+    # on the message because a turn is not one call: a tool loop makes one of
+    # these per iteration, and attributing the last call's numbers to all of
+    # them undercounts every turn that used tools.
+    reasoning_info: MessageReasoningInfo | None = Field(default=None, exclude=True)
 
     model_config = ConfigDict(extra="forbid")
 
