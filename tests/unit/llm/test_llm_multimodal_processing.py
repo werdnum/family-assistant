@@ -12,8 +12,6 @@ from family_assistant.llm import BaseLLMClient
 from family_assistant.llm.base import InvalidRequestError
 from family_assistant.llm.messages import (
     AssistantMessage,
-    ImageUrlContentPart,
-    TextContentPart,
     ToolMessage,
     UserMessage,
 )
@@ -150,18 +148,19 @@ class TestGoogleGenAIClient:
             result = client.create_attachment_injection(attachment)
 
             assert result.role == "user"
-            assert isinstance(result.content, list)
-            assert len(result.content) == 2
+            assert result.parts is not None
+            assert len(result.parts) == 2
 
-            prelude = result.content[0]
-            assert isinstance(prelude, TextContentPart)
-            assert prelude.text == "[System: File from previous tool response]"
-
-            media = result.content[1]
-            assert isinstance(media, ImageUrlContentPart)
-            assert media.image_url["url"] == (
-                "data:image/png;base64," + base64.b64encode(b"fake png data").decode()
+            # First part should be system message
+            assert (
+                result.parts[0]["text"] == "[System: File from previous tool response]"
             )
+
+            # Second part should be a types.Part object with inline_data
+            part = result.parts[1]
+            assert hasattr(part, "inline_data")
+            assert part.inline_data.mime_type == "image/png"
+            assert part.inline_data.data == b"fake png data"
 
     def test_create_attachment_injection_pdf_with_content(self) -> None:
         """Test Gemini attachment injection for PDF content"""
@@ -179,20 +178,19 @@ class TestGoogleGenAIClient:
             result = client.create_attachment_injection(attachment)
 
             assert result.role == "user"
-            assert isinstance(result.content, list)
-            assert len(result.content) == 2
+            assert result.parts is not None
+            assert len(result.parts) == 2
 
-            # A PDF may be dropped by whichever adapter renders this next, so the
-            # prelude describes it rather than staying generic.
-            prelude = result.content[0]
-            assert isinstance(prelude, TextContentPart)
-            assert "application/pdf" in prelude.text
-
-            media = result.content[1]
-            assert isinstance(media, ImageUrlContentPart)
-            assert media.image_url["url"] == (
-                "data:application/pdf;base64," + base64.b64encode(fake_data).decode()
+            # First part should be system message
+            assert (
+                result.parts[0]["text"] == "[System: File from previous tool response]"
             )
+
+            # Second part should be a types.Part object with inline_data for PDF
+            part = result.parts[1]
+            assert hasattr(part, "inline_data")
+            assert part.inline_data.mime_type == "application/pdf"
+            assert part.inline_data.data == fake_data
 
     def test_create_attachment_injection_non_pdf_binary_content(self) -> None:
         """Test Gemini attachment injection for non-PDF binary content"""
@@ -210,13 +208,11 @@ class TestGoogleGenAIClient:
             result = client.create_attachment_injection(attachment)
 
             assert result.role == "user"
-            assert isinstance(result.content, list)
-            assert len(result.content) == 2
+            assert result.parts is not None
+            assert len(result.parts) == 2
 
             # Should describe the non-PDF binary content
-            described = result.content[1]
-            assert isinstance(described, TextContentPart)
-            text_part = described.text
+            text_part = result.parts[1]["text"]
             assert "application/zip" in text_part
             assert "0.0MB" in text_part  # 1KB shows as 0.0MB
             assert "Test ZIP archive" in text_part
@@ -236,12 +232,10 @@ class TestGoogleGenAIClient:
             result = client.create_attachment_injection(attachment)
 
             assert result.role == "user"
-            assert isinstance(result.content, list)
-            assert len(result.content) == 2
+            assert result.parts is not None
+            assert len(result.parts) == 2
 
-            described = result.content[1]
-            assert isinstance(described, TextContentPart)
-            text_part = described.text
+            text_part = result.parts[1]["text"]
             assert "/path/to/document.pdf" in text_part
             assert "File not found or inaccessible" in text_part
 

@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from google.genai import types
 from pydantic import ValidationError
 
 from family_assistant.assistant import (
@@ -432,69 +431,36 @@ def _google_injected(mime_type: str) -> UserMessage:
 
 
 @pytest.mark.parametrize("mime_type", ["audio/ogg", "video/mp4", "application/pdf"])
-def test_the_google_injection_is_built_from_provider_neutral_parts(
+def test_the_google_injection_describes_itself_for_the_other_adapters(
     mime_type: str,
 ) -> None:
     """Google is `default_assistant`'s primary, so it builds what the fallback reads.
 
-    The media used to ride in `UserMessage.parts` as `types.Part`, which only the
-    Gemini adapter looks at, with `content` set to the fixed string
+    The media rides in `parts`, which only the Gemini adapter looks at. Every
+    other adapter renders `content`, and this used to be the fixed string
     "[Multimodal attachment]" -- so a fallback turn saw a web user's upload as a
-    placeholder naming neither the type nor the id. Neutral parts let every
-    adapter apply its own conversion.
+    placeholder naming neither the type nor the id, leaving the model unable even
+    to hand it to `media_analyst`.
     """
     message = _google_injected(mime_type)
 
-    assert isinstance(message.content, list)
-    assert message.parts is None
-    media = next(
-        part for part in message.content if isinstance(part, ImageUrlContentPart)
-    )
-    assert media.image_url["url"].startswith(f"data:{mime_type};base64,")
-    assert media.attachment_id == "att-7"
-
-
-def test_the_google_injection_still_reaches_gemini_as_inline_data() -> None:
-    """The neutral form must not cost the primary anything.
-
-    Gemini's own converter turns a base64 data URI back into the same
-    `Part.from_bytes` inline data the adapter used to build directly, so the
-    request body is unchanged for the model that reads it.
-    """
-    contents = GoogleGenAIClient(
-        api_key="test-key", model="gemini-3.7-flash"
-    )._convert_messages_to_genai_format([_google_injected("application/pdf")])
-
-    content = contents[0]
-    assert isinstance(content, types.Content)
-    inline = [part.inline_data for part in content.parts or [] if part.inline_data]
-    assert [blob.mime_type for blob in inline] == ["application/pdf"]
-
-
-def test_the_openai_fallback_reads_a_pdf_the_primary_never_answered_on() -> None:
-    """A PDF is readable by both models, so the fallback must still receive it.
-
-    This is the web-chat upload path: `chat_api.py` routes every non-image
-    attachment through `attachment_content`, which lands here.
-    """
-    items = OpenAIClient(
-        api_key="test-key", model="gpt-5.6-terra"
-    )._messages_to_responses_input([_google_injected("application/pdf")])
-
-    content = items[0]["content"]
-    assert isinstance(content, list)
-    assert [part["type"] for part in content] == ["input_text", "input_file"]
+    assert isinstance(message.content, str)
+    assert mime_type in message.content
+    assert "att-7" in message.content
 
 
 def test_the_openai_fallback_still_learns_what_arrived() -> None:
-    """Audio is the type no OpenAI model can take, so the text carries it."""
+    """End to end over the pair the shipped chain actually uses."""
+    message = _google_injected("audio/ogg")
+
     items = OpenAIClient(
         api_key="test-key", model="gpt-5.6-terra"
-    )._messages_to_responses_input([_google_injected("audio/ogg")])
+    )._messages_to_responses_input([message])
 
-    content = items[0]["content"]
-    assert isinstance(content, list)
-    rendered = " ".join(part["text"] for part in content if "text" in part)
+    # The Gemini `parts` are invisible here, so the string content is the whole
+    # of what Terra receives.
+    rendered = items[0]["content"]
+    assert isinstance(rendered, str)
     assert "audio/ogg" in rendered
     assert "att-7" in rendered
 

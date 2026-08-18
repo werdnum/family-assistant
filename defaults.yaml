@@ -710,16 +710,18 @@ service_profiles:
     # Terra is the safety net.
     #
     # The two surfaces deliver attachments differently: Telegram (handler.py)
-    # attaches everything as image_url parts, while web chat (chat_api.py) sends
-    # only images that way and routes PDFs, audio and video through
-    # attachment_content, which reaches the provider via
-    # create_attachment_injection. Both paths carry the file as provider-neutral
-    # content parts, so a fallback turn re-renders it through Terra's own
-    # MIME-aware conversion and images and PDFs still arrive at the Responses
-    # API as input_image and input_file. Audio and video Terra cannot accept in
-    # any form; on that path they get an explicit note naming the attachment and
-    # are handed to the 'media_analyst' profile, which is Gemini, to transcribe
-    # or describe.
+    # attaches everything as image_url parts, which every adapter converts for
+    # itself, while web chat (chat_api.py) sends only images that way and routes
+    # PDFs, audio and video through attachment_content, which reaches the
+    # provider via create_attachment_injection.
+    #
+    # That second path is built by the primary's adapter alone
+    # (RetryingLLMClient does not rebuild it), so on a fallback turn Terra gets
+    # a note naming the attachment's type and id rather than the file itself.
+    # Deliberate: falling back at all is rare, and the note is actionable --
+    # the model delegates to 'media_analyst', which is Gemini, or asks the user
+    # to resend. Making the bytes cross every provider boundary is machinery
+    # this path does not earn.
     processing_config:
       include_aggregated_context: true
       max_iterations: 50
