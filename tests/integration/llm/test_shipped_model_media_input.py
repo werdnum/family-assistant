@@ -238,12 +238,12 @@ async def test_media_analyst_provider_can_actually_read_audio(
 @pytest.mark.vcr(before_record_response=sanitize_response)
 @pytest.mark.usefixtures("_require_cassette")
 async def test_shipped_openai_model_calls_a_tool(llm_record_mode: str) -> None:
-    """Agentic tool calling on the default assistant's primary.
+    """Agentic tool calling on the default assistant's fallback.
 
-    Moving `default_assistant` off Gemini was motivated entirely by tool-calling
-    strength, and nothing exercised that model. A basic single call is a shallow
-    assertion, but it is the difference between the shipped primary being covered
-    and being assumed.
+    A fallback turn runs the whole conversation, tool calls included, so the
+    model taking over has to call tools as well as answer. A basic single call is
+    a shallow assertion, but it is the difference between the shipped pair being
+    covered and being assumed.
     """
     _skip_unless_replayable(llm_record_mode, "OPENAI_API_KEY")
     client = _client("openai", _SHIPPED_OPENAI_MODEL, "OPENAI_API_KEY")
@@ -261,6 +261,47 @@ async def test_shipped_openai_model_calls_a_tool(llm_record_mode: str) -> None:
 
 @pytest.mark.no_db
 @pytest.mark.llm_integration
+async def test_shipped_google_model_calls_a_tool(
+    request: pytest.FixtureRequest,
+    llm_record_mode: str,
+) -> None:
+    """Agentic tool calling on the default assistant's primary.
+
+    This is the model every interactive turn starts on, so its tool calling is
+    what users meet first -- and the adapter's function-declaration conversion is
+    a different code path from the OpenAI one the sibling test covers.
+
+    Uses the genai SDK's own replay rather than VCR, like the audio test.
+    """
+    _skip_unless_replayable(llm_record_mode, "GEMINI_API_KEY")
+
+    module_name = request.node.module.__name__.replace("tests.", "")
+    client = GoogleGenAIClient(
+        api_key=os.getenv("GEMINI_API_KEY", "test-gemini-key"),
+        model=_SHIPPED_GOOGLE_MODEL,
+        debug_config={
+            "client_mode": llm_record_mode,
+            "replay_id": f"{module_name}/{request.node.name}/mldev",
+            "replays_directory": "tests/cassettes/gemini",
+        },
+    )
+
+    try:
+        response = await client.generate_response(
+            [create_user_message("What is 42 times 17? Use the calculate tool.")],
+            tools=[_CALCULATE_TOOL],
+            tool_choice="auto",
+        )
+    finally:
+        await client.close()
+
+    assert isinstance(response, LLMOutput)
+    assert response.tool_calls, "expected the model to call the tool"
+    assert response.tool_calls[0].function.name == "calculate"
+
+
+@pytest.mark.no_db
+@pytest.mark.llm_integration
 @pytest.mark.vcr(before_record_response=sanitize_response)
 @pytest.mark.usefixtures("_require_cassette")
 async def test_shipped_default_retry_pair_completes_a_turn(
@@ -269,25 +310,26 @@ async def test_shipped_default_retry_pair_completes_a_turn(
     """The pair `default_assistant` actually runs, in the order it runs them.
 
     `test_retry_fallback.py` covers nano/2.5-flash-lite/5.2 pairings that no
-    profile uses. This is Terra primary with a Gemini fallback -- the shipped
-    chain, and the one whose cross-provider hop is the known soft spot.
+    profile uses. This is the shipped chain: Gemini primary with a Terra
+    fallback. The primary answers, so the recording carries no OpenAI leg --
+    building the chain in the shipped order is the assertion, because a chain
+    written the other way round proves the pair works in a direction production
+    never takes.
     """
-    _skip_unless_replayable(llm_record_mode, "OPENAI_API_KEY")
-    if llm_record_mode != "replay" and not os.getenv("GEMINI_API_KEY"):
-        pytest.skip("Recording this test requires GEMINI_API_KEY")
+    _skip_unless_replayable(llm_record_mode, "GEMINI_API_KEY")
 
     client = LLMClientFactory.create_client({
         "retry_config": {
             "primary": {
-                "provider": "openai",
-                "model": _SHIPPED_OPENAI_MODEL,
-                "api_key": os.getenv("OPENAI_API_KEY", "test-openai-key"),
-            },
-            "fallback": {
                 "provider": "google",
                 "model": _SHIPPED_GOOGLE_MODEL,
                 "api_key": os.getenv("GEMINI_API_KEY", "test-gemini-key"),
                 "api_base": "https://generativelanguage.googleapis.com/v1beta",
+            },
+            "fallback": {
+                "provider": "openai",
+                "model": _SHIPPED_OPENAI_MODEL,
+                "api_key": os.getenv("OPENAI_API_KEY", "test-openai-key"),
             },
         }
     })

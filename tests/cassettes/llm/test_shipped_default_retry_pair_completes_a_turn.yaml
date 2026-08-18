@@ -1,110 +1,43 @@
 interactions:
   - request:
-      body: '{"include":["reasoning.encrypted_content"],"input":[{"role":"user","content":"Reply with exactly: ''Primary response received''"}],"model":"gpt-5.6-terra","store":false,"stream":false}'
+      body: '{"contents": [{"parts": [{"text": "Reply with exactly: ''Primary response received''"}], "role": "user"}], "generationConfig": {"mediaResolution": "MEDIA_RESOLUTION_HIGH"}}'
       headers:
-        accept:
+        Content-Type:
           - application/json
-        accept-encoding:
-          - gzip, deflate
-        connection:
-          - keep-alive
-        content-length:
-          - '182'
-        content-type:
-          - application/json
-        host:
-          - api.openai.com
         user-agent:
-          - AsyncOpenAI/Python 1.109.1
-        x-stainless-arch:
-          - arm64
-        x-stainless-async:
-          - async:asyncio
-        x-stainless-lang:
-          - python
-        x-stainless-os:
-          - Linux
-        x-stainless-package-version:
-          - 1.109.1
-        x-stainless-read-timeout:
-          - '600'
-        x-stainless-retry-count:
-          - '0'
-        x-stainless-runtime:
-          - CPython
-        x-stainless-runtime-version:
-          - 3.13.9
-      method: POST
-      uri: https://api.openai.com/v1/responses
+          - google-genai-sdk/2.10.0 gl-python/3.13.12
+        x-goog-api-client:
+          - google-genai-sdk/2.10.0 gl-python/3.13.12
+      method: post
+      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent
     response:
       body:
-        string: !!binary |
-          H4sIAAAAAAAA/61V226jMBB9z1dEPLcVoQkh+xX7Xq2sAQbirbFZX9JGVf59xzYQSBNpH/YhEp7j
-          OXM5M87Xar1OeJ38WCcaTc9SqItiV0BTFNjUUKabHHKk3/6Qbqtic9gWaXZ43e6aLD281nkDyZOn
-          UOVvrOxIo6TBaK80gsWagcc2+2KXZ5v0sAuYsWCd8T6V6nqBdC86lVC9t1o56fNqQBiMZi4Ely3Z
-          vuhIhh7OqL1/jScUqqcDAZcYeKS8CZ0HFLVW3lM6IYKh0fjHoazOrEcJwp4JTF/SgHE5krEaLXBh
-          5p5cGqtdZTkVPbd38MmUs72zzKp3/A5apQSrQCzpOlWj8DW1vX3eveTPlnIdmuwxDT7S3CMGIctb
-          6ErszaRqZ9rHohavRRZELcsa011epFDm++wQ4wUWe+4x8KAx0OIVeKReACslLcprUvPEFrRjh/DT
-          Tt7hAkipLIxdffu1AIVqe63KO0ggIt6fmnegz+txGumjQn6iHKfbl+FrIkj6I5iQVcNpBhhI80Ej
-          NcFaiYCCMZyqp/JWI0/goHnUJCeKpbQ0HXF+e0qGRgzvjBhBJ66cYWO+LKg3aUzVdr0lyuqI7B3P
-          DzGNvu9xQpJse4yDQ0tolFzsTlAo9oryZNZpanQsNcGmUdpG1WvuutHu589bffE16FHvxLjON3tI
-          alpBAw3aM1XiM2o4LhbOoD5x6oXl4wo34EQcAgqgNC5232LX+9l3wb4Z2jZUMJRESXdwPc+mLNyL
-          Yg0pn1CXyvAgwljllHiU76gov9AfZ1VyBVzYgykqzVmLrEU5D8zlYu/Tp3vA7DW57sbA9911KHeG
-          DMBlIr99btL7yH+Pa2lTxe2FsdMfWDKDoKvjvEHSdSw8ucbOXBYKXLebjj2b7Xw6GfuwQ4ciGrST
-          1fg8JjU3UIrxL+VWtKU+m93T6l/kSeKSfWhu77UqwvWjTtzKs79nvxd1Wt9HzDcCZNnUSGeWa9cR
-          ew0WPP1ldfkLUAPqrP8HAAA=
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Primary response received\",\n            \"thoughtSignature\": \"EuUECuIEARFNMg82ePDBynAYReL8O+hJr/0QYHZiqFOr0oekLlR+ZG+3H5JJWCWnW8TPSDUmC+2uftZ02MI9gRi5l+4e3UHseuQqQk1YfYnEyY31f4XUWPbTLnLOaFcY0cQbcWb2OPs4Ux6QUyXIOCVNE7VDfUXdA5KjW7Db5YNvHoUBMKG2Gye1+vxgi6ZIsus2zKpmsJWGLQY+f/B4qj3GyJEWeerghFjLWtRSOOe7enunAuRDVAkoaiAFC58MmZ9SEdGK5egB5SpMIrfZTOlTJ60pjUqRuK0HzglqY5EEqWv02SyV+RSnqWfHC/W3OuteF3McTUiS8RvviZB8KduqYwmn8hLajPvD3wN+yQgiAIER3YUmvqpqVLgFlzJNyau3VHCszbMrDrkMX3pyWorg9CJujsR8TwOuebTxy+YMP0LWGPAn9JxuuNrnZXd8EUZBB5oISXq+usq/byCE1bE+6oeqIMpxqs4xVTQDfjv/prSAv1Yxg6CmjxEu35BUsFn+Y/fFrC2HQr53Fcpk8RxoBcU2uiZc+u+bl4PjMuyVUZcI/axWeMvb7rhW8h2R6Y5VRbHeeZZqwqsohQcoLaZlR5KQe7u+/zXtTHvo8S7TLrX0JtxG8f3liz5H5RRP8wvRnmmq+YMaSsw28KULs8+ct4Hp4th/nPq8Z7E+0IHK0aVZqLqk4qFqdXF3rYQvq0tEvmicCTsGCrSQXBi+BUkrVP2pQUNeX6TUEbOlWcRRa6jS99yXzqjs2jGDbg25HJzg/zOKUfEQrRJ1JCFp+D8RGkFaEiha2Ossra3KC9C5OcAggqCEVg==\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 10,\n    \"candidatesTokenCount\": 3,\n    \"totalTokenCount\": 116,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 10\n      }\n    ],\n    \"thoughtsTokenCount\": 103,\n    \"serviceTier\": \"standard\"\n  },\n  \"modelVersion\": \"gemini-3.7-flash\",\n  \"responseId\": \"NSaEar-7Hq2MjrEPk4fwiQI\"\n}\n"
       headers:
-        Access-Control-Expose-Headers:
-          - CF-Ray
-        CF-Cache-Status:
-          - DYNAMIC
-        CF-Ray:
-          - a24810a658ce33e8-FRA
-        Connection:
-          - keep-alive
         Content-Encoding:
           - gzip
         Content-Type:
-          - application/json
+          - application/json; charset=UTF-8
         Date:
-          - Sat, 01 Aug 2026 21:51:36 GMT
+          - Tue, 18 Aug 2026 09:30:30 GMT
         Server:
-          - cloudflare
-        Strict-Transport-Security:
-          - max-age=31536000; includeSubDomains; preload
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=1367
         Transfer-Encoding:
           - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
         X-Content-Type-Options:
           - nosniff
-        access-control-expose-headers:
-          - X-Request-ID
-          - CF-Ray
-        alt-svc:
-          - h3=":443"; ma=86400
-        openai-organization:
-          - REDACTED
-        openai-processing-ms:
-          - '1043'
-        openai-project:
-          - proj_wvaoRBrBR9ayhT5aPMqWgDtI
-        openai-version:
-          - '2020-10-01'
-        set-cookie:
-          - __cf_bm=HeQg0c7HZduJvujE_InPlVm7YBhMs6QGw9yalhSD6L8-1785621095.4200988-1.0.1.1-kE_1qbbddqHW8r_HtJv2rZLT3vP3jQ7MIWkqgWIaL628VJQ8icQbi0LpFIzY_CkCYcSNRwQ6mYpp6Picb37rNoa4HlFdd6_8n5cda.4j1kMlfPbFax9SU1f3Q6lXCCf1; HttpOnly; SameSite=None; Secure; Path=/; Domain=api.openai.com; Expires=Sat, 01 Aug 2026 22:21:36 GMT
-        x-ratelimit-limit-requests:
-          - '10000'
-        x-ratelimit-limit-tokens:
-          - '4000000'
-        x-ratelimit-remaining-requests:
-          - '9999'
-        x-ratelimit-remaining-tokens:
-          - '4000000'
-        x-ratelimit-reset-requests:
-          - 6ms
-        x-ratelimit-reset-tokens:
-          - 0s
-        x-request-id:
-          - req_22f6c3875c1347e388243de7514db1df
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-Gemini-Service-Tier:
+          - standard
+        X-XSS-Protection:
+          - '0'
       status:
         code: 200
         message: OK

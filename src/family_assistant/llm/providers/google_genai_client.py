@@ -37,6 +37,7 @@ from family_assistant.llm import (
     ToolCallItem,
     UserMessageDict,
     _format_messages_for_debug,
+    describe_attachment_for_fallback,
 )
 from family_assistant.llm.antigravity_egress import (
     AntigravityEgressResolver,
@@ -701,9 +702,13 @@ class GoogleGenAIClient(BaseLLMClient):
                     "text": f"[File: {attachment.file_path} - Error reading file: {e!s}]"
                 })
 
-        # Return UserMessage with parts for provider-specific handling
+        # `parts` carries the media for Gemini, which reads `parts` and ignores
+        # `content`. Every other adapter does the reverse, and a cross-provider
+        # fallback renders this same message -- `RetryingLLMClient` builds the
+        # injection from the primary alone -- so `content` is what the fallback
+        # sees, and a placeholder there would drop the attachment silently.
         return UserMessage(
-            content="[Multimodal attachment]",  # Fallback content for serialization
+            content=describe_attachment_for_fallback(attachment),
             parts=parts,
         )
 

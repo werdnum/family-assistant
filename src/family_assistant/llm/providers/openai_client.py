@@ -29,6 +29,7 @@ from family_assistant.llm import (
     ToolCallFunction,
     ToolCallItem,
     UserMessageDict,
+    describe_attachment_for_fallback,
 )
 from family_assistant.llm.messages import (
     ContentPart,
@@ -99,22 +100,6 @@ def _is_media_mime_type(mime_type: str) -> bool:
         mime_type.startswith(_HANDOFF_MEDIA_MIME_PREFIXES)
         or mime_type in _RESPONSES_FILE_MIME_TYPES
     )
-
-
-def _describe_unrepresentable_attachment(attachment: "ToolAttachment") -> str:
-    """Text standing in for a media part a provider may not carry.
-
-    Names the type, the size and the id, so a model that never receives the bytes
-    can still say what arrived and hand the id to `delegate_to_service`. Phrased
-    as a description rather than "you cannot read this": the same message goes to
-    the provider that *can* read it, and telling that model the file is
-    unreadable would be false.
-    """
-    size_mb = len(attachment.content or b"") / (1024 * 1024)
-    described = f"{attachment.mime_type}, {size_mb:.1f}MB"
-    if attachment.attachment_id:
-        described += f", attachment_id={attachment.attachment_id}"
-    return f"[System: File from previous tool response: {described}]"
 
 
 class OpenAIClient(BaseLLMClient):
@@ -212,7 +197,7 @@ class OpenAIClient(BaseLLMClient):
                 if not attachment.mime_type.startswith(_RESPONSES_IMAGE_MIME_PREFIX):
                     content_parts[0] = TextContentPart(
                         type="text",
-                        text=_describe_unrepresentable_attachment(attachment),
+                        text=describe_attachment_for_fallback(attachment),
                     )
                 content_parts.append(
                     ImageUrlContentPart(

@@ -37,6 +37,7 @@ from family_assistant.llm.messages import (
     UserMessage,
 )
 from family_assistant.llm.providers.anthropic_client import AnthropicClient
+from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.llm.providers.openai_client import OpenAIClient
 from family_assistant.tools import (
     LOCAL_TOOL_DESCRIPTORS,
@@ -415,6 +416,53 @@ def test_the_anthropic_fallback_still_learns_what_arrived() -> None:
     assert "att-7" in rendered
     # The audio itself is gone -- that is the provider's limit, not a bug here.
     assert not any(block.get("type") == "image" for block in blocks)
+
+
+def _google_injected(mime_type: str) -> UserMessage:
+    client = GoogleGenAIClient(api_key="test-key", model="gemini-3.7-flash")
+    return client.create_attachment_injection(
+        ToolAttachment(
+            mime_type=mime_type,
+            content=b"\0" * 2048,
+            description="From a tool",
+            attachment_id="att-7",
+        )
+    )
+
+
+@pytest.mark.parametrize("mime_type", ["audio/ogg", "video/mp4", "application/pdf"])
+def test_the_google_injection_describes_itself_for_the_other_adapters(
+    mime_type: str,
+) -> None:
+    """Google is `default_assistant`'s primary, so it builds what the fallback reads.
+
+    The media rides in `parts`, which only the Gemini adapter looks at. Every
+    other adapter renders `content`, and this used to be the fixed string
+    "[Multimodal attachment]" -- so a fallback turn saw a web user's upload as a
+    placeholder naming neither the type nor the id, leaving the model unable even
+    to hand it to `media_analyst`.
+    """
+    message = _google_injected(mime_type)
+
+    assert isinstance(message.content, str)
+    assert mime_type in message.content
+    assert "att-7" in message.content
+
+
+def test_the_openai_fallback_still_learns_what_arrived() -> None:
+    """End to end over the pair the shipped chain actually uses."""
+    message = _google_injected("audio/ogg")
+
+    items = OpenAIClient(
+        api_key="test-key", model="gpt-5.6-terra"
+    )._messages_to_responses_input([message])
+
+    # The Gemini `parts` are invisible here, so the string content is the whole
+    # of what Terra receives.
+    rendered = items[0]["content"]
+    assert isinstance(rendered, str)
+    assert "audio/ogg" in rendered
+    assert "att-7" in rendered
 
 
 def test_an_injected_image_keeps_the_plain_prelude() -> None:
