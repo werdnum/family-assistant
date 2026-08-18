@@ -115,3 +115,15 @@ Attachment bytes are counted separately from the serialized payload rather than 
 provider substitutes a short text description for an attachment type it cannot read, and which types
 those are differs by provider and model, so folding the two together would let a substituted file
 inflate the number that says how much was actually sent.
+
+### Scope: structured and JSON calls
+
+`generate_structured` and `generate_json` are covered by the retry layer's spans
+(`llm.generate_structured`, `llm.generate_json`, carrying attempt count, fallback flag and duration)
+but not by the per-call helper, so they produce no provider span, no ring-buffer record, and no
+resolved model or payload size, and a provider's internal schema-validation retries are not broken
+out. That is a deliberate boundary rather than an oversight: these calls serve internal utilities —
+classification, duplicate detection — rather than a conversational turn, so they are not what a
+latency investigation starts from, and each provider implements them with its own validation-retry
+loop that would have to be instrumented separately. Route them through `LLMCallTelemetry` when one
+of those calls is what needs explaining.

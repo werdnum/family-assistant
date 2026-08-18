@@ -478,3 +478,30 @@ class TestRetryingLLMClientSpans:
         assert spans[0].status.status_code == StatusCode.ERROR
         assert spans[0].attributes is not None
         assert spans[0].attributes["llm.error.type"] == "rate_limit"
+
+    @pytest.mark.asyncio
+    async def test_a_turn_where_everything_fails_still_reports_its_attempts(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        """The all-failed path raises before any success-recording runs."""
+        failing_client = FailingMockClient(
+            rules=[], default_response=LLMOutput(content="unused")
+        )
+        client = RetryingLLMClient(
+            primary_client=failing_client,
+            primary_model="test-model",
+            fallback_client=FailingMockClient(
+                rules=[], default_response=LLMOutput(content="unused")
+            ),
+            fallback_model="fallback-model",
+        )
+        messages = [SystemMessage(content="system"), UserMessage(content="hello")]
+
+        with pytest.raises(ProviderConnectionError):
+            await client.generate_response(messages=messages)
+
+        spans = span_exporter.get_finished_spans()
+        assert len(spans) == 1
+        assert spans[0].attributes is not None
+        assert spans[0].attributes["llm.attempts"] == 3
+        assert spans[0].attributes["llm.fallback_used"] is True
