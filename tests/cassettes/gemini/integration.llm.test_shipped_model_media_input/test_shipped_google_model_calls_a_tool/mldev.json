@@ -1,0 +1,164 @@
+{
+  "replay_id": "integration.llm.test_shipped_model_media_input/test_shipped_google_model_calls_a_tool/mldev",
+  "interactions": [
+    {
+      "request": {
+        "method": "post",
+        "url": "{MLDEV_URL_PREFIX}/models/gemini-3.7-flash:generateContent",
+        "headers": {
+          "Content-Type": "application/json",
+          "x-goog-api-key": "{REDACTED}",
+          "user-agent": "google-genai-sdk/{VERSION_NUMBER} {LANGUAGE_LABEL}/{VERSION_NUMBER}",
+          "x-goog-api-client": "google-genai-sdk/{VERSION_NUMBER} {LANGUAGE_LABEL}/{VERSION_NUMBER}"
+        },
+        "body_segments": [
+          {
+            "contents": [
+              {
+                "parts": [
+                  {
+                    "text": "What is 42 times 17? Use the calculate tool."
+                  }
+                ],
+                "role": "user"
+              }
+            ],
+            "tools": [
+              {
+                "functionDeclarations": [
+                  {
+                    "description": "Evaluate an arithmetic expression.",
+                    "name": "calculate",
+                    "parameters": {
+                      "properties": {
+                        "expression": {
+                          "description": "",
+                          "type": "STRING"
+                        }
+                      },
+                      "required": [
+                        "expression"
+                      ],
+                      "type": "OBJECT"
+                    }
+                  }
+                ]
+              }
+            ],
+            "generationConfig": {
+              "mediaResolution": "MEDIA_RESOLUTION_HIGH"
+            }
+          }
+        ]
+      },
+      "response": {
+        "status_code": 200,
+        "headers": {
+          "X-Gemini-Service-Tier": "standard",
+          "Content-Type": "application/json; charset=UTF-8",
+          "Vary": "Origin, X-Origin, Referer",
+          "Content-Encoding": "gzip",
+          "Server": "scaffolding on HTTPServer2",
+          "X-XSS-Protection": "0",
+          "X-Frame-Options": "SAMEORIGIN",
+          "X-Content-Type-Options": "nosniff",
+          "Transfer-Encoding": "chunked"
+        },
+        "body_segments": [
+          {
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "functionCall": {
+                        "name": "calculate",
+                        "args": {
+                          "expression": "42 * 17"
+                        },
+                        "id": "call_1247945"
+                      },
+                      "thoughtSignature": "EowCCokCARFNMg/j52Dg1Vxss1ArbvAkQ7jqnWzxJXsN/HowMNwjNzgCW8OuSy8ZoP1kSLS4cd39lZscfITJE4dZniItCny1Z18dZdWJfAcCSBehGiID91TEtPAEKSB8E4vLd8rBNBAXj2JzeDbzqP9v+HYeeguQM7G0POCNP/lM5m3jUSD0ozw3CGQLh76DoF/vJ2ZCgcRoDGx8flKfiDDx86RnqoR85FLV0bEQ2DnQvXJyeP6KYSZJzdsr5+51GTiDgtJUtMa3ijkYjFdyr4++bEpBSUggCgAkeNxIEc7UpzYiSxQ7K7Mf4nku9vwRwrSGec2Cct9lvAR0Q/RXU7WLqfr7KcY80dPDtianmg=="
+                    }
+                  ],
+                  "role": "model"
+                },
+                "finishReason": "STOP",
+                "index": 0,
+                "finishMessage": "Model generated function call(s)."
+              }
+            ],
+            "usageMetadata": {
+              "promptTokenCount": 56,
+              "candidatesTokenCount": 19,
+              "totalTokenCount": 120,
+              "promptTokensDetails": [
+                {
+                  "modality": "TEXT",
+                  "tokenCount": 56
+                }
+              ],
+              "thoughtsTokenCount": 45,
+              "serviceTier": "standard"
+            },
+            "modelVersion": "gemini-3.7-flash",
+            "responseId": "ZiaEaszZKN2U-8YP4c-zsQI"
+          }
+        ],
+        "byte_segments": [],
+        "sdk_response_segments": [
+          {
+            "sdk_http_response": {
+              "headers": {
+                "X-Gemini-Service-Tier": "standard",
+                "Content-Type": "application/json; charset=UTF-8",
+                "Vary": "Origin, X-Origin, Referer",
+                "Content-Encoding": "gzip",
+                "Server": "scaffolding on HTTPServer2",
+                "X-XSS-Protection": "0",
+                "X-Frame-Options": "SAMEORIGIN",
+                "X-Content-Type-Options": "nosniff",
+                "Transfer-Encoding": "chunked"
+              }
+            },
+            "candidates": [
+              {
+                "content": {
+                  "parts": [
+                    {
+                      "function_call": {
+                        "id": "call_1247945",
+                        "args": {
+                          "expression": "42 * 17"
+                        },
+                        "name": "calculate"
+                      },
+                      "thought_signature": "EowCCokCARFNMg_j52Dg1Vxss1ArbvAkQ7jqnWzxJXsN_HowMNwjNzgCW8OuSy8ZoP1kSLS4cd39lZscfITJE4dZniItCny1Z18dZdWJfAcCSBehGiID91TEtPAEKSB8E4vLd8rBNBAXj2JzeDbzqP9v-HYeeguQM7G0POCNP_lM5m3jUSD0ozw3CGQLh76DoF_vJ2ZCgcRoDGx8flKfiDDx86RnqoR85FLV0bEQ2DnQvXJyeP6KYSZJzdsr5-51GTiDgtJUtMa3ijkYjFdyr4--bEpBSUggCgAkeNxIEc7UpzYiSxQ7K7Mf4nku9vwRwrSGec2Cct9lvAR0Q_RXU7WLqfr7KcY80dPDtianmg=="
+                    }
+                  ],
+                  "role": "model"
+                },
+                "finish_reason": "STOP",
+                "index": 0
+              }
+            ],
+            "model_version": "gemini-3.7-flash",
+            "response_id": "ZiaEaszZKN2U-8YP4c-zsQI",
+            "usage_metadata": {
+              "candidates_token_count": 19,
+              "prompt_token_count": 56,
+              "prompt_tokens_details": [
+                {
+                  "modality": "TEXT",
+                  "token_count": 56
+                }
+              ],
+              "thoughts_token_count": 45,
+              "total_token_count": 120
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

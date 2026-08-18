@@ -129,9 +129,10 @@ llm_parameters:
   # overthink; xhigh and max are the next dials if it still falls short.
   "gpt-5.6-sol":
     reasoning_effort: "high"
-  # default_assistant answers Telegram and web chat, where time-to-first-token
-  # is felt directly, so this stays at medium. Raise it if agentic tool calling
-  # still lags -- effort is the lever here, not the model.
+  # Terra is default_assistant's fallback and camera_analyst's, both of which
+  # answer interactively, where time-to-first-token is felt directly, so this
+  # stays at medium. Raise it if agentic tool calling still lags -- effort is
+  # the lever here, not the model.
   "gpt-5.6-terra":
     reasoning_effort: "medium"
 # Gemini Live Voice API Configuration
@@ -701,28 +702,36 @@ service_profiles:
     # 'default_profile_settings', and raises max_iterations so the main
     # assistant has more headroom before hitting the tool-call limit.
     #
-    # It inverts the inherited retry_config: Terra primary, Gemini fallback.
-    # This is the profile users talk to directly, so it gets the stronger
-    # agentic tool-caller, and Gemini becomes the safety net rather than the
-    # default. Terra reads the media users actually send here. The two surfaces
-    # deliver it differently: Telegram (handler.py) attaches everything as
-    # image_url parts, while web chat (chat_api.py) sends only images that way
-    # and routes PDFs, audio and video through attachment_content, which reaches
-    # the provider via create_attachment_injection. Both paths now use the same
-    # MIME-aware conversion, so images and PDFs reach the Responses API as
-    # input_image and input_file. Audio and video it cannot accept in any form;
-    # those get an explicit note naming the attachment and are handed to the
-    # 'media_analyst' profile, which is Gemini, to transcribe or describe.
+    # It restates the inherited retry_config rather than inverting it: Gemini
+    # primary, Terra fallback. This is the profile users talk to directly and
+    # the one attachments arrive at, and Gemini is the only configured provider
+    # whose adapter represents audio and video at all -- so on the primary the
+    # media users actually send is read in the turn it arrives, with no handoff.
+    # Terra is the safety net.
+    #
+    # The two surfaces deliver attachments differently: Telegram (handler.py)
+    # attaches everything as image_url parts, which every adapter converts for
+    # itself, while web chat (chat_api.py) sends only images that way and routes
+    # PDFs, audio and video through attachment_content, which reaches the
+    # provider via create_attachment_injection.
+    #
+    # That second path is built by the primary's adapter alone
+    # (RetryingLLMClient does not rebuild it), so on a fallback turn Terra gets
+    # a note naming the attachment's type and id rather than the file itself.
+    # Deliberate: falling back at all is rare, and the note is actionable --
+    # the model delegates to 'media_analyst', which is Gemini, or asks the user
+    # to resend. Making the bytes cross every provider boundary is machinery
+    # this path does not earn.
     processing_config:
       include_aggregated_context: true
       max_iterations: 50
       retry_config:
         primary:
-          provider: "openai"
-          model: "gpt-5.6-terra"
-        fallback:
           provider: "google"
           model: "gemini-3.7-flash"
+        fallback:
+          provider: "openai"
+          model: "gpt-5.6-terra"
   - id: "email_intake"
     description: "Assistant profile for handling email the user sends or forwards. Replies by email and may propose calendar events, notes, reminders, document indexing, or messages to known users; writes wait for confirmation."
     processing_config:

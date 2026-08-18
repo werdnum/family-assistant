@@ -91,6 +91,27 @@ class UserMessageDict(TypedDict):
     content: str | list[UserMessageContentPart]
 
 
+def describe_attachment_for_fallback(attachment: "ToolAttachment") -> str:
+    """Text standing in for a media part a provider may not carry.
+
+    Names the type, the size and the id, so a model that never receives the bytes
+    can still say what arrived and hand the id to `delegate_to_service`. Phrased
+    as a description rather than "you cannot read this": the same message goes to
+    the provider that *can* read it, and telling that model the file is
+    unreadable would be false.
+
+    Shared rather than per-adapter because it is the fallback's only source of
+    truth. `RetryingLLMClient.create_attachment_injection` builds the message
+    from the primary's adapter and hands it to the fallback unchanged, so
+    whichever adapter is primary owns what the other one gets to see.
+    """
+    size_mb = len(attachment.content or b"") / (1024 * 1024)
+    described = f"{attachment.mime_type}, {size_mb:.1f}MB"
+    if attachment.attachment_id:
+        described += f", attachment_id={attachment.attachment_id}"
+    return f"[System: File from previous tool response: {described}]"
+
+
 class BaseLLMClient:
     """Base class providing common functionality for LLM clients"""
 
