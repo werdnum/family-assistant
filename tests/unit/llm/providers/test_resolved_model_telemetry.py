@@ -106,7 +106,14 @@ async def test_openai_responses_stream_failure_is_recorded_when_the_consumer_sto
     Anything the provider leaves until after its loop never runs, so a failed
     turn would be the one call missing from the diagnostics buffer.
     """
-    client = OpenAIClient(api_key="test-key", model="gpt-5.6-sol")
+    # Pinned to the official base URL: OPENAI_BASE_URL in the environment
+    # reaches the SDK without passing through this constructor, and a
+    # compatible endpoint routes to Chat Completions instead.
+    client = OpenAIClient(
+        api_key="test-key",
+        model="gpt-5.6-sol",
+        base_url="https://api.openai.com/v1",
+    )
 
     async def _fake_create(**_kwargs: object) -> AsyncIterator[object]:
         async def _iter() -> AsyncIterator[object]:

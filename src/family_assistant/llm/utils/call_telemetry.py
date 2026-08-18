@@ -44,13 +44,19 @@ __all__ = ["LLMCallTelemetry"]
 
 
 def _attachment_chars(messages: Sequence[LLMMessage]) -> int:
-    """Approximate what tool-result attachments add to the request.
+    """Approximate what tool-result attachments could add to the request.
 
     ``message_to_json_dict`` deliberately drops ``transient_attachments``, and
     providers only base64-encode them well after this point, so an image or PDF
-    of several megabytes would otherwise be invisible in the payload size --
-    which is exactly the case a slow first token most needs explained. Sized at
-    the base64 expansion the provider will apply.
+    of several megabytes would otherwise be invisible -- which is exactly the
+    case a slow first token most needs explained. Sized at the base64 expansion
+    a provider applies to what it can read.
+
+    This is an upper bound, and reported apart from the serialized payload for
+    that reason: a provider substitutes a short text description for a type it
+    cannot read, and which types those are differs by provider and model.
+    Keeping the two separate means a substituted attachment cannot silently
+    inflate the number that says how much was actually sent.
     """
     total = 0
     for message in messages:
@@ -142,11 +148,10 @@ class LLMCallTelemetry:
         # Tool schemas are part of the prompt the model has to process, and a
         # tool-heavy profile sends a lot of them, so they belong in the size
         # that explains a slow first token just as much as the messages do.
-        self._payload_chars = (
-            _payload_chars(self._message_dicts)
-            + _attachment_chars(messages)
-            + _payload_chars(tools)
+        self._payload_chars = _payload_chars(self._message_dicts) + _payload_chars(
+            tools
         )
+        self._attachment_chars = _attachment_chars(messages)
         self.span.set_attributes({
             "gen_ai.system": system,
             "gen_ai.operation.name": operation,
@@ -155,6 +160,7 @@ class LLMCallTelemetry:
             "llm.request.streaming": streaming,
             "llm.request.message_count": len(self._message_dicts),
             "llm.request.payload_chars": self._payload_chars,
+            "llm.request.attachment_chars": self._attachment_chars,
             "llm.request.tool_count": len(tools) if tools else 0,
             "llm.request.tool_choice": tool_choice or "",
         })
@@ -306,6 +312,7 @@ class LLMCallTelemetry:
                     response_id=self._response_id,
                     usage=self._reasoning_info,
                     request_payload_chars=self._payload_chars,
+                    request_attachment_chars=self._attachment_chars,
                 )
             )
         except Exception as record_err:

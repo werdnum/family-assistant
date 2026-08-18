@@ -138,6 +138,7 @@ async def test_diagnostics_export_markdown_carries_call_telemetry(
             response_id="resp_abc",
             usage={"prompt_tokens": 10, "completion_tokens": 20},
             request_payload_chars=4096,
+            request_attachment_chars=80_000,
         )
     )
 
@@ -148,6 +149,7 @@ async def test_diagnostics_export_markdown_carries_call_telemetry(
     assert "**Served by**: test-model-2026-08-01" in content
     assert "250ms to first output" in content
     assert "4096 request chars" in content
+    assert "up to 80000 attachment chars" in content
     assert "provider id resp_abc" in content
     assert "finished stop" in content
     assert "prompt_tokens=10" in content

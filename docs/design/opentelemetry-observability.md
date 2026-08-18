@@ -71,17 +71,18 @@ Two layers of spans cover a turn, and they answer different questions:
 
 ### Request
 
-| Attribute                   | Meaning                                                    |
-| --------------------------- | ---------------------------------------------------------- |
-| `gen_ai.system`             | Provider (`anthropic`, `openai`, `google-genai`).          |
-| `gen_ai.request.model`      | Model as configured — which may be an alias.               |
-| `gen_ai.operation.name`     | `chat`, or the agent id for an Interactions API agent run. |
-| `llm.request.id`            | Joins the span to its ring-buffer record.                  |
-| `llm.request.streaming`     | Whether the turn was streamed.                             |
-| `llm.request.message_count` | Messages sent.                                             |
-| `llm.request.payload_chars` | Approximate serialized request size, attachments included. |
-| `llm.request.tool_count`    | Tool definitions sent.                                     |
-| `llm.request.tool_choice`   | The `tool_choice` sent.                                    |
+| Attribute                      | Meaning                                                          |
+| ------------------------------ | ---------------------------------------------------------------- |
+| `gen_ai.system`                | Provider (`anthropic`, `openai`, `google-genai`).                |
+| `gen_ai.request.model`         | Model as configured — which may be an alias.                     |
+| `gen_ai.operation.name`        | `chat`, or the agent id for an Interactions API agent run.       |
+| `llm.request.id`               | Joins the span to its ring-buffer record.                        |
+| `llm.request.streaming`        | Whether the turn was streamed.                                   |
+| `llm.request.message_count`    | Messages sent.                                                   |
+| `llm.request.payload_chars`    | Approximate serialized request size: messages plus tool schemas. |
+| `llm.request.attachment_chars` | Upper bound on attachment bytes, counted apart (see below).      |
+| `llm.request.tool_count`       | Tool definitions sent.                                           |
+| `llm.request.tool_choice`      | The `tool_choice` sent.                                          |
 
 ### Response and timing
 
@@ -109,3 +110,8 @@ usually shows up as `gen_ai.response.model` moving while `gen_ai.request.model` 
 duration from time to first output separates the two ways a turn gets slow — a late first token
 (provider queueing, or a large prompt, which `llm.request.payload_chars` will show) from a long tail
 of output.
+
+Attachment bytes are counted separately from the serialized payload rather than added to it: a
+provider substitutes a short text description for an attachment type it cannot read, and which types
+those are differs by provider and model, so folding the two together would let a substituted file
+inflate the number that says how much was actually sent.

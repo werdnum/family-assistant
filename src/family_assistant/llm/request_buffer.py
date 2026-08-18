@@ -43,6 +43,13 @@ class LLMRequestRecord:
     response_id: str | None = None
     usage: MessageReasoningInfo | None = None
     request_payload_chars: int | None = None
+    request_attachment_chars: int | None = None
+    """Upper bound on the attachment bytes the request may carry.
+
+    Kept apart from ``request_payload_chars`` because a provider substitutes a
+    short description for an attachment type it cannot read, and which those
+    are differs by provider.
+    """
 
     # ast-grep-ignore: no-dict-any - JSON serialization output
     def to_dict(self) -> dict[str, Any]:
@@ -65,6 +72,7 @@ class LLMRequestRecord:
             "response_id": self.response_id,
             "usage": self.usage,
             "request_payload_chars": self.request_payload_chars,
+            "request_attachment_chars": self.request_attachment_chars,
         }
 
 

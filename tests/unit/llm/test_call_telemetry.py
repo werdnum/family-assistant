@@ -268,10 +268,15 @@ class TestPayloadSize:
 
         attributes = _finished(exporter).attributes
         assert attributes is not None
+        # Reported apart from the serialized payload, because a provider that
+        # cannot read the type substitutes a short description for it.
+        attachment_chars = attributes["llm.request.attachment_chars"]
         payload_chars = attributes["llm.request.payload_chars"]
+        assert isinstance(attachment_chars, int)
         assert isinstance(payload_chars, int)
         # Base64 expands the 30kB image to ~40kB; the text alone is a few dozen.
-        assert payload_chars > 39_000
+        assert attachment_chars > 39_000
+        assert payload_chars < 1_000
 
     def test_tool_schemas_count_toward_the_payload(
         self, exporter: InMemorySpanExporter, buffer: LLMRequestBuffer

@@ -68,6 +68,7 @@ class LLMRequestExport(BaseModel):
     response_id: str | None = None
     usage: MessageReasoningInfo | None = None
     request_payload_chars: int | None = None
+    request_attachment_chars: int | None = None
 
 
 class MessageHistoryExport(BaseModel):
@@ -237,6 +238,8 @@ def _llm_request_detail_lines(req: LLMRequestExport) -> list[str]:
         timing.append(f"{req.time_to_first_output_ms:.0f}ms to first output")
     if req.request_payload_chars is not None:
         timing.append(f"{req.request_payload_chars} request chars")
+    if req.request_attachment_chars:
+        timing.append(f"up to {req.request_attachment_chars} attachment chars")
     lines.append(f"**Timing**: {', '.join(timing)}")
 
     call = [req.provider or "unknown provider"]
@@ -496,6 +499,7 @@ async def export_diagnostics(
             response_id=record.response_id,
             usage=record.usage,
             request_payload_chars=record.request_payload_chars,
+            request_attachment_chars=record.request_attachment_chars,
         )
         for record in llm_records
     ]
