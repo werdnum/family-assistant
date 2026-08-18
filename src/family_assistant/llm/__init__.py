@@ -1346,6 +1346,9 @@ class PlaybackLLMClient:
                         "MessageReasoningInfo | None",
                         output_data.get("reasoning_info"),
                     ),
+                    resolved_model=cast(
+                        "str | None", output_data.get("resolved_model")
+                    ),
                 )
                 logger.debug(
                     f"Playing back matched LLMOutput. Content: {bool(matched_output.content)}. Tool Calls: {len(matched_output.tool_calls) if matched_output.tool_calls else 0}"
@@ -1404,12 +1407,13 @@ class PlaybackLLMClient:
                     type="tool_call", tool_call=tool_call, tool_call_id=tool_call.id
                 )
 
-        yield LLMStreamEvent(
-            type="done",
-            metadata={"reasoning_info": response.reasoning_info}
-            if response.reasoning_info
-            else None,
-        )
+        done_metadata: StreamEventMetadata = {}
+        if response.reasoning_info:
+            done_metadata["reasoning_info"] = response.reasoning_info
+        if response.resolved_model:
+            done_metadata["resolved_model"] = response.resolved_model
+
+        yield LLMStreamEvent(type="done", metadata=done_metadata or None)
 
     # ast-grep-ignore: no-dict-any - input args dict has heterogeneous values (str, list, None) from VCR recording match keys
     async def _log_no_match_error(self, current_input_args: dict[str, object]) -> None:

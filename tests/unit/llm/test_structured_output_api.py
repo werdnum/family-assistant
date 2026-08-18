@@ -164,3 +164,40 @@ class TestPlaybackLLMClientCompatibility:
         result = await client.generate_json(messages=messages)
 
         assert result == {"answer": "ok"}
+
+    @pytest.mark.asyncio
+    async def test_playback_preserves_the_recorded_resolved_model(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A replayed turn must not look like the alias was never resolved."""
+        recording_path = tmp_path / "response.jsonl"
+        messages = [create_user_message("Hello")]
+        record = {
+            "input": {
+                "method": "generate_response",
+                "messages": [message_to_json_dict(message) for message in messages],
+                "tools": None,
+                "tool_choice": "auto",
+            },
+            "output": {
+                "content": "Hi there",
+                "tool_calls": None,
+                "reasoning_info": None,
+                "resolved_model": "test-model-2026-08-01",
+            },
+        }
+        recording_path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+
+        client = PlaybackLLMClient(str(recording_path))
+
+        output = await client.generate_response(messages=messages)
+        assert output.resolved_model == "test-model-2026-08-01"
+
+        events = [
+            event async for event in client.generate_response_stream(messages=messages)
+        ]
+        done = events[-1]
+        assert done.type == "done"
+        assert done.metadata is not None
+        assert done.metadata.get("resolved_model") == "test-model-2026-08-01"
