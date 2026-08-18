@@ -49,6 +49,7 @@ from family_assistant.llm.google_types import (
 )
 from family_assistant.llm.messages import (
     AssistantMessage,
+    ContentPart,
     ImageUrlContentPart,
     LLMMessage,
     MessageReasoningInfo,
@@ -262,6 +263,14 @@ def convert_tools_to_genai_format(tools: list[ToolDefinition]) -> list[Any]:
     if function_declarations:
         return [types.Tool(function_declarations=function_declarations)]
     return []
+
+
+def _is_gemini_media_mime_type(mime_type: str) -> bool:
+    """The types Gemini reads as media rather than as a description of one."""
+    return (
+        mime_type.startswith(("image/", "video/", "audio/"))
+        or mime_type == "application/pdf"
+    )
 
 
 class GoogleGenAIClient(BaseLLMClient):
@@ -622,29 +631,51 @@ class GoogleGenAIClient(BaseLLMClient):
             # This returns a UserMessage object
             return super().create_attachment_injection(attachment)
 
-        # Handle multimodal content (images/PDFs) with provider-specific format
-        parts: list[dict[str, object] | types.Part] = [
-            {"text": "[System: File from previous tool response]"}
+        # Built from provider-neutral content parts rather than `types.Part`.
+        # Gemini's own converter turns a base64 data URI back into the same
+        # `Part.from_bytes` inline data, so nothing is lost here -- and
+        # `RetryingLLMClient` builds this message from the primary alone and
+        # hands it to the fallback unchanged, so anything expressed in Google's
+        # own types would reach Terra as nothing at all. Neutral parts let the
+        # OpenAI adapter apply its own MIME-aware conversion, so a web user's
+        # PDF is still read on a fallback turn.
+        content_parts: list[ContentPart] = [
+            TextContentPart(
+                type="text", text="[System: File from previous tool response]"
+            )
         ]
 
-        # Gemini supports images, videos, audio, and PDFs via types.Part.from_bytes()
-        if attachment.content and (
-            attachment.mime_type.startswith("image/")
-            or attachment.mime_type.startswith("video/")
-            or attachment.mime_type.startswith("audio/")
-            or attachment.mime_type == "application/pdf"
-        ):
-            # Use the recommended types.Part.from_bytes() method for multimodal content
-            media_part = types.Part.from_bytes(
-                data=attachment.content, mime_type=attachment.mime_type
+        def _describe(text: str) -> None:
+            content_parts.append(TextContentPart(type="text", text=text))
+
+        def _attach(data: bytes, mime_type: str) -> None:
+            # Anything but an image may be dropped by whichever adapter renders
+            # this next, so the prelude carries the description in that case --
+            # the same rule the OpenAI adapter follows for the types it cannot
+            # represent.
+            if not mime_type.startswith("image/"):
+                content_parts[0] = TextContentPart(
+                    type="text", text=describe_attachment_for_fallback(attachment)
+                )
+            b64_data = base64.b64encode(data).decode()
+            content_parts.append(
+                ImageUrlContentPart(
+                    type="image_url",
+                    image_url={"url": f"data:{mime_type};base64,{b64_data}"},
+                    attachment_id=attachment.attachment_id,
+                )
             )
-            parts.append(media_part)
+
+        # Gemini reads images, videos, audio and PDFs.
+        if attachment.content and _is_gemini_media_mime_type(attachment.mime_type):
+            _attach(attachment.content, attachment.mime_type)
         elif attachment.content:
             # Other binary content with data - describe what we have
             size_mb = len(attachment.content) / (1024 * 1024)
-            parts.append({
-                "text": f"[File content: {attachment.mime_type}, {size_mb:.1f}MB - {attachment.description}. Note: Binary content not accessible to model, text extraction may be needed]"
-            })
+            _describe(
+                f"[File content: {attachment.mime_type}, {size_mb:.1f}MB - {attachment.description}. "
+                "Note: Binary content not accessible to model, text extraction may be needed]"
+            )
         elif attachment.file_path:
             # Try to read file content for supported types
             try:
@@ -656,13 +687,12 @@ class GoogleGenAIClient(BaseLLMClient):
 
                     if file_size > MAX_FILE_SIZE:
                         size_mb = file_size / (1024 * 1024)
-                        parts.append({
-                            "text": f"[File: {file_path.name} ({size_mb:.1f}MB) - Too large to process "
+                        _describe(
+                            f"[File: {file_path.name} ({size_mb:.1f}MB) - Too large to process "
                             f"(exceeds {MAX_FILE_SIZE // (1024 * 1024)}MB limit). "
                             f"{attachment.description or 'No description'}]"
-                        })
+                        )
                     else:
-                        # Read file content
                         file_content = file_path.read_bytes()
 
                         # Infer MIME type from file extension if not provided
@@ -672,45 +702,27 @@ class GoogleGenAIClient(BaseLLMClient):
                             if guessed_mime_type:
                                 effective_mime_type = guessed_mime_type
 
-                        # Handle supported file types with content
-                        # Gemini supports images, videos, audio, and PDFs
-                        if effective_mime_type and (
-                            effective_mime_type.startswith("image/")
-                            or effective_mime_type.startswith("video/")
-                            or effective_mime_type.startswith("audio/")
-                            or effective_mime_type == "application/pdf"
+                        if effective_mime_type and _is_gemini_media_mime_type(
+                            effective_mime_type
                         ):
-                            media_part = types.Part.from_bytes(
-                                data=file_content, mime_type=effective_mime_type
-                            )
-                            parts.append(media_part)
+                            _attach(file_content, effective_mime_type)
                         else:
                             # Unsupported type - describe the file
                             size_mb = len(file_content) / (1024 * 1024)
-                            parts.append({
-                                "text": f"[File: {file_path.name} ({effective_mime_type or 'unknown type'}, "
+                            _describe(
+                                f"[File: {file_path.name} ({effective_mime_type or 'unknown type'}, "
                                 f"{size_mb:.1f}MB) - {attachment.description or 'No description'}. "
-                                f"Binary content not accessible to model]"
-                            })
+                                "Binary content not accessible to model]"
+                            )
                 else:
-                    parts.append({
-                        "text": f"[File: {attachment.file_path} - File not found or inaccessible]"
-                    })
+                    _describe(
+                        f"[File: {attachment.file_path} - File not found or inaccessible]"
+                    )
             except Exception as e:
                 # Error reading file - fall back to description
-                parts.append({
-                    "text": f"[File: {attachment.file_path} - Error reading file: {e!s}]"
-                })
+                _describe(f"[File: {attachment.file_path} - Error reading file: {e!s}]")
 
-        # `parts` carries the media for Gemini, which reads `parts` and ignores
-        # `content`. Every other adapter does the reverse, and a cross-provider
-        # fallback renders this same message -- `RetryingLLMClient` builds the
-        # injection from the primary alone -- so `content` is what the fallback
-        # sees, and a placeholder there would drop the attachment silently.
-        return UserMessage(
-            content=describe_attachment_for_fallback(attachment),
-            parts=parts,
-        )
+        return UserMessage(content=content_parts)
 
     def _convert_messages_to_genai_format(
         self,

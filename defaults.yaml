@@ -713,12 +713,13 @@ service_profiles:
     # attaches everything as image_url parts, while web chat (chat_api.py) sends
     # only images that way and routes PDFs, audio and video through
     # attachment_content, which reaches the provider via
-    # create_attachment_injection. Both paths use the same MIME-aware
-    # conversion, so on a fallback turn images and PDFs still reach the
-    # Responses API as input_image and input_file. Audio and video Terra cannot
-    # accept in any form; on that path they get an explicit note naming the
-    # attachment and are handed to the 'media_analyst' profile, which is Gemini,
-    # to transcribe or describe.
+    # create_attachment_injection. Both paths carry the file as provider-neutral
+    # content parts, so a fallback turn re-renders it through Terra's own
+    # MIME-aware conversion and images and PDFs still arrive at the Responses
+    # API as input_image and input_file. Audio and video Terra cannot accept in
+    # any form; on that path they get an explicit note naming the attachment and
+    # are handed to the 'media_analyst' profile, which is Gemini, to transcribe
+    # or describe.
     processing_config:
       include_aggregated_context: true
       max_iterations: 50
