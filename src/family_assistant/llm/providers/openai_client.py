@@ -849,7 +849,18 @@ class OpenAIClient(BaseLLMClient):
             )
 
             telemetry.record_output(llm_output)
-            telemetry.finish_success(asdict(llm_output))
+            if response.status == "completed":
+                telemetry.finish_success(asdict(llm_output))
+            else:
+                # A run that stopped short -- `incomplete` on an output-token
+                # limit, or `failed` -- still returns whatever it produced, and
+                # this call keeps returning it. Recording it as a success as
+                # well would leave the diagnostics saying the turn was fine
+                # while the user is looking at a truncated answer.
+                telemetry.finish_failure(
+                    f"OpenAI Responses request {response.status}",
+                    error_type=str(response.status),
+                )
             return llm_output
 
         # Convert typed messages to dicts for API call

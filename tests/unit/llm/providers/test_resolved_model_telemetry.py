@@ -142,3 +142,39 @@ async def test_openai_responses_stream_failure_is_recorded_when_the_consumer_sto
     record = buffer.get_recent()[0]
     assert record.error == "upstream refused"
     assert record.response is None
+
+
+async def test_openai_responses_incomplete_run_is_not_recorded_as_a_success(
+    buffer: LLMRequestBuffer,
+) -> None:
+    """A run that stopped on the output-token limit returns a truncated answer.
+
+    The call still returns it -- that behaviour is unchanged -- but the
+    diagnostics must not claim the turn went fine.
+    """
+    client = OpenAIClient(
+        api_key="test-key",
+        model="gpt-5.6-sol",
+        base_url="https://api.openai.com/v1",
+    )
+    response = SimpleNamespace(
+        output_text="half an ans",
+        output=[],
+        model="gpt-5.6-sol-2026-05-01",
+        id="resp_abc",
+        status="incomplete",
+        usage=None,
+    )
+
+    async def _fake_create(**_kwargs: object) -> SimpleNamespace:
+        return response
+
+    client.client = cast(
+        "Any", SimpleNamespace(responses=SimpleNamespace(create=_fake_create))
+    )
+
+    output = await client.generate_response([UserMessage(content="hi")])
+
+    assert output.content == "half an ans"
+    record = buffer.get_recent()[0]
+    assert record.error == "OpenAI Responses request incomplete"
