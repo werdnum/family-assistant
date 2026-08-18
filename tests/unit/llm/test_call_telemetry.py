@@ -205,6 +205,22 @@ class TestStreaming:
         assert record.streaming is True
         assert record.time_to_first_output_ms is not None
 
+    def test_reasoning_is_sized_apart_from_the_visible_answer(
+        self, exporter: InMemorySpanExporter, buffer: LLMRequestBuffer
+    ) -> None:
+        """Thinking text never reaches the user, so it is not answer length."""
+        del buffer
+        telemetry = _telemetry(exporter, streaming=True)
+        telemetry.observe_event(LLMStreamEvent(type="thinking", content="deliberate"))
+        telemetry.observe_event(LLMStreamEvent(type="content", content="answer"))
+        telemetry.finish_success({"streaming": True})
+        telemetry.span.end()
+
+        attributes = _finished(exporter).attributes
+        assert attributes is not None
+        assert attributes["llm.response.content_chars"] == len("answer")
+        assert attributes["llm.response.thinking_chars"] == len("deliberate")
+
     def test_a_stream_that_never_emits_reports_no_first_output(
         self, exporter: InMemorySpanExporter, buffer: LLMRequestBuffer
     ) -> None:

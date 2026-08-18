@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, TypeVar, cast
 
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
@@ -12,7 +12,12 @@ from opentelemetry.trace import StatusCode
 from pydantic import BaseModel
 
 import family_assistant.llm.retrying_client as rc_module
-from family_assistant.llm import JsonObject, LLMMessage, LLMOutput
+from family_assistant.llm import (
+    JsonObject,
+    LLMMessage,
+    LLMOutput,
+    LLMStreamEvent,
+)
 from family_assistant.llm.base import InvalidRequestError, ProviderConnectionError
 from family_assistant.llm.messages import SystemMessage, UserMessage
 from family_assistant.llm.retrying_client import RetryingLLMClient
@@ -21,7 +26,7 @@ from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import AsyncGenerator, AsyncIterator, Iterator, Sequence
 
     from family_assistant.tools.types import ToolDefinition
 
@@ -424,3 +429,52 @@ class TestRetryingLLMClientSpans:
         # Two provider calls were made, not three.
         assert spans[0].attributes["llm.attempts"] == 2
         assert spans[0].attributes["llm.fallback_used"] is True
+
+    @pytest.mark.asyncio
+    async def test_an_in_band_stream_error_marks_the_span(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        """The consumer raises on the error event, so this is the only chance."""
+
+        class _ErrorStreamClient(RuleBasedMockLLMClient):
+            def generate_response_stream(
+                self,
+                messages: list[LLMMessage],
+                tools: list[ToolDefinition] | None = None,
+                tool_choice: str | None = "auto",
+            ) -> AsyncIterator[LLMStreamEvent]:
+                async def _stream() -> AsyncIterator[LLMStreamEvent]:
+                    yield LLMStreamEvent(type="content", content="partial")
+                    yield LLMStreamEvent(
+                        type="error",
+                        error="upstream refused",
+                        metadata={"error_type": "rate_limit"},
+                    )
+
+                return _stream()
+
+        client = RetryingLLMClient(
+            primary_client=_ErrorStreamClient(
+                rules=[], default_response=LLMOutput(content="unused")
+            ),
+            primary_model="test-model",
+        )
+        messages = [SystemMessage(content="system"), UserMessage(content="hello")]
+
+        # Mirrors the processing loop, which stops consuming as soon as it sees
+        # the error event, so the generator is closed rather than run to its
+        # own completion and `finish` never gets to record anything.
+        stream = cast(
+            "AsyncGenerator[LLMStreamEvent]",
+            client.generate_response_stream(messages=messages),
+        )
+        async for event in stream:
+            if event.type == "error":
+                break
+        await stream.aclose()
+
+        spans = span_exporter.get_finished_spans()
+        assert len(spans) == 1
+        assert spans[0].status.status_code == StatusCode.ERROR
+        assert spans[0].attributes is not None
+        assert spans[0].attributes["llm.error.type"] == "rate_limit"

@@ -58,6 +58,19 @@ class _StreamTelemetry:
 
     def observe(self, event: LLMStreamEvent) -> None:
         """Fold one streamed event into the span's attributes."""
+        if event.type == "error":
+            # The consumer raises on this event, which closes this generator
+            # where it is suspended at its `yield` -- `finish` never runs. A
+            # failed turn recorded nowhere is the one worst worth losing, so it
+            # is marked as the event passes through.
+            self._span.set_status(StatusCode.ERROR, event.error or "stream failed")
+            self._span.set_attribute(
+                "llm.duration_ms", (time.monotonic() - self._start) * 1000
+            )
+            error_type = (event.metadata or {}).get("error_type")
+            if isinstance(error_type, str):
+                self._span.set_attribute("llm.error.type", error_type)
+            return
         if (
             event.type in {"content", "thinking", "tool_call"}
             and self._first_output_at is None

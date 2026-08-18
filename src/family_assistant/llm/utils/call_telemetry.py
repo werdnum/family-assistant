@@ -136,6 +136,7 @@ class LLMCallTelemetry:
         self._finish_reason: str | None = None
         self._reasoning_info: MessageReasoningInfo | None = None
         self._content_chars = 0
+        self._thinking_chars = 0
         self._tool_call_count = 0
 
         # Tool schemas are part of the prompt the model has to process, and a
@@ -184,8 +185,14 @@ class LLMCallTelemetry:
         """
         if event.type in {"content", "thinking", "tool_call"}:
             self.mark_first_output()
-        if event.type in {"content", "thinking"} and event.content:
+        if event.type == "content" and event.content:
             self._content_chars += len(event.content)
+        elif event.type == "thinking" and event.content:
+            # Counted apart from content: reasoning is never shown to the user,
+            # so folding it in would make a long answer and a long deliberation
+            # look alike -- while dropping it would hide the usual reason a
+            # reasoning model is slow.
+            self._thinking_chars += len(event.content)
         elif event.type == "tool_call":
             self._tool_call_count += 1
 
@@ -260,6 +267,7 @@ class LLMCallTelemetry:
             "llm.response.model_resolved": self.resolved_model is not None,
             "llm.duration_ms": self.elapsed_ms,
             "llm.response.content_chars": self._content_chars,
+            "llm.response.thinking_chars": self._thinking_chars,
             "llm.response.tool_call_count": self._tool_call_count,
         }
         first_output_ms = self.time_to_first_output_ms
