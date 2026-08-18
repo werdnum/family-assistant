@@ -108,10 +108,11 @@ def test_the_handoff_profile_uses_a_provider_that_reads_audio_and_video() -> Non
 def test_the_media_receiving_profile_may_delegate_to_the_handoff_profile() -> None:
     """The note is only an affordance if the profile reading it can make the call.
 
-    `default_assistant` runs an OpenAI primary, so it is the profile that will
-    actually see the note, and its policy denies `delegate_to_service` for
-    several specific targets. A deny landing on this one would leave the model
-    told to do something its own policy forbids.
+    `default_assistant` runs a Google primary that reads audio and video itself,
+    but falls back to OpenAI, so it is the profile that will see the note on a
+    fallback turn. Its policy denies `delegate_to_service` for several specific
+    targets, and a deny landing on this one would leave the model told to do
+    something its own policy forbids.
     """
     profile = _shipped_profile(_MEDIA_RECEIVING_PROFILE_ID)
     assert profile.tools_policy is not None

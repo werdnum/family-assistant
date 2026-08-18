@@ -2661,7 +2661,7 @@ def test_unrelated_operator_override_keeps_the_shipped_retry_chain(
 
     assert processing_config.max_iterations == 7
     assert processing_config.retry_config is not None
-    assert processing_config.retry_config.primary.model == "gpt-5.6-terra"
+    assert processing_config.retry_config.primary.model == "gemini-3.7-flash"
 
 
 def test_explicit_null_retry_config_with_a_model_drops_the_shipped_chain(

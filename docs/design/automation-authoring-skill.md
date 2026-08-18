@@ -127,10 +127,10 @@ The accurate rule:
 ## Consequences
 
 - `/automate` is gone. Automation requests are handled in the ordinary conversation.
-- Automation authoring runs on the main assistant's model (GPT-5.6-terra, 50 iterations) rather than
-  the specialist's Sonnet 5 at 100 iterations, and shares the conversation's iteration budget.
-  Genuinely hard authoring can still go through `/complex`, which is also full-trust and whose
-  stamped automations likewise wake with full tools.
+- Automation authoring runs on the main assistant's model (50 iterations) rather than the
+  specialist's Sonnet 5 at 100 iterations, and shares the conversation's iteration budget. Genuinely
+  hard authoring can still go through `/complex`, which is also full-trust and whose stamped
+  automations likewise wake with full tools.
 - Validation tool-call noise now appears in the user's conversation rather than an isolated
   delegation.
 

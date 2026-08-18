@@ -34,11 +34,11 @@ if TYPE_CHECKING:
     from family_assistant.llm.messages import ContentPart, LLMMessage
     from family_assistant.tools.types import ToolDefinition
 
-# The default assistant's primary. Reads images and PDFs; cannot take audio or
+# The default assistant's fallback. Reads images and PDFs; cannot take audio or
 # video in any form, which is what the handoff note exists for.
 _SHIPPED_OPENAI_MODEL = "gpt-5.6-terra"
-# The media_analyst provider, and the only configured one whose adapter
-# represents audio at all.
+# The default assistant's primary and the media_analyst provider, and the only
+# configured one whose adapter represents audio at all.
 _SHIPPED_GOOGLE_MODEL = "gemini-3.7-flash"
 
 _CALCULATE_TOOL: "ToolDefinition" = {
