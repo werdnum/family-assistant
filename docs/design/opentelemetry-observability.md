@@ -55,3 +55,55 @@ install metric readers.
 Direct launches such as `python -m family_assistant` are valid for local app execution, but they
 intentionally do not install an OpenTelemetry SDK provider. Use `opentelemetry-instrument` when
 traces are required.
+
+## LLM Call Attributes
+
+Every provider call produces two records of the same event: a span, and a record in the in-memory
+diagnostics ring buffer that `get_llm_request_history` and the diagnostics export read.
+`LLMCallTelemetry` (`family_assistant/llm/utils/call_telemetry.py`) assembles both, so a provider
+reports the same detail everywhere and a new provider gets timing and request shape for free.
+
+Two layers of spans cover a turn, and they answer different questions:
+
+- `llm.provider.generate` / `llm.provider.generate_stream` — one attempt against one provider.
+- `llm.generate` / `llm.generate_stream` — the retrying client's view: what the caller waited for,
+  including rate-limit sleeps and a fallback's whole second attempt.
+
+### Request
+
+| Attribute                   | Meaning                                                    |
+| --------------------------- | ---------------------------------------------------------- |
+| `gen_ai.system`             | Provider (`anthropic`, `openai`, `google-genai`).          |
+| `gen_ai.request.model`      | Model as configured — which may be an alias.               |
+| `gen_ai.operation.name`     | `chat`, or the agent id for an Interactions API agent run. |
+| `llm.request.id`            | Joins the span to its ring-buffer record.                  |
+| `llm.request.streaming`     | Whether the turn was streamed.                             |
+| `llm.request.message_count` | Messages sent.                                             |
+| `llm.request.payload_chars` | Approximate serialized request size, attachments included. |
+| `llm.request.tool_count`    | Tool definitions sent.                                     |
+| `llm.request.tool_choice`   | The `tool_choice` sent.                                    |
+
+### Response and timing
+
+| Attribute                       | Meaning                                                            |
+| ------------------------------- | ------------------------------------------------------------------ |
+| `gen_ai.response.model`         | Model the provider reported serving.                               |
+| `llm.response.model_resolved`   | Whether that came from the provider or is the request echoed back. |
+| `gen_ai.response.id`            | Provider-side request id, for support tickets.                     |
+| `gen_ai.response.finish_reason` | Stop reason.                                                       |
+| `llm.duration_ms`               | Wall-clock for the call.                                           |
+| `llm.time_to_first_output_ms`   | Until the first content, thinking or tool-call token.              |
+| `llm.response.content_chars`    | Characters of content produced.                                    |
+| `llm.response.tool_call_count`  | Tool calls returned.                                               |
+| `llm.error.type`                | Exception class, on failure.                                       |
+| `gen_ai.usage.*`                | Token usage, including prompt-cache reads and writes.              |
+
+The retry spans add `llm.attempts`, `llm.fallback_used` and `llm.has_fallback`, and carry
+`llm.attempt` / `llm.fallback` / `llm.rate_limit_retry` events.
+
+The requested and resolved model are recorded separately on purpose: an alias or provider-side
+routing resolves to a dated snapshot, so a latency or quality change with no deploy behind it
+usually shows up as `gen_ai.response.model` moving while `gen_ai.request.model` stays put. Splitting
+duration from time to first output separates the two ways a turn gets slow — a late first token
+(provider queueing, or a large prompt, which `llm.request.payload_chars` will show) from a long tail
+of output.

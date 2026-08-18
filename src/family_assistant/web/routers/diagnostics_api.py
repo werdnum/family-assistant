@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
+from family_assistant.llm.messages import MessageReasoningInfo
 from family_assistant.llm.request_buffer import get_request_buffer
 from family_assistant.storage.database import Database
 from family_assistant.storage.types import MessageHistoryRow
@@ -59,6 +60,14 @@ class LLMRequestExport(BaseModel):
     # ast-grep-ignore: no-dict-any - LLM response structure varies by provider (OpenAI/Anthropic/Google formats differ)
     response: dict[str, Any] | None = None
     error: str | None = None
+    provider: str | None = None
+    resolved_model_id: str | None = None
+    streaming: bool = False
+    time_to_first_output_ms: float | None = None
+    finish_reason: str | None = None
+    response_id: str | None = None
+    usage: MessageReasoningInfo | None = None
+    request_payload_chars: int | None = None
 
 
 class MessageHistoryExport(BaseModel):
@@ -443,6 +452,14 @@ async def export_diagnostics(
             tool_choice=record.tool_choice,
             response=record.response,
             error=record.error,
+            provider=record.provider,
+            resolved_model_id=record.resolved_model_id,
+            streaming=record.streaming,
+            time_to_first_output_ms=record.time_to_first_output_ms,
+            finish_reason=record.finish_reason,
+            response_id=record.response_id,
+            usage=record.usage,
+            request_payload_chars=record.request_payload_chars,
         )
         for record in llm_records
     ]
