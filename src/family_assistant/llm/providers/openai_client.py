@@ -1177,6 +1177,17 @@ class OpenAIClient(BaseLLMClient):
                     ):
                         if event.type == "error":
                             stream_error = event
+                            # Recorded before the yield, not after the loop: the
+                            # consumer raises on this event, which closes this
+                            # generator where it is suspended, so anything left
+                            # until afterwards never runs.
+                            telemetry.finish_failure(
+                                event.error or "OpenAI Responses stream failed",
+                                error_type=str(
+                                    (event.metadata or {}).get("error_id")
+                                    or "responses_stream_error"
+                                ),
+                            )
                         if event.type == "done" and event.metadata:
                             telemetry.record_response_metadata(
                                 resolved_model=event.metadata.get("resolved_model"),
@@ -1188,18 +1199,6 @@ class OpenAIClient(BaseLLMClient):
                         yield event  # noqa: ASYNC119
                 if stream_error is None:
                     telemetry.finish_success({"streaming": True})
-                else:
-                    # The Responses API reports a failed or incomplete run as a
-                    # frame on the stream rather than by raising, so without
-                    # this the turn that most needs explaining would be the one
-                    # missing from the diagnostics buffer.
-                    telemetry.finish_failure(
-                        stream_error.error or "OpenAI Responses stream failed",
-                        error_type=str(
-                            (stream_error.metadata or {}).get("error_id")
-                            or "responses_stream_error"
-                        ),
-                    )
                 return
 
             # Convert typed messages to dicts for SDK boundary

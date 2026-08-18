@@ -20,7 +20,9 @@ from family_assistant.llm.providers.openai_client import OpenAIClient
 from family_assistant.llm.request_buffer import LLMRequestBuffer, get_request_buffer
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import AsyncGenerator, AsyncIterator, Iterator
+
+    from family_assistant.llm import LLMStreamEvent
 
 
 @pytest.fixture
@@ -94,3 +96,42 @@ async def test_openai_chat_completions_records_the_served_model(
     assert record.resolved_model_id == "gpt-5.5-2026-05-01"
     assert record.provider == "openai"
     assert record.finish_reason == "stop"
+
+
+async def test_openai_responses_stream_failure_is_recorded_when_the_consumer_stops(
+    buffer: LLMRequestBuffer,
+) -> None:
+    """The processing loop raises on the error event, closing the generator.
+
+    Anything the provider leaves until after its loop never runs, so a failed
+    turn would be the one call missing from the diagnostics buffer.
+    """
+    client = OpenAIClient(api_key="test-key", model="gpt-5.6-sol")
+
+    async def _fake_create(**_kwargs: object) -> AsyncIterator[object]:
+        async def _iter() -> AsyncIterator[object]:
+            yield SimpleNamespace(
+                type="response.failed",
+                response=SimpleNamespace(
+                    error=SimpleNamespace(message="upstream refused")
+                ),
+            )
+
+        return _iter()
+
+    client.client = cast(
+        "Any", SimpleNamespace(responses=SimpleNamespace(create=_fake_create))
+    )
+
+    stream = cast(
+        "AsyncGenerator[LLMStreamEvent]",
+        client.generate_response_stream([UserMessage(content="hi")]),
+    )
+    async for event in stream:
+        if event.type == "error":
+            break
+    await stream.aclose()
+
+    record = buffer.get_recent()[0]
+    assert record.error == "upstream refused"
+    assert record.response is None
