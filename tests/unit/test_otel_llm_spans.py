@@ -298,3 +298,91 @@ class TestRetryingLLMClientSpans:
         assert span.name == "llm.generate_json"
         assert span.attributes is not None
         assert span.attributes["gen_ai.request.model"] == "test-model"
+
+    @pytest.mark.asyncio
+    async def test_generate_response_reports_the_model_the_provider_served(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        mock_client = RuleBasedMockLLMClient(
+            rules=[],
+            default_response=LLMOutput(
+                content="ok", resolved_model="test-model-2026-08-01"
+            ),
+        )
+        client = RetryingLLMClient(
+            primary_client=mock_client,
+            primary_model="test-model",
+        )
+        messages = [SystemMessage(content="system"), UserMessage(content="hello")]
+
+        await client.generate_response(messages=messages)
+
+        spans = span_exporter.get_finished_spans()
+        assert len(spans) == 1
+        assert spans[0].attributes is not None
+        assert spans[0].attributes["gen_ai.request.model"] == "test-model"
+        assert spans[0].attributes["gen_ai.response.model"] == "test-model-2026-08-01"
+        assert spans[0].attributes["llm.attempts"] == 1
+        assert spans[0].attributes["llm.fallback_used"] is False
+
+    @pytest.mark.asyncio
+    async def test_generate_response_counts_attempts_through_to_the_fallback(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        failing_client = FailingMockClient(
+            rules=[], default_response=LLMOutput(content="unused")
+        )
+        fallback_client = RuleBasedMockLLMClient(
+            rules=[],
+            default_response=LLMOutput(content="fallback response"),
+        )
+        client = RetryingLLMClient(
+            primary_client=failing_client,
+            primary_model="test-model",
+            fallback_client=fallback_client,
+            fallback_model="fallback-model",
+        )
+        messages = [SystemMessage(content="system"), UserMessage(content="hello")]
+
+        await client.generate_response(messages=messages)
+
+        spans = span_exporter.get_finished_spans()
+        assert len(spans) == 1
+        assert spans[0].attributes is not None
+        assert spans[0].attributes["llm.attempts"] == 3
+        assert spans[0].attributes["llm.fallback_used"] is True
+        assert spans[0].attributes["gen_ai.response.model"] == "fallback-model"
+
+    @pytest.mark.asyncio
+    async def test_stream_span_records_latency_and_resolved_model(
+        self, span_exporter: InMemorySpanExporter
+    ) -> None:
+        mock_client = RuleBasedMockLLMClient(
+            rules=[],
+            default_response=LLMOutput(
+                content="streamed response", resolved_model="test-model-2026-08-01"
+            ),
+        )
+        client = RetryingLLMClient(
+            primary_client=mock_client,
+            primary_model="test-model",
+        )
+        messages = [SystemMessage(content="system"), UserMessage(content="hello")]
+
+        async for _event in client.generate_response_stream(messages=messages):
+            pass
+
+        spans = span_exporter.get_finished_spans()
+        assert len(spans) == 1
+        attributes = spans[0].attributes
+        assert attributes is not None
+        assert attributes["gen_ai.response.model"] == "test-model-2026-08-01"
+        assert attributes["llm.attempts"] == 1
+        assert attributes["llm.fallback_used"] is False
+        # The first chunk arrives well before the stream ends, which is the whole
+        # point of measuring the two separately.
+        first_output_ms = attributes["llm.time_to_first_output_ms"]
+        duration_ms = attributes["llm.duration_ms"]
+        assert isinstance(first_output_ms, float)
+        assert isinstance(duration_ms, float)
+        assert first_output_ms < duration_ms

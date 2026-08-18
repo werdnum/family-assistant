@@ -273,6 +273,8 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
             done_metadata: StreamEventMetadata = {}
             if response.reasoning_info:
                 done_metadata["reasoning_info"] = response.reasoning_info
+            if response.resolved_model:
+                done_metadata["resolved_model"] = response.resolved_model
             yield LLMStreamEvent(type="done", metadata=done_metadata)
 
         return _stream()
