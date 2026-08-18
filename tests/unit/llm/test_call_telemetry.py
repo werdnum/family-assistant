@@ -25,7 +25,7 @@ from family_assistant.llm import (
 from family_assistant.llm.messages import SystemMessage, ToolMessage, UserMessage
 from family_assistant.llm.request_buffer import LLMRequestBuffer, get_request_buffer
 from family_assistant.llm.utils.call_telemetry import LLMCallTelemetry
-from family_assistant.tools.types import ToolAttachment
+from family_assistant.tools.types import ToolAttachment, ToolDefinition
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -256,6 +256,41 @@ class TestPayloadSize:
         assert isinstance(payload_chars, int)
         # Base64 expands the 30kB image to ~40kB; the text alone is a few dozen.
         assert payload_chars > 39_000
+
+    def test_tool_schemas_count_toward_the_payload(
+        self, exporter: InMemorySpanExporter, buffer: LLMRequestBuffer
+    ) -> None:
+        """A tool-heavy profile sends schemas the model still has to process."""
+        del buffer
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        span = provider.get_tracer("test").start_span("llm.provider.generate")
+        tool: ToolDefinition = {
+            "type": "function",
+            "function": {
+                "name": "a_tool",
+                "description": "d" * 5_000,
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+        telemetry = LLMCallTelemetry(
+            span,
+            provider="testprovider",
+            system="testprovider",
+            requested_model="model-latest",
+            messages=[UserMessage(content="hi")],
+            tools=[tool],
+            tool_choice="auto",
+            streaming=False,
+        )
+        telemetry.finish_success(None)
+        span.end()
+
+        attributes = _finished(exporter).attributes
+        assert attributes is not None
+        payload_chars = attributes["llm.request.payload_chars"]
+        assert isinstance(payload_chars, int)
+        assert payload_chars > 5_000
 
 
 class TestErrors:

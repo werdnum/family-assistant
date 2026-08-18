@@ -138,8 +138,13 @@ class LLMCallTelemetry:
         self._content_chars = 0
         self._tool_call_count = 0
 
-        self._payload_chars = _payload_chars(self._message_dicts) + (
-            _attachment_chars(messages)
+        # Tool schemas are part of the prompt the model has to process, and a
+        # tool-heavy profile sends a lot of them, so they belong in the size
+        # that explains a slow first token just as much as the messages do.
+        self._payload_chars = (
+            _payload_chars(self._message_dicts)
+            + _attachment_chars(messages)
+            + _payload_chars(tools)
         )
         self.span.set_attributes({
             "gen_ai.system": system,

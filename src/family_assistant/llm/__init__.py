@@ -65,6 +65,8 @@ class StreamEventMetadata(TypedDict, total=False):
     reasoning_info: MessageReasoningInfo
     provider_metadata: object
     resolved_model: str
+    response_id: str
+    finish_reason: str
     attachment_ids: list[str]
     attachments: list[dict[str, str | int | None]]
     message: AssistantMessage

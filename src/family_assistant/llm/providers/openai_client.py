@@ -1180,6 +1180,8 @@ class OpenAIClient(BaseLLMClient):
                         if event.type == "done" and event.metadata:
                             telemetry.record_response_metadata(
                                 resolved_model=event.metadata.get("resolved_model"),
+                                response_id=event.metadata.get("response_id"),
+                                finish_reason=event.metadata.get("finish_reason"),
                             )
                             telemetry.record_usage(event.metadata.get("reasoning_info"))
                         telemetry.observe_event(event)
@@ -1473,6 +1475,14 @@ class OpenAIClient(BaseLLMClient):
                 metadata["reasoning_info"] = reasoning_info
             if response.model:
                 metadata["resolved_model"] = response.model
+            # Diagnostics only: the wrapper reads these off the terminal event
+            # because it never sees the Response object itself, and without the
+            # provider's own id a slow or failed turn cannot be matched against
+            # OpenAI's logs.
+            if response.id:
+                metadata["response_id"] = response.id
+            if response.status:
+                metadata["finish_reason"] = response.status
             metadata["provider_metadata"] = {
                 "openai_response_output": [
                     item.model_dump(mode="json") for item in response.output
