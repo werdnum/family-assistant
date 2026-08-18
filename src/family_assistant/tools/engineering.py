@@ -420,6 +420,15 @@ async def get_llm_request_history(
 ) -> ToolResult:
     """Get recent LLM request/response history from the in-memory ring buffer.
 
+    Each record carries the request (messages, tools, payload size), the
+    response, and the timing and identity of the call: ``duration_ms``,
+    ``time_to_first_output_ms`` for streamed turns, ``provider``, the requested
+    ``model_id`` next to the ``resolved_model_id`` the provider actually served,
+    ``finish_reason``, ``response_id`` and token ``usage``. For a slow turn,
+    compare time to first output against the total duration -- a late first
+    token points at the provider or a large prompt, while a late finish with a
+    prompt first token points at output length.
+
     Args:
         limit: Maximum number of records to return (default 5, max 100).
         minutes: Optional filter to only include records from the last N minutes.

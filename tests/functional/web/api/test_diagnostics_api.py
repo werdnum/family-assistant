@@ -118,6 +118,44 @@ async def test_diagnostics_export_markdown_format(
 
 
 @pytest.mark.asyncio
+async def test_diagnostics_export_markdown_carries_call_telemetry(
+    api_client: httpx.AsyncClient,
+) -> None:
+    """The paste-friendly export carries the same facts as the JSON one."""
+    get_request_buffer().add(
+        LLMRequestRecord(
+            timestamp=datetime.now(UTC),
+            request_id="telemetry123",
+            model_id="test-model",
+            messages=[{"role": "user", "content": "Hello"}],
+            response={"streaming": True},
+            duration_ms=1500.0,
+            provider="openai",
+            resolved_model_id="test-model-2026-08-01",
+            streaming=True,
+            time_to_first_output_ms=250.0,
+            finish_reason="stop",
+            response_id="resp_abc",
+            usage={"prompt_tokens": 10, "completion_tokens": 20},
+            request_payload_chars=4096,
+            request_attachment_chars=80_000,
+        )
+    )
+
+    response = await api_client.get("/api/diagnostics/export?format=markdown")
+
+    assert response.status_code == 200
+    content = response.text
+    assert "**Served by**: test-model-2026-08-01" in content
+    assert "250ms to first output" in content
+    assert "4096 request chars" in content
+    assert "up to 80000 attachment chars" in content
+    assert "provider id resp_abc" in content
+    assert "finished stop" in content
+    assert "prompt_tokens=10" in content
+
+
+@pytest.mark.asyncio
 async def test_diagnostics_export_limits_results(
     api_client: httpx.AsyncClient,
 ) -> None:

@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
+from family_assistant.llm.messages import MessageReasoningInfo
 from family_assistant.llm.request_buffer import get_request_buffer
 from family_assistant.storage.database import Database
 from family_assistant.storage.types import MessageHistoryRow
@@ -59,6 +60,15 @@ class LLMRequestExport(BaseModel):
     # ast-grep-ignore: no-dict-any - LLM response structure varies by provider (OpenAI/Anthropic/Google formats differ)
     response: dict[str, Any] | None = None
     error: str | None = None
+    provider: str | None = None
+    resolved_model_id: str | None = None
+    streaming: bool = False
+    time_to_first_output_ms: float | None = None
+    finish_reason: str | None = None
+    response_id: str | None = None
+    usage: MessageReasoningInfo | None = None
+    request_payload_chars: int | None = None
+    request_attachment_chars: int | None = None
 
 
 class MessageHistoryExport(BaseModel):
@@ -210,6 +220,43 @@ def _diagnostic_counts(counter: Counter[str | None]) -> list[DiagnosticCount]:
     ]
 
 
+def _llm_request_detail_lines(req: LLMRequestExport) -> list[str]:
+    """Render the timing and identity of one call for the paste-friendly export.
+
+    This export is what gets pasted into a bug report, so it carries the same
+    facts as the JSON one: which model actually served the call, where the time
+    went, and the ids needed to take the question to the provider.
+    """
+    lines: list[str] = []
+
+    served_by = req.resolved_model_id
+    if served_by and served_by != req.model_id:
+        lines.append(f"**Served by**: {served_by}")
+
+    timing = [f"{req.duration_ms:.0f}ms total"]
+    if req.time_to_first_output_ms is not None:
+        timing.append(f"{req.time_to_first_output_ms:.0f}ms to first output")
+    if req.request_payload_chars is not None:
+        timing.append(f"{req.request_payload_chars} request chars")
+    if req.request_attachment_chars:
+        timing.append(f"up to {req.request_attachment_chars} attachment chars")
+    lines.append(f"**Timing**: {', '.join(timing)}")
+
+    call = [req.provider or "unknown provider"]
+    call.append("streaming" if req.streaming else "non-streaming")
+    if req.finish_reason:
+        call.append(f"finished {req.finish_reason}")
+    if req.response_id:
+        call.append(f"provider id {req.response_id}")
+    lines.append(f"**Call**: {', '.join(call)}")
+
+    if req.usage:
+        usage = ", ".join(f"{key}={value}" for key, value in sorted(req.usage.items()))
+        lines.append(f"**Usage**: {usage}")
+
+    return lines
+
+
 def _format_markdown_export(data: DiagnosticsExportResponse) -> str:
     """Format the diagnostic export as markdown."""
     lines = [
@@ -255,6 +302,7 @@ def _format_markdown_export(data: DiagnosticsExportResponse) -> str:
                 f"### [{req.timestamp}] {status} {req.model_id} ({req.duration_ms:.0f}ms)"
             )
             lines.append(f"**Request ID**: {req.request_id}")
+            lines.extend(_llm_request_detail_lines(req))
 
             # Summarize messages
             lines.append(f"**Messages**: {len(req.messages)} message(s)")
@@ -443,6 +491,15 @@ async def export_diagnostics(
             tool_choice=record.tool_choice,
             response=record.response,
             error=record.error,
+            provider=record.provider,
+            resolved_model_id=record.resolved_model_id,
+            streaming=record.streaming,
+            time_to_first_output_ms=record.time_to_first_output_ms,
+            finish_reason=record.finish_reason,
+            response_id=record.response_id,
+            usage=record.usage,
+            request_payload_chars=record.request_payload_chars,
+            request_attachment_chars=record.request_attachment_chars,
         )
         for record in llm_records
     ]

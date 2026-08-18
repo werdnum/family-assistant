@@ -6,11 +6,8 @@ import base64
 import json
 import logging
 import os
-import time
-import uuid
 from collections.abc import AsyncIterator, Callable, Sequence
 from dataclasses import asdict
-from datetime import UTC, datetime
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -39,7 +36,6 @@ from anthropic.types import (
     URLImageSourceParam,
 )
 from opentelemetry import trace
-from opentelemetry.trace import StatusCode
 from pydantic import BaseModel, ValidationError
 
 from family_assistant.llm import (
@@ -63,10 +59,8 @@ from family_assistant.llm.messages import (
     TextContentPart,
     ToolMessage,
     UserMessage,
-    message_to_json_dict,
 )
-from family_assistant.llm.request_buffer import LLMRequestRecord, get_request_buffer
-from family_assistant.llm.utils.usage_telemetry import set_usage_span_attributes
+from family_assistant.llm.utils.call_telemetry import LLMCallTelemetry
 from family_assistant.tools.types import ToolDefinition
 
 from ..base import (
@@ -1010,18 +1004,17 @@ class AnthropicClient(BaseLLMClient):
         """Generate response using Anthropic API."""
         self._validate_user_input(messages)
 
-        with tracer.start_as_current_span(
-            "llm.provider.generate",
-            attributes={
-                "gen_ai.system": "anthropic",
-                "gen_ai.request.model": self.model,
-            },
-        ) as span:
-            start_time = time.monotonic()
-            request_timestamp = datetime.now(UTC)
-            request_id = f"anthropic_{uuid.uuid4().hex[:16]}"
-
-            message_dicts = [message_to_json_dict(msg) for msg in messages]
+        with tracer.start_as_current_span("llm.provider.generate") as span:
+            telemetry = LLMCallTelemetry(
+                span,
+                provider="anthropic",
+                system="anthropic",
+                requested_model=self.model,
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+                streaming=False,
+            )
 
             try:
                 processed_messages = self._process_tool_messages(list(messages))
@@ -1057,62 +1050,31 @@ class AnthropicClient(BaseLLMClient):
 
                 thinking_blocks = self._extract_thinking_blocks(response.content)
 
-                # Extract usage information
+                telemetry.record_response_metadata(
+                    resolved_model=response.model,
+                    response_id=response.id,
+                    finish_reason=response.stop_reason,
+                )
+
                 reasoning_info: MessageReasoningInfo | None = None
                 if response.usage:
                     reasoning_info = self._reasoning_info_from_usage(response.usage)
-                    set_usage_span_attributes(span, reasoning_info)
-
-                span.set_attribute("gen_ai.response.model", self.model)
 
                 llm_output = LLMOutput(
                     content=content_text or None,
                     tool_calls=tool_calls if tool_calls else None,
                     reasoning_info=reasoning_info,
                     provider_metadata=self._thinking_metadata(thinking_blocks),
+                    resolved_model=response.model,
                 )
 
-                duration_ms = (time.monotonic() - start_time) * 1000
-                try:
-                    get_request_buffer().add(
-                        LLMRequestRecord(
-                            timestamp=request_timestamp,
-                            request_id=request_id,
-                            model_id=self.model,
-                            messages=message_dicts,
-                            tools=tools,
-                            tool_choice=tool_choice,
-                            response=asdict(llm_output),
-                            duration_ms=duration_ms,
-                            error=None,
-                        )
-                    )
-                except Exception as record_err:
-                    logger.debug(f"Failed to record LLM request: {record_err}")
+                telemetry.record_output(llm_output)
+                telemetry.finish_success(asdict(llm_output))
 
                 return llm_output
 
             except Exception as e:
-                duration_ms = (time.monotonic() - start_time) * 1000
-                try:
-                    get_request_buffer().add(
-                        LLMRequestRecord(
-                            timestamp=request_timestamp,
-                            request_id=request_id,
-                            model_id=self.model,
-                            messages=message_dicts,
-                            tools=tools,
-                            tool_choice=tool_choice,
-                            response=None,
-                            duration_ms=duration_ms,
-                            error=str(e),
-                        )
-                    )
-                except Exception as record_err:
-                    logger.debug(f"Failed to record LLM request error: {record_err}")
-
-                span.set_status(StatusCode.ERROR, str(e))
-                span.record_exception(e)
+                telemetry.finish_error(e)
                 self._raise_mapped_error(e)
 
     def _raise_mapped_error(self, e: Exception) -> NoReturn:
@@ -1264,19 +1226,18 @@ class AnthropicClient(BaseLLMClient):
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses."""
-        span = tracer.start_span(
-            "llm.provider.generate_stream",
-            attributes={
-                "gen_ai.system": "anthropic",
-                "gen_ai.request.model": self.model,
-            },
-        )
+        span = tracer.start_span("llm.provider.generate_stream")
         try:
-            start_time = time.monotonic()
-            request_timestamp = datetime.now(UTC)
-            request_id = f"anthropic_stream_{uuid.uuid4().hex[:16]}"
-
-            message_dicts = [message_to_json_dict(msg) for msg in messages]
+            telemetry = LLMCallTelemetry(
+                span,
+                provider="anthropic",
+                system="anthropic",
+                requested_model=self.model,
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+                streaming=True,
+            )
 
             try:
                 processed_messages = self._process_tool_messages(list(messages))
@@ -1314,18 +1275,22 @@ class AnthropicClient(BaseLLMClient):
                             elif event.type == "content_block_delta":
                                 delta = event.delta
                                 if delta.type == "text_delta":
-                                    yield LLMStreamEvent(  # noqa: ASYNC119
+                                    content_event = LLMStreamEvent(
                                         type="content", content=delta.text
                                     )
+                                    telemetry.observe_event(content_event)
+                                    yield content_event  # noqa: ASYNC119
                                 elif delta.type == "thinking_delta":
                                     # Surfaced as its own event type so it can
                                     # never be mistaken for response content.
                                     # The authoritative copy used for replay is
                                     # taken from the final message below, which
                                     # carries the signature these deltas lack.
-                                    yield LLMStreamEvent(  # noqa: ASYNC119
+                                    thinking_event = LLMStreamEvent(
                                         type="thinking", content=delta.thinking
                                     )
+                                    telemetry.observe_event(thinking_event)
+                                    yield thinking_event  # noqa: ASYNC119
                                 elif (
                                     delta.type == "input_json_delta"
                                     and current_tool is not None
@@ -1342,11 +1307,13 @@ class AnthropicClient(BaseLLMClient):
                                             arguments=current_tool["arguments"] or "{}",
                                         ),
                                     )
-                                    yield LLMStreamEvent(  # noqa: ASYNC119
+                                    tool_call_event = LLMStreamEvent(
                                         type="tool_call",
                                         tool_call=tool_call,
                                         tool_call_id=current_tool["id"],
                                     )
+                                    telemetry.observe_event(tool_call_event)
+                                    yield tool_call_event  # noqa: ASYNC119
                                     current_tool = None
 
                         # Get final message for usage info
@@ -1367,55 +1334,22 @@ class AnthropicClient(BaseLLMClient):
                         final_message.usage
                     )
                     metadata["reasoning_info"] = stream_reasoning_info
-                    set_usage_span_attributes(span, stream_reasoning_info)
+                    telemetry.record_usage(stream_reasoning_info)
 
-                span.set_attribute("gen_ai.response.model", self.model)
+                if final_message:
+                    telemetry.record_response_metadata(
+                        resolved_model=final_message.model,
+                        response_id=final_message.id,
+                        finish_reason=final_message.stop_reason,
+                    )
+                    metadata["resolved_model"] = final_message.model
 
-                duration_ms = (time.monotonic() - start_time) * 1000
-                try:
-                    get_request_buffer().add(
-                        LLMRequestRecord(
-                            timestamp=request_timestamp,
-                            request_id=request_id,
-                            model_id=self.model,
-                            messages=message_dicts,
-                            tools=tools,
-                            tool_choice=tool_choice,
-                            response={"streaming": True, "metadata": metadata},
-                            duration_ms=duration_ms,
-                            error=None,
-                        )
-                    )
-                except Exception as record_err:
-                    logger.debug(
-                        f"Failed to record streaming LLM request: {record_err}"
-                    )
+                telemetry.finish_success({"streaming": True, "metadata": metadata})
 
                 yield LLMStreamEvent(type="done", metadata=metadata)
 
             except Exception as e:
-                duration_ms = (time.monotonic() - start_time) * 1000
-                try:
-                    get_request_buffer().add(
-                        LLMRequestRecord(
-                            timestamp=request_timestamp,
-                            request_id=request_id,
-                            model_id=self.model,
-                            messages=message_dicts,
-                            tools=tools,
-                            tool_choice=tool_choice,
-                            response=None,
-                            duration_ms=duration_ms,
-                            error=str(e),
-                        )
-                    )
-                except Exception as record_err:
-                    logger.debug(
-                        f"Failed to record streaming LLM request error: {record_err}"
-                    )
-
-                span.set_status(StatusCode.ERROR, str(e))
-                span.record_exception(e)
+                telemetry.finish_error(e)
 
                 error_message = str(e)
                 error_type = "unknown"
