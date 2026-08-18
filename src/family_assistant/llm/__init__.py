@@ -64,6 +64,7 @@ class StreamEventMetadata(TypedDict, total=False):
 
     reasoning_info: MessageReasoningInfo
     provider_metadata: object
+    resolved_model: str
     attachment_ids: list[str]
     attachments: list[dict[str, str | int | None]]
     message: AssistantMessage
@@ -807,6 +808,13 @@ class LLMOutput:
     tool_calls: list[ToolCallItem] | None = field(default=None)
     reasoning_info: MessageReasoningInfo | None = field(default=None)
     provider_metadata: Any | None = field(default=None)
+    resolved_model: str | None = field(default=None)
+    """Model id the provider reported serving, when it reported one.
+
+    Distinct from the model that was requested: aliases and provider-side
+    routing resolve to a dated snapshot, so this is what a latency or quality
+    change should be attributed to.
+    """
 
 
 @dataclass

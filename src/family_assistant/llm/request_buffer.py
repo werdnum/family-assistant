@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 from threading import Lock
 from typing import Any
 
+from family_assistant.llm.messages import MessageReasoningInfo
 from family_assistant.tools.types import ToolDefinition
 
 
@@ -29,6 +30,19 @@ class LLMRequestRecord:
     response: dict[str, Any] | None = None
     duration_ms: float = 0.0
     error: str | None = None
+    provider: str | None = None
+    resolved_model_id: str | None = None
+    """Model id the provider reported serving, when it differs from ``model_id``.
+
+    ``model_id`` is what was asked for; an alias or provider-side routing can
+    resolve it to something else, which is worth seeing next to the latency.
+    """
+    streaming: bool = False
+    time_to_first_output_ms: float | None = None
+    finish_reason: str | None = None
+    response_id: str | None = None
+    usage: MessageReasoningInfo | None = None
+    request_payload_chars: int | None = None
 
     # ast-grep-ignore: no-dict-any - JSON serialization output
     def to_dict(self) -> dict[str, Any]:
@@ -43,6 +57,14 @@ class LLMRequestRecord:
             "response": self.response,
             "duration_ms": self.duration_ms,
             "error": self.error,
+            "provider": self.provider,
+            "resolved_model_id": self.resolved_model_id,
+            "streaming": self.streaming,
+            "time_to_first_output_ms": self.time_to_first_output_ms,
+            "finish_reason": self.finish_reason,
+            "response_id": self.response_id,
+            "usage": self.usage,
+            "request_payload_chars": self.request_payload_chars,
         }
 
 

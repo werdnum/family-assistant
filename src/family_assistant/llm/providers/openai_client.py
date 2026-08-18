@@ -6,11 +6,8 @@ import base64
 import json
 import logging
 import os
-import time
-import uuid
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import asdict
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypedDict, TypeVar, cast
 
 if TYPE_CHECKING:
@@ -19,6 +16,7 @@ if TYPE_CHECKING:
 import aiofiles
 from openai import AsyncOpenAI
 from openai.types.responses import Response
+from opentelemetry import trace
 from pydantic import BaseModel, ValidationError
 
 from family_assistant.llm import (
@@ -41,7 +39,7 @@ from family_assistant.llm.messages import (
     UserMessage,
     message_to_json_dict,
 )
-from family_assistant.llm.request_buffer import LLMRequestRecord, get_request_buffer
+from family_assistant.llm.utils.call_telemetry import LLMCallTelemetry
 
 from ..base import (
     AuthenticationError,
@@ -55,6 +53,7 @@ from ..base import (
 )
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 T = TypeVar("T", bound=BaseModel)
 
 
@@ -796,160 +795,142 @@ class OpenAIClient(BaseLLMClient):
         # Validate user input before processing
         self._validate_user_input(messages)
 
-        # Request tracking for diagnostics
-        start_time = time.monotonic()
-        request_timestamp = datetime.now(UTC)
-        request_id = f"openai_{uuid.uuid4().hex[:16]}"
-
-        # Convert messages to dict format for request buffer recording (before try block)
-        message_dicts = [message_to_json_dict(msg) for msg in messages]
-
-        try:
-            # Process tool attachments before sending
-            processed_messages = self._process_tool_messages(list(messages))
-
-            if self._uses_responses_api():
-                params = self._build_responses_params(
-                    processed_messages, tools, tool_choice, stream=False
+        with tracer.start_as_current_span("llm.provider.generate") as span:
+            telemetry = LLMCallTelemetry(
+                span,
+                provider="openai",
+                system="openai",
+                requested_model=self.model,
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+                streaming=False,
+            )
+            try:
+                return await self._generate_response_inner(
+                    messages, tools, tool_choice, telemetry
                 )
-                response = await cast("Any", self.client.responses.create)(**params)
-                llm_output = LLMOutput(
-                    content=response.output_text or None,
-                    tool_calls=self._responses_tool_calls(response),
-                    reasoning_info=self._responses_reasoning_info(response),
-                    provider_metadata={
-                        "openai_response_output": [
-                            item.model_dump(mode="json") for item in response.output
-                        ],
-                        "openai_response_stored": params["store"] is True,
-                    },
-                )
+            except Exception as e:
+                telemetry.finish_error(e)
+                raise self._map_error_to_typed_exception(e) from e
 
-                duration_ms = (time.monotonic() - start_time) * 1000
-                get_request_buffer().add(
-                    LLMRequestRecord(
-                        timestamp=request_timestamp,
-                        request_id=request_id,
-                        model_id=self.model,
-                        messages=message_dicts,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                        response=asdict(llm_output),
-                        duration_ms=duration_ms,
-                        error=None,
-                    )
-                )
-                return llm_output
+    async def _generate_response_inner(
+        self,
+        messages: Sequence[LLMMessage],
+        tools: list["ToolDefinition"] | None,
+        tool_choice: str | None,
+        telemetry: LLMCallTelemetry,
+    ) -> LLMOutput:
+        """Issue the request and assemble the response, under *telemetry*."""
+        # Process tool attachments before sending
+        processed_messages = self._process_tool_messages(list(messages))
 
-            # Convert typed messages to dicts for API call
-            api_message_dicts = [
-                self._to_chat_completions_message(msg) for msg in processed_messages
-            ]
-
-            # Build parameters with defaults, then model-specific overrides
-            params = {
-                "model": self.model,
-                "messages": api_message_dicts,
-                **self.default_kwargs,
-                **self._get_model_specific_params(self.model),
-            }
-
-            # Add tools if provided
-            if tools:
-                params["tools"] = tools
-                params["tool_choice"] = tool_choice
-
-            # Make API call
-            response = await self.client.chat.completions.create(**params)
-
-            # Parse response
-            message = response.choices[0].message
-            content = message.content
-
-            # Convert tool calls to our format
-            tool_calls = None
-            if message.tool_calls:
-                tool_calls = [
-                    ToolCallItem(
-                        id=tc.id,
-                        type=tc.type,
-                        function=ToolCallFunction(
-                            name=tc.function.name,
-                            arguments=tc.function.arguments,
-                        ),
-                    )
-                    for tc in message.tool_calls
-                ]
-
-            # Extract usage information
-            reasoning_info: MessageReasoningInfo | None = None
-            if response.usage:
-                reasoning_info = MessageReasoningInfo(
-                    prompt_tokens=response.usage.prompt_tokens,
-                    completion_tokens=response.usage.completion_tokens,
-                    total_tokens=response.usage.total_tokens,
-                )
-
-                # Add reasoning tokens if available (for o1 models)
-                if hasattr(response.usage, "completion_tokens_details"):
-                    details = response.usage.completion_tokens_details
-                    if details and hasattr(details, "reasoning_tokens"):
-                        reasoning_info["reasoning_tokens"] = details.reasoning_tokens
-
-                cached = self._cached_prompt_tokens(response.usage)
-                if cached is not None:
-                    reasoning_info["cached_prompt_tokens"] = cached
-                cache_write = self._cache_write_tokens(response.usage)
-                if cache_write is not None:
-                    reasoning_info["cache_write_tokens"] = cache_write
-
+        if self._uses_responses_api():
+            params = self._build_responses_params(
+                processed_messages, tools, tool_choice, stream=False
+            )
+            response = await cast("Any", self.client.responses.create)(**params)
+            telemetry.record_response_metadata(
+                resolved_model=response.model,
+                response_id=response.id,
+                finish_reason=response.status,
+            )
             llm_output = LLMOutput(
-                content=content,
-                tool_calls=tool_calls,
-                reasoning_info=reasoning_info,
+                content=response.output_text or None,
+                tool_calls=self._responses_tool_calls(response),
+                reasoning_info=self._responses_reasoning_info(response),
+                provider_metadata={
+                    "openai_response_output": [
+                        item.model_dump(mode="json") for item in response.output
+                    ],
+                    "openai_response_stored": params["store"] is True,
+                },
+                resolved_model=response.model,
             )
 
-            # Record successful request to diagnostics buffer
-            duration_ms = (time.monotonic() - start_time) * 1000
-            try:
-                get_request_buffer().add(
-                    LLMRequestRecord(
-                        timestamp=request_timestamp,
-                        request_id=request_id,
-                        model_id=self.model,
-                        messages=message_dicts,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                        response=asdict(llm_output),
-                        duration_ms=duration_ms,
-                        error=None,
-                    )
-                )
-            except Exception as record_err:
-                logger.debug(f"Failed to record LLM request: {record_err}")
-
+            telemetry.record_output(llm_output)
+            telemetry.finish_success(asdict(llm_output))
             return llm_output
 
-        except Exception as e:
-            # Record failed request to diagnostics buffer
-            duration_ms = (time.monotonic() - start_time) * 1000
-            try:
-                get_request_buffer().add(
-                    LLMRequestRecord(
-                        timestamp=request_timestamp,
-                        request_id=request_id,
-                        model_id=self.model,
-                        messages=message_dicts,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                        response=None,
-                        duration_ms=duration_ms,
-                        error=str(e),
-                    )
+        # Convert typed messages to dicts for API call
+        api_message_dicts = [
+            self._to_chat_completions_message(msg) for msg in processed_messages
+        ]
+
+        # Build parameters with defaults, then model-specific overrides
+        params = {
+            "model": self.model,
+            "messages": api_message_dicts,
+            **self.default_kwargs,
+            **self._get_model_specific_params(self.model),
+        }
+
+        # Add tools if provided
+        if tools:
+            params["tools"] = tools
+            params["tool_choice"] = tool_choice
+
+        # Make API call
+        response = await self.client.chat.completions.create(**params)
+
+        # Parse response
+        message = response.choices[0].message
+        content = message.content
+
+        # Convert tool calls to our format
+        tool_calls = None
+        if message.tool_calls:
+            tool_calls = [
+                ToolCallItem(
+                    id=tc.id,
+                    type=tc.type,
+                    function=ToolCallFunction(
+                        name=tc.function.name,
+                        arguments=tc.function.arguments,
+                    ),
                 )
-            except Exception as record_err:
-                logger.debug(f"Failed to record LLM request error: {record_err}")
-            raise self._map_error_to_typed_exception(e) from e
+                for tc in message.tool_calls
+            ]
+
+        # Extract usage information
+        reasoning_info: MessageReasoningInfo | None = None
+        if response.usage:
+            reasoning_info = MessageReasoningInfo(
+                prompt_tokens=response.usage.prompt_tokens,
+                completion_tokens=response.usage.completion_tokens,
+                total_tokens=response.usage.total_tokens,
+            )
+
+            # Add reasoning tokens if available (for o1 models)
+            if hasattr(response.usage, "completion_tokens_details"):
+                details = response.usage.completion_tokens_details
+                if details and hasattr(details, "reasoning_tokens"):
+                    reasoning_info["reasoning_tokens"] = details.reasoning_tokens
+
+            cached = self._cached_prompt_tokens(response.usage)
+            if cached is not None:
+                reasoning_info["cached_prompt_tokens"] = cached
+            cache_write = self._cache_write_tokens(response.usage)
+            if cache_write is not None:
+                reasoning_info["cache_write_tokens"] = cache_write
+
+        telemetry.record_response_metadata(
+            resolved_model=response.model,
+            response_id=response.id,
+            finish_reason=response.choices[0].finish_reason,
+        )
+
+        llm_output = LLMOutput(
+            content=content,
+            tool_calls=tool_calls,
+            reasoning_info=reasoning_info,
+            resolved_model=response.model,
+        )
+
+        telemetry.record_output(llm_output)
+        telemetry.finish_success(asdict(llm_output))
+
+        return llm_output
 
     async def generate_structured(
         self,
@@ -1172,13 +1153,17 @@ class OpenAIClient(BaseLLMClient):
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses."""
-        # Request tracking for diagnostics
-        start_time = time.monotonic()
-        request_timestamp = datetime.now(UTC)
-        request_id = f"openai_stream_{uuid.uuid4().hex[:16]}"
-
-        # Convert messages to dict format for request buffer recording (before try block)
-        message_dicts = [message_to_json_dict(msg) for msg in messages]
+        span = tracer.start_span("llm.provider.generate_stream")
+        telemetry = LLMCallTelemetry(
+            span,
+            provider="openai",
+            system="openai",
+            requested_model=self.model,
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            streaming=True,
+        )
 
         try:
             # Process tool attachments before sending
@@ -1186,27 +1171,21 @@ class OpenAIClient(BaseLLMClient):
 
             if self._uses_responses_api():
                 responses_stream_error = False
-                async for event in self._generate_responses_stream(
-                    processed_messages, tools, tool_choice
-                ):
-                    if event.type == "error":
-                        responses_stream_error = True
-                    yield event
+                with trace.use_span(span, end_on_exit=False):
+                    async for event in self._generate_responses_stream(
+                        processed_messages, tools, tool_choice
+                    ):
+                        if event.type == "error":
+                            responses_stream_error = True
+                        if event.type == "done" and event.metadata:
+                            telemetry.record_response_metadata(
+                                resolved_model=event.metadata.get("resolved_model"),
+                            )
+                            telemetry.record_usage(event.metadata.get("reasoning_info"))
+                        telemetry.observe_event(event)
+                        yield event  # noqa: ASYNC119
                 if not responses_stream_error:
-                    duration_ms = (time.monotonic() - start_time) * 1000
-                    get_request_buffer().add(
-                        LLMRequestRecord(
-                            timestamp=request_timestamp,
-                            request_id=request_id,
-                            model_id=self.model,
-                            messages=message_dicts,
-                            tools=tools,
-                            tool_choice=tool_choice,
-                            response={"streaming": True},
-                            duration_ms=duration_ms,
-                            error=None,
-                        )
-                    )
+                    telemetry.finish_success({"streaming": True})
                 return
 
             # Convert typed messages to dicts for SDK boundary
@@ -1241,7 +1220,8 @@ class OpenAIClient(BaseLLMClient):
                 params["tool_choice"] = tool_choice
 
             # Make streaming API call
-            stream = await self.client.chat.completions.create(**params)
+            with trace.use_span(span, end_on_exit=False):
+                stream = await self.client.chat.completions.create(**params)
 
             # VCR replays flatten streaming bodies into a single line with a
             # custom marker. The OpenAI SDK doesn't decode that format, so we
@@ -1262,6 +1242,14 @@ class OpenAIClient(BaseLLMClient):
                 # list, so it has to be captured before the guards below skip it.
                 if chunk is not None and getattr(chunk, "usage", None):
                     last_chunk_with_usage = chunk
+                if chunk is not None:
+                    telemetry.record_response_metadata(
+                        resolved_model=getattr(chunk, "model", None),
+                        response_id=getattr(chunk, "id", None),
+                        finish_reason=(
+                            chunk.choices[0].finish_reason if chunk.choices else None
+                        ),
+                    )
 
                 if not chunk or not hasattr(chunk, "choices") or not chunk.choices:
                     continue
@@ -1272,7 +1260,11 @@ class OpenAIClient(BaseLLMClient):
 
                 # Handle content
                 if delta.content:
-                    yield LLMStreamEvent(type="content", content=delta.content)
+                    content_event = LLMStreamEvent(
+                        type="content", content=delta.content
+                    )
+                    telemetry.observe_event(content_event)
+                    yield content_event
 
                 # Handle tool calls
                 if delta.tool_calls:
@@ -1317,11 +1309,13 @@ class OpenAIClient(BaseLLMClient):
                             arguments=tc_data["function"]["arguments"] or "{}",
                         ),
                     )
-                    yield LLMStreamEvent(
+                    tool_call_event = LLMStreamEvent(
                         type="tool_call",
                         tool_call=tool_call,
                         tool_call_id=tc_id,
                     )
+                    telemetry.observe_event(tool_call_event)
+                    yield tool_call_event
 
             # Extract usage information if available
             metadata: StreamEventMetadata = {}
@@ -1352,50 +1346,17 @@ class OpenAIClient(BaseLLMClient):
                 if reasoning_tokens is not None:
                     stream_reasoning_info["reasoning_tokens"] = reasoning_tokens
                 metadata["reasoning_info"] = stream_reasoning_info
+                telemetry.record_usage(stream_reasoning_info)
 
-            # Record successful streaming request to diagnostics buffer
-            duration_ms = (time.monotonic() - start_time) * 1000
-            try:
-                get_request_buffer().add(
-                    LLMRequestRecord(
-                        timestamp=request_timestamp,
-                        request_id=request_id,
-                        model_id=self.model,
-                        messages=message_dicts,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                        response={"streaming": True, "metadata": metadata},
-                        duration_ms=duration_ms,
-                        error=None,
-                    )
-                )
-            except Exception as record_err:
-                logger.debug(f"Failed to record streaming LLM request: {record_err}")
+            if telemetry.resolved_model:
+                metadata["resolved_model"] = telemetry.resolved_model
+            telemetry.finish_success({"streaming": True, "metadata": metadata})
 
             # Signal completion
             yield LLMStreamEvent(type="done", metadata=metadata)
 
         except Exception as e:
-            # Record failed streaming request to diagnostics buffer
-            duration_ms = (time.monotonic() - start_time) * 1000
-            try:
-                get_request_buffer().add(
-                    LLMRequestRecord(
-                        timestamp=request_timestamp,
-                        request_id=request_id,
-                        model_id=self.model,
-                        messages=message_dicts,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                        response=None,
-                        duration_ms=duration_ms,
-                        error=str(e),
-                    )
-                )
-            except Exception as record_err:
-                logger.debug(
-                    f"Failed to record streaming LLM request error: {record_err}"
-                )
+            telemetry.finish_error(e)
 
             # Handle errors the same way as non-streaming
             error_message = str(e)
@@ -1436,6 +1397,8 @@ class OpenAIClient(BaseLLMClient):
                     "model": self.model,
                 },
             )
+        finally:
+            span.end()
 
     async def _generate_responses_stream(
         self,
@@ -1496,6 +1459,8 @@ class OpenAIClient(BaseLLMClient):
             reasoning_info = self._responses_reasoning_info(response)
             if reasoning_info:
                 metadata["reasoning_info"] = reasoning_info
+            if response.model:
+                metadata["resolved_model"] = response.model
             metadata["provider_metadata"] = {
                 "openai_response_output": [
                     item.model_dump(mode="json") for item in response.output

@@ -334,7 +334,13 @@ class _FakeAnthropicStream:
             yield event
 
     async def get_final_message(self) -> object:
-        return SimpleNamespace(content=[THINKING_BLOCK], usage=None)
+        return SimpleNamespace(
+            content=[THINKING_BLOCK],
+            usage=None,
+            model="claude-sonnet-4-6-20250929",
+            id="msg_fake",
+            stop_reason="end_turn",
+        )
 
 
 async def test_production_stream_loop_emits_thinking_delta() -> None:

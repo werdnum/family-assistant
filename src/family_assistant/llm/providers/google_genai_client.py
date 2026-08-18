@@ -8,11 +8,9 @@ import logging
 import mimetypes
 import os
 import re
-import time
 import uuid
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import asdict
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
@@ -25,7 +23,6 @@ from google.genai import types
 from google.genai.client import DebugConfig
 from google.genai.interactions import Interaction
 from opentelemetry import trace
-from opentelemetry.trace import StatusCode
 from pydantic import BaseModel, ValidationError
 
 from family_assistant.config_models import AntigravityEnvironmentConfig
@@ -58,10 +55,8 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
     is_turn_scaffolding,
-    message_to_json_dict,
 )
-from family_assistant.llm.request_buffer import LLMRequestRecord, get_request_buffer
-from family_assistant.llm.utils.usage_telemetry import set_usage_span_attributes
+from family_assistant.llm.utils.call_telemetry import LLMCallTelemetry
 from family_assistant.processing.protocol import (
     DelegationPermanentError,
     DelegationTaskNotFoundError,
@@ -93,6 +88,18 @@ def _system_prefixed_content(content: str) -> str:
 
 
 tracer = trace.get_tracer(__name__)
+
+
+def _first_finish_reason(
+    response: types.GenerateContentResponse,
+) -> types.FinishReason | None:
+    """The finish reason of the first candidate, when the response carries one."""
+    for candidate in response.candidates or []:
+        if candidate.finish_reason is not None:
+            return candidate.finish_reason
+    return None
+
+
 T = TypeVar("T", bound=BaseModel)
 
 # Maps Interactions API ErrorEvent.error.code values to our typed exception classes.
@@ -1063,20 +1070,17 @@ class GoogleGenAIClient(BaseLLMClient):
         # Validate user input before processing
         self._validate_user_input(messages)
 
-        with tracer.start_as_current_span(
-            "llm.provider.generate",
-            attributes={
-                "gen_ai.system": "google-genai",
-                "gen_ai.request.model": self.model_name,
-            },
-        ) as span:
-            # Request tracking for diagnostics
-            start_time = time.monotonic()
-            request_timestamp = datetime.now(UTC)
-            request_id = f"google_{uuid.uuid4().hex[:16]}"
-
-            # Convert messages to dict format for request buffer recording
-            message_dicts = [message_to_json_dict(msg) for msg in messages]
+        with tracer.start_as_current_span("llm.provider.generate") as span:
+            telemetry = LLMCallTelemetry(
+                span,
+                provider="google",
+                system="google-genai",
+                requested_model=self.model_name,
+                messages=messages,
+                tools=tools,
+                tool_choice=tool_choice,
+                streaming=False,
+            )
 
             try:
                 # Keep messages as typed objects for processing
@@ -1318,57 +1322,27 @@ class GoogleGenAIClient(BaseLLMClient):
                         reasoning_info = MessageReasoningInfo()
                     reasoning_info["thought_summaries"] = thought_summaries
 
+                telemetry.record_response_metadata(
+                    resolved_model=response.model_version,
+                    response_id=response.response_id,
+                    finish_reason=_first_finish_reason(response),
+                )
+
                 llm_output = LLMOutput(
                     content=content,
                     tool_calls=tool_calls,
                     reasoning_info=reasoning_info,
                     provider_metadata=None,  # Thought signatures are now on individual tool calls
+                    resolved_model=response.model_version,
                 )
 
-                # Record successful request to diagnostics buffer
-                duration_ms = (time.monotonic() - start_time) * 1000
-                try:
-                    get_request_buffer().add(
-                        LLMRequestRecord(
-                            timestamp=request_timestamp,
-                            request_id=request_id,
-                            model_id=self.model_name,
-                            messages=message_dicts,
-                            tools=tools,
-                            tool_choice=tool_choice,
-                            response=asdict(llm_output),
-                            duration_ms=duration_ms,
-                            error=None,
-                        )
-                    )
-                except Exception as record_err:
-                    logger.debug(f"Failed to record LLM request: {record_err}")
-
-                set_usage_span_attributes(span, llm_output.reasoning_info)
+                telemetry.record_output(llm_output)
+                telemetry.finish_success(asdict(llm_output))
 
                 return llm_output
 
             except Exception as e:
-                span.set_status(StatusCode.ERROR, str(e))
-                span.record_exception(e)
-                # Record failed request to diagnostics buffer
-                duration_ms = (time.monotonic() - start_time) * 1000
-                try:
-                    get_request_buffer().add(
-                        LLMRequestRecord(
-                            timestamp=request_timestamp,
-                            request_id=request_id,
-                            model_id=self.model_name,
-                            messages=message_dicts,
-                            tools=tools,
-                            tool_choice=tool_choice,
-                            response=None,
-                            duration_ms=duration_ms,
-                            error=str(e),
-                        )
-                    )
-                except Exception as record_err:
-                    logger.debug(f"Failed to record LLM request error: {record_err}")
+                telemetry.finish_error(e)
                 raise self._map_error_to_typed_exception(e) from e
 
     def _map_error_to_typed_exception(self, e: Exception) -> LLMProviderError:
@@ -1847,12 +1821,18 @@ class GoogleGenAIClient(BaseLLMClient):
         rendered, so the interactive transcript stays the agent's prose.
         """
         agent_label = self._agent_label
-        start_time = time.monotonic()
-        request_timestamp = datetime.now(UTC)
-        request_id = (
-            f"google_{agent_label.lower().replace(' ', '_')}_{uuid.uuid4().hex[:16]}"
+        span = tracer.start_span("llm.provider.agent_interaction")
+        telemetry = LLMCallTelemetry(
+            span,
+            provider="google",
+            system="google-genai",
+            requested_model=self.model_name,
+            messages=messages,
+            tools=None,
+            tool_choice=None,
+            streaming=True,
+            operation=agent_label.lower().replace(" ", "_"),
         )
-        message_dicts = [message_to_json_dict(msg) for msg in messages]
 
         content_yielded = False
         try:
@@ -1885,14 +1865,20 @@ class GoogleGenAIClient(BaseLLMClient):
 
                 elif event_type in {"step.delta", "content.delta"}:
                     if chunk.delta.type == "text":
-                        yield LLMStreamEvent(type="content", content=chunk.delta.text)
+                        text_event = LLMStreamEvent(
+                            type="content", content=chunk.delta.text
+                        )
+                        telemetry.observe_event(text_event)
+                        yield text_event
                         content_yielded = True
                     elif chunk.delta.type == "thought_summary":
                         thought_text = chunk.delta.content.text
                         thought_summaries.append(thought_text)
-                        yield LLMStreamEvent(
+                        thought_event = LLMStreamEvent(
                             type="content", content=f"\n*Thinking: {thought_text}*\n"
                         )
+                        telemetry.observe_event(thought_event)
+                        yield thought_event
                         content_yielded = True
                     elif chunk.delta.type == "image":
                         # Image deltas (e.g. visualization charts) are not yet surfaced as
@@ -1959,48 +1945,15 @@ class GoogleGenAIClient(BaseLLMClient):
                     thought_summaries=[{"summary": t} for t in thought_summaries]
                 )
 
-            # Record successful request to diagnostics buffer
-            duration_ms = (time.monotonic() - start_time) * 1000
-            try:
-                get_request_buffer().add(
-                    LLMRequestRecord(
-                        timestamp=request_timestamp,
-                        request_id=request_id,
-                        model_id=self.model_name,
-                        messages=message_dicts,
-                        tools=None,
-                        tool_choice=None,
-                        response={"streaming": True, "metadata": done_metadata},
-                        duration_ms=duration_ms,
-                        error=None,
-                    )
-                )
-            except Exception as record_err:
-                logger.debug(f"Failed to record {agent_label} request: {record_err}")
+            if interaction_id:
+                telemetry.record_response_metadata(response_id=interaction_id)
+            telemetry.record_usage(done_metadata.get("reasoning_info"))
+            telemetry.finish_success({"streaming": True, "metadata": done_metadata})
 
             yield LLMStreamEvent(type="done", metadata=done_metadata)
 
         except Exception as e:
-            # Record failed request to diagnostics buffer
-            duration_ms = (time.monotonic() - start_time) * 1000
-            try:
-                get_request_buffer().add(
-                    LLMRequestRecord(
-                        timestamp=request_timestamp,
-                        request_id=request_id,
-                        model_id=self.model_name,
-                        messages=message_dicts,
-                        tools=None,
-                        tool_choice=None,
-                        response=None,
-                        duration_ms=duration_ms,
-                        error=str(e),
-                    )
-                )
-            except Exception as record_err:
-                logger.debug(
-                    f"Failed to record {agent_label} request error: {record_err}"
-                )
+            telemetry.finish_error(e)
 
             # If the exception is already a typed LLMProviderError (e.g. raised by
             # stream error/status handlers above), use it directly.
@@ -2037,6 +1990,8 @@ class GoogleGenAIClient(BaseLLMClient):
             if last_event_id:
                 error_done_metadata["last_event_id"] = last_event_id
             yield LLMStreamEvent(type="done", metadata=error_done_metadata)
+        finally:
+            span.end()
 
     async def _generate_response_stream(
         self,
@@ -2045,18 +2000,17 @@ class GoogleGenAIClient(BaseLLMClient):
         tool_choice: str | None = "auto",
     ) -> AsyncIterator[LLMStreamEvent]:
         """Internal async generator for streaming responses using Google GenAI."""
-        span = tracer.start_span(
-            "llm.provider.generate_stream",
-            attributes={
-                "gen_ai.system": "google-genai",
-                "gen_ai.request.model": self.model_name,
-            },
+        span = tracer.start_span("llm.provider.generate_stream")
+        telemetry = LLMCallTelemetry(
+            span,
+            provider="google",
+            system="google-genai",
+            requested_model=self.model_name,
+            messages=messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            streaming=True,
         )
-        # Request tracking for diagnostics
-        start_time = time.monotonic()
-        request_timestamp = datetime.now(UTC)
-        request_id = f"google_stream_{uuid.uuid4().hex[:16]}"
-        message_dicts = [message_to_json_dict(msg) for msg in messages]
 
         content_yielded = False
         try:
@@ -2159,18 +2113,24 @@ class GoogleGenAIClient(BaseLLMClient):
             # carrying the final cumulative counts. Keep the newest seen rather
             # than reading a single chunk, since not every chunk includes it.
             latest_usage_metadata: Any | None = None
+            resolved_model: str | None = None
+            response_id: str | None = None
+            finish_reason: object = None
 
             # Process stream chunks
             with trace.use_span(span, end_on_exit=False):
                 async for chunk in stream_response:  # type: ignore[misc]
                     if getattr(chunk, "usage_metadata", None):
                         latest_usage_metadata = chunk.usage_metadata
+                    resolved_model = chunk.model_version or resolved_model
+                    response_id = chunk.response_id or response_id
+                    finish_reason = _first_finish_reason(chunk) or finish_reason
 
                     # Extract text content from chunk
                     if hasattr(chunk, "text") and chunk.text:
-                        yield LLMStreamEvent(  # noqa: ASYNC119
-                            type="content", content=chunk.text
-                        )
+                        chunk_event = LLMStreamEvent(type="content", content=chunk.text)
+                        telemetry.observe_event(chunk_event)
+                        yield chunk_event  # noqa: ASYNC119
                         content_yielded = True
 
                     # Handle candidates structure for more complex responses
@@ -2202,9 +2162,11 @@ class GoogleGenAIClient(BaseLLMClient):
                                         and hasattr(part, "text")
                                         and part.text
                                     ):
-                                        yield LLMStreamEvent(  # noqa: ASYNC119
+                                        part_event = LLMStreamEvent(
                                             type="content", content=part.text
                                         )
+                                        telemetry.observe_event(part_event)
+                                        yield part_event  # noqa: ASYNC119
                                         content_yielded = True
 
                                     # Accumulate function calls with their thought signatures
@@ -2274,19 +2236,29 @@ class GoogleGenAIClient(BaseLLMClient):
                     ),
                     provider_metadata=provider_metadata,
                 )
-                yield LLMStreamEvent(
+                tool_call_event = LLMStreamEvent(
                     type="tool_call", tool_call=tool_call, tool_call_id=tool_call_id
                 )
+                telemetry.observe_event(tool_call_event)
+                yield tool_call_event
 
             # Signal completion
             done_metadata: StreamEventMetadata = {}
+
+            telemetry.record_response_metadata(
+                resolved_model=resolved_model,
+                response_id=response_id,
+                finish_reason=finish_reason,
+            )
+            if resolved_model:
+                done_metadata["resolved_model"] = resolved_model
 
             stream_reasoning_info: MessageReasoningInfo | None = None
             if latest_usage_metadata is not None:
                 stream_reasoning_info = self._reasoning_info_from_usage_metadata(
                     latest_usage_metadata
                 )
-                set_usage_span_attributes(span, stream_reasoning_info)
+                telemetry.record_usage(stream_reasoning_info)
 
             # Add thought summaries to reasoning_info for debugging/introspection
             if thought_summaries:
@@ -2297,50 +2269,12 @@ class GoogleGenAIClient(BaseLLMClient):
             if stream_reasoning_info is not None:
                 done_metadata["reasoning_info"] = stream_reasoning_info
 
-            # Record successful streaming request to diagnostics buffer
-            duration_ms = (time.monotonic() - start_time) * 1000
-            try:
-                get_request_buffer().add(
-                    LLMRequestRecord(
-                        timestamp=request_timestamp,
-                        request_id=request_id,
-                        model_id=self.model_name,
-                        messages=message_dicts,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                        response={"streaming": True, "metadata": done_metadata},
-                        duration_ms=duration_ms,
-                        error=None,
-                    )
-                )
-            except Exception as record_err:
-                logger.debug(f"Failed to record streaming LLM request: {record_err}")
+            telemetry.finish_success({"streaming": True, "metadata": done_metadata})
 
             yield LLMStreamEvent(type="done", metadata=done_metadata)
 
         except Exception as e:
-            span.set_status(StatusCode.ERROR, str(e))
-            span.record_exception(e)
-            # Record failed streaming request to diagnostics buffer
-            duration_ms = (time.monotonic() - start_time) * 1000
-            try:
-                get_request_buffer().add(
-                    LLMRequestRecord(
-                        timestamp=request_timestamp,
-                        request_id=request_id,
-                        model_id=self.model_name,
-                        messages=message_dicts,
-                        tools=tools,
-                        tool_choice=tool_choice,
-                        response=None,
-                        duration_ms=duration_ms,
-                        error=str(e),
-                    )
-                )
-            except Exception as record_err:
-                logger.debug(
-                    f"Failed to record streaming LLM request error: {record_err}"
-                )
+            telemetry.finish_error(e)
 
             typed_error = self._map_error_to_typed_exception(e)
             logger.exception(
