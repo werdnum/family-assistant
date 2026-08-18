@@ -2,8 +2,8 @@
 
 Every provider call produces two records of the same event: an OpenTelemetry
 span and an :class:`LLMRequestRecord` in the in-memory diagnostics ring buffer.
-Both used to be assembled by hand at each of the six provider entry points
-(three providers x streaming/non-streaming), which is why they had drifted --
+Both used to be assembled by hand at every provider entry point, which is why
+they had drifted --
 the OpenAI client had no span at all, and every provider reported the *requested*
 model as ``gen_ai.response.model`` rather than the model the API actually
 served.
@@ -133,7 +133,7 @@ class LLMCallTelemetry:
 
     @property
     def time_to_first_output_ms(self) -> float | None:
-        """Milliseconds until the first content or tool-call token, if any."""
+        """Milliseconds until the first streamed token, if the turn streamed."""
         if self._first_output_at is None:
             return None
         return (self._first_output_at - self._start) * 1000
@@ -188,8 +188,12 @@ class LLMCallTelemetry:
         set_usage_span_attributes(self.span, reasoning_info)
 
     def record_output(self, output: LLMOutput) -> None:
-        """Record the shape of a non-streamed response."""
-        self.mark_first_output()
+        """Record the shape of a non-streamed response.
+
+        Deliberately leaves time-to-first-output unset: on a non-streamed call
+        it would only ever equal the duration, and an attribute that is present
+        but meaningless is worse than an absent one.
+        """
         self._content_chars = len(output.content or "")
         self._tool_call_count = len(output.tool_calls or [])
         self.record_usage(output.reasoning_info)
