@@ -221,6 +221,20 @@ class TestStreaming:
         assert attributes["llm.response.content_chars"] == len("answer")
         assert attributes["llm.response.thinking_chars"] == len("deliberate")
 
+    def test_a_turn_with_no_streamed_reasoning_omits_the_thinking_size(
+        self, exporter: InMemorySpanExporter, buffer: LLMRequestBuffer
+    ) -> None:
+        """Zero would read as "did not deliberate" on a non-streamed turn."""
+        del buffer
+        telemetry = _telemetry(exporter)
+        telemetry.record_output(LLMOutput(content="answer"))
+        telemetry.finish_success(None)
+        telemetry.span.end()
+
+        attributes = _finished(exporter).attributes
+        assert attributes is not None
+        assert "llm.response.thinking_chars" not in attributes
+
     def test_a_stream_that_never_emits_reports_no_first_output(
         self, exporter: InMemorySpanExporter, buffer: LLMRequestBuffer
     ) -> None:

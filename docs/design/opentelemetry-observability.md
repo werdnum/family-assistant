@@ -95,7 +95,7 @@ Two layers of spans cover a turn, and they answer different questions:
 | `llm.duration_ms`               | Wall-clock for the call.                                           |
 | `llm.time_to_first_output_ms`   | Until the first content, thinking or tool-call token.              |
 | `llm.response.content_chars`    | Characters of user-visible content produced.                       |
-| `llm.response.thinking_chars`   | Characters of reasoning, counted apart from the answer.            |
+| `llm.response.thinking_chars`   | Characters of reasoning; absent when the turn did not stream it.   |
 | `llm.response.tool_call_count`  | Tool calls returned.                                               |
 | `llm.error.type`                | Exception class, on failure.                                       |
 | `gen_ai.usage.*`                | Token usage, including prompt-cache reads and writes.              |

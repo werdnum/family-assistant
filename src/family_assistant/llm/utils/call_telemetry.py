@@ -142,7 +142,7 @@ class LLMCallTelemetry:
         self._finish_reason: str | None = None
         self._reasoning_info: MessageReasoningInfo | None = None
         self._content_chars = 0
-        self._thinking_chars = 0
+        self._thinking_chars: int | None = None
         self._tool_call_count = 0
 
         # Tool schemas are part of the prompt the model has to process, and a
@@ -198,7 +198,7 @@ class LLMCallTelemetry:
             # so folding it in would make a long answer and a long deliberation
             # look alike -- while dropping it would hide the usual reason a
             # reasoning model is slow.
-            self._thinking_chars += len(event.content)
+            self._thinking_chars = (self._thinking_chars or 0) + len(event.content)
         elif event.type == "tool_call":
             self._tool_call_count += 1
 
@@ -273,9 +273,13 @@ class LLMCallTelemetry:
             "llm.response.model_resolved": self.resolved_model is not None,
             "llm.duration_ms": self.elapsed_ms,
             "llm.response.content_chars": self._content_chars,
-            "llm.response.thinking_chars": self._thinking_chars,
             "llm.response.tool_call_count": self._tool_call_count,
         }
+        if self._thinking_chars is not None:
+            # Absent means "not measured" rather than "none produced": reasoning
+            # text is only visible where it streams, so a zero here would make a
+            # non-streamed reasoning turn look like it never deliberated.
+            attributes["llm.response.thinking_chars"] = self._thinking_chars
         first_output_ms = self.time_to_first_output_ms
         if first_output_ms is not None:
             attributes["llm.time_to_first_output_ms"] = first_output_ms
