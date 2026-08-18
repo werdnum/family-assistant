@@ -392,11 +392,6 @@ class RetryingLLMClient:
                             and e.retry_after is not None
                             and e.retry_after <= 60
                         ):
-                            attempts += 1
-                            span.set_attributes({
-                                "llm.attempts": attempts,
-                                "llm.fallback_used": False,
-                            })
                             span.add_event(
                                 "llm.rate_limit_retry",
                                 attributes={
@@ -409,6 +404,14 @@ class RetryingLLMClient:
                             )
                             # ast-grep-ignore: no-asyncio-sleep-in-tests - Production retry delay, not test code
                             await asyncio.sleep(e.retry_after)
+                            # Counted after the wait, not before it: a turn
+                            # cancelled during the backoff never issues this
+                            # call, and llm.attempts counts calls issued.
+                            attempts += 1
+                            span.set_attributes({
+                                "llm.attempts": attempts,
+                                "llm.fallback_used": False,
+                            })
                             try:
                                 async for (
                                     event
