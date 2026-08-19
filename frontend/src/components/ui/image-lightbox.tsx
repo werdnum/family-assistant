@@ -57,6 +57,17 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
     onIndexChange((index + delta + images.length) % images.length);
   };
 
+  // The content fills the viewport so it covers the overlay, and Radix only
+  // treats clicks on the overlay itself as outside interactions. Dismiss on a
+  // click that lands on the padding around the image and controls instead.
+  const handleBackdropClick = (event: React.MouseEvent) => {
+    const target = event.target;
+    if (target instanceof Element && target.closest('[data-lightbox-interactive]')) {
+      return;
+    }
+    onClose();
+  };
+
   const handleKeyDown = (event: React.KeyboardEvent) => {
     if (images.length < 2) {
       return;
@@ -84,6 +95,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
         <DialogPrimitiveContent
           className="fixed inset-0 z-50 flex flex-col focus:outline-none"
           onKeyDown={handleKeyDown}
+          onClick={handleBackdropClick}
           aria-describedby={undefined}
           data-testid="image-lightbox"
         >
@@ -97,6 +109,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
               rel="noopener noreferrer"
               className={overlayButtonClass}
               aria-label={`Download ${image.name}`}
+              data-lightbox-interactive
               data-testid="image-lightbox-download"
             >
               <DownloadIcon size={18} />
@@ -106,6 +119,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
               className={overlayButtonClass}
               onClick={onClose}
               aria-label="Close image viewer"
+              data-lightbox-interactive
               data-testid="image-lightbox-close"
             >
               <XIcon size={18} />
@@ -119,6 +133,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                 className={cn(overlayButtonClass, 'absolute left-3 z-10')}
                 onClick={() => step(-1)}
                 aria-label="Previous image"
+                data-lightbox-interactive
                 data-testid="image-lightbox-previous"
               >
                 <ChevronLeftIcon size={20} />
@@ -127,15 +142,19 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
 
             <div
               className={cn(
-                'flex h-full w-full items-center justify-center px-4',
-                zoomed && 'overflow-auto'
+                'flex h-full w-full px-4',
+                zoomed ? 'items-start justify-start overflow-auto' : 'items-center justify-center'
               )}
             >
               <button
                 type="button"
-                className={cn('flex max-h-full', zoomed ? 'cursor-zoom-out' : 'cursor-zoom-in')}
+                className={cn(
+                  'flex',
+                  zoomed ? 'm-auto cursor-zoom-out' : 'max-h-full cursor-zoom-in'
+                )}
                 onClick={() => setZoomed((current) => !current)}
                 aria-label={zoomed ? 'Fit image to screen' : 'Zoom image to full size'}
+                data-lightbox-interactive
                 data-testid="image-lightbox-zoom"
               >
                 <img
@@ -157,6 +176,7 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
                 className={cn(overlayButtonClass, 'absolute right-3 z-10')}
                 onClick={() => step(1)}
                 aria-label="Next image"
+                data-lightbox-interactive
                 data-testid="image-lightbox-next"
               >
                 <ChevronRightIcon size={20} />

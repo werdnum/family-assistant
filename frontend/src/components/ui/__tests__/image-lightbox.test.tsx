@@ -85,8 +85,35 @@ describe('ImageLightbox', () => {
     await user.click(screen.getByTestId('image-lightbox-zoom'));
     expect(screen.getByTestId('image-lightbox-image')).toHaveAttribute('data-zoomed', 'true');
 
+    // Auto margins rather than centred justification, so the top-left of an
+    // image larger than the viewport stays inside the scrollable area.
+    const frame = screen.getByTestId('image-lightbox-zoom').parentElement;
+    expect(frame).toHaveClass('overflow-auto', 'items-start', 'justify-start');
+    expect(screen.getByTestId('image-lightbox-zoom')).toHaveClass('m-auto');
+
     await user.click(screen.getByTestId('image-lightbox-next'));
     expect(screen.getByTestId('image-lightbox-image')).toHaveAttribute('data-zoomed', 'false');
+  });
+
+  it('closes when the backdrop around the image is clicked', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(<ImageLightbox images={IMAGES} index={0} onIndexChange={vi.fn()} onClose={onClose} />);
+
+    // The content fills the viewport, so the blank area around the image is
+    // part of it rather than of the Radix overlay.
+    await user.click(screen.getByTestId('image-lightbox'));
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it('does not close when the image or a control is clicked', async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(<ImageLightbox images={IMAGES} index={0} onIndexChange={vi.fn()} onClose={onClose} />);
+
+    await user.click(screen.getByTestId('image-lightbox-image'));
+    await user.click(screen.getByTestId('image-lightbox-next'));
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it('closes on the close button and on Escape', async () => {
