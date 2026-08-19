@@ -1,0 +1,59 @@
+interactions:
+  - request:
+      body: '{"agent":"antigravity-preview-05-2026","input":"Using Python, print the numbers 1 to 3, one per line.","stream":false,"background":true,"system_instruction":"System: You are a coding agent. Run the code and report the output.","environment":{"type":"remote"},"agent_config":{"model":"gemini-3.7-flash","type":"antigravity"}}'
+      headers:
+        accept:
+          - application/json
+        accept-encoding:
+          - gzip, deflate
+        connection:
+          - keep-alive
+        content-length:
+          - '324'
+        content-type:
+          - application/json
+        host:
+          - generativelanguage.googleapis.com
+        user-agent:
+          - speakeasy-sdk/python 2.4.1-preview.5 2.924.0 v1beta google-genai
+        x-goog-api-client:
+          - google-genai-sdk/2.18.1 gl-python/3.13.7
+      method: POST
+      uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    response:
+      body:
+        string: !!binary |
+          H4sIAAAAAAAC/5SPwU7DMBBE/8VXCHJiktq5IhWoSAVV0pZT5K5XwY3qBGcbAoh/x+kf9Pp2Znbm
+          l1nDcjbG9cMHTEWrHt/3RVK2pPFoPk0Vv5lqmgq33OjpeV+Uq9fNafmzbtOXneuEdtt19bQtoFxN
+          1W5gt2wgTechJFpX975rPA4zBo+acP6U8CSLuIxiVXKZ8zS/F3cLmahYxlzecJ5zHvTn3lylRzda
+          37kTOqovg1SiMikEoEkNaAkAGSrITCbkQaQLnKuiHy1gTRZ9cITmzmhvwqU7HBHoMoLQayDbuYB1
+          E+ID1Y5s4/Vo6TvqPY4WvyKeRnNT9vcPAAD//wMA4h3ZRVEBAAA=
+      headers:
+        Alt-Svc:
+          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+        Content-Encoding:
+          - gzip
+        Content-Type:
+          - application/json
+        Date:
+          - Wed, 19 Aug 2026 08:05:46 GMT
+        Server:
+          - scaffolding on HTTPServer2
+        Server-Timing:
+          - gfet4t7; dur=6089
+        Transfer-Encoding:
+          - chunked
+        Vary:
+          - Origin
+          - X-Origin
+          - Referer
+        X-Content-Type-Options:
+          - nosniff
+        X-Frame-Options:
+          - SAMEORIGIN
+        X-XSS-Protection:
+          - '0'
+      status:
+        code: 200
+        message: OK
+version: 1
