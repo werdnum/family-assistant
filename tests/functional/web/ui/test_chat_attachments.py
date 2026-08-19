@@ -211,6 +211,14 @@ async def test_attachment_response_flow(
     await response_image.wait_for(state="visible", timeout=30000)
     assert attachment_id in (await response_image.get_attribute("src") or "")
 
+    # Clicking the inline image opens the full-screen viewer, and Escape closes it.
+    await page.locator('[data-testid="response-image-trigger"]').first.click()
+    lightbox_image = page.locator('[data-testid="image-lightbox-image"]')
+    await lightbox_image.wait_for(state="visible", timeout=10000)
+    assert attachment_id in (await lightbox_image.get_attribute("src") or "")
+    await page.keyboard.press("Escape")
+    await lightbox_image.wait_for(state="detached", timeout=10000)
+
     await chat_page.wait_for_attachments_ready(timeout=30000)
 
     # Verify the attachment display is shown to the user.
