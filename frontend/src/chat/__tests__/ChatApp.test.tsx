@@ -627,6 +627,12 @@ describe('ChatApp', () => {
     expect(image).toHaveAttribute('src', '/api/attachments/chart-image');
     expect(image).toHaveAttribute('alt', 'Revenue chart');
     expect(screen.getByTestId('tool-group-content')).toHaveAttribute('data-state', 'closed');
+
+    // Clicking the inline image opens it full-screen rather than navigating away.
+    await userEvent.click(screen.getByTestId('response-image-trigger'));
+    const lightboxImage = await screen.findByTestId('image-lightbox-image');
+    expect(lightboxImage).toHaveAttribute('src', '/api/attachments/chart-image');
+    expect(screen.getByTestId('image-lightbox-caption')).toHaveTextContent('Revenue chart');
   });
 
   it('adopts the opened conversation profile and sends the follow-up under it', async () => {

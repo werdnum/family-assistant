@@ -76,11 +76,17 @@ When the assistant attaches something to its reply — a generated image, a char
 a file it fetched from your email — it arrives with the answer itself:
 
 - **Images** appear inline, underneath the reply text, in both the web app and the iOS app. Tap or
-  click one to see it full size, and use the download button beside it to save or share it.
+  click one to open it full screen, and use the download button to save or share it.
 - **Other files** (PDFs, documents, data files) appear as a named attachment with a download button
   rather than a preview.
 - Images are part of the saved reply, so reopening the conversation later shows them again — they
   are not just a live-stream effect.
+
+In the web app, the full-screen viewer fills the window with the image and its name. Click the image
+to switch between fitting the window and full size, and scroll around when it's larger than the
+screen. When a reply carries several images, arrows on either side — or the left and right arrow
+keys — move between them, with a counter showing where you are. Close it with the X, the Escape key,
+or a click outside the image. Images you attach to your own messages open in the same viewer.
 
 ## How attachments behave
 

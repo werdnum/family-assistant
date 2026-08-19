@@ -7,19 +7,13 @@ import {
   useAttachment,
   useComposerRuntime,
 } from '@assistant-ui/react';
-import { DialogContent as DialogPrimitiveContent } from '@radix-ui/react-dialog';
+import { Slot } from '@radix-ui/react-slot';
 import { CircleXIcon, FileIcon, PaperclipIcon } from 'lucide-react';
-import { type FC, PropsWithChildren, useEffect, useState } from 'react';
+import { type FC, PropsWithChildren, useEffect, useMemo, useState } from 'react';
 import { useShallow } from 'zustand/shallow';
 import { TooltipIconButton } from '@/components/assistant-ui/tooltip-icon-button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import {
-  Dialog,
-  DialogOverlay,
-  DialogPortal,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
+import { ImageLightbox } from '@/components/ui/image-lightbox';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 const useFileSrc = (file: File | undefined) => {
@@ -70,47 +64,48 @@ const useAttachmentSrc = () => {
   return useFileSrc(file) ?? src;
 };
 
-type AttachmentPreviewProps = {
-  src: string;
-};
-
-const AttachmentPreview: FC<AttachmentPreviewProps> = ({ src }) => {
-  const [isLoaded, setIsLoaded] = useState(false);
-
-  return (
-    <img
-      src={src}
-      style={{
-        width: 'auto',
-        height: 'auto',
-        maxWidth: '75dvh',
-        maxHeight: '75dvh',
-        display: isLoaded ? 'block' : 'none',
-        overflow: 'clip',
-      }}
-      onLoad={() => setIsLoaded(true)}
-      alt="Preview"
-    />
-  );
-};
-
-const AttachmentPreviewDialog: FC<PropsWithChildren> = ({ children }) => {
+/**
+ * Wraps an image attachment so clicking it opens the full-screen lightbox.
+ * Non-image attachments have nothing to show, so they render as-is.
+ */
+const AttachmentPreviewTrigger: FC<PropsWithChildren> = ({ children }) => {
   const src = useAttachmentSrc();
+  const name = useAttachment((a) => a.name);
+  const [isOpen, setIsOpen] = useState(false);
+  const images = useMemo(
+    () => (src ? [{ key: src, url: src, name: name || 'Image attachment' }] : []),
+    [src, name]
+  );
 
   if (!src) {
     return children;
   }
 
   return (
-    <Dialog>
-      <DialogTrigger className="hover:bg-accent/50 cursor-pointer transition-colors" asChild>
+    <>
+      <Slot
+        role="button"
+        tabIndex={0}
+        className="hover:bg-accent/50 cursor-zoom-in transition-colors focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={() => setIsOpen(true)}
+        onKeyDown={(event: React.KeyboardEvent) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            setIsOpen(true);
+          }
+        }}
+        aria-label={`View ${name || 'image attachment'}`}
+        data-testid="attachment-preview-trigger"
+      >
         {children}
-      </DialogTrigger>
-      <AttachmentDialogContent>
-        <DialogTitle className="sr-only">Image Attachment Preview</DialogTitle>
-        <AttachmentPreview src={src} />
-      </AttachmentDialogContent>
-    </Dialog>
+      </Slot>
+      <ImageLightbox
+        images={images}
+        index={isOpen ? 0 : null}
+        onIndexChange={() => undefined}
+        onClose={() => setIsOpen(false)}
+      />
+    </>
   );
 };
 
@@ -170,7 +165,7 @@ const AttachmentUI: FC = () => {
             </p>
           </div>
         ) : (
-          <AttachmentPreviewDialog>
+          <AttachmentPreviewTrigger>
             <TooltipTrigger asChild>
               <div className="flex h-12 w-40 items-center justify-center gap-2 rounded-lg border p-1">
                 <AttachmentThumb />
@@ -182,7 +177,7 @@ const AttachmentUI: FC = () => {
                 </div>
               </div>
             </TooltipTrigger>
-          </AttachmentPreviewDialog>
+          </AttachmentPreviewTrigger>
         )}
         {canRemove && <AttachmentRemove />}
       </AttachmentPrimitive.Root>
@@ -279,12 +274,3 @@ export const ComposerAddAttachment: FC = () => {
     </>
   );
 };
-
-const AttachmentDialogContent: FC<PropsWithChildren> = ({ children }) => (
-  <DialogPortal>
-    <DialogOverlay />
-    <DialogPrimitiveContent className="data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] fixed left-[50%] top-[50%] z-50 grid translate-x-[-50%] translate-y-[-50%] shadow-lg duration-200">
-      {children}
-    </DialogPrimitiveContent>
-  </DialogPortal>
-);
