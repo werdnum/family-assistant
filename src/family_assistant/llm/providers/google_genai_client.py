@@ -1709,6 +1709,13 @@ class GoogleGenAIClient(BaseLLMClient):
         carries no attachments) and its egress policy, which comes from static
         profile config and so applies to both paths. Credentials named by that
         policy are minted here, per run.
+
+        Antigravity always gets a block, even an otherwise empty one: the API
+        requires the field and rejects a create request that omits it with
+        ``Missing required field 'environment'``, so its default sandbox is
+        stated as ``{"type": "remote"}`` rather than left implicit. Deep
+        Research takes no environment at all, so it sends none unless there is
+        something to put in one.
         """
         # ast-grep-ignore: no-dict-any - environment payload for the Interactions SDK
         environment: dict[str, Any] = {}
@@ -1718,7 +1725,7 @@ class GoogleGenAIClient(BaseLLMClient):
             network = await self._antigravity_egress.resolve_network()
             if network is not None:
                 environment["network"] = network
-        if not environment:
+        if not environment and not is_antigravity_model(self._agent_name):
             return None
         return {"type": "remote", **environment}
 
