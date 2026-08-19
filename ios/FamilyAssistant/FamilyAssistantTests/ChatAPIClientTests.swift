@@ -268,20 +268,21 @@ final class ChatAPIClientTests: XCTestCase {
                 return .json(#"{"detail":"expired token"}"#, statusCode: 401)
             }
             let authManager = makeAuthManager()
-            let client = ChatAPIClient(authManager: authManager)
+            let viewModel = ConversationShareViewModel(
+                apiClient: ChatAPIClient(authManager: authManager),
+                errorReporter: ErrorReporter(spoolDirectory: nil)
+            )
 
-            do {
-                if method == "POST" {
-                    _ = try await client.createConversationShare(conversationID: "web_conv_share")
-                } else {
-                    try await client.revokeConversationShare(conversationID: "web_conv_share")
-                }
-                XCTFail("Expected \(method) to reject stale credentials")
-            } catch AuthError.noCredentials {
-                XCTAssertEqual(requestCount.value, 1, "\(method) must not be replayed")
-                XCTAssertTrue(authManager.authRequired)
-                XCTAssertNil(KeychainHelper.readString(key: "fa_api_token"))
+            if method == "POST" {
+                let url = await viewModel.createShare(conversationID: "web_conv_share")
+                XCTAssertNil(url)
+            } else {
+                await viewModel.revokeShare(conversationID: "web_conv_share")
             }
+            XCTAssertEqual(requestCount.value, 1, "\(method) must not be replayed")
+            XCTAssertTrue(authManager.authRequired)
+            XCTAssertNil(KeychainHelper.readString(key: "fa_api_token"))
+            XCTAssertNil(viewModel.actionErrorMessage, "the dedicated re-auth flow replaces a sharing alert")
         }
     }
 

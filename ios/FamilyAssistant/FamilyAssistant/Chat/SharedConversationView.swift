@@ -67,6 +67,10 @@ final class ConversationShareViewModel {
             guard finishMutation(generation: generation, conversationID: conversationID) else { return nil }
             status = .active
             return url
+        } catch AuthError.authRejected, AuthError.noCredentials {
+            guard finishMutation(generation: generation, conversationID: conversationID) else { return nil }
+            status = previousStatus
+            return nil
         } catch {
             guard finishMutation(generation: generation, conversationID: conversationID) else { return nil }
             status = previousStatus
@@ -83,6 +87,9 @@ final class ConversationShareViewModel {
             try await apiClient.revokeConversationShare(conversationID: conversationID)
             guard finishMutation(generation: generation, conversationID: conversationID) else { return }
             status = .inactive
+        } catch AuthError.authRejected, AuthError.noCredentials {
+            guard finishMutation(generation: generation, conversationID: conversationID) else { return }
+            status = previousStatus
         } catch {
             guard finishMutation(generation: generation, conversationID: conversationID) else { return }
             status = previousStatus
