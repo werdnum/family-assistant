@@ -72,25 +72,35 @@ struct ChatAPIClient {
 
     /// Rotate the conversation's active share and return its absolute URL.
     func createConversationShare(conversationID: String) async throws -> URL {
+        let capturedAuthEpoch = authManager.authEpoch
         let encodedID = Self.encodedPathComponent(conversationID)
         let request = try await authManager.authorizedRequest(
             url: apiURL("/api/v1/chat/conversations/\(encodedID)/share"),
             method: "POST"
         )
         let (data, response) = try await urlSession.data(for: request)
-        try validate(response: response, data: data)
+        try validateNonIdempotentResponse(
+            response: response,
+            data: data,
+            capturedAuthEpoch: capturedAuthEpoch
+        )
         let share = try JSONDecoder.chatDecoder.decode(ChatConversationShareResponse.self, from: data)
         return try apiURL(share.shareURL)
     }
 
     func revokeConversationShare(conversationID: String) async throws {
+        let capturedAuthEpoch = authManager.authEpoch
         let encodedID = Self.encodedPathComponent(conversationID)
         let request = try await authManager.authorizedRequest(
             url: apiURL("/api/v1/chat/conversations/\(encodedID)/share"),
             method: "DELETE"
         )
         let (data, response) = try await urlSession.data(for: request)
-        try validate(response: response, data: data)
+        try validateNonIdempotentResponse(
+            response: response,
+            data: data,
+            capturedAuthEpoch: capturedAuthEpoch
+        )
     }
 
     /// Load only messages newer than `after` (ISO-8601 timestamp).
@@ -716,6 +726,23 @@ struct ChatAPIClient {
                 retryAfter: Self.parseRetryAfter(httpResponse)
             )
         }
+    }
+
+    /// A rejected mutation must never be replayed automatically because the server
+    /// may have applied it before returning. Latch re-authentication instead so a
+    /// subsequent user action starts with fresh credentials.
+    private func validateNonIdempotentResponse(
+        response: URLResponse,
+        data: Data,
+        capturedAuthEpoch: Int
+    ) throws {
+        if let statusCode = (response as? HTTPURLResponse)?.statusCode,
+           statusCode == 401 || statusCode == 403
+        {
+            authManager.markAuthRequiredIfCurrent(capturedEpoch: capturedAuthEpoch)
+            throw AuthError.noCredentials
+        }
+        try validate(response: response, data: data)
     }
 
     /// Parse a `Retry-After` response header into seconds. Handles the delta-seconds

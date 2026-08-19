@@ -253,6 +253,38 @@ final class ChatAPIClientTests: XCTestCase {
         XCTAssertEqual(viewModel.status, .active)
     }
 
+    func testConversationShareMutationsLatchAuthRequiredWithoutRetry() async throws {
+        for method in ["POST", "DELETE"] {
+            resetStoredAuth()
+            KeychainHelper.save(key: "fa_api_token", string: apiToken)
+            UserDefaults.standard.set(
+                ISO8601DateFormatter().string(from: Date().addingTimeInterval(7200)),
+                forKey: "fa_token_expiry"
+            )
+            let requestCount = AtomicCounter()
+            ChatMockBackendURLProtocol.respond { request in
+                XCTAssertEqual(request.httpMethod, method)
+                _ = requestCount.increment()
+                return .json(#"{"detail":"expired token"}"#, statusCode: 401)
+            }
+            let authManager = makeAuthManager()
+            let client = ChatAPIClient(authManager: authManager)
+
+            do {
+                if method == "POST" {
+                    _ = try await client.createConversationShare(conversationID: "web_conv_share")
+                } else {
+                    try await client.revokeConversationShare(conversationID: "web_conv_share")
+                }
+                XCTFail("Expected \(method) to reject stale credentials")
+            } catch AuthError.noCredentials {
+                XCTAssertEqual(requestCount.value, 1, "\(method) must not be replayed")
+                XCTAssertTrue(authManager.authRequired)
+                XCTAssertNil(KeychainHelper.readString(key: "fa_api_token"))
+            }
+        }
+    }
+
     func testProfilesDecodeDirectChatProfiles() async throws {
         ChatMockBackendURLProtocol.respond { request in
             XCTAssertEqual(request.httpMethod, "GET")
