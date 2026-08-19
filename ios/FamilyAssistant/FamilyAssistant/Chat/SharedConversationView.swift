@@ -9,6 +9,112 @@ enum SharedConversationLoadState: Equatable {
     case failed(String)
 }
 
+enum ConversationShareStatus: Equatable {
+    case unavailable
+    case loading
+    case inactive
+    case active
+    case failed
+}
+
+/// Owner-side sharing state. The server intentionally returns only whether an
+/// active link exists, never the active bearer token, so sharing an already-shared
+/// conversation rotates the link before presenting it.
+@MainActor
+@Observable
+final class ConversationShareViewModel {
+    private(set) var status: ConversationShareStatus = .unavailable
+    private(set) var isUpdating = false
+    var actionErrorMessage: String?
+
+    @ObservationIgnored private let apiClient: ChatAPIClient
+    @ObservationIgnored private let errorReporter: ErrorReporter
+    @ObservationIgnored private var conversationID: String?
+    @ObservationIgnored private var operationGeneration = 0
+
+    init(apiClient: ChatAPIClient, errorReporter: ErrorReporter = .shared) {
+        self.apiClient = apiClient
+        self.errorReporter = errorReporter
+    }
+
+    func loadStatus(conversationID: String?) async {
+        operationGeneration += 1
+        let generation = operationGeneration
+        self.conversationID = conversationID
+        isUpdating = false
+        actionErrorMessage = nil
+        guard let conversationID else {
+            status = .unavailable
+            return
+        }
+        status = .loading
+        do {
+            let active = try await apiClient.getConversationShareStatus(conversationID: conversationID)
+            guard generation == operationGeneration, self.conversationID == conversationID else { return }
+            status = active ? .active : .inactive
+        } catch {
+            guard generation == operationGeneration, self.conversationID == conversationID else { return }
+            status = .failed
+            errorReporter.report(error, component: "ConversationShare.status")
+        }
+    }
+
+    func createShare(conversationID: String) async -> URL? {
+        let previousStatus = status
+        let generation = beginMutation(conversationID: conversationID)
+        do {
+            let url = try await apiClient.createConversationShare(conversationID: conversationID)
+            guard finishMutation(generation: generation, conversationID: conversationID) else { return nil }
+            status = .active
+            return url
+        } catch AuthError.authRejected, AuthError.noCredentials {
+            guard finishMutation(generation: generation, conversationID: conversationID) else { return nil }
+            status = previousStatus
+            return nil
+        } catch {
+            guard finishMutation(generation: generation, conversationID: conversationID) else { return nil }
+            status = previousStatus
+            actionErrorMessage = "Couldn’t share conversation. \(error.localizedDescription)"
+            errorReporter.report(error, component: "ConversationShare.create")
+            return nil
+        }
+    }
+
+    func revokeShare(conversationID: String) async {
+        let previousStatus = status
+        let generation = beginMutation(conversationID: conversationID)
+        do {
+            try await apiClient.revokeConversationShare(conversationID: conversationID)
+            guard finishMutation(generation: generation, conversationID: conversationID) else { return }
+            status = .inactive
+        } catch AuthError.authRejected, AuthError.noCredentials {
+            guard finishMutation(generation: generation, conversationID: conversationID) else { return }
+            status = previousStatus
+        } catch {
+            guard finishMutation(generation: generation, conversationID: conversationID) else { return }
+            status = previousStatus
+            actionErrorMessage = "Couldn’t stop sharing. \(error.localizedDescription)"
+            errorReporter.report(error, component: "ConversationShare.revoke")
+        }
+    }
+
+    private func beginMutation(conversationID: String) -> Int {
+        operationGeneration += 1
+        self.conversationID = conversationID
+        isUpdating = true
+        actionErrorMessage = nil
+        return operationGeneration
+    }
+
+    private func finishMutation(generation: Int, conversationID: String) -> Bool {
+        guard generation == operationGeneration, self.conversationID == conversationID else {
+            return false
+        }
+        isUpdating = false
+        return true
+    }
+}
+
 @MainActor
 @Observable
 final class SharedConversationViewModel {

@@ -31,6 +31,11 @@ final class ChatViewModel {
     @ObservationIgnored private var preferredProfileID: String
     var conversationID: String?
     var conversationSelection: String?
+    /// The conversation whose persisted messages are currently rendered. This is
+    /// intentionally separate from `conversationID`: during a switch the old
+    /// bubbles remain visible while the new request loads, and those bubbles must
+    /// not make sharing controls target the newly selected conversation.
+    private(set) var persistedMessagesConversationID: String?
     var draftText = ""
     var draftAttachments: [ChatAttachment] = []
     var pendingConfirmations: [ChatPendingConfirmation] = []
@@ -99,6 +104,18 @@ final class ChatViewModel {
         // so a send would post under the previous profile and the backend would
         // filter this thread's history out of the turn's context.
         return hasContent && attachmentsReady && !isLoadingMessages
+    }
+
+    /// Owner-side share controls mirror the web app and appear only after this
+    /// conversation has at least one server-persisted message.
+    var shareableConversationID: String? {
+        guard !isLoadingMessages,
+              persistedMessagesConversationID == conversationID,
+              messages.contains(where: { !$0.id.hasPrefix("local_") })
+        else {
+            return nil
+        }
+        return conversationID
     }
 
     /// Derived connection state for the toolbar indicator. Forwards the
@@ -836,6 +853,7 @@ final class ChatViewModel {
         displayedMessageNewerOffset = 0
         if isSwitchingConversation {
             draftText = ""
+            persistedMessagesConversationID = nil
         }
         conversationID = id
         conversationSelection = id
@@ -908,6 +926,7 @@ final class ChatViewModel {
         conversationID = Self.generateConversationID()
         conversationSelection = conversationID
         messages = []
+        persistedMessagesConversationID = nil
         if !preservingDraft {
             draftText = ""
             cleanupTemporaryImports(for: draftAttachments)
@@ -1015,6 +1034,7 @@ final class ChatViewModel {
                 return
             }
             replaceMessagesPreservingPagedBackWindow(withLiveFollowBubbles(Self.renderMessages(from: response.messages)))
+            persistedMessagesConversationID = response.messages.isEmpty ? nil : id
             await attachDiscoveredActiveTurns(response.activeTurns)
             errorMessage = nil
             // A prior failed load of THIS thread may have left a stale inline banner
@@ -1412,6 +1432,7 @@ final class ChatViewModel {
             let existingIDs = Set(merged.map(\.id))
             merged.append(contentsOf: rendered.filter { !existingIDs.contains($0.id) })
             replaceMessagesPreservingPagedBackWindow(withLiveFollowBubbles(merged))
+            persistedMessagesConversationID = id
             errorMessage = nil
             recordAdvisorySuccess(operation: .messagesMerge)
         } catch {
@@ -3965,6 +3986,7 @@ final class ChatViewModel {
     private func handleConversationGone(conversationID: String) {
         conversations.removeAll { $0.conversationID == conversationID }
         if conversationID == self.conversationID {
+            persistedMessagesConversationID = nil
             presentInlineThreadFeedback(
                 "This conversation is no longer available.",
                 reason: .accessChanged,

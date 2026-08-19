@@ -402,15 +402,23 @@ final class AuthManager {
     /// Atomically clear rejected credentials and latch the terminal ``authRequired``
     /// state, but only if the provided epoch still owns the current auth state.
     /// Called from callers (operation start-to-terminal-latch paths) that captured
-    /// their epoch at the start of a network operation; a stale rejection from a
-    /// superseded epoch (logout/re-login happened while the operation was in flight)
-    /// must not delete a freshly re-authenticated session's credentials.
+    /// their epoch and bearer token at the start of a network operation. A stale
+    /// rejection from a superseded epoch or token must not delete freshly rotated
+    /// or re-authenticated credentials.
     @MainActor
-    func markAuthRequiredIfCurrent(capturedEpoch: Int) {
-        guard isCurrentAuthEpoch(capturedEpoch) else {
-            return
+    @discardableResult
+    func markAuthRequiredIfCurrent(
+        capturedEpoch: Int,
+        rejectedAccessToken: String? = nil
+    ) -> Bool {
+        guard isCurrentAuthEpoch(capturedEpoch) else { return false }
+        if let rejectedAccessToken,
+           KeychainHelper.readString(key: Keys.apiToken) != rejectedAccessToken
+        {
+            return false
         }
         markAuthRequired()
+        return true
     }
 
     /// Clear only the stored credentials (keychain/defaults). Used for in-place

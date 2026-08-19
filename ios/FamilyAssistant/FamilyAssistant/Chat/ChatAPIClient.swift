@@ -62,6 +62,49 @@ struct ChatAPIClient {
         return try JSONDecoder.chatDecoder.decode(ChatConversationMessagesResponse.self, from: data)
     }
 
+    func getConversationShareStatus(conversationID: String) async throws -> Bool {
+        let encodedID = Self.encodedPathComponent(conversationID)
+        let url = try apiURL("/api/v1/chat/conversations/\(encodedID)/share")
+        let (data, response) = try await authorizedGETWithAuthRetry(url: url)
+        try validate(response: response, data: data)
+        return try JSONDecoder.chatDecoder.decode(ChatConversationShareStatusResponse.self, from: data).active
+    }
+
+    /// Rotate the conversation's active share and return its absolute URL.
+    func createConversationShare(conversationID: String) async throws -> URL {
+        let capturedAuthEpoch = authManager.authEpoch
+        let encodedID = Self.encodedPathComponent(conversationID)
+        let request = try await authManager.authorizedRequest(
+            url: apiURL("/api/v1/chat/conversations/\(encodedID)/share"),
+            method: "POST"
+        )
+        let (data, response) = try await urlSession.data(for: request)
+        try validateNonIdempotentResponse(
+            response: response,
+            data: data,
+            capturedAuthEpoch: capturedAuthEpoch,
+            rejectedAccessToken: Self.bearerAccessToken(from: request)
+        )
+        let share = try JSONDecoder.chatDecoder.decode(ChatConversationShareResponse.self, from: data)
+        return try apiURL(share.shareURL)
+    }
+
+    func revokeConversationShare(conversationID: String) async throws {
+        let capturedAuthEpoch = authManager.authEpoch
+        let encodedID = Self.encodedPathComponent(conversationID)
+        let request = try await authManager.authorizedRequest(
+            url: apiURL("/api/v1/chat/conversations/\(encodedID)/share"),
+            method: "DELETE"
+        )
+        let (data, response) = try await urlSession.data(for: request)
+        try validateNonIdempotentResponse(
+            response: response,
+            data: data,
+            capturedAuthEpoch: capturedAuthEpoch,
+            rejectedAccessToken: Self.bearerAccessToken(from: request)
+        )
+    }
+
     /// Load only messages newer than `after` (ISO-8601 timestamp).
     ///
     /// Incremental loads after a turn or live event pass the timestamp of the
@@ -643,15 +686,7 @@ struct ChatAPIClient {
             return (data, response)
         }
 
-        let rejectedAccessToken: String? = request
-            .value(forHTTPHeaderField: "Authorization")
-            .flatMap { authorization -> String? in
-                let bearerPrefix = "Bearer "
-                guard authorization.hasPrefix(bearerPrefix) else {
-                    return nil
-                }
-                return String(authorization.dropFirst(bearerPrefix.count))
-            }
+        let rejectedAccessToken = Self.bearerAccessToken(from: request)
 
         do {
             try await authManager.refreshIfNeeded(
@@ -684,6 +719,36 @@ struct ChatAPIClient {
                 detail: detail,
                 retryAfter: Self.parseRetryAfter(httpResponse)
             )
+        }
+    }
+
+    /// A rejected mutation must never be replayed automatically because the server
+    /// may have applied it before returning. Latch re-authentication instead so a
+    /// subsequent user action starts with fresh credentials.
+    private func validateNonIdempotentResponse(
+        response: URLResponse,
+        data: Data,
+        capturedAuthEpoch: Int,
+        rejectedAccessToken: String?
+    ) throws {
+        if let statusCode = (response as? HTTPURLResponse)?.statusCode,
+           statusCode == 401 || statusCode == 403
+        {
+            if authManager.markAuthRequiredIfCurrent(
+                capturedEpoch: capturedAuthEpoch,
+                rejectedAccessToken: rejectedAccessToken
+            ) {
+                throw AuthError.noCredentials
+            }
+        }
+        try validate(response: response, data: data)
+    }
+
+    private static func bearerAccessToken(from request: URLRequest) -> String? {
+        request.value(forHTTPHeaderField: "Authorization").flatMap { authorization in
+            let bearerPrefix = "Bearer "
+            guard authorization.hasPrefix(bearerPrefix) else { return nil }
+            return String(authorization.dropFirst(bearerPrefix.count))
         }
     }
 
@@ -831,6 +896,18 @@ private struct ChatSendMessageResponse: Decodable {
     enum CodingKeys: String, CodingKey {
         case reply
         case conversationID = "conversation_id"
+    }
+}
+
+private struct ChatConversationShareStatusResponse: Decodable {
+    let active: Bool
+}
+
+private struct ChatConversationShareResponse: Decodable {
+    let shareURL: String
+
+    enum CodingKeys: String, CodingKey {
+        case shareURL = "share_url"
     }
 }
 

@@ -671,10 +671,12 @@ final class ChatViewModelTests: XCTestCase {
         let model = makeViewModel(conversationID: nil)
         await model.selectConversation("web_conv_loaded")
         XCTAssertFalse(model.messages.isEmpty)
+        XCTAssertEqual(model.shareableConversationID, "web_conv_loaded")
         model.draftText = "half-written question"
 
         model.changeProfile(to: "research")
 
+        XCTAssertNil(model.shareableConversationID)
         XCTAssertNotEqual(
             model.conversationID,
             "web_conv_loaded",

@@ -86,6 +86,10 @@ final class FamilyAssistantUITests: XCTestCase {
         openSeededConversationIfNeeded()
 
         XCTAssertTrue(app.staticTexts["Milk and apples."].waitForExistence(timeout: 20))
+        XCTAssertTrue(
+            app.buttons["share-conversation"].waitForExistence(timeout: 10),
+            "A persisted conversation should offer the owner-side share button."
+        )
         XCTAssertTrue(app.buttons["default_assistant"].exists || app.buttons["default_assistant, Profile"].exists)
         attachScreenshot(named: "native-chat-history")
     }

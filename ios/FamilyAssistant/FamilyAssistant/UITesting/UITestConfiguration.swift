@@ -352,6 +352,9 @@ private final class UITestBackendURLProtocol: URLProtocol {
         case ("POST", "/api/notes"), ("POST", "/api/notes/"):
             return saveNote(from: request)
         default:
+            if request.httpMethod == "GET", shareConversationID(from: request) != nil {
+                return .json(#"{"active":false}"#)
+            }
             if request.httpMethod == "GET", let conversationID = streamConversationID(from: request) {
                 return chatStreamResponse(conversationID: conversationID)
             }
@@ -609,6 +612,19 @@ private final class UITestBackendURLProtocol: URLProtocol {
         }
         let withoutPrefix = String(path.dropFirst("/api/v1/chat/conversations/".count))
         let encodedID = String(withoutPrefix.dropLast("/messages".count))
+        return encodedID.removingPercentEncoding
+    }
+
+    private static func shareConversationID(from request: URLRequest) -> String? {
+        guard let url = request.url,
+              let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath,
+              path.hasPrefix("/api/v1/chat/conversations/"),
+              path.hasSuffix("/share")
+        else {
+            return nil
+        }
+        let withoutPrefix = String(path.dropFirst("/api/v1/chat/conversations/".count))
+        let encodedID = String(withoutPrefix.dropLast("/share".count))
         return encodedID.removingPercentEncoding
     }
 

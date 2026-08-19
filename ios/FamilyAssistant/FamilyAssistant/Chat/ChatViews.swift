@@ -14,6 +14,7 @@ struct ChatRootView: View {
     // deterministically and stays in sync as the user opens threads / taps Back,
     // rather than letting the selection-before-data-loads race decide.
     @State private var preferredColumn: NavigationSplitViewColumn
+    let authManager: AuthManager
     let route: ChatRoute
 
     init(
@@ -28,6 +29,7 @@ struct ChatRootView: View {
         )
         _viewModel = State(initialValue: model)
         _preferredColumn = State(initialValue: model.conversationSelection == nil ? .sidebar : .detail)
+        self.authManager = authManager
         self.route = route
     }
 
@@ -54,7 +56,11 @@ struct ChatRootView: View {
                             LiveUpdatesIndicator(viewModel: viewModel)
                         }
                     }
-                    ToolbarItem(placement: .topBarTrailing) {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        ConversationShareToolbar(
+                            authManager: authManager,
+                            conversationID: viewModel.shareableConversationID
+                        )
                         ProfilePickerView(viewModel: viewModel)
                     }
                 }
@@ -118,6 +124,90 @@ struct ChatRootView: View {
             return
         }
         await viewModel.addSharedAttachments(batch)
+    }
+}
+
+private struct ConversationShareToolbar: View {
+    let conversationID: String?
+
+    @State private var shareViewModel: ConversationShareViewModel
+    @State private var shareURL: URL?
+
+    init(authManager: AuthManager, conversationID: String?) {
+        self.conversationID = conversationID
+        _shareViewModel = State(
+            initialValue: ConversationShareViewModel(
+                apiClient: ChatAPIClient(authManager: authManager)
+            )
+        )
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            switch shareViewModel.status {
+            case .unavailable:
+                EmptyView()
+            case .loading:
+                Button {} label: {
+                    Label("Loading sharing status", systemImage: "square.and.arrow.up")
+                }
+                .disabled(true)
+            case .inactive:
+                shareButton(label: "Share Conversation")
+            case .active:
+                shareButton(label: "Replace Shared Conversation Link")
+                Button(role: .destructive) {
+                    guard let conversationID else { return }
+                    Task { await shareViewModel.revokeShare(conversationID: conversationID) }
+                } label: {
+                    Label("Stop Sharing Conversation", systemImage: "link.badge.minus")
+                }
+                .disabled(shareViewModel.isUpdating)
+                .accessibilityIdentifier("stop-sharing-conversation")
+            case .failed:
+                Button {
+                    Task { await shareViewModel.loadStatus(conversationID: conversationID) }
+                } label: {
+                    Label("Retry Loading Sharing Status", systemImage: "arrow.clockwise")
+                }
+                .accessibilityIdentifier("retry-sharing-status")
+            }
+        }
+        .task(id: conversationID) {
+            await shareViewModel.loadStatus(conversationID: conversationID)
+        }
+        .sheet(
+            item: Binding(
+                get: { shareURL.map(ShareURL.init(url:)) },
+                set: { if $0 == nil { shareURL = nil } }
+            )
+        ) { item in
+            ShareSheet(activityItems: [item.url])
+        }
+        .alert(
+            "Sharing Error",
+            isPresented: Binding(
+                get: { shareViewModel.actionErrorMessage != nil },
+                set: { if !$0 { shareViewModel.actionErrorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(shareViewModel.actionErrorMessage ?? "")
+        }
+    }
+
+    private func shareButton(label: String) -> some View {
+        Button {
+            guard let conversationID else { return }
+            Task {
+                shareURL = await shareViewModel.createShare(conversationID: conversationID)
+            }
+        } label: {
+            Label(label, systemImage: "square.and.arrow.up")
+        }
+        .disabled(shareViewModel.isUpdating)
+        .accessibilityIdentifier("share-conversation")
     }
 }
 
