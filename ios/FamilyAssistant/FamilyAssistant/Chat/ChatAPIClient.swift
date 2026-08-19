@@ -82,7 +82,8 @@ struct ChatAPIClient {
         try validateNonIdempotentResponse(
             response: response,
             data: data,
-            capturedAuthEpoch: capturedAuthEpoch
+            capturedAuthEpoch: capturedAuthEpoch,
+            rejectedAccessToken: Self.bearerAccessToken(from: request)
         )
         let share = try JSONDecoder.chatDecoder.decode(ChatConversationShareResponse.self, from: data)
         return try apiURL(share.shareURL)
@@ -99,7 +100,8 @@ struct ChatAPIClient {
         try validateNonIdempotentResponse(
             response: response,
             data: data,
-            capturedAuthEpoch: capturedAuthEpoch
+            capturedAuthEpoch: capturedAuthEpoch,
+            rejectedAccessToken: Self.bearerAccessToken(from: request)
         )
     }
 
@@ -684,15 +686,7 @@ struct ChatAPIClient {
             return (data, response)
         }
 
-        let rejectedAccessToken: String? = request
-            .value(forHTTPHeaderField: "Authorization")
-            .flatMap { authorization -> String? in
-                let bearerPrefix = "Bearer "
-                guard authorization.hasPrefix(bearerPrefix) else {
-                    return nil
-                }
-                return String(authorization.dropFirst(bearerPrefix.count))
-            }
+        let rejectedAccessToken = Self.bearerAccessToken(from: request)
 
         do {
             try await authManager.refreshIfNeeded(
@@ -734,15 +728,28 @@ struct ChatAPIClient {
     private func validateNonIdempotentResponse(
         response: URLResponse,
         data: Data,
-        capturedAuthEpoch: Int
+        capturedAuthEpoch: Int,
+        rejectedAccessToken: String?
     ) throws {
         if let statusCode = (response as? HTTPURLResponse)?.statusCode,
            statusCode == 401 || statusCode == 403
         {
-            authManager.markAuthRequiredIfCurrent(capturedEpoch: capturedAuthEpoch)
-            throw AuthError.noCredentials
+            if authManager.markAuthRequiredIfCurrent(
+                capturedEpoch: capturedAuthEpoch,
+                rejectedAccessToken: rejectedAccessToken
+            ) {
+                throw AuthError.noCredentials
+            }
         }
         try validate(response: response, data: data)
+    }
+
+    private static func bearerAccessToken(from request: URLRequest) -> String? {
+        request.value(forHTTPHeaderField: "Authorization").flatMap { authorization in
+            let bearerPrefix = "Bearer "
+            guard authorization.hasPrefix(bearerPrefix) else { return nil }
+            return String(authorization.dropFirst(bearerPrefix.count))
+        }
     }
 
     /// Parse a `Retry-After` response header into seconds. Handles the delta-seconds

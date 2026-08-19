@@ -285,6 +285,32 @@ final class ChatAPIClientTests: XCTestCase {
         }
     }
 
+    func testConversationShareMutationPreservesConcurrentlyRotatedCredentials() async throws {
+        let requestCount = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(self.apiToken)")
+            _ = requestCount.increment()
+            KeychainHelper.save(key: "fa_api_token", string: "concurrently-rotated-token")
+            return .json(#"{"detail":"expired token"}"#, statusCode: 401)
+        }
+        let authManager = makeAuthManager()
+
+        do {
+            _ = try await ChatAPIClient(authManager: authManager)
+                .createConversationShare(conversationID: "web_conv_share")
+            XCTFail("Expected the stale mutation to fail")
+        } catch let ChatAPIError.server(statusCode, _, _) {
+            XCTAssertEqual(statusCode, 401)
+            XCTAssertEqual(requestCount.value, 1)
+            XCTAssertFalse(authManager.authRequired)
+            XCTAssertEqual(
+                KeychainHelper.readString(key: "fa_api_token"),
+                "concurrently-rotated-token"
+            )
+        }
+    }
+
     func testProfilesDecodeDirectChatProfiles() async throws {
         ChatMockBackendURLProtocol.respond { request in
             XCTAssertEqual(request.httpMethod, "GET")
