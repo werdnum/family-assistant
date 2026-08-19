@@ -108,6 +108,9 @@ async def test_deep_research_stream_initiation(mock_genai_client: MagicMock) -> 
     assert call_kwargs["stream"] is True
     # previous_interaction_id should be absent if not provided
     assert "previous_interaction_id" not in call_kwargs
+    # Deep Research has no sandbox, so it sends no environment -- the field is
+    # required only by Antigravity, which always states its own.
+    assert "environment" not in call_kwargs
 
     # Verify events
     # 1. Content event

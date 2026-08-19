@@ -377,10 +377,15 @@ async def test_submit_path_merges_mounted_sources_with_egress_policy(
 
 
 @pytest.mark.asyncio
-async def test_no_environment_block_without_sources_or_egress_policy(
+async def test_default_sandbox_is_stated_rather_than_omitted(
     mock_genai_client: MagicMock,
 ) -> None:
-    """The shipped profile gets a default sandbox, not an empty environment object."""
+    """The shipped profile mounts nothing and sets no egress policy.
+
+    Omitting ``environment`` entirely does not get the API's default sandbox --
+    it gets ``400 Missing required field 'environment'``, which failed every
+    run on a profile that configures no ``antigravity_config.environment``.
+    """
     client = GoogleGenAIClient(
         api_key="test",
         model=ANTIGRAVITY_AGENT_ID,
@@ -393,7 +398,27 @@ async def test_no_environment_block_without_sources_or_egress_policy(
     await client.start_agent_interaction([UserMessage(content="Do the thing.")])
 
     call_kwargs = mock_genai_client.aio.interactions.create.call_args.kwargs
-    assert "environment" not in call_kwargs
+    assert call_kwargs["environment"] == {"type": "remote"}
+
+
+@pytest.mark.asyncio
+async def test_interactive_path_also_states_the_default_sandbox(
+    mock_genai_client: MagicMock,
+) -> None:
+    """`/coder` run directly hit the same rejection as a delegated run."""
+    client = GoogleGenAIClient(
+        api_key="test",
+        model=ANTIGRAVITY_AGENT_ID,
+        antigravity_model="gemini-3.7-flash",
+    )
+    mock_genai_client.aio.interactions.create = AsyncMock(
+        return_value=_completing_stream("inter_ag_plain_stream", "Done.")
+    )
+
+    await _drain_stream(client, [UserMessage(content="Do the thing.")])
+
+    call_kwargs = mock_genai_client.aio.interactions.create.call_args.kwargs
+    assert call_kwargs["environment"] == {"type": "remote"}
 
 
 @pytest.mark.asyncio
