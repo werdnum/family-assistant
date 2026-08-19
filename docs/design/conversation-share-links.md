@@ -2,14 +2,15 @@
 
 ## Goal
 
-Let the owner of a web conversation give another authorized Family Assistant user a link to a
-read-only view. The link is a privacy speedbump between household members, not an authorization
-substitute: every request still requires an authenticated, allowlisted user.
+Let a conversation owner give another authorized Family Assistant user a link to a read-only view.
+The link is a privacy speedbump between household members, not an authorization substitute: every
+request still requires an authenticated, allowlisted user.
 
 ## User experience
 
 - A persisted conversation has a **Share** action in the chat header.
-- Sharing rotates the conversation's one active link and copies the replacement URL.
+- Sharing rotates the conversation's one active link. The web app copies the replacement URL; the
+  native iOS app opens the system share sheet with it.
 - The owner can stop sharing, immediately invalidating the link.
 - A recipient opens `/shared/conversations/{token}` and sees a dedicated read-only transcript.
 - On `assistant.andrewgarrett.dev`, the iOS Associated Domains entitlement and AASA file route that

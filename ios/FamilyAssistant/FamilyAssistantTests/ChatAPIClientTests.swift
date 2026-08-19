@@ -193,6 +193,66 @@ final class ChatAPIClientTests: XCTestCase {
         }
     }
 
+    func testConversationShareControlsLoadRotateAndRevoke() async throws {
+        var methods: [String] = []
+        ChatMockBackendURLProtocol.respond { request in
+            XCTAssertEqual(
+                request.url?.path,
+                "/api/v1/chat/conversations/web_conv_share/encoded/share"
+            )
+            XCTAssertTrue(request.url?.absoluteString.contains("web_conv_share%2Fencoded") == true)
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer \(self.apiToken)")
+            let method = request.httpMethod ?? ""
+            methods.append(method)
+            switch method {
+            case "GET":
+                return .json(#"{"active":false}"#)
+            case "POST":
+                return .json(#"{"share_url":"/shared/conversations/new-token"}"#)
+            case "DELETE":
+                return .json("", statusCode: 204)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+        let viewModel = ConversationShareViewModel(
+            apiClient: makeClient(),
+            errorReporter: ErrorReporter(spoolDirectory: nil)
+        )
+
+        await viewModel.loadStatus(conversationID: "web_conv_share/encoded")
+        XCTAssertEqual(viewModel.status, .inactive)
+
+        let url = await viewModel.createShare(conversationID: "web_conv_share/encoded")
+        XCTAssertEqual(url?.absoluteString, "https://assistant.example.test/shared/conversations/new-token")
+        XCTAssertEqual(viewModel.status, .active)
+
+        await viewModel.revokeShare(conversationID: "web_conv_share/encoded")
+        XCTAssertEqual(viewModel.status, .inactive)
+        XCTAssertEqual(methods, ["GET", "POST", "DELETE"])
+    }
+
+    func testConversationShareStatusFailureCanRetry() async {
+        var requestCount = 0
+        ChatMockBackendURLProtocol.respond { _ in
+            requestCount += 1
+            if requestCount == 1 {
+                return .json(#"{"detail":"temporarily unavailable"}"#, statusCode: 503)
+            }
+            return .json(#"{"active":true}"#)
+        }
+        let viewModel = ConversationShareViewModel(
+            apiClient: makeClient(),
+            errorReporter: ErrorReporter(spoolDirectory: nil)
+        )
+
+        await viewModel.loadStatus(conversationID: "web_conv_share")
+        XCTAssertEqual(viewModel.status, .failed)
+
+        await viewModel.loadStatus(conversationID: "web_conv_share")
+        XCTAssertEqual(viewModel.status, .active)
+    }
+
     func testProfilesDecodeDirectChatProfiles() async throws {
         ChatMockBackendURLProtocol.respond { request in
             XCTAssertEqual(request.httpMethod, "GET")
