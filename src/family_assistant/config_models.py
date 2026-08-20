@@ -746,31 +746,6 @@ class AttachmentConfig(BaseModel):
     large_tool_result_threshold_kb: int = (
         100  # Auto-convert to attachment if > this size (in KiB)
     )
-    allowed_mime_types: list[str] = Field(
-        default_factory=lambda: [
-            "image/jpeg",
-            "image/png",
-            "image/gif",
-            "image/webp",
-            "image/bmp",
-            "image/tiff",
-            "application/pdf",
-            "text/plain",
-            "text/markdown",
-            "application/json",
-            "text/csv",
-            "video/mp4",
-            "video/webm",
-            "video/ogg",
-            "audio/mpeg",
-            "audio/wav",
-            "audio/ogg",
-            "audio/webm",
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        ]
-    )
 
 
 def _normalize_string_set(values: object, label: str) -> set[str]:

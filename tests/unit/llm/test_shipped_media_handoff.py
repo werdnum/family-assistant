@@ -207,27 +207,6 @@ def test_context_provider_names_match_config() -> None:
     assert live_names == CONTEXT_PROVIDER_NAMES
 
 
-def test_shipped_config_admits_the_media_the_handoff_transcribes() -> None:
-    """A type absent from the allowlist is rejected before any model sees it.
-
-    `AttachmentRegistry` refuses an upload whose MIME type is not in
-    `attachment_config.allowed_mime_types`, so the handoff can only ever run for
-    types listed there. This was shipping without any `audio/*`: the code default
-    in `attachment_registry.py` includes them, but `defaults.yaml` supplies the
-    key and therefore wins, which made audio work under test and fail in
-    production — the profile and its note were reachable only in theory.
-
-    Telegram sends audio as `audio/mpeg` and voice notes as `audio/ogg`.
-    """
-    allowed = set(_load_defaults().attachment_config.allowed_mime_types)
-
-    assert {"audio/mpeg", "audio/ogg", "audio/wav", "audio/webm"} <= allowed
-    assert {"video/mp4", "video/webm", "video/ogg"} <= allowed
-    # The two the Responses API reads directly, for contrast: if these ever left
-    # the list the OpenAI path would break rather than degrade to the handoff.
-    assert {"image/png", "application/pdf"} <= allowed
-
-
 # A test config replaces `global_tools_policy` wholesale, which strands the
 # exclusions of every shipped profile that withholds a grant -- validation
 # rejects an exclusion naming a tool nothing grants. These tests are about how

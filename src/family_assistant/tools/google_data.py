@@ -814,7 +814,8 @@ async def _lookup_attachment_part(
     Gmail hands out a fresh ``attachmentId`` token on each ``messages.get`` for
     the same message: matching on the attachment id alone finds nothing whenever
     the token rotated between the caller's fetch and this one, and the file then
-    gets stored as ``application/octet-stream``, which the allowlist rejects.
+    gets stored as ``application/octet-stream``, losing the type a model needs
+    to decide how to read it.
     """
     message = (
         await _google_request(
@@ -868,8 +869,9 @@ async def _resolve_content_type(
 
     Gmail echoes the sender's ``Content-Type``, and plenty of mailers label
     every attachment ``application/octet-stream``, so a declared generic type is
-    treated as no answer at all rather than a truthy one — the registry's
-    allowlist rejects it, and the bytes usually say what the file really is.
+    treated as no answer at all rather than a truthy one — the bytes usually say
+    what the file really is, and a real type is what tells a model whether it
+    can read the file at all.
     Sniffing beats the part filename because it cannot be talked into
     reclassifying content: only formats with no magic number (CSV, plain text)
     fall through to the sender-supplied name.

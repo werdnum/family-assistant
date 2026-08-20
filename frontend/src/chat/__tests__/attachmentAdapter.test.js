@@ -54,27 +54,11 @@ describe('FileAttachmentAdapter', () => {
   });
 
   describe('constructor', () => {
-    test('sets correct accept pattern', () => {
-      expect(adapter.accept).toBe(
-        'image/jpeg,image/png,image/gif,image/webp,text/plain,text/markdown,application/pdf,audio/mpeg,audio/wav,audio/ogg,audio/webm,video/mp4,video/webm,video/ogg'
-      );
-    });
-
-    // A type absent here is rejected before upload, so the backend transcription
-    // handoff never sees it. These must stay in step with
-    // attachment_config.allowed_mime_types in defaults.yaml.
-    test('accepts the audio and video the assistant can transcribe', () => {
-      for (const type of [
-        'audio/mpeg',
-        'audio/wav',
-        'audio/ogg',
-        'audio/webm',
-        'video/mp4',
-        'video/webm',
-        'video/ogg',
-      ]) {
-        expect(adapter.accept).toContain(type);
-      }
+    // The picker offers every file type: nothing is filtered by type on the
+    // way in, so a narrower pattern here would only hide files the backend
+    // would have accepted.
+    test('accepts every file type', () => {
+      expect(adapter.accept).toBe('*/*');
     });
   });
 
@@ -110,9 +94,8 @@ describe('FileAttachmentAdapter', () => {
       expect(uploads).toEqual([]);
     });
 
-    // The backend processes image, video, audio and document and ignores
-    // anything else, so a media file left as 'file' is uploaded and then dropped
-    // from the turn: the model answers without it and nothing reports an error.
+    // Media keeps its own label so the backend hands it to the model as media
+    // rather than as a generic document.
     test('classifies audio and video as their backend types', async () => {
       for (const [mimeType, expected] of [
         ['audio/mpeg', 'audio'],
@@ -166,19 +149,24 @@ describe('FileAttachmentAdapter', () => {
       expect(result.status.message).toContain('size exceeds');
     });
 
-    test('returns error for invalid file type', async () => {
-      const file = createMockFile(
-        'document.docx',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        1024
-      );
+    // Nothing is rejected for its type: a file the model cannot read directly
+    // is still one the assistant can open with its attachment tools, and
+    // 'document' is the label that survives into later turns.
+    test('accepts a file of any type as a document', async () => {
+      for (const [filename, mimeType] of [
+        ['model.stl', 'model/stl'],
+        ['books.qbo', 'application/vnd.intu.qbo'],
+        ['archive.bin', 'application/octet-stream'],
+        ['unlabelled', ''],
+      ]) {
+        const file = createMockFile(filename, mimeType, 1024);
 
-      const result = await adapter.add({ file });
+        const result = await adapter.add({ file });
 
-      expect(result.type).toBe('file');
-      expect(result.name).toBe('document.docx');
-      expect(result.status.type).toBe('incomplete');
-      expect(result.status.message).toContain('Unsupported file type');
+        expect(result.type).toBe('document');
+        expect(result.name).toBe(filename);
+        expect(result.status.type).toBe('requires-action');
+      }
     });
 
     test('returns error for file with empty name', async () => {
@@ -344,6 +332,13 @@ describe('CompositeAttachmentAdapter', () => {
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
       );
       expect(result).toBeUndefined();
+    });
+
+    test.each(['*', '*/*'])('finds adapter accepting everything with %s', (accept) => {
+      mockImageAdapter.accept = accept;
+
+      expect(compositeAdapter.getAdapterForType('model/stl')).toBe(mockImageAdapter);
+      expect(compositeAdapter.getAdapterForType('')).toBe(mockImageAdapter);
     });
   });
 

@@ -589,10 +589,6 @@ struct ChatAPIClient {
         guard fileSize <= ChatConstants.maxAttachmentSizeBytes else {
             throw ChatAPIError.validation("File size exceeds 100MB.")
         }
-        guard ChatConstants.allowedAttachmentMIMETypes.contains(mimeType) else {
-            throw ChatAPIError.validation("Unsupported file type: \(mimeType).")
-        }
-
         var request = try await authManager.authorizedRequest(
             url: apiURL("/api/attachments/upload"),
             method: "POST"

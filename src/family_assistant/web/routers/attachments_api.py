@@ -27,6 +27,14 @@ logger = logging.getLogger(__name__)
 attachments_api_router = APIRouter()
 
 
+# An attachment is stored whatever its type, so a served file may be one the
+# browser would happily run on this origin (HTML, SVG) if it decided the type
+# for itself. It is handed over as a download rather than rendered -- Starlette
+# sends `Content-Disposition: attachment` whenever a filename is given -- and
+# this stops the type being second-guessed either way.
+_NOSNIFF = {"X-Content-Type-Options": "nosniff"}
+
+
 class AttachmentUploadResponse(BaseModel):
     """Response model for attachment upload."""
 
@@ -186,11 +194,13 @@ async def serve_attachment(
         cache_headers = {
             "Cache-Control": "private, no-store",
             "ETag": f'"{attachment_id}"',
+            **_NOSNIFF,
         }
     else:
         cache_headers = {
             "Cache-Control": "public, max-age=31536000, immutable",  # Cache for 1 year (files are immutable)
             "ETag": f'"{attachment_id}"',  # Use attachment ID as ETag
+            **_NOSNIFF,
         }
 
     # Return file response with proper headers

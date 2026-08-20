@@ -1790,33 +1790,6 @@ attachment_config:
   # Storage path for chat attachments
   # Can be overridden by chat_attachment_storage_path for backward compatibility
   storage_path: "/tmp/chat_attachments"
-  # Allowed MIME types for attachments
-  allowed_mime_types:
-    - "image/jpeg"
-    - "image/png"
-    - "image/gif"
-    - "image/webp"
-    - "image/bmp"
-    - "image/tiff"
-    - "application/pdf"
-    - "text/plain"
-    - "text/markdown"
-    - "application/json"
-    - "text/csv"
-    # Audio and video have to be admitted here or they never reach a model: an
-    # upload whose type is absent from this list is rejected at registration, so
-    # the voice-note handoff to media_analyst would be advertised and unreachable.
-    # Telegram sends audio as audio/mpeg and voice notes as audio/ogg.
-    - "video/mp4"
-    - "video/webm"
-    - "video/ogg"
-    - "audio/mpeg"
-    - "audio/wav"
-    - "audio/ogg"
-    - "audio/webm"
-    - "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    - "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    - "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 # AI Worker Sandbox configuration
 # Enables spawning isolated AI coding agents for complex computing tasks
 ai_worker_config:
