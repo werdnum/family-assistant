@@ -14,6 +14,7 @@ from family_assistant.services.attachment_registry import (
 )
 from family_assistant.services.attachment_registry import (
     AttachmentRegistry,
+    AttachmentTooLargeError,
 )
 from family_assistant.storage.database import Database
 from family_assistant.web.dependencies import (
@@ -107,6 +108,14 @@ async def upload_attachment(
     except HTTPException:
         # Re-raise HTTPExceptions from the service
         raise
+    except AttachmentTooLargeError as e:
+        # The size and the limit are the whole of what a user can act on, and
+        # media is held to a tighter limit than other files, so the message has
+        # to reach them rather than becoming a generic failure.
+        raise HTTPException(
+            status_code=413,
+            detail=str(e),
+        ) from e
     except Exception as e:
         logger.exception(f"Unexpected error during attachment upload: {e}")
         raise HTTPException(

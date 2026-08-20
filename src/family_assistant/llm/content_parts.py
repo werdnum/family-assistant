@@ -74,3 +74,22 @@ def image_url_content(
 def attachment_content(attachment_id: str) -> AttachmentContentPartDict:
     """Create an attachment reference content part dict."""
     return {"type": "attachment", "attachment_id": attachment_id}
+
+
+# What a provider is willing to receive as inline bytes. Anything outside this
+# set is described instead: an adapter handed an inline part for a type it
+# cannot read either rejects the whole request or drops the file, and the model
+# then answers about a file it never received. A description costs the bytes but
+# names the attachment, which is what lets the assistant open it with its
+# attachment tools or hand it to a profile that can read it.
+_INLINEABLE_MIME_PREFIXES = ("image/", "audio/", "video/", "text/")
+_INLINEABLE_MIME_TYPES = frozenset({"application/pdf", "application/json"})
+
+
+def can_inline_attachment_bytes(mime_type: str | None) -> bool:
+    """Whether an attachment of this type may be sent to a model as bytes."""
+    if not mime_type:
+        return False
+    return mime_type in _INLINEABLE_MIME_TYPES or mime_type.startswith(
+        _INLINEABLE_MIME_PREFIXES
+    )

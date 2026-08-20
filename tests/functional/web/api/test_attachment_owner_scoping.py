@@ -111,6 +111,20 @@ async def test_serve_ownerless_attachment_keeps_public_immutable_cache(
 
 
 @pytest.mark.asyncio
+async def test_upload_of_an_oversized_file_reports_the_limit(
+    api_test_client: AsyncClient,
+) -> None:
+    """An upload refused for its size says so, with the limit."""
+    response = await api_test_client.post(
+        "/api/attachments/upload",
+        files={"file": ("huge.ogg", b"\0" * (30 * 1024 * 1024), "audio/ogg")},
+    )
+
+    assert response.status_code == 413
+    assert "exceeds maximum allowed size" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_serve_refuses_to_let_the_browser_sniff_the_type(
     api_test_client: AsyncClient,
     db_engine: AsyncEngine,

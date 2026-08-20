@@ -129,6 +129,16 @@ DEFAULT_MAX_MULTIMODAL_SIZE = 20 * 1024 * 1024  # 20MB
 MULTIMODAL_MIME_PREFIXES = ("image/", "audio/", "video/")
 
 
+class AttachmentTooLargeError(ValueError):
+    """An attachment exceeded the size limit that applies to its MIME type.
+
+    Distinct from any other `ValueError` the registry raises so a route can
+    answer with the limit and the actual size, which is the only part of the
+    refusal a user can act on. Handed back as a generic 500, the same refusal
+    reads as the server having broken.
+    """
+
+
 class AttachmentMetadata:
     """Metadata container for attachment information."""
 
@@ -1491,7 +1501,7 @@ class AttachmentRegistry:
             else self.max_file_size
         )
         if len(file_content) > size_limit:
-            raise ValueError(
+            raise AttachmentTooLargeError(
                 f"File size {len(file_content)} bytes exceeds maximum allowed size of {size_limit} bytes"
             )
 
