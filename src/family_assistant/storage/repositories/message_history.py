@@ -2550,6 +2550,7 @@ class MessageHistoryRepository(BaseRepository):
                                 ImageUrlContentPart(
                                     type="image_url",
                                     image_url={"url": att["content_url"]},
+                                    attachment_id=att.get("attachment_id"),
                                 )
                             )
                         else:

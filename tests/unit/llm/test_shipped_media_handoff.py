@@ -397,6 +397,37 @@ def test_the_anthropic_fallback_still_learns_what_arrived() -> None:
     assert not any(block.get("type") == "image" for block in blocks)
 
 
+@pytest.mark.parametrize(
+    "mime_type", ["image/svg+xml", "audio/ogg", "video/mp4", "application/pdf"]
+)
+def test_a_replayed_media_part_anthropic_cannot_read_is_named(mime_type: str) -> None:
+    """History replay has no text part to fall back on.
+
+    The injection path pairs its media with a description, so dropping the
+    media part there still tells the model what arrived. A message rebuilt
+    from history is only the parts, and skipping one silently left the model
+    answering about a file it never saw.
+    """
+    message = UserMessage(
+        content=[
+            ImageUrlContentPart(
+                type="image_url",
+                image_url={"url": f"data:{mime_type};base64,AAAA"},
+                attachment_id="att-9",
+            )
+        ]
+    )
+
+    blocks = AnthropicClient(
+        api_key="test-key", model="claude-fable-5"
+    )._convert_user_content(message)
+
+    assert isinstance(blocks, list)
+    rendered = " ".join(block["text"] for block in blocks if block["type"] == "text")
+    assert mime_type in rendered
+    assert "att-9" in rendered
+
+
 def _google_injected(mime_type: str) -> UserMessage:
     client = GoogleGenAIClient(api_key="test-key", model="gemini-3.7-flash")
     return client.create_attachment_injection(
