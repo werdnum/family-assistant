@@ -15,6 +15,7 @@ from sqlalchemy.sql import func as sql_func
 from sqlalchemy.sql import functions as func
 from sqlalchemy.sql.elements import ColumnElement
 
+from family_assistant.llm.content_parts import can_inline_attachment_bytes
 from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.llm.messages import (
     AssistantMessage,
@@ -117,6 +118,36 @@ def _is_pre_epoch_row(timestamp: object, history_taint_epoch: datetime) -> bool:
     if timestamp.tzinfo is None:
         timestamp = timestamp.replace(tzinfo=UTC)
     return timestamp < history_taint_epoch
+
+
+# ast-grep-ignore: no-dict-any - attachment metadata as stored on the history row
+def _attachment_mime_type(attachment: Mapping[str, Any]) -> str:
+    """The MIME type a stored attachment row carries, under either key."""
+    for key in ("mime_type", "content_type"):
+        value = attachment.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
+# ast-grep-ignore: no-dict-any - attachment metadata as stored on the history row
+def _describe_attachment(attachment: Mapping[str, Any]) -> str:
+    """Name an attachment whose bytes are not being replayed to the model.
+
+    The id is the load-bearing part: it is what the assistant passes to its
+    attachment tools, or to a profile that can read the file, so a type no
+    provider takes inline is still reachable on a later turn.
+    """
+    described = [
+        str(value)
+        for value in (
+            attachment.get("filename") or attachment.get("description") or "attachment",
+            _attachment_mime_type(attachment),
+            attachment.get("attachment_id"),
+        )
+        if value
+    ]
+    return f"[File: {', '.join(described)}]"
 
 
 def _message_history_taint_metadata(
@@ -2497,35 +2528,37 @@ class MessageHistoryRepository(BaseRepository):
             text_content_str = msg.get("content") or ""
             attachments = msg.get("attachments")
 
-            # Reconstruct multimodal content from attachments if present
-            # Attachments with content_url that are images/video/audio/PDF should be
-            # included as content parts for the LLM
+            # Replay every attachment the message carried. The MIME type decides
+            # how, not the stored label: bytes a provider can read are inlined
+            # from their URL, and anything else is named instead, because an
+            # inline part of a type the adapter cannot read costs the turn
+            # rather than the file. Keying on the label instead dropped whatever
+            # a client had labelled generically, so a later turn answered as
+            # though the file had never been sent.
             if attachments and isinstance(attachments, list):
-                multimodal_attachments = [
-                    att
-                    for att in attachments
-                    if att.get("content_url")
-                    and (
-                        att.get("type") in {"image", "video", "audio", "document"}
-                        or att.get("content_type") == "application/pdf"
-                        or att.get("mime_type") == "application/pdf"
-                    )
-                ]
+                replayable = [att for att in attachments if att.get("content_url")]
 
-                if multimodal_attachments:
-                    # Build multimodal content: text first, then attachment URLs
+                if replayable:
                     content_parts: list[ContentPart] = []
                     if text_content_str:
                         content_parts.append(
                             TextContentPart(type="text", text=text_content_str)
                         )
-                    for att in multimodal_attachments:
-                        content_parts.append(
-                            ImageUrlContentPart(
-                                type="image_url",
-                                image_url={"url": att["content_url"]},
+                    for att in replayable:
+                        if can_inline_attachment_bytes(_attachment_mime_type(att)):
+                            content_parts.append(
+                                ImageUrlContentPart(
+                                    type="image_url",
+                                    image_url={"url": att["content_url"]},
+                                    attachment_id=att.get("attachment_id"),
+                                )
                             )
-                        )
+                        else:
+                            content_parts.append(
+                                TextContentPart(
+                                    type="text", text=_describe_attachment(att)
+                                )
+                            )
 
                     return UserMessage(
                         content=content_parts,

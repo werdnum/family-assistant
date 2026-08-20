@@ -351,6 +351,71 @@ async def test_chat_api_accepts_native_ios_uploaded_attachment_reference_and_loa
 
 
 @pytest.mark.asyncio
+async def test_chat_api_passes_through_an_attachment_of_an_unrecognised_type(
+    api_test_client: AsyncClient,
+    api_mock_llm_client: RuleBasedMockLLMClient,
+    attachment_registry_fixture: AttachmentRegistry,
+    db_engine: AsyncEngine,
+) -> None:
+    """A type the client has no case for still reaches the model.
+
+    A client labels what it recognises and falls back to something generic for
+    the rest. Gating on that label meant the upload succeeded, the turn ran
+    without the file and the model answered as though nothing was attached --
+    a silent drop the user could only see as the assistant ignoring them.
+    """
+    conversation_id = "web_conv_unrecognised_type"
+    db_context = Database(engine=db_engine)
+    attachment = await attachment_registry_fixture.register_user_attachment(
+        db_context=db_context,
+        content=b"solid bracket\n",
+        filename="bracket.stl",
+        mime_type="model/stl",
+        conversation_id=None,
+        user_id="test_user",
+    )
+
+    def model_file_matcher(args: dict) -> bool:
+        return any(
+            attachment.attachment_id
+            in extract_text_from_content(get_message_content(msg))
+            for msg in args.get("messages", [])
+        )
+
+    api_mock_llm_client.rules = [
+        (model_file_matcher, LLMOutput(content="I can see the 3D model."))
+    ]
+    api_mock_llm_client.default_response = LLMOutput(
+        content="Attachment injection was missing."
+    )
+
+    response = await run_chat_turn_stream(
+        api_test_client,
+        {
+            "prompt": "What is this?",
+            "conversation_id": conversation_id,
+            "profile_id": "default_assistant",
+            "interface_type": "web",
+            "attachments": [
+                {
+                    "type": "file",
+                    "content": f"/api/attachments/{attachment.attachment_id}",
+                    "name": "bracket.stl",
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    streamed_text = ""
+    for line in response.content.decode("utf-8").splitlines():
+        if line.startswith("data: "):
+            data = json.loads(line.removeprefix("data: "))
+            streamed_text += data.get("content", "")
+    assert streamed_text == "I can see the 3D model."
+
+
+@pytest.mark.asyncio
 async def test_chat_api_no_attachments(
     api_test_client: AsyncClient, api_mock_llm_client: RuleBasedMockLLMClient
 ) -> None:

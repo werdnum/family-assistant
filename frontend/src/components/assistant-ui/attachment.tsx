@@ -249,7 +249,6 @@ export const ComposerAddAttachment: FC = () => {
     <>
       <input
         type="file"
-        accept="image/png,image/jpeg,image/gif,image/webp,text/plain,text/markdown,application/pdf,audio/mpeg,audio/wav,audio/ogg,audio/webm,video/mp4,video/webm,video/ogg"
         multiple
         className="hidden"
         id="composer-file-input"

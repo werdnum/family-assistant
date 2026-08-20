@@ -12,18 +12,13 @@ move between tools and people.
 - **iOS app:** take a photo with the camera, choose an image or file from the composer, paste a
   copied image, or share a file into the app from another app.
 
-**Supported types** depend on where you're sending from:
+**Any file type is accepted**, from any of those places — a 3D model, an accounts export, a firmware
+image, a zip archive. What differs is how much the assistant can do with one: it reads images,
+audio, video, PDFs and text directly, and for anything else it works from the file's name, type and
+whatever its tools can extract, so say what a file is when you send something unusual.
 
-- **Web chat:** JPEG, PNG, GIF, and WebP images; PDF, plain text, and Markdown; MP3, WAV, OGG, and
-  WebM audio; MP4, WebM, and OGG video.
-- **iOS chat:** JPEG, PNG, GIF, and WebP images, plus PDF, plain text, and Markdown.
-- **Telegram:** images, documents, audio files, video, and voice notes — including formats the web
-  chat won't take.
-- **Upload Document page:** PDF, TXT, DOCX, DOC, HTML, and MD — documents rather than images, since
-  the point of that page is indexing text you can search later.
-
-If a file is rejected, converting it to a nearby format (an image to PNG, a spreadsheet to CSV sent
-through Telegram) is usually the quickest way through.
+The **Upload Document page** is the exception, and deliberately so: it indexes text you can search
+later, so it takes PDF, TXT, DOCX, DOC, HTML, and MD.
 
 Size limits apply: typically 20 MB for anything a model looks at or listens to — images, audio and
 video — and 100 MB for other files. A recording over the limit is refused with its size rather than
@@ -125,4 +120,6 @@ step applies.
 - Be specific about what you want to know about an image; "what's wrong with this label?" beats
   "describe this".
 - When uploading several files at once, say what each one is so the assistant can tell them apart.
-- Very large files take longer to process and may be rejected outright.
+- Very large files take longer to process, and one over the size limit is refused outright.
+- For a file format the assistant can't read directly, say what it is and what you want from it — it
+  can often get there by running code over the file.

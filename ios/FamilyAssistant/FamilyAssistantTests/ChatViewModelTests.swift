@@ -9136,7 +9136,7 @@ final class ChatViewModelTests: XCTestCase {
         let pasted = PastedChatImage(data: pngData, mimeType: "image/png", filenameExtension: "png")
 
         XCTAssertEqual(pasted.data, pngData)
-        XCTAssertTrue(ChatConstants.allowedAttachmentMIMETypes.contains(pasted.mimeType))
+        XCTAssertTrue(ChatConstants.directPhotoPickerMIMETypes.contains(pasted.mimeType))
     }
 
     func testPastedImageTranscodesDecodableDataToJPEG() throws {
@@ -9147,7 +9147,7 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(pasted.mimeType, "image/jpeg")
         XCTAssertEqual(pasted.filenameExtension, "jpg")
         XCTAssertNotNil(UIImage(data: pasted.data))
-        XCTAssertTrue(ChatConstants.allowedAttachmentMIMETypes.contains(pasted.mimeType))
+        XCTAssertTrue(ChatConstants.directPhotoPickerMIMETypes.contains(pasted.mimeType))
     }
 
     func testPastedImageTranscodeRejectsUndecodableData() {
@@ -9160,7 +9160,7 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(captured.mimeType, "image/jpeg")
         XCTAssertEqual(captured.filenameExtension, "jpg")
         XCTAssertNotNil(UIImage(data: captured.data))
-        XCTAssertTrue(ChatConstants.allowedAttachmentMIMETypes.contains(captured.mimeType))
+        XCTAssertTrue(ChatConstants.directPhotoPickerMIMETypes.contains(captured.mimeType))
     }
 
     private func solidImage(size: CGSize) -> UIImage {
@@ -9495,7 +9495,7 @@ final class ChatViewModelTests: XCTestCase {
     func testPickedHEICPhotosAreAcceptedForJPEGUpload() {
         XCTAssertTrue(ChatConstants.allowedPhotoPickerMIMETypes.contains("image/heic"))
         XCTAssertTrue(ChatConstants.allowedPhotoPickerMIMETypes.contains("image/heif"))
-        XCTAssertFalse(ChatConstants.allowedAttachmentMIMETypes.contains("image/heic"))
+        XCTAssertFalse(ChatConstants.directPhotoPickerMIMETypes.contains("image/heic"))
         XCTAssertEqual(ChatConstants.uploadMIMEType(forPickedPhotoMIMEType: "image/heic"), "image/jpeg")
         XCTAssertEqual(ChatConstants.uploadMIMEType(forPickedPhotoMIMEType: "image/heif"), "image/jpeg")
         XCTAssertEqual(

@@ -111,6 +111,49 @@ async def test_serve_ownerless_attachment_keeps_public_immutable_cache(
 
 
 @pytest.mark.asyncio
+async def test_upload_of_an_oversized_file_reports_the_limit(
+    api_test_client: AsyncClient,
+) -> None:
+    """An upload refused for its size says so, with the limit."""
+    response = await api_test_client.post(
+        "/api/attachments/upload",
+        files={"file": ("huge.ogg", b"\0" * (30 * 1024 * 1024), "audio/ogg")},
+    )
+
+    assert response.status_code == 413
+    assert "exceeds maximum allowed size" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_serve_refuses_to_let_the_browser_sniff_the_type(
+    api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
+    attachment_registry_fixture: AttachmentRegistry,
+) -> None:
+    """Nothing served from this origin may be re-typed by the browser.
+
+    An attachment is stored whatever its type, so a file whose bytes read as
+    markup can reach this route. It is handed over as a download and its
+    declared type stands, which is what keeps it from running on the origin
+    the user is signed in to.
+    """
+    db_context = Database(engine=db_engine)
+    metadata = await attachment_registry_fixture.store_and_register_tool_attachment(
+        file_content=b"<script>alert(1)</script>",
+        filename="payload.bin",
+        content_type="application/octet-stream",
+        tool_name="download_media",
+        db_context=db_context,
+    )
+
+    response = await api_test_client.get(f"/api/attachments/{metadata.attachment_id}")
+
+    assert response.status_code == 200
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.headers["content-disposition"].startswith("attachment;")
+
+
+@pytest.mark.asyncio
 async def test_metadata_owned_attachment_404_for_non_owner(
     app_fixture: FastAPI,
     api_test_client: AsyncClient,

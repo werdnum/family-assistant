@@ -58,7 +58,6 @@ class AttachmentRegistryConfig(TypedDict, total=False):
     # relatively still resolve after a restart.
     email_attachment_base_path: str
     large_tool_result_threshold_kb: int
-    allowed_mime_types: list[str]
 
 
 class AttachmentRowDict(TypedDict):
@@ -128,26 +127,16 @@ DEFAULT_MAX_MULTIMODAL_SIZE = 20 * 1024 * 1024  # 20MB
 # which extracts its text without a model seeing the file at all. Bounding them
 # here would refuse an upload that has a working use.
 MULTIMODAL_MIME_PREFIXES = ("image/", "audio/", "video/")
-# NOTE: In production, allowed_mime_types is configured in config.yaml under
-# attachments.allowed_mime_types. This default is only used when config is not provided
-# (e.g., in tests). To add new MIME types, update config.yaml.
-DEFAULT_ALLOWED_MIME_TYPES: set[str] = {
-    "image/png",
-    "image/jpeg",
-    "image/gif",
-    "image/webp",
-    "text/plain",
-    "text/markdown",
-    "application/json",
-    "application/pdf",
-    "video/mp4",
-    "video/webm",
-    "video/ogg",
-    "audio/mpeg",
-    "audio/wav",
-    "audio/ogg",
-    "audio/webm",
-}
+
+
+class AttachmentTooLargeError(ValueError):
+    """An attachment exceeded the size limit that applies to its MIME type.
+
+    Distinct from any other `ValueError` the registry raises so a route can
+    answer with the limit and the actual size, which is the only part of the
+    refusal a user can act on. Handed back as a generic 500, the same refusal
+    reads as the server having broken.
+    """
 
 
 class AttachmentMetadata:
@@ -322,12 +311,6 @@ class AttachmentRegistry:
         self.max_multimodal_size = attachment_config.get(
             "max_multimodal_size", DEFAULT_MAX_MULTIMODAL_SIZE
         )
-        allowed_types = attachment_config.get("allowed_mime_types")
-        if allowed_types and isinstance(allowed_types, list):
-            self.allowed_mime_types = set(allowed_types)
-        else:
-            self.allowed_mime_types = DEFAULT_ALLOWED_MIME_TYPES
-
         email_base = attachment_config.get("email_attachment_base_path")
         self.email_attachment_base_path: Path | None = (
             Path(email_base).resolve() if email_base else None
@@ -336,8 +319,7 @@ class AttachmentRegistry:
         logger.info(
             f"AttachmentRegistry initialized with storage path: {self.storage_path}, "
             f"max_file_size: {self.max_file_size // (1024 * 1024)}MB, "
-            f"max_multimodal_size: {self.max_multimodal_size // (1024 * 1024)}MB, "
-            f"allowed_types: {len(self.allowed_mime_types)} types"
+            f"max_multimodal_size: {self.max_multimodal_size // (1024 * 1024)}MB"
         )
 
     @property
@@ -1431,7 +1413,7 @@ class AttachmentRegistry:
 
     def _validate_file(self, file: UploadFile) -> None:
         """
-        Validate uploaded file for type and size restrictions.
+        Validate uploaded file for size restrictions.
 
         Args:
             file: The uploaded file to validate
@@ -1439,14 +1421,6 @@ class AttachmentRegistry:
         Raises:
             HTTPException: If file validation fails
         """
-        # Check MIME type
-        if file.content_type not in self.allowed_mime_types:
-            raise HTTPException(
-                status_code=400,
-                detail=f"File type '{file.content_type}' not allowed. "
-                f"Allowed types: {', '.join(self.allowed_mime_types)}",
-            )
-
         # Check file size
         if hasattr(file.file, "seek") and hasattr(file.file, "tell"):
             # Get current position
@@ -1527,13 +1501,8 @@ class AttachmentRegistry:
             else self.max_file_size
         )
         if len(file_content) > size_limit:
-            raise ValueError(
+            raise AttachmentTooLargeError(
                 f"File size {len(file_content)} bytes exceeds maximum allowed size of {size_limit} bytes"
-            )
-
-        if content_type not in self.allowed_mime_types:
-            raise ValueError(
-                f"File type '{content_type}' not allowed. Allowed types: {', '.join(self.allowed_mime_types)}"
             )
 
         # Generate unique attachment ID

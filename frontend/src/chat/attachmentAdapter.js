@@ -1,6 +1,6 @@
 /**
- * Attachment adapter for handling image files in the chat interface
- * Validates and processes image files for sending to the backend
+ * Attachment adapter for handling files in the chat interface
+ * Validates and processes attachments for sending to the backend
  */
 
 import { generateUUID } from '../utils/uuid.js';
@@ -10,30 +10,6 @@ const MAX_FILE_SIZE =
   typeof import.meta.env !== 'undefined' && import.meta.env.VITE_MAX_FILE_SIZE
     ? Number(import.meta.env.VITE_MAX_FILE_SIZE)
     : 100 * 1024 * 1024; // 100MB default - matches backend AttachmentService
-const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-
-// Audio and video the assistant can have transcribed or described. A type
-// missing here is rejected before upload, so the backend handoff never sees it.
-// Keep in step with attachment_config.allowed_mime_types in defaults.yaml and
-// with the picker's accept list in components/assistant-ui/attachment.tsx.
-const SUPPORTED_MEDIA_TYPES = [
-  'audio/mpeg',
-  'audio/wav',
-  'audio/ogg',
-  'audio/webm',
-  'video/mp4',
-  'video/webm',
-  'video/ogg',
-];
-
-// Additional supported file types from backend AttachmentService
-const SUPPORTED_FILE_TYPES = [
-  ...SUPPORTED_IMAGE_TYPES,
-  'text/plain',
-  'text/markdown',
-  'application/pdf',
-  ...SUPPORTED_MEDIA_TYPES,
-];
 
 /**
  * Uploads a file to the attachment service
@@ -68,11 +44,6 @@ const validateFile = (file) => {
     throw new Error(`File size exceeds ${MAX_FILE_SIZE / (1024 * 1024)}MB limit`);
   }
 
-  // Check file type
-  if (!SUPPORTED_FILE_TYPES.includes(file.type)) {
-    throw new Error(`Unsupported file type. Supported types: ${SUPPORTED_FILE_TYPES.join(', ')}`);
-  }
-
   // Basic file name validation
   if (!file.name || file.name.trim() === '') {
     throw new Error('File must have a valid name');
@@ -82,15 +53,15 @@ const validateFile = (file) => {
 /**
  * Determines the attachment type the backend will process the file as.
  *
- * chat_api handles image, video, audio and document and ignores anything else,
- * so a type left as 'file' is uploaded and then dropped from the turn -- the
- * model answers without ever seeing it.
+ * Anything that is not recognisable media is a document: that is the label the
+ * backend keeps in message history, so a file of a type this client has no
+ * case for still reaches the model and survives into later turns.
  *
  * @param {File} file - The file being attached
  * @returns {string} Attachment type
  */
 const classifyAttachment = (file) => {
-  if (SUPPORTED_IMAGE_TYPES.includes(file.type)) {
+  if (file.type.startsWith('image/')) {
     return 'image';
   }
   if (file.type.startsWith('audio/')) {
@@ -99,10 +70,7 @@ const classifyAttachment = (file) => {
   if (file.type.startsWith('video/')) {
     return 'video';
   }
-  if (file.type === 'application/pdf' || file.type.startsWith('text/')) {
-    return 'document';
-  }
-  return 'file';
+  return 'document';
 };
 
 /**
@@ -151,8 +119,9 @@ const errorAttachment = ({ id, type, file, message }) => ({
  */
 export class FileAttachmentAdapter {
   constructor() {
-    // Accept all supported file types
-    this.accept = SUPPORTED_FILE_TYPES.join(',');
+    // Any file type: what a model cannot read directly, the assistant can still
+    // open with its attachment tools or hand to a profile that can.
+    this.accept = '*/*';
   }
 
   /**
@@ -232,12 +201,29 @@ export class FileAttachmentAdapter {
 }
 
 /**
+ * Tests one entry of an `accept` list against a MIME type.
+ * A bare or full wildcard matches everything; `image/*` matches by prefix.
+ * @param {string} acceptType - A single accept entry
+ * @param {string} type - The MIME type to test
+ * @returns {boolean} Whether the entry accepts the type
+ */
+const matchesAcceptType = (acceptType, type) => {
+  if (acceptType === '*' || acceptType === '*/*') {
+    return true;
+  }
+  if (acceptType.endsWith('/*')) {
+    return type.startsWith(acceptType.slice(0, -1));
+  }
+  return acceptType === type;
+};
+
+/**
  * Composite attachment adapter that combines multiple adapters
  */
 export class CompositeAttachmentAdapter {
   constructor(adapters = []) {
     this.adapters = adapters;
-    // Let our adapter validate unsupported files and render inline errors.
+    // Let our adapter validate files and render inline errors.
     this.accept = '*';
   }
 
@@ -247,35 +233,12 @@ export class CompositeAttachmentAdapter {
    * @returns {Object|null} Matching adapter or null
    */
   getAdapterForType(type) {
-    return this.adapters.find((adapter) => {
-      // Check if adapter's accept pattern matches the type
-      const acceptPattern = adapter.accept;
-
-      // Handle comma-separated types
-      if (acceptPattern.includes(',')) {
-        const acceptedTypes = acceptPattern.split(',').map((t) => t.trim());
-        return acceptedTypes.some((acceptType) => {
-          if (acceptType === type) {
-            return true;
-          }
-          if (acceptType.endsWith('/*')) {
-            const prefix = acceptType.slice(0, -2);
-            return type.startsWith(prefix);
-          }
-          return false;
-        });
-      }
-
-      // Handle single type or wildcard
-      if (acceptPattern === type) {
-        return true;
-      }
-      if (acceptPattern.endsWith('/*')) {
-        const prefix = acceptPattern.slice(0, -2);
-        return type.startsWith(prefix);
-      }
-      return false;
-    });
+    return this.adapters.find((adapter) =>
+      adapter.accept
+        .split(',')
+        .map((acceptType) => acceptType.trim())
+        .some((acceptType) => matchesAcceptType(acceptType, type))
+    );
   }
 
   /**

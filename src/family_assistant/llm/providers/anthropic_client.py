@@ -85,6 +85,21 @@ _VALID_IMAGE_MEDIA_TYPES: set[str] = {
 
 
 logger = logging.getLogger(__name__)
+
+
+def _describe_undeliverable_media(media_type: str, attachment_id: str | None) -> str:
+    """Stand in for a part this provider cannot carry.
+
+    Phrased as a description rather than an apology: the model's useful next
+    move is to name the file or hand its id to a profile that reads that type,
+    and it can only do either if it is told the file exists.
+    """
+    described = media_type
+    if attachment_id:
+        described += f", attachment_id={attachment_id}"
+    return f"[System: File the model cannot read directly: {described}]"
+
+
 tracer = trace.get_tracer(__name__)
 T = TypeVar("T", bound=BaseModel)
 R = TypeVar("R")
@@ -823,8 +838,22 @@ class AnthropicClient(BaseLLMClient):
                     header, b64_data = url.split(",", 1)
                     raw_media_type = header.split(":")[1].split(";")[0]
                     if raw_media_type not in _VALID_IMAGE_MEDIA_TYPES:
+                        # Named rather than dropped. Anthropic takes only these
+                        # four image types as bytes -- not audio, video, PDF or
+                        # an SVG -- and skipping the part left the model
+                        # answering about a file it was never shown, with
+                        # nothing to say that had happened. The id is what it
+                        # hands to a profile that can read the file.
                         logger.warning(
-                            f"Unsupported image media type '{raw_media_type}' for Anthropic, skipping"
+                            f"Unsupported media type '{raw_media_type}' for Anthropic, describing instead"
+                        )
+                        blocks.append(
+                            TextBlockParam(
+                                type="text",
+                                text=_describe_undeliverable_media(
+                                    raw_media_type, part.attachment_id
+                                ),
+                            )
                         )
                         continue
                     blocks.append(

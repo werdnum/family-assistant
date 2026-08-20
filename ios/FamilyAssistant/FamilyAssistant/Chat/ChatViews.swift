@@ -1002,7 +1002,7 @@ private struct ChatComposerView: View {
         }
         .fileImporter(
             isPresented: $importsFiles,
-            allowedContentTypes: [.jpeg, .png, .gif, .webP, .plainText, .markdown, .pdf],
+            allowedContentTypes: [.item],
             allowsMultipleSelection: true
         ) { result in
             if case .success(let urls) = result {

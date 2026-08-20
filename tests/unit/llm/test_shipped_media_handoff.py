@@ -207,27 +207,6 @@ def test_context_provider_names_match_config() -> None:
     assert live_names == CONTEXT_PROVIDER_NAMES
 
 
-def test_shipped_config_admits_the_media_the_handoff_transcribes() -> None:
-    """A type absent from the allowlist is rejected before any model sees it.
-
-    `AttachmentRegistry` refuses an upload whose MIME type is not in
-    `attachment_config.allowed_mime_types`, so the handoff can only ever run for
-    types listed there. This was shipping without any `audio/*`: the code default
-    in `attachment_registry.py` includes them, but `defaults.yaml` supplies the
-    key and therefore wins, which made audio work under test and fail in
-    production — the profile and its note were reachable only in theory.
-
-    Telegram sends audio as `audio/mpeg` and voice notes as `audio/ogg`.
-    """
-    allowed = set(_load_defaults().attachment_config.allowed_mime_types)
-
-    assert {"audio/mpeg", "audio/ogg", "audio/wav", "audio/webm"} <= allowed
-    assert {"video/mp4", "video/webm", "video/ogg"} <= allowed
-    # The two the Responses API reads directly, for contrast: if these ever left
-    # the list the OpenAI path would break rather than degrade to the handoff.
-    assert {"image/png", "application/pdf"} <= allowed
-
-
 # A test config replaces `global_tools_policy` wholesale, which strands the
 # exclusions of every shipped profile that withholds a grant -- validation
 # rejects an exclusion naming a tool nothing grants. These tests are about how
@@ -416,6 +395,37 @@ def test_the_anthropic_fallback_still_learns_what_arrived() -> None:
     assert "att-7" in rendered
     # The audio itself is gone -- that is the provider's limit, not a bug here.
     assert not any(block.get("type") == "image" for block in blocks)
+
+
+@pytest.mark.parametrize(
+    "mime_type", ["image/svg+xml", "audio/ogg", "video/mp4", "application/pdf"]
+)
+def test_a_replayed_media_part_anthropic_cannot_read_is_named(mime_type: str) -> None:
+    """History replay has no text part to fall back on.
+
+    The injection path pairs its media with a description, so dropping the
+    media part there still tells the model what arrived. A message rebuilt
+    from history is only the parts, and skipping one silently left the model
+    answering about a file it never saw.
+    """
+    message = UserMessage(
+        content=[
+            ImageUrlContentPart(
+                type="image_url",
+                image_url={"url": f"data:{mime_type};base64,AAAA"},
+                attachment_id="att-9",
+            )
+        ]
+    )
+
+    blocks = AnthropicClient(
+        api_key="test-key", model="claude-fable-5"
+    )._convert_user_content(message)
+
+    assert isinstance(blocks, list)
+    rendered = " ".join(block["text"] for block in blocks if block["type"] == "text")
+    assert mime_type in rendered
+    assert "att-9" in rendered
 
 
 def _google_injected(mime_type: str) -> UserMessage:

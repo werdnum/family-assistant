@@ -8,17 +8,6 @@ interface AttachmentUploadProps {
   disabled?: boolean;
 }
 
-// Supported file types matching backend
-const SUPPORTED_FILE_TYPES = [
-  'image/jpeg',
-  'image/png',
-  'image/gif',
-  'image/webp',
-  'text/plain',
-  'text/markdown',
-  'application/pdf',
-];
-
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
 
 /**
@@ -36,10 +25,6 @@ export const AttachmentUpload: React.FC<AttachmentUploadProps> = ({
   const validateFile = (file: File): string | null => {
     if (file.size > MAX_FILE_SIZE) {
       return `File size exceeds ${MAX_FILE_SIZE / (1024 * 1024)}MB limit`;
-    }
-
-    if (!SUPPORTED_FILE_TYPES.includes(file.type)) {
-      return `Unsupported file type. Supported: images, text, markdown, PDF`;
     }
 
     if (!file.name || file.name.trim() === '') {
@@ -106,7 +91,6 @@ export const AttachmentUpload: React.FC<AttachmentUploadProps> = ({
       <input
         ref={fileInputRef}
         type="file"
-        accept={SUPPORTED_FILE_TYPES.join(',')}
         multiple
         className="hidden"
         onChange={handleFileSelect}

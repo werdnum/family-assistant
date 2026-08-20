@@ -113,6 +113,21 @@ def _content_part_for_attachment(
     return attachment_content(attachment_id)
 
 
+def _attachment_type_label(mime_type: str) -> str:
+    """Label a stored attachment for message history and client rendering.
+
+    The MIME type decides rather than the label the client sent: a client
+    labels what it recognises and falls back to something generic for the rest,
+    and a generic label is the one history reconstruction drops. Anything that
+    is not recognisable media is a document, the bucket that is kept, so a file
+    of a type no client has a case for still comes back on later turns.
+    """
+    for prefix in ("image/", "audio/", "video/"):
+        if mime_type.startswith(prefix):
+            return prefix.rstrip("/")
+    return "document"
+
+
 def _user_name_for_chat(current_user: Mapping[str, object]) -> str:
     """Derive a human-friendly name for the authenticated web user.
 
@@ -251,205 +266,194 @@ async def _process_user_attachments(
     if payload.attachments:
         trigger_attachments = []
         for attachment in payload.attachments:
-            # Handle images, videos, audio, and documents (PDFs)
-            attachment_type = attachment.get("type")
-            if attachment_type in {"image", "video", "audio", "document"}:
-                # Validate that content is present and not empty
-                content_data = attachment.get("content")
-                if not content_data:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Attachment content is required",
-                    )
-                if not content_data.strip():
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Attachment content cannot be empty",
-                    )
-                # Handle attachment content - either URL reference or base64 data
-                try:
-                    # New flow: Handle URL references to uploaded attachments
-                    if content_data.startswith("/api/attachments/"):
-                        # Content is a URL reference to an already uploaded attachment
-                        # Extract attachment ID from URL like "/api/attachments/12345"
-                        attachment_id = content_data.split("/")[-1]
+            # Every attachment the client sends reaches the model: an image
+            # inline, anything else as an attachment reference the assistant
+            # can open with its attachment tools. The type the client declared
+            # is not consulted, so a client that has no case for a file's type
+            # cannot silently drop it from the turn.
+            # Validate that content is present and not empty
+            content_data = attachment.get("content")
+            if not content_data:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Attachment content is required",
+                )
+            if not content_data.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Attachment content cannot be empty",
+                )
+            # Handle attachment content - either URL reference or base64 data
+            try:
+                # New flow: Handle URL references to uploaded attachments
+                if content_data.startswith("/api/attachments/"):
+                    # Content is a URL reference to an already uploaded attachment
+                    # Extract attachment ID from URL like "/api/attachments/12345"
+                    attachment_id = content_data.split("/")[-1]
 
-                        # First try to atomically claim unlinked attachment for this conversation
-                        attachment_record: (
-                            AttachmentMetadata | None
-                        ) = await attachment_registry.claim_unlinked_attachment(
+                    # First try to atomically claim unlinked attachment for this conversation
+                    attachment_record: (
+                        AttachmentMetadata | None
+                    ) = await attachment_registry.claim_unlinked_attachment(
+                        db_context=db_context,
+                        attachment_id=attachment_id,
+                        conversation_id=conversation_id,
+                        acting_user_id=user_id,
+                        required_source_id=user_id,
+                    )
+
+                    # If not claimed (already linked), get existing attachment record
+                    if not attachment_record:
+                        attachment_record = await attachment_registry.get_attachment(
                             db_context=db_context,
                             attachment_id=attachment_id,
-                            conversation_id=conversation_id,
                             acting_user_id=user_id,
-                            required_source_id=user_id,
                         )
 
-                        # If not claimed (already linked), get existing attachment record
-                        if not attachment_record:
-                            attachment_record = (
-                                await attachment_registry.get_attachment(
-                                    db_context=db_context,
-                                    attachment_id=attachment_id,
-                                    acting_user_id=user_id,
-                                )
-                            )
-
-                        if not attachment_record or not attachment_record.content_url:
-                            raise HTTPException(
-                                status_code=status.HTTP_404_NOT_FOUND,
-                                detail="Attachment not found or missing content URL",
-                            )
-                        if (
-                            attachment_record.source_id != user_id
-                            and attachment_record.conversation_id != conversation_id
-                        ):
-                            raise HTTPException(
-                                status_code=status.HTTP_404_NOT_FOUND,
-                                detail="Attachment not found",
-                            )
-
-                        trigger_content_parts.append(
-                            _content_part_for_attachment(
-                                attachment_record.attachment_id,
-                                attachment_record.content_url,
-                                attachment_record.mime_type,
-                            )
+                    if not attachment_record or not attachment_record.content_url:
+                        raise HTTPException(
+                            status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Attachment not found or missing content URL",
+                        )
+                    if (
+                        attachment_record.source_id != user_id
+                        and attachment_record.conversation_id != conversation_id
+                    ):
+                        raise HTTPException(
+                            status_code=status.HTTP_404_NOT_FOUND,
+                            detail="Attachment not found",
                         )
 
-                        # Store attachment metadata for message history
-                        trigger_attachments.append({
-                            "type": attachment.get("type", "image"),
-                            "attachment_id": attachment_record.attachment_id,
-                            "url": attachment_record.content_url,
-                            "content_url": attachment_record.content_url,
-                            "mime_type": attachment_record.mime_type,
-                            "description": attachment_record.description,
-                            "filename": attachment_record.metadata.get(
-                                "original_filename", "unknown"
-                            ),
-                            "size": attachment_record.size,
-                        })
+                    trigger_content_parts.append(
+                        _content_part_for_attachment(
+                            attachment_record.attachment_id,
+                            attachment_record.content_url,
+                            attachment_record.mime_type,
+                        )
+                    )
 
-                    else:
-                        # Legacy flow: Handle base64 data (for backwards compatibility)
-                        if content_data.startswith("data:"):
-                            # Extract MIME type and base64 data
-                            header, b64_data = content_data.split(",", 1)
-                            mime_type = header.split(":")[1].split(";")[0]
-                            content_bytes = base64.b64decode(b64_data)
-                            base_filename = attachment.get(
-                                "filename", f"upload_{uuid.uuid4().hex[:8]}"
-                            )
-                            # Ensure filename has correct extension based on MIME type
-                            ext = mimetypes.guess_extension(mime_type) or ""
-                            if ext and not base_filename.lower().endswith(ext):
-                                filename = f"{base_filename}{ext}"
-                            else:
-                                filename = base_filename
+                    # Store attachment metadata for message history
+                    trigger_attachments.append({
+                        "type": _attachment_type_label(attachment_record.mime_type),
+                        "attachment_id": attachment_record.attachment_id,
+                        "url": attachment_record.content_url,
+                        "content_url": attachment_record.content_url,
+                        "mime_type": attachment_record.mime_type,
+                        "description": attachment_record.description,
+                        "filename": attachment_record.metadata.get(
+                            "original_filename", "unknown"
+                        ),
+                        "size": attachment_record.size,
+                    })
+
+                else:
+                    # Legacy flow: Handle base64 data (for backwards compatibility)
+                    if content_data.startswith("data:"):
+                        # Extract MIME type and base64 data
+                        header, b64_data = content_data.split(",", 1)
+                        mime_type = header.split(":")[1].split(";")[0]
+                        content_bytes = base64.b64decode(b64_data)
+                        base_filename = attachment.get(
+                            "filename", f"upload_{uuid.uuid4().hex[:8]}"
+                        )
+                        # Ensure filename has correct extension based on MIME type
+                        ext = mimetypes.guess_extension(mime_type) or ""
+                        if ext and not base_filename.lower().endswith(ext):
+                            filename = f"{base_filename}{ext}"
                         else:
-                            # Assume direct base64 content
-                            content_bytes = base64.b64decode(content_data)
-                            # For security, don't trust client-provided filenames for MIME type
-                            # Instead, try to detect from content magic bytes or use safe default
-                            base_filename = attachment.get(
-                                "filename", f"upload_{uuid.uuid4().hex[:8]}"
-                            )
-
-                            # Basic content-based MIME type detection for common image formats
-                            # Check magic bytes at the beginning of the content
-                            if content_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
-                                mime_type = "image/png"
-                            elif content_bytes.startswith(b"\xff\xd8\xff"):
-                                mime_type = "image/jpeg"
-                            elif content_bytes.startswith(b"GIF8"):
-                                mime_type = "image/gif"
-                            elif (
-                                content_bytes.startswith(b"RIFF")
-                                and b"WEBP" in content_bytes[:12]
-                            ):
-                                mime_type = "image/webp"
-                            elif content_bytes.startswith(b"BM"):
-                                mime_type = "image/bmp"
-                            else:
-                                # Unknown format, use safe generic type
-                                mime_type = "application/octet-stream"
-
-                            # Ensure filename has correct extension based on MIME type
-                            ext = mimetypes.guess_extension(mime_type) or ""
-                            if ext and not base_filename.lower().endswith(ext):
-                                filename = f"{base_filename}{ext}"
-                            else:
-                                filename = base_filename
-
-                        # Store attachment via AttachmentRegistry
-                        attachment_record = (
-                            await attachment_registry.register_user_attachment(
-                                db_context=db_context,
-                                content=content_bytes,
-                                filename=filename,
-                                mime_type=mime_type,
-                                conversation_id=conversation_id,
-                                message_id=None,  # Will be set when message is stored
-                                user_id=user_id,
-                                description=attachment.get(
-                                    "description", f"User uploaded: {filename}"
-                                ),
-                            )
+                            filename = base_filename
+                    else:
+                        # Assume direct base64 content
+                        content_bytes = base64.b64decode(content_data)
+                        # For security, don't trust client-provided filenames for MIME type
+                        # Instead, try to detect from content magic bytes or use safe default
+                        base_filename = attachment.get(
+                            "filename", f"upload_{uuid.uuid4().hex[:8]}"
                         )
 
-                        if not attachment_record.content_url:
-                            raise HTTPException(
-                                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                                detail="Failed to generate content URL for attachment",
-                            )
+                        # Basic content-based MIME type detection for common image formats
+                        # Check magic bytes at the beginning of the content
+                        if content_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+                            mime_type = "image/png"
+                        elif content_bytes.startswith(b"\xff\xd8\xff"):
+                            mime_type = "image/jpeg"
+                        elif content_bytes.startswith(b"GIF8"):
+                            mime_type = "image/gif"
+                        elif (
+                            content_bytes.startswith(b"RIFF")
+                            and b"WEBP" in content_bytes[:12]
+                        ):
+                            mime_type = "image/webp"
+                        elif content_bytes.startswith(b"BM"):
+                            mime_type = "image/bmp"
+                        else:
+                            # Unknown format, use safe generic type
+                            mime_type = "application/octet-stream"
 
-                        trigger_content_parts.append(
-                            _content_part_for_attachment(
-                                attachment_record.attachment_id,
-                                attachment_record.content_url,
-                                attachment_record.mime_type,
-                            )
+                        # Ensure filename has correct extension based on MIME type
+                        ext = mimetypes.guess_extension(mime_type) or ""
+                        if ext and not base_filename.lower().endswith(ext):
+                            filename = f"{base_filename}{ext}"
+                        else:
+                            filename = base_filename
+
+                    # Store attachment via AttachmentRegistry
+                    attachment_record = (
+                        await attachment_registry.register_user_attachment(
+                            db_context=db_context,
+                            content=content_bytes,
+                            filename=filename,
+                            mime_type=mime_type,
+                            conversation_id=conversation_id,
+                            message_id=None,  # Will be set when message is stored
+                            user_id=user_id,
+                            description=attachment.get(
+                                "description", f"User uploaded: {filename}"
+                            ),
+                        )
+                    )
+
+                    if not attachment_record.content_url:
+                        raise HTTPException(
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="Failed to generate content URL for attachment",
                         )
 
-                        # Store attachment metadata for message history with stable attachment_id
-                        trigger_attachments.append({
-                            "type": attachment.get("type", "image"),
-                            "attachment_id": attachment_record.attachment_id,
-                            "url": attachment_record.content_url,
-                            "content_url": attachment_record.content_url,
-                            "mime_type": attachment_record.mime_type,
-                            "description": attachment_record.description,
-                            "filename": filename,
-                            "size": attachment_record.size,
-                        })
+                    trigger_content_parts.append(
+                        _content_part_for_attachment(
+                            attachment_record.attachment_id,
+                            attachment_record.content_url,
+                            attachment_record.mime_type,
+                        )
+                    )
 
-                except (ValueError, binascii.Error) as e:
-                    # Invalid base64 or data URL format
-                    logger.error(f"Invalid attachment content: {e}")
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Invalid base64 attachment content: {e!s}",
-                    ) from e
-                except HTTPException:
-                    raise
-                except Exception as e:
-                    logger.exception(f"Error processing user attachment: {e}")
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail="Failed to process attachment",
-                    ) from e
-            else:
-                # Dropping it here is why a misclassified attachment looked like a
-                # model that ignored the file: the upload succeeded and the turn
-                # ran without it. Not an error, because the iOS client's type
-                # enum can still produce 'file' for a type it has no case for.
-                logger.warning(
-                    "Ignoring attachment of unhandled type %r (%s); it will not "
-                    "reach the model.",
-                    attachment_type,
-                    attachment.get("name", "unnamed"),
-                )
+                    # Store attachment metadata for message history with stable attachment_id
+                    trigger_attachments.append({
+                        "type": _attachment_type_label(attachment_record.mime_type),
+                        "attachment_id": attachment_record.attachment_id,
+                        "url": attachment_record.content_url,
+                        "content_url": attachment_record.content_url,
+                        "mime_type": attachment_record.mime_type,
+                        "description": attachment_record.description,
+                        "filename": filename,
+                        "size": attachment_record.size,
+                    })
+
+            except (ValueError, binascii.Error) as e:
+                # Invalid base64 or data URL format
+                logger.error(f"Invalid attachment content: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid base64 attachment content: {e!s}",
+                ) from e
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.exception(f"Error processing user attachment: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to process attachment",
+                ) from e
 
     return trigger_content_parts, trigger_attachments
 
@@ -2904,6 +2908,10 @@ async def serve_shared_conversation_attachment(
         headers={
             "Cache-Control": "private, no-store",
             "ETag": f'"{attachment_id}"',
+            # See `_NOSNIFF` in attachments_api: an attachment is stored
+            # whatever its type, and the browser must not decide that type
+            # for itself on this origin.
+            "X-Content-Type-Options": "nosniff",
         },
     )
 

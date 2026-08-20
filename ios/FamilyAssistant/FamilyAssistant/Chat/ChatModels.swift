@@ -8,17 +8,16 @@ enum ChatConstants {
         "image/heic",
         "image/heif",
     ]
-    static let allowedAttachmentMIMETypes: Set<String> = [
+    /// Image types the photo picker hands over as-is. HEIC/HEIF are transcoded
+    /// to JPEG on the way out, so they are admitted separately.
+    static let directPhotoPickerMIMETypes: Set<String> = [
         "image/jpeg",
         "image/png",
         "image/gif",
         "image/webp",
-        "text/plain",
-        "text/markdown",
-        "application/pdf",
     ]
 
-    static let allowedPhotoPickerMIMETypes = allowedAttachmentMIMETypes.union(photoPickerTranscodedMIMETypes)
+    static let allowedPhotoPickerMIMETypes = directPhotoPickerMIMETypes.union(photoPickerTranscodedMIMETypes)
 
     static func uploadMIMEType(forPickedPhotoMIMEType mimeType: String) -> String {
         photoPickerTranscodedMIMETypes.contains(mimeType) ? "image/jpeg" : mimeType
@@ -117,14 +116,15 @@ enum ChatAttachmentType: String, Codable, Equatable {
     case document
     case file
 
+    /// Anything that is not an image is a document: that is the label the
+    /// backend keeps in message history, so a file of a type this client has
+    /// no case for still reaches the model and survives into later turns.
+    /// `.file` remains for attachments the server labels that way.
     static func from(mimeType: String) -> ChatAttachmentType {
         if mimeType.hasPrefix("image/") {
             return .image
         }
-        if mimeType == "application/pdf" || mimeType.hasPrefix("text/") {
-            return .document
-        }
-        return .file
+        return .document
     }
 }
 
