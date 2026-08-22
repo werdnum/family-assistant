@@ -566,6 +566,14 @@ export const handlers = [
     return new HttpResponse(null, { status: 404 });
   }),
 
+  // Mock session→JWT bridge endpoint
+  http.get('/api/auth/browser-token', () => {
+    return HttpResponse.json({
+      token: 'mock-browser-jwt',
+      expires_in: 3600,
+    });
+  }),
+
   // Mock frontend error reporting endpoint
   http.post('/api/errors/', async () => {
     return HttpResponse.json({

@@ -4,6 +4,7 @@ import { ThemeProvider } from '../shared/ThemeProvider';
 import ChatApp from './ChatApp';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { initializeErrorHandlers } from '../errors/errorHandlers';
+import { startSessionBridge } from '../api/browserTokenClient';
 
 // Import Tailwind CSS and custom styles
 import '../styles/globals.css';
@@ -14,6 +15,7 @@ initializeErrorHandlers();
 
 // Ensure the DOM is ready before mounting
 function mountChatApp() {
+  startSessionBridge();
   const container = document.getElementById('chat-root');
   if (container) {
     const root = ReactDOM.createRoot(container);

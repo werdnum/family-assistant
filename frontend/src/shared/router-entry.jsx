@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import AppRouter from './AppRouter';
 import { ThemeProvider } from './ThemeProvider';
 import { initializeErrorHandlers } from '../errors/errorHandlers';
+import { startSessionBridge } from '../api/browserTokenClient';
 
 // Import Tailwind CSS and custom styles
 import '../styles/globals.css';
@@ -12,6 +13,7 @@ initializeErrorHandlers();
 
 // Ensure the DOM is ready before mounting
 function mountApp() {
+  startSessionBridge();
   const container = document.getElementById('app-root');
   if (container) {
     const root = ReactDOM.createRoot(container);
