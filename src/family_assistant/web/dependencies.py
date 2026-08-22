@@ -57,7 +57,7 @@ def resolve_current_user_payload(request: Request, user: dict) -> dict:
         }
 
     try:
-        if user.get("source") in {"api_token", "app_token_session"}:
+        if user.get("source") in _TOKEN_IDENTITY_SOURCES:
             resolved = resolver.resolve_api_token_user(
                 str(user.get("sub", user.get("user_identifier", "")))
             )
@@ -247,7 +247,7 @@ async def get_diagnostics_reader(request: Request) -> dict:
 
 # Auth-source markers indicating the caller authenticated with an API token
 # (bearer / X-API-Token / app-token session) rather than a browser session.
-_TOKEN_IDENTITY_SOURCES = {"api_token", "app_token_session"}
+_TOKEN_IDENTITY_SOURCES = {"api_token", "jwt_access_token", "app_token_session"}
 
 
 async def get_current_session_user(request: Request) -> dict:

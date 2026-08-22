@@ -67,6 +67,12 @@ def init_jwt_signing() -> bool:
             f"got {type(loaded_key).__name__}."
         )
 
+    if loaded_key.curve.name != "secp256r1":
+        raise JWTSigningKeyError(
+            f"{JWT_SIGNING_KEY_ENV_VAR} must be a P-256 (prime256v1) EC key "
+            f"for ES256; got curve {loaded_key.curve.name}."
+        )
+
     _signing_key = loaded_key
     _key_id = _compute_key_id(loaded_key)
     logger.info("JWT access-token signing enabled (kid=%s).", _key_id)

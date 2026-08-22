@@ -16,6 +16,10 @@ from family_assistant.web.frontend_telemetry import (
 )
 from family_assistant.web.routers.errors_api import (
     ERROR_INTAKE_RATE_LIMIT,
+    RATE_LIMIT_MAX_ADDRESSES,
+    check_error_intake_rate_limit,
+    expire_rate_limit_addresses,
+    rate_limit_tracked_addresses,
     reset_error_intake_rate_limiter,
 )
 
@@ -512,3 +516,18 @@ async def test_intake_rate_limit_returns_429(
             statuses.append(response.status_code)
     assert all(status == 200 for status in statuses[:-1])
     assert statuses[-1] == 429
+
+
+@pytest.mark.asyncio
+async def test_rate_limiter_map_stays_bounded(
+    web_only_assistant: Assistant,
+) -> None:
+    """Rotating client addresses cannot grow the limiter map without bound."""
+
+    for i in range(RATE_LIMIT_MAX_ADDRESSES + 500):
+        check_error_intake_rate_limit(f"10.0.0.{i % 256}.{i}")
+        if rate_limit_tracked_addresses() > RATE_LIMIT_MAX_ADDRESSES:
+            break
+        if i % 512 == 0:
+            expire_rate_limit_addresses(200)
+    assert rate_limit_tracked_addresses() <= RATE_LIMIT_MAX_ADDRESSES

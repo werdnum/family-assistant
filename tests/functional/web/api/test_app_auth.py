@@ -11,7 +11,7 @@ import pytest_asyncio
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -426,20 +426,38 @@ class TestJWTTokens:
 
     @pytest.mark.asyncio
     async def test_browser_token_sets_cookie(
-        self, session_client: AsyncClient, jwt_enabled: None
+        self, session_client: AsyncClient, db_engine: AsyncEngine, jwt_enabled: None
     ) -> None:
         """The bridge sets the JWT cookie scoped to /api with Lax SameSite."""
         response = await session_client.get("/api/auth/browser-token")
         assert response.status_code == 200
         body = response.json()
         assert body["expires_in"] == 3600
-        assert body["token"].count(".") == 2
+        assert "token" not in body
 
         set_cookie = response.headers["set-cookie"]
         assert "fa_access_token=" in set_cookie
         assert "httponly" in set_cookie.lower()
         assert "samesite=lax" in set_cookie.lower()
         assert "path=/api" in set_cookie.lower()
+
+    @pytest.mark.asyncio
+    async def test_browser_token_reuses_single_row(
+        self, session_client: AsyncClient, db_engine: AsyncEngine, jwt_enabled: None
+    ) -> None:
+        """Repeated bridge calls reuse one revocation row instead of growing it."""
+        for _ in range(3):
+            response = await session_client.get("/api/auth/browser-token")
+            assert response.status_code == 200
+
+        query = (
+            select(func.count().label("count"))
+            .select_from(api_tokens_table)
+            .where(api_tokens_table.c.name == "browser-session")
+        )
+        db = Database(db_engine)
+        row = await db.fetch_one(query)
+        assert row is not None and row["count"] == 1
 
     @pytest.mark.asyncio
     async def test_route_classification_published(

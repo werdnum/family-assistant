@@ -23,6 +23,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+from sqlalchemy import select
 from sqlalchemy import update as sa_update
 
 from family_assistant.services.user_identity import UserIdentityResolutionError
@@ -62,6 +63,10 @@ API_TOKEN_EXPIRY_SECONDS = API_TOKEN_EXPIRY_DAYS * 86400
 # SameSite=Lax so browser-managed flows that return from cross-site redirects
 # (OAuth callbacks) keep authenticating; cross-site POSTs never carry it.
 BROWSER_TOKEN_COOKIE_NAME = "fa_access_token"
+
+# Name of the internal api_tokens row backing browser-session JWTs. One live
+# row per user, reused across bridge calls; never issued as a credential.
+BROWSER_SESSION_TOKEN_NAME = "browser-session"
 
 # --- Routers ---
 # Two routers: one for page-level endpoints, one for API endpoints
@@ -505,26 +510,46 @@ async def browser_token(
         current_user.get("sub") or current_user.get("user_identifier")
     )
 
-    # Browser sessions have no api_tokens row of their own, so each bridge
-    # mints a short-lived one: the JWT's tid keeps pointing at a real
-    # revocation registry row, and the row expires with (a grace past) the JWT.
+    # Browser sessions have no api_tokens row of their own, so the bridge binds
+    # each JWT to a dedicated short-lived row: it keeps pointing at a real
+    # revocation registry entry, and the row expires with (a grace past) the
+    # JWT. One live row per user is reused across bridge calls so routine page
+    # reloads do not grow the table; the secret is never issued to anyone.
     ttl = jwt_tokens.access_token_ttl_seconds()
-    minted = api_tokens_storage.mint_api_token()
     now = datetime.now(UTC)
-    async with db_context.transaction() as txn:
-        api_token_id = await api_tokens_storage.add_api_token(
-            db_context=txn,
-            user_identifier=user_identifier,
-            name="browser-session",
-            hashed_token=minted.hashed_secret,
-            prefix=minted.prefix,
-            created_at=minted.created_at,
-            expires_at=now + timedelta(seconds=ttl + 60),
-            token_type="api",
+    reuse_query = (
+        select(api_tokens_table.c.id)
+        .where(
+            api_tokens_table.c.user_identifier == user_identifier,
+            api_tokens_table.c.name == BROWSER_SESSION_TOKEN_NAME,
+            api_tokens_table.c.token_type == "api",
+            api_tokens_table.c.is_revoked == False,  # noqa: E712 - SQL comparison
+            api_tokens_table.c.expires_at > now,
         )
+        .order_by(api_tokens_table.c.id.desc())
+        .limit(1)
+    )
+    existing = await db_context.fetch_one(reuse_query)
+    if existing:
+        api_token_id = int(existing["id"])
+    else:
+        minted = api_tokens_storage.mint_api_token()
+        async with db_context.transaction() as txn:
+            api_token_id = await api_tokens_storage.add_api_token(
+                db_context=txn,
+                user_identifier=user_identifier,
+                name=BROWSER_SESSION_TOKEN_NAME,
+                hashed_token=minted.hashed_secret,
+                prefix=minted.prefix,
+                created_at=minted.created_at,
+                expires_at=now + timedelta(seconds=ttl + 60),
+                token_type="api",
+            )
 
     token = jwt_tokens.mint_access_token(user_identifier, api_token_id)
-    response = JSONResponse(content={"token": token, "expires_in": ttl})
+    # The credential travels only via the HttpOnly cookie; the body carries no
+    # token material so injected scripts cannot read it out of the response.
+    response = JSONResponse(content={"expires_in": ttl})
     response.set_cookie(
         key=BROWSER_TOKEN_COOKIE_NAME,
         value=token,

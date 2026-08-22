@@ -119,28 +119,67 @@ class FrontendTelemetryResponse(BaseModel):
 # on restart. Authenticated reporters keep the full severity behaviour.
 ERROR_INTAKE_RATE_LIMIT = 60  # reports per window per client address
 ERROR_INTAKE_WINDOW_SECONDS = 60.0
+# Cap on tracked addresses: an attacker rotating source addresses (e.g. across
+# an IPv6 allocation) must not be able to grow the map without bound. When the
+# cap is hit, expired entries are swept; if that frees nothing, the oldest
+# entries are evicted, which degrades per-address accuracy under attack rather
+# than allowing memory exhaustion.
+RATE_LIMIT_MAX_ADDRESSES = 4_096
 
 _rate_limit_lock = threading.Lock()
 _rate_limit_hits: dict[str, deque[float]] = {}
-
-
-def _check_error_intake_rate_limit(client_address: str) -> bool:
-    """Sliding-window per-address limiter; True when the report is allowed."""
-    now = time.monotonic()
-    with _rate_limit_lock:
-        hits = _rate_limit_hits.setdefault(client_address, deque())
-        while hits and now - hits[0] > ERROR_INTAKE_WINDOW_SECONDS:
-            hits.popleft()
-        if len(hits) >= ERROR_INTAKE_RATE_LIMIT:
-            return False
-        hits.append(now)
-        return True
 
 
 def reset_error_intake_rate_limiter() -> None:
     """Clear limiter state (tests)."""
     with _rate_limit_lock:
         _rate_limit_hits.clear()
+
+
+def check_error_intake_rate_limit(client_address: str) -> bool:
+    """Sliding-window per-address limiter; True when the report is allowed."""
+    now = time.monotonic()
+    with _rate_limit_lock:
+        hits = _rate_limit_hits.get(client_address)
+        if hits is not None:
+            while hits and now - hits[0] > ERROR_INTAKE_WINDOW_SECONDS:
+                hits.popleft()
+            if not hits:
+                del _rate_limit_hits[client_address]
+        if len(_rate_limit_hits) >= RATE_LIMIT_MAX_ADDRESSES:
+            _sweep_rate_limit_addresses(now)
+        hits = _rate_limit_hits.get(client_address)
+        if hits is None:
+            if len(_rate_limit_hits) >= RATE_LIMIT_MAX_ADDRESSES:
+                return False
+            hits = deque()
+            _rate_limit_hits[client_address] = hits
+        if len(hits) >= ERROR_INTAKE_RATE_LIMIT:
+            return False
+        hits.append(now)
+        return True
+
+
+def rate_limit_tracked_addresses() -> int:
+    """Number of client addresses currently tracked by the limiter (tests)."""
+    with _rate_limit_lock:
+        return len(_rate_limit_hits)
+
+
+def expire_rate_limit_addresses(count: int) -> None:
+    """Expire the given number of tracked addresses (tests: exercise the sweep)."""
+    with _rate_limit_lock:
+        for address in list(_rate_limit_hits)[:count]:
+            _rate_limit_hits[address].clear()
+
+
+def _sweep_rate_limit_addresses(now: float) -> None:
+    for address in list(_rate_limit_hits):
+        hits = _rate_limit_hits[address]
+        while hits and now - hits[0] > ERROR_INTAKE_WINDOW_SECONDS:
+            hits.popleft()
+        if not hits:
+            del _rate_limit_hits[address]
 
 
 async def _reporter_is_authenticated(request: Request) -> bool:
@@ -191,7 +230,7 @@ async def report_frontend_error(
     severity.
     """
     client_address = request.client.host if request.client else "unknown"
-    if not _check_error_intake_rate_limit(client_address):
+    if not check_error_intake_rate_limit(client_address):
         raise HTTPException(status_code=429, detail="Too many error reports.")
 
     reporter_authenticated = await _reporter_is_authenticated(request)

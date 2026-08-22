@@ -6,8 +6,8 @@ from datetime import UTC, datetime, timedelta
 import jwt as pyjwt
 import pytest
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ec import (
-    SECP256R1,
     EllipticCurvePrivateKey,
     generate_private_key,
 )
@@ -20,7 +20,7 @@ from family_assistant.web import jwt_tokens
 
 @pytest.fixture
 def signing_key_pem() -> str:
-    private_key = generate_private_key(SECP256R1())
+    private_key = ec.generate_private_key(ec.SECP256R1())
     pem = private_key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.PKCS8,
@@ -154,3 +154,15 @@ def test_verify_without_signing_configured(monkeypatch: pytest.MonkeyPatch) -> N
     shaped_token = "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJ1In0.sig"
     assert jwt_tokens.looks_like_jwt(shaped_token)
     assert jwt_tokens.verify_access_token(shaped_token) is None
+
+
+def test_non_p256_ec_key_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    p384 = generate_private_key(ec.SECP384R1())
+    pem = p384.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("ascii")
+    monkeypatch.setenv("JWT_SIGNING_KEY", pem)
+    with pytest.raises(jwt_tokens.JWTSigningKeyError, match="P-256"):
+        jwt_tokens.init_jwt_signing()
