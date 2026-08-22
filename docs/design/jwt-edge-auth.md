@@ -84,7 +84,9 @@ The review of this design established two constraints that shape everything else
    gateway is not in the path (LAN/Tailscale); off-LAN they are rejected by design.
 4. **Session→JWT bridge**: `GET /api/auth/browser-token`, authenticated by the existing OIDC session
    cookie, sets the short-lived JWT as an HttpOnly `Secure` `SameSite=Lax` cookie scoped to
-   `/api`, and also returns it in the body for non-browser consumers of the session (none today).
+   `/api`; the credential travels exclusively via that cookie (an XSS reading the response body
+   must not be able to export a bearer token), and the response body carries only `expires_in`
+   for the frontend's refresh scheduling.
    Lax is what lets browser-managed flows survive the gateway unchanged — including returns from
    cross-site redirects such as the Google OAuth callback — while cross-site POSTs (the CSRF case
    that matters) still never carry it.
@@ -101,12 +103,15 @@ The review of this design established two constraints that shape everything else
 
 ### Web frontend
 
-8. After page load, and again when the cookie nears expiry, call the session→JWT bridge; the cookie
-   it sets authenticates every subsequent browser-managed API request — decorated `fetch`, native
-   `EventSource` subscriptions, `<img>` attachment previews, and full-page OAuth redirects alike.
-   No per-request machinery changes. Page loads themselves remain behind Access SSO + session
-   cookies — only `/api` traffic changes credential shape. The bridge re-run is driven by the JWT's
-   `exp`, which the frontend reads from the bridge response.
+8. Mounting is gated on the initial bridge attempt: a startup gate renders a minimal placeholder
+   until the first bridge call settles (proceeding immediately on 401 — an expired OIDC session is
+   the existing auth flow's territory — but keeping API consumers unmounted through transient
+   failures, with backoff retries, so their one-shot load effects never fire without the cookie).
+   After that, near-expiry re-runs keep the cookie fresh; the cookie it sets authenticates every
+   browser-managed API request — decorated `fetch`, native `EventSource` subscriptions, `<img>`
+   attachment previews, and full-page OAuth redirects alike — with no per-request machinery
+   changes. Page loads themselves remain behind Access SSO + session cookies — only `/api` traffic
+   changes credential shape.
 
 ### Edge (deployment repo)
 
