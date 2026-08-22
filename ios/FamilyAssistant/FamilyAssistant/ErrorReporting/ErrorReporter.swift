@@ -48,6 +48,7 @@ final class ErrorReporter: @unchecked Sendable {
 
     private let lock = NSLock()
     private var baseURLProvider: (() -> URL?)?
+    private var authTokenProvider: (() -> String?)?
     private var recentReports: [String: Date] = [:]
 
     /// Cap on spooled reports so a server outage cannot grow the cache without bound.
@@ -68,8 +69,16 @@ final class ErrorReporter: @unchecked Sendable {
     // MARK: - Configuration
 
     /// Provide a resolver for the backend base URL (e.g. `https://assistant.example.com`).
-    func configure(baseURLProvider: @escaping () -> URL?) {
-        lock.withLock { self.baseURLProvider = baseURLProvider }
+    /// The token provider supplies the current API access token so reports keep
+    /// landing in the persistent error lane on authenticated deployments.
+    func configure(
+        baseURLProvider: @escaping () -> URL?,
+        authTokenProvider: (() -> String?)? = nil
+    ) {
+        lock.withLock {
+            self.baseURLProvider = baseURLProvider
+            self.authTokenProvider = authTokenProvider
+        }
     }
 
     /// Install a global uncaught-exception handler that persists the exception for delivery on the
@@ -197,6 +206,9 @@ final class ErrorReporter: @unchecked Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let token = lock.withLock({ authTokenProvider })?() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         request.httpBody = try JSONEncoder().encode(payload)
 
         let (_, response) = try await session.data(for: request)

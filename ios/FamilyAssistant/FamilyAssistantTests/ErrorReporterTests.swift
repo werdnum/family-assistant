@@ -194,6 +194,47 @@ final class ErrorReporterTests: XCTestCase {
         XCTAssertEqual(spooledFiles().count, 1)
     }
 
+    func testDeliverAttachesBearerTokenWhenConfigured() async throws {
+        MockErrorURLProtocol.respond { _ in .init(statusCode: 200) }
+        let reporter = makeReporter()
+        reporter.configure(
+            baseURLProvider: { self.baseURL },
+            authTokenProvider: { "test-access-token" }
+        )
+
+        await reporter.deliver(
+            message: "Boom",
+            component: "Notes.editor.save",
+            errorType: .handled,
+            stack: nil,
+            extraData: [:]
+        )
+
+        XCTAssertEqual(MockErrorURLProtocol.requests.count, 1)
+        let request = try XCTUnwrap(MockErrorURLProtocol.requests.first)
+        XCTAssertEqual(
+            request.value(forHTTPHeaderField: "Authorization"),
+            "Bearer test-access-token"
+        )
+    }
+
+    func testDeliverOmitsAuthHeaderWithoutToken() async throws {
+        MockErrorURLProtocol.respond { _ in .init(statusCode: 200) }
+        let reporter = makeReporter()
+        reporter.configure(baseURLProvider: { self.baseURL })
+
+        await reporter.deliver(
+            message: "Boom",
+            component: "Notes.editor.save",
+            errorType: .handled,
+            stack: nil,
+            extraData: [:]
+        )
+
+        let request = try XCTUnwrap(MockErrorURLProtocol.requests.first)
+        XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+    }
+
     // MARK: - Helpers
 
     private func makeReporter() -> ErrorReporter {

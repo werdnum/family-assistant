@@ -768,6 +768,12 @@ final class AuthManager {
 
     // MARK: - Helpers
 
+    /// Current access token for components that attach credentials outside
+    /// `authorizedRequest` (e.g. error reporting).
+    func currentAccessToken() -> String? {
+        KeychainHelper.readString(key: Keys.apiToken)
+    }
+
     func validatedServerURL() -> URL? {
         var urlString = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if !urlString.hasPrefix("http://") && !urlString.hasPrefix("https://") {
