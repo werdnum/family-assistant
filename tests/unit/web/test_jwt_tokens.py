@@ -1,19 +1,26 @@
 """Tests for ES256 JWT access-token issuance and verification."""
 
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 import jwt as pyjwt
 import pytest
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ec, rsa
+from cryptography.hazmat.primitives.asymmetric.ec import (
+    SECP256R1,
+    EllipticCurvePrivateKey,
+    generate_private_key,
+)
+from cryptography.hazmat.primitives.asymmetric.rsa import (
+    generate_private_key as generate_rsa_key,
+)
 
 from family_assistant.web import jwt_tokens
 
 
 @pytest.fixture
 def signing_key_pem() -> str:
-    private_key = ec.generate_private_key(ec.SECP256R1())
+    private_key = generate_private_key(SECP256R1())
     pem = private_key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.PKCS8,
@@ -23,10 +30,12 @@ def signing_key_pem() -> str:
 
 
 @pytest.fixture(autouse=True)
-def _enable_jwt_signing(signing_key_pem: str, monkeypatch: pytest.MonkeyPatch) -> None:
+def _enable_jwt_signing(
+    signing_key_pem: str, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[None]:
     monkeypatch.setenv("JWT_SIGNING_KEY", signing_key_pem)
     jwt_tokens.init_jwt_signing()
-    yield  # type: ignore[misc]
+    yield
     jwt_tokens.reset_jwt_signing_for_tests()
 
 
@@ -47,7 +56,7 @@ def test_invalid_pem_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_non_ec_key_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
-    rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    rsa_key = generate_rsa_key(public_exponent=65537, key_size=2048)
     pem = rsa_key.private_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PrivateFormat.PKCS8,
@@ -83,6 +92,7 @@ def test_wrong_audience_rejected(signing_key_pem: str) -> None:
     private_key = serialization.load_pem_private_key(
         signing_key_pem.encode("ascii"), password=None
     )
+    assert isinstance(private_key, EllipticCurvePrivateKey)
     now = datetime.now(UTC)
     token: str = pyjwt.encode(
         {
@@ -125,7 +135,7 @@ def test_invalid_ttl_env_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_jwks_document_shape_and_stable_kid(signing_key_pem: str) -> None:
-    jwks: dict[str, Any] = jwt_tokens.jwks_document()
+    jwks = jwt_tokens.jwks_document()
     (key,) = jwks["keys"]
     assert key["kty"] == "EC"
     assert key["crv"] == "P-256"

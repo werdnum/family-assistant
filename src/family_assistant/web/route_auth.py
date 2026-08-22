@@ -18,9 +18,24 @@ split (see docs/design/jwt-edge-auth.md): it is published at
 generated or contract-tested against it rather than hand-mirrored.
 """
 
-from typing import Any, Literal
+from typing import Literal, TypedDict
 
 RouteClass = Literal["bootstrap", "public", "scoped"]
+
+# Functional TypedDict syntax: "class" is a reserved word in class syntax but
+# is the published JSON contract's key.
+RouteExemption = TypedDict(
+    "RouteExemption",
+    {"match": str, "path": str, "methods": list[str], "class": str},
+)
+
+
+class RouteClassificationDocument(TypedDict):
+    """The document served at /.well-known/auth-route-classification."""
+
+    jwt_required_prefix: str
+    no_jwt_routes: list["RouteExemption"]
+
 
 # (methods, match, path, class). "exact" matches only that path; "prefix"
 # matches the path itself and anything beneath it.
@@ -63,7 +78,7 @@ def api_route_requires_default_auth(method: str, path: str) -> bool:
     return True
 
 
-def api_route_classification() -> dict[str, Any]:
+def api_route_classification() -> RouteClassificationDocument:
     """The published classification document for edge policy generation."""
     return {
         "jwt_required_prefix": "/api/",

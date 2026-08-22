@@ -14,8 +14,8 @@ import base64
 import hashlib
 import logging
 import os
-from datetime import UTC, datetime, timedelta
-from typing import Any
+from datetime import UTC, datetime
+from typing import TypedDict, cast
 
 import jwt
 from cryptography.hazmat.primitives import serialization
@@ -102,24 +102,51 @@ def access_token_ttl_seconds() -> int:
     return ttl
 
 
+class AccessTokenClaims(TypedDict):
+    """Claims carried by every issued access token."""
+
+    iss: str
+    aud: str
+    sub: str
+    tid: int
+    iat: int
+    exp: int
+    jti: str
+
+
+class JsonWebKey(TypedDict):
+    """The EC public-key JWK published for gateway verification."""
+
+    kty: str
+    crv: str
+    x: str
+    y: str
+    kid: str
+    alg: str
+    use: str
+
+
 def mint_access_token(user_identifier: str, api_token_id: int) -> str:
     """Mint a short-lived ES256 access token bound to an api_tokens row."""
     if _signing_key is None or _key_id is None:
         raise RuntimeError("JWT signing is not configured.")
     now = datetime.now(UTC)
-    claims: dict[str, Any] = {
+    ttl = access_token_ttl_seconds()
+    claims: AccessTokenClaims = {
         "iss": JWT_ISSUER,
         "aud": JWT_AUDIENCE,
         "sub": user_identifier,
         "tid": api_token_id,
-        "iat": now,
-        "exp": now + timedelta(seconds=access_token_ttl_seconds()),
+        "iat": int(now.timestamp()),
+        "exp": int(now.timestamp()) + ttl,
         "jti": hashlib.sha256(f"{api_token_id}:{now.timestamp()}".encode()).hexdigest(),
     }
-    return jwt.encode(claims, _signing_key, algorithm="ES256", headers={"kid": _key_id})
+    return jwt.encode(
+        dict(claims), _signing_key, algorithm="ES256", headers={"kid": _key_id}
+    )
 
 
-def verify_access_token(token: str) -> dict[str, Any] | None:
+def verify_access_token(token: str) -> AccessTokenClaims | None:
     """Verify signature/expiry/issuer/audience; return claims or None.
 
     Callers must still check the ``tid`` row's revocation status.
@@ -127,13 +154,16 @@ def verify_access_token(token: str) -> dict[str, Any] | None:
     if _signing_key is None:
         return None
     try:
-        return jwt.decode(
-            token,
-            _signing_key.public_key(),
-            algorithms=["ES256"],
-            issuer=JWT_ISSUER,
-            audience=JWT_AUDIENCE,
-            options={"require": ["exp", "iss", "aud", "sub", "tid"]},
+        return cast(
+            "AccessTokenClaims",
+            jwt.decode(
+                token,
+                _signing_key.public_key(),
+                algorithms=["ES256"],
+                issuer=JWT_ISSUER,
+                audience=JWT_AUDIENCE,
+                options={"require": ["exp", "iss", "aud", "sub", "tid"]},
+            ),
         )
     except jwt.PyJWTError as exc:
         logger.debug("JWT verification failed: %s", exc)
@@ -148,24 +178,21 @@ def _int_to_bytes(value: int) -> bytes:
     return value.to_bytes((value.bit_length() + 7) // 8 or 1, "big")
 
 
-def jwks_document() -> dict[str, Any]:
+def jwks_document() -> dict[str, list[JsonWebKey]]:
     """Return the JWKS publishing the verification public key."""
     if _signing_key is None or _key_id is None:
         raise RuntimeError("JWT signing is not configured.")
     public_numbers = _signing_key.public_key().public_numbers()
-    return {
-        "keys": [
-            {
-                "kty": "EC",
-                "crv": "P-256",
-                "x": _b64u(_int_to_bytes(public_numbers.x)),
-                "y": _b64u(_int_to_bytes(public_numbers.y)),
-                "kid": _key_id,
-                "alg": "ES256",
-                "use": "sig",
-            }
-        ]
+    key: JsonWebKey = {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": _b64u(_int_to_bytes(public_numbers.x)),
+        "y": _b64u(_int_to_bytes(public_numbers.y)),
+        "kid": _key_id,
+        "alg": "ES256",
+        "use": "sig",
     }
+    return {"keys": [key]}
 
 
 def looks_like_jwt(token: str) -> bool:

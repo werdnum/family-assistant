@@ -311,7 +311,9 @@ class TestJWTTokens:
             yield client
 
     @pytest_asyncio.fixture
-    async def jwt_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def jwt_enabled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> AsyncGenerator[None]:
         private_key = ec.generate_private_key(ec.SECP256R1())
         pem = private_key.private_bytes(
             encoding=serialization.Encoding.PEM,

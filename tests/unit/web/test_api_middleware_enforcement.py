@@ -28,18 +28,14 @@ class _RejectingAuthService(AuthService):
         super().__init__()
         self.auth_enabled = True
 
-    async def get_user_from_api_token(
-        self, auth_header: str, request: object
-    ) -> None:
+    async def get_user_from_api_token(self, auth_header: str, request: object) -> None:
         return None
 
 
 class _AcceptingAuthService(_RejectingAuthService):
     """Accepts any bearer credential as a fixed user."""
 
-    async def get_user_from_api_token(
-        self, auth_header: str, request: object
-    ) -> dict:
+    async def get_user_from_api_token(self, auth_header: str, request: object) -> dict:
         return {
             "sub": "token-user",
             "name": "token-user",
