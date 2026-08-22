@@ -1,11 +1,15 @@
 """API endpoints for error logs."""
 
+import json
 import logging
+import threading
+import time
+from collections import deque
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field, field_validator
 
 from family_assistant.storage.database import Database
 from family_assistant.web.dependencies import get_db, get_diagnostics_reader
@@ -61,13 +65,18 @@ class ErrorLogsListResponse(BaseModel):
 
 
 class FrontendErrorReport(BaseModel):
-    """Request model for frontend error reports."""
+    """Request model for frontend error reports.
 
-    message: str
-    stack: str | None = None
-    url: str
-    user_agent: str | None = None
-    component_name: str | None = None
+    Field bounds bound the blast radius of the deliberately unauthenticated
+    intake: a report is rejected with 422 before any logging/persistence when
+    a field is oversized.
+    """
+
+    message: str = Field(max_length=8_000)
+    stack: str | None = Field(default=None, max_length=32_000)
+    url: str = Field(max_length=2_000)
+    user_agent: str | None = Field(default=None, max_length=512)
+    component_name: str | None = Field(default=None, max_length=256)
     error_type: str | None = (
         None  # uncaught, promise_rejection, component_error, manual
     )
@@ -76,8 +85,15 @@ class FrontendErrorReport(BaseModel):
     # buffer instead so breadcrumbs never pollute error_logs. The web frontend
     # never sets this, so its reports (incl. component_error boundaries) stay in
     # the error log; only clients that opt in (iOS breadcrumbs) get the new lane.
-    severity: str | None = None
+    severity: str | None = Field(default=None, max_length=16)
     extra_data: dict | None = None
+
+    @field_validator("extra_data")
+    @classmethod
+    def _bound_extra_data(cls, value: dict | None) -> dict | None:
+        if value is not None and len(json.dumps(value, default=str)) > 16_000:
+            raise ValueError("extra_data serialized size exceeds 16000 characters")
+        return value
 
 
 class FrontendErrorReportResponse(BaseModel):
@@ -93,9 +109,66 @@ class FrontendTelemetryResponse(BaseModel):
     count: int
 
 
+# --- Server-side abuse controls for the unauthenticated intake ---
+#
+# The intake must stay reachable without a user session (error capture before
+# login or with broken auth), so its protection is bounded impact instead of
+# access control: a per-client rate limit, hard payload bounds (see
+# FrontendErrorReport), and unauthenticated reports never persist — they are
+# clamped into the in-memory telemetry ring, which is fixed-size and dropped
+# on restart. Authenticated reporters keep the full severity behaviour.
+ERROR_INTAKE_RATE_LIMIT = 60  # reports per window per client address
+ERROR_INTAKE_WINDOW_SECONDS = 60.0
+
+_rate_limit_lock = threading.Lock()
+_rate_limit_hits: dict[str, deque[float]] = {}
+
+
+def _check_error_intake_rate_limit(client_address: str) -> bool:
+    """Sliding-window per-address limiter; True when the report is allowed."""
+    now = time.monotonic()
+    with _rate_limit_lock:
+        hits = _rate_limit_hits.setdefault(client_address, deque())
+        while hits and now - hits[0] > ERROR_INTAKE_WINDOW_SECONDS:
+            hits.popleft()
+        if len(hits) >= ERROR_INTAKE_RATE_LIMIT:
+            return False
+        hits.append(now)
+        return True
+
+
+def reset_error_intake_rate_limiter() -> None:
+    """Clear limiter state (tests)."""
+    with _rate_limit_lock:
+        _rate_limit_hits.clear()
+
+
+async def _reporter_is_authenticated(request: Request) -> bool:
+    """Whether the reporter holds a session or valid API credential.
+
+    Deployments without auth enabled are treated as trusted (LAN/dev model).
+    """
+    try:
+        if request.session.get("user"):
+            return True
+    except AssertionError:
+        pass
+
+    auth_service = getattr(request.app.state, "auth_service", None)
+    if not auth_service or not auth_service.auth_enabled:
+        return True
+
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return False
+
+    api_user = await auth_service.get_user_from_api_token(auth_header, request)
+    return api_user is not None
+
+
 @errors_api_router.post("/")
 async def report_frontend_error(
-    error_report: FrontendErrorReport,
+    error_report: FrontendErrorReport, request: Request
 ) -> FrontendErrorReportResponse:
     """Report a frontend JavaScript error.
 
@@ -108,11 +181,20 @@ async def report_frontend_error(
     breadcrumbs do not drown genuine errors. Absent or "error" severity behaves
     as before (logged at ERROR, persisted to error_logs).
 
-    Note: This endpoint is intentionally unauthenticated to allow error
-    capture before user login or when auth state is broken. The /api/* paths
-    are in PUBLIC_PATHS (auth.py). Rate limiting via batching and deduplication
-    is implemented in the frontend errorClient.ts.
+    This endpoint is intentionally reachable without a user session so error
+    capture works before login or with broken auth. Because it is therefore
+    exposed unauthenticated (including past the edge under
+    docs/design/jwt-edge-auth.md), abuse is bounded server-side rather than by
+    access control: per-client rate limiting, hard payload bounds on the
+    request model, and unauthenticated reports are clamped into the telemetry
+    ring buffer — never persisted to error_logs — regardless of claimed
+    severity.
     """
+    client_address = request.client.host if request.client else "unknown"
+    if not _check_error_intake_rate_limit(client_address):
+        raise HTTPException(status_code=429, detail="Too many error reports.")
+
+    reporter_authenticated = await _reporter_is_authenticated(request)
     extra_data = {
         "url": error_report.url,
         "user_agent": error_report.user_agent,
@@ -120,13 +202,17 @@ async def report_frontend_error(
         "error_type": error_report.error_type,
         "stack": error_report.stack,
         "details": error_report.extra_data,
+        "reporter_authenticated": reporter_authenticated,
     }
 
     severity = (error_report.severity or "error").strip().lower()
     telemetry_level = _TELEMETRY_LEVELS.get(severity)
+    if not reporter_authenticated:
+        # Clamp unauthenticated reports into the bounded ring buffer; a
+        # claimed "error" severity must not buy persistence.
+        telemetry_level = logging.INFO
+
     if telemetry_level is None:
-        # Error lane: unknown severities fall back here too, so a malformed value
-        # is never silently dropped from the error log.
         frontend_logger.error(
             error_report.message,
             extra={"extra_data": extra_data},
@@ -138,7 +224,7 @@ async def report_frontend_error(
     get_frontend_telemetry_buffer().add(
         FrontendTelemetryRecord(
             timestamp=datetime.now(UTC),
-            severity=severity,
+            severity=severity if reporter_authenticated else "info",
             message=error_report.message,
             component_name=error_report.component_name,
             error_type=error_report.error_type,

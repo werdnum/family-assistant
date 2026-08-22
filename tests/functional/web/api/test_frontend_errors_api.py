@@ -10,7 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.assistant import Assistant
 from family_assistant.utils.logging_handler import SQLAlchemyErrorHandler
-from family_assistant.web.frontend_telemetry import reset_frontend_telemetry_buffer
+from family_assistant.web.frontend_telemetry import (
+    get_frontend_telemetry_buffer,
+    reset_frontend_telemetry_buffer,
+)
+from family_assistant.web.routers.errors_api import (
+    ERROR_INTAKE_RATE_LIMIT,
+    reset_error_intake_rate_limiter,
+)
 
 # The frontend.javascript logger that the API endpoint uses
 FRONTEND_LOGGER_NAME = "frontend.javascript"
@@ -392,3 +399,116 @@ async def test_frontend_error_extra_data_stored_correctly(
         # Client-provided extra_data is nested under "details" to prevent key collision
         assert error["extra_data"]["details"]["custom_field"] == "custom_value"
         assert error["extra_data"]["details"]["nested"]["key"] == "value"
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter() -> None:
+    reset_error_intake_rate_limiter()
+
+
+class _FakeAuthService:
+    """Auth-enabled stand-in; configurable token acceptance."""
+
+    auth_enabled = True
+    oauth = None
+
+    def __init__(self, accept_tokens: bool) -> None:
+        self._accept_tokens = accept_tokens
+
+    async def get_user_from_api_token(
+        self, auth_header: str, request: object
+    ) -> dict | None:
+        if self._accept_tokens:
+            return {
+                "sub": "token-user",
+                "name": "token-user",
+                "email": "token-user",
+                "source": "api_token",
+                "token_id": 1,
+            }
+        return None
+
+
+def _client_for(assistant: Assistant) -> httpx.AsyncClient:
+    assert assistant.fastapi_app is not None
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=assistant.fastapi_app),
+        base_url="http://testserver",
+    )
+
+
+@pytest.mark.asyncio
+async def test_report_rejects_oversized_payload(
+    web_only_assistant: Assistant,
+) -> None:
+    async with _client_for(web_only_assistant) as client:
+        response = await client.post(
+            "/api/errors/",
+            json={"message": "x" * 9000, "url": "http://localhost/chat"},
+        )
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_reports_never_persist(
+    web_only_assistant: Assistant,
+) -> None:
+    """With auth enabled and no credential, claimed errors land in the ring."""
+    assert web_only_assistant.fastapi_app is not None
+    original = getattr(web_only_assistant.fastapi_app.state, "auth_service", None)
+    web_only_assistant.fastapi_app.state.auth_service = _FakeAuthService(False)
+    try:
+        async with _client_for(web_only_assistant) as client:
+            response = await client.post(
+                "/api/errors/",
+                json={
+                    "message": "claimed error",
+                    "url": "http://x/",
+                    "severity": "error",
+                },
+            )
+    finally:
+        web_only_assistant.fastapi_app.state.auth_service = original
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "recorded"
+    records = get_frontend_telemetry_buffer().get_recent()
+    assert len(records) == 1
+    assert records[0].to_dict()["severity"] == "info"
+
+
+@pytest.mark.asyncio
+async def test_authenticated_error_report_keeps_error_lane(
+    web_only_assistant: Assistant,
+) -> None:
+    assert web_only_assistant.fastapi_app is not None
+    original = getattr(web_only_assistant.fastapi_app.state, "auth_service", None)
+    web_only_assistant.fastapi_app.state.auth_service = _FakeAuthService(True)
+    try:
+        async with _client_for(web_only_assistant) as client:
+            response = await client.post(
+                "/api/errors/",
+                json={"message": "real error", "url": "http://x/"},
+                headers={"Authorization": "Bearer some-opaque-token"},
+            )
+    finally:
+        web_only_assistant.fastapi_app.state.auth_service = original
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "reported"
+
+
+@pytest.mark.asyncio
+async def test_intake_rate_limit_returns_429(
+    web_only_assistant: Assistant,
+) -> None:
+    async with _client_for(web_only_assistant) as client:
+        statuses = []
+        for _ in range(ERROR_INTAKE_RATE_LIMIT + 1):
+            response = await client.post(
+                "/api/errors/",
+                json={"message": "spam", "url": "http://x/"},
+            )
+            statuses.append(response.status_code)
+    assert all(status == 200 for status in statuses[:-1])
+    assert statuses[-1] == 429

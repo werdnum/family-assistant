@@ -320,6 +320,12 @@ class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
 
+class OpaqueTokenExchangeRequest(BaseModel):
+    """An opaque API token to upgrade to a short-lived signed JWT."""
+
+    token: str
+
+
 class RefreshTokenResponse(BaseModel):
     api_token: str
     expires_in: int  # seconds

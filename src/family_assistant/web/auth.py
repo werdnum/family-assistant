@@ -7,7 +7,7 @@ from typing import Any, NoReturn
 
 from authlib.integrations.starlette_client import OAuth  # type: ignore
 from fastapi import APIRouter, HTTPException, Request, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from passlib.context import CryptContext
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -20,6 +20,7 @@ from family_assistant.services.user_identity import (
 )
 from family_assistant.storage.base import api_tokens_table
 from family_assistant.storage.database import Database
+from family_assistant.web import jwt_tokens, route_auth
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +54,8 @@ PUBLIC_PATHS = [
     re.compile(r"^/app-auth$"),
     re.compile(r"^/app-auth-callback$"),
     re.compile(r"^/webhook(/.*)?$"),
-    re.compile(r"^/api(/.*)?$"),
+    # /api is NOT blanket-public: AuthMiddleware classifies every /api request
+    # via route_auth and enforces authentication by default (fail-closed).
     re.compile(r"^/health$"),
     re.compile(r"^/privacy$"),
     re.compile(r"^/static(/.*)?$"),
@@ -147,6 +149,9 @@ class AuthService:
 
         token_value = auth_header.split(" ", 1)[1]
 
+        if jwt_tokens.jwt_auth_enabled() and jwt_tokens.looks_like_jwt(token_value):
+            return await self._user_from_jwt_token(token_value)
+
         # Assuming the prefix is the first 8 characters of the token_value
         # and the rest is the secret part that was hashed.
         if len(token_value) <= 8:
@@ -206,6 +211,49 @@ class AuthService:
             "name": token_row["user_identifier"],  # Or a display name if available
             "email": token_row["user_identifier"],  # Or actual email if available
             "source": "api_token",
+            "token_id": token_row["id"],
+        }
+
+    async def _user_from_jwt_token(self, token_value: str) -> dict | None:
+        """Authenticate a signed access-token JWT against its api_tokens row.
+
+        The signature/expiry/issuer/audience are verified statelessly; the row
+        identified by the ``tid`` claim is still consulted so revocation and
+        manual expiry take effect immediately at this layer.
+        """
+        if not self.database_engine:
+            logger.error("Database engine not available in AuthService")
+            return None
+
+        claims = jwt_tokens.verify_access_token(token_value)
+        if not claims:
+            logger.warning("Rejected invalid JWT access token.")
+            return None
+
+        db = Database(self.database_engine)
+        query = select(api_tokens_table).where(
+            api_tokens_table.c.id == claims["tid"],
+            api_tokens_table.c.token_type == "api",
+        )
+        token_row = await db.fetch_one(query)
+
+        if not token_row or token_row["is_revoked"]:
+            logger.warning("JWT references missing or revoked API token.")
+            return None
+
+        now = datetime.now(UTC)
+        if token_row["expires_at"] and token_row["expires_at"] < now:
+            logger.warning(
+                "JWT references expired API token (ID: %s).", token_row["id"]
+            )
+            return None
+
+        user_identifier = str(claims["sub"])
+        return {
+            "sub": user_identifier,
+            "name": user_identifier,
+            "email": user_identifier,
+            "source": "jwt_access_token",
             "token_id": token_row["id"],
         }
 
@@ -346,13 +394,29 @@ class AuthMiddleware:
                 await self.app(scope, receive, send)
                 return
 
+        # /api requests are fail-closed: default authentication applies to
+        # everything the route classification does not exempt (bootstrap,
+        # public receivers, scoped-auth routes). Exempt requests fall through
+        # to their own auth mechanism; unauthenticated default-auth requests
+        # get a 401 below instead of the browser login redirect.
+        is_api_request = route_auth.is_api_path(request_path)
+        if is_api_request and not route_auth.api_route_requires_default_auth(
+            request.method, request_path
+        ):
+            await self.app(scope, receive, send)
+            return
+
         # Try to get user from session
         try:
             user = request.session.get("user")
         except AssertionError:
-            # Session middleware not available, so no authentication is possible
-            await self.app(scope, receive, send)
-            return
+            # Session middleware not available. API requests stay fail-closed
+            # (bearer auth below, then 401); page requests keep the legacy
+            # pass-through since the login redirect needs a session too.
+            if not is_api_request:
+                await self.app(scope, receive, send)
+                return
+            user = None
 
         # If session was created from an API token (e.g., iOS app),
         # verify the token is still valid (not revoked/expired).
@@ -409,6 +473,22 @@ class AuthMiddleware:
                     )
 
         if not user:
+            if is_api_request:
+                logger.debug(
+                    "No session or valid API token for API path %s; rejecting with 401.",
+                    request_path,
+                )
+                unauthorized = JSONResponse(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    content={
+                        "detail": "Not authenticated: session or API token required."
+                    },
+                    headers={
+                        "WWW-Authenticate": 'Bearer realm="api", error="missing_token"'
+                    },
+                )
+                await unauthorized(scope, receive, send)
+                return
             # Store intended URL before redirecting to login (for OIDC flow)
             # Session middleware might not be available
             with contextlib.suppress(AssertionError):

@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 import pytest_asyncio
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -20,6 +22,8 @@ if TYPE_CHECKING:
 
 from family_assistant.storage.base import api_tokens_table
 from family_assistant.storage.database import Database
+from family_assistant.web import jwt_tokens as jwt_tokens_module
+from family_assistant.web.route_auth import api_route_classification
 from family_assistant.web.routers.app_auth import (
     auth_codes,
     cleanup_expired_codes,
@@ -289,3 +293,156 @@ class TestCleanupExpiredCodes:
         cleanup_expired_codes()
         assert "old" not in auth_codes
         assert "fresh" in auth_codes
+
+
+class TestJWTTokens:
+    """Signed-JWT issuance when JWT_SIGNING_KEY is configured."""
+
+    @pytest_asyncio.fixture
+    async def session_client(
+        self, app_fixture: "FastAPI"
+    ) -> AsyncGenerator[AsyncClient]:
+        """Client with SessionMiddleware enabled for browser-session testing."""
+        app_fixture.add_middleware(SessionMiddleware, secret_key="test-secret")
+        transport = ASGITransport(app=app_fixture)
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
+            yield client
+
+    @pytest_asyncio.fixture
+    async def jwt_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        private_key = ec.generate_private_key(ec.SECP256R1())
+        pem = private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption(),
+        ).decode("ascii")
+        monkeypatch.setenv("JWT_SIGNING_KEY", pem)
+        jwt_tokens_module.init_jwt_signing()
+        yield  # type: ignore[misc]
+        jwt_tokens_module.reset_jwt_signing_for_tests()
+
+    @pytest.mark.asyncio
+    async def test_exchange_returns_signed_jwt(
+        self, api_test_client: AsyncClient, jwt_enabled: None
+    ) -> None:
+        code_verifier, code_challenge = _create_pkce_pair()
+        auth_code = _seed_auth_code(code_challenge)
+
+        response = await api_test_client.post(
+            "/api/auth/exchange",
+            json={"code": auth_code, "code_verifier": code_verifier},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["api_token"].count(".") == 2
+        assert data["expires_in"] == 3600
+
+        claims = jwt_tokens_module.verify_access_token(data["api_token"])
+        assert claims is not None
+        assert claims["sub"] == "testuser@example.com"
+
+    @pytest.mark.asyncio
+    async def test_refresh_returns_signed_jwt(
+        self, api_test_client: AsyncClient, jwt_enabled: None
+    ) -> None:
+        code_verifier, code_challenge = _create_pkce_pair()
+        auth_code = _seed_auth_code(code_challenge)
+        exchange = await api_test_client.post(
+            "/api/auth/exchange",
+            json={"code": auth_code, "code_verifier": code_verifier},
+        )
+        refresh_token = exchange.json()["refresh_token"]
+
+        response = await api_test_client.post(
+            "/api/auth/refresh",
+            json={"refresh_token": refresh_token},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["api_token"].count(".") == 2
+        assert data["expires_in"] == 3600
+
+    @pytest.mark.asyncio
+    async def test_exchange_stays_opaque_without_signing_key(
+        self, api_test_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("JWT_SIGNING_KEY", raising=False)
+        jwt_tokens_module.reset_jwt_signing_for_tests()
+
+        code_verifier, code_challenge = _create_pkce_pair()
+        auth_code = _seed_auth_code(code_challenge)
+        response = await api_test_client.post(
+            "/api/auth/exchange",
+            json={"code": auth_code, "code_verifier": code_verifier},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["expires_in"] == 30 * 86400
+        assert not jwt_tokens_module.looks_like_jwt(data["api_token"])
+
+    @pytest.mark.asyncio
+    async def test_opaque_upgrade_requires_valid_token(
+        self, api_test_client: AsyncClient, jwt_enabled: None
+    ) -> None:
+        response = await api_test_client.post(
+            "/api/auth/token", json={"token": "not-a-real-token"}
+        )
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_opaque_upgrade_returns_jwt_bound_to_row(
+        self,
+        api_test_client: AsyncClient,
+        db_engine: AsyncEngine,
+        jwt_enabled: None,
+    ) -> None:
+        minted = api_tokens_storage.mint_api_token()
+        db = Database(db_engine)
+        token_id = await api_tokens_storage.add_api_token(
+            db_context=db,
+            user_identifier="script-user@example.com",
+            name="script",
+            hashed_token=minted.hashed_secret,
+            prefix=minted.prefix,
+            created_at=minted.created_at,
+            expires_at=None,
+            token_type="api",
+        )
+
+        response = await api_test_client.post(
+            "/api/auth/token", json={"token": minted.full_token}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["expires_in"] == 3600
+
+        claims = jwt_tokens_module.verify_access_token(data["api_token"])
+        assert claims is not None
+        assert claims["tid"] == token_id
+
+    @pytest.mark.asyncio
+    async def test_browser_token_sets_cookie(
+        self, session_client: AsyncClient, jwt_enabled: None
+    ) -> None:
+        """The bridge sets the JWT cookie scoped to /api with Lax SameSite."""
+        response = await session_client.get("/api/auth/browser-token")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["expires_in"] == 3600
+        assert body["token"].count(".") == 2
+
+        set_cookie = response.headers["set-cookie"]
+        assert "fa_access_token=" in set_cookie
+        assert "httponly" in set_cookie.lower()
+        assert "samesite=lax" in set_cookie.lower()
+        assert "path=/api" in set_cookie.lower()
+
+    @pytest.mark.asyncio
+    async def test_route_classification_published(
+        self, api_test_client: AsyncClient
+    ) -> None:
+        response = await api_test_client.get("/.well-known/auth-route-classification")
+        assert response.status_code == 200
+        assert response.json() == api_route_classification()

@@ -35,6 +35,7 @@ from family_assistant.web.cancel_on_disconnect import (
     CancelOnClientDisconnectMiddleware,
 )
 from family_assistant.web.conversation_stream_hub import ConversationStreamHub
+from family_assistant.web.jwt_tokens import init_jwt_signing
 from family_assistant.web.routers.a2a_api import a2a_wellknown_router
 from family_assistant.web.routers.api import api_router
 from family_assistant.web.routers.api_documentation import (
@@ -144,6 +145,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage application lifecycle events."""
     # Startup
     logger.info("Application starting up...")
+
+    # Fail fast on a malformed JWT signing key rather than at first use.
+    init_jwt_signing()
 
     # Initialize AuthService if database engine is available
     # Note: database_engine will be set by Assistant during setup

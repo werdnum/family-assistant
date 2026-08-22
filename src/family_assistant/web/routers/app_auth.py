@@ -29,7 +29,9 @@ from family_assistant.services.user_identity import UserIdentityResolutionError
 from family_assistant.storage import api_tokens as api_tokens_storage
 from family_assistant.storage.base import api_tokens_table
 from family_assistant.storage.database import Database
+from family_assistant.web import jwt_tokens, route_auth
 from family_assistant.web.dependencies import (
+    get_current_session_user,
     get_current_user,
     get_db,
     get_user_identity_resolver,
@@ -37,6 +39,7 @@ from family_assistant.web.dependencies import (
 from family_assistant.web.models import (
     CodeExchangeRequest,
     CodeExchangeResponse,
+    OpaqueTokenExchangeRequest,
     RefreshTokenRequest,
     RefreshTokenResponse,
     TokenSessionResponse,
@@ -54,6 +57,11 @@ AUTH_CODE_TTL_SECONDS = 60
 API_TOKEN_EXPIRY_DAYS = 30
 REFRESH_TOKEN_EXPIRY_DAYS = 90
 API_TOKEN_EXPIRY_SECONDS = API_TOKEN_EXPIRY_DAYS * 86400
+
+# HttpOnly cookie carrying the browser's short-lived JWT past the gateway.
+# SameSite=Lax so browser-managed flows that return from cross-site redirects
+# (OAuth callbacks) keep authenticating; cross-site POSTs never carry it.
+BROWSER_TOKEN_COOKIE_NAME = "fa_access_token"
 
 # --- Routers ---
 # Two routers: one for page-level endpoints, one for API endpoints
@@ -243,6 +251,22 @@ async def app_auth_oidc_callback(request: Request) -> HTMLResponse:
     return HTMLResponse(content=html)
 
 
+def _access_token_response_value(
+    api_minted: api_tokens_storage.MintedApiToken,
+    api_token_id: int,
+    user_identifier: str,
+) -> str:
+    """Return the client-visible access token for a minted row.
+
+    With JWT signing configured this is a short-lived signed JWT bound to the
+    row (which remains the revocation registry); otherwise it is the opaque
+    secret itself.
+    """
+    if jwt_tokens.jwt_auth_enabled():
+        return jwt_tokens.mint_access_token(user_identifier, api_token_id)
+    return api_minted.full_token
+
+
 # --- API endpoints (mounted under /api/auth) ---
 
 
@@ -327,8 +351,15 @@ async def exchange_code(
             parent_token_id=api_token_id,
         )
 
-    full_api_token = api_minted.full_token
+    access_token = _access_token_response_value(
+        api_minted, api_token_id, user_identifier
+    )
     full_refresh_token = refresh_minted.full_token
+    token_ttl = (
+        jwt_tokens.access_token_ttl_seconds()
+        if jwt_tokens.jwt_auth_enabled()
+        else API_TOKEN_EXPIRY_SECONDS
+    )
 
     logger.info(
         "App auth exchange: issued API token %s and refresh token for user %s",
@@ -337,9 +368,9 @@ async def exchange_code(
     )
 
     return CodeExchangeResponse(
-        api_token=full_api_token,
+        api_token=access_token,
         refresh_token=full_refresh_token,
-        expires_in=API_TOKEN_EXPIRY_SECONDS,
+        expires_in=token_ttl,
     )
 
 
@@ -385,7 +416,14 @@ async def refresh_token(
             .values(parent_token_id=api_token_id)
         )
 
-    full_api_token = api_minted.full_token
+    access_token = _access_token_response_value(
+        api_minted, api_token_id, user_identifier
+    )
+    token_ttl = (
+        jwt_tokens.access_token_ttl_seconds()
+        if jwt_tokens.jwt_auth_enabled()
+        else API_TOKEN_EXPIRY_SECONDS
+    )
 
     logger.info(
         "Token refresh: issued new API token %s for user %s",
@@ -394,9 +432,109 @@ async def refresh_token(
     )
 
     return RefreshTokenResponse(
-        api_token=full_api_token,
-        expires_in=API_TOKEN_EXPIRY_SECONDS,
+        api_token=access_token,
+        expires_in=token_ttl,
     )
+
+
+@api_auth_router.post("/token")
+async def exchange_opaque_token(
+    payload: OpaqueTokenExchangeRequest,
+    db_context: Annotated[Database, Depends(get_db)],
+) -> RefreshTokenResponse:
+    """Upgrade a valid opaque API token to a signed JWT.
+
+    Opaque tokens are rejected by the gateway (it cannot consult the
+    database), so remote script clients exchange their opaque token once for a
+    short-lived JWT. The opaque token itself stays valid wherever the gateway
+    is not in the request path (LAN/Tailscale).
+    """
+    if not jwt_tokens.jwt_auth_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="JWT auth is not configured on this server.",
+        )
+
+    token_row = await api_tokens_storage.validate_token_by_value(
+        db_context, payload.token, expected_type="api"
+    )
+    if not token_row:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired API token.",
+        )
+
+    token = jwt_tokens.mint_access_token(
+        str(token_row["user_identifier"]), int(token_row["id"])
+    )
+    logger.info(
+        "Opaque token upgrade: issued JWT for API token %s (user %s)",
+        token_row["id"],
+        token_row["user_identifier"],
+    )
+    return RefreshTokenResponse(
+        api_token=token,
+        expires_in=jwt_tokens.access_token_ttl_seconds(),
+    )
+
+
+@api_auth_router.get("/browser-token")
+async def browser_token(
+    db_context: Annotated[Database, Depends(get_db)],
+    current_user: Annotated[dict, Depends(get_current_session_user)],
+) -> JSONResponse:
+    """Exchange the OIDC session for a short-lived browser JWT cookie.
+
+    The JWT is set as an HttpOnly SameSite=Lax cookie scoped to /api so every
+    browser-managed API request (fetch, EventSource, img tags) authenticates
+    past the gateway without per-request headers. The value is also returned
+    in the body; the frontend only reads expires_in.
+    """
+    if not jwt_tokens.jwt_auth_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="JWT auth is not configured on this server.",
+        )
+    if current_user.get("readonly"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Scoped tokens cannot mint browser sessions.",
+        )
+
+    user_identifier = str(
+        current_user.get("sub") or current_user.get("user_identifier")
+    )
+
+    # Browser sessions have no api_tokens row of their own, so each bridge
+    # mints a short-lived one: the JWT's tid keeps pointing at a real
+    # revocation registry row, and the row expires with (a grace past) the JWT.
+    ttl = jwt_tokens.access_token_ttl_seconds()
+    minted = api_tokens_storage.mint_api_token()
+    now = datetime.now(UTC)
+    async with db_context.transaction() as txn:
+        api_token_id = await api_tokens_storage.add_api_token(
+            db_context=txn,
+            user_identifier=user_identifier,
+            name="browser-session",
+            hashed_token=minted.hashed_secret,
+            prefix=minted.prefix,
+            created_at=minted.created_at,
+            expires_at=now + timedelta(seconds=ttl + 60),
+            token_type="api",
+        )
+
+    token = jwt_tokens.mint_access_token(user_identifier, api_token_id)
+    response = JSONResponse(content={"token": token, "expires_in": ttl})
+    response.set_cookie(
+        key=BROWSER_TOKEN_COOKIE_NAME,
+        value=token,
+        max_age=ttl,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/api",
+    )
+    return response
 
 
 @api_auth_router.post("/token-session")
@@ -446,6 +584,17 @@ async def auth_me(
 
 
 # --- Well-known endpoint ---
+
+
+@wellknown_router.get("/.well-known/auth-route-classification")
+async def auth_route_classification() -> JSONResponse:
+    """Publish which /api routes are exempt from default/JWT authentication.
+
+    Single source of truth for the edge deployment's JWT-enforcement route
+    split; consumed there via generation or contract testing so the two lists
+    cannot silently drift.
+    """
+    return JSONResponse(content=route_auth.api_route_classification())
 
 
 @wellknown_router.get("/.well-known/apple-app-site-association")
