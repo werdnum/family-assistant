@@ -74,10 +74,11 @@ The review of this design established two constraints that shape everything else
    expiry checks) and legacy opaque tokens (unchanged path). Opaque tokens remain valid wherever the
    gateway is not in the path (LAN/Tailscale); off-LAN they are rejected by design.
 4. **Session→JWT bridge**: `GET /api/auth/browser-token`, authenticated by the existing OIDC session
-   cookie, sets the short-lived JWT as an HttpOnly `Secure` `SameSite=Strict` cookie scoped to
+   cookie, sets the short-lived JWT as an HttpOnly `Secure` `SameSite=Lax` cookie scoped to
    `/api`, and also returns it in the body for non-browser consumers of the session (none today).
-   SameSite=Strict keeps the cookie off cross-site requests, so classic CSRF does not return with
-   it; the app's flows all originate same-site.
+   Lax is what lets browser-managed flows survive the gateway unchanged — including returns from
+   cross-site redirects such as the Google OAuth callback — while cross-site POSTs (the CSRF case
+   that matters) still never carry it.
 5. **Opaque→JWT exchange**: `POST /api/auth/token` upgrades a valid opaque API token to a JWT pair,
    so scripts using the documented token interface keep working remotely after a one-time upgrade;
    the opaque token stays valid on LAN.
@@ -102,11 +103,15 @@ The review of this design established two constraints that shape everything else
 
 9. **Envoy Gateway `SecurityPolicy`** with a JWT provider whose `remoteJWKS` points at the in-cluster
    Family Assistant service, extracting tokens from both the `Authorization: Bearer` header and the
-   browser cookie, attached unconditionally to the HTTPRoute section matching `/api/*`, except an
-   enumerated bootstrap route covering exactly the backend allowlist's no-default-auth paths
-   (`exchange`, `refresh`, `token`, `browser-token`, error intake). There is no header-conditioned
-   splitting and therefore no route an attacker can select by omitting anything; every exempted path
-   is authenticated by something else or public by design with its own abuse controls.
+   browser cookie, attached unconditionally to the HTTPRoute section matching `/api/*`, except the
+   routes the backend classifies as not using default authentication: bootstrap receivers
+   (`exchange`, `refresh`, `token`, `browser-token`), public-by-design error intake, and scoped-auth
+   diagnostics routes whose readonly-token check lives in a route dependency. There is no
+   header-conditioned splitting and therefore no route an attacker can select by omitting anything;
+   every exempted path is authenticated by something else or public by design with its own abuse
+   controls. The backend is the single source of truth for that classification — it publishes it,
+   and the deployment consumes it (generated config or a contract test), so the two lists cannot
+   silently drift.
 10. **Cloudflare Access bypass** scoped strictly to `assistant.andrewgarrett.dev/api/*`, ordered
     ahead of the wildcard app. Nothing else changes: the web UI, static assets, and pages remain
     behind interactive Access SSO, and `/api/*` remains behind two layers anyway (Cloudflare
@@ -129,10 +134,10 @@ The review of this design established two constraints that shape everything else
   traffic out, while authorization and revocation stay with the backend.
 - **Off-LAN opaque tokens end**: scripts holding manually created tokens must call the upgrade
   exchange once to work remotely; LAN use is unaffected. Documented in the API README.
-- **Browser cookie JWT and CSRF**: the bridge cookie is `SameSite=Strict`, so cross-site requests
-  never carry it and classic CSRF does not return. Strict also means the cookie is absent on
-  cross-site *initiated* top-level navigations to `/api`; no current flow depends on one, and any
-  future flow that does should use a link from an app page instead of loosening SameSite.
+- **Browser cookie JWT and CSRF**: the bridge cookie is `SameSite=Lax`, so it rides top-level GET
+  navigations (OAuth callback returns) but never cross-site POSTs — the CSRF case that matters.
+  A cross-site top-level GET to `/api` cannot leak data to the initiator (the response renders in
+  the victim's browser, unreadable cross-origin).
 - **Diagnostics scoped-auth pass-through**: the middleware allowlist names diagnostics paths so
   their readonly-token dependency keeps working; the pass-through grants nothing beyond those
   routes' own scoped checks. This is enumeration at a single chokepoint (the same list drives the
@@ -149,9 +154,11 @@ The review of this design established two constraints that shape everything else
 
 Each milestone is independently verifiable; M1–M3 land in this repo, M4 in the deployment repo.
 
-1. **Backend fail-closed middleware** — explicit `/api` public allowlist, enforced authentication for
-   everything else. Verify: functional tests asserting unauthenticated `/api` requests get 401 (not
-   redirect/open), allowlisted endpoints stay reachable, previously open read endpoints now reject.
+1. **Backend fail-closed middleware** — explicit route classification (default-auth vs bootstrap /
+   public / scoped), enforced authentication for everything else, published so the edge can consume
+   it. Verify: functional tests asserting unauthenticated `/api` requests get 401 (not
+   redirect/open), every classified path behaves per its class, previously open read endpoints now
+   reject.
 2. **JWT tokens + bridges** — ES256 issuance, dual verification, JWKS endpoint, browser bridge
    (cookie + body), opaque→JWT exchange, configuration. Verify: unit tests (mint/verify,
    bad-signature/expiry/audience rejection, JWKS shape, disabled-mode passthrough, cookie attributes)
@@ -161,10 +168,11 @@ Each milestone is independently verifiable; M1–M3 land in this repo, M4 in the
    present and expired.
 4. **iOS** — proportional refresh threshold; HTML/auth-wall detection in response validation and the
    error classifier. Verify: unit tests; full suite green.
-5. **Deployment** — Envoy `SecurityPolicy` (header + cookie extraction) + bootstrap route split
-   mirroring the backend allowlist, Access bypass rule in tofu.
-   Verify: `tofu plan` diff review; curl through the tunnel — no token ⇒ 401 from the gateway, valid
-   token (header and cookie) ⇒ 200, opaque token ⇒ 401 with clear pointer to the upgrade endpoint,
-   each bootstrap path reachable without a JWT; web UI unaffected.
+5. **Deployment** — Envoy `SecurityPolicy` (header + cookie extraction) + route split generated or
+   contract-tested against the backend's published classification, Access bypass rule in tofu.
+   Verify: `tofu plan` diff review; contract test fails when classification and policy diverge;
+   curl through the tunnel — no token ⇒ 401 from the gateway, valid token (header and cookie) ⇒
+   200, opaque token ⇒ 401 with clear pointer to the upgrade endpoint, each classified path
+   reachable per its class; web UI unaffected.
 6. **End-to-end** — device off-Tailscale: sign-in once, uploads/chat/SSE all work; failure modes
    surface as readable errors.
