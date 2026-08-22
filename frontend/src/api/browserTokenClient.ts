@@ -21,12 +21,14 @@ interface BrowserTokenResponse {
 
 class SessionExpiredError extends Error {}
 
+class BridgeNotConfiguredError extends Error {}
+
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 let inFlight: Promise<BridgeSettlement> | null = null;
 let retryDelayMs = RETRY_BASE_DELAY_MS;
 
 /** Outcome of a single bridge attempt. */
-export type BridgeSettlement = 'refreshed' | 'session-expired' | 'unreachable';
+export type BridgeSettlement = 'refreshed' | 'session-expired' | 'not-configured' | 'unreachable';
 
 const settlementListeners = new Set<(settlement: BridgeSettlement) => void>();
 
@@ -62,13 +64,18 @@ async function requestBrowserToken(): Promise<BrowserTokenResponse> {
   if (response.status === 401) {
     throw new SessionExpiredError('OIDC session expired');
   }
+  if (response.status === 404) {
+    // JWT auth is not configured on this server (unset signing key): the
+    // gateway policy is disabled too, so no cookie is needed — proceed.
+    throw new BridgeNotConfiguredError('Bridge endpoint not available');
+  }
   if (!response.ok) {
     throw new Error(`Failed to fetch browser token: ${response.status} ${response.statusText}`);
   }
   return response.json();
 }
 
-type AttemptResult = 'refreshed' | 'session-expired' | 'transient-failure';
+type AttemptResult = 'refreshed' | 'session-expired' | 'not-configured' | 'transient-failure';
 
 async function attemptRefresh(): Promise<AttemptResult> {
   const startedAt = Date.now();
@@ -76,7 +83,13 @@ async function attemptRefresh(): Promise<AttemptResult> {
   try {
     payload = await requestBrowserToken();
   } catch (error) {
-    return error instanceof SessionExpiredError ? 'session-expired' : 'transient-failure';
+    if (error instanceof SessionExpiredError) {
+      return 'session-expired';
+    }
+    if (error instanceof BridgeNotConfiguredError) {
+      return 'not-configured';
+    }
+    return 'transient-failure';
   }
 
   const elapsed = Date.now() - startedAt;
@@ -103,6 +116,11 @@ async function runBridgeCycle(): Promise<BridgeSettlement> {
     retryDelayMs = RETRY_BASE_DELAY_MS;
     notifySettlement('refreshed');
     return 'refreshed';
+  }
+  if (result === 'not-configured') {
+    retryDelayMs = RETRY_BASE_DELAY_MS;
+    notifySettlement('not-configured');
+    return 'not-configured';
   }
   notifySettlement('session-expired');
   return 'session-expired';
