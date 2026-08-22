@@ -212,8 +212,18 @@ struct ChatAPIClient {
             )
         )
         let (data, response) = try await urlSession.data(for: request)
-        guard response is HTTPURLResponse else {
+        guard let httpResponse = response as? HTTPURLResponse else {
             throw ChatAPIError.invalidResponse
+        }
+        // Non-2xx bodies stay the runner's error channel (decoded below, as
+        // before); an auth wall is only meaningful where a JSON result was due.
+        if (200 ..< 300).contains(httpResponse.statusCode),
+           AuthWallDetection.isLikely(
+               contentType: httpResponse.value(forHTTPHeaderField: "Content-Type"),
+               data: data
+           )
+        {
+            throw ChatAPIError.authWall
         }
         return try JSONDecoder.chatDecoder.decode(JSONValue.self, from: data)
     }
@@ -619,7 +629,9 @@ struct ChatAPIClient {
     func downloadAttachment(path: String) async throws -> (Data, String?) {
         let request = try await authManager.authorizedRequest(url: apiURL(path), method: "GET")
         let (data, response) = try await urlSession.data(for: request)
-        try validate(response: response, data: data)
+        // An attachment body is the payload, not a JSON envelope: an HTML/XML/SVG
+        // file is legitimate, so downloads keep status-only checking.
+        try validate(response: response, data: data, expectsJSON: false)
         return (data, (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type"))
     }
 
@@ -704,7 +716,7 @@ struct ChatAPIClient {
         return (retryData, retryResponse)
     }
 
-    private func validate(response: URLResponse, data: Data) throws {
+    private func validate(response: URLResponse, data: Data, expectsJSON: Bool = true) throws {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ChatAPIError.invalidResponse
         }
@@ -716,7 +728,9 @@ struct ChatAPIClient {
                 retryAfter: Self.parseRetryAfter(httpResponse)
             )
         }
-        if AuthWallDetection.isLikely(contentType: httpResponse.value(forHTTPHeaderField: "Content-Type"), data: data) {
+        if expectsJSON,
+           AuthWallDetection.isLikely(contentType: httpResponse.value(forHTTPHeaderField: "Content-Type"), data: data)
+        {
             throw ChatAPIError.authWall
         }
     }

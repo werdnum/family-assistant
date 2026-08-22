@@ -991,6 +991,22 @@ final class ChatAPIClientTests: XCTestCase {
         } catch ChatAPIError.authWall {}
     }
 
+    func testAttachmentDownloadAcceptsNonJSONBodies() async throws {
+        // An attachment body is the payload: an HTML/XML/SVG download must not
+        // be mistaken for an auth wall, so downloads keep status-only checking.
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect/></svg>",
+                headers: ["Content-Type": "image/svg+xml"]
+            )
+        }
+
+        let (data, contentType) = try await makeClient().downloadAttachment(path: "/api/attachments/att-1")
+
+        XCTAssertEqual(String(decoding: data, as: UTF8.self), "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect/></svg>")
+        XCTAssertEqual(contentType, "image/svg+xml")
+    }
+
     private func makeClient() -> ChatAPIClient {
         ChatAPIClient(authManager: makeAuthManager())
     }
