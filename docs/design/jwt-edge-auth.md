@@ -48,11 +48,13 @@ The review of this design established two constraints that shape everything else
     browsers hold them in an HttpOnly cookie set by the session bridge — so browser-managed
     requests that cannot carry headers (`<img>`, `EventSource`, full-page OAuth redirects)
     authenticate automatically instead of each needing its own migration.
- 3. **Bootstrap endpoints carry their own auth.** The gateway cannot signature-check requests whose
-    whole purpose is obtaining the first credential, plus deliberately public receivers (error
-    intake). Those paths form an explicit, enumerated no-JWT route set at the edge; each is
-    authenticated by something else (PKCE code, opaque token, session cookie) or is public by
-    design with its own abuse controls.
+ 3. **Bootstrap endpoints carry their own auth or bounded impact.** The gateway cannot
+    signature-check requests whose whole purpose is obtaining the first credential, plus the
+    deliberately public error-intake receiver. Those paths form an explicit, enumerated no-JWT route
+    set at the edge; each is authenticated by something else (PKCE code, opaque token, session
+    cookie) or — for error intake — bounded server-side instead of access-controlled: per-client
+    rate limiting, hard payload bounds, and unauthenticated reports clamped into the in-memory
+    telemetry ring so an Internet attacker can never buy persistent storage or log pollution.
 
 ### Backend
 
@@ -63,7 +65,11 @@ The review of this design established two constraints that shape everything else
    whose readonly-token check lives in a route dependency). Every other `/api/*` request requires
    authentication in `AuthMiddleware` — closing the LAN exposure of dependency-less routers as a
    side effect, and making the system safe under any edge configuration. Scoped routes stay scoped:
-   passing a diagnostics readonly token grants nothing beyond diagnostics.
+   passing a diagnostics readonly token grants nothing beyond diagnostics. Error intake stays
+   reachable without a session (capture before login / with broken auth) but is bounded server-side:
+   per-client rate limiting, hard payload bounds on the request model, and unauthenticated reports
+   are clamped into the in-memory telemetry ring — never persisted to `error_logs`, regardless of
+   claimed severity. Authenticated reporters (session or Bearer) keep the full severity behaviour.
 2. **Token issuance** (`exchange`, `refresh`): return `api_token` as a short-lived ES256-signed JWT
    instead of an opaque secret. Claims: `iss`, `aud=family-assistant-api`, `sub` (user), `tid`
    (token row id), `jti`, `iat`, `exp` (default TTL 1 hour, configurable). The refresh flow is
