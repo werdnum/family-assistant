@@ -448,3 +448,22 @@ class TestJWTTokens:
         response = await api_test_client.get("/.well-known/auth-route-classification")
         assert response.status_code == 200
         assert response.json() == api_route_classification()
+
+    @pytest.mark.asyncio
+    async def test_jwks_endpoint_serves_public_key(
+        self, api_test_client: AsyncClient, jwt_enabled: None
+    ) -> None:
+        response = await api_test_client.get("/.well-known/jwks.json")
+        assert response.status_code == 200
+        (key,) = response.json()["keys"]
+        assert key["kty"] == "EC"
+        assert key["kid"]
+
+    @pytest.mark.asyncio
+    async def test_jwks_endpoint_absent_without_signing_key(
+        self, api_test_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("JWT_SIGNING_KEY", raising=False)
+        jwt_tokens_module.reset_jwt_signing_for_tests()
+        response = await api_test_client.get("/.well-known/jwks.json")
+        assert response.status_code == 404

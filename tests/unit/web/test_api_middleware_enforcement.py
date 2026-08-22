@@ -1,10 +1,13 @@
 """Fail-closed middleware enforcement for /api routes (design: jwt-edge-auth)."""
 
+import json
 from collections.abc import AsyncGenerator
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from starlette.middleware.sessions import SessionMiddleware
+from starlette.requests import Request
 from starlette.types import Receive, Scope, Send
 
 from family_assistant.web.auth import AuthMiddleware, AuthService
@@ -107,3 +110,51 @@ async def test_valid_bearer_token_passes_default_auth() -> None:
     async with AsyncClient(transport=transport, base_url="http://testserver") as c:
         response = await c.get("/api/notes/", headers={"Authorization": "Bearer x"})
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_x_api_token_header_authenticates() -> None:
+    """The middleware honours the same credential headers as get_current_user."""
+
+    middleware = AuthMiddleware(_ok_app, _AcceptingAuthService())
+    transport = ASGITransport(app=middleware)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as c:
+        response = await c.get("/api/notes/", headers={"X-API-Token": "x"})
+    assert response.status_code == 200
+
+    middleware = AuthMiddleware(_ok_app, _RejectingAuthService())
+    transport = ASGITransport(app=middleware)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as c:
+        response = await c.get("/api/notes/", headers={"X-API-Token": "x"})
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_bearer_session_is_bound_to_token_id() -> None:
+    """A bearer-authenticated request persists the token id with the session."""
+
+    async def session_reader_app(scope: Scope, receive: Receive, send: Send) -> None:
+        request = Request(scope)
+        body = json.dumps(dict(request.session)).encode()
+        await send({
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [(b"content-type", b"application/json")],
+        })
+        await send({"type": "http.response.body", "body": body})
+
+    stack = SessionMiddleware(
+        AuthMiddleware(session_reader_app, _AcceptingAuthService()),
+        secret_key="test-secret",
+    )
+    transport = ASGITransport(app=stack)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as c:
+        first = await c.get("/api/notes/", headers={"Authorization": "Bearer x"})
+        assert first.json().get("api_token_id") == 1
+
+        # Replay only the session cookie (no bearer header): the stored user
+        # must carry api_token_id so the validity check can revoke it later.
+        cookie_header = first.headers["set-cookie"].split(";")[0]
+        second = await c.get("/api/notes/", headers={"Cookie": cookie_header})
+    assert second.status_code == 200
+    assert second.json()["user"]["token_id"] == 1

@@ -44,6 +44,16 @@ NO_DEFAULT_AUTH_ROUTES: list[tuple[frozenset[str], str, str, RouteClass]] = [
     (frozenset({"POST"}), "exact", "/api/auth/refresh", "bootstrap"),
     (frozenset({"POST"}), "exact", "/api/auth/token", "bootstrap"),
     (frozenset({"GET"}), "exact", "/api/auth/browser-token", "bootstrap"),
+    # OAuth return target: the browser can come back from the provider's
+    # consent page after arbitrarily long (the JWT cookie may have expired
+    # while away), so the gateway must let it through to the backend's own
+    # state + session validation.
+    (
+        frozenset({"GET"}),
+        "exact",
+        "/api/integrations/google/callback",
+        "bootstrap",
+    ),
     (frozenset({"POST"}), "exact", "/api/errors/", "public"),
     # Scoped: diagnostics readonly token checked in get_diagnostics_reader.
     (frozenset({"GET"}), "prefix", "/api/debug", "scoped"),

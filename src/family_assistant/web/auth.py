@@ -71,6 +71,18 @@ PUBLIC_PATHS = [
 User = dict[str, Any]
 
 
+def extract_api_credential(request: Request) -> str | None:
+    """Return the bearer/API token from the request headers, if present.
+
+    Shared by AuthMiddleware and the request dependencies so both accept
+    exactly the same credential headers.
+    """
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.lower().startswith("bearer "):
+        return auth_header.split(" ", 1)[1]
+    return request.headers.get("X-API-Token")
+
+
 class AuthService:
     """Service class for authentication operations with proper dependency injection."""
 
@@ -458,15 +470,20 @@ class AuthMiddleware:
 
         # Attempt API token authentication if no session user
         if not user:
-            auth_header = request.headers.get("Authorization")
-            if auth_header:
+            credential = extract_api_credential(request)
+            if credential:
                 api_user = await self.auth_service.get_user_from_api_token(
-                    auth_header, request
+                    f"Bearer {credential}", request
                 )
                 if api_user:
                     # Session middleware might not be available, can't store user in session
                     with contextlib.suppress(AssertionError):
                         request.session["user"] = api_user
+                        # Bind the session to the token row so the validity
+                        # check above terminates access when the credential
+                        # is revoked or expires, not just at session lifetime.
+                        if api_user.get("token_id"):
+                            request.session["api_token_id"] = api_user["token_id"]
                     user = api_user  # Update user for the current request flow
                     logger.debug(
                         f"User authenticated via API token for path {request_path}"

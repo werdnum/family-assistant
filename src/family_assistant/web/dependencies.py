@@ -13,6 +13,7 @@ from family_assistant.services.user_identity import (
 )
 from family_assistant.storage.database import Database
 from family_assistant.tools import ToolsProvider
+from family_assistant.web.auth import extract_api_credential
 from family_assistant.web.models import GeminiLiveConfig
 from family_assistant.web.voice_client import GoogleGeminiLiveClient, LiveAudioClient
 
@@ -211,13 +212,7 @@ async def get_current_user(request: Request) -> dict:
 # scraping diagnostics from an external monitor without minting a full API token.
 DIAGNOSTICS_READONLY_TOKEN_ENV_VAR = "DIAGNOSTICS_READONLY_TOKEN"
 
-
-def _extract_bearer_token(request: Request) -> str | None:
-    """Return the bearer/API token from the request headers, if present."""
-    auth_header = request.headers.get("Authorization")
-    if auth_header and auth_header.lower().startswith("bearer "):
-        return auth_header.split(" ", 1)[1]
-    return request.headers.get("X-API-Token")
+_extract_bearer_token = extract_api_credential
 
 
 async def get_diagnostics_reader(request: Request) -> dict:

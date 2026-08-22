@@ -586,6 +586,24 @@ async def auth_me(
 # --- Well-known endpoint ---
 
 
+@wellknown_router.get("/.well-known/jwks.json")
+async def jwks() -> JSONResponse:
+    """Publish the verification public key for gateway JWT validation.
+
+    Unauthenticated by design; the key is public. Short cache so key rotation
+    propagates promptly while sparing the app per-request cost at the edge.
+    """
+    if not jwt_tokens.jwt_auth_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="JWT auth is not configured on this server.",
+        )
+    return JSONResponse(
+        content=jwt_tokens.jwks_document(),
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
 @wellknown_router.get("/.well-known/auth-route-classification")
 async def auth_route_classification() -> JSONResponse:
     """Publish which /api routes are exempt from default/JWT authentication.
