@@ -42,18 +42,28 @@ The review of this design established two constraints that shape everything else
    bypassed — and several API routers declare no auth dependency today because `PUBLIC_PATHS`
    blanket-bypasses `/api` and Access was de facto the gate. The fix is a chokepoint, not routing:
    the backend itself must enforce authentication on every `/api/*` request.
-2. **One credential shape past the gateway.** The gateway verifies signatures; it cannot consult a
-   database, so opaque bearer tokens cannot be honoured off-LAN. Rather than carve out routes per
-   credential type (which reopens 1), all remote clients converge on JWTs.
+ 2. **One credential shape past the gateway, two deliveries.** The gateway verifies signatures; it
+    cannot consult a database, so opaque bearer tokens cannot be honoured off-LAN. All remote
+    clients converge on JWTs; native clients and scripts send them as `Authorization: Bearer`,
+    browsers hold them in an HttpOnly cookie set by the session bridge — so browser-managed
+    requests that cannot carry headers (`<img>`, `EventSource`, full-page OAuth redirects)
+    authenticate automatically instead of each needing its own migration.
+ 3. **Bootstrap endpoints carry their own auth.** The gateway cannot signature-check requests whose
+    whole purpose is obtaining the first credential, plus deliberately public receivers (error
+    intake). Those paths form an explicit, enumerated no-JWT route set at the edge; each is
+    authenticated by something else (PKCE code, opaque token, session cookie) or is public by
+    design with its own abuse controls.
 
 ### Backend
 
-1. **Fail-closed middleware**: replace the blanket `^/api(/.*)?$` entry in `PUBLIC_PATHS` with an
-   explicit allowlist of genuinely public API endpoints (`/api/auth/exchange`,
-   `/api/auth/refresh`, error intake). Every other `/api/*` request requires authentication in
-   `AuthMiddleware` — closing the LAN exposure of dependency-less routers as a side effect, and
-   making the system safe under any edge configuration. Endpoints with deliberate public receivers
-   name themselves on the allowlist rather than relying on the blanket bypass.
+1. **Fail-closed middleware**: replace the blanket `^/api(/.*)?$` entry in `PUBLIC_PATHS` with one
+   explicit list naming every path that does not use the default API-token/session authentication:
+   bootstrap receivers (`/api/auth/exchange`, `/api/auth/refresh`, `/api/auth/token`,
+   `/api/auth/browser-token`), public-by-design error intake, and scoped-auth routes (diagnostics,
+   whose readonly-token check lives in a route dependency). Every other `/api/*` request requires
+   authentication in `AuthMiddleware` — closing the LAN exposure of dependency-less routers as a
+   side effect, and making the system safe under any edge configuration. Scoped routes stay scoped:
+   passing a diagnostics readonly token grants nothing beyond diagnostics.
 2. **Token issuance** (`exchange`, `refresh`): return `api_token` as a short-lived ES256-signed JWT
    instead of an opaque secret. Claims: `iss`, `aud=family-assistant-api`, `sub` (user), `tid`
    (token row id), `jti`, `iat`, `exp` (default TTL 1 hour, configurable). The refresh flow is
@@ -64,8 +74,10 @@ The review of this design established two constraints that shape everything else
    expiry checks) and legacy opaque tokens (unchanged path). Opaque tokens remain valid wherever the
    gateway is not in the path (LAN/Tailscale); off-LAN they are rejected by design.
 4. **Session→JWT bridge**: `GET /api/auth/browser-token`, authenticated by the existing OIDC session
-   cookie, returns a short-lived JWT of the same shape. This is how the web frontend crosses the
-   gateway.
+   cookie, sets the short-lived JWT as an HttpOnly `Secure` `SameSite=Strict` cookie scoped to
+   `/api`, and also returns it in the body for non-browser consumers of the session (none today).
+   SameSite=Strict keeps the cookie off cross-site requests, so classic CSRF does not return with
+   it; the app's flows all originate same-site.
 5. **Opaque→JWT exchange**: `POST /api/auth/token` upgrades a valid opaque API token to a JWT pair,
    so scripts using the documented token interface keep working remotely after a one-time upgrade;
    the opaque token stays valid on LAN.
@@ -79,18 +91,22 @@ The review of this design established two constraints that shape everything else
 
 ### Web frontend
 
-8. On load (and again when the stored token nears expiry), fetch a bridge JWT from the session and
-   attach it as `Authorization: Bearer` to API calls, including fetch-based streaming, which already
-   dominates. The one native `EventSource` subscription (activity stream) converts to fetch-based
-   SSE so it can carry the header. Page loads themselves remain behind Access SSO + session cookies —
-   only `/api` traffic changes shape.
+8. After page load, and again when the cookie nears expiry, call the session→JWT bridge; the cookie
+   it sets authenticates every subsequent browser-managed API request — decorated `fetch`, native
+   `EventSource` subscriptions, `<img>` attachment previews, and full-page OAuth redirects alike.
+   No per-request machinery changes. Page loads themselves remain behind Access SSO + session
+   cookies — only `/api` traffic changes credential shape. The bridge re-run is driven by the JWT's
+   `exp`, which the frontend reads from the bridge response.
 
 ### Edge (deployment repo)
 
 9. **Envoy Gateway `SecurityPolicy`** with a JWT provider whose `remoteJWKS` points at the in-cluster
-   Family Assistant service, attached unconditionally to the HTTPRoute section matching `/api/*`,
-   except a small bootstrap route for the two auth endpoints. There is no header-conditioned
-   splitting and therefore no route an attacker can select by omitting anything.
+   Family Assistant service, extracting tokens from both the `Authorization: Bearer` header and the
+   browser cookie, attached unconditionally to the HTTPRoute section matching `/api/*`, except an
+   enumerated bootstrap route covering exactly the backend allowlist's no-default-auth paths
+   (`exchange`, `refresh`, `token`, `browser-token`, error intake). There is no header-conditioned
+   splitting and therefore no route an attacker can select by omitting anything; every exempted path
+   is authenticated by something else or public by design with its own abuse controls.
 10. **Cloudflare Access bypass** scoped strictly to `assistant.andrewgarrett.dev/api/*`, ordered
     ahead of the wildcard app. Nothing else changes: the web UI, static assets, and pages remain
     behind interactive Access SSO, and `/api/*` remains behind two layers anyway (Cloudflare
@@ -113,6 +129,14 @@ The review of this design established two constraints that shape everything else
   traffic out, while authorization and revocation stay with the backend.
 - **Off-LAN opaque tokens end**: scripts holding manually created tokens must call the upgrade
   exchange once to work remotely; LAN use is unaffected. Documented in the API README.
+- **Browser cookie JWT and CSRF**: the bridge cookie is `SameSite=Strict`, so cross-site requests
+  never carry it and classic CSRF does not return. Strict also means the cookie is absent on
+  cross-site *initiated* top-level navigations to `/api`; no current flow depends on one, and any
+  future flow that does should use a link from an app page instead of loosening SameSite.
+- **Diagnostics scoped-auth pass-through**: the middleware allowlist names diagnostics paths so
+  their readonly-token dependency keeps working; the pass-through grants nothing beyond those
+  routes' own scoped checks. This is enumeration at a single chokepoint (the same list drives the
+  edge's bootstrap route), not a per-route exemption habit.
 - **LAN path enforcement**: LAN/Tailscale traffic enters through the local ingress and may not
   traverse the public gateway, so edge JWT enforcement applies to the internet path; LAN relies on
   backend auth (now actually enforced everywhere, see milestone 1). No posture regression.
@@ -128,15 +152,19 @@ Each milestone is independently verifiable; M1–M3 land in this repo, M4 in the
 1. **Backend fail-closed middleware** — explicit `/api` public allowlist, enforced authentication for
    everything else. Verify: functional tests asserting unauthenticated `/api` requests get 401 (not
    redirect/open), allowlisted endpoints stay reachable, previously open read endpoints now reject.
-2. **JWT tokens + bridges** — ES256 issuance, dual verification, JWKS endpoint, browser bridge,
-   opaque→JWT exchange, configuration. Verify: unit tests (mint/verify, bad-signature/expiry/
-   audience rejection, JWKS shape, disabled-mode passthrough) and functional `app_auth` tests.
-3. **Web frontend** — bridge-token adoption across API calls and streaming; EventSource conversion.
-   Verify: frontend test suite; Playwright flows against a JWT-enforcing stub where practical.
+2. **JWT tokens + bridges** — ES256 issuance, dual verification, JWKS endpoint, browser bridge
+   (cookie + body), opaque→JWT exchange, configuration. Verify: unit tests (mint/verify,
+   bad-signature/expiry/audience rejection, JWKS shape, disabled-mode passthrough, cookie attributes)
+   and functional `app_auth` tests covering every bootstrap path.
+3. **Web frontend** — bridge call on load and near expiry. Verify: frontend test suite; Playwright
+   flows (chat streaming, attachment images, activity stream, Google OAuth connect) with the cookie
+   present and expired.
 4. **iOS** — proportional refresh threshold; HTML/auth-wall detection in response validation and the
    error classifier. Verify: unit tests; full suite green.
-5. **Deployment** — Envoy `SecurityPolicy` + bootstrap route split, Access bypass rule in tofu.
+5. **Deployment** — Envoy `SecurityPolicy` (header + cookie extraction) + bootstrap route split
+   mirroring the backend allowlist, Access bypass rule in tofu.
    Verify: `tofu plan` diff review; curl through the tunnel — no token ⇒ 401 from the gateway, valid
-   token ⇒ 200, opaque token ⇒ 401 with clear pointer to the upgrade endpoint; web UI unaffected.
+   token (header and cookie) ⇒ 200, opaque token ⇒ 401 with clear pointer to the upgrade endpoint,
+   each bootstrap path reachable without a JWT; web UI unaffected.
 6. **End-to-end** — device off-Tailscale: sign-in once, uploads/chat/SSE all work; failure modes
    surface as readable errors.
