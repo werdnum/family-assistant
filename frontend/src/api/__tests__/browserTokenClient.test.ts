@@ -79,7 +79,7 @@ describe('startSessionBridge', () => {
     expect(tokenRequests).toBe(1);
   });
 
-  it('retries once after a failure and then succeeds', async () => {
+  it('resolves after the first attempt even when it fails, with a retry scheduled', async () => {
     let attempts = 0;
     server.use(
       http.get('/api/auth/browser-token', () => {
@@ -91,15 +91,18 @@ describe('startSessionBridge', () => {
       })
     );
 
-    const bridge = startSessionBridge();
-    await vi.advanceTimersByTimeAsync(5_000);
-    await bridge;
+    await startSessionBridge();
+
+    expect(attempts).toBe(1);
+    expect(vi.getTimerCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(30_000);
 
     expect(attempts).toBe(2);
     expect(vi.getTimerCount()).toBe(1);
   });
 
-  it('backs off after repeated failures instead of retrying indefinitely', async () => {
+  it('reschedules transient failures with exponential backoff capped at ten minutes', async () => {
     server.use(
       http.get('/api/auth/browser-token', () => {
         tokenRequests += 1;
@@ -107,14 +110,55 @@ describe('startSessionBridge', () => {
       })
     );
 
-    const bridge = startSessionBridge();
-    await vi.advanceTimersByTimeAsync(5_000);
-    await bridge;
+    await startSessionBridge();
 
+    expect(tokenRequests).toBe(1);
+    await vi.advanceTimersByTimeAsync(30_000 - 1);
+    expect(tokenRequests).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
     expect(tokenRequests).toBe(2);
-    expect(vi.getTimerCount()).toBe(0);
 
     await vi.advanceTimersByTimeAsync(60_000);
+    expect(tokenRequests).toBe(3);
+
+    await vi.advanceTimersByTimeAsync(120_000 - 1);
+    expect(tokenRequests).toBe(3);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(tokenRequests).toBe(4);
+
+    await vi.advanceTimersByTimeAsync(240_000);
+    expect(tokenRequests).toBe(5);
+
+    await vi.advanceTimersByTimeAsync(480_000);
+    expect(tokenRequests).toBe(6);
+
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(tokenRequests).toBe(7);
+
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(tokenRequests).toBe(8);
+  });
+
+  it('returns to the near-expiry cadence once the bridge succeeds again', async () => {
+    server.use(
+      http.get('/api/auth/browser-token', () => {
+        tokenRequests += 1;
+        if (tokenRequests <= 2) {
+          return HttpResponse.error();
+        }
+        return HttpResponse.json({ token: 'test-jwt', expires_in: 3600 });
+      })
+    );
+
+    await startSessionBridge();
+    await vi.advanceTimersByTimeAsync(30_000);
     expect(tokenRequests).toBe(2);
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(tokenRequests).toBe(3);
+    expect(vi.getTimerCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(3600 * 1000 - 60_000);
+    expect(tokenRequests).toBe(4);
   });
 });

@@ -5,12 +5,14 @@
  * sets the short-lived API JWT as an HttpOnly cookie scoped to /api, so that
  * browser-managed requests (fetch, EventSource, <img>) authenticate without
  * per-request machinery. This module calls the bridge when the app loads and
- * again shortly before the JWT expires, keeping that cookie fresh. The JWT
- * itself is never read or stored here — only its lifetime, from `expires_in`.
+ * again shortly before the JWT expires, keeping that cookie fresh. Transient
+ * failures are retried on an exponential-backoff timer; the JWT itself is
+ * never read or stored here — only its lifetime, from `expires_in`.
  */
 
 const REFRESH_MARGIN_MS = 60_000;
-const RETRY_DELAY_MS = 5_000;
+const RETRY_BASE_DELAY_MS = 30_000;
+const RETRY_MAX_DELAY_MS = 10 * 60_000;
 
 interface BrowserTokenResponse {
   token: string;
@@ -21,6 +23,7 @@ class SessionExpiredError extends Error {}
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 let inFlight: Promise<void> | null = null;
+let retryDelayMs = RETRY_BASE_DELAY_MS;
 
 function clearRefreshTimer(): void {
   if (refreshTimer !== null) {
@@ -40,20 +43,15 @@ async function requestBrowserToken(): Promise<BrowserTokenResponse> {
   return response.json();
 }
 
-async function runRefresh(attempt = 0): Promise<void> {
+type AttemptResult = 'refreshed' | 'session-expired' | 'transient-failure';
+
+async function attemptRefresh(): Promise<AttemptResult> {
   const startedAt = Date.now();
   let payload: BrowserTokenResponse;
   try {
     payload = await requestBrowserToken();
   } catch (error) {
-    if (error instanceof SessionExpiredError) {
-      return;
-    }
-    if (attempt === 0) {
-      await delay(RETRY_DELAY_MS);
-      return runRefresh(attempt + 1);
-    }
-    return;
+    return error instanceof SessionExpiredError ? 'session-expired' : 'transient-failure';
   }
 
   const elapsed = Date.now() - startedAt;
@@ -63,24 +61,35 @@ async function runRefresh(attempt = 0): Promise<void> {
       void startSessionBridge();
     }, delayMs);
   }
+  return 'refreshed';
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
+async function runBridgeCycle(): Promise<void> {
+  const result = await attemptRefresh();
+  if (result === 'refreshed') {
+    retryDelayMs = RETRY_BASE_DELAY_MS;
+    return;
+  }
+  if (result === 'transient-failure') {
+    refreshTimer = setTimeout(() => {
+      void startSessionBridge();
+    }, retryDelayMs);
+    retryDelayMs = Math.min(retryDelayMs * 2, RETRY_MAX_DELAY_MS);
+  }
 }
 
 /**
- * Call the bridge now and schedule the near-expiry re-run. Concurrent calls
- * share one request; a previously scheduled timer is replaced.
+ * Call the bridge now and schedule the next run (near expiry, or after a
+ * transient failure). Concurrent calls share one request; a previously
+ * scheduled timer is replaced. Resolves once the initial attempt settles, so
+ * callers can gate rendering on it without waiting out retries.
  */
 export function startSessionBridge(): Promise<void> {
   if (inFlight) {
     return inFlight;
   }
   clearRefreshTimer();
-  inFlight = runRefresh().finally(() => {
+  inFlight = runBridgeCycle().finally(() => {
     inFlight = null;
   });
   return inFlight;
@@ -90,4 +99,5 @@ export function startSessionBridge(): Promise<void> {
 export function resetSessionBridge(): void {
   clearRefreshTimer();
   inFlight = null;
+  retryDelayMs = RETRY_BASE_DELAY_MS;
 }

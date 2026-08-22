@@ -1,9 +1,9 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import AppRouter from './AppRouter';
+import SessionBridgeGate from './SessionBridgeGate';
 import { ThemeProvider } from './ThemeProvider';
 import { initializeErrorHandlers } from '../errors/errorHandlers';
-import { startSessionBridge } from '../api/browserTokenClient';
 
 // Import Tailwind CSS and custom styles
 import '../styles/globals.css';
@@ -13,14 +13,15 @@ initializeErrorHandlers();
 
 // Ensure the DOM is ready before mounting
 function mountApp() {
-  startSessionBridge();
   const container = document.getElementById('app-root');
   if (container) {
     const root = ReactDOM.createRoot(container);
     root.render(
       <React.StrictMode>
         <ThemeProvider defaultTheme="system" storageKey="family-assistant-theme">
-          <AppRouter />
+          <SessionBridgeGate>
+            <AppRouter />
+          </SessionBridgeGate>
         </ThemeProvider>
       </React.StrictMode>
     );

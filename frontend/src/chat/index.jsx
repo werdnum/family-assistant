@@ -1,10 +1,10 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { ThemeProvider } from '../shared/ThemeProvider';
+import SessionBridgeGate from '../shared/SessionBridgeGate';
 import ChatApp from './ChatApp';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { initializeErrorHandlers } from '../errors/errorHandlers';
-import { startSessionBridge } from '../api/browserTokenClient';
 
 // Import Tailwind CSS and custom styles
 import '../styles/globals.css';
@@ -15,16 +15,17 @@ initializeErrorHandlers();
 
 // Ensure the DOM is ready before mounting
 function mountChatApp() {
-  startSessionBridge();
   const container = document.getElementById('chat-root');
   if (container) {
     const root = ReactDOM.createRoot(container);
     root.render(
       <React.StrictMode>
         <ThemeProvider defaultTheme="system" storageKey="family-assistant-theme">
-          <ErrorBoundary componentName="ChatApp">
-            <ChatApp />
-          </ErrorBoundary>
+          <SessionBridgeGate>
+            <ErrorBoundary componentName="ChatApp">
+              <ChatApp />
+            </ErrorBoundary>
+          </SessionBridgeGate>
         </ThemeProvider>
       </React.StrictMode>
     );
