@@ -460,6 +460,17 @@ class TestJWTTokens:
         assert row is not None and row["count"] == 1
 
     @pytest.mark.asyncio
+    async def test_browser_token_reports_disabled_without_signing_key(
+        self, session_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("JWT_SIGNING_KEY", raising=False)
+        jwt_tokens_module.reset_jwt_signing_for_tests()
+        response = await session_client.get("/api/auth/browser-token")
+        assert response.status_code == 200
+        assert response.json() == {"enabled": False}
+        assert "fa_access_token" not in response.headers.get("set-cookie", "")
+
+    @pytest.mark.asyncio
     async def test_route_classification_published(
         self, api_test_client: AsyncClient
     ) -> None:

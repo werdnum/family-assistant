@@ -492,14 +492,12 @@ async def browser_token(
 
     The JWT is set as an HttpOnly SameSite=Lax cookie scoped to /api so every
     browser-managed API request (fetch, EventSource, img tags) authenticates
-    past the gateway without per-request headers. The value is also returned
-    in the body; the frontend only reads expires_in.
+    past the gateway without per-request headers. Returns ``{"enabled":
+    false}`` when JWT auth is not configured so clients can proceed without
+    the cookie (and without logging a console error per page load).
     """
     if not jwt_tokens.jwt_auth_enabled():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="JWT auth is not configured on this server.",
-        )
+        return JSONResponse(content={"enabled": False})
     if current_user.get("readonly"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
