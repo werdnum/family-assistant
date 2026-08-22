@@ -15,8 +15,9 @@ const RETRY_BASE_DELAY_MS = 30_000;
 const RETRY_MAX_DELAY_MS = 10 * 60_000;
 
 interface BrowserTokenResponse {
-  token: string;
-  expires_in: number;
+  token?: string;
+  expires_in?: number;
+  enabled?: boolean;
 }
 
 class SessionExpiredError extends Error {}
@@ -92,8 +93,12 @@ async function attemptRefresh(): Promise<AttemptResult> {
     return 'transient-failure';
   }
 
+  if (payload.enabled === false) {
+    return 'not-configured';
+  }
+  const expiresIn = payload.expires_in ?? 0;
   const elapsed = Date.now() - startedAt;
-  const delayMs = payload.expires_in * 1000 - REFRESH_MARGIN_MS - elapsed;
+  const delayMs = expiresIn * 1000 - REFRESH_MARGIN_MS - elapsed;
   if (Number.isFinite(delayMs) && delayMs > 0) {
     refreshTimer = setTimeout(() => {
       void startSessionBridge();

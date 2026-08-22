@@ -59,6 +59,20 @@ describe('startSessionBridge', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('treats an enabled:false payload as feature-disabled and proceeds', async () => {
+    server.use(
+      http.get('/api/auth/browser-token', () => {
+        tokenRequests += 1;
+        return HttpResponse.json({ enabled: false });
+      })
+    );
+
+    await expect(startSessionBridge()).resolves.toBe('not-configured');
+
+    expect(tokenRequests).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('treats a 404 as feature-disabled and proceeds without retrying', async () => {
     server.use(
       http.get('/api/auth/browser-token', () => {
