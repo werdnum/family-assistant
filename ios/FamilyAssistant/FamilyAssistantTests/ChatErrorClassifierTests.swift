@@ -164,6 +164,24 @@ final class ChatErrorClassifierTests: XCTestCase {
         )
     }
 
+    func testAuthWallSurfacesActionableInlineFeedback() {
+        // An edge authentication wall is persistent and actionable: it must
+        // surface as clear inline feedback on every operation, never as silent
+        // background degradation or the generic action-failed message.
+        XCTAssertEqual(
+            classify(.conversationsRefresh, ChatAPIError.authWall),
+            .inlineFeedback(reason: .authWall)
+        )
+        XCTAssertEqual(
+            classify(.conversationsRefresh, ChatAPIError.authWall, userInitiated: true),
+            .inlineFeedback(reason: .authWall)
+        )
+        XCTAssertEqual(
+            classify(.sendTurn, ChatAPIError.authWall, userInitiated: true),
+            .inlineFeedback(reason: .authWall)
+        )
+    }
+
     // MARK: - Clean EOF
 
     func testCleanEOFPostTurnIsSilentForAdvisoryMerge() {

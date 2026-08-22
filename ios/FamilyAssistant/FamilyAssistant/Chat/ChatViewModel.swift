@@ -4023,6 +4023,8 @@ final class ChatViewModel {
             "You no longer have access to this conversation."
         case .rateLimited:
             "Too many requests. Please try again in a moment."
+        case .authWall:
+            "Server requires sign-in or is unreachable (authentication wall detected)."
         case .userReadFailed:
             "Couldn't refresh. \(error.localizedDescription)"
         case .actionFailed:

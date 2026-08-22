@@ -716,6 +716,9 @@ struct ChatAPIClient {
                 retryAfter: Self.parseRetryAfter(httpResponse)
             )
         }
+        if AuthWallDetection.isLikely(contentType: httpResponse.value(forHTTPHeaderField: "Content-Type"), data: data) {
+            throw ChatAPIError.authWall
+        }
     }
 
     /// A rejected mutation must never be replayed automatically because the server
@@ -1055,9 +1058,35 @@ private struct ChatTurnConflictResponse: Decodable {
     }
 }
 
+/// Shared by the chat and notes clients: recognises an edge authentication wall
+/// (e.g. a Cloudflare Access login page) masquerading as a successful response.
+/// Off-LAN, a request can be 302-redirected to the wall's HTML login page and
+/// `URLSession` follows it, so the client sees `200 text/html` where JSON was
+/// expected — without this check that surfaces as a cryptic decode failure.
+enum AuthWallDetection {
+    static func isLikely(contentType: String?, data: Data) -> Bool {
+        if let contentType, contentType.lowercased().hasPrefix("text/html") {
+            return true
+        }
+        var trimmed = data[...]
+        while let first = trimmed.first,
+              first == UInt8(ascii: " ")
+              || first == UInt8(ascii: "\t")
+              || first == UInt8(ascii: "\r")
+              || first == UInt8(ascii: "\n")
+        {
+            trimmed = trimmed.dropFirst()
+        }
+        return trimmed.first == UInt8(ascii: "<")
+    }
+}
+
 enum ChatAPIError: LocalizedError, Equatable {
     case invalidServerURL
     case invalidResponse
+    /// The server answered with an HTML sign-in page (an edge authentication
+    /// wall) instead of the expected API payload.
+    case authWall
     case validation(String)
     /// Starting a second turn was refused because the conversation already has
     /// a running turn. The client can recover by steering `activeTurnID`.
@@ -1073,6 +1102,8 @@ enum ChatAPIError: LocalizedError, Equatable {
             "Invalid server URL."
         case .invalidResponse:
             "The server returned an invalid response."
+        case .authWall:
+            "Server requires sign-in or is unreachable (authentication wall detected)."
         case .validation(let message):
             message
         case .turnAlreadyRunning:

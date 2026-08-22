@@ -110,6 +110,9 @@ struct NotesAPIClient {
             let detail = try? JSONDecoder().decode(ServerError.self, from: data).detail
             throw NotesAPIError.server(statusCode: httpResponse.statusCode, detail: detail)
         }
+        if AuthWallDetection.isLikely(contentType: httpResponse.value(forHTTPHeaderField: "Content-Type"), data: data) {
+            throw NotesAPIError.authWall
+        }
     }
 
     private static func encodedPathComponent(_ value: String) -> String {
@@ -126,6 +129,9 @@ private struct ServerError: Decodable {
 enum NotesAPIError: LocalizedError {
     case invalidServerURL
     case invalidResponse
+    /// The server answered with an HTML sign-in page (an edge authentication
+    /// wall) instead of the expected API payload.
+    case authWall
     case server(statusCode: Int, detail: String?)
 
     var errorDescription: String? {
@@ -134,6 +140,8 @@ enum NotesAPIError: LocalizedError {
             return "Invalid server URL"
         case .invalidResponse:
             return "The server returned an invalid response."
+        case .authWall:
+            return "Server requires sign-in or is unreachable (authentication wall detected)."
         case .server(let statusCode, let detail):
             if let detail, !detail.isEmpty {
                 return detail

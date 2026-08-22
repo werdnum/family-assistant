@@ -958,6 +958,39 @@ final class ChatAPIClientTests: XCTestCase {
         }
     }
 
+    func testHTMLResponseSurfacesAuthWallInsteadOfDecodeError() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                "<html><head><title>Just a moment...</title></head><body></body></html>",
+                headers: ["Content-Type": "text/html; charset=utf-8"]
+            )
+        }
+
+        do {
+            _ = try await makeClient().listProfiles()
+            XCTFail("Expected an HTML login page to throw authWall")
+        } catch let error as ChatAPIError {
+            XCTAssertEqual(error, .authWall)
+            XCTAssertEqual(error.errorDescription?.contains("authentication wall"), true)
+        }
+    }
+
+    func testMarkupBodyWithJSONContentTypeSurfacesAuthWall() async throws {
+        // A followed redirect can deliver the wall's markup under any content
+        // type; a body starting with "<" is still detected.
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                "\n  <html><body>Sign in</body></html>",
+                headers: ["Content-Type": "application/json"]
+            )
+        }
+
+        do {
+            _ = try await makeClient().listConversations()
+            XCTFail("Expected HTML markup in the body to throw authWall")
+        } catch ChatAPIError.authWall {}
+    }
+
     private func makeClient() -> ChatAPIClient {
         ChatAPIClient(authManager: makeAuthManager())
     }

@@ -139,6 +139,9 @@ enum ChatErrorSurface: Equatable {
         /// A user action (send/stop/confirm/attachment) failed and surfaces at the
         /// point of action (slice 2 builds the retry bubble).
         case actionFailed = "action_failed"
+        /// The server answered with an HTML sign-in page (an edge authentication
+        /// wall) instead of the expected API payload.
+        case authWall = "auth_wall"
     }
 }
 
@@ -153,6 +156,13 @@ enum ChatErrorClassifier {
         // modal, regardless of operation or who initiated it.
         if isAuthTerminal(context.error) {
             return .authFlow
+        }
+
+        if isAuthWall(context.error) {
+            // An edge authentication wall is persistent, not transient: surface
+            // it as actionable feedback on every operation rather than letting
+            // background reads swallow it as silent/degraded transport noise.
+            return .inlineFeedback(reason: .authWall)
         }
 
         if let statusCode = serverStatusCode(context.error) {
@@ -247,6 +257,18 @@ enum ChatErrorClassifier {
             return true
         }
         if case AuthError.authRejected = error {
+            return true
+        }
+        return false
+    }
+
+    /// Whether the server answered with an edge authentication wall (an HTML
+    /// sign-in page) instead of the expected API payload.
+    static func isAuthWall(_ error: Error?) -> Bool {
+        guard let error else {
+            return false
+        }
+        if case ChatAPIError.authWall = error {
             return true
         }
         return false
