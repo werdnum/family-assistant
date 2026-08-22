@@ -1,7 +1,11 @@
 import { HttpResponse, http } from 'msw';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { server } from '../../test/setup.js';
-import { resetSessionBridge, startSessionBridge } from '../browserTokenClient';
+import {
+  addBridgeSettlementListener,
+  resetSessionBridge,
+  startSessionBridge,
+} from '../browserTokenClient';
 
 let tokenRequests: number;
 
@@ -31,7 +35,6 @@ describe('startSessionBridge', () => {
     expect(tokenRequests).toBe(1);
     expect(vi.getTimerCount()).toBe(1);
   });
-
   it('re-fires the bridge shortly before expiry', async () => {
     server.use(tokenHandler(3600));
 
@@ -50,7 +53,7 @@ describe('startSessionBridge', () => {
       })
     );
 
-    await expect(startSessionBridge()).resolves.toBeUndefined();
+    await expect(startSessionBridge()).resolves.toBe('session-expired');
 
     expect(tokenRequests).toBe(1);
     expect(vi.getTimerCount()).toBe(0);
@@ -79,7 +82,7 @@ describe('startSessionBridge', () => {
     expect(tokenRequests).toBe(1);
   });
 
-  it('resolves after the first attempt even when it fails, with a retry scheduled', async () => {
+  it('resolves as unreachable after a failed attempt, with a retry scheduled', async () => {
     let attempts = 0;
     server.use(
       http.get('/api/auth/browser-token', () => {
@@ -91,7 +94,7 @@ describe('startSessionBridge', () => {
       })
     );
 
-    await startSessionBridge();
+    await expect(startSessionBridge()).resolves.toBe('unreachable');
 
     expect(attempts).toBe(1);
     expect(vi.getTimerCount()).toBe(1);
@@ -160,5 +163,32 @@ describe('startSessionBridge', () => {
 
     await vi.advanceTimersByTimeAsync(3600 * 1000 - 60_000);
     expect(tokenRequests).toBe(4);
+  });
+
+  it('notifies settlement listeners with each attempt outcome', async () => {
+    server.use(
+      http.get('/api/auth/browser-token', () => {
+        tokenRequests += 1;
+        if (tokenRequests <= 2) {
+          return HttpResponse.error();
+        }
+        return HttpResponse.json({ token: 'test-jwt', expires_in: 3600 });
+      })
+    );
+    const settlements: string[] = [];
+    const unsubscribe = addBridgeSettlementListener((settlement) => {
+      settlements.push(settlement);
+    });
+
+    await startSessionBridge();
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(settlements).toEqual(['unreachable', 'unreachable', 'refreshed']);
+    unsubscribe();
+    expect(vi.getTimerCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(3600 * 1000 - 60_000);
+    expect(settlements).toEqual(['unreachable', 'unreachable', 'refreshed']);
   });
 });

@@ -22,8 +22,33 @@ interface BrowserTokenResponse {
 class SessionExpiredError extends Error {}
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
-let inFlight: Promise<void> | null = null;
+let inFlight: Promise<BridgeSettlement> | null = null;
 let retryDelayMs = RETRY_BASE_DELAY_MS;
+
+/** Outcome of a single bridge attempt. */
+export type BridgeSettlement = 'refreshed' | 'session-expired' | 'unreachable';
+
+const settlementListeners = new Set<(settlement: BridgeSettlement) => void>();
+
+function notifySettlement(settlement: BridgeSettlement): void {
+  settlementListeners.forEach((listener) => {
+    listener(settlement);
+  });
+}
+
+/**
+ * Observe every bridge attempt's outcome (including scheduled retries).
+ *
+ * @returns An unsubscribe function.
+ */
+export function addBridgeSettlementListener(
+  listener: (settlement: BridgeSettlement) => void
+): () => void {
+  settlementListeners.add(listener);
+  return () => {
+    settlementListeners.delete(listener);
+  };
+}
 
 function clearRefreshTimer(): void {
   if (refreshTimer !== null) {
@@ -64,27 +89,32 @@ async function attemptRefresh(): Promise<AttemptResult> {
   return 'refreshed';
 }
 
-async function runBridgeCycle(): Promise<void> {
+async function runBridgeCycle(): Promise<BridgeSettlement> {
   const result = await attemptRefresh();
-  if (result === 'refreshed') {
-    retryDelayMs = RETRY_BASE_DELAY_MS;
-    return;
-  }
   if (result === 'transient-failure') {
     refreshTimer = setTimeout(() => {
       void startSessionBridge();
     }, retryDelayMs);
     retryDelayMs = Math.min(retryDelayMs * 2, RETRY_MAX_DELAY_MS);
+    notifySettlement('unreachable');
+    return 'unreachable';
   }
+  if (result === 'refreshed') {
+    retryDelayMs = RETRY_BASE_DELAY_MS;
+    notifySettlement('refreshed');
+    return 'refreshed';
+  }
+  notifySettlement('session-expired');
+  return 'session-expired';
 }
 
 /**
  * Call the bridge now and schedule the next run (near expiry, or after a
  * transient failure). Concurrent calls share one request; a previously
- * scheduled timer is replaced. Resolves once the initial attempt settles, so
- * callers can gate rendering on it without waiting out retries.
+ * scheduled timer is replaced. Resolves with this attempt's outcome once it
+ * settles, so callers can gate rendering on it without waiting out retries.
  */
-export function startSessionBridge(): Promise<void> {
+export function startSessionBridge(): Promise<BridgeSettlement> {
   if (inFlight) {
     return inFlight;
   }

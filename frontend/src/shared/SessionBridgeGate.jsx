@@ -1,32 +1,55 @@
 import React, { useEffect, useState } from 'react';
-import { startSessionBridge } from '../api/browserTokenClient';
+import { addBridgeSettlementListener, startSessionBridge } from '../api/browserTokenClient';
 
 /**
  * Delays rendering authenticated children until the session→JWT bridge has
- * attempted to set its cookie, so mount-time API calls don't race the gateway
- * ahead of the Set-Cookie on a fresh session. Proceeds once the attempt
- * settles — including a 401 (expired OIDC session), where the existing auth
- * flow owns the re-login UX.
+ * actually established credentials: a successful response, or an explicit 401
+ * (expired OIDC session — proceeding is correct there because the existing
+ * auth flow owns the re-login UX). On transient failures the backoff loop in
+ * browserTokenClient keeps retrying and children stay gated behind a
+ * "Connecting…" placeholder, so their mount effects don't race ahead of the
+ * Set-Cookie and hit unrecoverable 401s.
  */
 export default function SessionBridgeGate({ children }) {
-  const [bridgeSettled, setBridgeSettled] = useState(false);
+  const [phase, setPhase] = useState('loading');
 
   useEffect(() => {
     let cancelled = false;
-    void startSessionBridge().finally(() => {
+    let unsubscribe = () => {};
+
+    const openGate = () => {
       if (!cancelled) {
-        setBridgeSettled(true);
+        setPhase('ready');
       }
+    };
+
+    void startSessionBridge().then((settlement) => {
+      if (cancelled) {
+        return;
+      }
+      if (settlement !== 'unreachable') {
+        openGate();
+        return;
+      }
+      setPhase('connecting');
+      unsubscribe = addBridgeSettlementListener((next) => {
+        if (next !== 'unreachable') {
+          unsubscribe();
+          openGate();
+        }
+      });
     });
+
     return () => {
       cancelled = true;
+      unsubscribe();
     };
   }, []);
 
-  if (!bridgeSettled) {
+  if (phase !== 'ready') {
     return (
       <div className="min-h-screen flex items-center justify-center text-muted-foreground">
-        Loading…
+        {phase === 'connecting' ? 'Connecting…' : 'Loading…'}
       </div>
     );
   }
