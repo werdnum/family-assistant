@@ -10203,6 +10203,62 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertNotNil(model.conversationsLastRefreshedAt, "and stamps the last-refreshed time")
     }
 
+    func testAuthWallOnListRefreshCarriesActionableBannerMessage() async throws {
+        // An edge authentication wall answering the list endpoint must render its
+        // dedicated explanation on the list banner, not the generic
+        // "Couldn't refresh" text — and still never a modal or thread message.
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(
+                    "<html><head><title>Just a moment...</title></head><body></body></html>",
+                    headers: ["Content-Type": "text/html; charset=utf-8"]
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+        let model = makeViewModel(conversationID: nil)
+
+        await model.refreshConversations()
+
+        XCTAssertTrue(model.conversationsRefreshFailed)
+        XCTAssertEqual(
+            model.conversationsRefreshFailureMessage,
+            ChatAPIError.authWall.errorDescription,
+            "the banner carries the auth-wall explanation"
+        )
+        XCTAssertNil(model.errorMessage, "a list-refresh failure must not raise the modal")
+        XCTAssertNil(model.threadInlineMessage, "and must not use the thread-scoped banner")
+
+        // Recovery: a good refresh clears the message with the banner.
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(#"{"conversations":[],"count":0}"#)
+        }
+        await model.refreshConversations()
+        XCTAssertFalse(model.conversationsRefreshFailed)
+        XCTAssertNil(model.conversationsRefreshFailureMessage)
+    }
+
+    func testGenericListRefreshFailureKeepsDefaultBannerMessage() async throws {
+        // Only the auth wall carries detail: a transport failure keeps nil so the
+        // banner shows its generic text.
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"detail":"temporary"}"#, statusCode: 503)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+        let model = makeViewModel(conversationID: nil)
+
+        await model.refreshConversations()
+
+        XCTAssertTrue(model.conversationsRefreshFailed)
+        XCTAssertNil(model.conversationsRefreshFailureMessage)
+    }
+
     func testConversationReturning404IsTreatedAsGone() async throws {
         // §4.5: a 404 on a per-conversation read means the conversation was deleted.
         // It is dropped from the held list and shown as gone inline, not surfaced as

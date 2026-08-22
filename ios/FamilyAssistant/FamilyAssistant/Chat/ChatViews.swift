@@ -232,7 +232,8 @@ private struct ConversationListView: View {
         )) {
             if viewModel.conversationsRefreshFailed {
                 ConversationListRefreshBanner(
-                    lastRefreshed: viewModel.conversationsLastRefreshedAt
+                    lastRefreshed: viewModel.conversationsLastRefreshedAt,
+                    message: viewModel.conversationsRefreshFailureMessage
                 )
             }
             if filteredConversations.isEmpty && !viewModel.isLoadingConversations {
@@ -263,6 +264,9 @@ private struct ConversationListView: View {
 /// or the thread-scoped banner couldn't do on the list column.
 private struct ConversationListRefreshBanner: View {
     let lastRefreshed: Date?
+    /// Actionable detail replacing the generic title (an auth wall); nil keeps
+    /// the default text.
+    let message: String?
 
     private var subtitle: String {
         guard let lastRefreshed else {
@@ -276,7 +280,7 @@ private struct ConversationListRefreshBanner: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Couldn’t refresh")
+                Text(message ?? "Couldn’t refresh")
                     .font(.subheadline.weight(.medium))
                 Text(subtitle)
                     .font(.caption)

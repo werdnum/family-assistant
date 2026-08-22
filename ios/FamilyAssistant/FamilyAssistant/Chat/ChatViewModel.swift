@@ -57,6 +57,10 @@ final class ChatViewModel {
     /// next successful list refresh. A rate-limit (429) that schedules a retry does
     /// NOT set it — that isn't a failure, just a throttle that self-recovers.
     private(set) var conversationsRefreshFailed = false
+    /// Actionable detail for the list failure banner, when the classifier's
+    /// verdict carries one (an auth wall). Nil keeps the generic "Couldn't
+    /// refresh" text. Cleared with the banner on the next successful refresh.
+    private(set) var conversationsRefreshFailureMessage: String?
     /// When the conversation list was last refreshed successfully, shown alongside the
     /// failure banner ("Last updated …") so a stale list is diagnosable at a glance.
     private(set) var conversationsLastRefreshedAt: Date?
@@ -716,6 +720,7 @@ final class ChatViewModel {
     /// the freshness time, and record the per-operation advisory-health success.
     private func markConversationListRefreshed(operation: ChatOperation) {
         conversationsRefreshFailed = false
+        conversationsRefreshFailureMessage = nil
         conversationsLastRefreshedAt = Date()
         recordAdvisorySuccess(operation: operation)
     }
@@ -741,6 +746,11 @@ final class ChatViewModel {
         if case let .retryAfter(delay) = surface {
             scheduleAdvisoryRetry(after: delay, retry: retry)
             return
+        }
+        if case .inlineFeedback(.authWall) = surface {
+            // The wall is persistent and actionable: carry its explanation onto
+            // the list banner instead of the generic refresh-failed text.
+            conversationsRefreshFailureMessage = ChatAPIError.authWall.errorDescription
         }
         conversationsRefreshFailed = true
         recordAdvisoryFailure(operation: operation)
