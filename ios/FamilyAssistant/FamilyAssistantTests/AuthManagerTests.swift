@@ -51,6 +51,7 @@ final class AuthManagerTests: XCTestCase {
 
     func testRefreshIfNeededPostsRefreshTokenAndStoresReturnedCredentials() async throws {
         seedStoredAuth(apiToken: "expired-api-token", refreshToken: "stored-refresh-token", expiresIn: -60)
+        UserDefaults.standard.set(1800, forKey: "fa_token_lifetime")
         let authManager = makeAuthManager()
         AuthBackendURLProtocol.respond { request in
             XCTAssertEqual(request.httpMethod, "POST")
@@ -64,7 +65,7 @@ final class AuthManagerTests: XCTestCase {
                 {
                   "api_token": "new-api-token",
                   "refresh_token": "new-refresh-token",
-                  "expires_in": 7200
+                  "expires_in": 3600
                 }
                 """
             )
@@ -76,6 +77,7 @@ final class AuthManagerTests: XCTestCase {
         XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), "new-api-token")
         XCTAssertEqual(KeychainHelper.readString(key: "fa_refresh_token"), "new-refresh-token")
         XCTAssertNotNil(UserDefaults.standard.string(forKey: "fa_token_expiry"))
+        XCTAssertEqual(UserDefaults.standard.object(forKey: "fa_token_lifetime") as? Int, 3600)
     }
 
     func testAuthorizedRequestClearsCredentialsWhenRefreshCredentialsAreMissing() async throws {
@@ -468,6 +470,66 @@ final class AuthManagerTests: XCTestCase {
         XCTAssertEqual(Data([0xfb, 0xff]).base64URLEncoded, "-_8")
     }
 
+    func testRefreshThresholdIsProportionalToTokenLifetime() {
+        XCTAssertEqual(AuthManager.refreshThreshold(tokenTTL: nil), 3600)
+        XCTAssertEqual(AuthManager.refreshThreshold(tokenTTL: 0), 3600)
+        XCTAssertEqual(AuthManager.refreshThreshold(tokenTTL: 7200), 3600, "a long-lived token caps at the historical hour")
+        XCTAssertEqual(AuthManager.refreshThreshold(tokenTTL: 1800), 900)
+
+        XCTAssertTrue(AuthManager.shouldRefresh(remaining: 900, ttl: 1800))
+        XCTAssertTrue(AuthManager.shouldRefresh(remaining: 899, ttl: 1800))
+        XCTAssertFalse(AuthManager.shouldRefresh(remaining: 901, ttl: 1800))
+    }
+
+    func testShortLivedTokenRefreshesAtHalfLifetimeNotFixedHour() async throws {
+        // A one-hour token with 45 minutes left is fresh under a proportional
+        // half-lifetime threshold, though the old fixed check would have
+        // refreshed it on nearly every call.
+        seedStoredAuth(apiToken: "short-lived", refreshToken: "the-refresh", expiresIn: 2700)
+        UserDefaults.standard.set(3600, forKey: "fa_token_lifetime")
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in
+            XCTFail("A token past its proportional threshold must not be refreshed early")
+            return .json("{}")
+        }
+
+        try await authManager.refreshIfNeeded()
+
+        XCTAssertTrue(AuthBackendURLProtocol.requests.isEmpty)
+    }
+
+    func testShortLivedTokenPastHalfLifetimeStillRefreshes() async throws {
+        // Half of the one-hour lifetime has elapsed: the token is due even
+        // though it still has ~29 minutes left.
+        seedStoredAuth(apiToken: "short-lived", refreshToken: "the-refresh", expiresIn: 1740)
+        UserDefaults.standard.set(3600, forKey: "fa_token_lifetime")
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in
+            .json(#"{"api_token":"rotated","refresh_token":"rotated-refresh","expires_in":3600}"#)
+        }
+
+        try await authManager.refreshIfNeeded()
+
+        let refreshPosts = AuthBackendURLProtocol.requests.filter { $0.url?.path == "/api/auth/refresh" }
+        XCTAssertEqual(refreshPosts.count, 1)
+        XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), "rotated")
+    }
+
+    func testMissingLifetimeFallsBackToHistoricalHourThreshold() async throws {
+        // No stored lifetime (pre-proportional credentials): remaining time above
+        // an hour must skip the refresh exactly as before.
+        seedStoredAuth(apiToken: "legacy", refreshToken: "the-refresh", expiresIn: 5400)
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in
+            XCTFail("A legacy token over an hour from expiry must not be refreshed")
+            return .json("{}")
+        }
+
+        try await authManager.refreshIfNeeded()
+
+        XCTAssertTrue(AuthBackendURLProtocol.requests.isEmpty)
+    }
+
     private func waitUntil(
         timeout: TimeInterval = 2,
         predicate: @escaping () -> Bool
@@ -501,6 +563,7 @@ final class AuthManagerTests: XCTestCase {
         KeychainHelper.delete(key: "fa_api_token")
         KeychainHelper.delete(key: "fa_refresh_token")
         UserDefaults.standard.removeObject(forKey: "fa_token_expiry")
+        UserDefaults.standard.removeObject(forKey: "fa_token_lifetime")
         UserDefaults.standard.removeObject(forKey: "fa_server_url")
     }
 

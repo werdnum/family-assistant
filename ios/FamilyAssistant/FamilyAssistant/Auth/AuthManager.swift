@@ -108,6 +108,7 @@ final class AuthManager {
         static let apiToken = "fa_api_token"
         static let refreshToken = "fa_refresh_token"
         static let tokenExpiry = "fa_token_expiry"
+        static let tokenLifetime = "fa_token_lifetime"
     }
 
     init(websiteDataCleaner: (@MainActor () async -> Void)? = nil) {
@@ -359,6 +360,7 @@ final class AuthManager {
         KeychainHelper.delete(key: Keys.apiToken)
         KeychainHelper.delete(key: Keys.refreshToken)
         UserDefaults.standard.removeObject(forKey: Keys.tokenExpiry)
+        UserDefaults.standard.removeObject(forKey: Keys.tokenLifetime)
         isAuthenticated = false
     }
 
@@ -428,6 +430,7 @@ final class AuthManager {
         KeychainHelper.delete(key: Keys.apiToken)
         KeychainHelper.delete(key: Keys.refreshToken)
         UserDefaults.standard.removeObject(forKey: Keys.tokenExpiry)
+        UserDefaults.standard.removeObject(forKey: Keys.tokenLifetime)
     }
 
     /// Whether the bridge that captured `epoch` still owns the current auth state.
@@ -552,7 +555,11 @@ final class AuthManager {
                 throw AuthError.noCredentials
             }
 
-            if expiry.timeIntervalSinceNow > 3600 {
+            let storedLifetime = UserDefaults.standard.object(forKey: Keys.tokenLifetime) as? TimeInterval
+            if !Self.shouldRefresh(
+                remaining: expiry.timeIntervalSinceNow,
+                ttl: storedLifetime
+            ) {
                 return
             }
         }
@@ -741,6 +748,7 @@ final class AuthManager {
         KeychainHelper.delete(key: Keys.apiToken)
         KeychainHelper.delete(key: Keys.refreshToken)
         UserDefaults.standard.removeObject(forKey: Keys.tokenExpiry)
+        UserDefaults.standard.removeObject(forKey: Keys.tokenLifetime)
 
         // Clear WKWebView data before flipping the auth state, so a fast
         // re-login's fresh session cookie cannot be wiped by this cleanup.
@@ -809,7 +817,24 @@ final class AuthManager {
         if let expiresIn = tokens.expiresIn {
             let expiry = Date().addingTimeInterval(TimeInterval(expiresIn))
             UserDefaults.standard.set(ISO8601DateFormatter().string(from: expiry), forKey: Keys.tokenExpiry)
+            UserDefaults.standard.set(expiresIn, forKey: Keys.tokenLifetime)
         }
+    }
+
+    /// The freshness threshold for a token with issued lifetime `ttl`: half the
+    /// lifetime, capped at an hour. A missing (or non-positive) lifetime — tokens
+    /// issued before the server reported `expires_in`, or tests that seed only an
+    /// expiry — falls back to the historical fixed one-hour threshold.
+    static func refreshThreshold(tokenTTL ttl: TimeInterval?) -> TimeInterval {
+        guard let ttl, ttl > 0 else { return 3600 }
+        return min(3600, ttl / 2)
+    }
+
+    /// Whether a token with `remaining` seconds left and issued lifetime `ttl` is
+    /// due for a proactive refresh. Mirrors the pre-proportional behaviour at the
+    /// fallback boundary (refresh when remaining ≤ threshold).
+    static func shouldRefresh(remaining: TimeInterval, ttl: TimeInterval?) -> Bool {
+        remaining <= refreshThreshold(tokenTTL: ttl)
     }
 }
 
