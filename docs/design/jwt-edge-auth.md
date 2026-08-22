@@ -61,15 +61,18 @@ The review of this design established two constraints that shape everything else
 1. **Fail-closed middleware**: replace the blanket `^/api(/.*)?$` entry in `PUBLIC_PATHS` with one
    explicit list naming every path that does not use the default API-token/session authentication:
    bootstrap receivers (`/api/auth/exchange`, `/api/auth/refresh`, `/api/auth/token`,
-   `/api/auth/browser-token`), public-by-design error intake, and scoped-auth routes (diagnostics,
-   whose readonly-token check lives in a route dependency). Every other `/api/*` request requires
-   authentication in `AuthMiddleware` — closing the LAN exposure of dependency-less routers as a
-   side effect, and making the system safe under any edge configuration. Scoped routes stay scoped:
-   passing a diagnostics readonly token grants nothing beyond diagnostics. Error intake stays
-   reachable without a session (capture before login / with broken auth) but is bounded server-side:
-   per-client rate limiting, hard payload bounds on the request model, and unauthenticated reports
-   are clamped into the in-memory telemetry ring — never persisted to `error_logs`, regardless of
-   claimed severity. Authenticated reporters (session or Bearer) keep the full severity behaviour.
+   `/api/auth/browser-token`), external OAuth return targets (the browser can arrive from a
+   provider's consent page after arbitrarily long — longer than the JWT lifetime — so the callback
+   must reach its own state + session validation), public-by-design error intake, and scoped-auth
+   routes (diagnostics, whose readonly-token check lives in a route dependency). Every other
+   `/api/*` request requires authentication in `AuthMiddleware` — closing the LAN exposure of
+   dependency-less routers as a side effect, and making the system safe under any edge
+   configuration. Scoped routes stay scoped: passing a diagnostics readonly token grants nothing
+   beyond diagnostics. Error intake stays reachable without a session (capture before login / with
+   broken auth) but is bounded server-side: per-client rate limiting, hard payload bounds on the
+   request model, and unauthenticated reports are clamped into the in-memory telemetry ring — never
+   persisted to `error_logs`, regardless of claimed severity. Authenticated reporters (session or
+   Bearer) keep the full severity behaviour.
 2. **Token issuance** (`exchange`, `refresh`): return `api_token` as a short-lived ES256-signed JWT
    instead of an opaque secret. Claims: `iss`, `aud=family-assistant-api`, `sub` (user), `tid`
    (token row id), `jti`, `iat`, `exp` (default TTL 1 hour, configurable). The refresh flow is
@@ -143,7 +146,9 @@ The review of this design established two constraints that shape everything else
 - **Browser cookie JWT and CSRF**: the bridge cookie is `SameSite=Lax`, so it rides top-level GET
   navigations (OAuth callback returns) but never cross-site POSTs — the CSRF case that matters.
   A cross-site top-level GET to `/api` cannot leak data to the initiator (the response renders in
-  the victim's browser, unreadable cross-origin).
+  the victim's browser, unreadable cross-origin). Lax only helps while the cookie is unexpired,
+  which is why OAuth return targets are classified as no-JWT routes rather than relying on the
+  cookie surviving the round trip.
 - **Diagnostics scoped-auth pass-through**: the middleware allowlist names diagnostics paths so
   their readonly-token dependency keeps working; the pass-through grants nothing beyond those
   routes' own scoped checks. This is enumeration at a single chokepoint (the same list drives the
