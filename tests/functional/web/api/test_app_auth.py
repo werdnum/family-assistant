@@ -1,8 +1,9 @@
 """Tests for the iOS app auth token endpoints."""
 
 import hashlib
+import json
 import time
-from base64 import urlsafe_b64encode
+from base64 import b64encode, urlsafe_b64encode
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
@@ -13,6 +14,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient
+from itsdangerous import TimestampSigner
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.middleware.sessions import SessionMiddleware
@@ -35,6 +37,19 @@ from family_assistant.web.routers.app_auth import (
 def _clear_auth_codes() -> None:
     """Clear in-memory auth codes before each test."""
     auth_codes.clear()
+
+
+def _oidc_session_cookie() -> str:
+    payload = b64encode(
+        json.dumps({
+            "user": {
+                "sub": "browser-user@example.com",
+                "user_identifier": "browser-user@example.com",
+                "email": "browser-user@example.com",
+            }
+        }).encode("utf-8")
+    )
+    return TimestampSigner("test-secret").sign(payload).decode("utf-8")
 
 
 def _create_pkce_pair() -> tuple[str, str]:
@@ -307,14 +322,11 @@ class TestJWTTokens:
         app_fixture.add_middleware(SessionMiddleware, secret_key="test-secret")
         original_overrides = dict(app_fixture.dependency_overrides)
         app_fixture.state.auth_service = _SessionAuthService()
-        app_fixture.dependency_overrides[get_current_user] = lambda: {
-            "sub": "browser-user@example.com",
-            "user_identifier": "browser-user@example.com",
-            "email": "browser-user@example.com",
-        }
         transport = ASGITransport(app=app_fixture)
         async with AsyncClient(
-            transport=transport, base_url="http://testserver"
+            transport=transport,
+            base_url="http://testserver",
+            cookies={"session": _oidc_session_cookie()},
         ) as client:
             yield client
         app_fixture.dependency_overrides.clear()
@@ -658,14 +670,11 @@ class TestBrowserSessionRows:
         app_fixture.add_middleware(SessionMiddleware, secret_key="test-secret")
         original_overrides = dict(app_fixture.dependency_overrides)
         app_fixture.state.auth_service = _SessionAuthService()
-        app_fixture.dependency_overrides[get_current_user] = lambda: {
-            "sub": "browser-user@example.com",
-            "user_identifier": "browser-user@example.com",
-            "email": "browser-user@example.com",
-        }
         transport = ASGITransport(app=app_fixture)
         async with AsyncClient(
-            transport=transport, base_url="http://testserver"
+            transport=transport,
+            base_url="http://testserver",
+            cookies={"session": _oidc_session_cookie()},
         ) as client:
             yield client
         app_fixture.dependency_overrides.clear()

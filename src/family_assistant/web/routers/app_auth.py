@@ -568,7 +568,6 @@ async def exchange_opaque_token(
 async def browser_token(
     request: Request,
     db_context: Annotated[Database, Depends(get_db)],
-    current_user: Annotated[dict, Depends(get_current_user)],
     jwt_token_service: Annotated[
         jwt_tokens.JWTTokenService, Depends(get_jwt_token_service)
     ],
@@ -589,6 +588,16 @@ async def browser_token(
         or not auth_service.auth_enabled
     ):
         return JSONResponse(content={"enabled": False})
+
+    try:
+        current_user = request.session.get("user")
+    except AssertionError:
+        current_user = None
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Browser JWT bridge requires an OIDC browser session.",
+        )
 
     # Only an OIDC session may mint a renewable browser credential. The iOS
     # token-session cookie is bounded by the JWT that established it; treating
