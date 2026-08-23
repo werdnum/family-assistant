@@ -32,7 +32,7 @@ export default function SessionBridgeGate({ children }) {
         return;
       }
       if (settlement === 'forbidden') {
-        setPhase('forbidden');
+        setPhase((prev) => (prev === 'ready' ? prev : 'forbidden'));
         return;
       }
       // Once the gate has opened, later settlements must never close it —
@@ -57,7 +57,7 @@ export default function SessionBridgeGate({ children }) {
     return (
       <div className="min-h-screen flex items-center justify-center text-muted-foreground">
         {phase === 'forbidden'
-          ? 'Browser authentication is unavailable. Check the server session-authentication configuration.'
+          ? 'Browser authentication is unavailable for this session.'
           : phase === 'connecting'
             ? 'Connecting…'
             : 'Loading…'}
