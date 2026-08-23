@@ -106,14 +106,15 @@ The review of this design established two constraints that shape everything else
 ### Web frontend
 
 8. Mounting is gated on the initial bridge attempt: a startup gate renders a minimal placeholder
-   until the first bridge call settles (proceeding immediately on 401 — an expired OIDC session is
-   the existing auth flow's territory — but keeping API consumers unmounted through transient
-   failures, with backoff retries, so their one-shot load effects never fire without the cookie).
-   After that, near-expiry re-runs keep the cookie fresh; the cookie it sets authenticates every
-   browser-managed API request — decorated `fetch`, native `EventSource` subscriptions, `<img>`
-   attachment previews, and full-page OAuth redirects alike — with no per-request machinery
-   changes. Page loads themselves remain behind Access SSO + session cookies — only `/api` traffic
-   changes credential shape.
+   until the first bridge call settles, and API consumers stay unmounted through transient failures
+   (backoff retries) so their one-shot load effects never fire without the cookie. A 401 — an
+   expired OIDC session — triggers the central re-authentication transition instead of proceeding:
+   a full-page navigation to the current URL lets `AuthMiddleware` redirect to the OIDC login with
+   the intended destination preserved. After that, near-expiry re-runs keep the cookie fresh; the
+   cookie it sets authenticates every browser-managed API request — decorated `fetch`, native
+   `EventSource` subscriptions, `<img>` attachment previews, and full-page OAuth redirects alike —
+   with no per-request machinery changes. Page loads themselves remain behind Access SSO + session
+   cookies — only `/api` traffic changes credential shape.
 
 ### Edge (deployment repo)
 
