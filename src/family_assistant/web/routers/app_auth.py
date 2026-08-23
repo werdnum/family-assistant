@@ -419,6 +419,18 @@ async def refresh_token(
                     parent_expires = parent_expires.replace(tzinfo=UTC)
                 if not parent_expires or parent_expires > now:
                     token_ttl = jwt_tokens.access_token_ttl_seconds()
+                    # Extend the reused row through the newly issued JWT's
+                    # lifetime plus grace — a row in its final TTL window
+                    # would otherwise invalidate the token early.
+                    async with db_context.transaction() as txn:
+                        await txn.execute(
+                            sa_update(api_tokens_table)
+                            .where(api_tokens_table.c.id == parent_row["id"])
+                            .values(
+                                expires_at=datetime.now(UTC)
+                                + timedelta(seconds=token_ttl + 60)
+                            )
+                        )
                     access_token = jwt_tokens.mint_access_token(
                         user_identifier, int(parent_row["id"])
                     )
