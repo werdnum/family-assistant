@@ -110,3 +110,21 @@ def api_route_classification() -> RouteClassificationDocument:
             for methods, match, route_path, route_class in NO_DEFAULT_AUTH_ROUTES
         ],
     }
+
+
+BOOTSTRAP_BODY_LIMIT_BYTES = 64 * 1024
+
+
+def api_route_body_limit(method: str, path: str) -> int | None:
+    """Byte cap for a request body on this route; None means unlimited.
+
+    The no-default-auth routes are reachable unauthenticated (bootstrap and
+    public receivers), so their bodies are capped before buffering. Default-
+    auth routes are excluded — they legitimately carry large payloads such as
+    attachment uploads.
+    """
+    if api_route_requires_default_auth(method, path):
+        return None
+    if method.upper() not in {"POST", "PUT", "PATCH"}:
+        return None
+    return BOOTSTRAP_BODY_LIMIT_BYTES

@@ -12,6 +12,7 @@ from passlib.context import CryptContext
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.config import Config
+from starlette.datastructures import Headers
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from family_assistant.services.user_identity import (
@@ -382,6 +383,71 @@ class AuthService:
         request.session.pop("user", None)
         logger.info("User logged out.")
         return RedirectResponse(url="/")
+
+
+# ast-grep-ignore: no-dict-any - ASGI receive() messages are untyped dicts by protocol definition
+ScopeMessage = dict[str, Any]
+
+
+# Request-body cap for unauthenticated bootstrap/public API routes.
+class BootstrapBodyLimitMiddleware:
+    """Cap request bodies on unauthenticated bootstrap/public API routes.
+
+    These routes bypass default authentication, so an oversized body must be
+    rejected while streaming — before FastAPI buffers and parses it. The cap
+    comes from route_auth's classification, keeping one source of truth for
+    which routes are exposed without credentials.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        limit = route_auth.api_route_body_limit(scope["method"], scope["path"])
+        if limit is None:
+            await self.app(scope, receive, send)
+            return
+
+        headers = Headers(scope=scope)
+        content_length = headers.get("content-length")
+        if content_length and int(content_length) > limit:
+            await JSONResponse(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                content={"detail": "Request body too large."},
+            )(scope, receive, send)
+            return
+
+        # Buffer with the cap applied so memory stays bounded even when no
+        # Content-Length is provided (chunked transfer).
+        body = b""
+        more = True
+        while more:
+            message = await receive()
+            if message["type"] != "http.request":
+                break
+            body += message.get("body", b"")
+            more = message.get("more_body", False)
+            if len(body) > limit:
+                await JSONResponse(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    content={"detail": "Request body too large."},
+                )(scope, receive, send)
+                return
+
+        replayed = False
+
+        async def replay_receive() -> ScopeMessage:
+            nonlocal replayed
+            if replayed:
+                return {"type": "http.disconnect"}
+            replayed = True
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        await self.app(scope, replay_receive, send)
 
 
 # Define AuthMiddleware class

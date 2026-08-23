@@ -29,6 +29,7 @@ from family_assistant.web.auth import (
     SESSION_SECRET_KEY,
     AuthMiddleware,
     AuthService,
+    BootstrapBodyLimitMiddleware,
     create_auth_router,
 )
 from family_assistant.web.cancel_on_disconnect import (
@@ -132,6 +133,10 @@ class AuthMiddlewareWrapper:
         else:
             await self.app(scope, receive, send)
 
+
+# The body cap runs before auth so oversized unauthenticated bootstrap
+# payloads are rejected while still streaming (see BootstrapBodyLimitMiddleware).
+middleware.append(Middleware(BootstrapBodyLimitMiddleware))
 
 if AUTH_ENABLED:
     middleware.append(Middleware(AuthMiddlewareWrapper))

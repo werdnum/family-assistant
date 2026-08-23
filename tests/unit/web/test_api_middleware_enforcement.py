@@ -12,7 +12,13 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 from starlette.types import Receive, Scope, Send
 
-from family_assistant.web.auth import PUBLIC_PATHS, AuthMiddleware, AuthService
+from family_assistant.web.auth import (
+    PUBLIC_PATHS,
+    AuthMiddleware,
+    AuthService,
+    BootstrapBodyLimitMiddleware,
+)
+from family_assistant.web.route_auth import BOOTSTRAP_BODY_LIMIT_BYTES
 
 
 async def _ok_app(scope: Scope, receive: Receive, send: Send) -> None:
@@ -242,3 +248,46 @@ async def test_expired_bound_jwt_invalidates_session() -> None:
             headers={"Cookie": seed.headers["set-cookie"].split(";")[0]},
         )
     assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_small_bootstrap_bodies_pass_through() -> None:
+
+    stack = BootstrapBodyLimitMiddleware(_ok_app)
+    transport = ASGITransport(app=stack)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as c:
+        response = await c.post("/api/auth/exchange", content=b"x" * 100)
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_oversized_bootstrap_body_rejected_while_streaming() -> None:
+    stack = BootstrapBodyLimitMiddleware(_ok_app)
+    transport = ASGITransport(app=stack)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as c:
+        response = await c.post(
+            "/api/auth/exchange",
+            content=b"x" * (BOOTSTRAP_BODY_LIMIT_BYTES + 1),
+        )
+    assert response.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_content_length_header_rejected_before_reading() -> None:
+    stack = BootstrapBodyLimitMiddleware(_ok_app)
+    transport = ASGITransport(app=stack)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as c:
+        response = await c.post(
+            "/api/auth/exchange",
+            headers={"Content-Length": str(BOOTSTRAP_BODY_LIMIT_BYTES * 10)},
+        )
+    assert response.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_default_auth_routes_are_not_capped() -> None:
+    stack = BootstrapBodyLimitMiddleware(_ok_app)
+    transport = ASGITransport(app=stack)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as c:
+        response = await c.post("/api/notes/", content=b"x" * 200)
+    assert response.status_code == 200
