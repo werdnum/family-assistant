@@ -517,16 +517,22 @@ async def exchange_opaque_token(
         )
 
     ttl = jwt_tokens.access_token_ttl_seconds()
-    # Extend the backing row through the newly issued JWT's lifetime plus
-    # grace — an operator token in its final expiry window would otherwise
-    # invalidate the JWT before the advertised expires_in.
+    # Extend the backing row through the newly issued JWT's lifetime only when
+    # it has a finite expiry that would otherwise cut the JWT short. A row
+    # without an expiry (the common operator-token configuration) must keep
+    # working locally forever — never impose or shorten its lifetime.
     now = datetime.now(UTC)
-    async with db_context.transaction() as txn:
-        await txn.execute(
-            sa_update(api_tokens_table)
-            .where(api_tokens_table.c.id == token_row["id"])
-            .values(expires_at=now + timedelta(seconds=ttl + 60))
-        )
+    desired_expires = now + timedelta(seconds=ttl + 60)
+    row_expires = token_row["expires_at"]
+    if row_expires and row_expires.tzinfo is None:
+        row_expires = row_expires.replace(tzinfo=UTC)
+    if row_expires is not None and row_expires < desired_expires:
+        async with db_context.transaction() as txn:
+            await txn.execute(
+                sa_update(api_tokens_table)
+                .where(api_tokens_table.c.id == token_row["id"])
+                .values(expires_at=desired_expires)
+            )
 
     token = jwt_tokens.mint_access_token(
         str(token_row["user_identifier"]), int(token_row["id"])

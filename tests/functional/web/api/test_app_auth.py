@@ -667,3 +667,35 @@ class TestBrowserSessionRows:
         )
         row = await Database(db_engine).fetch_one(query)
         assert row is not None and row["count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_opaque_upgrade_preserves_non_expiring_row(
+        self,
+        api_test_client: AsyncClient,
+        db_engine: AsyncEngine,
+        jwt_enabled: None,
+    ) -> None:
+        """A never-expiring operator token keeps NULL expiry after upgrade."""
+        minted = api_tokens_storage.mint_api_token()
+        db = Database(db_engine)
+        token_id = await api_tokens_storage.add_api_token(
+            db_context=db,
+            user_identifier="operator@example.com",
+            name="operator",
+            hashed_token=minted.hashed_secret,
+            prefix=minted.prefix,
+            created_at=minted.created_at,
+            expires_at=None,
+            token_type="api",
+        )
+
+        response = await api_test_client.post(
+            "/api/auth/token", json={"token": minted.full_token}
+        )
+        assert response.status_code == 200
+
+        query = select(api_tokens_table.c.expires_at).where(
+            api_tokens_table.c.id == token_id
+        )
+        row = await db.fetch_one(query)
+        assert row is not None and row["expires_at"] is None
