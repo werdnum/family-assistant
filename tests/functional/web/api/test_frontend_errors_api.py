@@ -450,6 +450,17 @@ class _JWTOnlyAuthService:
     auth_enabled = False
     jwt_tokens = _EnabledJWTService()
 
+    async def get_user_from_api_token(
+        self, auth_header: str, request: object
+    ) -> dict | None:
+        if auth_header != "Bearer valid-jwt":
+            return None
+        return {
+            "sub": "jwt-user@example.com",
+            "source": "jwt_access_token",
+            "token_id": 1,
+        }
+
 
 def _client_for(assistant: Assistant) -> httpx.AsyncClient:
     assert assistant.fastapi_app is not None
@@ -529,6 +540,31 @@ async def test_jwt_only_deployment_treats_missing_credentials_as_unauthenticated
 
     assert response.status_code == 200
     assert response.json()["status"] == "recorded"
+
+
+@pytest.mark.asyncio
+async def test_jwt_only_deployment_recognizes_valid_reporter_credentials(
+    web_only_assistant: Assistant,
+) -> None:
+    assert web_only_assistant.fastapi_app is not None
+    original = getattr(web_only_assistant.fastapi_app.state, "auth_service", None)
+    web_only_assistant.fastapi_app.state.auth_service = _JWTOnlyAuthService()
+    try:
+        async with _client_for(web_only_assistant) as client:
+            response = await client.post(
+                "/api/errors/",
+                json={
+                    "message": "authenticated edge report",
+                    "url": "http://x/",
+                    "severity": "error",
+                },
+                headers={"Authorization": "Bearer valid-jwt"},
+            )
+    finally:
+        web_only_assistant.fastapi_app.state.auth_service = original
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "reported"
 
 
 @pytest.mark.asyncio

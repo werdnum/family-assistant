@@ -130,8 +130,7 @@ class AuthMiddlewareWrapper:
                         self.app, self.auth_service, PUBLIC_PATHS
                     )
 
-        # Use AuthMiddleware if available and auth is enabled
-        if self.auth_middleware and AUTH_ENABLED:
+        if self.auth_middleware:
             await self.auth_middleware(scope, receive, send)
         else:
             await self.app(scope, receive, send)
@@ -141,10 +140,11 @@ class AuthMiddlewareWrapper:
 # payloads are rejected while still streaming (see BootstrapBodyLimitMiddleware).
 middleware.append(Middleware(BootstrapBodyLimitMiddleware))
 
-if AUTH_ENABLED:
-    middleware.append(Middleware(AuthMiddlewareWrapper))
-else:
-    logger.info("AuthMiddleware NOT added as AUTH_ENABLED is false.")
+# Install independently of OIDC: AuthMiddleware decides at request time whether
+# OIDC or signed-JWT API authentication is configured. This is what keeps a
+# JWT-only LAN/Tailscale path fail-closed while preserving installations with
+# neither authentication mode configured.
+middleware.append(Middleware(AuthMiddlewareWrapper))
 
 
 # --- Lifespan context manager for startup/shutdown ---

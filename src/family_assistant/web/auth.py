@@ -101,6 +101,15 @@ def get_request_authenticated_api_user(request: Request) -> User | None:
     return user if isinstance(user, dict) else None
 
 
+def api_authentication_enabled(auth_service: object) -> bool:
+    """Whether API requests must authenticate through OIDC or signed JWTs."""
+    jwt_service = getattr(auth_service, "jwt_tokens", None)
+    return bool(
+        getattr(auth_service, "auth_enabled", False)
+        or (jwt_service and getattr(jwt_service, "enabled", False))
+    )
+
+
 def _clear_token_session_binding(request: Request) -> None:
     """Remove credential bindings when a session changes authentication source."""
     request.session.pop("api_token_id", None)
@@ -542,11 +551,13 @@ class AuthMiddleware:
         self._token_valid_cache: dict[int, dict[str, bool | float]] = {}
         self.TOKEN_VALID_CACHE_TTL = 30  # seconds
         logger.info(
-            f"AuthMiddleware initialized (auth_enabled={self.auth_service.auth_enabled})"
+            "AuthMiddleware initialized (oidc_enabled=%s, api_auth_enabled=%s)",
+            self.auth_service.auth_enabled,
+            api_authentication_enabled(self.auth_service),
         )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if not self.auth_service.auth_enabled or scope["type"] != "http":
+        if scope["type"] != "http" or not api_authentication_enabled(self.auth_service):
             await self.app(scope, receive, send)
             return
 
