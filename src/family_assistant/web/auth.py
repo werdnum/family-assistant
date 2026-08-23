@@ -101,6 +101,12 @@ def get_request_authenticated_api_user(request: Request) -> User | None:
     return user if isinstance(user, dict) else None
 
 
+def _clear_token_session_binding(request: Request) -> None:
+    """Remove credential bindings when a session changes authentication source."""
+    request.session.pop("api_token_id", None)
+    request.session.pop("session_jwt_exp", None)
+
+
 class AuthService:
     """Service class for authentication operations with proper dependency injection."""
 
@@ -378,6 +384,7 @@ class AuthService:
                             detail=str(exc),
                         ) from exc
 
+                _clear_token_session_binding(request)
                 request.session["user"] = dict(user_info)
                 logger.info(
                     f"User logged in successfully: {user_info.get('email') or user_info.get('sub')}"
@@ -405,6 +412,7 @@ class AuthService:
     async def handle_logout(self, request: Request) -> RedirectResponse:
         """Clears the user session."""
         request.session.pop("user", None)
+        _clear_token_session_binding(request)
         logger.info("User logged out.")
         return RedirectResponse(url="/")
 
@@ -693,6 +701,7 @@ def create_auth_router(auth_service: AuthService) -> APIRouter:
             async def logout_error(request: Request) -> RedirectResponse:
                 # Allow logout to work even if OAuth is broken - just clear session
                 request.session.pop("user", None)
+                _clear_token_session_binding(request)
                 logger.info(
                     "User logged out (OAuth not initialized, session cleared only)"
                 )
