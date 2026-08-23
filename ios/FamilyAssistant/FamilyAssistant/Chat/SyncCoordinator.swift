@@ -556,6 +556,7 @@ final class SyncCoordinator {
                 var connected = false
                 var connectedAt: Date?
                 var streamError: Error?
+                var sawValidContent = false
                 do {
                     guard let stream = try await self.delegate?.openFollowStream(
                         conversationID: conversationID,
@@ -566,16 +567,19 @@ final class SyncCoordinator {
                     connected = true
                     connectedAt = Date()
                     self.apply(.followConnected(generation: generation))
-                    authRefreshAlreadyAttempted = false
-                    authWallPresented = false
                     await self.delegate?.followStreamDidConnect(
                         conversationID: conversationID,
                         generation: generation
                     )
-                    delay = initialDelay
                     for try await event in stream {
                         if Task.isCancelled {
                             break
+                        }
+                        if !sawValidContent {
+                            sawValidContent = true
+                            authRefreshAlreadyAttempted = false
+                            authWallPresented = false
+                            delay = initialDelay
                         }
                         let shouldContinue = await self.delegate?.handleFollowEvent(
                             event,
@@ -726,6 +730,7 @@ final class SyncCoordinator {
                 self.markActivityReopening(generation: generation)
                 var connectedAt: Date?
                 var streamError: Error?
+                var sawValidContent = false
                 do {
                     guard let stream = try await self.delegate?.openActivityStream(
                         generation: generation
@@ -733,14 +738,17 @@ final class SyncCoordinator {
                         return
                     }
                     connectedAt = Date()
-                    delay = initialDelay
                     self.apply(.activityConnected(generation: generation))
-                    authRefreshAlreadyAttempted = false
-                    authWallPresented = false
                     await self.delegate?.activityStreamDidSignal(generation: generation)
                     for try await _ in stream {
                         if Task.isCancelled {
                             break
+                        }
+                        if !sawValidContent {
+                            sawValidContent = true
+                            authRefreshAlreadyAttempted = false
+                            authWallPresented = false
+                            delay = initialDelay
                         }
                         await self.delegate?.activityStreamDidSignal(generation: generation)
                     }
