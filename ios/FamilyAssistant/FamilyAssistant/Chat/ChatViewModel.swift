@@ -5137,14 +5137,14 @@ extension ChatViewModel: SyncStreamDelegate {
         await refreshRecentConversations()
     }
 
-    func presentFollowStreamAuthWall(_ error: ChatAPIError, generation: Int) {
+    func presentFollowStreamAuthWall(_ error: Error, generation: Int) {
         guard syncCoordinator.isCurrentFollow(generation) else {
             return
         }
         presentAuthWall(error)
     }
 
-    func presentActivityStreamAuthWall(_ error: ChatAPIError, generation: Int) {
+    func presentActivityStreamAuthWall(_ error: Error, generation: Int) {
         guard syncCoordinator.isCurrentActivity(generation) else {
             return
         }

@@ -973,6 +973,30 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(delegate.presentedAuthWallCount, 1)
     }
 
+    func testFollowRefreshAuthWallIsSurfacedBeforeBackoff() async throws {
+        seedStoredAuth()
+        let refreshRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            XCTAssertEqual(request.url?.path, "/api/auth/refresh")
+            _ = refreshRequests.increment()
+            return .json("<html><body>Sign in</body></html>")
+        }
+        let coordinator = SyncCoordinator(
+            authManager: makeAuthManager(),
+            pathMonitor: StubPathMonitor(isSatisfied: true)
+        )
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.followOpenError = ChatAPIError.server(statusCode: 401, detail: nil, retryAfter: nil)
+        coordinator.delegate = delegate
+
+        coordinator.startFollowStream(conversationID: "conv-1")
+        try await waitUntil { delegate.presentedAuthWallCount == 1 }
+        coordinator.cancelStreams()
+
+        XCTAssertEqual(refreshRequests.value, 1)
+        XCTAssertEqual(delegate.presentedAuthWallCount, 1)
+    }
+
     func testActivityConnectAuthWallIsSurfacedBeforeBackoff() async throws {
         let (coordinator, _, _) = makeCoordinator()
         let delegate = RecordingSyncStreamDelegate()
@@ -1237,11 +1261,11 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
 
     func activityStreamDidSignal(generation: Int) async {}
 
-    func presentFollowStreamAuthWall(_ error: ChatAPIError, generation: Int) {
+    func presentFollowStreamAuthWall(_ error: Error, generation: Int) {
         presentedAuthWallCount += 1
     }
 
-    func presentActivityStreamAuthWall(_ error: ChatAPIError, generation: Int) {
+    func presentActivityStreamAuthWall(_ error: Error, generation: Int) {
         presentedAuthWallCount += 1
     }
 
@@ -1320,9 +1344,9 @@ private final class WedgingSyncStreamDelegate: SyncStreamDelegate {
 
     func activityStreamDidSignal(generation: Int) async {}
 
-    func presentFollowStreamAuthWall(_ error: ChatAPIError, generation: Int) {}
+    func presentFollowStreamAuthWall(_ error: Error, generation: Int) {}
 
-    func presentActivityStreamAuthWall(_ error: ChatAPIError, generation: Int) {}
+    func presentActivityStreamAuthWall(_ error: Error, generation: Int) {}
 
     func currentConversationID() -> String? { nil }
 
