@@ -36,8 +36,15 @@ export default function SessionBridgeGate({ children }) {
         setPhase((prev) => (prev === 'ready' ? prev : 'forbidden'));
         return;
       }
+      if (settlement === 'credentials-stale') {
+        // A scheduled refresh failed after reaching the cookie's safety
+        // margin. Hold consumers until a retry succeeds so exponential backoff
+        // cannot leave mounted requests racing an expired credential.
+        setPhase('connecting');
+        return;
+      }
       // Once the gate has opened, later settlements must never close it —
-      // only an expired session (handled above) does.
+      // only an expired/unsafe credential (handled above) does.
       setPhase((prev) => {
         if (prev === 'ready') {
           return prev;

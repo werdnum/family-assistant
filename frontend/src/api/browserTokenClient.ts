@@ -39,6 +39,7 @@ export type BridgeSettlement =
   | 'session-expired'
   | 'not-configured'
   | 'unreachable'
+  | 'credentials-stale'
   | 'forbidden';
 
 const settlementListeners = new Set<(settlement: BridgeSettlement) => void>();
@@ -149,8 +150,10 @@ async function runBridgeCycle(cycleGeneration: number): Promise<BridgeSettlement
       void startSessionBridge();
     }, retryDelayMs);
     retryDelayMs = Math.min(retryDelayMs * 2, RETRY_MAX_DELAY_MS);
-    notifySettlement('unreachable');
-    return 'unreachable';
+    const settlement =
+      refreshDueAtMs !== null && Date.now() >= refreshDueAtMs ? 'credentials-stale' : 'unreachable';
+    notifySettlement(settlement);
+    return settlement;
   }
   if (result === 'refreshed') {
     retryDelayMs = RETRY_BASE_DELAY_MS;

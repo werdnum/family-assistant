@@ -46,6 +46,29 @@ describe('startSessionBridge', () => {
     expect(vi.getTimerCount()).toBe(1);
   });
 
+  it('marks credentials stale when their scheduled refresh fails', async () => {
+    const settlements: string[] = [];
+    const unsubscribe = addBridgeSettlementListener((settlement) => {
+      settlements.push(settlement);
+    });
+    let attempts = 0;
+    server.use(
+      http.get('/api/auth/browser-token', () => {
+        attempts += 1;
+        return attempts === 1 ? HttpResponse.json({ expires_in: 3600 }) : HttpResponse.error();
+      })
+    );
+
+    try {
+      await startSessionBridge();
+      await vi.advanceTimersByTimeAsync(3600 * 1000 - 60_000);
+
+      expect(settlements).toEqual(['refreshed', 'credentials-stale']);
+    } finally {
+      unsubscribe();
+    }
+  });
+
   it('clamps long-lived credential refreshes to the browser timer range', async () => {
     server.use(tokenHandler(30 * 24 * 60 * 60));
 

@@ -67,6 +67,46 @@ describe('SessionBridgeGate', () => {
     }
   });
 
+  it('unmounts API consumers when a due refresh fails, then remounts after retry', async () => {
+    vi.useFakeTimers();
+    try {
+      let attempts = 0;
+      server.use(
+        http.get('/api/auth/browser-token', () => {
+          attempts += 1;
+          if (attempts === 2) {
+            return HttpResponse.error();
+          }
+          return HttpResponse.json({ expires_in: 3600 });
+        })
+      );
+
+      render(
+        <SessionBridgeGate>
+          <div>app content</div>
+        </SessionBridgeGate>
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(screen.getByText('app content')).toBeInTheDocument();
+
+      await vi.advanceTimersByTimeAsync(3600 * 1000 - 60_000);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toBe(2);
+      expect(screen.queryByText('app content')).not.toBeInTheDocument();
+      expect(screen.getByText('Connecting…')).toBeInTheDocument();
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toBe(3);
+      expect(screen.getByText('app content')).toBeInTheDocument();
+    } finally {
+      resetSessionBridge();
+      vi.useRealTimers();
+    }
+  });
+
   it('routes a bridge 401 into the re-authentication reload', async () => {
     const browserTokenClient = await import('../../api/browserTokenClient');
     const reloadSpy = vi
