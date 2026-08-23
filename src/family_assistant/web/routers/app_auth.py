@@ -23,6 +23,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 from sqlalchemy import update as sa_update
 
@@ -543,8 +544,18 @@ async def browser_token(
     if existing:
         api_token_id = int(existing["id"])
     else:
+        # Prune this user's expired internal rows before inserting the
+        # replacement so the table (and token settings UI) does not
+        # accumulate dead browser-session entries.
         minted = api_tokens_storage.mint_api_token()
         async with db_context.transaction() as txn:
+            await txn.execute(
+                sa_delete(api_tokens_table).where(
+                    api_tokens_table.c.user_identifier == user_identifier,
+                    api_tokens_table.c.name == BROWSER_SESSION_TOKEN_NAME,
+                    api_tokens_table.c.expires_at <= now,
+                )
+            )
             api_token_id = await api_tokens_storage.add_api_token(
                 db_context=txn,
                 user_identifier=user_identifier,

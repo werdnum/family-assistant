@@ -4,6 +4,7 @@ import hashlib
 import time
 from base64 import urlsafe_b64encode
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -548,3 +549,80 @@ class _NoAuthService:
 
     auth_enabled = False
     oauth = None
+
+
+class TestBrowserSessionRows:
+    @pytest_asyncio.fixture
+    async def session_client(
+        self, app_fixture: "FastAPI"
+    ) -> AsyncGenerator[AsyncClient]:
+        """Client with SessionMiddleware and an auth-enabled OIDC session."""
+        app_fixture.add_middleware(SessionMiddleware, secret_key="test-secret")
+        original_overrides = dict(app_fixture.dependency_overrides)
+        app_fixture.state.auth_service = _SessionAuthService()
+        app_fixture.dependency_overrides[get_current_session_user] = lambda: {
+            "sub": "browser-user@example.com",
+            "user_identifier": "browser-user@example.com",
+            "email": "browser-user@example.com",
+        }
+        transport = ASGITransport(app=app_fixture)
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
+            yield client
+        app_fixture.dependency_overrides.clear()
+        app_fixture.dependency_overrides.update(original_overrides)
+
+    @pytest_asyncio.fixture
+    async def jwt_enabled(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> AsyncGenerator[None]:
+        pem = (
+            ec
+            .generate_private_key(ec.SECP256R1())
+            .private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption(),
+            )
+            .decode("ascii")
+        )
+        monkeypatch.setenv("JWT_SIGNING_KEY", pem)
+        jwt_tokens_module.init_jwt_signing()
+        yield
+        jwt_tokens_module.reset_jwt_signing_for_tests()
+
+    @pytest.mark.asyncio
+    async def test_browser_token_prunes_expired_rows(
+        self,
+        session_client: AsyncClient,
+        db_engine: AsyncEngine,
+        jwt_enabled: None,
+    ) -> None:
+        """An expired internal row is pruned when its replacement is minted."""
+        minted = api_tokens_storage.mint_api_token()
+        db = Database(db_engine)
+        await api_tokens_storage.add_api_token(
+            db_context=db,
+            user_identifier="browser-user@example.com",
+            name="browser-session",
+            hashed_token=minted.hashed_secret,
+            prefix=minted.prefix,
+            created_at=minted.created_at,
+            expires_at=datetime.now(UTC) - timedelta(days=1),
+            token_type="api",
+        )
+
+        response = await session_client.get("/api/auth/browser-token")
+        assert response.status_code == 200
+
+        query = (
+            select(func.count().label("count"))
+            .select_from(api_tokens_table)
+            .where(
+                api_tokens_table.c.user_identifier == "browser-user@example.com",
+                api_tokens_table.c.name == "browser-session",
+            )
+        )
+        row = await db.fetch_one(query)
+        assert row is not None and row["count"] == 1
