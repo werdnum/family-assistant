@@ -653,10 +653,14 @@ async def token_session(
         "email": current_user.get("email", current_user.get("user_identifier")),
         "source": "app_token_session",
     }
-    # Store the token ID so session validity is tied to token validity
+    # Store the token ID so session validity is tied to token validity.
+    # JWT-sourced bearers additionally bind the session to the JWT's own
+    # (short) expiry so it cannot outlive the credential that minted it.
     token_id = current_user.get("token_id")
     if token_id:
         request.session["api_token_id"] = token_id
+    if current_user.get("exp"):
+        request.session["session_jwt_exp"] = current_user["exp"]
 
     logger.info(
         "Token-session: established session for user %s (token_id=%s)",

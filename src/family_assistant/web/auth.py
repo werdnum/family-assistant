@@ -275,6 +275,9 @@ class AuthService:
             "email": user_identifier,
             "source": "jwt_access_token",
             "token_id": token_row["id"],
+            # Carried so session-minting bridges can bind the session to the
+            # JWT's own expiry instead of the backing row's lifetime.
+            "exp": int(claims["exp"]),
         }
 
     async def handle_login(self, request: Request) -> RedirectResponse:
@@ -438,9 +441,22 @@ class AuthMiddleware:
                 return
             user = None
 
-        # If session was created from an API token (e.g., iOS app),
-        # verify the token is still valid (not revoked/expired).
-        # Uses a short TTL cache to avoid a DB query on every request.
+        # If session was created from an API token (e.g., iOS app), verify the
+        # token is still valid (not revoked/expired) and that any bound short-
+        # lived JWT has not expired. Uses a short TTL cache to avoid a DB query
+        # on every request.
+        if user:
+            jwt_exp = request.session.get("session_jwt_exp")
+            if jwt_exp is not None and time.time() >= float(jwt_exp):
+                logger.warning(
+                    "Session invalidated: bound JWT access token has expired."
+                )
+                with contextlib.suppress(AssertionError):
+                    request.session.pop("user", None)
+                    request.session.pop("api_token_id", None)
+                    request.session.pop("session_jwt_exp", None)
+                user = None
+
         if user:
             api_token_id = request.session.get("api_token_id")
             if api_token_id and self.auth_service.database_engine:

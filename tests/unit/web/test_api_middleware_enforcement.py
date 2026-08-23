@@ -1,6 +1,8 @@
 """Fail-closed middleware enforcement for /api routes (design: jwt-edge-auth)."""
 
 import json
+import re
+import time
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -10,7 +12,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 from starlette.types import Receive, Scope, Send
 
-from family_assistant.web.auth import AuthMiddleware, AuthService
+from family_assistant.web.auth import PUBLIC_PATHS, AuthMiddleware, AuthService
 
 
 async def _ok_app(scope: Scope, receive: Receive, send: Send) -> None:
@@ -197,3 +199,46 @@ async def test_jwt_bearer_auth_is_not_persisted_into_session() -> None:
         response = await c.get("/api/notes/", headers={"Authorization": "Bearer x"})
     assert response.status_code == 200
     assert response.json() == {}
+
+
+@pytest.mark.asyncio
+async def test_expired_bound_jwt_invalidates_session() -> None:
+    """A session bound to a JWT is rejected once that JWT's exp passes."""
+
+    async def session_app(scope: Scope, receive: Receive, send: Send) -> None:
+        request = Request(scope)
+        if scope["path"] == "/health-seed":
+            request.session.update({
+                "user": {"sub": "jwt-user", "source": "app_token_session"},
+                "api_token_id": 2,
+                "session_jwt_exp": time.time() - 10,
+            })
+        body = json.dumps(dict(request.session)).encode()
+        await send({
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [(b"content-type", b"application/json")],
+        })
+        await send({"type": "http.response.body", "body": body})
+
+    # The AuthMiddleware sits inside SessionMiddleware so both share the
+    # session; /api/notes requires default auth, exercising the bound check.
+    class _HealthSeedPublic(AuthMiddleware):
+        def __init__(self) -> None:
+            super().__init__(session_app, _RejectingAuthService())
+            self.public_paths = list(PUBLIC_PATHS) + [re.compile(r"^/health-seed$")]
+
+    stack = SessionMiddleware(
+        _HealthSeedPublic(),
+        secret_key="test-secret",
+    )
+    transport = ASGITransport(app=stack)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as c:
+        seed = await c.get("/health-seed")
+        assert seed.json().get("session_jwt_exp"), "seed failed"
+
+        response = await c.get(
+            "/api/notes/",
+            headers={"Cookie": seed.headers["set-cookie"].split(";")[0]},
+        )
+    assert response.status_code == 401
