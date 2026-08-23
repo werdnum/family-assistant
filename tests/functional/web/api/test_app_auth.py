@@ -480,6 +480,32 @@ class TestJWTTokens:
         assert "fa_access_token" not in response.headers.get("set-cookie", "")
 
     @pytest.mark.asyncio
+    async def test_browser_token_reports_disabled_without_session_auth(
+        self,
+        app_fixture: "FastAPI",
+        jwt_enabled: None,
+    ) -> None:
+        """Without session authentication the bridge must not mint credentials."""
+        original_overrides = dict(app_fixture.dependency_overrides)
+        app_fixture.state.auth_service = _NoAuthService()
+        app_fixture.dependency_overrides[get_current_user] = lambda: {
+            "sub": "anonymous",
+            "user_identifier": "anonymous",
+        }
+        try:
+            transport = ASGITransport(app=app_fixture)
+            async with AsyncClient(
+                transport=transport, base_url="http://testserver"
+            ) as client:
+                response = await client.get("/api/auth/browser-token")
+        finally:
+            app_fixture.dependency_overrides.clear()
+            app_fixture.dependency_overrides.update(original_overrides)
+        assert response.status_code == 200
+        assert response.json() == {"enabled": False}
+        assert "fa_access_token" not in response.headers.get("set-cookie", "")
+
+    @pytest.mark.asyncio
     async def test_route_classification_published(
         self, api_test_client: AsyncClient
     ) -> None:
@@ -516,30 +542,6 @@ class _SessionAuthService:
 
     async def get_user_from_api_token(self, auth_header: str, request: object) -> None:
         return None
-
-    @pytest.mark.asyncio
-    async def test_browser_token_requires_session_auth(
-        self,
-        app_fixture: "FastAPI",
-        jwt_enabled: None,
-    ) -> None:
-        """Without session authentication the bridge must not mint credentials."""
-        original_overrides = dict(app_fixture.dependency_overrides)
-        app_fixture.state.auth_service = _NoAuthService()
-        app_fixture.dependency_overrides[get_current_user] = lambda: {
-            "sub": "anonymous",
-            "user_identifier": "anonymous",
-        }
-        try:
-            transport = ASGITransport(app=app_fixture)
-            async with AsyncClient(
-                transport=transport, base_url="http://testserver"
-            ) as client:
-                response = await client.get("/api/auth/browser-token")
-        finally:
-            app_fixture.dependency_overrides.clear()
-            app_fixture.dependency_overrides.update(original_overrides)
-        assert response.status_code == 403
 
 
 class _NoAuthService:

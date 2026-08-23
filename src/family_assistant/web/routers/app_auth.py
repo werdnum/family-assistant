@@ -553,21 +553,19 @@ async def browser_token(
     The JWT is set as an HttpOnly SameSite=Lax cookie scoped to /api so every
     browser-managed API request (fetch, EventSource, img tags) authenticates
     past the gateway without per-request headers. Returns ``{"enabled":
-    false}`` when JWT auth is not configured so clients can proceed without
-    the cookie (and without logging a console error per page load).
+    false}`` when JWT auth or backend session authentication is not configured
+    so clients can proceed without waiting on a bridge that cannot operate.
     """
-    if not jwt_tokens.jwt_auth_enabled():
+    auth_service = getattr(request.app.state, "auth_service", None)
+    if (
+        not jwt_tokens.jwt_auth_enabled()
+        or not auth_service
+        or not auth_service.auth_enabled
+    ):
         return JSONResponse(content={"enabled": False})
 
-    # Only deployments with session authentication may mint browser
-    # credentials. OIDC sessions and the iOS app's revalidated token-bound
-    # session are accepted; a bearer credential presented directly is not.
-    auth_service = getattr(request.app.state, "auth_service", None)
-    if not auth_service or not auth_service.auth_enabled:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Browser JWT bridge requires session authentication.",
-        )
+    # OIDC sessions and the iOS app's revalidated token-bound session are
+    # accepted; a bearer credential presented directly is not.
     if current_user.get("source") in {"api_token", "jwt_access_token"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
