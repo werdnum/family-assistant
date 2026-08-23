@@ -215,10 +215,9 @@ struct ChatAPIClient {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ChatAPIError.invalidResponse
         }
-        // Non-2xx bodies stay the runner's error channel (decoded below, as
-        // before); an auth wall is only meaningful where a JSON result was due.
-        if (200 ..< 300).contains(httpResponse.statusCode),
-           AuthWallDetection.isLikely(
+        // JSON error bodies stay the runner's error channel (decoded below),
+        // while an edge auth wall is HTML regardless of the status it uses.
+        if AuthWallDetection.isLikely(
                contentType: httpResponse.value(forHTTPHeaderField: "Content-Type"),
                data: data
            )

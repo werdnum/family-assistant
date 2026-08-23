@@ -215,6 +215,26 @@ final class ChatAPIClientToolExecuteTests: XCTestCase {
         } catch ChatAPIError.authWall {}
     }
 
+    func testExecuteToolSurfacesAuthWallForNonSuccessHTMLBody() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                "<html><body>Sign in</body></html>",
+                statusCode: 403,
+                headers: ["Content-Type": "text/html; charset=utf-8"]
+            )
+        }
+
+        do {
+            _ = try await makeClient().executeTool(
+                name: "get_weather",
+                arguments: .object(["city": .string("NYC")]),
+                profileID: nil,
+                taintMetadata: VoiceToolRunner.initialTaintMetadata
+            )
+            XCTFail("Expected a non-success auth-wall body to throw authWall")
+        } catch ChatAPIError.authWall {}
+    }
+
     func testExecuteToolNon2xxJSONErrorBodyStillDecodes() async throws {
         ChatMockBackendURLProtocol.respond { _ in
             .json(#"{"detail":"policy denied"}"#, statusCode: 400)
