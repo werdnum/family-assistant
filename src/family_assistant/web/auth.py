@@ -580,6 +580,11 @@ class AuthMiddleware:
                 return
 
         is_api_request = route_auth.is_api_path(request_path)
+        if not is_api_request and not auth_service.auth_enabled:
+            # Signed JWTs protect the API surface only. Page authentication and
+            # its /login redirect exist only when OIDC is configured.
+            await self.app(scope, receive, send)
+            return
 
         # Try to get user from session first: token-bound sessions must be
         # revalidated BEFORE any classification-based early return, so an

@@ -167,6 +167,23 @@ async def test_jwt_only_authentication_is_enforced_and_reused_by_dependency() ->
     assert auth_service.calls == 1
 
 
+@pytest.mark.asyncio
+async def test_jwt_only_authentication_does_not_protect_ui_pages() -> None:
+    auth_service = _AcceptingJWTAuthService()
+    auth_service.auth_enabled = False
+    auth_service.jwt_tokens = JWTTokenService(
+        ec.generate_private_key(ec.SECP256R1()), "test-key"
+    )
+    middleware = AuthMiddleware(_ok_app, auth_service)
+    transport = ASGITransport(app=middleware)
+
+    async with AsyncClient(transport=transport, base_url="http://testserver") as c:
+        response = await c.get("/settings")
+
+    assert response.status_code == 200
+    assert response.text == "ok"
+
+
 def test_application_always_installs_auth_middleware_wrapper() -> None:
     assert any(item.cls is AuthMiddlewareWrapper for item in app_middleware)
 
