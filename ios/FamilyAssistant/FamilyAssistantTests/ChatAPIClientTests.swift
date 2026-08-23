@@ -286,6 +286,26 @@ final class ChatAPIClientTests: XCTestCase {
         }
     }
 
+    func testConversationShareAuthWallDoesNotClearCredentials() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                "<html><body>Sign in</body></html>",
+                statusCode: 403,
+                headers: ["Content-Type": "text/html; charset=utf-8"]
+            )
+        }
+        let authManager = makeAuthManager()
+
+        do {
+            _ = try await ChatAPIClient(authManager: authManager)
+                .createConversationShare(conversationID: "web_conv_share")
+            XCTFail("Expected the edge auth wall to fail the mutation")
+        } catch ChatAPIError.authWall {
+            XCTAssertFalse(authManager.authRequired)
+            XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), apiToken)
+        }
+    }
+
     func testConversationShareMutationPreservesConcurrentlyRotatedCredentials() async throws {
         let requestCount = AtomicCounter()
         ChatMockBackendURLProtocol.respond { request in

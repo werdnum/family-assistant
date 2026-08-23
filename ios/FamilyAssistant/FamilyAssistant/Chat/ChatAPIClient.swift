@@ -217,13 +217,7 @@ struct ChatAPIClient {
         }
         // JSON error bodies stay the runner's error channel (decoded below),
         // while an edge auth wall is HTML regardless of the status it uses.
-        if AuthWallDetection.isLikely(
-               contentType: httpResponse.value(forHTTPHeaderField: "Content-Type"),
-               data: data
-           )
-        {
-            throw ChatAPIError.authWall
-        }
+        try rejectAuthWall(response: httpResponse, data: data)
         return try JSONDecoder.chatDecoder.decode(JSONValue.self, from: data)
     }
 
@@ -711,6 +705,7 @@ struct ChatAPIClient {
         let capturedEpoch = authManager.authEpoch
         let request = try await authManager.authorizedRequest(url: url, method: "GET")
         let (data, response) = try await urlSession.data(for: request)
+        try rejectAuthWall(response: response, data: data)
         guard (response as? HTTPURLResponse)?.statusCode == 401 else {
             return (data, response)
         }
@@ -730,6 +725,7 @@ struct ChatAPIClient {
 
         let retryRequest = try await authManager.authorizedRequest(url: url, method: "GET")
         let (retryData, retryResponse) = try await urlSession.data(for: retryRequest)
+        try rejectAuthWall(response: retryResponse, data: retryData)
         if (retryResponse as? HTTPURLResponse)?.statusCode == 401 {
             authManager.markAuthRequiredIfCurrent(capturedEpoch: capturedEpoch)
             throw AuthError.noCredentials
@@ -741,6 +737,7 @@ struct ChatAPIClient {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ChatAPIError.invalidResponse
         }
+        try rejectAuthWall(response: httpResponse, data: data, expectsJSON: expectsJSON)
         guard (200 ..< 300).contains(httpResponse.statusCode) else {
             let detail = try? JSONDecoder.chatDecoder.decode(ChatServerError.self, from: data).detail
             throw ChatAPIError.server(
@@ -749,11 +746,23 @@ struct ChatAPIClient {
                 retryAfter: Self.parseRetryAfter(httpResponse)
             )
         }
-        if expectsJSON,
-           AuthWallDetection.isLikely(contentType: httpResponse.value(forHTTPHeaderField: "Content-Type"), data: data)
-        {
-            throw ChatAPIError.authWall
+    }
+
+    private func rejectAuthWall(
+        response: URLResponse,
+        data: Data,
+        expectsJSON: Bool = true
+    ) throws {
+        guard expectsJSON,
+              let httpResponse = response as? HTTPURLResponse,
+              AuthWallDetection.isLikely(
+                  contentType: httpResponse.value(forHTTPHeaderField: "Content-Type"),
+                  data: data
+              )
+        else {
+            return
         }
+        throw ChatAPIError.authWall
     }
 
     /// A rejected mutation must never be replayed automatically because the server
@@ -765,6 +774,7 @@ struct ChatAPIClient {
         capturedAuthEpoch: Int,
         rejectedAccessToken: String?
     ) throws {
+        try rejectAuthWall(response: response, data: data)
         if let statusCode = (response as? HTTPURLResponse)?.statusCode,
            statusCode == 401 || statusCode == 403
         {
