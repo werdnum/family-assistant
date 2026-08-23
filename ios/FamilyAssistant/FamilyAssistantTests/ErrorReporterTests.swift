@@ -310,6 +310,27 @@ final class ErrorReporterTests: XCTestCase {
         XCTAssertTrue(spooledFiles().isEmpty)
     }
 
+    func testDeliverWhenTokenRefreshFailsUsesUnauthenticatedErrorIntake() async throws {
+        MockErrorURLProtocol.respond { _ in .init(statusCode: 200) }
+        let reporter = makeReporter()
+        reporter.configure(
+            baseURLProvider: { self.baseURL },
+            authTokenProvider: { throw AuthError.transient(underlying: nil) }
+        )
+
+        await reporter.deliver(
+            message: "Refresh failed",
+            component: "Auth.refresh",
+            errorType: .handled,
+            stack: nil,
+            extraData: [:]
+        )
+
+        let request = try XCTUnwrap(MockErrorURLProtocol.requests.first)
+        XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+        XCTAssertTrue(spooledFiles().isEmpty)
+    }
+
     // MARK: - Helpers
 
     private func makeReporter() -> ErrorReporter {

@@ -210,7 +210,8 @@ final class ErrorReporter: @unchecked Sendable {
         let token: String?
         do {
             token = try await tokenProvider?()
-        } catch AuthError.noCredentials {
+        } catch {
+            // Authentication enriches reports but must not block the public error-intake path.
             token = nil
         }
         if let token {
