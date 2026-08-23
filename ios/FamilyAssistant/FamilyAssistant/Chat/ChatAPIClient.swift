@@ -852,7 +852,11 @@ struct ChatAPIClient {
                 return (initialBytes, iterator)
             }
         }
-        throw ChatAPIError.invalidResponse
+        // A server may accept an SSE connection and then close it before the
+        // first event. That is a clean stream drop, not a malformed HTTP
+        // response; callers must receive the stream so their reconnect state
+        // machine observes the connection and applies its normal backoff.
+        return (initialBytes, iterator)
     }
 
     private func validatedStreamResponse(
@@ -872,6 +876,18 @@ struct ChatAPIClient {
             // rejection and clear otherwise-valid app credentials.
             try validate(response: httpResponse, data: errorBody)
             throw ChatAPIError.invalidResponse
+        }
+
+        // An explicit SSE content type establishes the stream at the headers:
+        // do not wait for a first event, because healthy streams can remain
+        // silent indefinitely. Redirected edge login pages arrive as HTML (or
+        // occasionally a misleading JSON response), so those responses still
+        // take the prefix-sniffing path below before the stream is returned.
+        if httpResponse.value(forHTTPHeaderField: "Content-Type")?
+            .lowercased()
+            .hasPrefix("text/event-stream") == true
+        {
+            return (Data(), bytes.makeAsyncIterator())
         }
 
         let start = try await validatedStreamStart(bytes)
