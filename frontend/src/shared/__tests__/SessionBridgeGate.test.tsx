@@ -30,7 +30,11 @@ describe('SessionBridgeGate', () => {
     await waitFor(() => expect(screen.getByText('app content')).toBeInTheDocument());
   });
 
-  it('renders children when the bridge returns 401', async () => {
+  it('routes a bridge 401 into the re-authentication reload', async () => {
+    const browserTokenClient = await import('../../api/browserTokenClient');
+    const reloadSpy = vi
+      .spyOn(browserTokenClient, 'reloadForReauthentication')
+      .mockImplementation(() => {});
     server.use(
       http.get('/api/auth/browser-token', () =>
         HttpResponse.json({ detail: 'Unauthorized' }, { status: 401 })
@@ -43,8 +47,9 @@ describe('SessionBridgeGate', () => {
       </SessionBridgeGate>
     );
 
-    await waitFor(() => expect(screen.getByText('app content')).toBeInTheDocument());
-    expect(screen.queryByText(/Loading…|Connecting…/)).not.toBeInTheDocument();
+    await waitFor(() => expect(reloadSpy).toHaveBeenCalled());
+    expect(screen.queryByText('app content')).not.toBeInTheDocument();
+    reloadSpy.mockRestore();
   });
 
   it('stays gated across transient failures until a retry succeeds', async () => {

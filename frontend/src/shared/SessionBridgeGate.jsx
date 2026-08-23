@@ -1,14 +1,19 @@
 import React, { useEffect, useState } from 'react';
-import { addBridgeSettlementListener, startSessionBridge } from '../api/browserTokenClient';
+import {
+  addBridgeSettlementListener,
+  reloadForReauthentication,
+  startSessionBridge,
+} from '../api/browserTokenClient';
 
 /**
  * Delays rendering authenticated children until the session→JWT bridge has
- * actually established credentials: a successful response, or an explicit 401
- * (expired OIDC session — proceeding is correct there because the existing
- * auth flow owns the re-login UX). On transient failures the backoff loop in
- * browserTokenClient keeps retrying and children stay gated behind a
- * "Connecting…" placeholder, so their mount effects don't race ahead of the
- * Set-Cookie and hit unrecoverable 401s.
+ * actually established credentials: a successful response. On transient
+ * failures the backoff loop in browserTokenClient keeps retrying and children
+ * stay gated behind a "Connecting…" placeholder, so their mount effects don't
+ * race ahead of the Set-Cookie and hit unrecoverable 401s. A 401 (expired
+ * OIDC session) routes into the central re-authentication transition: a
+ * full-page navigation to the current URL lets AuthMiddleware redirect to the
+ * OIDC login with the intended destination preserved.
  */
 export default function SessionBridgeGate({ children }) {
   const [phase, setPhase] = useState('loading');
@@ -17,27 +22,26 @@ export default function SessionBridgeGate({ children }) {
     let cancelled = false;
     let unsubscribe = () => {};
 
-    const openGate = () => {
-      if (!cancelled) {
-        setPhase('ready');
-      }
-    };
-
     void startSessionBridge().then((settlement) => {
       if (cancelled) {
         return;
       }
-      if (settlement !== 'unreachable') {
-        openGate();
+      if (settlement === 'session-expired') {
+        reloadForReauthentication();
         return;
       }
-      setPhase('connecting');
-      unsubscribe = addBridgeSettlementListener((next) => {
-        if (next !== 'unreachable') {
-          unsubscribe();
-          openGate();
-        }
-      });
+      if (settlement === 'unreachable') {
+        setPhase('connecting');
+        unsubscribe = addBridgeSettlementListener((next) => {
+          if (next !== 'unreachable') {
+            unsubscribe();
+            setPhase('ready');
+          }
+        });
+        return;
+      }
+      // 'refreshed' or 'not-configured'
+      setPhase('ready');
     });
 
     return () => {

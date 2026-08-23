@@ -132,6 +132,15 @@ async function runBridgeCycle(): Promise<BridgeSettlement> {
 }
 
 /**
+ * Central re-authentication transition for a bridge 401: a full-page
+ * navigation to the current URL lets the backend's AuthMiddleware redirect to
+ * OIDC login with the intended destination preserved. Exported for tests.
+ */
+export function reloadForReauthentication(): void {
+  window.location.reload();
+}
+
+/**
  * Call the bridge now and schedule the next run (near expiry, or after a
  * transient failure). Concurrent calls share one request; a previously
  * scheduled timer is replaced. Resolves with this attempt's outcome once it
