@@ -13,7 +13,11 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage.database import Database
-from family_assistant.web.auth import api_authentication_enabled, extract_api_credential
+from family_assistant.web.auth import (
+    api_authentication_enabled,
+    extract_api_credential,
+    session_jwt_binding_is_valid,
+)
 from family_assistant.web.dependencies import get_db, get_diagnostics_reader
 from family_assistant.web.frontend_telemetry import (
     FrontendTelemetryRecord,
@@ -228,6 +232,8 @@ async def _reporter_authentication(request: Request) -> tuple[bool, str | None]:
         session_user = request.session.get("user")
     except AssertionError:
         session_user = None
+    if session_user and not session_jwt_binding_is_valid(request):
+        return False, None
     session_identifier = None
     if session_user:
         session_identifier = (

@@ -110,6 +110,21 @@ def api_authentication_enabled(auth_service: object) -> bool:
     )
 
 
+def session_jwt_binding_is_valid(request: Request) -> bool:
+    """Whether a session's optional short-lived JWT binding is still valid."""
+    try:
+        raw_expiry = request.session.get("session_jwt_exp")
+    except AssertionError:
+        return True
+    if raw_expiry is None:
+        return True
+    try:
+        return time.time() < float(raw_expiry)
+    except (TypeError, ValueError):
+        logger.warning("Session invalidated: malformed bound JWT expiry.")
+        return False
+
+
 def _clear_token_session_binding(request: Request) -> None:
     """Remove credential bindings when a session changes authentication source."""
     request.session.pop("api_token_id", None)
@@ -605,17 +620,13 @@ class AuthMiddleware:
         # token is still valid (not revoked/expired) and that any bound short-
         # lived JWT has not expired. Uses a short TTL cache to avoid a DB query
         # on every request.
-        if user:
-            jwt_exp = request.session.get("session_jwt_exp")
-            if jwt_exp is not None and time.time() >= float(jwt_exp):
-                logger.warning(
-                    "Session invalidated: bound JWT access token has expired."
-                )
-                with contextlib.suppress(AssertionError):
-                    request.session.pop("user", None)
-                    request.session.pop("api_token_id", None)
-                    request.session.pop("session_jwt_exp", None)
-                user = None
+        if user and not session_jwt_binding_is_valid(request):
+            logger.warning("Session invalidated: bound JWT access token has expired.")
+            with contextlib.suppress(AssertionError):
+                request.session.pop("user", None)
+                request.session.pop("api_token_id", None)
+                request.session.pop("session_jwt_exp", None)
+            user = None
 
         if user:
             api_token_id = request.session.get("api_token_id")
