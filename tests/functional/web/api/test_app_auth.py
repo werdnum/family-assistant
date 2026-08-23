@@ -321,8 +321,8 @@ class TestJWTTokens:
 
     @pytest_asyncio.fixture
     async def jwt_enabled(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> AsyncGenerator[None]:
+        self, app_fixture: "FastAPI", monkeypatch: pytest.MonkeyPatch
+    ) -> AsyncGenerator[jwt_tokens_module.JWTTokenService]:
         private_key = ec.generate_private_key(ec.SECP256R1())
         pem = private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
@@ -330,13 +330,17 @@ class TestJWTTokens:
             encryption_algorithm=serialization.NoEncryption(),
         ).decode("ascii")
         monkeypatch.setenv("JWT_SIGNING_KEY", pem)
-        jwt_tokens_module.init_jwt_signing()
-        yield None
-        jwt_tokens_module.reset_jwt_signing_for_tests()
+        service = jwt_tokens_module.JWTTokenService.from_environment()
+        app_fixture.state.jwt_token_service = service
+        if isinstance(app_fixture.state.auth_service, AuthService):
+            app_fixture.state.auth_service.jwt_tokens = service
+        yield service
 
     @pytest.mark.asyncio
     async def test_exchange_returns_signed_jwt(
-        self, api_test_client: AsyncClient, jwt_enabled: None
+        self,
+        api_test_client: AsyncClient,
+        jwt_enabled: jwt_tokens_module.JWTTokenService,
     ) -> None:
         code_verifier, code_challenge = _create_pkce_pair()
         auth_code = _seed_auth_code(code_challenge)
@@ -350,13 +354,48 @@ class TestJWTTokens:
         assert data["api_token"].count(".") == 2
         assert data["expires_in"] == 3600
 
-        claims = jwt_tokens_module.verify_access_token(data["api_token"])
+        claims = jwt_enabled.verify_access_token(data["api_token"])
         assert claims is not None
         assert claims["sub"] == "testuser@example.com"
 
     @pytest.mark.asyncio
+    async def test_exchange_row_outlives_long_configured_jwt(
+        self,
+        api_test_client: AsyncClient,
+        db_engine: AsyncEngine,
+        jwt_enabled: jwt_tokens_module.JWTTokenService,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A configured JWT lifetime over 30 days extends its backing row."""
+        monkeypatch.setenv("JWT_ACCESS_TOKEN_TTL_SECONDS", str(40 * 86400))
+        code_verifier, code_challenge = _create_pkce_pair()
+        auth_code = _seed_auth_code(code_challenge)
+
+        response = await api_test_client.post(
+            "/api/auth/exchange",
+            json={"code": auth_code, "code_verifier": code_verifier},
+        )
+
+        assert response.status_code == 200
+        claims = jwt_enabled.verify_access_token(response.json()["api_token"])
+        assert claims is not None
+        row = await Database(db_engine).fetch_one(
+            select(api_tokens_table.c.expires_at).where(
+                api_tokens_table.c.id == claims["tid"]
+            )
+        )
+        assert row is not None
+        row_expiry = row["expires_at"]
+        assert row_expiry is not None
+        if row_expiry.tzinfo is None:
+            row_expiry = row_expiry.replace(tzinfo=UTC)
+        assert row_expiry.timestamp() >= claims["exp"]
+
+    @pytest.mark.asyncio
     async def test_refresh_returns_signed_jwt(
-        self, api_test_client: AsyncClient, jwt_enabled: None
+        self,
+        api_test_client: AsyncClient,
+        jwt_enabled: jwt_tokens_module.JWTTokenService,
     ) -> None:
         code_verifier, code_challenge = _create_pkce_pair()
         auth_code = _seed_auth_code(code_challenge)
@@ -377,10 +416,16 @@ class TestJWTTokens:
 
     @pytest.mark.asyncio
     async def test_exchange_stays_opaque_without_signing_key(
-        self, api_test_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+        self,
+        app_fixture: "FastAPI",
+        api_test_client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.delenv("JWT_SIGNING_KEY", raising=False)
-        jwt_tokens_module.reset_jwt_signing_for_tests()
+        service = jwt_tokens_module.JWTTokenService.from_environment()
+        app_fixture.state.jwt_token_service = service
+        if isinstance(app_fixture.state.auth_service, AuthService):
+            app_fixture.state.auth_service.jwt_tokens = service
 
         code_verifier, code_challenge = _create_pkce_pair()
         auth_code = _seed_auth_code(code_challenge)
@@ -395,7 +440,9 @@ class TestJWTTokens:
 
     @pytest.mark.asyncio
     async def test_opaque_upgrade_requires_valid_token(
-        self, api_test_client: AsyncClient, jwt_enabled: None
+        self,
+        api_test_client: AsyncClient,
+        jwt_enabled: jwt_tokens_module.JWTTokenService,
     ) -> None:
         response = await api_test_client.post(
             "/api/auth/token", json={"token": "not-a-real-token"}
@@ -407,7 +454,7 @@ class TestJWTTokens:
         self,
         api_test_client: AsyncClient,
         db_engine: AsyncEngine,
-        jwt_enabled: None,
+        jwt_enabled: jwt_tokens_module.JWTTokenService,
     ) -> None:
         minted = api_tokens_storage.mint_api_token()
         db = Database(db_engine)
@@ -429,13 +476,16 @@ class TestJWTTokens:
         data = response.json()
         assert data["expires_in"] == 3600
 
-        claims = jwt_tokens_module.verify_access_token(data["api_token"])
+        claims = jwt_enabled.verify_access_token(data["api_token"])
         assert claims is not None
         assert claims["tid"] == token_id
 
     @pytest.mark.asyncio
     async def test_browser_token_sets_cookie(
-        self, session_client: AsyncClient, db_engine: AsyncEngine, jwt_enabled: None
+        self,
+        session_client: AsyncClient,
+        db_engine: AsyncEngine,
+        jwt_enabled: jwt_tokens_module.JWTTokenService,
     ) -> None:
         """The bridge sets the JWT cookie scoped to /api with Lax SameSite."""
         response = await session_client.get("/api/auth/browser-token")
@@ -452,7 +502,10 @@ class TestJWTTokens:
 
     @pytest.mark.asyncio
     async def test_browser_token_reuses_single_row(
-        self, session_client: AsyncClient, db_engine: AsyncEngine, jwt_enabled: None
+        self,
+        session_client: AsyncClient,
+        db_engine: AsyncEngine,
+        jwt_enabled: jwt_tokens_module.JWTTokenService,
     ) -> None:
         """Repeated bridge calls reuse one revocation row instead of growing it."""
         for _ in range(3):
@@ -473,10 +526,14 @@ class TestJWTTokens:
 
     @pytest.mark.asyncio
     async def test_browser_token_reports_disabled_without_signing_key(
-        self, session_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+        self,
+        app_fixture: "FastAPI",
+        session_client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.delenv("JWT_SIGNING_KEY", raising=False)
-        jwt_tokens_module.reset_jwt_signing_for_tests()
+        service = jwt_tokens_module.JWTTokenService.from_environment()
+        app_fixture.state.jwt_token_service = service
         response = await session_client.get("/api/auth/browser-token")
         assert response.status_code == 200
         assert response.json() == {"enabled": False}
@@ -486,7 +543,7 @@ class TestJWTTokens:
     async def test_browser_token_reports_disabled_without_session_auth(
         self,
         app_fixture: "FastAPI",
-        jwt_enabled: None,
+        jwt_enabled: jwt_tokens_module.JWTTokenService,
     ) -> None:
         """Without session authentication the bridge must not mint credentials."""
         original_overrides = dict(app_fixture.dependency_overrides)
@@ -518,7 +575,9 @@ class TestJWTTokens:
 
     @pytest.mark.asyncio
     async def test_jwks_endpoint_serves_public_key(
-        self, api_test_client: AsyncClient, jwt_enabled: None
+        self,
+        api_test_client: AsyncClient,
+        jwt_enabled: jwt_tokens_module.JWTTokenService,
     ) -> None:
         response = await api_test_client.get("/.well-known/jwks.json")
         assert response.status_code == 200
@@ -528,10 +587,14 @@ class TestJWTTokens:
 
     @pytest.mark.asyncio
     async def test_jwks_endpoint_absent_without_signing_key(
-        self, api_test_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+        self,
+        app_fixture: "FastAPI",
+        api_test_client: AsyncClient,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.delenv("JWT_SIGNING_KEY", raising=False)
-        jwt_tokens_module.reset_jwt_signing_for_tests()
+        service = jwt_tokens_module.JWTTokenService.from_environment()
+        app_fixture.state.jwt_token_service = service
         response = await api_test_client.get("/.well-known/jwks.json")
         assert response.status_code == 404
 
@@ -578,8 +641,8 @@ class TestBrowserSessionRows:
 
     @pytest_asyncio.fixture
     async def jwt_enabled(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> AsyncGenerator[None]:
+        self, app_fixture: "FastAPI", monkeypatch: pytest.MonkeyPatch
+    ) -> AsyncGenerator[jwt_tokens_module.JWTTokenService]:
         pem = (
             ec
             .generate_private_key(ec.SECP256R1())
@@ -591,22 +654,25 @@ class TestBrowserSessionRows:
             .decode("ascii")
         )
         monkeypatch.setenv("JWT_SIGNING_KEY", pem)
-        jwt_tokens_module.init_jwt_signing()
-        yield
-        jwt_tokens_module.reset_jwt_signing_for_tests()
+        service = jwt_tokens_module.JWTTokenService.from_environment()
+        app_fixture.state.jwt_token_service = service
+        if isinstance(app_fixture.state.auth_service, AuthService):
+            app_fixture.state.auth_service.jwt_tokens = service
+        yield service
 
     @pytest.mark.asyncio
     async def test_refreshed_jwt_rebinds_existing_app_session(
         self,
         db_engine: AsyncEngine,
-        jwt_enabled: None,
+        jwt_enabled: jwt_tokens_module.JWTTokenService,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """A retained app session is rebound to the bearer sent on this launch."""
-        auth_service = AuthService(db_engine)
+        auth_service = AuthService(db_engine, jwt_enabled)
         auth_service.auth_enabled = True
         app = FastAPI()
         app.state.auth_service = auth_service
+        app.state.jwt_token_service = jwt_enabled
         app.state.database_engine = db_engine
         app.include_router(api_auth_router, prefix="/api")
 
@@ -633,7 +699,7 @@ class TestBrowserSessionRows:
         async with AsyncClient(
             transport=transport, base_url="http://testserver"
         ) as client:
-            first_token = jwt_tokens_module.mint_access_token(
+            first_token = jwt_enabled.mint_access_token(
                 "ios-user@example.com", token_id
             )
             first = await client.post(
@@ -644,7 +710,7 @@ class TestBrowserSessionRows:
             first_state = (await client.get("/test/session-state")).json()
 
             monkeypatch.setenv("JWT_ACCESS_TOKEN_TTL_SECONDS", "7200")
-            refreshed_token = jwt_tokens_module.mint_access_token(
+            refreshed_token = jwt_enabled.mint_access_token(
                 "ios-user@example.com", token_id
             )
             rebound = await client.post(
@@ -666,7 +732,7 @@ class TestBrowserSessionRows:
         self,
         session_client: AsyncClient,
         db_engine: AsyncEngine,
-        jwt_enabled: None,
+        jwt_enabled: jwt_tokens_module.JWTTokenService,
     ) -> None:
         """An expired internal row is pruned when its replacement is minted."""
         minted = api_tokens_storage.mint_api_token()
@@ -702,7 +768,7 @@ class TestBrowserSessionRows:
         self,
         session_client: AsyncClient,
         db_engine: AsyncEngine,
-        jwt_enabled: None,
+        jwt_enabled: jwt_tokens_module.JWTTokenService,
     ) -> None:
         """An API token named browser-session remains a user credential."""
         minted = api_tokens_storage.mint_api_token()
@@ -737,7 +803,7 @@ class TestBrowserSessionRows:
         self,
         api_test_client: AsyncClient,
         db_engine: AsyncEngine,
-        jwt_enabled: None,
+        jwt_enabled: jwt_tokens_module.JWTTokenService,
     ) -> None:
         """JWT-mode refreshes rebind to the parent row instead of inserting new ones."""
         code_verifier, code_challenge = _create_pkce_pair()
@@ -746,9 +812,7 @@ class TestBrowserSessionRows:
             "/api/auth/exchange",
             json={"code": auth_code, "code_verifier": code_verifier},
         )
-        first_claims = jwt_tokens_module.verify_access_token(
-            exchange.json()["api_token"]
-        )
+        first_claims = jwt_enabled.verify_access_token(exchange.json()["api_token"])
         assert first_claims is not None
         db = Database(db_engine)
         expiry_query = select(api_tokens_table.c.expires_at).where(
@@ -762,7 +826,7 @@ class TestBrowserSessionRows:
             json={"refresh_token": exchange.json()["refresh_token"]},
         )
         assert refresh_response.status_code == 200
-        second_claims = jwt_tokens_module.verify_access_token(
+        second_claims = jwt_enabled.verify_access_token(
             refresh_response.json()["api_token"]
         )
         assert second_claims is not None
@@ -787,7 +851,7 @@ class TestBrowserSessionRows:
         self,
         api_test_client: AsyncClient,
         db_engine: AsyncEngine,
-        jwt_enabled: None,
+        jwt_enabled: jwt_tokens_module.JWTTokenService,
     ) -> None:
         """A never-expiring operator token keeps NULL expiry after upgrade."""
         minted = api_tokens_storage.mint_api_token()
@@ -819,7 +883,7 @@ class TestBrowserSessionRows:
         self,
         api_test_client: AsyncClient,
         db_engine: AsyncEngine,
-        jwt_enabled: None,
+        jwt_enabled: jwt_tokens_module.JWTTokenService,
     ) -> None:
         """Exchanging an opaque token neither extends nor outlives its row."""
         minted = api_tokens_storage.mint_api_token()
@@ -842,7 +906,7 @@ class TestBrowserSessionRows:
         assert response.status_code == 200
         body = response.json()
         assert 1 <= body["expires_in"] <= 30 * 60
-        claims = jwt_tokens_module.verify_access_token(body["api_token"])
+        claims = jwt_enabled.verify_access_token(body["api_token"])
         assert claims is not None
         assert claims["exp"] - claims["iat"] == body["expires_in"]
 

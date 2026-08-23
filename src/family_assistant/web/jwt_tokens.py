@@ -30,68 +30,9 @@ JWT_AUDIENCE = "family-assistant-api"
 
 logger = logging.getLogger(__name__)
 
-_signing_key: EllipticCurvePrivateKey | None = None
-_key_id: str | None = None
-
 
 class JWTSigningKeyError(RuntimeError):
     """The configured signing key could not be parsed."""
-
-
-def init_jwt_signing() -> bool:
-    """Load the configured signing key; fail fast on an unparsable value.
-
-    Returns True when JWT auth is enabled. Called once at application startup.
-    """
-    global _signing_key, _key_id
-
-    pem = os.environ.get(JWT_SIGNING_KEY_ENV_VAR)
-    if not pem:
-        _signing_key = None
-        _key_id = None
-        return False
-
-    try:
-        loaded_key = serialization.load_pem_private_key(
-            pem.encode("utf-8"), password=None
-        )
-    except Exception as exc:
-        raise JWTSigningKeyError(
-            f"{JWT_SIGNING_KEY_ENV_VAR} is set but could not be parsed as a "
-            f"private key in PEM format: {exc}"
-        ) from exc
-
-    if not isinstance(loaded_key, EllipticCurvePrivateKey):
-        raise JWTSigningKeyError(
-            f"{JWT_SIGNING_KEY_ENV_VAR} must be an EC private key (ES256); "
-            f"got {type(loaded_key).__name__}."
-        )
-
-    if loaded_key.curve.name != "secp256r1":
-        raise JWTSigningKeyError(
-            f"{JWT_SIGNING_KEY_ENV_VAR} must be a P-256 (prime256v1) EC key "
-            f"for ES256; got curve {loaded_key.curve.name}."
-        )
-
-    _signing_key = loaded_key
-    _key_id = _compute_key_id(loaded_key)
-    # Fail fast on an invalid TTL too, before any exchange consumes its
-    # one-time authorization code against a later mint failure.
-    access_token_ttl_seconds()
-    logger.info("JWT access-token signing enabled (kid=%s).", _key_id)
-    return True
-
-
-def jwt_auth_enabled() -> bool:
-    """Whether signed-JWT issuance/verification is configured."""
-    return _signing_key is not None
-
-
-def reset_jwt_signing_for_tests() -> None:
-    """Clear module state between tests."""
-    global _signing_key, _key_id
-    _signing_key = None
-    _key_id = None
 
 
 def access_token_ttl_seconds() -> int:
@@ -135,52 +76,118 @@ class JsonWebKey(TypedDict):
     use: str
 
 
-def mint_access_token(
-    user_identifier: str, api_token_id: int, expires_in: int | None = None
-) -> str:
-    """Mint a short-lived ES256 access token bound to an api_tokens row."""
-    if _signing_key is None or _key_id is None:
-        raise RuntimeError("JWT signing is not configured.")
-    now = datetime.now(UTC)
-    ttl = expires_in if expires_in is not None else access_token_ttl_seconds()
-    if expires_in is not None and ttl <= 0:
-        raise ValueError("Access-token lifetime must be positive.")
-    claims: AccessTokenClaims = {
-        "iss": JWT_ISSUER,
-        "aud": JWT_AUDIENCE,
-        "sub": user_identifier,
-        "tid": api_token_id,
-        "iat": int(now.timestamp()),
-        "exp": int(now.timestamp()) + ttl,
-        "jti": hashlib.sha256(f"{api_token_id}:{now.timestamp()}".encode()).hexdigest(),
-    }
-    return jwt.encode(
-        dict(claims), _signing_key, algorithm="ES256", headers={"kid": _key_id}
-    )
+class JWTTokenService:
+    """Application-scoped JWT signer and verifier."""
 
+    def __init__(
+        self,
+        signing_key: EllipticCurvePrivateKey | None,
+        key_id: str | None,
+    ) -> None:
+        self._signing_key = signing_key
+        self._key_id = key_id
 
-def verify_access_token(token: str) -> AccessTokenClaims | None:
-    """Verify signature/expiry/issuer/audience; return claims or None.
+    @classmethod
+    def from_environment(cls) -> "JWTTokenService":
+        """Load one application's signing configuration from the environment."""
+        pem = os.environ.get(JWT_SIGNING_KEY_ENV_VAR)
+        if not pem:
+            return cls(None, None)
 
-    Callers must still check the ``tid`` row's revocation status.
-    """
-    if _signing_key is None:
-        return None
-    try:
-        return cast(
-            "AccessTokenClaims",
-            jwt.decode(
-                token,
-                _signing_key.public_key(),
-                algorithms=["ES256"],
-                issuer=JWT_ISSUER,
-                audience=JWT_AUDIENCE,
-                options={"require": ["exp", "iss", "aud", "sub", "tid"]},
-            ),
+        try:
+            loaded_key = serialization.load_pem_private_key(
+                pem.encode("utf-8"), password=None
+            )
+        except Exception as exc:
+            raise JWTSigningKeyError(
+                f"{JWT_SIGNING_KEY_ENV_VAR} is set but could not be parsed as a "
+                f"private key in PEM format: {exc}"
+            ) from exc
+
+        if not isinstance(loaded_key, EllipticCurvePrivateKey):
+            raise JWTSigningKeyError(
+                f"{JWT_SIGNING_KEY_ENV_VAR} must be an EC private key (ES256); "
+                f"got {type(loaded_key).__name__}."
+            )
+        if loaded_key.curve.name != "secp256r1":
+            raise JWTSigningKeyError(
+                f"{JWT_SIGNING_KEY_ENV_VAR} must be a P-256 (prime256v1) EC key "
+                f"for ES256; got curve {loaded_key.curve.name}."
+            )
+
+        key_id = _compute_key_id(loaded_key)
+        access_token_ttl_seconds()
+        logger.info("JWT access-token signing enabled (kid=%s).", key_id)
+        return cls(loaded_key, key_id)
+
+    @property
+    def enabled(self) -> bool:
+        """Whether signed-JWT issuance and verification are configured."""
+        return self._signing_key is not None
+
+    def mint_access_token(
+        self, user_identifier: str, api_token_id: int, expires_in: int | None = None
+    ) -> str:
+        """Mint a short-lived ES256 access token bound to an api_tokens row."""
+        if self._signing_key is None or self._key_id is None:
+            raise RuntimeError("JWT signing is not configured.")
+        now = datetime.now(UTC)
+        ttl = expires_in if expires_in is not None else access_token_ttl_seconds()
+        if expires_in is not None and ttl <= 0:
+            raise ValueError("Access-token lifetime must be positive.")
+        claims: AccessTokenClaims = {
+            "iss": JWT_ISSUER,
+            "aud": JWT_AUDIENCE,
+            "sub": user_identifier,
+            "tid": api_token_id,
+            "iat": int(now.timestamp()),
+            "exp": int(now.timestamp()) + ttl,
+            "jti": hashlib.sha256(
+                f"{api_token_id}:{now.timestamp()}".encode()
+            ).hexdigest(),
+        }
+        return jwt.encode(
+            dict(claims),
+            self._signing_key,
+            algorithm="ES256",
+            headers={"kid": self._key_id},
         )
-    except jwt.PyJWTError as exc:
-        logger.debug("JWT verification failed: %s", exc)
-        return None
+
+    def verify_access_token(self, token: str) -> AccessTokenClaims | None:
+        """Verify signature/expiry/issuer/audience; return claims or None."""
+        if self._signing_key is None:
+            return None
+        try:
+            return cast(
+                "AccessTokenClaims",
+                jwt.decode(
+                    token,
+                    self._signing_key.public_key(),
+                    algorithms=["ES256"],
+                    issuer=JWT_ISSUER,
+                    audience=JWT_AUDIENCE,
+                    options={"require": ["exp", "iss", "aud", "sub", "tid"]},
+                ),
+            )
+        except jwt.PyJWTError as exc:
+            logger.debug("JWT verification failed: %s", exc)
+            return None
+
+    def jwks_document(self) -> dict[str, list[JsonWebKey]]:
+        """Return the JWKS publishing this application's verification key."""
+        if self._signing_key is None or self._key_id is None:
+            raise RuntimeError("JWT signing is not configured.")
+        public_numbers = self._signing_key.public_key().public_numbers()
+        key: JsonWebKey = {
+            "kty": "EC",
+            "crv": "P-256",
+            "x": _b64u(coordinate_bytes(public_numbers.x)),
+            "y": _b64u(coordinate_bytes(public_numbers.y)),
+            "kid": self._key_id,
+            "alg": "ES256",
+            "use": "sig",
+        }
+        return {"keys": [key]}
 
 
 def _b64u(raw: bytes) -> str:
@@ -195,23 +202,6 @@ def coordinate_bytes(value: int) -> bytes:
     non-canonical JWK that strict verifiers reject.
     """
     return value.to_bytes(32, "big")
-
-
-def jwks_document() -> dict[str, list[JsonWebKey]]:
-    """Return the JWKS publishing the verification public key."""
-    if _signing_key is None or _key_id is None:
-        raise RuntimeError("JWT signing is not configured.")
-    public_numbers = _signing_key.public_key().public_numbers()
-    key: JsonWebKey = {
-        "kty": "EC",
-        "crv": "P-256",
-        "x": _b64u(coordinate_bytes(public_numbers.x)),
-        "y": _b64u(coordinate_bytes(public_numbers.y)),
-        "kid": _key_id,
-        "alg": "ES256",
-        "use": "sig",
-    }
-    return {"keys": [key]}
 
 
 def looks_like_jwt(token: str) -> bool:

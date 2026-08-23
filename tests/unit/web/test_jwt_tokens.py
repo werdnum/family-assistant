@@ -1,6 +1,5 @@
 """Tests for ES256 JWT access-token issuance and verification."""
 
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
 import jwt as pyjwt
@@ -30,30 +29,27 @@ def signing_key_pem() -> str:
     return pem.decode("ascii")
 
 
-@pytest.fixture(autouse=True)
-def _enable_jwt_signing(
+@pytest.fixture
+def jwt_service(
     signing_key_pem: str, monkeypatch: pytest.MonkeyPatch
-) -> Iterator[None]:
+) -> jwt_tokens.JWTTokenService:
     monkeypatch.setenv("JWT_SIGNING_KEY", signing_key_pem)
-    jwt_tokens.init_jwt_signing()
-    yield
-    jwt_tokens.reset_jwt_signing_for_tests()
+    return jwt_tokens.JWTTokenService.from_environment()
 
 
-def test_enabled_after_init() -> None:
-    assert jwt_tokens.jwt_auth_enabled()
+def test_enabled_after_init(jwt_service: jwt_tokens.JWTTokenService) -> None:
+    assert jwt_service.enabled
 
 
 def test_disabled_without_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("JWT_SIGNING_KEY", raising=False)
-    assert not jwt_tokens.init_jwt_signing()
-    assert not jwt_tokens.jwt_auth_enabled()
+    assert not jwt_tokens.JWTTokenService.from_environment().enabled
 
 
 def test_invalid_pem_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("JWT_SIGNING_KEY", "not a key")
     with pytest.raises(jwt_tokens.JWTSigningKeyError):
-        jwt_tokens.init_jwt_signing()
+        jwt_tokens.JWTTokenService.from_environment()
 
 
 def test_non_ec_key_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -65,13 +61,13 @@ def test_non_ec_key_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     ).decode("ascii")
     monkeypatch.setenv("JWT_SIGNING_KEY", pem)
     with pytest.raises(jwt_tokens.JWTSigningKeyError, match="EC private key"):
-        jwt_tokens.init_jwt_signing()
+        jwt_tokens.JWTTokenService.from_environment()
 
 
-def test_mint_and_verify_roundtrip() -> None:
-    token = jwt_tokens.mint_access_token("user@example.com", 42)
+def test_mint_and_verify_roundtrip(jwt_service: jwt_tokens.JWTTokenService) -> None:
+    token = jwt_service.mint_access_token("user@example.com", 42)
     assert jwt_tokens.looks_like_jwt(token)
-    claims = jwt_tokens.verify_access_token(token)
+    claims = jwt_service.verify_access_token(token)
     assert claims is not None
     assert claims["sub"] == "user@example.com"
     assert claims["tid"] == 42
@@ -82,21 +78,25 @@ def test_mint_and_verify_roundtrip() -> None:
     )
 
 
-def test_mint_accepts_shorter_lifetime() -> None:
-    token = jwt_tokens.mint_access_token("user@example.com", 42, expires_in=90)
-    claims = jwt_tokens.verify_access_token(token)
+def test_mint_accepts_shorter_lifetime(
+    jwt_service: jwt_tokens.JWTTokenService,
+) -> None:
+    token = jwt_service.mint_access_token("user@example.com", 42, expires_in=90)
+    claims = jwt_service.verify_access_token(token)
     assert claims is not None
     assert claims["exp"] - claims["iat"] == 90
 
 
-def test_tampered_token_rejected() -> None:
-    token = jwt_tokens.mint_access_token("user@example.com", 42)
+def test_tampered_token_rejected(jwt_service: jwt_tokens.JWTTokenService) -> None:
+    token = jwt_service.mint_access_token("user@example.com", 42)
     header, payload, signature = token.split(".")
     tampered = f"{header}.{payload}.AAAA{signature[4:]}"
-    assert jwt_tokens.verify_access_token(tampered) is None
+    assert jwt_service.verify_access_token(tampered) is None
 
 
-def test_wrong_audience_rejected(signing_key_pem: str) -> None:
+def test_wrong_audience_rejected(
+    signing_key_pem: str, jwt_service: jwt_tokens.JWTTokenService
+) -> None:
     private_key = serialization.load_pem_private_key(
         signing_key_pem.encode("ascii"), password=None
     )
@@ -115,22 +115,25 @@ def test_wrong_audience_rejected(signing_key_pem: str) -> None:
         algorithm="ES256",
     )
     assert isinstance(token, str)
-    assert jwt_tokens.verify_access_token(token) is None
+    assert jwt_service.verify_access_token(token) is None
 
 
 def test_expired_token_rejected(
+    jwt_service: jwt_tokens.JWTTokenService,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(jwt_tokens, "access_token_ttl_seconds", lambda: -10)
-    token = jwt_tokens.mint_access_token("user@example.com", 42)
-    assert jwt_tokens.verify_access_token(token) is None
+    token = jwt_service.mint_access_token("user@example.com", 42)
+    assert jwt_service.verify_access_token(token) is None
 
 
-def test_ttl_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_ttl_from_env(
+    jwt_service: jwt_tokens.JWTTokenService, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("JWT_ACCESS_TOKEN_TTL_SECONDS", "120")
     assert jwt_tokens.access_token_ttl_seconds() == 120
-    claims = jwt_tokens.verify_access_token(
-        jwt_tokens.mint_access_token("user@example.com", 7)
+    claims = jwt_service.verify_access_token(
+        jwt_service.mint_access_token("user@example.com", 7)
     )
     assert claims is not None
     assert claims["exp"] - claims["iat"] == pytest.approx(120, abs=2)
@@ -142,8 +145,10 @@ def test_invalid_ttl_env_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
         jwt_tokens.access_token_ttl_seconds()
 
 
-def test_jwks_document_shape_and_stable_kid(signing_key_pem: str) -> None:
-    jwks = jwt_tokens.jwks_document()
+def test_jwks_document_shape_and_stable_kid(
+    jwt_service: jwt_tokens.JWTTokenService,
+) -> None:
+    jwks = jwt_service.jwks_document()
     (key,) = jwks["keys"]
     assert key["kty"] == "EC"
     assert key["crv"] == "P-256"
@@ -152,16 +157,34 @@ def test_jwks_document_shape_and_stable_kid(signing_key_pem: str) -> None:
     assert key["kid"]
 
     kid_before = key["kid"]
-    jwt_tokens.init_jwt_signing()
-    assert jwt_tokens.jwks_document()["keys"][0]["kid"] == kid_before
+    reloaded_service = jwt_tokens.JWTTokenService.from_environment()
+    assert reloaded_service.jwks_document()["keys"][0]["kid"] == kid_before
+
+
+def test_services_keep_independent_signing_keys(
+    jwt_service: jwt_tokens.JWTTokenService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first_token = jwt_service.mint_access_token("first@example.com", 1)
+    second_key = ec.generate_private_key(ec.SECP256R1())
+    second_pem = second_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("ascii")
+    monkeypatch.setenv("JWT_SIGNING_KEY", second_pem)
+    second_service = jwt_tokens.JWTTokenService.from_environment()
+
+    assert jwt_service.verify_access_token(first_token) is not None
+    assert second_service.verify_access_token(first_token) is None
 
 
 def test_verify_without_signing_configured(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("JWT_SIGNING_KEY", raising=False)
-    jwt_tokens.reset_jwt_signing_for_tests()
+    jwt_service = jwt_tokens.JWTTokenService.from_environment()
     shaped_token = "eyJhbGciOiJFUzI1NiJ9.eyJzdWIiOiJ1In0.sig"
     assert jwt_tokens.looks_like_jwt(shaped_token)
-    assert jwt_tokens.verify_access_token(shaped_token) is None
+    assert jwt_service.verify_access_token(shaped_token) is None
 
 
 def test_non_p256_ec_key_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -173,7 +196,7 @@ def test_non_p256_ec_key_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     ).decode("ascii")
     monkeypatch.setenv("JWT_SIGNING_KEY", pem)
     with pytest.raises(jwt_tokens.JWTSigningKeyError, match="P-256"):
-        jwt_tokens.init_jwt_signing()
+        jwt_tokens.JWTTokenService.from_environment()
 
 
 def test_coordinate_encoding_is_fixed_width() -> None:
@@ -189,4 +212,4 @@ def test_invalid_ttl_fails_at_startup(
     monkeypatch.setenv("JWT_SIGNING_KEY", signing_key_pem)
     monkeypatch.setenv("JWT_ACCESS_TOKEN_TTL_SECONDS", "nope")
     with pytest.raises(jwt_tokens.JWTSigningKeyError, match="TTL"):
-        jwt_tokens.init_jwt_signing()
+        jwt_tokens.JWTTokenService.from_environment()

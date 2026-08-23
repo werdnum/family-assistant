@@ -104,7 +104,11 @@ def get_request_authenticated_api_user(request: Request) -> User | None:
 class AuthService:
     """Service class for authentication operations with proper dependency injection."""
 
-    def __init__(self, database_engine: AsyncEngine | None = None) -> None:
+    def __init__(
+        self,
+        database_engine: AsyncEngine | None = None,
+        jwt_token_service: jwt_tokens.JWTTokenService | None = None,
+    ) -> None:
         """
         Initialize the AuthService with dependencies.
 
@@ -112,6 +116,9 @@ class AuthService:
             database_engine: The database engine for database operations
         """
         self.database_engine = database_engine
+        self.jwt_tokens = (
+            jwt_token_service or jwt_tokens.JWTTokenService.from_environment()
+        )
         self.auth_enabled = AUTH_ENABLED
         self.oauth: OAuth | None = None
 
@@ -179,7 +186,7 @@ class AuthService:
 
         token_value = auth_header.split(" ", 1)[1]
 
-        if jwt_tokens.jwt_auth_enabled() and jwt_tokens.looks_like_jwt(token_value):
+        if self.jwt_tokens.enabled and jwt_tokens.looks_like_jwt(token_value):
             return await self._user_from_jwt_token(token_value)
 
         # Assuming the prefix is the first 8 characters of the token_value
@@ -259,7 +266,7 @@ class AuthService:
             logger.error("Database engine not available in AuthService")
             return None
 
-        claims = jwt_tokens.verify_access_token(token_value)
+        claims = self.jwt_tokens.verify_access_token(token_value)
         if not claims:
             logger.warning("Rejected invalid JWT access token.")
             return None

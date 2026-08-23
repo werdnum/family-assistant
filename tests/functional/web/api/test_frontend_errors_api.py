@@ -17,10 +17,7 @@ from family_assistant.web.frontend_telemetry import (
 from family_assistant.web.routers.errors_api import (
     ERROR_INTAKE_RATE_LIMIT,
     RATE_LIMIT_MAX_ADDRESSES,
-    check_error_intake_rate_limit,
-    expire_rate_limit_addresses,
-    rate_limit_tracked_addresses,
-    reset_error_intake_rate_limiter,
+    ErrorIntakeRateLimiter,
 )
 
 # The frontend.javascript logger that the API endpoint uses
@@ -406,8 +403,11 @@ async def test_frontend_error_extra_data_stored_correctly(
 
 
 @pytest.fixture(autouse=True)
-def _reset_rate_limiter() -> None:
-    reset_error_intake_rate_limiter()
+def _reset_rate_limiter(web_only_assistant: Assistant) -> None:
+    assert web_only_assistant.fastapi_app is not None
+    web_only_assistant.fastapi_app.state.error_intake_rate_limiter = (
+        ErrorIntakeRateLimiter()
+    )
 
 
 class _FakeAuthService:
@@ -566,11 +566,21 @@ async def test_rate_limiter_map_stays_bounded(
     web_only_assistant: Assistant,
 ) -> None:
     """Rotating client addresses cannot grow the limiter map without bound."""
-
+    limiter = ErrorIntakeRateLimiter()
     for i in range(RATE_LIMIT_MAX_ADDRESSES + 500):
-        check_error_intake_rate_limit(f"10.0.0.{i % 256}.{i}")
-        if rate_limit_tracked_addresses() > RATE_LIMIT_MAX_ADDRESSES:
+        limiter.allow(f"10.0.0.{i % 256}.{i}")
+        if limiter.tracked_clients() > RATE_LIMIT_MAX_ADDRESSES:
             break
         if i % 512 == 0:
-            expire_rate_limit_addresses(200)
-    assert rate_limit_tracked_addresses() <= RATE_LIMIT_MAX_ADDRESSES
+            limiter.expire_clients(200)
+    assert limiter.tracked_clients() <= RATE_LIMIT_MAX_ADDRESSES
+
+
+def test_error_intake_limiters_are_instance_scoped() -> None:
+    first = ErrorIntakeRateLimiter()
+    second = ErrorIntakeRateLimiter()
+    for _ in range(ERROR_INTAKE_RATE_LIMIT):
+        assert first.allow("same-client")
+
+    assert not first.allow("same-client")
+    assert second.allow("same-client")

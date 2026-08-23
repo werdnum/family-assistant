@@ -36,7 +36,6 @@ from family_assistant.web.cancel_on_disconnect import (
     CancelOnClientDisconnectMiddleware,
 )
 from family_assistant.web.conversation_stream_hub import ConversationStreamHub
-from family_assistant.web.jwt_tokens import init_jwt_signing
 from family_assistant.web.routers.a2a_api import a2a_wellknown_router
 from family_assistant.web.routers.api import api_router
 from family_assistant.web.routers.api_documentation import (
@@ -54,6 +53,7 @@ from family_assistant.web.routers.app_auth import (
 from family_assistant.web.routers.asterisk_live_api import asterisk_live_router
 from family_assistant.web.routers.client_config import router as client_config_router
 from family_assistant.web.routers.context_viewer import context_viewer_router
+from family_assistant.web.routers.errors_api import ErrorIntakeRateLimiter
 from family_assistant.web.routers.gemini_live_api import gemini_live_router
 
 # documents_ui, vector_search, and errors routers removed - replaced with React
@@ -151,13 +151,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Startup
     logger.info("Application starting up...")
 
-    # Fail fast on a malformed JWT signing key rather than at first use.
-    init_jwt_signing()
-
     # Initialize AuthService if database engine is available
     # Note: database_engine will be set by Assistant during setup
     if hasattr(app.state, "database_engine"):
         app.state.auth_service = AuthService(app.state.database_engine)
+        app.state.jwt_token_service = app.state.auth_service.jwt_tokens
         logger.info("AuthService initialized with database engine")
 
         # Initialize WebChatInterface for web UI message delivery
@@ -195,6 +193,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     else:
         # For development or when database is not yet initialized
         app.state.auth_service = AuthService()
+        app.state.jwt_token_service = app.state.auth_service.jwt_tokens
         logger.warning(
             "AuthService initialized without database engine - API token auth will not work"
         )
@@ -229,6 +228,7 @@ def create_app() -> FastAPI:
     new_app.state.templates = templates
     new_app.state.server_url = SERVER_URL
     new_app.state.docs_user_dir = docs_user_dir
+    new_app.state.error_intake_rate_limiter = ErrorIntakeRateLimiter()
 
     # In-memory broker for resumable conversation streaming. Holds in-flight
     # turn state, the per-conversation event ring buffer, subscriber queues,
@@ -459,6 +459,7 @@ def configure_app_auth(
     # Initialize AuthService
     auth_service = AuthService(database_engine)
     app.state.auth_service = auth_service
+    app.state.jwt_token_service = auth_service.jwt_tokens
 
     # Include auth router
     if AUTH_ENABLED:

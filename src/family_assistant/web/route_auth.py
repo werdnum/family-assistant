@@ -20,6 +20,7 @@ split (see docs/design/jwt-edge-auth.md): it is published at
 generated or contract-tested against it rather than hand-mirrored.
 """
 
+import re
 from typing import Literal, TypedDict
 
 RouteClass = Literal["bootstrap", "public", "scoped"]
@@ -40,7 +41,7 @@ class RouteClassificationDocument(TypedDict):
 
 
 # (methods, match, path, class). "exact" matches only that path; "prefix"
-# matches the path itself and anything beneath it.
+# matches the path itself and anything beneath it; "regex" is full-matched.
 NO_DEFAULT_AUTH_ROUTES: list[tuple[frozenset[str], str, str, RouteClass]] = [
     (frozenset({"POST"}), "exact", "/api/auth/exchange", "bootstrap"),
     (frozenset({"POST"}), "exact", "/api/auth/refresh", "bootstrap"),
@@ -66,7 +67,12 @@ NO_DEFAULT_AUTH_ROUTES: list[tuple[frozenset[str], str, str, RouteClass]] = [
     # default authentication.
     (frozenset({"GET"}), "exact", "/api/debug/profiles/tools", "scoped"),
     (frozenset({"GET"}), "prefix", "/api/diagnostics", "scoped"),
-    (frozenset({"GET"}), "prefix", "/api/errors/", "scoped"),
+    (
+        frozenset({"GET"}),
+        "regex",
+        r"^/api/errors/(telemetry|[0-9]+)?$",
+        "scoped",
+    ),
 ]
 
 
@@ -89,10 +95,12 @@ def api_route_requires_default_auth(method: str, path: str) -> bool:
         if match == "exact":
             if path == route_path:
                 return False
-        else:
+        elif match == "prefix":
             prefix = route_path.rstrip("/")
             if path == prefix or path.startswith(f"{prefix}/"):
                 return False
+        elif match == "regex" and re.fullmatch(route_path, path):
+            return False
     return True
 
 

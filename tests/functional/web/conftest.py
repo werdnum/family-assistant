@@ -52,7 +52,9 @@ from family_assistant.tools import (
     ToolPolicyDecision,
     ToolsProvider,
 )
+from family_assistant.web.auth import AuthService
 from family_assistant.web.conversation_stream_hub import ConversationStreamHub
+from family_assistant.web.jwt_tokens import JWTTokenService
 from family_assistant.web.web_chat_interface import WebChatInterface
 from tests.conftest import check_db_engine_invariants
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
@@ -1251,6 +1253,8 @@ async def app_fixture(
         api_test_tools_provider  # For /api/tools/execute if needed
     )
     app.state.database_engine = db_engine  # For get_db dependency
+    app.state.jwt_token_service = JWTTokenService.from_environment()
+    app.state.auth_service = AuthService(db_engine, app.state.jwt_token_service)
     app.state.config = AppConfig(
         database_url=str(db_engine.url),
     )

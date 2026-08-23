@@ -18,6 +18,7 @@ from family_assistant.web.auth import (
     extract_api_credential,
     get_request_authenticated_api_user,
 )
+from family_assistant.web.jwt_tokens import JWTTokenService
 from family_assistant.web.models import GeminiLiveConfig
 from family_assistant.web.voice_client import GoogleGeminiLiveClient, LiveAudioClient
 
@@ -26,6 +27,17 @@ if TYPE_CHECKING:
     from family_assistant.web.web_chat_interface import WebChatInterface
 
 logger = logging.getLogger(__name__)
+
+
+def get_jwt_token_service(request: Request) -> JWTTokenService:
+    """Return the application-scoped JWT signer and verifier."""
+    service = getattr(request.app.state, "jwt_token_service", None)
+    if not isinstance(service, JWTTokenService):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication service is not configured.",
+        )
+    return service
 
 
 def get_user_identity_resolver(request: Request) -> UserIdentityResolver | None:
