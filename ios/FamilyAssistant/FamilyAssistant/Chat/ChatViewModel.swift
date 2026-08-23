@@ -5184,6 +5184,14 @@ extension ChatViewModel: ResyncHost {
         try await authManager.refreshIfNeeded()
     }
 
+    func presentResyncAuthWall(_ error: AuthError) {
+        presentInlineThreadFeedback(
+            inlineMessage(for: .authWall, error: error),
+            reason: .authWall,
+            operation: .conversationsRefresh
+        )
+    }
+
     func establishFollowStream(
         conversationID: String,
         generation _: Int

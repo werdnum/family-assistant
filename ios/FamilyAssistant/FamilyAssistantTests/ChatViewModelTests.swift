@@ -43,6 +43,17 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertTrue(model.messages.isEmpty)
     }
 
+    func testResyncAuthWallShowsActionableInlineFeedback() {
+        let model = makeViewModel(conversationID: "web_conv_auth_wall")
+
+        model.presentResyncAuthWall(.authWall)
+
+        XCTAssertEqual(
+            model.threadInlineMessage,
+            "Server requires sign-in or is unreachable (authentication wall detected)."
+        )
+    }
+
     func testLaunchRestoresRecentlyActiveConversation() {
         storeLastConversation("web_conv_recent", activeSecondsAgo: 60)
 

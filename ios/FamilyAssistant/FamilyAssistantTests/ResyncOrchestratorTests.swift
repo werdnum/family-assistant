@@ -205,6 +205,7 @@ final class ResyncOrchestratorTests: XCTestCase {
         XCTAssertEqual(host.authGateCount, 1)
         XCTAssertEqual(host.listSnapshotCount, 0)
         XCTAssertEqual(host.restartStreamsCount, 1)
+        XCTAssertEqual(host.presentedAuthWallCount, 1)
         XCTAssertEqual(host.phaseFinishCount, 1)
     }
 
@@ -792,6 +793,7 @@ private final class FakeResyncHost: ResyncHost {
     var onEstablishFollow: (() async -> Void)?
     private(set) var awaitTerminationCount = 0
     private(set) var authGateCount = 0
+    private(set) var presentedAuthWallCount = 0
     private(set) var listSnapshotCount = 0
     private(set) var recentListSnapshotCount = 0
 
@@ -850,6 +852,10 @@ private final class FakeResyncHost: ResyncHost {
         if let authGateError {
             throw authGateError
         }
+    }
+
+    func presentResyncAuthWall(_: AuthError) {
+        presentedAuthWallCount += 1
     }
 
     func establishFollowStream(

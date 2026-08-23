@@ -47,6 +47,10 @@ protocol ResyncHost: AnyObject {
     /// stands, with no error modal.
     func gateAuthIfNeeded(generation: Int) async throws
 
+    /// Surface an edge authentication wall through the chat's actionable inline
+    /// error lane. Unlike a credential rejection, this does not latch re-auth.
+    func presentResyncAuthWall(_ error: AuthError)
+
     /// Establish the selected conversation's follow stream: open the connection
     /// and return the event stream once response headers are received ("the
     /// existing connect signal"). Returns nil when no conversation is selected or
@@ -472,11 +476,16 @@ final class ResyncOrchestrator {
             }
             reportStep("gateAuth", edge: "exit", attempt: attempt, runID: runID)
             switch error {
-            case .authWall, .transient:
-                // An authentication wall or transient refresh failure (network
-                // error, 5xx) is NOT a credential rejection: `authRequired` is
-                // not latched and a re-auth trigger fires only for real
-                // rejections. Because
+            case .authWall:
+                host.presentResyncAuthWall(error)
+                if generationsStillCurrent(generations, host: host) {
+                    restartStreams(host: host, attempt: attempt, runID: runID)
+                }
+                return .aborted
+            case .transient:
+                // A transient refresh failure (network error, 5xx) is NOT a
+                // credential rejection: `authRequired` is not latched and a
+                // re-auth trigger fires only for real rejections. Because
                 // `awaitStreamTermination()` above already tore both loops down,
                 // returning here would strand the app with NO loops running until
                 // some later trigger. Restart the loops instead so their own
