@@ -407,11 +407,17 @@ struct ChatAPIClient {
         // `streamConversation` for why this matters to the reconnect backoff).
         let (bytes, response) = try await urlSession.bytes(for: request)
         try validate(response: response, data: Data())
+        let (initialBytes, iterator) = try await validatedStreamStart(bytes)
 
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    try await streamActivityEvents(bytes: bytes, continuation: continuation)
+                    var iterator = iterator
+                    try await streamActivityEvents(
+                        initialBytes: initialBytes,
+                        iterator: &iterator,
+                        continuation: continuation
+                    )
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -424,19 +430,21 @@ struct ChatAPIClient {
     }
 
     private func streamActivityEvents(
-        bytes: URLSession.AsyncBytes,
+        initialBytes: Data,
+        iterator: inout URLSession.AsyncBytes.AsyncIterator,
         continuation: AsyncThrowingStream<ChatConversationActivity, Error>.Continuation
     ) async throws {
         let parser = SSEParser()
-        var pendingUTF8 = Data()
-        var awaitingFirstContentByte = true
-        for try await byte in bytes {
-            if AuthWallDetection.isMarkupStart(
-                byte: byte,
-                awaitingFirstContentByte: &awaitingFirstContentByte
-            ) {
-                throw ChatAPIError.authWall
+        var pendingUTF8 = initialBytes
+        if let chunk = String(data: pendingUTF8, encoding: .utf8) {
+            pendingUTF8.removeAll(keepingCapacity: true)
+            for event in parser.append(chunk) {
+                if let activity = Self.activity(from: event) {
+                    continuation.yield(activity)
+                }
             }
+        }
+        while let byte = try await iterator.next() {
             pendingUTF8.append(byte)
             guard let chunk = String(data: pendingUTF8, encoding: .utf8) else {
                 continue
@@ -539,12 +547,19 @@ struct ChatAPIClient {
         // succeeded and tight-loop against a down or erroring endpoint.
         let (bytes, response) = try await urlSession.bytes(for: request)
         try validate(response: response, data: Data())
+        let (initialBytes, iterator) = try await validatedStreamStart(bytes)
 
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
+                    var iterator = iterator
                     let parser = SSEParser()
-                    try await streamServerSentEvents(bytes: bytes, parser: parser, continuation: continuation)
+                    try await streamServerSentEvents(
+                        initialBytes: initialBytes,
+                        iterator: &iterator,
+                        parser: parser,
+                        continuation: continuation
+                    )
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -783,19 +798,19 @@ struct ChatAPIClient {
     }
 
     private func streamServerSentEvents(
-        bytes: URLSession.AsyncBytes,
+        initialBytes: Data,
+        iterator: inout URLSession.AsyncBytes.AsyncIterator,
         parser: SSEParser,
         continuation: AsyncThrowingStream<ChatStreamEvent, Error>.Continuation
     ) async throws {
-        var pendingUTF8 = Data()
-        var awaitingFirstContentByte = true
-        for try await byte in bytes {
-            if AuthWallDetection.isMarkupStart(
-                byte: byte,
-                awaitingFirstContentByte: &awaitingFirstContentByte
-            ) {
-                throw ChatAPIError.authWall
+        var pendingUTF8 = initialBytes
+        if let chunk = String(data: pendingUTF8, encoding: .utf8) {
+            pendingUTF8.removeAll(keepingCapacity: true)
+            for event in parser.append(chunk) {
+                continuation.yield(parser.decode(event))
             }
+        }
+        while let byte = try await iterator.next() {
             pendingUTF8.append(byte)
             guard let chunk = String(data: pendingUTF8, encoding: .utf8) else {
                 continue
@@ -813,6 +828,27 @@ struct ChatAPIClient {
         for event in parser.flush() {
             continuation.yield(parser.decode(event))
         }
+    }
+
+    private func validatedStreamStart(
+        _ bytes: URLSession.AsyncBytes
+    ) async throws -> (Data, URLSession.AsyncBytes.AsyncIterator) {
+        var iterator = bytes.makeAsyncIterator()
+        var initialBytes = Data()
+        var awaitingFirstContentByte = true
+        while let byte = try await iterator.next() {
+            initialBytes.append(byte)
+            if AuthWallDetection.isMarkupStart(
+                byte: byte,
+                awaitingFirstContentByte: &awaitingFirstContentByte
+            ) {
+                throw ChatAPIError.authWall
+            }
+            if !awaitingFirstContentByte {
+                return (initialBytes, iterator)
+            }
+        }
+        throw ChatAPIError.invalidResponse
     }
 
     private nonisolated static func multipartBody(

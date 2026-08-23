@@ -435,15 +435,13 @@ final class ChatAPIClientTests: XCTestCase {
             .json("\n <html><body>Sign in</body></html>")
         }
 
-        let stream = try await makeClient().subscribeToTurn(
-            conversationID: "web_conv_auth_wall",
-            fromSeq: 0,
-            ackSeq: nil
-        )
-
         do {
-            for try await _ in stream {}
-            XCTFail("Expected streamed markup to throw authWall")
+            _ = try await makeClient().subscribeToTurn(
+                conversationID: "web_conv_auth_wall",
+                fromSeq: 0,
+                ackSeq: nil
+            )
+            XCTFail("Expected streamed markup to fail before returning a stream")
         } catch let error as ChatAPIError {
             XCTAssertEqual(error, .authWall)
         }
@@ -454,11 +452,9 @@ final class ChatAPIClientTests: XCTestCase {
             .json("\n <html><body>Sign in</body></html>")
         }
 
-        let stream = try await makeClient().connectActivityStream()
-
         do {
-            for try await _ in stream {}
-            XCTFail("Expected streamed markup to throw authWall")
+            _ = try await makeClient().connectActivityStream()
+            XCTFail("Expected streamed markup to fail before returning a stream")
         } catch let error as ChatAPIError {
             XCTAssertEqual(error, .authWall)
         }
