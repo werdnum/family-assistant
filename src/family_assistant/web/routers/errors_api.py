@@ -183,13 +183,29 @@ def _sweep_rate_limit_addresses(now: float) -> None:
 
 
 async def _reporter_is_authenticated(request: Request) -> bool:
-    """Whether the reporter holds a session or valid API credential.
+    """Whether the reporter holds a valid session or API credential.
 
+    Sessions bound to an API token are revalidated against the token row, so a
+    revoked or expired credential cannot keep writing persistent reports.
     Deployments without auth enabled are treated as trusted (LAN/dev model).
     """
     try:
         if request.session.get("user"):
-            return True
+            token_id = request.session.get("api_token_id")
+            if not token_id:
+                return True
+            auth_service = getattr(request.app.state, "auth_service", None)
+            engine = getattr(auth_service, "database_engine", None) if auth_service else None
+            if not engine:
+                return True
+            from family_assistant.storage import (  # noqa: PLC0415 - deferred to avoid circular import at module level
+                api_tokens as api_tokens_storage,
+            )
+            from family_assistant.storage.database import (  # noqa: PLC0415 - deferred to avoid circular import at module level
+                Database,
+            )
+
+            return await api_tokens_storage.is_token_valid(Database(engine), token_id)
     except AssertionError:
         pass
 
