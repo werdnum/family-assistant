@@ -5137,6 +5137,20 @@ extension ChatViewModel: SyncStreamDelegate {
         await refreshRecentConversations()
     }
 
+    func presentFollowStreamAuthWall(_ error: ChatAPIError, generation: Int) {
+        guard syncCoordinator.isCurrentFollow(generation) else {
+            return
+        }
+        presentAuthWall(error)
+    }
+
+    func presentActivityStreamAuthWall(_ error: ChatAPIError, generation: Int) {
+        guard syncCoordinator.isCurrentActivity(generation) else {
+            return
+        }
+        presentAuthWall(error)
+    }
+
     func runCoalescedResync(reason: SyncCoordinator.RestartReason) {
         // Reachability recovery routes through the SAME coalesced resync foreground
         // uses (§4.4). `request()` joins any in-flight resync, so a burst of
@@ -5185,6 +5199,10 @@ extension ChatViewModel: ResyncHost {
     }
 
     func presentResyncAuthWall(_ error: AuthError) {
+        presentAuthWall(error)
+    }
+
+    private func presentAuthWall(_ error: Error) {
         let message = inlineMessage(for: .authWall, error: error)
         conversationsRefreshFailed = true
         conversationsRefreshFailureMessage = message

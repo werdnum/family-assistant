@@ -61,6 +61,14 @@ protocol SyncStreamDelegate: AnyObject {
     /// Refresh the recent-conversation list (on activity connect and each ping).
     func activityStreamDidSignal(generation: Int) async
 
+    /// Surface an authentication wall detected while opening the steady-state
+    /// follow stream. The reconnect loop continues with backoff after the UI is informed.
+    func presentFollowStreamAuthWall(_ error: ChatAPIError, generation: Int)
+
+    /// Surface an authentication wall detected while opening the steady-state
+    /// activity stream. The reconnect loop continues with backoff after the UI is informed.
+    func presentActivityStreamAuthWall(_ error: ChatAPIError, generation: Int)
+
     /// Tear down the in-flight send's transport task WITHOUT running the
     /// user-facing `cancelStream()` semantics ("Response stopped", control
     /// discard, queued stop-cancel POST). The `ActiveTurnSession` (state, cursors,
@@ -531,6 +539,7 @@ final class SyncCoordinator {
         followTask = Task { [weak self] in
             var delay = initialDelay
             var authRefreshAlreadyAttempted = false
+            var authWallPresented = false
             while !Task.isCancelled {
                 guard let self else { return }
                 if self.authManager.authRequired {
@@ -558,6 +567,7 @@ final class SyncCoordinator {
                     connectedAt = Date()
                     self.apply(.followConnected(generation: generation))
                     authRefreshAlreadyAttempted = false
+                    authWallPresented = false
                     await self.delegate?.followStreamDidConnect(
                         conversationID: conversationID,
                         generation: generation
@@ -580,6 +590,12 @@ final class SyncCoordinator {
                     }
                 } catch {
                     streamError = error
+                    if let apiError = error as? ChatAPIError,
+                       case .authWall = apiError,
+                       !authWallPresented {
+                        authWallPresented = true
+                        self.delegate?.presentFollowStreamAuthWall(apiError, generation: generation)
+                    }
                     if case ChatAPIError.server(let statusCode, _, _) = error, statusCode == 410 {
                         self.delegate?.followBufferRotated(generation: generation)
                     }
@@ -696,6 +712,7 @@ final class SyncCoordinator {
         activityTask = Task { [weak self] in
             var delay = initialDelay
             var authRefreshAlreadyAttempted = false
+            var authWallPresented = false
             while !Task.isCancelled {
                 guard let self else { return }
                 if self.authManager.authRequired {
@@ -720,6 +737,7 @@ final class SyncCoordinator {
                     delay = initialDelay
                     self.apply(.activityConnected(generation: generation))
                     authRefreshAlreadyAttempted = false
+                    authWallPresented = false
                     await self.delegate?.activityStreamDidSignal(generation: generation)
                     for try await _ in stream {
                         if Task.isCancelled {
@@ -729,6 +747,12 @@ final class SyncCoordinator {
                     }
                 } catch {
                     streamError = error
+                    if let apiError = error as? ChatAPIError,
+                       case .authWall = apiError,
+                       !authWallPresented {
+                        authWallPresented = true
+                        self.delegate?.presentActivityStreamAuthWall(apiError, generation: generation)
+                    }
                     // A response-time 401/403 on connect is a terminal auth failure
                     // (see the follow loop): force one coalesced refresh and retry at
                     // once on success, otherwise stop — the delegate has latched
