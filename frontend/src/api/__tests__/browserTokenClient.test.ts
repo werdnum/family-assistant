@@ -46,6 +46,17 @@ describe('startSessionBridge', () => {
     expect(vi.getTimerCount()).toBe(1);
   });
 
+  it('clamps long-lived credential refreshes to the browser timer range', async () => {
+    server.use(tokenHandler(30 * 24 * 60 * 60));
+
+    await startSessionBridge();
+    await vi.advanceTimersByTimeAsync(2_147_483_647 - 1);
+    expect(tokenRequests).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(tokenRequests).toBe(2);
+  });
+
   it('refreshes an overdue cookie before a suspended page resumes', async () => {
     server.use(tokenHandler(3600));
     await startSessionBridge();

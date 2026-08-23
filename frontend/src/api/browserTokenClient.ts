@@ -13,6 +13,7 @@
 const REFRESH_MARGIN_MS = 60_000;
 const RETRY_BASE_DELAY_MS = 30_000;
 const RETRY_MAX_DELAY_MS = 10 * 60_000;
+const MAX_BROWSER_TIMER_DELAY_MS = 2_147_483_647;
 
 interface BrowserTokenResponse {
   token?: string;
@@ -122,8 +123,13 @@ async function attemptRefresh(cycleGeneration: number): Promise<AttemptResult> {
   }
   const elapsed = Date.now() - startedAt;
   // Always schedule positive near-expiry work, even for very short TTLs where
-  // the margin would otherwise go non-positive and strand the cookie.
-  const delayMs = Math.max(expiresIn * 1000 - REFRESH_MARGIN_MS - elapsed, 1_000);
+  // the margin would otherwise go non-positive and strand the cookie. Refresh
+  // long-lived cookies early rather than overflowing browsers' signed 32-bit
+  // timer delay and creating a tight request loop.
+  const delayMs = Math.min(
+    Math.max(expiresIn * 1000 - REFRESH_MARGIN_MS - elapsed, 1_000),
+    MAX_BROWSER_TIMER_DELAY_MS
+  );
   if (Number.isFinite(delayMs) && cycleGeneration === bridgeGeneration) {
     refreshDueAtMs = Date.now() + delayMs;
     refreshTimer = setTimeout(() => {
