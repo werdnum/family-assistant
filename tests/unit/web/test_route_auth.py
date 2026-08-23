@@ -30,6 +30,9 @@ from family_assistant.web.route_auth import (
         ("POST", "/api/errors/", True),
         ("GET", "/api/errors/telemetry", True),
         ("GET", "/api/errors/", True),
+        ("GET", "/api/errors/123", True),
+        ("GET", "/api/errors", False),
+        ("GET", "/api/errors/not-an-id", False),
         ("POST", "/api/errors/telemetry", False),
         # Only the inventory route accepts the scoped readonly token.
         ("GET", "/api/debug/profiles/tools", True),
@@ -67,8 +70,10 @@ def test_every_declared_route_is_matched_as_declared() -> None:
     """Each declared exemption must actually exempt its own path."""
     for methods, match, route_path, _ in NO_DEFAULT_AUTH_ROUTES:
         method = sorted(methods)[0]
-        assert api_route_requires_default_auth(method, route_path) is False
-        if match == "prefix":
+        if match == "exact":
+            assert api_route_requires_default_auth(method, route_path) is False
+        elif match == "prefix":
+            assert api_route_requires_default_auth(method, route_path) is False
             assert (
                 api_route_requires_default_auth(method, f"{route_path}/deep") is False
             )

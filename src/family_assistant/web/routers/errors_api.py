@@ -128,60 +128,55 @@ ERROR_INTAKE_WINDOW_SECONDS = 60.0
 # attack rather than allowing memory exhaustion.
 RATE_LIMIT_MAX_ADDRESSES = 4_096
 
-_rate_limit_lock = threading.Lock()
-_rate_limit_hits: dict[str, deque[float]] = {}
 
+class ErrorIntakeRateLimiter:
+    """Application-scoped sliding-window limiter for public error intake."""
 
-def reset_error_intake_rate_limiter() -> None:
-    """Clear limiter state (tests)."""
-    with _rate_limit_lock:
-        _rate_limit_hits.clear()
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._hits: dict[str, deque[float]] = {}
 
+    def allow(self, client_key: str) -> bool:
+        """Return whether this client may submit another report."""
+        now = time.monotonic()
+        with self._lock:
+            hits = self._hits.get(client_key)
+            if hits is not None:
+                while hits and now - hits[0] > ERROR_INTAKE_WINDOW_SECONDS:
+                    hits.popleft()
+                if not hits:
+                    del self._hits[client_key]
+            if len(self._hits) >= RATE_LIMIT_MAX_ADDRESSES:
+                self._sweep(now)
+            hits = self._hits.get(client_key)
+            if hits is None:
+                if len(self._hits) >= RATE_LIMIT_MAX_ADDRESSES:
+                    return False
+                hits = deque()
+                self._hits[client_key] = hits
+            if len(hits) >= ERROR_INTAKE_RATE_LIMIT:
+                return False
+            hits.append(now)
+            return True
 
-def check_error_intake_rate_limit(client_key: str) -> bool:
-    """Sliding-window per-client limiter; True when the report is allowed."""
-    now = time.monotonic()
-    with _rate_limit_lock:
-        hits = _rate_limit_hits.get(client_key)
-        if hits is not None:
+    def tracked_clients(self) -> int:
+        """Return the number of currently tracked client keys."""
+        with self._lock:
+            return len(self._hits)
+
+    def expire_clients(self, count: int) -> None:
+        """Expire client keys for deterministic bounded-map tests."""
+        with self._lock:
+            for client_key in list(self._hits)[:count]:
+                self._hits[client_key].clear()
+
+    def _sweep(self, now: float) -> None:
+        for client_key in list(self._hits):
+            hits = self._hits[client_key]
             while hits and now - hits[0] > ERROR_INTAKE_WINDOW_SECONDS:
                 hits.popleft()
             if not hits:
-                del _rate_limit_hits[client_key]
-        if len(_rate_limit_hits) >= RATE_LIMIT_MAX_ADDRESSES:
-            _sweep_rate_limit_addresses(now)
-        hits = _rate_limit_hits.get(client_key)
-        if hits is None:
-            if len(_rate_limit_hits) >= RATE_LIMIT_MAX_ADDRESSES:
-                return False
-            hits = deque()
-            _rate_limit_hits[client_key] = hits
-        if len(hits) >= ERROR_INTAKE_RATE_LIMIT:
-            return False
-        hits.append(now)
-        return True
-
-
-def rate_limit_tracked_addresses() -> int:
-    """Number of client addresses currently tracked by the limiter (tests)."""
-    with _rate_limit_lock:
-        return len(_rate_limit_hits)
-
-
-def expire_rate_limit_addresses(count: int) -> None:
-    """Expire the given number of tracked addresses (tests: exercise the sweep)."""
-    with _rate_limit_lock:
-        for address in list(_rate_limit_hits)[:count]:
-            _rate_limit_hits[address].clear()
-
-
-def _sweep_rate_limit_addresses(now: float) -> None:
-    for address in list(_rate_limit_hits):
-        hits = _rate_limit_hits[address]
-        while hits and now - hits[0] > ERROR_INTAKE_WINDOW_SECONDS:
-            hits.popleft()
-        if not hits:
-            del _rate_limit_hits[address]
+                del self._hits[client_key]
 
 
 def _session_bound_token_id(request: Request) -> int | None:
@@ -292,7 +287,12 @@ async def report_frontend_error(
         if reporter_authenticated and reporter_identifier
         else f"address:{client_address}"
     )
-    if not check_error_intake_rate_limit(rate_limit_key):
+    limiter = getattr(request.app.state, "error_intake_rate_limiter", None)
+    if not isinstance(limiter, ErrorIntakeRateLimiter):
+        raise HTTPException(
+            status_code=500, detail="Error intake limiter is unavailable."
+        )
+    if not limiter.allow(rate_limit_key):
         raise HTTPException(status_code=429, detail="Too many error reports.")
 
     try:

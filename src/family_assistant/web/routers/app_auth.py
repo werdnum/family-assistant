@@ -36,6 +36,7 @@ from family_assistant.web.dependencies import (
     get_current_api_user,
     get_current_user,
     get_db,
+    get_jwt_token_service,
     get_user_identity_resolver,
 )
 from family_assistant.web.models import (
@@ -75,6 +76,17 @@ BROWSER_SESSION_TOKEN_TYPE = "browser"
 page_router = APIRouter()
 api_auth_router = APIRouter(prefix="/auth", tags=["App Auth API"])
 wellknown_router = APIRouter()
+
+
+def _api_token_expiry(jwt_token_service: jwt_tokens.JWTTokenService) -> datetime:
+    """Return a backing-row expiry that cannot cut an issued JWT short."""
+    lifetime = API_TOKEN_EXPIRY_SECONDS
+    if jwt_token_service.enabled:
+        lifetime = max(
+            lifetime,
+            jwt_tokens.access_token_ttl_seconds() + 60,
+        )
+    return datetime.now(UTC) + timedelta(seconds=lifetime)
 
 
 def cleanup_expired_codes() -> None:
@@ -259,6 +271,7 @@ async def app_auth_oidc_callback(request: Request) -> HTMLResponse:
 
 
 def _access_token_response_value(
+    jwt_token_service: jwt_tokens.JWTTokenService,
     api_minted: api_tokens_storage.MintedApiToken,
     api_token_id: int,
     user_identifier: str,
@@ -269,8 +282,8 @@ def _access_token_response_value(
     row (which remains the revocation registry); otherwise it is the opaque
     secret itself.
     """
-    if jwt_tokens.jwt_auth_enabled():
-        return jwt_tokens.mint_access_token(user_identifier, api_token_id)
+    if jwt_token_service.enabled:
+        return jwt_token_service.mint_access_token(user_identifier, api_token_id)
     return api_minted.full_token
 
 
@@ -282,6 +295,9 @@ async def exchange_code(
     request: Request,
     payload: CodeExchangeRequest,
     db_context: Annotated[Database, Depends(get_db)],
+    jwt_token_service: Annotated[
+        jwt_tokens.JWTTokenService, Depends(get_jwt_token_service)
+    ],
 ) -> CodeExchangeResponse:
     """Exchange an authorization code + PKCE verifier for API and refresh tokens."""
     cleanup_expired_codes()
@@ -330,7 +346,7 @@ async def exchange_code(
     # would hold the engine-wide transaction lock for its whole duration.
     api_minted = api_tokens_storage.mint_api_token()
     refresh_minted = api_tokens_storage.mint_api_token()
-    api_token_expires = datetime.now(UTC) + timedelta(days=API_TOKEN_EXPIRY_DAYS)
+    api_token_expires = _api_token_expiry(jwt_token_service)
     refresh_expires = datetime.now(UTC) + timedelta(days=REFRESH_TOKEN_EXPIRY_DAYS)
 
     async with db_context.transaction() as txn:
@@ -359,12 +375,12 @@ async def exchange_code(
         )
 
     access_token = _access_token_response_value(
-        api_minted, api_token_id, user_identifier
+        jwt_token_service, api_minted, api_token_id, user_identifier
     )
     full_refresh_token = refresh_minted.full_token
     token_ttl = (
         jwt_tokens.access_token_ttl_seconds()
-        if jwt_tokens.jwt_auth_enabled()
+        if jwt_token_service.enabled
         else API_TOKEN_EXPIRY_SECONDS
     )
 
@@ -385,6 +401,9 @@ async def exchange_code(
 async def refresh_token(
     payload: RefreshTokenRequest,
     db_context: Annotated[Database, Depends(get_db)],
+    jwt_token_service: Annotated[
+        jwt_tokens.JWTTokenService, Depends(get_jwt_token_service)
+    ],
 ) -> RefreshTokenResponse:
     """Exchange a valid refresh token for a new API token."""
     token_row = await api_tokens_storage.validate_token_by_value(
@@ -405,7 +424,7 @@ async def refresh_token(
     # Reuse the parent row while it remains valid — it stays the revocation
     # handle — and only mint a fresh row when it is gone or expired. Opaque
     # mode keeps full rotation: its secret changes per issuance.
-    if jwt_tokens.jwt_auth_enabled():
+    if jwt_token_service.enabled:
         parent_token_id = token_row["parent_token_id"]
         if parent_token_id:
             parent_query = select(api_tokens_table).where(
@@ -429,7 +448,7 @@ async def refresh_token(
                             .where(api_tokens_table.c.id == parent_row["id"])
                             .values(expires_at=desired_expires)
                         )
-                    access_token = jwt_tokens.mint_access_token(
+                    access_token = jwt_token_service.mint_access_token(
                         user_identifier, int(parent_row["id"])
                     )
                     logger.info(
@@ -443,7 +462,7 @@ async def refresh_token(
 
     # Minted before the block; see the exchange endpoint for why.
     api_minted = api_tokens_storage.mint_api_token()
-    api_token_expires = datetime.now(UTC) + timedelta(days=API_TOKEN_EXPIRY_DAYS)
+    api_token_expires = _api_token_expiry(jwt_token_service)
 
     async with db_context.transaction() as txn:
         # Replacement insert + refresh-token relink must be atomic: a failed second
@@ -467,11 +486,11 @@ async def refresh_token(
         )
 
     access_token = _access_token_response_value(
-        api_minted, api_token_id, user_identifier
+        jwt_token_service, api_minted, api_token_id, user_identifier
     )
     token_ttl = (
         jwt_tokens.access_token_ttl_seconds()
-        if jwt_tokens.jwt_auth_enabled()
+        if jwt_token_service.enabled
         else API_TOKEN_EXPIRY_SECONDS
     )
 
@@ -491,6 +510,9 @@ async def refresh_token(
 async def exchange_opaque_token(
     payload: OpaqueTokenExchangeRequest,
     db_context: Annotated[Database, Depends(get_db)],
+    jwt_token_service: Annotated[
+        jwt_tokens.JWTTokenService, Depends(get_jwt_token_service)
+    ],
 ) -> RefreshTokenResponse:
     """Upgrade a valid opaque API token to a signed JWT.
 
@@ -499,7 +521,7 @@ async def exchange_opaque_token(
     short-lived JWT. The opaque token itself stays valid wherever the gateway
     is not in the request path (LAN/Tailscale).
     """
-    if not jwt_tokens.jwt_auth_enabled():
+    if not jwt_token_service.enabled:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="JWT auth is not configured on this server.",
@@ -531,7 +553,7 @@ async def exchange_opaque_token(
             )
         ttl = min(ttl, remaining_seconds)
 
-    token = jwt_tokens.mint_access_token(
+    token = jwt_token_service.mint_access_token(
         str(token_row["user_identifier"]), int(token_row["id"]), expires_in=ttl
     )
     logger.info(
@@ -547,6 +569,9 @@ async def browser_token(
     request: Request,
     db_context: Annotated[Database, Depends(get_db)],
     current_user: Annotated[dict, Depends(get_current_user)],
+    jwt_token_service: Annotated[
+        jwt_tokens.JWTTokenService, Depends(get_jwt_token_service)
+    ],
 ) -> JSONResponse:
     """Exchange the OIDC session for a short-lived browser JWT cookie.
 
@@ -558,7 +583,7 @@ async def browser_token(
     """
     auth_service = getattr(request.app.state, "auth_service", None)
     if (
-        not jwt_tokens.jwt_auth_enabled()
+        not jwt_token_service.enabled
         or not auth_service
         or not auth_service.auth_enabled
     ):
@@ -636,7 +661,7 @@ async def browser_token(
                 token_type=BROWSER_SESSION_TOKEN_TYPE,
             )
 
-    token = jwt_tokens.mint_access_token(user_identifier, api_token_id)
+    token = jwt_token_service.mint_access_token(user_identifier, api_token_id)
     # The credential travels only via the HttpOnly cookie; the body carries no
     # token material so injected scripts cannot read it out of the response.
     response = JSONResponse(content={"expires_in": ttl})
@@ -709,19 +734,23 @@ async def auth_me(
 
 
 @wellknown_router.get("/.well-known/jwks.json")
-async def jwks() -> JSONResponse:
+async def jwks(
+    jwt_token_service: Annotated[
+        jwt_tokens.JWTTokenService, Depends(get_jwt_token_service)
+    ],
+) -> JSONResponse:
     """Publish the verification public key for gateway JWT validation.
 
     Unauthenticated by design; the key is public. Short cache so key rotation
     propagates promptly while sparing the app per-request cost at the edge.
     """
-    if not jwt_tokens.jwt_auth_enabled():
+    if not jwt_token_service.enabled:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="JWT auth is not configured on this server.",
         )
     return JSONResponse(
-        content=jwt_tokens.jwks_document(),
+        content=jwt_token_service.jwks_document(),
         headers={"Cache-Control": "public, max-age=300"},
     )
 
