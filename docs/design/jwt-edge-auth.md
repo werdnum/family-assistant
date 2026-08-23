@@ -172,7 +172,7 @@ The review of this design established two constraints that shape everything else
 
 ## Milestones
 
-Each milestone is independently verifiable; M1–M3 land in this repo, M4 in the deployment repo.
+Each milestone is independently verifiable; M1–M4 land in this repo, M5 in the deployment repo.
 
 1. **Backend fail-closed middleware** — explicit route classification (default-auth vs bootstrap /
    public / scoped), enforced authentication for everything else, published so the edge can consume
