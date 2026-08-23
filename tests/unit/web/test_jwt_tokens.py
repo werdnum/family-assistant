@@ -174,3 +174,12 @@ def test_coordinate_encoding_is_fixed_width() -> None:
     assert len(coordinate_bytes(1)) == 32
     assert coordinate_bytes(0)[0] == 0
     assert coordinate_bytes(2**256 - 1) == b"\xff" * 32
+
+
+def test_invalid_ttl_fails_at_startup(
+    signing_key_pem: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("JWT_SIGNING_KEY", signing_key_pem)
+    monkeypatch.setenv("JWT_ACCESS_TOKEN_TTL_SECONDS", "nope")
+    with pytest.raises(jwt_tokens.JWTSigningKeyError, match="TTL"):
+        jwt_tokens.init_jwt_signing()

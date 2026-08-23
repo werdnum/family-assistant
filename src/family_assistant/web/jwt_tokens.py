@@ -75,6 +75,9 @@ def init_jwt_signing() -> bool:
 
     _signing_key = loaded_key
     _key_id = _compute_key_id(loaded_key)
+    # Fail fast on an invalid TTL too, before any exchange consumes its
+    # one-time authorization code against a later mint failure.
+    access_token_ttl_seconds()
     logger.info("JWT access-token signing enabled (kid=%s).", _key_id)
     return True
 
