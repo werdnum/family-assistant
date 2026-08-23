@@ -626,3 +626,44 @@ class TestBrowserSessionRows:
         )
         row = await db.fetch_one(query)
         assert row is not None and row["count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_refresh_reuses_backing_row(
+        self,
+        api_test_client: AsyncClient,
+        db_engine: AsyncEngine,
+        jwt_enabled: None,
+    ) -> None:
+        """JWT-mode refreshes rebind to the parent row instead of inserting new ones."""
+        code_verifier, code_challenge = _create_pkce_pair()
+        auth_code = _seed_auth_code(code_challenge)
+        exchange = await api_test_client.post(
+            "/api/auth/exchange",
+            json={"code": auth_code, "code_verifier": code_verifier},
+        )
+        first_claims = jwt_tokens_module.verify_access_token(
+            exchange.json()["api_token"]
+        )
+        assert first_claims is not None
+
+        refresh_response = await api_test_client.post(
+            "/api/auth/refresh",
+            json={"refresh_token": exchange.json()["refresh_token"]},
+        )
+        assert refresh_response.status_code == 200
+        second_claims = jwt_tokens_module.verify_access_token(
+            refresh_response.json()["api_token"]
+        )
+        assert second_claims is not None
+        assert second_claims["tid"] == first_claims["tid"]
+
+        query = (
+            select(func.count().label("count"))
+            .select_from(api_tokens_table)
+            .where(
+                api_tokens_table.c.user_identifier == "testuser@example.com",
+                api_tokens_table.c.name == "iOS App",
+            )
+        )
+        row = await Database(db_engine).fetch_one(query)
+        assert row is not None and row["count"] == 1

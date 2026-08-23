@@ -396,6 +396,40 @@ async def refresh_token(
         )
 
     user_identifier = token_row["user_identifier"]
+    now = datetime.now(UTC)
+
+    # With JWT signing, refreshes happen on a near-expiry cadence (the JWT is
+    # stateless and its secret never changes), so rotating the backing api
+    # row on every call would insert one row per device per half-lifetime.
+    # Reuse the parent row while it remains valid — it stays the revocation
+    # handle — and only mint a fresh row when it is gone or expired. Opaque
+    # mode keeps full rotation: its secret changes per issuance.
+    if jwt_tokens.jwt_auth_enabled():
+        parent_token_id = token_row["parent_token_id"]
+        if parent_token_id:
+            parent_query = select(api_tokens_table).where(
+                api_tokens_table.c.id == parent_token_id,
+                api_tokens_table.c.token_type == "api",
+                api_tokens_table.c.is_revoked == False,  # noqa: E712 - SQL comparison
+            )
+            parent_row = await db_context.fetch_one(parent_query)
+            if parent_row:
+                parent_expires = parent_row["expires_at"]
+                if parent_expires and parent_expires.tzinfo is None:
+                    parent_expires = parent_expires.replace(tzinfo=UTC)
+                if not parent_expires or parent_expires > now:
+                    token_ttl = jwt_tokens.access_token_ttl_seconds()
+                    access_token = jwt_tokens.mint_access_token(
+                        user_identifier, int(parent_row["id"])
+                    )
+                    logger.info(
+                        "Token refresh: reissued JWT for API token %s (user %s)",
+                        parent_row["id"],
+                        user_identifier,
+                    )
+                    return RefreshTokenResponse(
+                        api_token=access_token, expires_in=token_ttl
+                    )
 
     # Minted before the block; see the exchange endpoint for why.
     api_minted = api_tokens_storage.mint_api_token()
@@ -543,6 +577,14 @@ async def browser_token(
     existing = await db_context.fetch_one(reuse_query)
     if existing:
         api_token_id = int(existing["id"])
+        # Extend the reused row through the newly issued JWT's lifetime plus
+        # grace, so backend validation never rejects the cookie early.
+        async with db_context.transaction() as txn:
+            await txn.execute(
+                sa_update(api_tokens_table)
+                .where(api_tokens_table.c.id == api_token_id)
+                .values(expires_at=now + timedelta(seconds=ttl + 60))
+            )
     else:
         # Prune this user's expired internal rows before inserting the
         # replacement so the table (and token settings UI) does not
