@@ -693,7 +693,7 @@ class TestBrowserSessionRows:
         yield service
 
     @pytest.mark.asyncio
-    async def test_refreshed_jwt_rebinds_existing_app_session(
+    async def test_refreshed_jwt_rebinds_app_session_without_cookie_renewal(
         self,
         db_engine: AsyncEngine,
         jwt_enabled: jwt_tokens_module.JWTTokenService,
@@ -752,15 +752,16 @@ class TestBrowserSessionRows:
             assert rebound.status_code == 200
             rebound_state = (await client.get("/test/session-state")).json()
 
-            monkeypatch.setenv("JWT_ACCESS_TOKEN_TTL_SECONDS", "10800")
+            previous_expiry = rebound_state["session_jwt_exp"]
             bridge = await client.get("/api/auth/browser-token")
             bridged_state = (await client.get("/test/session-state")).json()
 
         assert rebound_state["api_token_id"] == token_id
         assert rebound_state["session_jwt_exp"] > first_state["session_jwt_exp"]
-        assert bridged_state["session_jwt_exp"] > rebound_state["session_jwt_exp"]
+        assert bridged_state["session_jwt_exp"] == previous_expiry
         assert bridge.status_code == 200
-        assert "fa_access_token=" in bridge.headers["set-cookie"]
+        assert bridge.json() == {"enabled": False}
+        assert "fa_access_token" not in bridge.headers.get("set-cookie", "")
 
     @pytest.mark.asyncio
     async def test_browser_token_prunes_expired_rows(

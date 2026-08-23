@@ -578,8 +578,9 @@ async def browser_token(
     The JWT is set as an HttpOnly SameSite=Lax cookie scoped to /api so every
     browser-managed API request (fetch, EventSource, img tags) authenticates
     past the gateway without per-request headers. Returns ``{"enabled":
-    false}`` when JWT auth or backend session authentication is not configured
-    so clients can proceed without waiting on a bridge that cannot operate.
+    false}`` when JWT auth or OIDC session authentication is not available to
+    the caller so clients can proceed without waiting on a bridge that cannot
+    operate.
     """
     auth_service = getattr(request.app.state, "auth_service", None)
     if (
@@ -589,12 +590,19 @@ async def browser_token(
     ):
         return JSONResponse(content={"enabled": False})
 
-    # OIDC sessions and the iOS app's revalidated token-bound session are
-    # accepted; a bearer credential presented directly is not.
+    # Only an OIDC session may mint a renewable browser credential. The iOS
+    # token-session cookie is bounded by the JWT that established it; treating
+    # that cookie as renewal proof would turn a short-lived JWT into a refresh
+    # credential. Embedded app web views therefore keep their established LAN
+    # session but do not opt into the public edge bridge.
+    if current_user.get("source") == "app_token_session":
+        return JSONResponse(content={"enabled": False})
+
+    # A bearer credential presented directly is not a browser session.
     if current_user.get("source") in {"api_token", "jwt_access_token"}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Browser JWT bridge requires a browser or app session.",
+            detail="Browser JWT bridge requires an OIDC browser session.",
         )
     if current_user.get("readonly"):
         raise HTTPException(
@@ -662,9 +670,6 @@ async def browser_token(
             )
 
     token = jwt_token_service.mint_access_token(user_identifier, api_token_id)
-    session_user = request.session.get("user")
-    if session_user and session_user.get("source") == "app_token_session":
-        request.session["session_jwt_exp"] = int(now.timestamp()) + ttl
     # The credential travels only via the HttpOnly cookie; the body carries no
     # token material so injected scripts cannot read it out of the response.
     response = JSONResponse(content={"expires_in": ttl})
