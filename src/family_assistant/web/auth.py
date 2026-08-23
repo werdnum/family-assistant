@@ -199,7 +199,11 @@ class AuthService:
             return None
 
         now = datetime.now(UTC)
-        if token_row["expires_at"] and token_row["expires_at"] < now:
+        row_expires = token_row["expires_at"]
+        if row_expires and row_expires.tzinfo is None:
+            # SQLite returns naive datetimes even for DateTime(timezone=True).
+            row_expires = row_expires.replace(tzinfo=UTC)
+        if row_expires and row_expires < now:
             logger.warning(
                 f"Attempt to use expired API token (ID: {token_row['id']}, User: {token_row['user_identifier']})."
             )
@@ -254,7 +258,11 @@ class AuthService:
             return None
 
         now = datetime.now(UTC)
-        if token_row["expires_at"] and token_row["expires_at"] < now:
+        row_expires = token_row["expires_at"]
+        if row_expires and row_expires.tzinfo is None:
+            # SQLite returns naive datetimes even for DateTime(timezone=True).
+            row_expires = row_expires.replace(tzinfo=UTC)
+        if row_expires and row_expires < now:
             logger.warning(
                 "JWT references expired API token (ID: %s).", token_row["id"]
             )
