@@ -5,6 +5,7 @@ import time
 from base64 import urlsafe_b64encode
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
+from unittest.mock import MagicMock
 
 import pytest
 import pytest_asyncio
@@ -392,6 +393,37 @@ class TestJWTTokens:
         assert row_expiry.timestamp() >= claims["exp"]
 
     @pytest.mark.asyncio
+    async def test_successful_jwt_authentication_updates_last_used(
+        self,
+        api_test_client: AsyncClient,
+        db_engine: AsyncEngine,
+        jwt_enabled: jwt_tokens_module.JWTTokenService,
+    ) -> None:
+        code_verifier, code_challenge = _create_pkce_pair()
+        auth_code = _seed_auth_code(code_challenge)
+        response = await api_test_client.post(
+            "/api/auth/exchange",
+            json={"code": auth_code, "code_verifier": code_verifier},
+        )
+        token = response.json()["api_token"]
+        claims = jwt_enabled.verify_access_token(token)
+        assert claims is not None
+
+        auth_service = AuthService(db_engine, jwt_enabled)
+        user = await auth_service.get_user_from_api_token(
+            f"Bearer {token}", MagicMock(spec=Request)
+        )
+
+        assert user is not None
+        row = await Database(db_engine).fetch_one(
+            select(api_tokens_table.c.last_used_at).where(
+                api_tokens_table.c.id == claims["tid"]
+            )
+        )
+        assert row is not None
+        assert row["last_used_at"] is not None
+
+    @pytest.mark.asyncio
     async def test_refresh_returns_signed_jwt(
         self,
         api_test_client: AsyncClient,
@@ -720,10 +752,13 @@ class TestBrowserSessionRows:
             assert rebound.status_code == 200
             rebound_state = (await client.get("/test/session-state")).json()
 
+            monkeypatch.setenv("JWT_ACCESS_TOKEN_TTL_SECONDS", "10800")
             bridge = await client.get("/api/auth/browser-token")
+            bridged_state = (await client.get("/test/session-state")).json()
 
         assert rebound_state["api_token_id"] == token_id
         assert rebound_state["session_jwt_exp"] > first_state["session_jwt_exp"]
+        assert bridged_state["session_jwt_exp"] > rebound_state["session_jwt_exp"]
         assert bridge.status_code == 200
         assert "fa_access_token=" in bridge.headers["set-cookie"]
 

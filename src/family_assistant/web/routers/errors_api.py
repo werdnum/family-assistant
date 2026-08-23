@@ -120,6 +120,10 @@ class FrontendTelemetryResponse(BaseModel):
 # clamped into the in-memory telemetry ring, which is fixed-size and dropped
 # on restart. Authenticated reporters keep the full severity behaviour.
 ERROR_INTAKE_RATE_LIMIT = 60  # reports per window per authenticated user or address
+# A higher pre-authentication ceiling bounds invalid-token verification and body
+# buffering without collapsing all authenticated users behind one proxy into the
+# same reporting bucket. The normal per-user/address limit still applies below.
+ERROR_INTAKE_ADDRESS_ADMISSION_RATE_LIMIT = 600
 ERROR_INTAKE_WINDOW_SECONDS = 60.0
 # Cap on tracked addresses: an attacker rotating source addresses (e.g. across
 # an IPv6 allocation) must not be able to grow the map without bound. When the
@@ -132,7 +136,8 @@ RATE_LIMIT_MAX_ADDRESSES = 4_096
 class ErrorIntakeRateLimiter:
     """Application-scoped sliding-window limiter for public error intake."""
 
-    def __init__(self) -> None:
+    def __init__(self, max_hits: int = ERROR_INTAKE_RATE_LIMIT) -> None:
+        self._max_hits = max_hits
         self._lock = threading.Lock()
         self._hits: dict[str, deque[float]] = {}
 
@@ -154,7 +159,7 @@ class ErrorIntakeRateLimiter:
                     return False
                 hits = deque()
                 self._hits[client_key] = hits
-            if len(hits) >= ERROR_INTAKE_RATE_LIMIT:
+            if len(hits) >= self._max_hits:
                 return False
             hits.append(now)
             return True
@@ -210,11 +215,15 @@ async def _reporter_authentication(request: Request) -> tuple[bool, str | None]:
 
     Sessions bound to an API token are revalidated against the token row, so a
     revoked or expired credential cannot keep writing persistent reports.
-    Deployments without auth enabled are treated as trusted (LAN/dev model).
+    Deployments without either OIDC or JWT authentication are treated as trusted
+    (LAN/dev model). JWT-edge deployments without OIDC are still public here.
     """
     auth_service = getattr(request.app.state, "auth_service", None)
-    if not auth_service or not auth_service.auth_enabled:
-        return True, None
+    if not auth_service:
+        return False, None
+    if not auth_service.auth_enabled:
+        jwt_service = getattr(auth_service, "jwt_tokens", None)
+        return not bool(jwt_service and jwt_service.enabled), None
 
     try:
         session_user = request.session.get("user")

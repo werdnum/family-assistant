@@ -53,7 +53,10 @@ from family_assistant.web.routers.app_auth import (
 from family_assistant.web.routers.asterisk_live_api import asterisk_live_router
 from family_assistant.web.routers.client_config import router as client_config_router
 from family_assistant.web.routers.context_viewer import context_viewer_router
-from family_assistant.web.routers.errors_api import ErrorIntakeRateLimiter
+from family_assistant.web.routers.errors_api import (
+    ERROR_INTAKE_ADDRESS_ADMISSION_RATE_LIMIT,
+    ErrorIntakeRateLimiter,
+)
 from family_assistant.web.routers.gemini_live_api import gemini_live_router
 
 # documents_ui, vector_search, and errors routers removed - replaced with React
@@ -229,6 +232,9 @@ def create_app() -> FastAPI:
     new_app.state.server_url = SERVER_URL
     new_app.state.docs_user_dir = docs_user_dir
     new_app.state.error_intake_rate_limiter = ErrorIntakeRateLimiter()
+    new_app.state.error_intake_address_admission_limiter = ErrorIntakeRateLimiter(
+        ERROR_INTAKE_ADDRESS_ADMISSION_RATE_LIMIT
+    )
 
     # In-memory broker for resumable conversation streaming. Holds in-flight
     # turn state, the per-conversation event ring buffer, subscriber queues,

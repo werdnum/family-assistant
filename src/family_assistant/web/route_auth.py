@@ -24,6 +24,8 @@ import re
 from typing import Literal, TypedDict
 
 RouteClass = Literal["bootstrap", "public", "scoped"]
+PUBLIC_ERROR_INTAKE_METHOD = "POST"
+PUBLIC_ERROR_INTAKE_PATH = "/api/errors/"
 
 # Functional TypedDict syntax: "class" is a reserved word in class syntax but
 # is the published JSON contract's key.
@@ -61,7 +63,12 @@ NO_DEFAULT_AUTH_ROUTES: list[tuple[frozenset[str], str, str, RouteClass]] = [
     # own ?token= secret during the handshake and cannot present a JWT or
     # browser cookie. Any future non-HTTP-auth transport joins this class.
     (frozenset({"GET"}), "exact", "/api/asterisk/live", "scoped"),
-    (frozenset({"POST"}), "exact", "/api/errors/", "public"),
+    (
+        frozenset({PUBLIC_ERROR_INTAKE_METHOD}),
+        "exact",
+        PUBLIC_ERROR_INTAKE_PATH,
+        "public",
+    ),
     # Scoped: diagnostics readonly token checked in get_diagnostics_reader.
     # Narrow to exactly the routes that accept it; sibling debug routes use
     # default authentication.
@@ -102,6 +109,14 @@ def api_route_requires_default_auth(method: str, path: str) -> bool:
         elif match == "regex" and re.fullmatch(route_path, path):
             return False
     return True
+
+
+def is_public_error_intake(method: str, path: str) -> bool:
+    """Whether this request is the deliberately public error receiver."""
+    return (
+        method.upper() == PUBLIC_ERROR_INTAKE_METHOD
+        and path == PUBLIC_ERROR_INTAKE_PATH
+    )
 
 
 def api_route_classification() -> RouteClassificationDocument:

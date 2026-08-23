@@ -15,6 +15,7 @@ from family_assistant.web.frontend_telemetry import (
     reset_frontend_telemetry_buffer,
 )
 from family_assistant.web.routers.errors_api import (
+    ERROR_INTAKE_ADDRESS_ADMISSION_RATE_LIMIT,
     ERROR_INTAKE_RATE_LIMIT,
     RATE_LIMIT_MAX_ADDRESSES,
     ErrorIntakeRateLimiter,
@@ -408,6 +409,9 @@ def _reset_rate_limiter(web_only_assistant: Assistant) -> None:
     web_only_assistant.fastapi_app.state.error_intake_rate_limiter = (
         ErrorIntakeRateLimiter()
     )
+    web_only_assistant.fastapi_app.state.error_intake_address_admission_limiter = (
+        ErrorIntakeRateLimiter(ERROR_INTAKE_ADDRESS_ADMISSION_RATE_LIMIT)
+    )
 
 
 class _FakeAuthService:
@@ -418,10 +422,12 @@ class _FakeAuthService:
 
     def __init__(self, accept_tokens: bool) -> None:
         self._accept_tokens = accept_tokens
+        self.calls = 0
 
     async def get_user_from_api_token(
         self, auth_header: str, request: object
     ) -> dict | None:
+        self.calls += 1
         if self._accept_tokens:
             user_identifier = auth_header.rsplit(" ", 1)[-1]
             return {
@@ -432,6 +438,17 @@ class _FakeAuthService:
                 "token_id": 1,
             }
         return None
+
+
+class _EnabledJWTService:
+    enabled = True
+
+
+class _JWTOnlyAuthService:
+    """JWT-edge configuration with no OIDC session authentication."""
+
+    auth_enabled = False
+    jwt_tokens = _EnabledJWTService()
 
 
 def _client_for(assistant: Assistant) -> httpx.AsyncClient:
@@ -488,6 +505,62 @@ async def test_unauthenticated_reports_never_persist(
     records = get_frontend_telemetry_buffer().get_recent()
     assert len(records) == 1
     assert records[0].to_dict()["severity"] == "info"
+
+
+@pytest.mark.asyncio
+async def test_jwt_only_deployment_treats_missing_credentials_as_unauthenticated(
+    web_only_assistant: Assistant,
+) -> None:
+    assert web_only_assistant.fastapi_app is not None
+    original = getattr(web_only_assistant.fastapi_app.state, "auth_service", None)
+    web_only_assistant.fastapi_app.state.auth_service = _JWTOnlyAuthService()
+    try:
+        async with _client_for(web_only_assistant) as client:
+            response = await client.post(
+                "/api/errors/",
+                json={
+                    "message": "public edge report",
+                    "url": "http://x/",
+                    "severity": "error",
+                },
+            )
+    finally:
+        web_only_assistant.fastapi_app.state.auth_service = original
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "recorded"
+
+
+@pytest.mark.asyncio
+async def test_address_admission_limit_precedes_invalid_token_validation(
+    web_only_assistant: Assistant,
+) -> None:
+    assert web_only_assistant.fastapi_app is not None
+    app = web_only_assistant.fastapi_app
+    original_auth = getattr(app.state, "auth_service", None)
+    original_limiter = app.state.error_intake_address_admission_limiter
+    rejecting_auth = _FakeAuthService(False)
+    app.state.auth_service = rejecting_auth
+    app.state.error_intake_address_admission_limiter = ErrorIntakeRateLimiter(1)
+    try:
+        async with _client_for(web_only_assistant) as client:
+            first = await client.post(
+                "/api/errors/",
+                json={"message": "first", "url": "http://x/"},
+                headers={"Authorization": "Bearer invalid"},
+            )
+            second = await client.post(
+                "/api/errors/",
+                json={"message": "second", "url": "http://x/"},
+                headers={"Authorization": "Bearer invalid"},
+            )
+    finally:
+        app.state.auth_service = original_auth
+        app.state.error_intake_address_admission_limiter = original_limiter
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+    assert rejecting_auth.calls == 1
 
 
 @pytest.mark.asyncio
