@@ -62,7 +62,9 @@ NO_DEFAULT_AUTH_ROUTES: list[tuple[frozenset[str], str, str, RouteClass]] = [
     (frozenset({"GET"}), "exact", "/api/asterisk/live", "scoped"),
     (frozenset({"POST"}), "exact", "/api/errors/", "public"),
     # Scoped: diagnostics readonly token checked in get_diagnostics_reader.
-    (frozenset({"GET"}), "prefix", "/api/debug", "scoped"),
+    # Narrow to exactly the routes that accept it; sibling debug routes use
+    # default authentication.
+    (frozenset({"GET"}), "exact", "/api/debug/profiles/tools", "scoped"),
     (frozenset({"GET"}), "prefix", "/api/diagnostics", "scoped"),
     (frozenset({"GET"}), "prefix", "/api/errors/", "scoped"),
 ]

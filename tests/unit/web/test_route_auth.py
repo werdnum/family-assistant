@@ -31,6 +31,11 @@ from family_assistant.web.route_auth import (
         ("GET", "/api/errors/telemetry", True),
         ("GET", "/api/errors/", True),
         ("POST", "/api/errors/telemetry", False),
+        # Only the inventory route accepts the scoped readonly token.
+        ("GET", "/api/debug/profiles/tools", True),
+        ("GET", "/api/debug/profiles", False),
+        ("GET", "/api/debug/routes", False),
+        ("GET", "/api/debug/auth-state", False),
         # Scoped diagnostics/debug prefixes (GET only).
         ("GET", "/api/diagnostics/export", True),
         ("GET", "/api/debug/profiles/tools", True),

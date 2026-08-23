@@ -91,7 +91,7 @@ async def test_unauthenticated_default_auth_api_request_rejected(
         ("POST", "/api/errors/"),
         ("GET", "/api/errors/telemetry"),
         ("GET", "/api/diagnostics/export"),
-        ("GET", "/api/debug/profiles"),
+        ("GET", "/api/debug/profiles/tools"),
         ("GET", "/api/asterisk/live"),
     ],
 )
