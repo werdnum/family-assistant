@@ -480,6 +480,38 @@ final class ChatAPIClientTests: XCTestCase {
         }
     }
 
+    func testConversationStreamDetectsMarkupWithSSEContentTypeDuringIteration() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .text("\n <html><body>Sign in</body></html>")
+        }
+
+        let stream = try await makeClient().subscribeToTurn(
+            conversationID: "web_conv_auth_wall",
+            fromSeq: 0,
+            ackSeq: nil
+        )
+        do {
+            for try await _ in stream {}
+            XCTFail("Expected SSE-labelled markup to fail during iteration")
+        } catch let error as ChatAPIError {
+            XCTAssertEqual(error, .authWall)
+        }
+    }
+
+    func testActivityStreamDetectsMarkupWithSSEContentTypeDuringIteration() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .text("\n <html><body>Sign in</body></html>")
+        }
+
+        let stream = try await makeClient().connectActivityStream()
+        do {
+            for try await _ in stream {}
+            XCTFail("Expected SSE-labelled markup to fail during iteration")
+        } catch let error as ChatAPIError {
+            XCTAssertEqual(error, .authWall)
+        }
+    }
+
     func testConversationStreamDetectsNonSuccessMarkupBeforeStatusHandling() async throws {
         ChatMockBackendURLProtocol.respond { _ in
             .json("<html><body>Access denied</body></html>", statusCode: 403)

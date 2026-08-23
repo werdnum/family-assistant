@@ -429,6 +429,13 @@ struct ChatAPIClient {
         continuation: AsyncThrowingStream<ChatConversationActivity, Error>.Continuation
     ) async throws {
         let parser = SSEParser()
+        var awaitingFirstContentByte = true
+        for byte in initialBytes {
+            try rejectAuthWallMarkupStart(
+                byte,
+                awaitingFirstContentByte: &awaitingFirstContentByte
+            )
+        }
         var pendingUTF8 = initialBytes
         if let chunk = String(data: pendingUTF8, encoding: .utf8) {
             pendingUTF8.removeAll(keepingCapacity: true)
@@ -439,6 +446,10 @@ struct ChatAPIClient {
             }
         }
         while let byte = try await iterator.next() {
+            try rejectAuthWallMarkupStart(
+                byte,
+                awaitingFirstContentByte: &awaitingFirstContentByte
+            )
             pendingUTF8.append(byte)
             guard let chunk = String(data: pendingUTF8, encoding: .utf8) else {
                 continue
@@ -807,6 +818,13 @@ struct ChatAPIClient {
         parser: SSEParser,
         continuation: AsyncThrowingStream<ChatStreamEvent, Error>.Continuation
     ) async throws {
+        var awaitingFirstContentByte = true
+        for byte in initialBytes {
+            try rejectAuthWallMarkupStart(
+                byte,
+                awaitingFirstContentByte: &awaitingFirstContentByte
+            )
+        }
         var pendingUTF8 = initialBytes
         if let chunk = String(data: pendingUTF8, encoding: .utf8) {
             pendingUTF8.removeAll(keepingCapacity: true)
@@ -815,6 +833,10 @@ struct ChatAPIClient {
             }
         }
         while let byte = try await iterator.next() {
+            try rejectAuthWallMarkupStart(
+                byte,
+                awaitingFirstContentByte: &awaitingFirstContentByte
+            )
             pendingUTF8.append(byte)
             guard let chunk = String(data: pendingUTF8, encoding: .utf8) else {
                 continue
@@ -831,6 +853,18 @@ struct ChatAPIClient {
         }
         for event in parser.flush() {
             continuation.yield(parser.decode(event))
+        }
+    }
+
+    private func rejectAuthWallMarkupStart(
+        _ byte: UInt8,
+        awaitingFirstContentByte: inout Bool
+    ) throws {
+        if AuthWallDetection.isMarkupStart(
+            byte: byte,
+            awaitingFirstContentByte: &awaitingFirstContentByte
+        ) {
+            throw ChatAPIError.authWall
         }
     }
 
