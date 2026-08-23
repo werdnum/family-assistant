@@ -1,12 +1,16 @@
 """Tests for the frontend error reporting API endpoint."""
 
 import logging
+import time
 from collections.abc import AsyncGenerator
 
 import httpx
 import pytest
 import pytest_asyncio
+from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine
+from starlette.middleware.sessions import SessionMiddleware
+from starlette.requests import Request
 
 from family_assistant.assistant import Assistant
 from family_assistant.utils.logging_handler import SQLAlchemyErrorHandler
@@ -19,6 +23,7 @@ from family_assistant.web.routers.errors_api import (
     ERROR_INTAKE_RATE_LIMIT,
     RATE_LIMIT_MAX_ADDRESSES,
     ErrorIntakeRateLimiter,
+    errors_api_router,
 )
 
 # The frontend.javascript logger that the API endpoint uses
@@ -460,6 +465,42 @@ class _JWTOnlyAuthService:
             "source": "jwt_access_token",
             "token_id": 1,
         }
+
+
+@pytest.mark.asyncio
+async def test_expired_jwt_bound_session_is_not_an_authenticated_reporter() -> None:
+    test_app = FastAPI()
+    test_app.include_router(errors_api_router, prefix="/api/errors")
+    test_app.add_middleware(SessionMiddleware, secret_key="test-session-secret")
+    test_app.state.auth_service = _JWTOnlyAuthService()
+    test_app.state.error_intake_rate_limiter = ErrorIntakeRateLimiter()
+
+    @test_app.get("/seed-session")
+    async def seed_session(request: Request) -> dict[str, str]:
+        request.session.update({
+            "user": {"sub": "expired@example.com"},
+            "api_token_id": 1,
+            "session_jwt_exp": time.time() - 1,
+        })
+        return {"status": "seeded"}
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=test_app),
+        base_url="http://testserver",
+    ) as client:
+        seed = await client.get("/seed-session")
+        assert seed.status_code == 200
+        response = await client.post(
+            "/api/errors/",
+            json={
+                "message": "expired session report",
+                "url": "http://x/",
+                "severity": "error",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "recorded"
 
 
 def _client_for(assistant: Assistant) -> httpx.AsyncClient:
