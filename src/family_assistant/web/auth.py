@@ -476,14 +476,21 @@ class AuthMiddleware:
                     f"Bearer {credential}", request
                 )
                 if api_user:
-                    # Session middleware might not be available, can't store user in session
-                    with contextlib.suppress(AssertionError):
-                        request.session["user"] = api_user
-                        # Bind the session to the token row so the validity
-                        # check above terminates access when the credential
-                        # is revoked or expires, not just at session lifetime.
-                        if api_user.get("token_id"):
-                            request.session["api_token_id"] = api_user["token_id"]
+                    # Session middleware might not be available, can't store user in session.
+                    # JWT credentials are deliberately not persisted: the
+                    # session would outlive the one-hour token expiry, since
+                    # the validity check binds to the long-lived backing row.
+                    # Opaque-token sessions are bound via api_token_id below,
+                    # so their revocation check still applies.
+                    if api_user.get("source") != "jwt_access_token":
+                        with contextlib.suppress(AssertionError):
+                            request.session["user"] = api_user
+                            # Bind the session to the token row so the
+                            # validity check above terminates access when the
+                            # credential is revoked or expires, not just at
+                            # session lifetime.
+                            if api_user.get("token_id"):
+                                request.session["api_token_id"] = api_user["token_id"]
                     user = api_user  # Update user for the current request flow
                     logger.debug(
                         f"User authenticated via API token for path {request_path}"

@@ -159,3 +159,41 @@ async def test_bearer_session_is_bound_to_token_id() -> None:
         second = await c.get("/api/notes/", headers={"Cookie": cookie_header})
     assert second.status_code == 200
     assert second.json()["user"]["token_id"] == 1
+
+
+class _AcceptingJWTAuthService(_AcceptingAuthService):
+    """Accepts any bearer credential as a short-lived JWT identity."""
+
+    async def get_user_from_api_token(self, auth_header: str, request: object) -> dict:
+        return {
+            "sub": "jwt-user",
+            "name": "jwt-user",
+            "email": "jwt-user",
+            "source": "jwt_access_token",
+            "token_id": 2,
+        }
+
+
+@pytest.mark.asyncio
+async def test_jwt_bearer_auth_is_not_persisted_into_session() -> None:
+    """A one-hour JWT must not mint a long-lived session cookie."""
+
+    async def session_reader_app(scope: Scope, receive: Receive, send: Send) -> None:
+        request = Request(scope)
+        body = json.dumps(dict(request.session)).encode()
+        await send({
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [(b"content-type", b"application/json")],
+        })
+        await send({"type": "http.response.body", "body": body})
+
+    stack = SessionMiddleware(
+        AuthMiddleware(session_reader_app, _AcceptingJWTAuthService()),
+        secret_key="test-secret",
+    )
+    transport = ASGITransport(app=stack)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as c:
+        response = await c.get("/api/notes/", headers={"Authorization": "Bearer x"})
+    assert response.status_code == 200
+    assert response.json() == {}
