@@ -78,7 +78,7 @@ struct ChatAPIClient {
             url: apiURL("/api/v1/chat/conversations/\(encodedID)/share"),
             method: "POST"
         )
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
         try validateNonIdempotentResponse(
             response: response,
             data: data,
@@ -96,7 +96,7 @@ struct ChatAPIClient {
             url: apiURL("/api/v1/chat/conversations/\(encodedID)/share"),
             method: "DELETE"
         )
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
         try validateNonIdempotentResponse(
             response: response,
             data: data,
@@ -153,7 +153,7 @@ struct ChatAPIClient {
         )
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(EphemeralTokenRequestBody(profileID: profileID))
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
         do {
             try validate(response: response, data: data)
         } catch let ChatAPIError.server(statusCode, detail, _) where detail == nil {
@@ -179,7 +179,7 @@ struct ChatAPIClient {
                 turns: turns.map { VoiceSessionTurnBody(role: $0.speaker.rawValue, text: $0.text) }
             )
         )
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
         try validate(response: response, data: data)
         return try JSONDecoder.chatDecoder.decode(VoiceSessionResponseBody.self, from: data).conversationID
     }
@@ -211,7 +211,7 @@ struct ChatAPIClient {
                 taintMetadata: taintMetadata
             )
         )
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ChatAPIError.invalidResponse
         }
@@ -247,7 +247,7 @@ struct ChatAPIClient {
             )
         )
 
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
         try validate(response: response, data: data)
         let decoded = try JSONDecoder.chatDecoder.decode(ChatSendMessageResponse.self, from: data)
         return ChatSendResult(reply: decoded.reply, conversationID: decoded.conversationID)
@@ -283,7 +283,7 @@ struct ChatAPIClient {
                 attachments: attachments.map(ChatStreamAttachment.init(attachment:))
             )
         )
-        let (startData, startResponse) = try await urlSession.data(for: startRequest)
+        let (startData, startResponse) = try await urlSession.dataExpectingJSON(for: startRequest, authWallError: ChatAPIError.authWall)
         if (startResponse as? HTTPURLResponse)?.statusCode == 409,
            let conflict = try? JSONDecoder.chatDecoder.decode(ChatTurnConflictResponse.self, from: startData) {
             throw ChatAPIError.turnAlreadyRunning(activeTurnID: conflict.detail.activeTurnID)
@@ -312,7 +312,7 @@ struct ChatAPIClient {
         )
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder.chatEncoder.encode(ChatTurnControlRequest(conversationID: conversationID))
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
         try validate(response: response, data: data)
         return try JSONDecoder.chatDecoder.decode(ChatTurnCancelResult.self, from: data)
     }
@@ -331,7 +331,7 @@ struct ChatAPIClient {
         request.httpBody = try JSONEncoder.chatEncoder.encode(
             ChatTurnSteerRequest(conversationID: conversationID, prompt: prompt)
         )
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
         try validate(response: response, data: data)
         return try JSONDecoder.chatDecoder.decode(ChatTurnSteerResult.self, from: data)
     }
@@ -396,6 +396,7 @@ struct ChatAPIClient {
             url: apiURL("/api/v1/chat/activity/stream"),
             method: "GET"
         )
+        // auth-wall-stream-chokepoint: validatedStreamResponse sniffs the prefix.
         let (bytes, response) = try await urlSession.bytes(for: request)
         let (initialBytes, iterator) = try await validatedStreamResponse(
             bytes,
@@ -493,7 +494,7 @@ struct ChatAPIClient {
         request.httpBody = try JSONEncoder.chatEncoder.encode(
             ChatAckRequest(conversationID: conversationID, ackSeq: ackSeq)
         )
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
         try validate(response: response, data: data)
     }
 
@@ -532,6 +533,7 @@ struct ChatAPIClient {
         // Establish and validate the connection before returning the stream.
         // Callers rely on errors surfacing here so reconnect backoff is not reset
         // for a stream object that immediately fails.
+        // auth-wall-stream-chokepoint: validatedStreamResponse sniffs the prefix.
         let (bytes, response) = try await urlSession.bytes(for: request)
         let (initialBytes, iterator) = try await validatedStreamResponse(
             bytes,
@@ -592,7 +594,7 @@ struct ChatAPIClient {
             )
         )
 
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
         try validate(response: response, data: data)
         let result = try JSONDecoder.chatDecoder.decode(ChatConfirmationActionResponse.self, from: data)
         if !result.success {
@@ -623,7 +625,7 @@ struct ChatAPIClient {
             boundary: boundary
         )
 
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
         try validate(response: response, data: data)
         return try JSONDecoder.chatDecoder.decode(ChatUploadResponse.self, from: data)
     }
@@ -633,12 +635,13 @@ struct ChatAPIClient {
             url: apiURL("/api/attachments/\(Self.encodedPathComponent(attachmentID))"),
             method: "DELETE"
         )
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
         try validate(response: response, data: data)
     }
 
     func downloadAttachment(path: String) async throws -> (Data, String?) {
         let request = try await authManager.authorizedRequest(url: apiURL(path), method: "GET")
+        // auth-wall-exempt: an attachment may legitimately contain markup.
         let (data, response) = try await urlSession.data(for: request)
         // An attachment body is the payload, not a JSON envelope: an HTML/XML/SVG
         // file is legitimate, so downloads keep status-only checking.
@@ -700,7 +703,7 @@ struct ChatAPIClient {
         // stale rejection clear the newly issued credentials.
         let capturedEpoch = authManager.authEpoch
         let request = try await authManager.authorizedRequest(url: url, method: "GET")
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
         try rejectAuthWall(response: response, data: data)
         guard (response as? HTTPURLResponse)?.statusCode == 401 else {
             return (data, response)
@@ -720,7 +723,7 @@ struct ChatAPIClient {
         }
 
         let retryRequest = try await authManager.authorizedRequest(url: url, method: "GET")
-        let (retryData, retryResponse) = try await urlSession.data(for: retryRequest)
+        let (retryData, retryResponse) = try await urlSession.dataExpectingJSON(for: retryRequest, authWallError: ChatAPIError.authWall)
         try rejectAuthWall(response: retryResponse, data: retryData)
         if (retryResponse as? HTTPURLResponse)?.statusCode == 401 {
             authManager.markAuthRequiredIfCurrent(capturedEpoch: capturedEpoch)
@@ -1199,6 +1202,25 @@ enum AuthWallDetection {
             trimmed = trimmed.dropFirst()
         }
         return trimmed.first == UInt8(ascii: "<")
+    }
+}
+
+extension URLSession {
+    /// Required transport path for API responses whose body is expected to be
+    /// JSON. The wall check happens before status handling or decoding, so an
+    /// endpoint cannot accidentally accept redirected login markup.
+    func dataExpectingJSON<E: Error>(
+        for request: URLRequest,
+        authWallError: @autoclosure () -> E
+    ) async throws -> (Data, URLResponse) {
+        // auth-wall-transport-chokepoint: all expected-JSON requests route here.
+        let (data, response) = try await self.data(for: request)
+        try AuthWallDetection.rejectIfLikely(
+            response: response,
+            data: data,
+            throwing: authWallError()
+        )
+        return (data, response)
     }
 }
 

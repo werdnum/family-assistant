@@ -212,7 +212,7 @@ final class ErrorReporter: @unchecked Sendable {
         }
         request.httpBody = try JSONEncoder().encode(payload)
 
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await session.dataExpectingJSON(for: request, authWallError: ReporterError.authWall)
         try AuthWallDetection.rejectIfLikely(
             response: response,
             data: data,

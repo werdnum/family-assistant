@@ -1083,6 +1083,43 @@ final class ChatAPIClientTests: XCTestCase {
         XCTAssertEqual(contentType, "image/svg+xml")
     }
 
+    func testHTTPResponseReadsUseAuthWallChokepointsOrExplicitExemptions() throws {
+        let projectDirectory = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let productionDirectory = projectDirectory.appendingPathComponent("FamilyAssistant")
+        let enumerator = try XCTUnwrap(
+            FileManager.default.enumerator(
+                at: productionDirectory,
+                includingPropertiesForKeys: nil
+            )
+        )
+        var rawResponseReadCount = 0
+
+        for case let fileURL as URL in enumerator where fileURL.pathExtension == "swift" {
+            let lines = try String(contentsOf: fileURL, encoding: .utf8)
+                .components(separatedBy: .newlines)
+            for (index, line) in lines.enumerated()
+                where line.contains(".data(for:") || line.contains(".bytes(for:")
+            {
+                rawResponseReadCount += 1
+                let marker = lines[..<index]
+                    .reversed()
+                    .first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                XCTAssertTrue(
+                    marker?.contains("auth-wall-") == true,
+                    "Raw response read must use a reviewed auth-wall marker: \(fileURL.lastPathComponent):\(index + 1)"
+                )
+            }
+        }
+
+        XCTAssertEqual(
+            rawResponseReadCount,
+            5,
+            "New raw response reads must route through dataExpectingJSON or receive explicit review."
+        )
+    }
+
     private func makeClient() -> ChatAPIClient {
         ChatAPIClient(authManager: makeAuthManager())
     }

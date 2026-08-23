@@ -5185,8 +5185,11 @@ extension ChatViewModel: ResyncHost {
     }
 
     func presentResyncAuthWall(_ error: AuthError) {
+        let message = inlineMessage(for: .authWall, error: error)
+        conversationsRefreshFailed = true
+        conversationsRefreshFailureMessage = message
         presentInlineThreadFeedback(
-            inlineMessage(for: .authWall, error: error),
+            message,
             reason: .authWall,
             operation: .conversationsRefresh
         )

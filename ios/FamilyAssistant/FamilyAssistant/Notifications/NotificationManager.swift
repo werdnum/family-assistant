@@ -444,7 +444,7 @@ final class NotificationManager {
     }
 
     private func performRequest(_ request: URLRequest) async throws {
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.dataExpectingJSON(for: request, authWallError: NotificationError.authWall)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NotificationError.invalidResponse
         }

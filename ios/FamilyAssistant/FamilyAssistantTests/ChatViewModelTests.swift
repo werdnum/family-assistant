@@ -52,6 +52,11 @@ final class ChatViewModelTests: XCTestCase {
             model.threadInlineMessage,
             "Server requires sign-in or is unreachable (authentication wall detected)."
         )
+        XCTAssertTrue(model.conversationsRefreshFailed)
+        XCTAssertEqual(
+            model.conversationsRefreshFailureMessage,
+            model.threadInlineMessage
+        )
     }
 
     func testLaunchRestoresRecentlyActiveConversation() {

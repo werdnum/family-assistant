@@ -60,7 +60,7 @@ struct NotesAPIClient {
 
     func listNotes() async throws -> [NativeNote] {
         let request = try await authManager.authorizedRequest(url: apiURL("/api/notes/"), method: "GET")
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.dataExpectingJSON(for: request, authWallError: NotesAPIError.authWall)
         try validate(response: response, data: data)
         return try JSONDecoder().decode([NativeNote].self, from: data)
     }
@@ -70,7 +70,7 @@ struct NotesAPIClient {
             url: apiURL("/api/notes/\(Self.encodedPathComponent(title))"),
             method: "GET"
         )
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.dataExpectingJSON(for: request, authWallError: NotesAPIError.authWall)
         try validate(response: response, data: data)
         return try JSONDecoder().decode(NativeNote.self, from: data)
     }
@@ -80,7 +80,7 @@ struct NotesAPIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(note)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.dataExpectingJSON(for: request, authWallError: NotesAPIError.authWall)
         try validate(response: response, data: data)
     }
 
@@ -89,7 +89,7 @@ struct NotesAPIClient {
             url: apiURL("/api/notes/\(Self.encodedPathComponent(title))"),
             method: "DELETE"
         )
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.dataExpectingJSON(for: request, authWallError: NotesAPIError.authWall)
         try validate(response: response, data: data)
     }
 

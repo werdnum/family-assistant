@@ -247,7 +247,7 @@ final class AuthManager {
             "code_verifier": codeVerifier,
         ])
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.dataExpectingJSON(for: request, authWallError: AuthError.authWall)
         try AuthWallDetection.rejectIfLikely(
             response: response,
             data: data,
@@ -615,7 +615,9 @@ final class AuthManager {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await URLSession.shared.dataExpectingJSON(for: request, authWallError: AuthError.authWall)
+        } catch AuthError.authWall {
+            throw AuthError.authWall
         } catch {
             throw AuthError.transient(underlying: error)
         }
@@ -684,7 +686,9 @@ final class AuthManager {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await URLSession.shared.dataExpectingJSON(for: request, authWallError: AuthError.authWall)
+        } catch AuthError.authWall {
+            throw AuthError.authWall
         } catch {
             throw AuthError.transient(underlying: error)
         }
@@ -757,6 +761,7 @@ final class AuthManager {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
+            // auth-wall-exempt: logout is a best-effort request with no response payload.
             _ = try? await URLSession.shared.data(for: request)
         }
 
