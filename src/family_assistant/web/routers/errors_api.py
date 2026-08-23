@@ -123,9 +123,9 @@ ERROR_INTAKE_RATE_LIMIT = 60  # reports per window per authenticated user or add
 ERROR_INTAKE_WINDOW_SECONDS = 60.0
 # Cap on tracked addresses: an attacker rotating source addresses (e.g. across
 # an IPv6 allocation) must not be able to grow the map without bound. When the
-# cap is hit, expired entries are swept; if that frees nothing, the oldest
-# entries are evicted, which degrades per-address accuracy under attack rather
-# than allowing memory exhaustion.
+# cap is hit, expired entries are swept; if that frees nothing, new client keys
+# are refused until an entry expires, degrading intake availability under
+# attack rather than allowing memory exhaustion.
 RATE_LIMIT_MAX_ADDRESSES = 4_096
 
 _rate_limit_lock = threading.Lock()
