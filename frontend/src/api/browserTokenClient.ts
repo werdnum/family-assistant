@@ -98,8 +98,10 @@ async function attemptRefresh(): Promise<AttemptResult> {
   }
   const expiresIn = payload.expires_in ?? 0;
   const elapsed = Date.now() - startedAt;
-  const delayMs = expiresIn * 1000 - REFRESH_MARGIN_MS - elapsed;
-  if (Number.isFinite(delayMs) && delayMs > 0) {
+  // Always schedule positive near-expiry work, even for very short TTLs where
+  // the margin would otherwise go non-positive and strand the cookie.
+  const delayMs = Math.max(expiresIn * 1000 - REFRESH_MARGIN_MS - elapsed, 1_000);
+  if (Number.isFinite(delayMs)) {
     refreshTimer = setTimeout(() => {
       void startSessionBridge();
     }, delayMs);
