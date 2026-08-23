@@ -9,8 +9,10 @@ design:
   their own authentication (PKCE code + verifier, opaque token, session).
 - ``public``: deliberately unauthenticated receivers with their own abuse
   controls.
-- ``scoped``: routes whose access control lives in a route dependency granting
-  narrower access than default auth (diagnostics readonly token).
+- ``scoped``: routes whose access control lives outside default auth — either
+  a route dependency granting narrower access than default auth (diagnostics
+  readonly token) or a custom transport-level credential (the Asterisk
+  WebSocket's query-token handshake, which cannot carry headers/cookies).
 
 The same classification drives the edge deployment's JWT-enforcement route
 split (see docs/design/jwt-edge-auth.md): it is published at
@@ -54,6 +56,10 @@ NO_DEFAULT_AUTH_ROUTES: list[tuple[frozenset[str], str, str, RouteClass]] = [
         "/api/integrations/google/callback",
         "bootstrap",
     ),
+    # Custom-auth transports: the Asterisk WebSocket authenticates with its
+    # own ?token= secret during the handshake and cannot present a JWT or
+    # browser cookie. Any future non-HTTP-auth transport joins this class.
+    (frozenset({"GET"}), "exact", "/api/asterisk/live", "scoped"),
     (frozenset({"POST"}), "exact", "/api/errors/", "public"),
     # Scoped: diagnostics readonly token checked in get_diagnostics_reader.
     (frozenset({"GET"}), "prefix", "/api/debug", "scoped"),

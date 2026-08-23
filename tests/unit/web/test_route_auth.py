@@ -20,6 +20,8 @@ from family_assistant.web.route_auth import (
         ("GET", "/api/auth/browser-token", True),
         # OAuth return target: may arrive after the JWT cookie expired.
         ("GET", "/api/integrations/google/callback", True),
+        # Custom-auth transport (query-token WebSocket handshake).
+        ("GET", "/api/asterisk/live", True),
         # Wrong method on a bootstrap endpoint falls through to default auth.
         ("GET", "/api/auth/exchange", False),
         ("POST", "/api/auth/browser-token", False),
