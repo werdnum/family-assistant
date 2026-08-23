@@ -207,7 +207,13 @@ final class ErrorReporter: @unchecked Sendable {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let tokenProvider = lock.withLock { authTokenProvider }
-        if let token = try await tokenProvider?() {
+        let token: String?
+        do {
+            token = try await tokenProvider?()
+        } catch AuthError.noCredentials {
+            token = nil
+        }
+        if let token {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         request.httpBody = try JSONEncoder().encode(payload)

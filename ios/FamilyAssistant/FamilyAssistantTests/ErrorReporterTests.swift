@@ -289,6 +289,27 @@ final class ErrorReporterTests: XCTestCase {
         XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
     }
 
+    func testDeliverWithoutCredentialsUsesUnauthenticatedErrorIntake() async throws {
+        MockErrorURLProtocol.respond { _ in .init(statusCode: 200) }
+        let reporter = makeReporter()
+        reporter.configure(
+            baseURLProvider: { self.baseURL },
+            authTokenProvider: { throw AuthError.noCredentials }
+        )
+
+        await reporter.deliver(
+            message: "Login failed",
+            component: "Auth.login",
+            errorType: .handled,
+            stack: nil,
+            extraData: [:]
+        )
+
+        let request = try XCTUnwrap(MockErrorURLProtocol.requests.first)
+        XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+        XCTAssertTrue(spooledFiles().isEmpty)
+    }
+
     // MARK: - Helpers
 
     private func makeReporter() -> ErrorReporter {
