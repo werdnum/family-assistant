@@ -2108,7 +2108,11 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(steerRequests.value, 0)
 
         startResponse.finish()
-        try await waitUntil { steerRequests.value == 2 }
+        try await waitUntil {
+            steerRequests.value == 2
+                && model.draftText.isEmpty
+                && self.privateStringArray("inFlightSteers", in: model).isEmpty
+        }
 
         XCTAssertEqual(model.draftText, "")
         XCTAssertEqual(privateStringArray("inFlightSteers", in: model), [])
