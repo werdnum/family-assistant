@@ -13,6 +13,13 @@ from family_assistant.services.user_identity import (
 )
 from family_assistant.storage.database import Database
 from family_assistant.tools import ToolsProvider
+from family_assistant.web.auth import (
+    AuthService,
+    api_authentication_enabled,
+    extract_api_credential,
+    get_request_authenticated_api_user,
+)
+from family_assistant.web.jwt_tokens import JWTTokenService
 from family_assistant.web.models import GeminiLiveConfig
 from family_assistant.web.voice_client import GoogleGeminiLiveClient, LiveAudioClient
 
@@ -21,6 +28,17 @@ if TYPE_CHECKING:
     from family_assistant.web.web_chat_interface import WebChatInterface
 
 logger = logging.getLogger(__name__)
+
+
+def get_jwt_token_service(request: Request) -> JWTTokenService:
+    """Return the application-scoped JWT signer and verifier."""
+    service = getattr(request.app.state, "jwt_token_service", None)
+    if not isinstance(service, JWTTokenService):
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication service is not configured.",
+        )
+    return service
 
 
 def get_user_identity_resolver(request: Request) -> UserIdentityResolver | None:
@@ -56,7 +74,7 @@ def resolve_current_user_payload(request: Request, user: dict) -> dict:
         }
 
     try:
-        if user.get("source") in {"api_token", "app_token_session"}:
+        if user.get("source") in _TOKEN_IDENTITY_SOURCES:
             resolved = resolver.resolve_api_token_user(
                 str(user.get("sub", user.get("user_identifier", "")))
             )
@@ -139,39 +157,23 @@ async def get_processing_service(request: Request) -> "ProcessingService":
     return service
 
 
-async def get_current_user(request: Request) -> dict:
-    """
-    Dependency to get the current user from either session (web UI) or API token.
-    Validates authentication and returns user details.
+def _auth_disabled_user() -> dict[str, object | None]:
+    return {
+        "user_identifier": "test_user",
+        "token_id": 0,
+        "token_name": "test_token",
+        "expires_at": None,
+    }
 
-    This dependency supports both:
-    - Session-based auth (web UI with cookies)
-    - API token auth (API clients with Authorization header)
-    """
-    # Get AuthService from app state
-    auth_service = getattr(request.app.state, "auth_service", None)
-    if not auth_service or not auth_service.auth_enabled:
-        # Return test user when auth is disabled (e.g., in tests)
-        logger.debug("Auth is disabled, returning test user.")
-        return {
-            "user_identifier": "test_user",
-            "token_id": 0,
-            "token_name": "test_token",
-            "expires_at": None,
-        }
 
-    # First try session auth (for web UI)
-    try:
-        session_user = request.session.get("user")
-        if session_user:
-            logger.debug("User authenticated via session.")
-            return resolve_current_user_payload(request, session_user)
-    except AssertionError:
-        # Session middleware not available
-        pass
+async def _authenticate_presented_api_user(
+    request: Request, auth_service: AuthService
+) -> dict:
+    cached_user = get_request_authenticated_api_user(request)
+    if cached_user is not None:
+        logger.debug("Reusing API-token authentication from request middleware.")
+        return resolve_current_user_payload(request, cached_user)
 
-    # Fall back to API token auth (for API clients), accepting either an
-    # Authorization: Bearer header or X-API-Token.
     token_value = _extract_bearer_token(request)
     if token_value:
         logger.debug("Attempting API token auth using bearer/X-API-Token header.")
@@ -206,18 +208,37 @@ async def get_current_user(request: Request) -> dict:
     return resolve_current_user_payload(request, api_user)
 
 
+async def get_current_user(request: Request) -> dict:
+    """
+    Dependency to get the current user from either session (web UI) or API token.
+    Validates authentication and returns user details.
+
+    This dependency supports both:
+    - Session-based auth (web UI with cookies)
+    - API token auth (API clients with Authorization header)
+    """
+    auth_service = getattr(request.app.state, "auth_service", None)
+    if not auth_service or not api_authentication_enabled(auth_service):
+        logger.debug("Auth is disabled, returning test user.")
+        return _auth_disabled_user()
+
+    try:
+        session_user = request.session.get("user")
+        if session_user:
+            logger.debug("User authenticated via session.")
+            return resolve_current_user_payload(request, session_user)
+    except AssertionError:
+        pass
+
+    return await _authenticate_presented_api_user(request, auth_service)
+
+
 # Environment variable holding an optional read-only token that grants access to
 # the diagnostics/error-log read endpoints (and nothing else). Intended for
 # scraping diagnostics from an external monitor without minting a full API token.
 DIAGNOSTICS_READONLY_TOKEN_ENV_VAR = "DIAGNOSTICS_READONLY_TOKEN"
 
-
-def _extract_bearer_token(request: Request) -> str | None:
-    """Return the bearer/API token from the request headers, if present."""
-    auth_header = request.headers.get("Authorization")
-    if auth_header and auth_header.lower().startswith("bearer "):
-        return auth_header.split(" ", 1)[1]
-    return request.headers.get("X-API-Token")
+_extract_bearer_token = extract_api_credential
 
 
 async def get_diagnostics_reader(request: Request) -> dict:
@@ -252,7 +273,7 @@ async def get_diagnostics_reader(request: Request) -> dict:
 
 # Auth-source markers indicating the caller authenticated with an API token
 # (bearer / X-API-Token / app-token session) rather than a browser session.
-_TOKEN_IDENTITY_SOURCES = {"api_token", "app_token_session"}
+_TOKEN_IDENTITY_SOURCES = {"api_token", "jwt_access_token", "app_token_session"}
 
 
 async def get_current_session_user(request: Request) -> dict:
@@ -283,11 +304,12 @@ async def get_current_session_user(request: Request) -> dict:
 
 
 async def get_current_api_user(request: Request) -> dict:
-    """
-    Legacy dependency for API token authentication only.
-    Use get_current_user for endpoints that support both session and API token auth.
-    """
-    return await get_current_user(request)
+    """Authenticate the credential presented on this request, ignoring sessions."""
+    auth_service = getattr(request.app.state, "auth_service", None)
+    if not auth_service or not api_authentication_enabled(auth_service):
+        logger.debug("Auth is disabled, returning test user.")
+        return _auth_disabled_user()
+    return await _authenticate_presented_api_user(request, auth_service)
 
 
 async def get_current_active_user(request: Request) -> dict:
@@ -308,6 +330,11 @@ async def get_current_active_user(request: Request) -> dict:
     auth_enabled = auth_service.auth_enabled
 
     if not auth_enabled:
+        if api_authentication_enabled(auth_service):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This endpoint requires an OIDC browser session.",
+            )
         # If auth is not enabled, create a mock user for development/testing.
         logger.warning(
             "Auth is disabled. Returning a mock user for get_current_active_user."

@@ -1384,12 +1384,59 @@ apparent backfill size. Use `days` to set the audit window and `max_events` to b
 response says explicitly when that cap truncated the breakdown. It exposes no message content,
 conversation IDs, tool arguments, or source IDs.
 
-The token grants no access beyond those endpoints. It does not make anything public that was not
-already: `/api/*` bypasses `AuthMiddleware` and individual routes enforce their own auth, so a
-deliberately public route such as the `POST /api/errors/` report receiver stays reachable without
-it. In particular `GET /api/debug/profiles` (the full config dump) is **not** covered, while the
-tool-inventory endpoint that is covered exposes only tool names and sizes — no prompts and no policy
-bodies.
+The diagnostics token grants no access beyond the endpoints above. `/api/*` requires
+`AuthMiddleware` authentication by default; the smaller set in `route_auth.NO_DEFAULT_AUTH_ROUTES`
+instead uses its declared scoped policy or, for a deliberately public receiver such as
+`POST /api/errors/`, bounded public handling. In particular `GET /api/debug/profiles` (the full
+config dump) is **not** covered, while the tool-inventory endpoint that is covered exposes only tool
+names and sizes — no prompts and no policy bodies.
+
+______________________________________________________________________
+
+## JWT Access Tokens (Edge Gateway Authentication)
+
+### JWT_SIGNING_KEY
+
+Optional PEM-encoded EC private key enabling short-lived signed access tokens (ES256). When set,
+`POST /api/auth/exchange`, `POST /api/auth/refresh`, and `POST /api/auth/token` return a signed JWT
+instead of an opaque secret; the JWT is also what the browser session bridge
+(`GET /api/auth/browser-token`) sets as an HttpOnly cookie scoped to `/api`. A deployment's edge
+gateway can then verify API requests statelessly against the published JWKS
+(`GET /.well-known/jwks.json`) — see docs/design/jwt-edge-auth.md.
+
+| Property  | Value                                                               |
+| --------- | ------------------------------------------------------------------- |
+| Required  | No                                                                  |
+| Default   | Unset (opaque token behaviour)                                      |
+| Sensitive | **Yes**                                                             |
+| Example   | PEM text (generate with `openssl ecparam -name prime256v1 -genkey`) |
+
+Unset ⇒ everything behaves as before (30-day opaque API tokens). Set but unparsable fails startup.
+The public key is published at `/.well-known/jwks.json`; the route classification the gateway policy
+must mirror is published at `/.well-known/auth-route-classification`.
+
+### JWT_ACCESS_TOKEN_TTL_SECONDS
+
+Lifetime of issued signed access tokens in seconds.
+
+| Property | Value  |
+| -------- | ------ |
+| Required | No     |
+| Default  | `3600` |
+
+Requires `JWT_SIGNING_KEY`. A JWT upgraded from an expiring opaque token is capped at that token's
+remaining lifetime. Revoked, expired, or deleted backing tokens are rejected immediately by the
+server; edge gateways accept an already issued JWT until its own expiry by design.
+
+### Error-intake abuse controls
+
+`POST /api/errors/` is deliberately reachable without a session so error capture works pre-login and
+with broken auth. It is bounded server-side: per-authenticated-user rate limiting (falling back to
+client address before authentication) of 60 reports per 60 seconds (HTTP 429 beyond), a 64 KiB body
+cap, hard field-length limits on the report model, and reports arriving without a valid session/API
+credential are clamped into the in-memory telemetry ring. They are never persisted to `error_logs`,
+whatever severity they claim, and are lost on process restart. Authenticated reporters keep the full
+behaviour described above.
 
 ______________________________________________________________________
 
@@ -1511,10 +1558,15 @@ Secret token for authenticating Asterisk WebSocket connections.
 
 | Property  | Value                          |
 | --------- | ------------------------------ |
-| Required  | No                             |
+| Required  | When `JWT_SIGNING_KEY` is set  |
 | Default   | None (authentication disabled) |
 | Sensitive | **Yes**                        |
 | Example   | `my-secure-token-123`          |
+
+The Asterisk WebSocket is exempt from gateway JWT enforcement because the
+client cannot attach a browser cookie or authorization header. When signed JWT
+authentication is enabled, the backend rejects all Asterisk connections unless
+this separate transport secret is configured.
 
 ______________________________________________________________________
 

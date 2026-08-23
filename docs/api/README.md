@@ -125,6 +125,23 @@ curl -X DELETE "https://your-domain.com/api/me/tokens/{token_id}" \
   -H "Authorization: Bearer <your-token>"
 ```
 
+#### Short-Lived Signed Tokens (JWT)
+
+When the server has a JWT signing key configured (see
+`JWT_SIGNING_KEY` in the configuration reference), clients can exchange a
+credential for a short-lived signed JWT that is accepted anywhere an opaque
+Bearer token is:
+
+- `POST /api/auth/token` with `{"token": "<opaque-api-token>"}` — upgrades an
+  opaque token. Use this for remote access when opaque tokens are rejected by
+  the edge gateway, which cannot consult the database; the opaque token itself
+  keeps working on the local network.
+- `POST /api/auth/refresh` — as before, returns a fresh signed token.
+
+Signed tokens expire (default one hour); re-run the exchange/refresh to obtain
+a new one. Revoking the underlying API token invalidates its tokens
+immediately at the server.
+
 ### Public Endpoints
 
 Some endpoints are accessible without authentication:

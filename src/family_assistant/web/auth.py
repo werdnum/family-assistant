@@ -7,11 +7,12 @@ from typing import Any, NoReturn
 
 from authlib.integrations.starlette_client import OAuth  # type: ignore
 from fastapi import APIRouter, HTTPException, Request, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from passlib.context import CryptContext
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.config import Config
+from starlette.datastructures import Headers
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from family_assistant.services.user_identity import (
@@ -20,6 +21,7 @@ from family_assistant.services.user_identity import (
 )
 from family_assistant.storage.base import api_tokens_table
 from family_assistant.storage.database import Database
+from family_assistant.web import jwt_tokens, route_auth
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +55,8 @@ PUBLIC_PATHS = [
     re.compile(r"^/app-auth$"),
     re.compile(r"^/app-auth-callback$"),
     re.compile(r"^/webhook(/.*)?$"),
-    re.compile(r"^/api(/.*)?$"),
+    # /api is NOT blanket-public: AuthMiddleware classifies every /api request
+    # via route_auth and enforces authentication by default (fail-closed).
     re.compile(r"^/health$"),
     re.compile(r"^/privacy$"),
     re.compile(r"^/static(/.*)?$"),
@@ -69,10 +72,73 @@ PUBLIC_PATHS = [
 User = dict[str, Any]
 
 
+def extract_api_credential(request: Request) -> str | None:
+    """Return the bearer/API token from the request headers, if present.
+
+    Shared by AuthMiddleware and the request dependencies so both accept
+    exactly the same credential headers.
+    """
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.lower().startswith("bearer "):
+        return auth_header.split(" ", 1)[1]
+    return request.headers.get("X-API-Token")
+
+
+_AUTHENTICATED_API_USER_STATE_KEY = "family_assistant_authenticated_api_user"
+
+
+def set_request_authenticated_api_user(request: Request, user: User) -> None:
+    """Cache middleware-authenticated API identity for downstream dependencies."""
+    request.scope.setdefault("state", {})[_AUTHENTICATED_API_USER_STATE_KEY] = user
+
+
+def get_request_authenticated_api_user(request: Request) -> User | None:
+    """Return the API identity already authenticated for this request, if any."""
+    state = request.scope.get("state")
+    if not state:
+        return None
+    user = state.get(_AUTHENTICATED_API_USER_STATE_KEY)
+    return user if isinstance(user, dict) else None
+
+
+def api_authentication_enabled(auth_service: object) -> bool:
+    """Whether API requests must authenticate through OIDC or signed JWTs."""
+    jwt_service = getattr(auth_service, "jwt_tokens", None)
+    return bool(
+        getattr(auth_service, "auth_enabled", False)
+        or (jwt_service and getattr(jwt_service, "enabled", False))
+    )
+
+
+def session_jwt_binding_is_valid(request: Request) -> bool:
+    """Whether a session's optional short-lived JWT binding is still valid."""
+    try:
+        raw_expiry = request.session.get("session_jwt_exp")
+    except AssertionError:
+        return True
+    if raw_expiry is None:
+        return True
+    try:
+        return time.time() < float(raw_expiry)
+    except (TypeError, ValueError):
+        logger.warning("Session invalidated: malformed bound JWT expiry.")
+        return False
+
+
+def _clear_token_session_binding(request: Request) -> None:
+    """Remove credential bindings when a session changes authentication source."""
+    request.session.pop("api_token_id", None)
+    request.session.pop("session_jwt_exp", None)
+
+
 class AuthService:
     """Service class for authentication operations with proper dependency injection."""
 
-    def __init__(self, database_engine: AsyncEngine | None = None) -> None:
+    def __init__(
+        self,
+        database_engine: AsyncEngine | None = None,
+        jwt_token_service: jwt_tokens.JWTTokenService | None = None,
+    ) -> None:
         """
         Initialize the AuthService with dependencies.
 
@@ -80,6 +146,9 @@ class AuthService:
             database_engine: The database engine for database operations
         """
         self.database_engine = database_engine
+        self.jwt_tokens = (
+            jwt_token_service or jwt_tokens.JWTTokenService.from_environment()
+        )
         self.auth_enabled = AUTH_ENABLED
         self.oauth: OAuth | None = None
 
@@ -147,6 +216,9 @@ class AuthService:
 
         token_value = auth_header.split(" ", 1)[1]
 
+        if self.jwt_tokens.enabled and jwt_tokens.looks_like_jwt(token_value):
+            return await self._user_from_jwt_token(token_value)
+
         # Assuming the prefix is the first 8 characters of the token_value
         # and the rest is the secret part that was hashed.
         if len(token_value) <= 8:
@@ -182,7 +254,11 @@ class AuthService:
             return None
 
         now = datetime.now(UTC)
-        if token_row["expires_at"] and token_row["expires_at"] < now:
+        row_expires = token_row["expires_at"]
+        if row_expires and row_expires.tzinfo is None:
+            # SQLite returns naive datetimes even for DateTime(timezone=True).
+            row_expires = row_expires.replace(tzinfo=UTC)
+        if row_expires and row_expires < now:
             logger.warning(
                 f"Attempt to use expired API token (ID: {token_row['id']}, User: {token_row['user_identifier']})."
             )
@@ -207,6 +283,62 @@ class AuthService:
             "email": token_row["user_identifier"],  # Or actual email if available
             "source": "api_token",
             "token_id": token_row["id"],
+        }
+
+    async def _user_from_jwt_token(self, token_value: str) -> dict | None:
+        """Authenticate a signed access-token JWT against its api_tokens row.
+
+        The signature/expiry/issuer/audience are verified statelessly; the row
+        identified by the ``tid`` claim is still consulted so revocation and
+        manual expiry take effect immediately at this layer.
+        """
+        if not self.database_engine:
+            logger.error("Database engine not available in AuthService")
+            return None
+
+        claims = self.jwt_tokens.verify_access_token(token_value)
+        if not claims:
+            logger.warning("Rejected invalid JWT access token.")
+            return None
+
+        db = Database(self.database_engine)
+        query = select(api_tokens_table).where(
+            api_tokens_table.c.id == claims["tid"],
+            api_tokens_table.c.token_type.in_(("api", "browser")),
+        )
+        token_row = await db.fetch_one(query)
+
+        if not token_row or token_row["is_revoked"]:
+            logger.warning("JWT references missing or revoked API token.")
+            return None
+
+        now = datetime.now(UTC)
+        row_expires = token_row["expires_at"]
+        if row_expires and row_expires.tzinfo is None:
+            # SQLite returns naive datetimes even for DateTime(timezone=True).
+            row_expires = row_expires.replace(tzinfo=UTC)
+        if row_expires and row_expires < now:
+            logger.warning(
+                "JWT references expired API token (ID: %s).", token_row["id"]
+            )
+            return None
+
+        await db.execute(
+            update(api_tokens_table)
+            .where(api_tokens_table.c.id == token_row["id"])
+            .values(last_used_at=now)
+        )
+
+        user_identifier = str(claims["sub"])
+        return {
+            "sub": user_identifier,
+            "name": user_identifier,
+            "email": user_identifier,
+            "source": "jwt_access_token",
+            "token_id": token_row["id"],
+            # Carried so session-minting bridges can bind the session to the
+            # JWT's own expiry instead of the backing row's lifetime.
+            "exp": int(claims["exp"]),
         }
 
     async def handle_login(self, request: Request) -> RedirectResponse:
@@ -282,6 +414,7 @@ class AuthService:
                             detail=str(exc),
                         ) from exc
 
+                _clear_token_session_binding(request)
                 request.session["user"] = dict(user_info)
                 logger.info(
                     f"User logged in successfully: {user_info.get('email') or user_info.get('sub')}"
@@ -309,8 +442,113 @@ class AuthService:
     async def handle_logout(self, request: Request) -> RedirectResponse:
         """Clears the user session."""
         request.session.pop("user", None)
+        _clear_token_session_binding(request)
         logger.info("User logged out.")
         return RedirectResponse(url="/")
+
+
+# ast-grep-ignore: no-dict-any - ASGI receive() messages are untyped dicts by protocol definition
+ScopeMessage = dict[str, Any]
+
+
+# Request-body cap for unauthenticated bootstrap/public API routes.
+class BootstrapBodyLimitMiddleware:
+    """Cap request bodies on unauthenticated bootstrap/public API routes.
+
+    These routes bypass default authentication, so an oversized body must be
+    rejected while streaming — before FastAPI buffers and parses it. The cap
+    comes from route_auth's classification, keeping one source of truth for
+    which routes are exposed without credentials.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        limit = route_auth.api_route_body_limit(scope["method"], scope["path"])
+        if limit is None:
+            await self.app(scope, receive, send)
+            return
+
+        if route_auth.is_public_error_intake(scope["method"], scope["path"]):
+            from family_assistant.web.routers.errors_api import (  # noqa: PLC0415 - router imports auth helpers
+                ErrorIntakeRateLimiter,
+            )
+
+            app = scope.get("app")
+            limiter = getattr(
+                getattr(app, "state", None),
+                "error_intake_address_admission_limiter",
+                None,
+            )
+            if not isinstance(limiter, ErrorIntakeRateLimiter):
+                await JSONResponse(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    content={
+                        "detail": "Error intake admission limiter is unavailable."
+                    },
+                )(scope, receive, send)
+                return
+            client = scope.get("client")
+            client_address = client[0] if client else "unknown"
+            if not limiter.allow(f"address:{client_address}"):
+                await JSONResponse(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    content={"detail": "Too many error reports."},
+                )(scope, receive, send)
+                return
+
+        headers = Headers(scope=scope)
+        content_length = headers.get("content-length")
+        if content_length:
+            try:
+                declared_length = int(content_length)
+            except ValueError:
+                declared_length = -1
+            if declared_length < 0:
+                await JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content={"detail": "Invalid Content-Length header."},
+                )(scope, receive, send)
+                return
+            if declared_length > limit:
+                await JSONResponse(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    content={"detail": "Request body too large."},
+                )(scope, receive, send)
+                return
+
+        # Buffer with the cap applied so memory stays bounded even when no
+        # Content-Length is provided (chunked transfer).
+        body = b""
+        more = True
+        while more:
+            message = await receive()
+            if message["type"] != "http.request":
+                break
+            body += message.get("body", b"")
+            more = message.get("more_body", False)
+            if len(body) > limit:
+                await JSONResponse(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    content={"detail": "Request body too large."},
+                )(scope, receive, send)
+                return
+
+        replayed = False
+
+        async def replay_receive() -> ScopeMessage:
+            nonlocal replayed
+            if replayed:
+                return {"type": "http.disconnect"}
+            replayed = True
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        await self.app(scope, replay_receive, send)
 
 
 # Define AuthMiddleware class
@@ -328,11 +566,21 @@ class AuthMiddleware:
         self._token_valid_cache: dict[int, dict[str, bool | float]] = {}
         self.TOKEN_VALID_CACHE_TTL = 30  # seconds
         logger.info(
-            f"AuthMiddleware initialized (auth_enabled={self.auth_service.auth_enabled})"
+            "AuthMiddleware initialized (oidc_enabled=%s, api_auth_enabled=%s)",
+            self.auth_service.auth_enabled,
+            api_authentication_enabled(self.auth_service),
         )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if not self.auth_service.auth_enabled or scope["type"] != "http":
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        app = scope.get("app")
+        auth_service = getattr(
+            getattr(app, "state", None), "auth_service", self.auth_service
+        )
+        if not api_authentication_enabled(auth_service):
             await self.app(scope, receive, send)
             return
 
@@ -346,20 +594,43 @@ class AuthMiddleware:
                 await self.app(scope, receive, send)
                 return
 
-        # Try to get user from session
-        try:
-            user = request.session.get("user")
-        except AssertionError:
-            # Session middleware not available, so no authentication is possible
+        is_api_request = route_auth.is_api_path(request_path)
+        if not is_api_request and not auth_service.auth_enabled:
+            # Signed JWTs protect the API surface only. Page authentication and
+            # its /login redirect exist only when OIDC is configured.
             await self.app(scope, receive, send)
             return
 
-        # If session was created from an API token (e.g., iOS app),
-        # verify the token is still valid (not revoked/expired).
-        # Uses a short TTL cache to avoid a DB query on every request.
+        # Try to get user from session first: token-bound sessions must be
+        # revalidated BEFORE any classification-based early return, so an
+        # expired credential cannot ride an exempt route past its checks.
+        try:
+            user = request.session.get("user")
+        except AssertionError:
+            # Session middleware not available. API requests stay fail-closed
+            # (bearer auth below, then 401); page requests keep the legacy
+            # pass-through since the login redirect needs a session too.
+            if is_api_request:
+                user = None
+            else:
+                await self.app(scope, receive, send)
+                return
+
+        # If session was created from an API token (e.g., iOS app), verify the
+        # token is still valid (not revoked/expired) and that any bound short-
+        # lived JWT has not expired. Uses a short TTL cache to avoid a DB query
+        # on every request.
+        if user and not session_jwt_binding_is_valid(request):
+            logger.warning("Session invalidated: bound JWT access token has expired.")
+            with contextlib.suppress(AssertionError):
+                request.session.pop("user", None)
+                request.session.pop("api_token_id", None)
+                request.session.pop("session_jwt_exp", None)
+            user = None
+
         if user:
             api_token_id = request.session.get("api_token_id")
-            if api_token_id and self.auth_service.database_engine:
+            if api_token_id and auth_service.database_engine:
                 now = time.monotonic()
                 cache_key = api_token_id
                 if len(self._token_valid_cache) > 1000:
@@ -375,7 +646,7 @@ class AuthMiddleware:
                         Database,
                     )
 
-                    db = Database(self.auth_service.database_engine)
+                    db = Database(auth_service.database_engine)
                     is_valid = await api_tokens_storage.is_token_valid(db, api_token_id)
                     self._token_valid_cache[cache_key] = {
                         "valid": is_valid,
@@ -390,25 +661,54 @@ class AuthMiddleware:
                     self._token_valid_cache.pop(cache_key, None)
                     request.session.pop("user", None)
                     request.session.pop("api_token_id", None)
+                    request.session.pop("session_jwt_exp", None)
                     user = None
+
+        # Exempt API routes carry their own route-specific authentication. A
+        # token-bound session is still revalidated above before the request can
+        # reach that mechanism.
+        if is_api_request and not route_auth.api_route_requires_default_auth(
+            request.method, request_path
+        ):
+            await self.app(scope, receive, send)
+            return
 
         # Attempt API token authentication if no session user
         if not user:
-            auth_header = request.headers.get("Authorization")
-            if auth_header:
-                api_user = await self.auth_service.get_user_from_api_token(
-                    auth_header, request
+            credential = extract_api_credential(request)
+            if credential:
+                api_user = await auth_service.get_user_from_api_token(
+                    f"Bearer {credential}", request
                 )
                 if api_user:
-                    # Session middleware might not be available, can't store user in session
-                    with contextlib.suppress(AssertionError):
-                        request.session["user"] = api_user
+                    # Bearer identity is request-local. Only the explicit
+                    # /api/auth/token-session bridge may persist it into a
+                    # cookie; otherwise a cookie-preserving client that later
+                    # sends a different bearer could keep acting as the first
+                    # identity because session lookup takes precedence.
+                    set_request_authenticated_api_user(request, api_user)
                     user = api_user  # Update user for the current request flow
                     logger.debug(
                         f"User authenticated via API token for path {request_path}"
                     )
 
         if not user:
+            if is_api_request:
+                logger.debug(
+                    "No session or valid API token for API path %s; rejecting with 401.",
+                    request_path,
+                )
+                unauthorized = JSONResponse(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    content={
+                        "detail": "Not authenticated: session or API token required."
+                    },
+                    headers={
+                        "WWW-Authenticate": 'Bearer realm="api", error="missing_token"'
+                    },
+                )
+                await unauthorized(scope, receive, send)
+                return
             # Store intended URL before redirecting to login (for OIDC flow)
             # Session middleware might not be available
             with contextlib.suppress(AssertionError):
@@ -460,6 +760,7 @@ def create_auth_router(auth_service: AuthService) -> APIRouter:
             async def logout_error(request: Request) -> RedirectResponse:
                 # Allow logout to work even if OAuth is broken - just clear session
                 request.session.pop("user", None)
+                _clear_token_session_binding(request)
                 logger.info(
                     "User logged out (OAuth not initialized, session cleared only)"
                 )

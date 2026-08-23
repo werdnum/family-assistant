@@ -23,20 +23,26 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import select
 from sqlalchemy import update as sa_update
 
 from family_assistant.services.user_identity import UserIdentityResolutionError
 from family_assistant.storage import api_tokens as api_tokens_storage
 from family_assistant.storage.base import api_tokens_table
 from family_assistant.storage.database import Database
+from family_assistant.web import jwt_tokens, route_auth
 from family_assistant.web.dependencies import (
+    get_current_api_user,
     get_current_user,
     get_db,
+    get_jwt_token_service,
     get_user_identity_resolver,
 )
 from family_assistant.web.models import (
     CodeExchangeRequest,
     CodeExchangeResponse,
+    OpaqueTokenExchangeRequest,
     RefreshTokenRequest,
     RefreshTokenResponse,
     TokenSessionResponse,
@@ -55,11 +61,32 @@ API_TOKEN_EXPIRY_DAYS = 30
 REFRESH_TOKEN_EXPIRY_DAYS = 90
 API_TOKEN_EXPIRY_SECONDS = API_TOKEN_EXPIRY_DAYS * 86400
 
+# HttpOnly cookie carrying the browser's short-lived JWT past the gateway.
+# SameSite=Lax so browser-managed flows that return from cross-site redirects
+# (OAuth callbacks) keep authenticating; cross-site POSTs never carry it.
+BROWSER_TOKEN_COOKIE_NAME = "fa_access_token"
+
+# Name of the internal api_tokens row backing browser-session JWTs. One live
+# row per user, reused across bridge calls; never issued as a credential.
+BROWSER_SESSION_TOKEN_NAME = "browser-session"
+BROWSER_SESSION_TOKEN_TYPE = "browser"
+
 # --- Routers ---
 # Two routers: one for page-level endpoints, one for API endpoints
 page_router = APIRouter()
 api_auth_router = APIRouter(prefix="/auth", tags=["App Auth API"])
 wellknown_router = APIRouter()
+
+
+def _api_token_expiry(jwt_token_service: jwt_tokens.JWTTokenService) -> datetime:
+    """Return a backing-row expiry that cannot cut an issued JWT short."""
+    lifetime = API_TOKEN_EXPIRY_SECONDS
+    if jwt_token_service.enabled:
+        lifetime = max(
+            lifetime,
+            jwt_tokens.access_token_ttl_seconds() + 60,
+        )
+    return datetime.now(UTC) + timedelta(seconds=lifetime)
 
 
 def cleanup_expired_codes() -> None:
@@ -243,6 +270,23 @@ async def app_auth_oidc_callback(request: Request) -> HTMLResponse:
     return HTMLResponse(content=html)
 
 
+def _access_token_response_value(
+    jwt_token_service: jwt_tokens.JWTTokenService,
+    api_minted: api_tokens_storage.MintedApiToken,
+    api_token_id: int,
+    user_identifier: str,
+) -> str:
+    """Return the client-visible access token for a minted row.
+
+    With JWT signing configured this is a short-lived signed JWT bound to the
+    row (which remains the revocation registry); otherwise it is the opaque
+    secret itself.
+    """
+    if jwt_token_service.enabled:
+        return jwt_token_service.mint_access_token(user_identifier, api_token_id)
+    return api_minted.full_token
+
+
 # --- API endpoints (mounted under /api/auth) ---
 
 
@@ -251,6 +295,9 @@ async def exchange_code(
     request: Request,
     payload: CodeExchangeRequest,
     db_context: Annotated[Database, Depends(get_db)],
+    jwt_token_service: Annotated[
+        jwt_tokens.JWTTokenService, Depends(get_jwt_token_service)
+    ],
 ) -> CodeExchangeResponse:
     """Exchange an authorization code + PKCE verifier for API and refresh tokens."""
     cleanup_expired_codes()
@@ -299,7 +346,7 @@ async def exchange_code(
     # would hold the engine-wide transaction lock for its whole duration.
     api_minted = api_tokens_storage.mint_api_token()
     refresh_minted = api_tokens_storage.mint_api_token()
-    api_token_expires = datetime.now(UTC) + timedelta(days=API_TOKEN_EXPIRY_DAYS)
+    api_token_expires = _api_token_expiry(jwt_token_service)
     refresh_expires = datetime.now(UTC) + timedelta(days=REFRESH_TOKEN_EXPIRY_DAYS)
 
     async with db_context.transaction() as txn:
@@ -327,8 +374,15 @@ async def exchange_code(
             parent_token_id=api_token_id,
         )
 
-    full_api_token = api_minted.full_token
+    access_token = _access_token_response_value(
+        jwt_token_service, api_minted, api_token_id, user_identifier
+    )
     full_refresh_token = refresh_minted.full_token
+    token_ttl = (
+        jwt_tokens.access_token_ttl_seconds()
+        if jwt_token_service.enabled
+        else API_TOKEN_EXPIRY_SECONDS
+    )
 
     logger.info(
         "App auth exchange: issued API token %s and refresh token for user %s",
@@ -337,9 +391,9 @@ async def exchange_code(
     )
 
     return CodeExchangeResponse(
-        api_token=full_api_token,
+        api_token=access_token,
         refresh_token=full_refresh_token,
-        expires_in=API_TOKEN_EXPIRY_SECONDS,
+        expires_in=token_ttl,
     )
 
 
@@ -347,6 +401,9 @@ async def exchange_code(
 async def refresh_token(
     payload: RefreshTokenRequest,
     db_context: Annotated[Database, Depends(get_db)],
+    jwt_token_service: Annotated[
+        jwt_tokens.JWTTokenService, Depends(get_jwt_token_service)
+    ],
 ) -> RefreshTokenResponse:
     """Exchange a valid refresh token for a new API token."""
     token_row = await api_tokens_storage.validate_token_by_value(
@@ -359,10 +416,53 @@ async def refresh_token(
         )
 
     user_identifier = token_row["user_identifier"]
+    now = datetime.now(UTC)
+
+    # With JWT signing, refreshes happen on a near-expiry cadence (the JWT is
+    # stateless and its secret never changes), so rotating the backing api
+    # row on every call would insert one row per device per half-lifetime.
+    # Reuse the parent row while it remains valid — it stays the revocation
+    # handle — and only mint a fresh row when it is gone or expired. Opaque
+    # mode keeps full rotation: its secret changes per issuance.
+    if jwt_token_service.enabled:
+        parent_token_id = token_row["parent_token_id"]
+        if parent_token_id:
+            parent_query = select(api_tokens_table).where(
+                api_tokens_table.c.id == parent_token_id,
+                api_tokens_table.c.token_type == "api",
+                api_tokens_table.c.is_revoked == False,  # noqa: E712 - SQL comparison
+            )
+            parent_row = await db_context.fetch_one(parent_query)
+            if parent_row:
+                parent_expires = parent_row["expires_at"]
+                if parent_expires and parent_expires.tzinfo is None:
+                    parent_expires = parent_expires.replace(tzinfo=UTC)
+                if not parent_expires or parent_expires > now:
+                    token_ttl = jwt_tokens.access_token_ttl_seconds()
+                    desired_expires = now + timedelta(seconds=token_ttl + 60)
+                    # Preserve a later or unlimited row lifetime. Only a row
+                    # that would expire before the new JWT needs extension.
+                    if parent_expires is not None and parent_expires < desired_expires:
+                        await db_context.execute(
+                            sa_update(api_tokens_table)
+                            .where(api_tokens_table.c.id == parent_row["id"])
+                            .values(expires_at=desired_expires)
+                        )
+                    access_token = jwt_token_service.mint_access_token(
+                        user_identifier, int(parent_row["id"])
+                    )
+                    logger.info(
+                        "Token refresh: reissued JWT for API token %s (user %s)",
+                        parent_row["id"],
+                        user_identifier,
+                    )
+                    return RefreshTokenResponse(
+                        api_token=access_token, expires_in=token_ttl
+                    )
 
     # Minted before the block; see the exchange endpoint for why.
     api_minted = api_tokens_storage.mint_api_token()
-    api_token_expires = datetime.now(UTC) + timedelta(days=API_TOKEN_EXPIRY_DAYS)
+    api_token_expires = _api_token_expiry(jwt_token_service)
 
     async with db_context.transaction() as txn:
         # Replacement insert + refresh-token relink must be atomic: a failed second
@@ -385,7 +485,14 @@ async def refresh_token(
             .values(parent_token_id=api_token_id)
         )
 
-    full_api_token = api_minted.full_token
+    access_token = _access_token_response_value(
+        jwt_token_service, api_minted, api_token_id, user_identifier
+    )
+    token_ttl = (
+        jwt_tokens.access_token_ttl_seconds()
+        if jwt_token_service.enabled
+        else API_TOKEN_EXPIRY_SECONDS
+    )
 
     logger.info(
         "Token refresh: issued new API token %s for user %s",
@@ -394,15 +501,203 @@ async def refresh_token(
     )
 
     return RefreshTokenResponse(
-        api_token=full_api_token,
-        expires_in=API_TOKEN_EXPIRY_SECONDS,
+        api_token=access_token,
+        expires_in=token_ttl,
     )
+
+
+@api_auth_router.post("/token")
+async def exchange_opaque_token(
+    payload: OpaqueTokenExchangeRequest,
+    db_context: Annotated[Database, Depends(get_db)],
+    jwt_token_service: Annotated[
+        jwt_tokens.JWTTokenService, Depends(get_jwt_token_service)
+    ],
+) -> RefreshTokenResponse:
+    """Upgrade a valid opaque API token to a signed JWT.
+
+    Opaque tokens are rejected by the gateway (it cannot consult the
+    database), so remote script clients exchange their opaque token once for a
+    short-lived JWT. The opaque token itself stays valid wherever the gateway
+    is not in the request path (LAN/Tailscale).
+    """
+    if not jwt_token_service.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="JWT auth is not configured on this server.",
+        )
+
+    token_row = await api_tokens_storage.validate_token_by_value(
+        db_context, payload.token, expected_type="api"
+    )
+    if not token_row:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired API token.",
+        )
+
+    ttl = jwt_tokens.access_token_ttl_seconds()
+    # A JWT derived from an expiring opaque credential must not outlive or
+    # renew that credential. Cap the JWT lifetime at the row's remaining
+    # lifetime; non-expiring operator tokens retain the configured JWT TTL.
+    now = datetime.now(UTC)
+    row_expires = token_row["expires_at"]
+    if row_expires and row_expires.tzinfo is None:
+        row_expires = row_expires.replace(tzinfo=UTC)
+    if row_expires is not None:
+        remaining_seconds = int((row_expires - now).total_seconds())
+        if remaining_seconds <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired API token.",
+            )
+        ttl = min(ttl, remaining_seconds)
+
+    token = jwt_token_service.mint_access_token(
+        str(token_row["user_identifier"]), int(token_row["id"]), expires_in=ttl
+    )
+    logger.info(
+        "Opaque token upgrade: issued JWT for API token %s (user %s)",
+        token_row["id"],
+        token_row["user_identifier"],
+    )
+    return RefreshTokenResponse(api_token=token, expires_in=ttl)
+
+
+@api_auth_router.get("/browser-token")
+async def browser_token(
+    request: Request,
+    db_context: Annotated[Database, Depends(get_db)],
+    jwt_token_service: Annotated[
+        jwt_tokens.JWTTokenService, Depends(get_jwt_token_service)
+    ],
+) -> JSONResponse:
+    """Exchange the OIDC session for a short-lived browser JWT cookie.
+
+    The JWT is set as an HttpOnly SameSite=Lax cookie scoped to /api so every
+    browser-managed API request (fetch, EventSource, img tags) authenticates
+    past the gateway without per-request headers. Returns ``{"enabled":
+    false}`` when JWT auth or OIDC session authentication is not available to
+    the caller so clients can proceed without waiting on a bridge that cannot
+    operate.
+    """
+    auth_service = getattr(request.app.state, "auth_service", None)
+    if (
+        not jwt_token_service.enabled
+        or not auth_service
+        or not auth_service.auth_enabled
+    ):
+        return JSONResponse(content={"enabled": False})
+
+    try:
+        current_user = request.session.get("user")
+    except AssertionError:
+        current_user = None
+    if not current_user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Browser JWT bridge requires an OIDC browser session.",
+        )
+
+    # Only an OIDC session may mint a renewable browser credential. The iOS
+    # token-session cookie is bounded by the JWT that established it; treating
+    # that cookie as renewal proof would turn a short-lived JWT into a refresh
+    # credential. Embedded app web views therefore keep their established LAN
+    # session but do not opt into the public edge bridge.
+    if current_user.get("source") == "app_token_session":
+        return JSONResponse(content={"enabled": False})
+
+    # A bearer credential presented directly is not a browser session.
+    if current_user.get("source") in {"api_token", "jwt_access_token"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Browser JWT bridge requires an OIDC browser session.",
+        )
+    if current_user.get("readonly"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Scoped tokens cannot mint browser sessions.",
+        )
+
+    user_identifier = str(
+        current_user.get("sub") or current_user.get("user_identifier")
+    )
+
+    # Browser sessions have no api_tokens row of their own, so the bridge binds
+    # each JWT to a dedicated short-lived row: it keeps pointing at a real
+    # revocation registry entry, and the row expires with (a grace past) the
+    # JWT. One live row per user is reused across bridge calls so routine page
+    # reloads do not grow the table; the secret is never issued to anyone.
+    ttl = jwt_tokens.access_token_ttl_seconds()
+    now = datetime.now(UTC)
+    reuse_query = (
+        select(api_tokens_table.c.id)
+        .where(
+            api_tokens_table.c.user_identifier == user_identifier,
+            api_tokens_table.c.name == BROWSER_SESSION_TOKEN_NAME,
+            api_tokens_table.c.token_type == BROWSER_SESSION_TOKEN_TYPE,
+            api_tokens_table.c.is_revoked == False,  # noqa: E712 - SQL comparison
+            api_tokens_table.c.expires_at > now,
+        )
+        .order_by(api_tokens_table.c.id.desc())
+        .limit(1)
+    )
+    existing = await db_context.fetch_one(reuse_query)
+    if existing:
+        api_token_id = int(existing["id"])
+        # Extend the reused row through the newly issued JWT's lifetime plus
+        # grace, so backend validation never rejects the cookie early.
+        async with db_context.transaction() as txn:
+            await txn.execute(
+                sa_update(api_tokens_table)
+                .where(api_tokens_table.c.id == api_token_id)
+                .values(expires_at=now + timedelta(seconds=ttl + 60))
+            )
+    else:
+        # Prune this user's expired internal rows before inserting the
+        # replacement so the table (and token settings UI) does not
+        # accumulate dead browser-session entries.
+        minted = api_tokens_storage.mint_api_token()
+        async with db_context.transaction() as txn:
+            await txn.execute(
+                sa_delete(api_tokens_table).where(
+                    api_tokens_table.c.user_identifier == user_identifier,
+                    api_tokens_table.c.name == BROWSER_SESSION_TOKEN_NAME,
+                    api_tokens_table.c.token_type == BROWSER_SESSION_TOKEN_TYPE,
+                    api_tokens_table.c.expires_at <= now,
+                )
+            )
+            api_token_id = await api_tokens_storage.add_api_token(
+                db_context=txn,
+                user_identifier=user_identifier,
+                name=BROWSER_SESSION_TOKEN_NAME,
+                hashed_token=minted.hashed_secret,
+                prefix=minted.prefix,
+                created_at=minted.created_at,
+                expires_at=now + timedelta(seconds=ttl + 60),
+                token_type=BROWSER_SESSION_TOKEN_TYPE,
+            )
+
+    token = jwt_token_service.mint_access_token(user_identifier, api_token_id)
+    # The credential travels only via the HttpOnly cookie; the body carries no
+    # token material so injected scripts cannot read it out of the response.
+    response = JSONResponse(content={"expires_in": ttl})
+    response.set_cookie(
+        key=BROWSER_TOKEN_COOKIE_NAME,
+        value=token,
+        max_age=ttl,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/api",
+    )
+    return response
 
 
 @api_auth_router.post("/token-session")
 async def token_session(
     request: Request,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[dict, Depends(get_current_api_user)],
 ) -> TokenSessionResponse:
     """Exchange a valid API Bearer token for a session cookie.
 
@@ -415,10 +710,17 @@ async def token_session(
         "email": current_user.get("email", current_user.get("user_identifier")),
         "source": "app_token_session",
     }
-    # Store the token ID so session validity is tied to token validity
+    # Store the token ID so session validity is tied to token validity.
+    # JWT-sourced bearers additionally bind the session to the JWT's own
+    # (short) expiry so it cannot outlive the credential that minted it.
     token_id = current_user.get("token_id")
-    if token_id:
+    request.session.pop("api_token_id", None)
+    request.session.pop("session_jwt_exp", None)
+    if token_id is not None:
         request.session["api_token_id"] = token_id
+    jwt_exp = current_user.get("exp")
+    if jwt_exp is not None:
+        request.session["session_jwt_exp"] = jwt_exp
 
     logger.info(
         "Token-session: established session for user %s (token_id=%s)",
@@ -446,6 +748,39 @@ async def auth_me(
 
 
 # --- Well-known endpoint ---
+
+
+@wellknown_router.get("/.well-known/jwks.json")
+async def jwks(
+    jwt_token_service: Annotated[
+        jwt_tokens.JWTTokenService, Depends(get_jwt_token_service)
+    ],
+) -> JSONResponse:
+    """Publish the verification public key for gateway JWT validation.
+
+    Unauthenticated by design; the key is public. Short cache so key rotation
+    propagates promptly while sparing the app per-request cost at the edge.
+    """
+    if not jwt_token_service.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="JWT auth is not configured on this server.",
+        )
+    return JSONResponse(
+        content=jwt_token_service.jwks_document(),
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
+@wellknown_router.get("/.well-known/auth-route-classification")
+async def auth_route_classification() -> JSONResponse:
+    """Publish which /api routes are exempt from default/JWT authentication.
+
+    Single source of truth for the edge deployment's JWT-enforcement route
+    split; consumed there via generation or contract testing so the two lists
+    cannot silently drift.
+    """
+    return JSONResponse(content=route_auth.api_route_classification())
 
 
 @wellknown_router.get("/.well-known/apple-app-site-association")

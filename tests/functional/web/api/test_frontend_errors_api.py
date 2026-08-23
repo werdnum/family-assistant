@@ -1,16 +1,30 @@
 """Tests for the frontend error reporting API endpoint."""
 
 import logging
+import time
 from collections.abc import AsyncGenerator
 
 import httpx
 import pytest
 import pytest_asyncio
+from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine
+from starlette.middleware.sessions import SessionMiddleware
+from starlette.requests import Request
 
 from family_assistant.assistant import Assistant
 from family_assistant.utils.logging_handler import SQLAlchemyErrorHandler
-from family_assistant.web.frontend_telemetry import reset_frontend_telemetry_buffer
+from family_assistant.web.frontend_telemetry import (
+    get_frontend_telemetry_buffer,
+    reset_frontend_telemetry_buffer,
+)
+from family_assistant.web.routers.errors_api import (
+    ERROR_INTAKE_ADDRESS_ADMISSION_RATE_LIMIT,
+    ERROR_INTAKE_RATE_LIMIT,
+    RATE_LIMIT_MAX_ADDRESSES,
+    ErrorIntakeRateLimiter,
+    errors_api_router,
+)
 
 # The frontend.javascript logger that the API endpoint uses
 FRONTEND_LOGGER_NAME = "frontend.javascript"
@@ -392,3 +406,331 @@ async def test_frontend_error_extra_data_stored_correctly(
         # Client-provided extra_data is nested under "details" to prevent key collision
         assert error["extra_data"]["details"]["custom_field"] == "custom_value"
         assert error["extra_data"]["details"]["nested"]["key"] == "value"
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter(web_only_assistant: Assistant) -> None:
+    assert web_only_assistant.fastapi_app is not None
+    web_only_assistant.fastapi_app.state.error_intake_rate_limiter = (
+        ErrorIntakeRateLimiter()
+    )
+    web_only_assistant.fastapi_app.state.error_intake_address_admission_limiter = (
+        ErrorIntakeRateLimiter(ERROR_INTAKE_ADDRESS_ADMISSION_RATE_LIMIT)
+    )
+
+
+class _FakeAuthService:
+    """Auth-enabled stand-in; configurable token acceptance."""
+
+    auth_enabled = True
+    oauth = None
+
+    def __init__(self, accept_tokens: bool) -> None:
+        self._accept_tokens = accept_tokens
+        self.calls = 0
+
+    async def get_user_from_api_token(
+        self, auth_header: str, request: object
+    ) -> dict | None:
+        self.calls += 1
+        if self._accept_tokens:
+            user_identifier = auth_header.rsplit(" ", 1)[-1]
+            return {
+                "sub": user_identifier,
+                "name": user_identifier,
+                "email": user_identifier,
+                "source": "api_token",
+                "token_id": 1,
+            }
+        return None
+
+
+class _EnabledJWTService:
+    enabled = True
+
+
+class _JWTOnlyAuthService:
+    """JWT-edge configuration with no OIDC session authentication."""
+
+    auth_enabled = False
+    jwt_tokens = _EnabledJWTService()
+
+    async def get_user_from_api_token(
+        self, auth_header: str, request: object
+    ) -> dict | None:
+        if auth_header != "Bearer valid-jwt":
+            return None
+        return {
+            "sub": "jwt-user@example.com",
+            "source": "jwt_access_token",
+            "token_id": 1,
+        }
+
+
+@pytest.mark.asyncio
+async def test_expired_jwt_bound_session_is_not_an_authenticated_reporter() -> None:
+    test_app = FastAPI()
+    test_app.include_router(errors_api_router, prefix="/api/errors")
+    test_app.add_middleware(SessionMiddleware, secret_key="test-session-secret")
+    test_app.state.auth_service = _JWTOnlyAuthService()
+    test_app.state.error_intake_rate_limiter = ErrorIntakeRateLimiter()
+
+    @test_app.get("/seed-session")
+    async def seed_session(request: Request) -> dict[str, str]:
+        request.session.update({
+            "user": {"sub": "expired@example.com"},
+            "api_token_id": 1,
+            "session_jwt_exp": time.time() - 1,
+        })
+        return {"status": "seeded"}
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=test_app),
+        base_url="http://testserver",
+    ) as client:
+        seed = await client.get("/seed-session")
+        assert seed.status_code == 200
+        response = await client.post(
+            "/api/errors/",
+            json={
+                "message": "expired session report",
+                "url": "http://x/",
+                "severity": "error",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "recorded"
+
+
+def _client_for(assistant: Assistant) -> httpx.AsyncClient:
+    assert assistant.fastapi_app is not None
+    return httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=assistant.fastapi_app),
+        base_url="http://testserver",
+    )
+
+
+@pytest.mark.asyncio
+async def test_report_rejects_oversized_payload(
+    web_only_assistant: Assistant,
+) -> None:
+    async with _client_for(web_only_assistant) as client:
+        response = await client.post(
+            "/api/errors/",
+            json={"message": "x" * 9000, "url": "http://localhost/chat"},
+        )
+        assert response.status_code in {413, 422}
+
+        # A body beyond the hard streaming cap is rejected before parsing.
+        response = await client.post(
+            "/api/errors/",
+            content=b"x" * (200 * 1024),
+            headers={"Content-Type": "application/json"},
+        )
+    assert response.status_code == 413
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_reports_never_persist(
+    web_only_assistant: Assistant,
+) -> None:
+    """With auth enabled and no credential, claimed errors land in the ring."""
+    assert web_only_assistant.fastapi_app is not None
+    original = getattr(web_only_assistant.fastapi_app.state, "auth_service", None)
+    web_only_assistant.fastapi_app.state.auth_service = _FakeAuthService(False)
+    try:
+        async with _client_for(web_only_assistant) as client:
+            response = await client.post(
+                "/api/errors/",
+                json={
+                    "message": "claimed error",
+                    "url": "http://x/",
+                    "severity": "error",
+                },
+            )
+    finally:
+        web_only_assistant.fastapi_app.state.auth_service = original
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "recorded"
+    records = get_frontend_telemetry_buffer().get_recent()
+    assert len(records) == 1
+    assert records[0].to_dict()["severity"] == "info"
+
+
+@pytest.mark.asyncio
+async def test_jwt_only_deployment_treats_missing_credentials_as_unauthenticated(
+    web_only_assistant: Assistant,
+) -> None:
+    assert web_only_assistant.fastapi_app is not None
+    original = getattr(web_only_assistant.fastapi_app.state, "auth_service", None)
+    web_only_assistant.fastapi_app.state.auth_service = _JWTOnlyAuthService()
+    try:
+        async with _client_for(web_only_assistant) as client:
+            response = await client.post(
+                "/api/errors/",
+                json={
+                    "message": "public edge report",
+                    "url": "http://x/",
+                    "severity": "error",
+                },
+            )
+    finally:
+        web_only_assistant.fastapi_app.state.auth_service = original
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "recorded"
+
+
+@pytest.mark.asyncio
+async def test_jwt_only_deployment_recognizes_valid_reporter_credentials(
+    web_only_assistant: Assistant,
+) -> None:
+    assert web_only_assistant.fastapi_app is not None
+    original = getattr(web_only_assistant.fastapi_app.state, "auth_service", None)
+    web_only_assistant.fastapi_app.state.auth_service = _JWTOnlyAuthService()
+    try:
+        async with _client_for(web_only_assistant) as client:
+            response = await client.post(
+                "/api/errors/",
+                json={
+                    "message": "authenticated edge report",
+                    "url": "http://x/",
+                    "severity": "error",
+                },
+                headers={"Authorization": "Bearer valid-jwt"},
+            )
+    finally:
+        web_only_assistant.fastapi_app.state.auth_service = original
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "reported"
+
+
+@pytest.mark.asyncio
+async def test_address_admission_limit_precedes_invalid_token_validation(
+    web_only_assistant: Assistant,
+) -> None:
+    assert web_only_assistant.fastapi_app is not None
+    app = web_only_assistant.fastapi_app
+    original_auth = getattr(app.state, "auth_service", None)
+    original_limiter = app.state.error_intake_address_admission_limiter
+    rejecting_auth = _FakeAuthService(False)
+    app.state.auth_service = rejecting_auth
+    app.state.error_intake_address_admission_limiter = ErrorIntakeRateLimiter(1)
+    try:
+        async with _client_for(web_only_assistant) as client:
+            first = await client.post(
+                "/api/errors/",
+                json={"message": "first", "url": "http://x/"},
+                headers={"Authorization": "Bearer invalid"},
+            )
+            second = await client.post(
+                "/api/errors/",
+                json={"message": "second", "url": "http://x/"},
+                headers={"Authorization": "Bearer invalid"},
+            )
+    finally:
+        app.state.auth_service = original_auth
+        app.state.error_intake_address_admission_limiter = original_limiter
+
+    assert first.status_code == 200
+    assert second.status_code == 429
+    assert rejecting_auth.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_authenticated_error_report_keeps_error_lane(
+    web_only_assistant: Assistant,
+) -> None:
+    assert web_only_assistant.fastapi_app is not None
+    original = getattr(web_only_assistant.fastapi_app.state, "auth_service", None)
+    web_only_assistant.fastapi_app.state.auth_service = _FakeAuthService(True)
+    try:
+        async with _client_for(web_only_assistant) as client:
+            response = await client.post(
+                "/api/errors/",
+                json={"message": "real error", "url": "http://x/"},
+                headers={"Authorization": "Bearer some-opaque-token"},
+            )
+    finally:
+        web_only_assistant.fastapi_app.state.auth_service = original
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "reported"
+
+
+@pytest.mark.asyncio
+async def test_intake_rate_limit_returns_429(
+    web_only_assistant: Assistant,
+) -> None:
+    async with _client_for(web_only_assistant) as client:
+        statuses = []
+        for _ in range(ERROR_INTAKE_RATE_LIMIT + 1):
+            response = await client.post(
+                "/api/errors/",
+                json={"message": "spam", "url": "http://x/"},
+            )
+            statuses.append(response.status_code)
+    assert all(status == 200 for status in statuses[:-1])
+    assert statuses[-1] == 429
+
+
+@pytest.mark.asyncio
+async def test_authenticated_reporters_have_separate_rate_limit_buckets(
+    web_only_assistant: Assistant,
+) -> None:
+    """A shared reverse-proxy address does not combine authenticated users."""
+    assert web_only_assistant.fastapi_app is not None
+    original = getattr(web_only_assistant.fastapi_app.state, "auth_service", None)
+    web_only_assistant.fastapi_app.state.auth_service = _FakeAuthService(True)
+    try:
+        async with _client_for(web_only_assistant) as client:
+            for _ in range(ERROR_INTAKE_RATE_LIMIT):
+                response = await client.post(
+                    "/api/errors/",
+                    json={"message": "user-a", "url": "http://x/"},
+                    headers={"Authorization": "Bearer user-a"},
+                )
+                assert response.status_code == 200
+            limited = await client.post(
+                "/api/errors/",
+                json={"message": "user-a", "url": "http://x/"},
+                headers={"Authorization": "Bearer user-a"},
+            )
+            other_user = await client.post(
+                "/api/errors/",
+                json={"message": "user-b", "url": "http://x/"},
+                headers={"Authorization": "Bearer user-b"},
+            )
+    finally:
+        web_only_assistant.fastapi_app.state.auth_service = original
+
+    assert limited.status_code == 429
+    assert other_user.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_rate_limiter_map_stays_bounded(
+    web_only_assistant: Assistant,
+) -> None:
+    """Rotating client addresses cannot grow the limiter map without bound."""
+    limiter = ErrorIntakeRateLimiter()
+    for i in range(RATE_LIMIT_MAX_ADDRESSES + 500):
+        limiter.allow(f"10.0.0.{i % 256}.{i}")
+        if limiter.tracked_clients() > RATE_LIMIT_MAX_ADDRESSES:
+            break
+        if i % 512 == 0:
+            limiter.expire_clients(200)
+    assert limiter.tracked_clients() <= RATE_LIMIT_MAX_ADDRESSES
+
+
+def test_error_intake_limiters_are_instance_scoped() -> None:
+    first = ErrorIntakeRateLimiter()
+    second = ErrorIntakeRateLimiter()
+    for _ in range(ERROR_INTAKE_RATE_LIMIT):
+        assert first.allow("same-client")
+
+    assert not first.allow("same-client")
+    assert second.allow("same-client")

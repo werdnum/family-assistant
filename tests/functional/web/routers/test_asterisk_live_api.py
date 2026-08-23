@@ -210,6 +210,29 @@ def test_asterisk_rejects_invalid_token(
 
 
 @pytest.mark.no_db
+def test_asterisk_requires_secret_when_jwt_edge_auth_is_enabled(
+    mock_gemini_client: tuple[MagicMock, MagicMock],
+    asterisk_env_cleanup: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    os.environ.pop("ASTERISK_SECRET_TOKEN", None)
+    with TestClient(app) as client:
+        monkeypatch.setattr(
+            app.state,
+            "jwt_token_service",
+            MagicMock(enabled=True),
+            raising=False,
+        )
+        with (
+            pytest.raises(WebSocketDisconnect) as exc_info,
+            client.websocket_connect("/api/asterisk/live"),
+        ):
+            pass
+
+    assert exc_info.value.code == 1008
+
+
+@pytest.mark.no_db
 def test_asterisk_rejects_unauthorized_extension(
     mock_gemini_client: tuple[MagicMock, MagicMock],
     asterisk_env_cleanup: None,
