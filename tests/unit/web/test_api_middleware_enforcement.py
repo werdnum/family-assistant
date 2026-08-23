@@ -365,3 +365,15 @@ async def test_default_auth_routes_are_not_capped() -> None:
     async with AsyncClient(transport=transport, base_url="http://testserver") as c:
         response = await c.post("/api/notes/", content=b"x" * 200)
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_non_api_webhook_routes_are_not_capped() -> None:
+    stack = BootstrapBodyLimitMiddleware(_ok_app)
+    transport = ASGITransport(app=stack)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as c:
+        response = await c.post(
+            "/webhook/mail/mime",
+            content=b"x" * (BOOTSTRAP_BODY_LIMIT_BYTES + 1),
+        )
+    assert response.status_code == 200
