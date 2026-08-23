@@ -119,7 +119,7 @@ class FrontendTelemetryResponse(BaseModel):
 # FrontendErrorReport), and unauthenticated reports never persist — they are
 # clamped into the in-memory telemetry ring, which is fixed-size and dropped
 # on restart. Authenticated reporters keep the full severity behaviour.
-ERROR_INTAKE_RATE_LIMIT = 60  # reports per window per client address
+ERROR_INTAKE_RATE_LIMIT = 60  # reports per window per authenticated user or address
 ERROR_INTAKE_WINDOW_SECONDS = 60.0
 # Cap on tracked addresses: an attacker rotating source addresses (e.g. across
 # an IPv6 allocation) must not be able to grow the map without bound. When the
@@ -138,24 +138,24 @@ def reset_error_intake_rate_limiter() -> None:
         _rate_limit_hits.clear()
 
 
-def check_error_intake_rate_limit(client_address: str) -> bool:
-    """Sliding-window per-address limiter; True when the report is allowed."""
+def check_error_intake_rate_limit(client_key: str) -> bool:
+    """Sliding-window per-client limiter; True when the report is allowed."""
     now = time.monotonic()
     with _rate_limit_lock:
-        hits = _rate_limit_hits.get(client_address)
+        hits = _rate_limit_hits.get(client_key)
         if hits is not None:
             while hits and now - hits[0] > ERROR_INTAKE_WINDOW_SECONDS:
                 hits.popleft()
             if not hits:
-                del _rate_limit_hits[client_address]
+                del _rate_limit_hits[client_key]
         if len(_rate_limit_hits) >= RATE_LIMIT_MAX_ADDRESSES:
             _sweep_rate_limit_addresses(now)
-        hits = _rate_limit_hits.get(client_address)
+        hits = _rate_limit_hits.get(client_key)
         if hits is None:
             if len(_rate_limit_hits) >= RATE_LIMIT_MAX_ADDRESSES:
                 return False
             hits = deque()
-            _rate_limit_hits[client_address] = hits
+            _rate_limit_hits[client_key] = hits
         if len(hits) >= ERROR_INTAKE_RATE_LIMIT:
             return False
         hits.append(now)
@@ -210,8 +210,8 @@ async def _token_bound_session_is_valid(engine: AsyncEngine, token_id: int) -> b
     return await api_tokens_storage.is_token_valid(Database(engine), token_id)
 
 
-async def _reporter_is_authenticated(request: Request) -> bool:
-    """Whether the reporter holds a valid session or API credential.
+async def _reporter_authentication(request: Request) -> tuple[bool, str | None]:
+    """Return authentication state and a stable identity for rate limiting.
 
     Sessions bound to an API token are revalidated against the token row, so a
     revoked or expired credential cannot keep writing persistent reports.
@@ -219,47 +219,43 @@ async def _reporter_is_authenticated(request: Request) -> bool:
     """
     auth_service = getattr(request.app.state, "auth_service", None)
     if not auth_service or not auth_service.auth_enabled:
-        return True
+        return True, None
+
+    try:
+        session_user = request.session.get("user")
+    except AssertionError:
+        session_user = None
+    session_identifier = None
+    if session_user:
+        session_identifier = (
+            str(session_user.get("sub") or session_user.get("user_identifier") or "")
+            or None
+        )
 
     session_bound_token_id = _session_bound_token_id(request)
     if session_bound_token_id is not None:
         engine = getattr(auth_service, "database_engine", None)
         if not engine:
-            return True
-        return await _token_bound_session_is_valid(engine, session_bound_token_id)
+            return True, session_identifier
+        valid = await _token_bound_session_is_valid(engine, session_bound_token_id)
+        return valid, session_identifier if valid else None
 
-    try:
-        if request.session.get("user"):
-            return True
-    except AssertionError:
-        pass
+    if session_user:
+        return True, session_identifier
 
     credential = extract_api_credential(request)
     if not credential:
-        return False
+        return False, None
 
     api_user = await auth_service.get_user_from_api_token(
         f"Bearer {credential}", request
     )
-    return api_user is not None
-
-
-ERROR_INTAKE_MAX_BODY_BYTES = 64 * 1024
-
-
-async def _read_limited_body(request: Request, max_bytes: int) -> bytes:
-    """Read the request body, aborting once it exceeds ``max_bytes``."""
-    chunks: list[bytes] = []
-    received = 0
-    async for chunk in request.stream():
-        received += len(chunk)
-        if received > max_bytes:
-            raise HTTPException(
-                status_code=413,
-                detail="Error report payload too large.",
-            )
-        chunks.append(chunk)
-    return b"".join(chunks)
+    if api_user is None:
+        return False, None
+    identifier = (
+        str(api_user.get("sub") or api_user.get("user_identifier") or "") or None
+    )
+    return True, identifier
 
 
 @errors_api_router.post("/")
@@ -284,20 +280,26 @@ async def report_frontend_error(
     access control: per-client rate limiting, a hard body-size cap enforced
     while the body is still streaming (before it is ever fully buffered), field
     limits on the report model, and unauthenticated reports are clamped into
-    the telemetry ring buffer — never persisted to error_logs — regardless of
-    claimed severity.
+    the telemetry ring buffer — never persisted to error_logs and lost on
+    process restart — regardless of claimed severity.
     """
+    reporter_authenticated, reporter_identifier = await _reporter_authentication(
+        request
+    )
     client_address = request.client.host if request.client else "unknown"
-    if not check_error_intake_rate_limit(client_address):
+    rate_limit_key = (
+        f"user:{reporter_identifier}"
+        if reporter_authenticated and reporter_identifier
+        else f"address:{client_address}"
+    )
+    if not check_error_intake_rate_limit(rate_limit_key):
         raise HTTPException(status_code=429, detail="Too many error reports.")
 
-    raw_body = await _read_limited_body(request, ERROR_INTAKE_MAX_BODY_BYTES)
     try:
-        error_report = FrontendErrorReport.model_validate(json.loads(raw_body))
+        error_report = FrontendErrorReport.model_validate(await request.json())
     except (ValueError, ValidationError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    reporter_authenticated = await _reporter_is_authenticated(request)
     extra_data = {
         "url": error_report.url,
         "user_agent": error_report.user_agent,

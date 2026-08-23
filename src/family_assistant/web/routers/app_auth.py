@@ -68,6 +68,7 @@ BROWSER_TOKEN_COOKIE_NAME = "fa_access_token"
 # Name of the internal api_tokens row backing browser-session JWTs. One live
 # row per user, reused across bridge calls; never issued as a credential.
 BROWSER_SESSION_TOKEN_NAME = "browser-session"
+BROWSER_SESSION_TOKEN_TYPE = "browser"
 
 # --- Routers ---
 # Two routers: one for page-level endpoints, one for API endpoints
@@ -514,25 +515,24 @@ async def exchange_opaque_token(
         )
 
     ttl = jwt_tokens.access_token_ttl_seconds()
-    # Extend the backing row through the newly issued JWT's lifetime only when
-    # it has a finite expiry that would otherwise cut the JWT short. A row
-    # without an expiry (the common operator-token configuration) must keep
-    # working locally forever — never impose or shorten its lifetime.
+    # A JWT derived from an expiring opaque credential must not outlive or
+    # renew that credential. Cap the JWT lifetime at the row's remaining
+    # lifetime; non-expiring operator tokens retain the configured JWT TTL.
     now = datetime.now(UTC)
-    desired_expires = now + timedelta(seconds=ttl + 60)
     row_expires = token_row["expires_at"]
     if row_expires and row_expires.tzinfo is None:
         row_expires = row_expires.replace(tzinfo=UTC)
-    if row_expires is not None and row_expires < desired_expires:
-        async with db_context.transaction() as txn:
-            await txn.execute(
-                sa_update(api_tokens_table)
-                .where(api_tokens_table.c.id == token_row["id"])
-                .values(expires_at=desired_expires)
+    if row_expires is not None:
+        remaining_seconds = int((row_expires - now).total_seconds())
+        if remaining_seconds <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired API token.",
             )
+        ttl = min(ttl, remaining_seconds)
 
     token = jwt_tokens.mint_access_token(
-        str(token_row["user_identifier"]), int(token_row["id"])
+        str(token_row["user_identifier"]), int(token_row["id"]), expires_in=ttl
     )
     logger.info(
         "Opaque token upgrade: issued JWT for API token %s (user %s)",
@@ -593,7 +593,7 @@ async def browser_token(
         .where(
             api_tokens_table.c.user_identifier == user_identifier,
             api_tokens_table.c.name == BROWSER_SESSION_TOKEN_NAME,
-            api_tokens_table.c.token_type == "api",
+            api_tokens_table.c.token_type == BROWSER_SESSION_TOKEN_TYPE,
             api_tokens_table.c.is_revoked == False,  # noqa: E712 - SQL comparison
             api_tokens_table.c.expires_at > now,
         )
@@ -621,6 +621,7 @@ async def browser_token(
                 sa_delete(api_tokens_table).where(
                     api_tokens_table.c.user_identifier == user_identifier,
                     api_tokens_table.c.name == BROWSER_SESSION_TOKEN_NAME,
+                    api_tokens_table.c.token_type == BROWSER_SESSION_TOKEN_TYPE,
                     api_tokens_table.c.expires_at <= now,
                 )
             )
@@ -632,7 +633,7 @@ async def browser_token(
                 prefix=minted.prefix,
                 created_at=minted.created_at,
                 expires_at=now + timedelta(seconds=ttl + 60),
-                token_type="api",
+                token_type=BROWSER_SESSION_TOKEN_TYPE,
             )
 
     token = jwt_tokens.mint_access_token(user_identifier, api_token_id)

@@ -423,10 +423,11 @@ class _FakeAuthService:
         self, auth_header: str, request: object
     ) -> dict | None:
         if self._accept_tokens:
+            user_identifier = auth_header.rsplit(" ", 1)[-1]
             return {
-                "sub": "token-user",
-                "name": "token-user",
-                "email": "token-user",
+                "sub": user_identifier,
+                "name": user_identifier,
+                "email": user_identifier,
                 "source": "api_token",
                 "token_id": 1,
             }
@@ -524,6 +525,40 @@ async def test_intake_rate_limit_returns_429(
             statuses.append(response.status_code)
     assert all(status == 200 for status in statuses[:-1])
     assert statuses[-1] == 429
+
+
+@pytest.mark.asyncio
+async def test_authenticated_reporters_have_separate_rate_limit_buckets(
+    web_only_assistant: Assistant,
+) -> None:
+    """A shared reverse-proxy address does not combine authenticated users."""
+    assert web_only_assistant.fastapi_app is not None
+    original = getattr(web_only_assistant.fastapi_app.state, "auth_service", None)
+    web_only_assistant.fastapi_app.state.auth_service = _FakeAuthService(True)
+    try:
+        async with _client_for(web_only_assistant) as client:
+            for _ in range(ERROR_INTAKE_RATE_LIMIT):
+                response = await client.post(
+                    "/api/errors/",
+                    json={"message": "user-a", "url": "http://x/"},
+                    headers={"Authorization": "Bearer user-a"},
+                )
+                assert response.status_code == 200
+            limited = await client.post(
+                "/api/errors/",
+                json={"message": "user-a", "url": "http://x/"},
+                headers={"Authorization": "Bearer user-a"},
+            )
+            other_user = await client.post(
+                "/api/errors/",
+                json={"message": "user-b", "url": "http://x/"},
+                headers={"Authorization": "Bearer user-b"},
+            )
+    finally:
+        web_only_assistant.fastapi_app.state.auth_service = original
+
+    assert limited.status_code == 429
+    assert other_user.status_code == 200
 
 
 @pytest.mark.asyncio

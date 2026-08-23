@@ -209,7 +209,7 @@ api_tokens_table = Table(
     ),  # Flag to indicate if the token is revoked
     Column(
         "token_type", String(16), nullable=False, server_default="api"
-    ),  # "api" or "refresh"
+    ),  # "api", "refresh", or internal "browser"
     Column(
         "parent_token_id", Integer, ForeignKey("api_tokens.id"), nullable=True
     ),  # Links refresh token to its API token

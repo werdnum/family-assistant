@@ -135,12 +135,16 @@ class JsonWebKey(TypedDict):
     use: str
 
 
-def mint_access_token(user_identifier: str, api_token_id: int) -> str:
+def mint_access_token(
+    user_identifier: str, api_token_id: int, expires_in: int | None = None
+) -> str:
     """Mint a short-lived ES256 access token bound to an api_tokens row."""
     if _signing_key is None or _key_id is None:
         raise RuntimeError("JWT signing is not configured.")
     now = datetime.now(UTC)
-    ttl = access_token_ttl_seconds()
+    ttl = expires_in if expires_in is not None else access_token_ttl_seconds()
+    if expires_in is not None and ttl <= 0:
+        raise ValueError("Access-token lifetime must be positive.")
     claims: AccessTokenClaims = {
         "iss": JWT_ISSUER,
         "aud": JWT_AUDIENCE,

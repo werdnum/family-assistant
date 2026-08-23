@@ -267,7 +267,7 @@ class AuthService:
         db = Database(self.database_engine)
         query = select(api_tokens_table).where(
             api_tokens_table.c.id == claims["tid"],
-            api_tokens_table.c.token_type == "api",
+            api_tokens_table.c.token_type.in_(("api", "browser")),
         )
         token_row = await db.fetch_one(query)
 
@@ -431,12 +431,23 @@ class BootstrapBodyLimitMiddleware:
 
         headers = Headers(scope=scope)
         content_length = headers.get("content-length")
-        if content_length and int(content_length) > limit:
-            await JSONResponse(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                content={"detail": "Request body too large."},
-            )(scope, receive, send)
-            return
+        if content_length:
+            try:
+                declared_length = int(content_length)
+            except ValueError:
+                declared_length = -1
+            if declared_length < 0:
+                await JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content={"detail": "Invalid Content-Length header."},
+                )(scope, receive, send)
+                return
+            if declared_length > limit:
+                await JSONResponse(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    content={"detail": "Request body too large."},
+                )(scope, receive, send)
+                return
 
         # Buffer with the cap applied so memory stays bounded even when no
         # Content-Length is provided (chunked transfer).
