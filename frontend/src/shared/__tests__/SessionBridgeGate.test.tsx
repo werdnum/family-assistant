@@ -121,3 +121,35 @@ describe('SessionBridgeGate', () => {
     }
   });
 });
+
+it('routes a session-expired settlement from a scheduled refresh into re-auth', async () => {
+  const browserTokenClient = await import('../../api/browserTokenClient');
+  const reloadSpy = vi
+    .spyOn(browserTokenClient, 'reloadForReauthentication')
+    .mockImplementation(() => {});
+  // First attempt succeeds (gate opens); the later near-expiry refresh
+  // settles session-expired.
+  let attempts = 0;
+  server.use(
+    http.get('/api/auth/browser-token', () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return HttpResponse.json({ expires_in: 3600 });
+      }
+      return HttpResponse.json({ detail: 'Unauthorized' }, { status: 401 });
+    })
+  );
+
+  render(
+    <SessionBridgeGate>
+      <div>app content</div>
+    </SessionBridgeGate>
+  );
+
+  await waitFor(() => expect(screen.getByText('app content')).toBeInTheDocument());
+
+  await browserTokenClient.startSessionBridge();
+
+  await waitFor(() => expect(reloadSpy).toHaveBeenCalled());
+  reloadSpy.mockRestore();
+});

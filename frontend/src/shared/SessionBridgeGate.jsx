@@ -20,9 +20,10 @@ export default function SessionBridgeGate({ children }) {
 
   useEffect(() => {
     let cancelled = false;
-    let unsubscribe = () => {};
-
-    void startSessionBridge().then((settlement) => {
+    // Installed for the component's whole lifetime: scheduled near-expiry
+    // refreshes settle long after the initial attempt, and any of them
+    // returning session-expired must route into re-authentication.
+    const unsubscribe = addBridgeSettlementListener((settlement) => {
       if (cancelled) {
         return;
       }
@@ -30,19 +31,17 @@ export default function SessionBridgeGate({ children }) {
         reloadForReauthentication();
         return;
       }
-      if (settlement === 'unreachable') {
-        setPhase('connecting');
-        unsubscribe = addBridgeSettlementListener((next) => {
-          if (next !== 'unreachable') {
-            unsubscribe();
-            setPhase('ready');
-          }
-        });
-        return;
-      }
-      // 'refreshed' or 'not-configured'
-      setPhase('ready');
+      // Once the gate has opened, later settlements must never close it —
+      // only an expired session (handled above) does.
+      setPhase((prev) => {
+        if (prev === 'ready') {
+          return prev;
+        }
+        return settlement !== 'unreachable' ? 'ready' : 'connecting';
+      });
     });
+
+    void startSessionBridge();
 
     return () => {
       cancelled = true;
