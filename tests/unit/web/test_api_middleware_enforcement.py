@@ -206,8 +206,8 @@ async def test_x_api_token_header_authenticates() -> None:
 
 
 @pytest.mark.asyncio
-async def test_bearer_session_is_bound_to_token_id() -> None:
-    """A bearer-authenticated request persists the token id with the session."""
+async def test_opaque_bearer_authentication_is_request_local() -> None:
+    """Ordinary bearer auth must not mint a session cookie implicitly."""
 
     async def session_reader_app(scope: Scope, receive: Receive, send: Send) -> None:
         request = Request(scope)
@@ -226,14 +226,11 @@ async def test_bearer_session_is_bound_to_token_id() -> None:
     transport = ASGITransport(app=stack)
     async with AsyncClient(transport=transport, base_url="http://testserver") as c:
         first = await c.get("/api/notes/", headers={"Authorization": "Bearer x"})
-        assert first.json().get("api_token_id") == 1
+        second = await c.get("/api/notes/")
 
-        # Replay only the session cookie (no bearer header): the stored user
-        # must carry api_token_id so the validity check can revoke it later.
-        cookie_header = first.headers["set-cookie"].split(";")[0]
-        second = await c.get("/api/notes/", headers={"Cookie": cookie_header})
-    assert second.status_code == 200
-    assert second.json()["user"]["token_id"] == 1
+    assert first.status_code == 200
+    assert first.json() == {}
+    assert second.status_code == 401
 
 
 class _AcceptingJWTAuthService(_AcceptingAuthService):
