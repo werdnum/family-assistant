@@ -82,6 +82,13 @@ def test_mint_and_verify_roundtrip() -> None:
     )
 
 
+def test_mint_accepts_shorter_lifetime() -> None:
+    token = jwt_tokens.mint_access_token("user@example.com", 42, expires_in=90)
+    claims = jwt_tokens.verify_access_token(token)
+    assert claims is not None
+    assert claims["exp"] - claims["iat"] == 90
+
+
 def test_tampered_token_rejected() -> None:
     token = jwt_tokens.mint_access_token("user@example.com", 42)
     header, payload, signature = token.split(".")

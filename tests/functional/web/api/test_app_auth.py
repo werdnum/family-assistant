@@ -462,7 +462,10 @@ class TestJWTTokens:
         query = (
             select(func.count().label("count"))
             .select_from(api_tokens_table)
-            .where(api_tokens_table.c.name == "browser-session")
+            .where(
+                api_tokens_table.c.name == "browser-session",
+                api_tokens_table.c.token_type == "browser",
+            )
         )
         db = Database(db_engine)
         row = await db.fetch_one(query)
@@ -676,7 +679,7 @@ class TestBrowserSessionRows:
             prefix=minted.prefix,
             created_at=minted.created_at,
             expires_at=datetime.now(UTC) - timedelta(days=1),
-            token_type="api",
+            token_type="browser",
         )
 
         response = await session_client.get("/api/auth/browser-token")
@@ -688,10 +691,46 @@ class TestBrowserSessionRows:
             .where(
                 api_tokens_table.c.user_identifier == "browser-user@example.com",
                 api_tokens_table.c.name == "browser-session",
+                api_tokens_table.c.token_type == "browser",
             )
         )
         row = await db.fetch_one(query)
         assert row is not None and row["count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_browser_token_does_not_reuse_user_named_token(
+        self,
+        session_client: AsyncClient,
+        db_engine: AsyncEngine,
+        jwt_enabled: None,
+    ) -> None:
+        """An API token named browser-session remains a user credential."""
+        minted = api_tokens_storage.mint_api_token()
+        db = Database(db_engine)
+        user_token_id = await api_tokens_storage.add_api_token(
+            db_context=db,
+            user_identifier="browser-user@example.com",
+            name="browser-session",
+            hashed_token=minted.hashed_secret,
+            prefix=minted.prefix,
+            created_at=minted.created_at,
+            expires_at=datetime.now(UTC) + timedelta(days=30),
+            token_type="api",
+        )
+
+        response = await session_client.get("/api/auth/browser-token")
+        assert response.status_code == 200
+
+        query = select(api_tokens_table.c.id, api_tokens_table.c.token_type).where(
+            api_tokens_table.c.user_identifier == "browser-user@example.com",
+            api_tokens_table.c.name == "browser-session",
+        )
+        rows = await db.fetch_all(query)
+        assert len(rows) == 2
+        assert any(
+            row["id"] == user_token_id and row["token_type"] == "api" for row in rows
+        )
+        assert any(row["token_type"] == "browser" for row in rows)
 
     @pytest.mark.asyncio
     async def test_refresh_reuses_backing_row(
@@ -774,3 +813,45 @@ class TestBrowserSessionRows:
         )
         row = await db.fetch_one(query)
         assert row is not None and row["expires_at"] is None
+
+    @pytest.mark.asyncio
+    async def test_opaque_upgrade_is_capped_by_row_expiry(
+        self,
+        api_test_client: AsyncClient,
+        db_engine: AsyncEngine,
+        jwt_enabled: None,
+    ) -> None:
+        """Exchanging an opaque token neither extends nor outlives its row."""
+        minted = api_tokens_storage.mint_api_token()
+        original_expiry = datetime.now(UTC) + timedelta(minutes=30)
+        db = Database(db_engine)
+        token_id = await api_tokens_storage.add_api_token(
+            db_context=db,
+            user_identifier="short-lived@example.com",
+            name="short-lived",
+            hashed_token=minted.hashed_secret,
+            prefix=minted.prefix,
+            created_at=minted.created_at,
+            expires_at=original_expiry,
+            token_type="api",
+        )
+
+        response = await api_test_client.post(
+            "/api/auth/token", json={"token": minted.full_token}
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert 1 <= body["expires_in"] <= 30 * 60
+        claims = jwt_tokens_module.verify_access_token(body["api_token"])
+        assert claims is not None
+        assert claims["exp"] - claims["iat"] == body["expires_in"]
+
+        query = select(api_tokens_table.c.expires_at).where(
+            api_tokens_table.c.id == token_id
+        )
+        row = await db.fetch_one(query)
+        assert row is not None
+        stored_expiry = row["expires_at"]
+        if stored_expiry.tzinfo is None:
+            stored_expiry = stored_expiry.replace(tzinfo=UTC)
+        assert stored_expiry == original_expiry

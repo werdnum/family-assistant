@@ -332,6 +332,19 @@ async def test_content_length_header_rejected_before_reading() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("content_length", ["invalid", "-1"])
+async def test_invalid_content_length_header_rejected(content_length: str) -> None:
+    stack = BootstrapBodyLimitMiddleware(_ok_app)
+    transport = ASGITransport(app=stack)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as c:
+        response = await c.post(
+            "/api/auth/exchange",
+            headers={"Content-Length": content_length},
+        )
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_default_auth_routes_are_not_capped() -> None:
     stack = BootstrapBodyLimitMiddleware(_ok_app)
     transport = ASGITransport(app=stack)
