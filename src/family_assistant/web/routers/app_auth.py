@@ -516,6 +516,18 @@ async def exchange_opaque_token(
             detail="Invalid or expired API token.",
         )
 
+    ttl = jwt_tokens.access_token_ttl_seconds()
+    # Extend the backing row through the newly issued JWT's lifetime plus
+    # grace — an operator token in its final expiry window would otherwise
+    # invalidate the JWT before the advertised expires_in.
+    now = datetime.now(UTC)
+    async with db_context.transaction() as txn:
+        await txn.execute(
+            sa_update(api_tokens_table)
+            .where(api_tokens_table.c.id == token_row["id"])
+            .values(expires_at=now + timedelta(seconds=ttl + 60))
+        )
+
     token = jwt_tokens.mint_access_token(
         str(token_row["user_identifier"]), int(token_row["id"])
     )
@@ -524,10 +536,7 @@ async def exchange_opaque_token(
         token_row["id"],
         token_row["user_identifier"],
     )
-    return RefreshTokenResponse(
-        api_token=token,
-        expires_in=jwt_tokens.access_token_ttl_seconds(),
-    )
+    return RefreshTokenResponse(api_token=token, expires_in=ttl)
 
 
 @api_auth_router.get("/browser-token")
