@@ -917,6 +917,16 @@ class ConsoleErrorCollector:
         """Set up console message listeners."""
 
         def handle_console_message(msg: Any) -> None:  # noqa: ANN401  # playwright console message
+            # The optional session→JWT bridge endpoint does not exist on
+            # deployments without JWT auth configured; the frontend handles
+            # the 404 gracefully and the browser's resource-load log line for
+            # it is not a page defect.
+            location_url = str(msg.location.get("url", ""))
+            if (
+                "/api/auth/browser-token" in (location_url + msg.text)
+                and "404" in msg.text
+            ):
+                return
             if msg.type == "error":
                 self.errors.append(
                     f"{msg.location.get('url', 'unknown')}:{msg.location.get('lineNumber', '?')} - {msg.text}"
