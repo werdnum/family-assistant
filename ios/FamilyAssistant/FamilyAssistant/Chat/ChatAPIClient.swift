@@ -78,7 +78,7 @@ struct ChatAPIClient {
             url: apiURL("/api/v1/chat/conversations/\(encodedID)/share"),
             method: "POST"
         )
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
         try validateNonIdempotentResponse(
             response: response,
             data: data,
@@ -96,7 +96,7 @@ struct ChatAPIClient {
             url: apiURL("/api/v1/chat/conversations/\(encodedID)/share"),
             method: "DELETE"
         )
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
         try validateNonIdempotentResponse(
             response: response,
             data: data,
@@ -153,7 +153,7 @@ struct ChatAPIClient {
         )
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(EphemeralTokenRequestBody(profileID: profileID))
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
         do {
             try validate(response: response, data: data)
         } catch let ChatAPIError.server(statusCode, detail, _) where detail == nil {
@@ -179,7 +179,7 @@ struct ChatAPIClient {
                 turns: turns.map { VoiceSessionTurnBody(role: $0.speaker.rawValue, text: $0.text) }
             )
         )
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
         try validate(response: response, data: data)
         return try JSONDecoder.chatDecoder.decode(VoiceSessionResponseBody.self, from: data).conversationID
     }
@@ -211,10 +211,13 @@ struct ChatAPIClient {
                 taintMetadata: taintMetadata
             )
         )
-        let (data, response) = try await urlSession.data(for: request)
-        guard response is HTTPURLResponse else {
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
+        guard let httpResponse = response as? HTTPURLResponse else {
             throw ChatAPIError.invalidResponse
         }
+        // JSON error bodies stay the runner's error channel (decoded below),
+        // while an edge auth wall is HTML regardless of the status it uses.
+        try rejectAuthWall(response: httpResponse, data: data)
         return try JSONDecoder.chatDecoder.decode(JSONValue.self, from: data)
     }
 
@@ -244,7 +247,7 @@ struct ChatAPIClient {
             )
         )
 
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
         try validate(response: response, data: data)
         let decoded = try JSONDecoder.chatDecoder.decode(ChatSendMessageResponse.self, from: data)
         return ChatSendResult(reply: decoded.reply, conversationID: decoded.conversationID)
@@ -280,7 +283,7 @@ struct ChatAPIClient {
                 attachments: attachments.map(ChatStreamAttachment.init(attachment:))
             )
         )
-        let (startData, startResponse) = try await urlSession.data(for: startRequest)
+        let (startData, startResponse) = try await urlSession.dataExpectingJSON(for: startRequest, authWallError: ChatAPIError.authWall)
         if (startResponse as? HTTPURLResponse)?.statusCode == 409,
            let conflict = try? JSONDecoder.chatDecoder.decode(ChatTurnConflictResponse.self, from: startData) {
             throw ChatAPIError.turnAlreadyRunning(activeTurnID: conflict.detail.activeTurnID)
@@ -309,7 +312,7 @@ struct ChatAPIClient {
         )
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder.chatEncoder.encode(ChatTurnControlRequest(conversationID: conversationID))
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
         try validate(response: response, data: data)
         return try JSONDecoder.chatDecoder.decode(ChatTurnCancelResult.self, from: data)
     }
@@ -328,7 +331,7 @@ struct ChatAPIClient {
         request.httpBody = try JSONEncoder.chatEncoder.encode(
             ChatTurnSteerRequest(conversationID: conversationID, prompt: prompt)
         )
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
         try validate(response: response, data: data)
         return try JSONDecoder.chatDecoder.decode(ChatTurnSteerResult.self, from: data)
     }
@@ -382,26 +385,32 @@ struct ChatAPIClient {
     /// Connect to the account-global conversation-activity stream for live
     /// conversation-list updates.
     ///
-    /// Emits a `ChatConversationActivity` whenever any conversation the caller
-    /// owns changes (a turn starts/ends, a delegated/scheduled reply lands) —
-    /// including conversations other than the one currently open, which the
-    /// per-conversation follow stream never sees. The frame is advisory; the
-    /// caller reacts by re-fetching the authoritative conversation list. Stays
-    /// open with server heartbeats; the caller resubscribes on close/error.
-    func connectActivityStream() async throws -> AsyncThrowingStream<ChatConversationActivity, Error> {
+    /// Emits an activity whenever any conversation the caller owns changes (a
+    /// turn starts/ends, a delegated/scheduled reply lands), including conversations
+    /// other than the one currently open. Heartbeats are emitted separately as
+    /// control events so they restore connection health without refreshing the list.
+    /// The caller resubscribes on close/error.
+    func connectActivityStream() async throws -> AsyncThrowingStream<ChatActivityStreamEvent, Error> {
         let request = try await authManager.authorizedRequest(
             url: apiURL("/api/v1/chat/activity/stream"),
             method: "GET"
         )
-        // Validate the response status before returning the stream (see
-        // `streamConversation` for why this matters to the reconnect backoff).
+        // auth-wall-stream-chokepoint: validatedStreamResponse sniffs the prefix.
         let (bytes, response) = try await urlSession.bytes(for: request)
-        try validate(response: response, data: Data())
+        let (initialBytes, iterator) = try await validatedStreamResponse(
+            bytes,
+            response: response
+        )
 
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    try await streamActivityEvents(bytes: bytes, continuation: continuation)
+                    var iterator = iterator
+                    try await streamActivityEvents(
+                        initialBytes: initialBytes,
+                        iterator: &iterator,
+                        continuation: continuation
+                    )
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -414,52 +423,65 @@ struct ChatAPIClient {
     }
 
     private func streamActivityEvents(
-        bytes: URLSession.AsyncBytes,
-        continuation: AsyncThrowingStream<ChatConversationActivity, Error>.Continuation
+        initialBytes: Data,
+        iterator: inout URLSession.AsyncBytes.AsyncIterator,
+        continuation: AsyncThrowingStream<ChatActivityStreamEvent, Error>.Continuation
     ) async throws {
         let parser = SSEParser()
-        var pendingUTF8 = Data()
-        for try await byte in bytes {
+        var awaitingFirstContentByte = true
+        for byte in initialBytes {
+            try rejectAuthWallMarkupStart(
+                byte,
+                awaitingFirstContentByte: &awaitingFirstContentByte
+            )
+        }
+        var pendingUTF8 = initialBytes
+        if let chunk = String(data: pendingUTF8, encoding: .utf8) {
+            pendingUTF8.removeAll(keepingCapacity: true)
+            for event in parser.append(chunk) {
+                continuation.yield(Self.activityStreamEvent(from: event))
+            }
+        }
+        while let byte = try await iterator.next() {
+            try rejectAuthWallMarkupStart(
+                byte,
+                awaitingFirstContentByte: &awaitingFirstContentByte
+            )
             pendingUTF8.append(byte)
             guard let chunk = String(data: pendingUTF8, encoding: .utf8) else {
                 continue
             }
             pendingUTF8.removeAll(keepingCapacity: true)
             for event in parser.append(chunk) {
-                if let activity = Self.activity(from: event) {
-                    continuation.yield(activity)
-                }
+                continuation.yield(Self.activityStreamEvent(from: event))
             }
         }
         if !pendingUTF8.isEmpty {
             for event in parser.append(String(decoding: pendingUTF8, as: UTF8.self)) {
-                if let activity = Self.activity(from: event) {
-                    continuation.yield(activity)
-                }
+                continuation.yield(Self.activityStreamEvent(from: event))
             }
         }
         for event in parser.flush() {
-            if let activity = Self.activity(from: event) {
-                continuation.yield(activity)
-            }
+            continuation.yield(Self.activityStreamEvent(from: event))
         }
     }
 
-    /// Map a raw SSE frame to a `ChatConversationActivity`, ignoring the
-    /// heartbeat/stream_dropped control frames (a closed stream surfaces as the
-    /// AsyncThrowingStream finishing, which the caller treats as "reconnect").
-    private static func activity(from event: ServerSentEvent) -> ChatConversationActivity? {
+    /// Preserve decoded control frames as health signals while distinguishing
+    /// them from conversation changes that require an authoritative list refresh.
+    private static func activityStreamEvent(from event: ServerSentEvent) -> ChatActivityStreamEvent {
         guard event.event == "conversation_activity" else {
-            return nil
+            return .control
         }
         guard let data = event.data.data(using: .utf8),
               let payload = try? JSONDecoder.chatDecoder.decode([String: JSONValue].self, from: data)
         else {
-            return ChatConversationActivity(conversationID: nil, reason: nil)
+            return .activity(ChatConversationActivity(conversationID: nil, reason: nil))
         }
-        return ChatConversationActivity(
-            conversationID: payload["conversation_id"]?.stringValue,
-            reason: payload["reason"]?.stringValue
+        return .activity(
+            ChatConversationActivity(
+                conversationID: payload["conversation_id"]?.stringValue,
+                reason: payload["reason"]?.stringValue
+            )
         )
     }
 
@@ -475,7 +497,7 @@ struct ChatAPIClient {
         request.httpBody = try JSONEncoder.chatEncoder.encode(
             ChatAckRequest(conversationID: conversationID, ackSeq: ackSeq)
         )
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
         try validate(response: response, data: data)
     }
 
@@ -511,23 +533,27 @@ struct ChatAPIClient {
         }
         let request = try await authManager.authorizedRequest(url: url, method: "GET")
 
-        // Establish the connection and validate the response status BEFORE
-        // returning the stream. `URLSession.bytes(for:)` resolves once the
-        // response headers arrive (the body still streams lazily via
-        // AsyncBytes), so a connection failure or a non-2xx status throws here at
-        // the call site rather than surfacing later during iteration. Callers
-        // (notably the live-updates reconnect loop) rely on this to tell a real
-        // connection apart from a stream object that will immediately error —
-        // otherwise they would reset their backoff before the stream ever
-        // succeeded and tight-loop against a down or erroring endpoint.
+        // Establish and validate the connection before returning the stream.
+        // Callers rely on errors surfacing here so reconnect backoff is not reset
+        // for a stream object that immediately fails.
+        // auth-wall-stream-chokepoint: validatedStreamResponse sniffs the prefix.
         let (bytes, response) = try await urlSession.bytes(for: request)
-        try validate(response: response, data: Data())
+        let (initialBytes, iterator) = try await validatedStreamResponse(
+            bytes,
+            response: response
+        )
 
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
+                    var iterator = iterator
                     let parser = SSEParser()
-                    try await streamServerSentEvents(bytes: bytes, parser: parser, continuation: continuation)
+                    try await streamServerSentEvents(
+                        initialBytes: initialBytes,
+                        iterator: &iterator,
+                        parser: parser,
+                        continuation: continuation
+                    )
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -571,7 +597,7 @@ struct ChatAPIClient {
             )
         )
 
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
         try validate(response: response, data: data)
         let result = try JSONDecoder.chatDecoder.decode(ChatConfirmationActionResponse.self, from: data)
         if !result.success {
@@ -602,7 +628,7 @@ struct ChatAPIClient {
             boundary: boundary
         )
 
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
         try validate(response: response, data: data)
         return try JSONDecoder.chatDecoder.decode(ChatUploadResponse.self, from: data)
     }
@@ -612,14 +638,17 @@ struct ChatAPIClient {
             url: apiURL("/api/attachments/\(Self.encodedPathComponent(attachmentID))"),
             method: "DELETE"
         )
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
         try validate(response: response, data: data)
     }
 
     func downloadAttachment(path: String) async throws -> (Data, String?) {
         let request = try await authManager.authorizedRequest(url: apiURL(path), method: "GET")
+        // auth-wall-exempt: an attachment may legitimately contain markup.
         let (data, response) = try await urlSession.data(for: request)
-        try validate(response: response, data: data)
+        // An attachment body is the payload, not a JSON envelope: an HTML/XML/SVG
+        // file is legitimate, so downloads keep status-only checking.
+        try validate(response: response, data: data, expectsJSON: false)
         return (data, (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type"))
     }
 
@@ -677,7 +706,8 @@ struct ChatAPIClient {
         // stale rejection clear the newly issued credentials.
         let capturedEpoch = authManager.authEpoch
         let request = try await authManager.authorizedRequest(url: url, method: "GET")
-        let (data, response) = try await urlSession.data(for: request)
+        let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
+        try rejectAuthWall(response: response, data: data)
         guard (response as? HTTPURLResponse)?.statusCode == 401 else {
             return (data, response)
         }
@@ -696,7 +726,8 @@ struct ChatAPIClient {
         }
 
         let retryRequest = try await authManager.authorizedRequest(url: url, method: "GET")
-        let (retryData, retryResponse) = try await urlSession.data(for: retryRequest)
+        let (retryData, retryResponse) = try await urlSession.dataExpectingJSON(for: retryRequest, authWallError: ChatAPIError.authWall)
+        try rejectAuthWall(response: retryResponse, data: retryData)
         if (retryResponse as? HTTPURLResponse)?.statusCode == 401 {
             authManager.markAuthRequiredIfCurrent(capturedEpoch: capturedEpoch)
             throw AuthError.noCredentials
@@ -704,10 +735,11 @@ struct ChatAPIClient {
         return (retryData, retryResponse)
     }
 
-    private func validate(response: URLResponse, data: Data) throws {
+    private func validate(response: URLResponse, data: Data, expectsJSON: Bool = true) throws {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ChatAPIError.invalidResponse
         }
+        try rejectAuthWall(response: httpResponse, data: data, expectsJSON: expectsJSON)
         guard (200 ..< 300).contains(httpResponse.statusCode) else {
             let detail = try? JSONDecoder.chatDecoder.decode(ChatServerError.self, from: data).detail
             throw ChatAPIError.server(
@@ -716,6 +748,19 @@ struct ChatAPIClient {
                 retryAfter: Self.parseRetryAfter(httpResponse)
             )
         }
+    }
+
+    private func rejectAuthWall(
+        response: URLResponse,
+        data: Data,
+        expectsJSON: Bool = true
+    ) throws {
+        guard expectsJSON else { return }
+        try AuthWallDetection.rejectIfLikely(
+            response: response,
+            data: data,
+            throwing: ChatAPIError.authWall
+        )
     }
 
     /// A rejected mutation must never be replayed automatically because the server
@@ -727,6 +772,7 @@ struct ChatAPIClient {
         capturedAuthEpoch: Int,
         rejectedAccessToken: String?
     ) throws {
+        try rejectAuthWall(response: response, data: data)
         if let statusCode = (response as? HTTPURLResponse)?.statusCode,
            statusCode == 401 || statusCode == 403
         {
@@ -759,12 +805,30 @@ struct ChatAPIClient {
     }
 
     private func streamServerSentEvents(
-        bytes: URLSession.AsyncBytes,
+        initialBytes: Data,
+        iterator: inout URLSession.AsyncBytes.AsyncIterator,
         parser: SSEParser,
         continuation: AsyncThrowingStream<ChatStreamEvent, Error>.Continuation
     ) async throws {
-        var pendingUTF8 = Data()
-        for try await byte in bytes {
+        var awaitingFirstContentByte = true
+        for byte in initialBytes {
+            try rejectAuthWallMarkupStart(
+                byte,
+                awaitingFirstContentByte: &awaitingFirstContentByte
+            )
+        }
+        var pendingUTF8 = initialBytes
+        if let chunk = String(data: pendingUTF8, encoding: .utf8) {
+            pendingUTF8.removeAll(keepingCapacity: true)
+            for event in parser.append(chunk) {
+                continuation.yield(parser.decode(event))
+            }
+        }
+        while let byte = try await iterator.next() {
+            try rejectAuthWallMarkupStart(
+                byte,
+                awaitingFirstContentByte: &awaitingFirstContentByte
+            )
             pendingUTF8.append(byte)
             guard let chunk = String(data: pendingUTF8, encoding: .utf8) else {
                 continue
@@ -782,6 +846,79 @@ struct ChatAPIClient {
         for event in parser.flush() {
             continuation.yield(parser.decode(event))
         }
+    }
+
+    private func rejectAuthWallMarkupStart(
+        _ byte: UInt8,
+        awaitingFirstContentByte: inout Bool
+    ) throws {
+        if AuthWallDetection.isMarkupStart(
+            byte: byte,
+            awaitingFirstContentByte: &awaitingFirstContentByte
+        ) {
+            throw ChatAPIError.authWall
+        }
+    }
+
+    private func validatedStreamStart(
+        _ bytes: URLSession.AsyncBytes
+    ) async throws -> (Data, URLSession.AsyncBytes.AsyncIterator) {
+        var iterator = bytes.makeAsyncIterator()
+        var initialBytes = Data()
+        var awaitingFirstContentByte = true
+        while let byte = try await iterator.next() {
+            initialBytes.append(byte)
+            if AuthWallDetection.isMarkupStart(
+                byte: byte,
+                awaitingFirstContentByte: &awaitingFirstContentByte
+            ) {
+                throw ChatAPIError.authWall
+            }
+            if !awaitingFirstContentByte {
+                return (initialBytes, iterator)
+            }
+        }
+        // A server may accept an SSE connection and then close it before the
+        // first event. That is a clean stream drop, not a malformed HTTP
+        // response; callers must receive the stream so their reconnect state
+        // machine observes the connection and applies its normal backoff.
+        return (initialBytes, iterator)
+    }
+
+    private func validatedStreamResponse(
+        _ bytes: URLSession.AsyncBytes,
+        response: URLResponse
+    ) async throws -> (Data, URLSession.AsyncBytes.AsyncIterator) {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ChatAPIError.invalidResponse
+        }
+        if !(200 ..< 300).contains(httpResponse.statusCode) {
+            var errorBody = Data()
+            for try await byte in bytes {
+                errorBody.append(byte)
+            }
+            // The shared validator sniffs markup before status-driven error
+            // handling, so an edge wall cannot be mistaken for an API-token
+            // rejection and clear otherwise-valid app credentials.
+            try validate(response: httpResponse, data: errorBody)
+            throw ChatAPIError.invalidResponse
+        }
+
+        // An explicit SSE content type establishes the stream at the headers:
+        // do not wait for a first event, because healthy streams can remain
+        // silent indefinitely. Redirected edge login pages arrive as HTML (or
+        // occasionally a misleading JSON response), so those responses still
+        // take the prefix-sniffing path below before the stream is returned.
+        if httpResponse.value(forHTTPHeaderField: "Content-Type")?
+            .lowercased()
+            .hasPrefix("text/event-stream") == true
+        {
+            return (Data(), bytes.makeAsyncIterator())
+        }
+
+        let start = try await validatedStreamStart(bytes)
+        try validate(response: httpResponse, data: start.0)
+        return start
     }
 
     private nonisolated static func multipartBody(
@@ -1055,9 +1192,91 @@ private struct ChatTurnConflictResponse: Decodable {
     }
 }
 
+/// Shared by the chat and notes clients: recognises an edge authentication wall
+/// (e.g. a Cloudflare Access login page) masquerading as a successful response.
+/// Off-LAN, a request can be 302-redirected to the wall's HTML login page and
+/// `URLSession` follows it, so the client sees `200 text/html` where JSON was
+/// expected — without this check that surfaces as a cryptic decode failure.
+enum AuthWallDetection {
+    static func rejectIfLikely<E: Error>(
+        response: URLResponse,
+        data: Data,
+        throwing error: @autoclosure () -> E
+    ) throws {
+        guard let httpResponse = response as? HTTPURLResponse,
+              canRepresentAuthWall(statusCode: httpResponse.statusCode),
+              isLikely(
+                  contentType: httpResponse.value(forHTTPHeaderField: "Content-Type"),
+                  data: data
+              )
+        else {
+            return
+        }
+        throw error()
+    }
+
+    private static func canRepresentAuthWall(statusCode: Int) -> Bool {
+        (200 ..< 400).contains(statusCode) || statusCode == 401 || statusCode == 403
+    }
+
+    static func isMarkupStart(
+        byte: UInt8,
+        awaitingFirstContentByte: inout Bool
+    ) -> Bool {
+        guard awaitingFirstContentByte else { return false }
+        if byte == UInt8(ascii: " ")
+            || byte == UInt8(ascii: "\t")
+            || byte == UInt8(ascii: "\r")
+            || byte == UInt8(ascii: "\n")
+        {
+            return false
+        }
+        awaitingFirstContentByte = false
+        return byte == UInt8(ascii: "<")
+    }
+
+    static func isLikely(contentType: String?, data: Data) -> Bool {
+        if let contentType, contentType.lowercased().hasPrefix("text/html") {
+            return true
+        }
+        var trimmed = data[...]
+        while let first = trimmed.first,
+              first == UInt8(ascii: " ")
+              || first == UInt8(ascii: "\t")
+              || first == UInt8(ascii: "\r")
+              || first == UInt8(ascii: "\n")
+        {
+            trimmed = trimmed.dropFirst()
+        }
+        return trimmed.first == UInt8(ascii: "<")
+    }
+}
+
+extension URLSession {
+    /// Required transport path for API responses whose body is expected to be
+    /// JSON. The wall check happens before status handling or decoding, so an
+    /// endpoint cannot accidentally accept redirected login markup.
+    func dataExpectingJSON<E: Error>(
+        for request: URLRequest,
+        authWallError: @autoclosure () -> E
+    ) async throws -> (Data, URLResponse) {
+        // auth-wall-transport-chokepoint: all expected-JSON requests route here.
+        let (data, response) = try await self.data(for: request)
+        try AuthWallDetection.rejectIfLikely(
+            response: response,
+            data: data,
+            throwing: authWallError()
+        )
+        return (data, response)
+    }
+}
+
 enum ChatAPIError: LocalizedError, Equatable {
     case invalidServerURL
     case invalidResponse
+    /// The server answered with an HTML sign-in page (an edge authentication
+    /// wall) instead of the expected API payload.
+    case authWall
     case validation(String)
     /// Starting a second turn was refused because the conversation already has
     /// a running turn. The client can recover by steering `activeTurnID`.
@@ -1073,6 +1292,8 @@ enum ChatAPIError: LocalizedError, Equatable {
             "Invalid server URL."
         case .invalidResponse:
             "The server returned an invalid response."
+        case .authWall:
+            "Server requires sign-in or is unreachable (authentication wall detected)."
         case .validation(let message):
             message
         case .turnAlreadyRunning:

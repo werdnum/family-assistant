@@ -155,7 +155,10 @@ offers the right fix in one tap — *degraded* (updates lagging, tap to reconnec
 reconnect), or *sign-in required* (tap to sign in). Background sync problems surface there rather
 than as pop-up dialogs; if the conversation list itself can't refresh, a small "Couldn't refresh —
 last updated …" note appears at the top of the list. A failed send shows a **Retry** button on the
-message itself; retrying is safe and never sends twice.
+message itself; retrying is safe and never sends twice. If Chat says **"authentication wall
+detected"**, open your Family Assistant web address in Safari and complete any sign-in page, then
+return to the app and tap the connection indicator to reconnect. If Safari cannot reach the sign-in
+page either, check your connection and contact the person who manages Family Assistant.
 
 **More** gathers Events, History, Automations, Tools, and a **Settings** screen with notification
 controls and sign-out.

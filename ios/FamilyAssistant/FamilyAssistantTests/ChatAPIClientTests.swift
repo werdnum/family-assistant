@@ -286,6 +286,26 @@ final class ChatAPIClientTests: XCTestCase {
         }
     }
 
+    func testConversationShareAuthWallDoesNotClearCredentials() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                "<html><body>Sign in</body></html>",
+                statusCode: 403,
+                headers: ["Content-Type": "text/html; charset=utf-8"]
+            )
+        }
+        let authManager = makeAuthManager()
+
+        do {
+            _ = try await ChatAPIClient(authManager: authManager)
+                .createConversationShare(conversationID: "web_conv_share")
+            XCTFail("Expected the edge auth wall to fail the mutation")
+        } catch ChatAPIError.authWall {
+            XCTAssertFalse(authManager.authRequired)
+            XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), apiToken)
+        }
+    }
+
     func testConversationShareMutationPreservesConcurrentlyRotatedCredentials() async throws {
         let requestCount = AtomicCounter()
         ChatMockBackendURLProtocol.respond { request in
@@ -428,6 +448,128 @@ final class ChatAPIClientTests: XCTestCase {
         XCTAssertEqual(streamQueryItems["follow"], "false")
         XCTAssertEqual(streamQueryItems["from_seq"], "7")
         XCTAssertEqual(streamQueryItems["ack_seq"], "6")
+    }
+
+    func testConversationStreamDetectsMarkupWithJSONContentType() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json("\n <html><body>Sign in</body></html>")
+        }
+
+        do {
+            _ = try await makeClient().subscribeToTurn(
+                conversationID: "web_conv_auth_wall",
+                fromSeq: 0,
+                ackSeq: nil
+            )
+            XCTFail("Expected streamed markup to fail before returning a stream")
+        } catch let error as ChatAPIError {
+            XCTAssertEqual(error, .authWall)
+        }
+    }
+
+    func testActivityStreamDetectsMarkupWithJSONContentType() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json("\n <html><body>Sign in</body></html>")
+        }
+
+        do {
+            _ = try await makeClient().connectActivityStream()
+            XCTFail("Expected streamed markup to fail before returning a stream")
+        } catch let error as ChatAPIError {
+            XCTAssertEqual(error, .authWall)
+        }
+    }
+
+    func testConversationStreamDetectsMarkupWithSSEContentTypeDuringIteration() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .text("\n <html><body>Sign in</body></html>")
+        }
+
+        let stream = try await makeClient().subscribeToTurn(
+            conversationID: "web_conv_auth_wall",
+            fromSeq: 0,
+            ackSeq: nil
+        )
+        do {
+            for try await _ in stream {}
+            XCTFail("Expected SSE-labelled markup to fail during iteration")
+        } catch let error as ChatAPIError {
+            XCTAssertEqual(error, .authWall)
+        }
+    }
+
+    func testActivityStreamDetectsMarkupWithSSEContentTypeDuringIteration() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .text("\n <html><body>Sign in</body></html>")
+        }
+
+        let stream = try await makeClient().connectActivityStream()
+        do {
+            for try await _ in stream {}
+            XCTFail("Expected SSE-labelled markup to fail during iteration")
+        } catch let error as ChatAPIError {
+            XCTAssertEqual(error, .authWall)
+        }
+    }
+
+    func testActivityStreamSurfacesHeartbeatAsControlEvent() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .text("event: heartbeat\ndata: {}\n\n")
+        }
+
+        let stream = try await makeClient().connectActivityStream()
+        var events: [ChatActivityStreamEvent] = []
+        for try await event in stream {
+            events.append(event)
+        }
+
+        XCTAssertEqual(events, [.control])
+    }
+
+    func testActivityStreamDistinguishesConversationActivity() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .text(
+                "event: conversation_activity\n"
+                    + "data: {\"conversation_id\":\"conv-1\",\"reason\":\"turn_started\"}\n\n"
+            )
+        }
+
+        let stream = try await makeClient().connectActivityStream()
+        var events: [ChatActivityStreamEvent] = []
+        for try await event in stream {
+            events.append(event)
+        }
+
+        XCTAssertEqual(
+            events,
+            [.activity(ChatConversationActivity(conversationID: "conv-1", reason: "turn_started"))]
+        )
+    }
+
+    func testConversationStreamDetectsNonSuccessMarkupBeforeStatusHandling() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json("<html><body>Access denied</body></html>", statusCode: 403)
+        }
+
+        do {
+            _ = try await makeClient().connectEvents(conversationID: "web_conv_auth_wall")
+            XCTFail("Expected non-success streamed markup to be detected as an auth wall")
+        } catch let error as ChatAPIError {
+            XCTAssertEqual(error, .authWall)
+        }
+    }
+
+    func testActivityStreamDetectsNonSuccessMarkupBeforeStatusHandling() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json("<html><body>Access denied</body></html>", statusCode: 401)
+        }
+
+        do {
+            _ = try await makeClient().connectActivityStream()
+            XCTFail("Expected non-success streamed markup to be detected as an auth wall")
+        } catch let error as ChatAPIError {
+            XCTAssertEqual(error, .authWall)
+        }
     }
 
     func testStartTurnAlreadyCompleteReportsFlag() async throws {
@@ -956,6 +1098,126 @@ final class ChatAPIClientTests: XCTestCase {
                 "the numeric-detail fallback still applies"
             )
         }
+    }
+
+    func testHTMLResponseSurfacesAuthWallInsteadOfDecodeError() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                "<html><head><title>Just a moment...</title></head><body></body></html>",
+                headers: ["Content-Type": "text/html; charset=utf-8"]
+            )
+        }
+
+        do {
+            _ = try await makeClient().listProfiles()
+            XCTFail("Expected an HTML login page to throw authWall")
+        } catch let error as ChatAPIError {
+            XCTAssertEqual(error, .authWall)
+            XCTAssertEqual(error.errorDescription?.contains("authentication wall"), true)
+        }
+    }
+
+    func testHTMLServerErrorRemainsADegradedServerFailure() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                "<html><body>Service unavailable</body></html>",
+                statusCode: 503,
+                headers: ["Content-Type": "text/html; charset=utf-8"]
+            )
+        }
+
+        do {
+            _ = try await makeClient().listProfiles()
+            XCTFail("Expected a server error")
+        } catch let ChatAPIError.server(statusCode, _, _) {
+            XCTAssertEqual(statusCode, 503)
+        }
+    }
+
+    func testHTMLStreamServerErrorRemainsADegradedServerFailure() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                "<html><body>Gateway unavailable</body></html>",
+                statusCode: 503,
+                headers: ["Content-Type": "text/html; charset=utf-8"]
+            )
+        }
+
+        do {
+            _ = try await makeClient().connectActivityStream()
+            XCTFail("Expected a server error")
+        } catch let ChatAPIError.server(statusCode, _, _) {
+            XCTAssertEqual(statusCode, 503)
+        }
+    }
+
+    func testMarkupBodyWithJSONContentTypeSurfacesAuthWall() async throws {
+        // A followed redirect can deliver the wall's markup under any content
+        // type; a body starting with "<" is still detected.
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                "\n  <html><body>Sign in</body></html>",
+                headers: ["Content-Type": "application/json"]
+            )
+        }
+
+        do {
+            _ = try await makeClient().listConversations()
+            XCTFail("Expected HTML markup in the body to throw authWall")
+        } catch ChatAPIError.authWall {}
+    }
+
+    func testAttachmentDownloadAcceptsNonJSONBodies() async throws {
+        // An attachment body is the payload: an HTML/XML/SVG download must not
+        // be mistaken for an auth wall, so downloads keep status-only checking.
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect/></svg>",
+                headers: ["Content-Type": "image/svg+xml"]
+            )
+        }
+
+        let (data, contentType) = try await makeClient().downloadAttachment(path: "/api/attachments/att-1")
+
+        XCTAssertEqual(String(decoding: data, as: UTF8.self), "<svg xmlns=\"http://www.w3.org/2000/svg\"><rect/></svg>")
+        XCTAssertEqual(contentType, "image/svg+xml")
+    }
+
+    func testHTTPResponseReadsUseAuthWallChokepointsOrExplicitExemptions() throws {
+        let projectDirectory = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let productionDirectory = projectDirectory.appendingPathComponent("FamilyAssistant")
+        let enumerator = try XCTUnwrap(
+            FileManager.default.enumerator(
+                at: productionDirectory,
+                includingPropertiesForKeys: nil
+            )
+        )
+        var rawResponseReadCount = 0
+
+        for case let fileURL as URL in enumerator where fileURL.pathExtension == "swift" {
+            let lines = try String(contentsOf: fileURL, encoding: .utf8)
+                .components(separatedBy: .newlines)
+            for (index, line) in lines.enumerated()
+                where line.contains(".data(for:") || line.contains(".bytes(for:")
+            {
+                rawResponseReadCount += 1
+                let marker = lines[..<index]
+                    .reversed()
+                    .first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+                XCTAssertTrue(
+                    marker?.contains("auth-wall-") == true,
+                    "Raw response read must use a reviewed auth-wall marker: \(fileURL.lastPathComponent):\(index + 1)"
+                )
+            }
+        }
+
+        XCTAssertEqual(
+            rawResponseReadCount,
+            5,
+            "New raw response reads must route through dataExpectingJSON or receive explicit review."
+        )
     }
 
     private func makeClient() -> ChatAPIClient {

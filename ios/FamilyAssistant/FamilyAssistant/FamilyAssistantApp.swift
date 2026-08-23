@@ -19,7 +19,12 @@ struct FamilyAssistantApp: App {
         _authManager = State(initialValue: authManager)
         _notificationManager = State(initialValue: NotificationManager())
 
-        ErrorReporter.shared.configure { [weak authManager] in authManager?.validatedServerURL() }
+        ErrorReporter.shared.configure(
+            baseURLProvider: { [weak authManager] in authManager?.validatedServerURL() },
+            authTokenProvider: { [weak authManager] in
+                try await authManager?.validAccessTokenIfPresent()
+            }
+        )
         ErrorReporter.shared.installGlobalHandlers()
     }
 

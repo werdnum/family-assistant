@@ -99,9 +99,13 @@ final class ChatErrorClassifierTests: XCTestCase {
         XCTAssertEqual(classify(.sendTurn, server(401), userInitiated: true), .authFlow)
     }
 
-    func testAuthTerminalErrorRoutesToAuthFlow() {
+    func testAuthErrorsUseDedicatedSurfaces() {
         XCTAssertEqual(classify(.conversationsRefresh, AuthError.noCredentials), .authFlow)
         XCTAssertEqual(classify(.pendingApprovalsPoll, AuthError.authRejected), .authFlow)
+        XCTAssertEqual(
+            classify(.conversationsRefresh, AuthError.authWall),
+            .inlineFeedback(reason: .authWall)
+        )
     }
 
     func test403OnConversationIsAccessChanged() {
@@ -161,6 +165,24 @@ final class ChatErrorClassifierTests: XCTestCase {
         XCTAssertEqual(
             classify(.messagesLoad, server(429), userInitiated: true, retryAfter: 12),
             .inlineFeedback(reason: .rateLimited)
+        )
+    }
+
+    func testAuthWallSurfacesActionableInlineFeedback() {
+        // An edge authentication wall is persistent and actionable: it must
+        // surface as clear inline feedback on every operation, never as silent
+        // background degradation or the generic action-failed message.
+        XCTAssertEqual(
+            classify(.conversationsRefresh, ChatAPIError.authWall),
+            .inlineFeedback(reason: .authWall)
+        )
+        XCTAssertEqual(
+            classify(.conversationsRefresh, ChatAPIError.authWall, userInitiated: true),
+            .inlineFeedback(reason: .authWall)
+        )
+        XCTAssertEqual(
+            classify(.sendTurn, ChatAPIError.authWall, userInitiated: true),
+            .inlineFeedback(reason: .authWall)
         )
     }
 

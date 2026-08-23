@@ -108,6 +108,7 @@ final class AuthManager {
         static let apiToken = "fa_api_token"
         static let refreshToken = "fa_refresh_token"
         static let tokenExpiry = "fa_token_expiry"
+        static let tokenLifetime = "fa_token_lifetime"
     }
 
     init(websiteDataCleaner: (@MainActor () async -> Void)? = nil) {
@@ -246,7 +247,12 @@ final class AuthManager {
             "code_verifier": codeVerifier,
         ])
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await URLSession.shared.dataExpectingJSON(for: request, authWallError: AuthError.authWall)
+        try AuthWallDetection.rejectIfLikely(
+            response: response,
+            data: data,
+            throwing: AuthError.authWall
+        )
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
             throw AuthError.exchangeFailed
         }
@@ -359,6 +365,7 @@ final class AuthManager {
         KeychainHelper.delete(key: Keys.apiToken)
         KeychainHelper.delete(key: Keys.refreshToken)
         UserDefaults.standard.removeObject(forKey: Keys.tokenExpiry)
+        UserDefaults.standard.removeObject(forKey: Keys.tokenLifetime)
         isAuthenticated = false
     }
 
@@ -428,6 +435,7 @@ final class AuthManager {
         KeychainHelper.delete(key: Keys.apiToken)
         KeychainHelper.delete(key: Keys.refreshToken)
         UserDefaults.standard.removeObject(forKey: Keys.tokenExpiry)
+        UserDefaults.standard.removeObject(forKey: Keys.tokenLifetime)
     }
 
     /// Whether the bridge that captured `epoch` still owns the current auth state.
@@ -552,7 +560,11 @@ final class AuthManager {
                 throw AuthError.noCredentials
             }
 
-            if expiry.timeIntervalSinceNow > 3600 {
+            let storedLifetime = UserDefaults.standard.object(forKey: Keys.tokenLifetime) as? TimeInterval
+            if !Self.shouldRefresh(
+                remaining: expiry.timeIntervalSinceNow,
+                ttl: storedLifetime
+            ) {
                 return
             }
         }
@@ -603,7 +615,9 @@ final class AuthManager {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await URLSession.shared.dataExpectingJSON(for: request, authWallError: AuthError.authWall)
+        } catch AuthError.authWall {
+            throw AuthError.authWall
         } catch {
             throw AuthError.transient(underlying: error)
         }
@@ -611,6 +625,11 @@ final class AuthManager {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AuthError.transient(underlying: nil)
         }
+        try AuthWallDetection.rejectIfLikely(
+            response: httpResponse,
+            data: data,
+            throwing: AuthError.authWall
+        )
 
         switch httpResponse.statusCode {
         case 200:
@@ -664,9 +683,12 @@ final class AuthManager {
         request.timeoutInterval = authRequestTimeoutSeconds
         request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
 
+        let data: Data
         let response: URLResponse
         do {
-            (_, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await URLSession.shared.dataExpectingJSON(for: request, authWallError: AuthError.authWall)
+        } catch AuthError.authWall {
+            throw AuthError.authWall
         } catch {
             throw AuthError.transient(underlying: error)
         }
@@ -674,6 +696,11 @@ final class AuthManager {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AuthError.transient(underlying: nil)
         }
+        try AuthWallDetection.rejectIfLikely(
+            response: httpResponse,
+            data: data,
+            throwing: AuthError.authWall
+        )
 
         switch httpResponse.statusCode {
         case 200:
@@ -734,6 +761,7 @@ final class AuthManager {
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
+            // auth-wall-exempt: logout is a best-effort request with no response payload.
             _ = try? await URLSession.shared.data(for: request)
         }
 
@@ -741,6 +769,7 @@ final class AuthManager {
         KeychainHelper.delete(key: Keys.apiToken)
         KeychainHelper.delete(key: Keys.refreshToken)
         UserDefaults.standard.removeObject(forKey: Keys.tokenExpiry)
+        UserDefaults.standard.removeObject(forKey: Keys.tokenLifetime)
 
         // Clear WKWebView data before flipping the auth state, so a fast
         // re-login's fresh session cookie cannot be wiped by this cleanup.
@@ -760,6 +789,39 @@ final class AuthManager {
 
     // MARK: - Helpers
 
+    /// Return a usable access token, refreshing first when it is due. Components
+    /// that send outside ``authorizedRequest`` (such as error reporting) use this
+    /// so launch-time work cannot race bootstrap and attach an expired token.
+    @MainActor
+    func validAccessToken() async throws -> String {
+        let capturedEpoch = authEpoch
+        do {
+            try await refreshIfNeeded()
+        } catch AuthError.authRejected, AuthError.noCredentials {
+            if isCurrentAuthEpoch(capturedEpoch) {
+                markAuthRequired()
+            }
+            throw AuthError.noCredentials
+        }
+
+        guard let apiToken = KeychainHelper.readString(key: Keys.apiToken) else {
+            markAuthRequired()
+            throw AuthError.noCredentials
+        }
+        return apiToken
+    }
+
+    /// Return a usable access token only when an authenticated session already
+    /// exists. Best-effort callers such as error reporting must not turn the
+    /// absence of credentials during onboarding into an auth-required state.
+    @MainActor
+    func validAccessTokenIfPresent() async throws -> String? {
+        guard KeychainHelper.readString(key: Keys.apiToken) != nil else {
+            return nil
+        }
+        return try await validAccessToken()
+    }
+
     func validatedServerURL() -> URL? {
         var urlString = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if !urlString.hasPrefix("http://") && !urlString.hasPrefix("https://") {
@@ -777,24 +839,7 @@ final class AuthManager {
 
     @MainActor
     func authorizedRequest(url: URL, method: String) async throws -> URLRequest {
-        let capturedEpoch = authEpoch
-        do {
-            try await refreshIfNeeded()
-        } catch AuthError.authRejected, AuthError.noCredentials {
-            // Only clear state if the epoch hasn't changed since we started. If
-            // logout/relogin bumped the epoch while we were in an in-flight refresh,
-            // don't clear the new session's credentials; let the error propagate so
-            // the caller can retry with the current credentials.
-            if isCurrentAuthEpoch(capturedEpoch) {
-                markAuthRequired()
-            }
-            throw AuthError.noCredentials
-        }
-
-        guard let apiToken = KeychainHelper.readString(key: Keys.apiToken) else {
-            markAuthRequired()
-            throw AuthError.noCredentials
-        }
+        let apiToken = try await validAccessToken()
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
@@ -809,7 +854,24 @@ final class AuthManager {
         if let expiresIn = tokens.expiresIn {
             let expiry = Date().addingTimeInterval(TimeInterval(expiresIn))
             UserDefaults.standard.set(ISO8601DateFormatter().string(from: expiry), forKey: Keys.tokenExpiry)
+            UserDefaults.standard.set(expiresIn, forKey: Keys.tokenLifetime)
         }
+    }
+
+    /// The freshness threshold for a token with issued lifetime `ttl`: half the
+    /// lifetime, capped at an hour. A missing (or non-positive) lifetime — tokens
+    /// issued before the server reported `expires_in`, or tests that seed only an
+    /// expiry — falls back to the historical fixed one-hour threshold.
+    static func refreshThreshold(tokenTTL ttl: TimeInterval?) -> TimeInterval {
+        guard let ttl, ttl > 0 else { return 3600 }
+        return min(3600, ttl / 2)
+    }
+
+    /// Whether a token with `remaining` seconds left and issued lifetime `ttl` is
+    /// due for a proactive refresh. Mirrors the pre-proportional behaviour at the
+    /// fallback boundary (refresh when remaining ≤ threshold).
+    static func shouldRefresh(remaining: TimeInterval, ttl: TimeInterval?) -> Bool {
+        remaining <= refreshThreshold(tokenTTL: ttl)
     }
 }
 
@@ -848,6 +910,7 @@ enum AuthError: LocalizedError {
     case exchangeFailed
     case authRejected
     case noCredentials
+    case authWall
     case transient(underlying: Error?)
 
     var errorDescription: String? {
@@ -856,6 +919,8 @@ enum AuthError: LocalizedError {
         case .exchangeFailed: "Failed to exchange authorization code"
         case .authRejected: "Server rejected stored credentials"
         case .noCredentials: "No stored credentials"
+        case .authWall:
+            "Server requires sign-in or is unreachable (authentication wall detected)."
         case .transient(let underlying):
             if let underlying { "Temporary failure: \(underlying.localizedDescription)" }
             else { "Temporary network or server error" }

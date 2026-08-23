@@ -195,6 +195,20 @@ final class ResyncOrchestratorTests: XCTestCase {
         XCTAssertEqual(host.phaseFinishCount, 1)
     }
 
+    func testAuthWallMidResyncRestartsStreams() async {
+        let host = FakeResyncHost(generation: 1, selectedConversationID: "conv-1")
+        host.authGateError = AuthError.authWall
+        let orchestrator = ResyncOrchestrator(host: host)
+
+        await orchestrator.request().value
+
+        XCTAssertEqual(host.authGateCount, 1)
+        XCTAssertEqual(host.listSnapshotCount, 0)
+        XCTAssertEqual(host.restartStreamsCount, 1)
+        XCTAssertEqual(host.presentedAuthWallCount, 1)
+        XCTAssertEqual(host.phaseFinishCount, 1)
+    }
+
     func testNonAuthGateFailureRestartsStreams() async {
         // A non-`AuthError` failure from the gate is treated as transient for the
         // same reason: never leave the torn-down loops stranded.
@@ -736,11 +750,11 @@ private final class ControllableFollowStream {
 /// An activity stream a test drives: `emit` queues a ping, `finish` closes it.
 @MainActor
 private final class ControllableActivityStream {
-    private var continuation: AsyncThrowingStream<ChatConversationActivity, Error>.Continuation?
+    private var continuation: AsyncThrowingStream<ChatActivityStreamEvent, Error>.Continuation?
     private var finished = false
     private(set) var emittedCount = 0
 
-    func makeStream() -> AsyncThrowingStream<ChatConversationActivity, Error> {
+    func makeStream() -> AsyncThrowingStream<ChatActivityStreamEvent, Error> {
         AsyncThrowingStream { continuation in
             if finished {
                 continuation.finish()
@@ -753,7 +767,7 @@ private final class ControllableActivityStream {
     func emit() {
         emittedCount += 1
         continuation?.yield(
-            ChatConversationActivity(conversationID: "conv-any", reason: "turn_started")
+            .activity(ChatConversationActivity(conversationID: "conv-any", reason: "turn_started"))
         )
     }
 
@@ -779,6 +793,7 @@ private final class FakeResyncHost: ResyncHost {
     var onEstablishFollow: (() async -> Void)?
     private(set) var awaitTerminationCount = 0
     private(set) var authGateCount = 0
+    private(set) var presentedAuthWallCount = 0
     private(set) var listSnapshotCount = 0
     private(set) var recentListSnapshotCount = 0
 
@@ -839,6 +854,10 @@ private final class FakeResyncHost: ResyncHost {
         }
     }
 
+    func presentResyncAuthWall(_: AuthError) {
+        presentedAuthWallCount += 1
+    }
+
     func establishFollowStream(
         conversationID _: String,
         generation _: Int
@@ -851,7 +870,7 @@ private final class FakeResyncHost: ResyncHost {
 
     func establishActivityStream(
         generation _: Int
-    ) async -> AsyncThrowingStream<ChatConversationActivity, Error>? {
+    ) async -> AsyncThrowingStream<ChatActivityStreamEvent, Error>? {
         activityEstablishCount += 1
         return activityStreamSource?.makeStream()
     }

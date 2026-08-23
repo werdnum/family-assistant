@@ -225,6 +225,32 @@ final class NotificationManagerTests: XCTestCase {
         XCTAssertNil(manager.pendingConfirmationModal)
     }
 
+    func testApproveActionReportsFollowedHTMLAuthWallInsteadOfSuccess() async throws {
+        seedStoredAuth()
+        let authManager = makeAuthManager()
+        let manager = NotificationManager()
+        manager.bind(authManager: authManager)
+
+        let requestCompleted = expectation(description: "confirm_tool intercepted by auth wall")
+        NotificationBackendURLProtocol.respond { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/chat/confirm_tool")
+            requestCompleted.fulfill()
+            return .html("<html><title>Sign in</title></html>")
+        }
+
+        manager.handleNotificationAction(
+            actionIdentifier: "FAMILY_ASSISTANT_APPROVE",
+            categoryIdentifier: "FAMILY_ASSISTANT_CONFIRMATION",
+            title: "Confirmation needed",
+            body: "Create a note?",
+            userInfo: ["request_id": "confirm_auth_wall"]
+        )
+
+        await fulfillment(of: [requestCompleted], timeout: 2.0)
+        try await waitUntil { manager.errorMessage != nil }
+        XCTAssertTrue(manager.errorMessage?.contains("authentication wall detected") == true)
+    }
+
     func testDenyActionSubmitsRejectionToConfirmEndpoint() async throws {
         seedStoredAuth()
         // NotificationManager holds authManager weakly, so keep a strong reference for the test.
@@ -466,9 +492,22 @@ private final class NotificationBackendURLProtocol: URLProtocol {
 private struct NotificationMockResponse {
     let statusCode: Int
     let data: Data
+    let contentType: String
 
     static func json(_ json: String, statusCode: Int = 200) -> NotificationMockResponse {
-        NotificationMockResponse(statusCode: statusCode, data: Data(json.utf8))
+        NotificationMockResponse(
+            statusCode: statusCode,
+            data: Data(json.utf8),
+            contentType: "application/json"
+        )
+    }
+
+    static func html(_ html: String, statusCode: Int = 200) -> NotificationMockResponse {
+        NotificationMockResponse(
+            statusCode: statusCode,
+            data: Data(html.utf8),
+            contentType: "text/html"
+        )
     }
 
     func urlResponse(for request: URLRequest) -> HTTPURLResponse {
@@ -476,7 +515,7 @@ private struct NotificationMockResponse {
             url: request.url!,
             statusCode: statusCode,
             httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "application/json"]
+            headerFields: ["Content-Type": contentType]
         )!
     }
 }

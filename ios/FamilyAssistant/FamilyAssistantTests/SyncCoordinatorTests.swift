@@ -920,7 +920,7 @@ final class SyncCoordinatorTests: XCTestCase {
         XCTAssertNil(KeychainHelper.readString(key: "fa_api_token"))
     }
 
-    func testActivityConnect403WithRejectedRefreshStopsAndLatchesAuthRequired() async {
+    func testActivityConnect403WithRejectedRefreshStopsAndLatchesAuthRequired() async throws {
         seedStoredAuth()
         let monitor = StubPathMonitor(isSatisfied: true)
         let authManager = makeAuthManager()
@@ -950,13 +950,180 @@ final class SyncCoordinatorTests: XCTestCase {
 
         coordinator.startActivityStream()
         await fulfillment(of: [authRequired], timeout: 2)
-        await Task.yield()
+        try await waitUntil { coordinator.activityHealth == .down }
 
         XCTAssertEqual(delegate.activityOpenCount, 1)
         XCTAssertEqual(refreshRequests.value, 1)
         XCTAssertEqual(delayCount, 0, "terminal auth must stop instead of entering backoff")
         XCTAssertTrue(authManager.authRequired)
         XCTAssertEqual(coordinator.activityHealth, .down)
+    }
+
+    func testFollowConnectAuthWallIsSurfacedBeforeBackoff() async throws {
+        let (coordinator, _, _) = makeCoordinator()
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.followOpenError = ChatAPIError.authWall
+        coordinator.delegate = delegate
+
+        coordinator.startFollowStream(conversationID: "conv-1")
+        try await waitUntil { delegate.presentedAuthWallCount == 1 }
+        coordinator.cancelStreams()
+
+        XCTAssertEqual(delegate.followOpenCount, 1)
+        XCTAssertEqual(delegate.presentedAuthWallCount, 1)
+    }
+
+    func testFollowRefreshAuthWallIsSurfacedBeforeBackoff() async throws {
+        seedStoredAuth()
+        let refreshRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            XCTAssertEqual(request.url?.path, "/api/auth/refresh")
+            _ = refreshRequests.increment()
+            return .json("<html><body>Sign in</body></html>")
+        }
+        let coordinator = SyncCoordinator(
+            authManager: makeAuthManager(),
+            pathMonitor: StubPathMonitor(isSatisfied: true)
+        )
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.followOpenError = ChatAPIError.server(statusCode: 401, detail: nil, retryAfter: nil)
+        coordinator.delegate = delegate
+
+        coordinator.startFollowStream(conversationID: "conv-1")
+        try await waitUntil { delegate.presentedAuthWallCount == 1 }
+        coordinator.cancelStreams()
+
+        XCTAssertEqual(refreshRequests.value, 1)
+        XCTAssertEqual(delegate.presentedAuthWallCount, 1)
+    }
+
+    func testActivityConnectAuthWallIsSurfacedBeforeBackoff() async throws {
+        let (coordinator, _, _) = makeCoordinator()
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.activityOpenError = ChatAPIError.authWall
+        coordinator.delegate = delegate
+
+        coordinator.startActivityStream()
+        try await waitUntil { delegate.presentedAuthWallCount == 1 }
+        coordinator.cancelStreams()
+
+        XCTAssertEqual(delegate.activityOpenCount, 1)
+        XCTAssertEqual(delegate.presentedAuthWallCount, 1)
+    }
+
+    func testFollowIterationAuthWallStaysDedupedAndBacksOff() async throws {
+        var delays: [Double] = []
+        let coordinator = SyncCoordinator(
+            authManager: makeAuthManager(),
+            pathMonitor: StubPathMonitor(isSatisfied: true),
+            followReconnectInitialDelaySeconds: 2,
+            followReconnectMaxDelaySeconds: 8,
+            reconnectDelay: { delay in
+                delays.append(delay)
+                await Task.yield()
+            }
+        )
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.followIterationError = ChatAPIError.authWall
+        coordinator.delegate = delegate
+
+        coordinator.startFollowStream(conversationID: "conv-1")
+        try await waitUntil { delays.count >= 3 }
+        coordinator.cancelStreams()
+
+        XCTAssertEqual(delegate.presentedAuthWallCount, 1)
+        XCTAssertEqual(Array(delays.prefix(3)), [2, 4, 8])
+    }
+
+    func testActivityIterationAuthWallStaysDedupedAndBacksOff() async throws {
+        var delays: [Double] = []
+        let coordinator = SyncCoordinator(
+            authManager: makeAuthManager(),
+            pathMonitor: StubPathMonitor(isSatisfied: true),
+            followReconnectInitialDelaySeconds: 2,
+            followReconnectMaxDelaySeconds: 8,
+            reconnectDelay: { delay in
+                delays.append(delay)
+                await Task.yield()
+            }
+        )
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.activityIterationError = ChatAPIError.authWall
+        coordinator.delegate = delegate
+
+        coordinator.startActivityStream()
+        try await waitUntil { delays.count >= 3 }
+        coordinator.cancelStreams()
+
+        XCTAssertEqual(delegate.presentedAuthWallCount, 1)
+        XCTAssertEqual(Array(delays.prefix(3)), [2, 4, 8])
+    }
+
+    func testActivityHeartbeatResetsReconnectBackoff() async throws {
+        var delays: [Double] = []
+        let coordinator = SyncCoordinator(
+            authManager: makeAuthManager(),
+            pathMonitor: StubPathMonitor(isSatisfied: true),
+            followReconnectInitialDelaySeconds: 2,
+            followReconnectMaxDelaySeconds: 8,
+            reconnectDelay: { delay in
+                delays.append(delay)
+                await Task.yield()
+            }
+        )
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.activityIterationEvents = [.control]
+        delegate.activityIterationError = RecordingSyncStreamDelegate.StubError()
+        coordinator.delegate = delegate
+
+        coordinator.startActivityStream()
+        try await waitUntil { delays.count >= 3 }
+        coordinator.cancelStreams()
+
+        XCTAssertEqual(Array(delays.prefix(3)), [2, 2, 2])
+    }
+
+    func testActivityHeartbeatClearsRefreshAttemptLatch() async {
+        seedStoredAuth()
+        let authManager = makeAuthManager()
+        let refreshRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            XCTAssertEqual(request.url?.path, "/api/auth/refresh")
+            _ = refreshRequests.increment()
+            return .json(#"{"api_token":"rotated","refresh_token":"rotated-refresh","expires_in":7200}"#)
+        }
+        let coordinator = SyncCoordinator(
+            authManager: authManager,
+            pathMonitor: StubPathMonitor(isSatisfied: true),
+            followReconnectInitialDelaySeconds: 0,
+            followReconnectMaxDelaySeconds: 0,
+            reconnectDelay: { _ in await Task.yield() }
+        )
+        let delegate = RecordingSyncStreamDelegate()
+        delegate.activityOpenHandler = { openCount in
+            switch openCount {
+            case 1, 3:
+                throw ChatAPIError.server(statusCode: 401, detail: nil, retryAfter: nil)
+            case 2:
+                return AsyncThrowingStream { continuation in
+                    continuation.yield(.control)
+                    continuation.finish()
+                }
+            default:
+                return AsyncThrowingStream { _ in }
+            }
+        }
+        let reopened = expectation(description: "activity stream refreshed twice")
+        reopened.expectedFulfillmentCount = 4
+        delegate.onActivityOpen = { reopened.fulfill() }
+        coordinator.delegate = delegate
+
+        coordinator.startActivityStream()
+        await fulfillment(of: [reopened], timeout: 2)
+        coordinator.cancelStreams()
+
+        XCTAssertEqual(refreshRequests.value, 2)
+        XCTAssertFalse(authManager.authRequired)
     }
 
     func testFollowConnect401WithSuccessfulRefreshReconnectsImmediately() async {
@@ -1126,6 +1293,7 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
     private(set) var activityOpenCount = 0
     private(set) var suspendActiveSendCount = 0
     private(set) var runCoalescedResyncCount = 0
+    private(set) var presentedAuthWallCount = 0
     private(set) var lastFollowConversationID: String?
     var shouldFailFollowOpen = false
     /// When set, the follow/activity open throws this specific error instead of the
@@ -1133,6 +1301,10 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
     /// terminal-auth connect path).
     var followOpenError: Error?
     var activityOpenError: Error?
+    var followIterationError: Error?
+    var activityIterationError: Error?
+    var activityIterationEvents: [ChatActivityStreamEvent] = []
+    var activityOpenHandler: ((Int) throws -> AsyncThrowingStream<ChatActivityStreamEvent, Error>)?
     /// When > 0, `followOpenError` is thrown only for the first N opens; later opens
     /// fall through to the hang/finish path. Lets a test exercise "401 then a
     /// successful reconnect" without an infinite open→401→refresh spin.
@@ -1168,6 +1340,11 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
         if shouldFailFollowOpen {
             throw StubError()
         }
+        if let followIterationError {
+            return AsyncThrowingStream { continuation in
+                continuation.finish(throwing: followIterationError)
+            }
+        }
         let hang = hangFollowOpen
         return AsyncThrowingStream { continuation in
             if !hang {
@@ -1194,11 +1371,26 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
 
     func openActivityStream(
         generation: Int
-    ) async throws -> AsyncThrowingStream<ChatConversationActivity, Error> {
+    ) async throws -> AsyncThrowingStream<ChatActivityStreamEvent, Error> {
         activityOpenCount += 1
         onActivityOpen?()
+        if let activityOpenHandler {
+            return try activityOpenHandler(activityOpenCount)
+        }
         if let activityOpenError, activityOpenErrorLimit == 0 || activityOpenCount <= activityOpenErrorLimit {
             throw activityOpenError
+        }
+        if !activityIterationEvents.isEmpty || activityIterationError != nil {
+            return AsyncThrowingStream { continuation in
+                for event in activityIterationEvents {
+                    continuation.yield(event)
+                }
+                if let activityIterationError {
+                    continuation.finish(throwing: activityIterationError)
+                } else {
+                    continuation.finish()
+                }
+            }
         }
         if hangActivityOpen {
             return AsyncThrowingStream { _ in }
@@ -1207,6 +1399,14 @@ private final class RecordingSyncStreamDelegate: SyncStreamDelegate {
     }
 
     func activityStreamDidSignal(generation: Int) async {}
+
+    func presentFollowStreamAuthWall(_ error: Error, generation: Int) {
+        presentedAuthWallCount += 1
+    }
+
+    func presentActivityStreamAuthWall(_ error: Error, generation: Int) {
+        presentedAuthWallCount += 1
+    }
 
     func currentConversationID() -> String? {
         activeConversationID
@@ -1277,11 +1477,15 @@ private final class WedgingSyncStreamDelegate: SyncStreamDelegate {
 
     func openActivityStream(
         generation: Int
-    ) async throws -> AsyncThrowingStream<ChatConversationActivity, Error> {
+    ) async throws -> AsyncThrowingStream<ChatActivityStreamEvent, Error> {
         AsyncThrowingStream { $0.finish() }
     }
 
     func activityStreamDidSignal(generation: Int) async {}
+
+    func presentFollowStreamAuthWall(_ error: Error, generation: Int) {}
+
+    func presentActivityStreamAuthWall(_ error: Error, generation: Int) {}
 
     func currentConversationID() -> String? { nil }
 

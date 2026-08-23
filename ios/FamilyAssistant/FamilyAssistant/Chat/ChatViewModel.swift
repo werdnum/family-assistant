@@ -57,6 +57,10 @@ final class ChatViewModel {
     /// next successful list refresh. A rate-limit (429) that schedules a retry does
     /// NOT set it — that isn't a failure, just a throttle that self-recovers.
     private(set) var conversationsRefreshFailed = false
+    /// Actionable detail for the list failure banner, when the classifier's
+    /// verdict carries one (an auth wall). Nil keeps the generic "Couldn't
+    /// refresh" text. Cleared with the banner on the next successful refresh.
+    private(set) var conversationsRefreshFailureMessage: String?
     /// When the conversation list was last refreshed successfully, shown alongside the
     /// failure banner ("Last updated …") so a stale list is diagnosable at a glance.
     private(set) var conversationsLastRefreshedAt: Date?
@@ -716,6 +720,7 @@ final class ChatViewModel {
     /// the freshness time, and record the per-operation advisory-health success.
     private func markConversationListRefreshed(operation: ChatOperation) {
         conversationsRefreshFailed = false
+        conversationsRefreshFailureMessage = nil
         conversationsLastRefreshedAt = Date()
         recordAdvisorySuccess(operation: operation)
     }
@@ -741,6 +746,12 @@ final class ChatViewModel {
         if case let .retryAfter(delay) = surface {
             scheduleAdvisoryRetry(after: delay, retry: retry)
             return
+        }
+        conversationsRefreshFailureMessage = nil
+        if case .inlineFeedback(.authWall) = surface {
+            // The wall is persistent and actionable: carry its explanation onto
+            // the list banner instead of the generic refresh-failed text.
+            conversationsRefreshFailureMessage = ChatAPIError.authWall.errorDescription
         }
         conversationsRefreshFailed = true
         recordAdvisoryFailure(operation: operation)
@@ -4023,6 +4034,8 @@ final class ChatViewModel {
             "You no longer have access to this conversation."
         case .rateLimited:
             "Too many requests. Please try again in a moment."
+        case .authWall:
+            "Server requires sign-in or is unreachable (authentication wall detected)."
         case .userReadFailed:
             "Couldn't refresh. \(error.localizedDescription)"
         case .actionFailed:
@@ -5108,7 +5121,7 @@ extension ChatViewModel: SyncStreamDelegate {
 
     func openActivityStream(
         generation _: Int
-    ) async throws -> AsyncThrowingStream<ChatConversationActivity, Error> {
+    ) async throws -> AsyncThrowingStream<ChatActivityStreamEvent, Error> {
         try await apiClient.connectActivityStream()
     }
 
@@ -5122,6 +5135,20 @@ extension ChatViewModel: SyncStreamDelegate {
         // buffered resync drain silent (finding 10): the drain routes through this
         // same handler.
         await refreshRecentConversations()
+    }
+
+    func presentFollowStreamAuthWall(_ error: Error, generation: Int) {
+        guard syncCoordinator.isCurrentFollow(generation) else {
+            return
+        }
+        presentAuthWall(error)
+    }
+
+    func presentActivityStreamAuthWall(_ error: Error, generation: Int) {
+        guard syncCoordinator.isCurrentActivity(generation) else {
+            return
+        }
+        presentAuthWall(error)
     }
 
     func runCoalescedResync(reason: SyncCoordinator.RestartReason) {
@@ -5171,6 +5198,21 @@ extension ChatViewModel: ResyncHost {
         try await authManager.refreshIfNeeded()
     }
 
+    func presentResyncAuthWall(_ error: AuthError) {
+        presentAuthWall(error)
+    }
+
+    private func presentAuthWall(_ error: Error) {
+        let message = inlineMessage(for: .authWall, error: error)
+        conversationsRefreshFailed = true
+        conversationsRefreshFailureMessage = message
+        presentInlineThreadFeedback(
+            message,
+            reason: .authWall,
+            operation: .conversationsRefresh
+        )
+    }
+
     func establishFollowStream(
         conversationID: String,
         generation _: Int
@@ -5205,7 +5247,7 @@ extension ChatViewModel: ResyncHost {
 
     func establishActivityStream(
         generation _: Int
-    ) async -> AsyncThrowingStream<ChatConversationActivity, Error>? {
+    ) async -> AsyncThrowingStream<ChatActivityStreamEvent, Error>? {
         let timeout = resyncEstablishTimeoutSeconds
         let client = apiClient
         let result = await Self.raceResyncStreamEstablishment(timeoutSeconds: timeout) {

@@ -43,6 +43,22 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertTrue(model.messages.isEmpty)
     }
 
+    func testResyncAuthWallShowsActionableInlineFeedback() {
+        let model = makeViewModel(conversationID: "web_conv_auth_wall")
+
+        model.presentResyncAuthWall(.authWall)
+
+        XCTAssertEqual(
+            model.threadInlineMessage,
+            "Server requires sign-in or is unreachable (authentication wall detected)."
+        )
+        XCTAssertTrue(model.conversationsRefreshFailed)
+        XCTAssertEqual(
+            model.conversationsRefreshFailureMessage,
+            model.threadInlineMessage
+        )
+    }
+
     func testLaunchRestoresRecentlyActiveConversation() {
         storeLastConversation("web_conv_recent", activeSecondsAgo: 60)
 
@@ -2092,7 +2108,11 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(steerRequests.value, 0)
 
         startResponse.finish()
-        try await waitUntil { steerRequests.value == 2 }
+        try await waitUntil {
+            steerRequests.value == 2
+                && model.draftText.isEmpty
+                && self.privateStringArray("inFlightSteers", in: model).isEmpty
+        }
 
         XCTAssertEqual(model.draftText, "")
         XCTAssertEqual(privateStringArray("inFlightSteers", in: model), [])
@@ -10201,6 +10221,91 @@ final class ChatViewModelTests: XCTestCase {
         await model.refreshConversations()
         XCTAssertFalse(model.conversationsRefreshFailed, "a successful refresh clears the banner")
         XCTAssertNotNil(model.conversationsLastRefreshedAt, "and stamps the last-refreshed time")
+    }
+
+    func testAuthWallOnListRefreshCarriesActionableBannerMessage() async throws {
+        // An edge authentication wall answering the list endpoint must render its
+        // dedicated explanation on the list banner, not the generic
+        // "Couldn't refresh" text — and still never a modal or thread message.
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(
+                    "<html><head><title>Just a moment...</title></head><body></body></html>",
+                    headers: ["Content-Type": "text/html; charset=utf-8"]
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+        let model = makeViewModel(conversationID: nil)
+
+        await model.refreshConversations()
+
+        XCTAssertTrue(model.conversationsRefreshFailed)
+        XCTAssertEqual(
+            model.conversationsRefreshFailureMessage,
+            ChatAPIError.authWall.errorDescription,
+            "the banner carries the auth-wall explanation"
+        )
+        XCTAssertNil(model.errorMessage, "a list-refresh failure must not raise the modal")
+        XCTAssertNil(model.threadInlineMessage, "and must not use the thread-scoped banner")
+
+        // Recovery: a good refresh clears the message with the banner.
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(#"{"conversations":[],"count":0}"#)
+        }
+        await model.refreshConversations()
+        XCTAssertFalse(model.conversationsRefreshFailed)
+        XCTAssertNil(model.conversationsRefreshFailureMessage)
+    }
+
+    func testGenericListRefreshFailureKeepsDefaultBannerMessage() async throws {
+        // Only the auth wall carries detail: a transport failure keeps nil so the
+        // banner shows its generic text.
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"detail":"temporary"}"#, statusCode: 503)
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+        let model = makeViewModel(conversationID: nil)
+
+        await model.refreshConversations()
+
+        XCTAssertTrue(model.conversationsRefreshFailed)
+        XCTAssertNil(model.conversationsRefreshFailureMessage)
+    }
+
+    func testGenericListRefreshFailureClearsStaleAuthWallMessage() async throws {
+        let authWall = AtomicFlag(true)
+        ChatMockBackendURLProtocol.respond { request in
+            guard request.url?.path == "/api/v1/chat/conversations" else {
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+            if authWall.value {
+                return .json(
+                    "<html><body>Sign in</body></html>",
+                    headers: ["Content-Type": "text/html"]
+                )
+            }
+            return .json(#"{"detail":"temporary"}"#, statusCode: 503)
+        }
+        let model = makeViewModel(conversationID: nil)
+
+        await model.refreshConversations()
+        XCTAssertEqual(
+            model.conversationsRefreshFailureMessage,
+            ChatAPIError.authWall.errorDescription
+        )
+
+        authWall.value = false
+        await model.refreshConversations()
+
+        XCTAssertTrue(model.conversationsRefreshFailed)
+        XCTAssertNil(model.conversationsRefreshFailureMessage)
     }
 
     func testConversationReturning404IsTreatedAsGone() async throws {

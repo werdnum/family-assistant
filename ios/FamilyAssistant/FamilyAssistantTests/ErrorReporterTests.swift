@@ -194,6 +194,150 @@ final class ErrorReporterTests: XCTestCase {
         XCTAssertEqual(spooledFiles().count, 1)
     }
 
+    func testFlushPersistedKeepsReportsWhenSuccessResponseIsAuthWall() async throws {
+        let reporter = makeReporter()
+        await reporter.deliver(
+            message: "Queued",
+            component: "Notes.list.load",
+            errorType: .handled,
+            stack: nil,
+            extraData: [:]
+        )
+
+        MockErrorURLProtocol.respond { _ in
+            .init(
+                statusCode: 200,
+                data: Data("<html><body>Sign in</body></html>".utf8),
+                contentType: "application/json"
+            )
+        }
+        reporter.configure { self.baseURL }
+        await reporter.flushPersisted()
+
+        XCTAssertEqual(MockErrorURLProtocol.requests.count, 1)
+        XCTAssertEqual(spooledFiles().count, 1)
+    }
+
+    func testFlushPersistedAwaitsRefreshedTokenProvider() async throws {
+        let reporter = makeReporter()
+        await reporter.deliver(
+            message: "Queued",
+            component: "Chat.stream",
+            errorType: .handled,
+            stack: nil,
+            extraData: [:]
+        )
+        XCTAssertEqual(spooledFiles().count, 1)
+
+        MockErrorURLProtocol.respond { _ in .init(statusCode: 200) }
+        let providerEntered = ErrorReporterAsyncGate()
+        let releaseProvider = ErrorReporterAsyncGate()
+        reporter.configure(
+            baseURLProvider: { self.baseURL },
+            authTokenProvider: {
+                providerEntered.open()
+                await releaseProvider.wait()
+                return "refreshed-access-token"
+            }
+        )
+
+        let flush = Task { await reporter.flushPersisted() }
+        await providerEntered.wait()
+        XCTAssertTrue(MockErrorURLProtocol.requests.isEmpty)
+        releaseProvider.open()
+        await flush.value
+
+        let request = try XCTUnwrap(MockErrorURLProtocol.requests.first)
+        XCTAssertEqual(
+            request.value(forHTTPHeaderField: "Authorization"),
+            "Bearer refreshed-access-token"
+        )
+        XCTAssertTrue(spooledFiles().isEmpty)
+    }
+
+    func testDeliverAttachesBearerTokenWhenConfigured() async throws {
+        MockErrorURLProtocol.respond { _ in .init(statusCode: 200) }
+        let reporter = makeReporter()
+        reporter.configure(
+            baseURLProvider: { self.baseURL },
+            authTokenProvider: { "test-access-token" }
+        )
+
+        await reporter.deliver(
+            message: "Boom",
+            component: "Notes.editor.save",
+            errorType: .handled,
+            stack: nil,
+            extraData: [:]
+        )
+
+        XCTAssertEqual(MockErrorURLProtocol.requests.count, 1)
+        let request = try XCTUnwrap(MockErrorURLProtocol.requests.first)
+        XCTAssertEqual(
+            request.value(forHTTPHeaderField: "Authorization"),
+            "Bearer test-access-token"
+        )
+    }
+
+    func testDeliverOmitsAuthHeaderWithoutToken() async throws {
+        MockErrorURLProtocol.respond { _ in .init(statusCode: 200) }
+        let reporter = makeReporter()
+        reporter.configure(baseURLProvider: { self.baseURL })
+
+        await reporter.deliver(
+            message: "Boom",
+            component: "Notes.editor.save",
+            errorType: .handled,
+            stack: nil,
+            extraData: [:]
+        )
+
+        let request = try XCTUnwrap(MockErrorURLProtocol.requests.first)
+        XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+    }
+
+    func testDeliverWithoutCredentialsUsesUnauthenticatedErrorIntake() async throws {
+        MockErrorURLProtocol.respond { _ in .init(statusCode: 200) }
+        let reporter = makeReporter()
+        reporter.configure(
+            baseURLProvider: { self.baseURL },
+            authTokenProvider: { throw AuthError.noCredentials }
+        )
+
+        await reporter.deliver(
+            message: "Login failed",
+            component: "Auth.login",
+            errorType: .handled,
+            stack: nil,
+            extraData: [:]
+        )
+
+        let request = try XCTUnwrap(MockErrorURLProtocol.requests.first)
+        XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+        XCTAssertTrue(spooledFiles().isEmpty)
+    }
+
+    func testDeliverWhenTokenRefreshFailsUsesUnauthenticatedErrorIntake() async throws {
+        MockErrorURLProtocol.respond { _ in .init(statusCode: 200) }
+        let reporter = makeReporter()
+        reporter.configure(
+            baseURLProvider: { self.baseURL },
+            authTokenProvider: { throw AuthError.transient(underlying: nil) }
+        )
+
+        await reporter.deliver(
+            message: "Refresh failed",
+            component: "Auth.refresh",
+            errorType: .handled,
+            stack: nil,
+            extraData: [:]
+        )
+
+        let request = try XCTUnwrap(MockErrorURLProtocol.requests.first)
+        XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+        XCTAssertTrue(spooledFiles().isEmpty)
+    }
+
     // MARK: - Helpers
 
     private func makeReporter() -> ErrorReporter {
@@ -212,9 +356,51 @@ final class ErrorReporterTests: XCTestCase {
     }
 }
 
+private final class ErrorReporterAsyncGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var opened = false
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if opened {
+                lock.unlock()
+                continuation.resume()
+                return
+            }
+            continuations.append(continuation)
+            lock.unlock()
+        }
+    }
+
+    func open() {
+        lock.lock()
+        opened = true
+        let pending = continuations
+        continuations.removeAll()
+        lock.unlock()
+        for continuation in pending {
+            continuation.resume()
+        }
+    }
+}
+
 private final class MockErrorURLProtocol: URLProtocol {
     struct Response {
         let statusCode: Int
+        let data: Data
+        let contentType: String
+
+        init(
+            statusCode: Int,
+            data: Data = Data("{\"status\":\"reported\"}".utf8),
+            contentType: String = "application/json"
+        ) {
+            self.statusCode = statusCode
+            self.data = data
+            self.contentType = contentType
+        }
     }
 
     typealias Handler = (URLRequest) -> Response
@@ -272,10 +458,10 @@ private final class MockErrorURLProtocol: URLProtocol {
             url: request.url!,
             statusCode: response.statusCode,
             httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "application/json"]
+            headerFields: ["Content-Type": response.contentType]
         )!
         client?.urlProtocol(self, didReceive: httpResponse, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Data("{\"status\":\"reported\"}".utf8))
+        client?.urlProtocol(self, didLoad: response.data)
         client?.urlProtocolDidFinishLoading(self)
     }
 
