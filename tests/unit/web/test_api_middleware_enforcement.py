@@ -8,12 +8,15 @@ from typing import Annotated, cast
 
 import pytest
 import pytest_asyncio
+from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import Depends, FastAPI
 from httpx import ASGITransport, AsyncClient
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
 from starlette.types import Receive, Scope, Send
 
+from family_assistant.web.app_creator import AuthMiddlewareWrapper
+from family_assistant.web.app_creator import middleware as app_middleware
 from family_assistant.web.auth import (
     PUBLIC_PATHS,
     AuthMiddleware,
@@ -21,6 +24,7 @@ from family_assistant.web.auth import (
     BootstrapBodyLimitMiddleware,
 )
 from family_assistant.web.dependencies import get_current_user
+from family_assistant.web.jwt_tokens import JWTTokenService
 from family_assistant.web.route_auth import BOOTSTRAP_BODY_LIMIT_BYTES
 
 
@@ -127,7 +131,7 @@ async def test_valid_bearer_token_passes_default_auth() -> None:
 
 
 @pytest.mark.asyncio
-async def test_jwt_authentication_is_reused_by_endpoint_dependency() -> None:
+async def test_jwt_only_authentication_is_enforced_and_reused_by_dependency() -> None:
     class CountingJWTAuthService(_AcceptingJWTAuthService):
         calls = 0
 
@@ -138,6 +142,10 @@ async def test_jwt_authentication_is_reused_by_endpoint_dependency() -> None:
             return await super().get_user_from_api_token(auth_header, request)
 
     auth_service = CountingJWTAuthService()
+    auth_service.auth_enabled = False
+    auth_service.jwt_tokens = JWTTokenService(
+        ec.generate_private_key(ec.SECP256R1()), "test-key"
+    )
     app = FastAPI()
     app.state.auth_service = auth_service
 
@@ -150,11 +158,17 @@ async def test_jwt_authentication_is_reused_by_endpoint_dependency() -> None:
     app.add_middleware(AuthMiddleware, auth_service=auth_service)
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as c:
+        unauthenticated = await c.get("/api/notes/")
         response = await c.get("/api/notes/", headers={"Authorization": "Bearer jwt"})
 
+    assert unauthenticated.status_code == 401
     assert response.status_code == 200
     assert response.json() == {"sub": "jwt-user"}
     assert auth_service.calls == 1
+
+
+def test_application_always_installs_auth_middleware_wrapper() -> None:
+    assert any(item.cls is AuthMiddlewareWrapper for item in app_middleware)
 
 
 @pytest.mark.asyncio

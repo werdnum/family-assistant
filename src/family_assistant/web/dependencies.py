@@ -15,6 +15,7 @@ from family_assistant.storage.database import Database
 from family_assistant.tools import ToolsProvider
 from family_assistant.web.auth import (
     AuthService,
+    api_authentication_enabled,
     extract_api_credential,
     get_request_authenticated_api_user,
 )
@@ -217,7 +218,7 @@ async def get_current_user(request: Request) -> dict:
     - API token auth (API clients with Authorization header)
     """
     auth_service = getattr(request.app.state, "auth_service", None)
-    if not auth_service or not auth_service.auth_enabled:
+    if not auth_service or not api_authentication_enabled(auth_service):
         logger.debug("Auth is disabled, returning test user.")
         return _auth_disabled_user()
 
@@ -305,7 +306,7 @@ async def get_current_session_user(request: Request) -> dict:
 async def get_current_api_user(request: Request) -> dict:
     """Authenticate the credential presented on this request, ignoring sessions."""
     auth_service = getattr(request.app.state, "auth_service", None)
-    if not auth_service or not auth_service.auth_enabled:
+    if not auth_service or not api_authentication_enabled(auth_service):
         logger.debug("Auth is disabled, returning test user.")
         return _auth_disabled_user()
     return await _authenticate_presented_api_user(request, auth_service)
@@ -329,6 +330,11 @@ async def get_current_active_user(request: Request) -> dict:
     auth_enabled = auth_service.auth_enabled
 
     if not auth_enabled:
+        if api_authentication_enabled(auth_service):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This endpoint requires an OIDC browser session.",
+            )
         # If auth is not enabled, create a mock user for development/testing.
         logger.warning(
             "Auth is disabled. Returning a mock user for get_current_active_user."
