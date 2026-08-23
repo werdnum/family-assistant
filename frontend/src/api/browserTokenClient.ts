@@ -115,7 +115,10 @@ async function attemptRefresh(cycleGeneration: number): Promise<AttemptResult> {
   if (payload.enabled === false) {
     return 'not-configured';
   }
-  const expiresIn = payload.expires_in ?? 0;
+  const expiresIn = payload.expires_in;
+  if (typeof expiresIn !== 'number' || !Number.isFinite(expiresIn) || expiresIn <= 0) {
+    return 'transient-failure';
+  }
   const elapsed = Date.now() - startedAt;
   // Always schedule positive near-expiry work, even for very short TTLs where
   // the margin would otherwise go non-positive and strand the cookie.

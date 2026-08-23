@@ -90,6 +90,25 @@ describe('startSessionBridge', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it.each([
+    ['missing', {}],
+    ['zero', { expires_in: 0 }],
+    ['negative', { expires_in: -1 }],
+    ['non-numeric', { expires_in: '3600' }],
+  ])('keeps the bridge gated when expires_in is %s', async (_label, payload) => {
+    server.use(
+      http.get('/api/auth/browser-token', () => {
+        tokenRequests += 1;
+        return HttpResponse.json(payload);
+      })
+    );
+
+    await expect(startSessionBridge()).resolves.toBe('unreachable');
+
+    expect(tokenRequests).toBe(1);
+    expect(vi.getTimerCount()).toBe(1);
+  });
+
   it('treats a 404 as feature-disabled and proceeds without retrying', async () => {
     server.use(
       http.get('/api/auth/browser-token', () => {
