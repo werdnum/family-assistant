@@ -10259,6 +10259,35 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertNil(model.conversationsRefreshFailureMessage)
     }
 
+    func testGenericListRefreshFailureClearsStaleAuthWallMessage() async throws {
+        let authWall = AtomicFlag(true)
+        ChatMockBackendURLProtocol.respond { request in
+            guard request.url?.path == "/api/v1/chat/conversations" else {
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+            if authWall.value {
+                return .json(
+                    "<html><body>Sign in</body></html>",
+                    headers: ["Content-Type": "text/html"]
+                )
+            }
+            return .json(#"{"detail":"temporary"}"#, statusCode: 503)
+        }
+        let model = makeViewModel(conversationID: nil)
+
+        await model.refreshConversations()
+        XCTAssertEqual(
+            model.conversationsRefreshFailureMessage,
+            ChatAPIError.authWall.errorDescription
+        )
+
+        authWall.value = false
+        await model.refreshConversations()
+
+        XCTAssertTrue(model.conversationsRefreshFailed)
+        XCTAssertNil(model.conversationsRefreshFailureMessage)
+    }
+
     func testConversationReturning404IsTreatedAsGone() async throws {
         // §4.5: a 404 on a per-conversation read means the conversation was deleted.
         // It is dropped from the held list and shown as gone inline, not surfaced as

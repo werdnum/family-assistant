@@ -747,6 +747,7 @@ final class ChatViewModel {
             scheduleAdvisoryRetry(after: delay, retry: retry)
             return
         }
+        conversationsRefreshFailureMessage = nil
         if case .inlineFeedback(.authWall) = surface {
             // The wall is persistent and actionable: carry its explanation onto
             // the list banner instead of the generic refresh-failed text.

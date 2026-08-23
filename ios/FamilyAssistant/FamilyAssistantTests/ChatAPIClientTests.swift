@@ -430,6 +430,40 @@ final class ChatAPIClientTests: XCTestCase {
         XCTAssertEqual(streamQueryItems["ack_seq"], "6")
     }
 
+    func testConversationStreamDetectsMarkupWithJSONContentType() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json("\n <html><body>Sign in</body></html>")
+        }
+
+        let stream = try await makeClient().subscribeToTurn(
+            conversationID: "web_conv_auth_wall",
+            fromSeq: 0,
+            ackSeq: nil
+        )
+
+        do {
+            for try await _ in stream {}
+            XCTFail("Expected streamed markup to throw authWall")
+        } catch let error as ChatAPIError {
+            XCTAssertEqual(error, .authWall)
+        }
+    }
+
+    func testActivityStreamDetectsMarkupWithJSONContentType() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json("\n <html><body>Sign in</body></html>")
+        }
+
+        let stream = try await makeClient().connectActivityStream()
+
+        do {
+            for try await _ in stream {}
+            XCTFail("Expected streamed markup to throw authWall")
+        } catch let error as ChatAPIError {
+            XCTAssertEqual(error, .authWall)
+        }
+    }
+
     func testStartTurnAlreadyCompleteReportsFlag() async throws {
         var sawStreamRequest = false
         ChatMockBackendURLProtocol.respond { request in

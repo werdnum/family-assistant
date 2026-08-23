@@ -429,7 +429,14 @@ struct ChatAPIClient {
     ) async throws {
         let parser = SSEParser()
         var pendingUTF8 = Data()
+        var awaitingFirstContentByte = true
         for try await byte in bytes {
+            if AuthWallDetection.isMarkupStart(
+                byte: byte,
+                awaitingFirstContentByte: &awaitingFirstContentByte
+            ) {
+                throw ChatAPIError.authWall
+            }
             pendingUTF8.append(byte)
             guard let chunk = String(data: pendingUTF8, encoding: .utf8) else {
                 continue
@@ -781,7 +788,14 @@ struct ChatAPIClient {
         continuation: AsyncThrowingStream<ChatStreamEvent, Error>.Continuation
     ) async throws {
         var pendingUTF8 = Data()
+        var awaitingFirstContentByte = true
         for try await byte in bytes {
+            if AuthWallDetection.isMarkupStart(
+                byte: byte,
+                awaitingFirstContentByte: &awaitingFirstContentByte
+            ) {
+                throw ChatAPIError.authWall
+            }
             pendingUTF8.append(byte)
             guard let chunk = String(data: pendingUTF8, encoding: .utf8) else {
                 continue
@@ -1078,6 +1092,22 @@ private struct ChatTurnConflictResponse: Decodable {
 /// `URLSession` follows it, so the client sees `200 text/html` where JSON was
 /// expected — without this check that surfaces as a cryptic decode failure.
 enum AuthWallDetection {
+    static func isMarkupStart(
+        byte: UInt8,
+        awaitingFirstContentByte: inout Bool
+    ) -> Bool {
+        guard awaitingFirstContentByte else { return false }
+        if byte == UInt8(ascii: " ")
+            || byte == UInt8(ascii: "\t")
+            || byte == UInt8(ascii: "\r")
+            || byte == UInt8(ascii: "\n")
+        {
+            return false
+        }
+        awaitingFirstContentByte = false
+        return byte == UInt8(ascii: "<")
+    }
+
     static func isLikely(contentType: String?, data: Data) -> Bool {
         if let contentType, contentType.lowercased().hasPrefix("text/html") {
             return true
