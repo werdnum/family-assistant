@@ -1431,10 +1431,10 @@ credential are clamped into the in-memory telemetry ring. They are never persist
 whatever severity they claim, and are lost on process restart. Authenticated reporters keep the full
 behaviour described above.
 
-The token grants no access beyond those endpoints. It does not make anything public that was not
-already: `/api/*` bypasses `AuthMiddleware` and individual routes enforce their own auth, so a
-deliberately public route such as the `POST /api/errors/` report receiver stays reachable without
-it. In particular `GET /api/debug/profiles` (the full config dump) is **not** covered, while the
+The token grants no access beyond those endpoints. `/api/*` requires `AuthMiddleware` authentication
+by default; the smaller set in `route_auth.NO_DEFAULT_AUTH_ROUTES` instead uses its declared scoped
+policy or, for a deliberately public receiver such as `POST /api/errors/`, bounded public handling.
+In particular `GET /api/debug/profiles` (the full config dump) is **not** covered, while the
 tool-inventory endpoint that is covered exposes only tool names and sizes — no prompts and no policy
 bodies.
 
