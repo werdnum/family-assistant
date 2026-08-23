@@ -811,6 +811,17 @@ final class AuthManager {
         return apiToken
     }
 
+    /// Return a usable access token only when an authenticated session already
+    /// exists. Best-effort callers such as error reporting must not turn the
+    /// absence of credentials during onboarding into an auth-required state.
+    @MainActor
+    func validAccessTokenIfPresent() async throws -> String? {
+        guard KeychainHelper.readString(key: Keys.apiToken) != nil else {
+            return nil
+        }
+        return try await validAccessToken()
+    }
+
     func validatedServerURL() -> URL? {
         var urlString = serverURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if !urlString.hasPrefix("http://") && !urlString.hasPrefix("https://") {

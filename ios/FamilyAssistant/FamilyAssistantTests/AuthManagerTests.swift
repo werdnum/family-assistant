@@ -111,6 +111,18 @@ final class AuthManagerTests: XCTestCase {
         XCTAssertFalse(authManager.authRequired)
     }
 
+    func testValidAccessTokenIfPresentDoesNotLatchAuthRequiredWithoutCredentials() async throws {
+        let authManager = makeAuthManager()
+        let initialEpoch = authManager.authEpoch
+
+        let token = try await authManager.validAccessTokenIfPresent()
+
+        XCTAssertNil(token)
+        XCTAssertFalse(authManager.authRequired)
+        XCTAssertEqual(authManager.authEpoch, initialEpoch)
+        XCTAssertTrue(AuthBackendURLProtocol.requests.isEmpty)
+    }
+
     func testAuthorizedRequestClearsCredentialsWhenRefreshCredentialsAreMissing() async throws {
         KeychainHelper.save(key: "fa_api_token", string: "api-token-without-refresh")
         let authManager = makeAuthManager()

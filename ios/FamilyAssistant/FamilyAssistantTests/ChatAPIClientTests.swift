@@ -1083,6 +1083,40 @@ final class ChatAPIClientTests: XCTestCase {
         }
     }
 
+    func testHTMLServerErrorRemainsADegradedServerFailure() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                "<html><body>Service unavailable</body></html>",
+                statusCode: 503,
+                headers: ["Content-Type": "text/html; charset=utf-8"]
+            )
+        }
+
+        do {
+            _ = try await makeClient().listProfiles()
+            XCTFail("Expected a server error")
+        } catch let ChatAPIError.server(statusCode, _, _) {
+            XCTAssertEqual(statusCode, 503)
+        }
+    }
+
+    func testHTMLStreamServerErrorRemainsADegradedServerFailure() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                "<html><body>Gateway unavailable</body></html>",
+                statusCode: 503,
+                headers: ["Content-Type": "text/html; charset=utf-8"]
+            )
+        }
+
+        do {
+            _ = try await makeClient().connectActivityStream()
+            XCTFail("Expected a server error")
+        } catch let ChatAPIError.server(statusCode, _, _) {
+            XCTAssertEqual(statusCode, 503)
+        }
+    }
+
     func testMarkupBodyWithJSONContentTypeSurfacesAuthWall() async throws {
         // A followed redirect can deliver the wall's markup under any content
         // type; a body starting with "<" is still detected.

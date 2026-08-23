@@ -1212,6 +1212,7 @@ enum AuthWallDetection {
         throwing error: @autoclosure () -> E
     ) throws {
         guard let httpResponse = response as? HTTPURLResponse,
+              canRepresentAuthWall(statusCode: httpResponse.statusCode),
               isLikely(
                   contentType: httpResponse.value(forHTTPHeaderField: "Content-Type"),
                   data: data
@@ -1220,6 +1221,10 @@ enum AuthWallDetection {
             return
         }
         throw error()
+    }
+
+    private static func canRepresentAuthWall(statusCode: Int) -> Bool {
+        (200 ..< 400).contains(statusCode) || statusCode == 401 || statusCode == 403
     }
 
     static func isMarkupStart(

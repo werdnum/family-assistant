@@ -22,7 +22,7 @@ struct FamilyAssistantApp: App {
         ErrorReporter.shared.configure(
             baseURLProvider: { [weak authManager] in authManager?.validatedServerURL() },
             authTokenProvider: { [weak authManager] in
-                try await authManager?.validAccessToken()
+                try await authManager?.validAccessTokenIfPresent()
             }
         )
         ErrorReporter.shared.installGlobalHandlers()
