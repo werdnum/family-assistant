@@ -84,6 +84,23 @@ def extract_api_credential(request: Request) -> str | None:
     return request.headers.get("X-API-Token")
 
 
+_AUTHENTICATED_API_USER_STATE_KEY = "family_assistant_authenticated_api_user"
+
+
+def set_request_authenticated_api_user(request: Request, user: User) -> None:
+    """Cache middleware-authenticated API identity for downstream dependencies."""
+    request.scope.setdefault("state", {})[_AUTHENTICATED_API_USER_STATE_KEY] = user
+
+
+def get_request_authenticated_api_user(request: Request) -> User | None:
+    """Return the API identity already authenticated for this request, if any."""
+    state = request.scope.get("state")
+    if not state:
+        return None
+    user = state.get(_AUTHENTICATED_API_USER_STATE_KEY)
+    return user if isinstance(user, dict) else None
+
+
 class AuthService:
     """Service class for authentication operations with proper dependency injection."""
 
@@ -483,29 +500,22 @@ class AuthMiddleware:
                 await self.app(scope, receive, send)
                 return
 
-        # /api requests are fail-closed: default authentication applies to
-        # everything the route classification does not exempt (bootstrap,
-        # public receivers, scoped-auth routes). Exempt requests fall through
-        # to their own auth mechanism; unauthenticated default-auth requests
-        # get a 401 below instead of the browser login redirect.
         is_api_request = route_auth.is_api_path(request_path)
-        if is_api_request and not route_auth.api_route_requires_default_auth(
-            request.method, request_path
-        ):
-            await self.app(scope, receive, send)
-            return
 
-        # Try to get user from session
+        # Try to get user from session first: token-bound sessions must be
+        # revalidated BEFORE any classification-based early return, so an
+        # expired credential cannot ride an exempt route past its checks.
         try:
             user = request.session.get("user")
         except AssertionError:
             # Session middleware not available. API requests stay fail-closed
             # (bearer auth below, then 401); page requests keep the legacy
             # pass-through since the login redirect needs a session too.
-            if not is_api_request:
+            if is_api_request:
+                user = None
+            else:
                 await self.app(scope, receive, send)
                 return
-            user = None
 
         # If session was created from an API token (e.g., iOS app), verify the
         # token is still valid (not revoked/expired) and that any bound short-
@@ -556,7 +566,17 @@ class AuthMiddleware:
                     self._token_valid_cache.pop(cache_key, None)
                     request.session.pop("user", None)
                     request.session.pop("api_token_id", None)
+                    request.session.pop("session_jwt_exp", None)
                     user = None
+
+        # Exempt API routes carry their own route-specific authentication. A
+        # token-bound session is still revalidated above before the request can
+        # reach that mechanism.
+        if is_api_request and not route_auth.api_route_requires_default_auth(
+            request.method, request_path
+        ):
+            await self.app(scope, receive, send)
+            return
 
         # Attempt API token authentication if no session user
         if not user:
@@ -581,6 +601,7 @@ class AuthMiddleware:
                             # session lifetime.
                             if api_user.get("token_id"):
                                 request.session["api_token_id"] = api_user["token_id"]
+                    set_request_authenticated_api_user(request, api_user)
                     user = api_user  # Update user for the current request flow
                     logger.debug(
                         f"User authenticated via API token for path {request_path}"

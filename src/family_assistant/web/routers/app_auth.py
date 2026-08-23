@@ -33,7 +33,7 @@ from family_assistant.storage.base import api_tokens_table
 from family_assistant.storage.database import Database
 from family_assistant.web import jwt_tokens, route_auth
 from family_assistant.web.dependencies import (
-    get_current_session_user,
+    get_current_api_user,
     get_current_user,
     get_db,
     get_user_identity_resolver,
@@ -419,17 +419,14 @@ async def refresh_token(
                     parent_expires = parent_expires.replace(tzinfo=UTC)
                 if not parent_expires or parent_expires > now:
                     token_ttl = jwt_tokens.access_token_ttl_seconds()
-                    # Extend the reused row through the newly issued JWT's
-                    # lifetime plus grace — a row in its final TTL window
-                    # would otherwise invalidate the token early.
-                    async with db_context.transaction() as txn:
-                        await txn.execute(
+                    desired_expires = now + timedelta(seconds=token_ttl + 60)
+                    # Preserve a later or unlimited row lifetime. Only a row
+                    # that would expire before the new JWT needs extension.
+                    if parent_expires is not None and parent_expires < desired_expires:
+                        await db_context.execute(
                             sa_update(api_tokens_table)
                             .where(api_tokens_table.c.id == parent_row["id"])
-                            .values(
-                                expires_at=datetime.now(UTC)
-                                + timedelta(seconds=token_ttl + 60)
-                            )
+                            .values(expires_at=desired_expires)
                         )
                     access_token = jwt_tokens.mint_access_token(
                         user_identifier, int(parent_row["id"])
@@ -549,7 +546,7 @@ async def exchange_opaque_token(
 async def browser_token(
     request: Request,
     db_context: Annotated[Database, Depends(get_db)],
-    current_user: Annotated[dict, Depends(get_current_session_user)],
+    current_user: Annotated[dict, Depends(get_current_user)],
 ) -> JSONResponse:
     """Exchange the OIDC session for a short-lived browser JWT cookie.
 
@@ -563,14 +560,18 @@ async def browser_token(
         return JSONResponse(content={"enabled": False})
 
     # Only deployments with session authentication may mint browser
-    # credentials: without it, get_current_session_user's unauthenticated
-    # fallback would let any caller obtain a signed cookie accepted across
-    # every gateway-protected /api route.
+    # credentials. OIDC sessions and the iOS app's revalidated token-bound
+    # session are accepted; a bearer credential presented directly is not.
     auth_service = getattr(request.app.state, "auth_service", None)
     if not auth_service or not auth_service.auth_enabled:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Browser JWT bridge requires session authentication.",
+        )
+    if current_user.get("source") in {"api_token", "jwt_access_token"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Browser JWT bridge requires a browser or app session.",
         )
     if current_user.get("readonly"):
         raise HTTPException(
@@ -655,7 +656,7 @@ async def browser_token(
 @api_auth_router.post("/token-session")
 async def token_session(
     request: Request,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[dict, Depends(get_current_api_user)],
 ) -> TokenSessionResponse:
     """Exchange a valid API Bearer token for a session cookie.
 
@@ -672,10 +673,13 @@ async def token_session(
     # JWT-sourced bearers additionally bind the session to the JWT's own
     # (short) expiry so it cannot outlive the credential that minted it.
     token_id = current_user.get("token_id")
-    if token_id:
+    request.session.pop("api_token_id", None)
+    request.session.pop("session_jwt_exp", None)
+    if token_id is not None:
         request.session["api_token_id"] = token_id
-    if current_user.get("exp"):
-        request.session["session_jwt_exp"] = current_user["exp"]
+    jwt_exp = current_user.get("exp")
+    if jwt_exp is not None:
+        request.session["session_jwt_exp"] = jwt_exp
 
     logger.info(
         "Token-session: established session for user %s (token_id=%s)",

@@ -5,28 +5,26 @@ import time
 from base64 import urlsafe_b64encode
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
 
 import pytest
 import pytest_asyncio
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 from starlette.middleware.sessions import SessionMiddleware
 
 from family_assistant.storage import api_tokens as api_tokens_storage
-
-if TYPE_CHECKING:
-    from fastapi import FastAPI
-
 from family_assistant.storage.base import api_tokens_table
 from family_assistant.storage.database import Database
 from family_assistant.web import jwt_tokens as jwt_tokens_module
-from family_assistant.web.dependencies import get_current_session_user
+from family_assistant.web.auth import AuthService
+from family_assistant.web.dependencies import get_current_user
 from family_assistant.web.route_auth import api_route_classification
 from family_assistant.web.routers.app_auth import (
+    api_auth_router,
     auth_codes,
     cleanup_expired_codes,
 )
@@ -308,7 +306,7 @@ class TestJWTTokens:
         app_fixture.add_middleware(SessionMiddleware, secret_key="test-secret")
         original_overrides = dict(app_fixture.dependency_overrides)
         app_fixture.state.auth_service = _SessionAuthService()
-        app_fixture.dependency_overrides[get_current_session_user] = lambda: {
+        app_fixture.dependency_overrides[get_current_user] = lambda: {
             "sub": "browser-user@example.com",
             "user_identifier": "browser-user@example.com",
             "email": "browser-user@example.com",
@@ -333,7 +331,7 @@ class TestJWTTokens:
         ).decode("ascii")
         monkeypatch.setenv("JWT_SIGNING_KEY", pem)
         jwt_tokens_module.init_jwt_signing()
-        yield  # type: ignore[misc]
+        yield None
         jwt_tokens_module.reset_jwt_signing_for_tests()
 
     @pytest.mark.asyncio
@@ -528,7 +526,7 @@ class _SessionAuthService:
         """Without session authentication the bridge must not mint credentials."""
         original_overrides = dict(app_fixture.dependency_overrides)
         app_fixture.state.auth_service = _NoAuthService()
-        app_fixture.dependency_overrides[get_current_session_user] = lambda: {
+        app_fixture.dependency_overrides[get_current_user] = lambda: {
             "sub": "anonymous",
             "user_identifier": "anonymous",
         }
@@ -560,7 +558,7 @@ class TestBrowserSessionRows:
         app_fixture.add_middleware(SessionMiddleware, secret_key="test-secret")
         original_overrides = dict(app_fixture.dependency_overrides)
         app_fixture.state.auth_service = _SessionAuthService()
-        app_fixture.dependency_overrides[get_current_session_user] = lambda: {
+        app_fixture.dependency_overrides[get_current_user] = lambda: {
             "sub": "browser-user@example.com",
             "user_identifier": "browser-user@example.com",
             "email": "browser-user@example.com",
@@ -591,6 +589,72 @@ class TestBrowserSessionRows:
         jwt_tokens_module.init_jwt_signing()
         yield
         jwt_tokens_module.reset_jwt_signing_for_tests()
+
+    @pytest.mark.asyncio
+    async def test_refreshed_jwt_rebinds_existing_app_session(
+        self,
+        db_engine: AsyncEngine,
+        jwt_enabled: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A retained app session is rebound to the bearer sent on this launch."""
+        auth_service = AuthService(db_engine)
+        auth_service.auth_enabled = True
+        app = FastAPI()
+        app.state.auth_service = auth_service
+        app.state.database_engine = db_engine
+        app.include_router(api_auth_router, prefix="/api")
+
+        @app.get("/test/session-state")
+        async def session_state(request: Request) -> dict:
+            return dict(request.session)
+
+        app.add_middleware(SessionMiddleware, secret_key="test-secret")
+
+        minted = api_tokens_storage.mint_api_token()
+        db = Database(db_engine)
+        token_id = await api_tokens_storage.add_api_token(
+            db_context=db,
+            user_identifier="ios-user@example.com",
+            name="iOS App",
+            hashed_token=minted.hashed_secret,
+            prefix=minted.prefix,
+            created_at=minted.created_at,
+            expires_at=datetime.now(UTC) + timedelta(days=30),
+            token_type="api",
+        )
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
+            first_token = jwt_tokens_module.mint_access_token(
+                "ios-user@example.com", token_id
+            )
+            first = await client.post(
+                "/api/auth/token-session",
+                headers={"Authorization": f"Bearer {first_token}"},
+            )
+            assert first.status_code == 200
+            first_state = (await client.get("/test/session-state")).json()
+
+            monkeypatch.setenv("JWT_ACCESS_TOKEN_TTL_SECONDS", "7200")
+            refreshed_token = jwt_tokens_module.mint_access_token(
+                "ios-user@example.com", token_id
+            )
+            rebound = await client.post(
+                "/api/auth/token-session",
+                headers={"Authorization": f"Bearer {refreshed_token}"},
+            )
+            assert rebound.status_code == 200
+            rebound_state = (await client.get("/test/session-state")).json()
+
+            bridge = await client.get("/api/auth/browser-token")
+
+        assert rebound_state["api_token_id"] == token_id
+        assert rebound_state["session_jwt_exp"] > first_state["session_jwt_exp"]
+        assert bridge.status_code == 200
+        assert "fa_access_token=" in bridge.headers["set-cookie"]
 
     @pytest.mark.asyncio
     async def test_browser_token_prunes_expired_rows(
@@ -645,6 +709,12 @@ class TestBrowserSessionRows:
             exchange.json()["api_token"]
         )
         assert first_claims is not None
+        db = Database(db_engine)
+        expiry_query = select(api_tokens_table.c.expires_at).where(
+            api_tokens_table.c.id == first_claims["tid"]
+        )
+        before_refresh = await db.fetch_one(expiry_query)
+        assert before_refresh is not None
 
         refresh_response = await api_test_client.post(
             "/api/auth/refresh",
@@ -656,6 +726,9 @@ class TestBrowserSessionRows:
         )
         assert second_claims is not None
         assert second_claims["tid"] == first_claims["tid"]
+        after_refresh = await db.fetch_one(expiry_query)
+        assert after_refresh is not None
+        assert after_refresh["expires_at"] == before_refresh["expires_at"]
 
         query = (
             select(func.count().label("count"))
@@ -665,7 +738,7 @@ class TestBrowserSessionRows:
                 api_tokens_table.c.name == "iOS App",
             )
         )
-        row = await Database(db_engine).fetch_one(query)
+        row = await db.fetch_one(query)
         assert row is not None and row["count"] == 1
 
     @pytest.mark.asyncio

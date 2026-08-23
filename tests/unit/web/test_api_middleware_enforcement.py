@@ -4,9 +4,11 @@ import json
 import re
 import time
 from collections.abc import AsyncGenerator
+from typing import Annotated, cast
 
 import pytest
 import pytest_asyncio
+from fastapi import Depends, FastAPI
 from httpx import ASGITransport, AsyncClient
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import Request
@@ -18,6 +20,7 @@ from family_assistant.web.auth import (
     AuthService,
     BootstrapBodyLimitMiddleware,
 )
+from family_assistant.web.dependencies import get_current_user
 from family_assistant.web.route_auth import BOOTSTRAP_BODY_LIMIT_BYTES
 
 
@@ -57,12 +60,14 @@ class _AcceptingAuthService(_RejectingAuthService):
 
 
 @pytest.fixture(params=[_RejectingAuthService, _AcceptingAuthService])
-def auth_service_class(request: pytest.FixtureRequest) -> type:
-    return request.param  # type: ignore[no-any-return]
+def auth_service_class(request: pytest.FixtureRequest) -> type[AuthService]:
+    return cast("type[AuthService]", request.param)
 
 
 @pytest_asyncio.fixture
-async def client(auth_service_class: type) -> AsyncGenerator[AsyncClient]:
+async def client(
+    auth_service_class: type[AuthService],
+) -> AsyncGenerator[AsyncClient]:
     middleware = AuthMiddleware(_ok_app, auth_service_class())
     transport = ASGITransport(app=middleware)
     async with AsyncClient(transport=transport, base_url="http://testserver") as c:
@@ -119,6 +124,37 @@ async def test_valid_bearer_token_passes_default_auth() -> None:
     async with AsyncClient(transport=transport, base_url="http://testserver") as c:
         response = await c.get("/api/notes/", headers={"Authorization": "Bearer x"})
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_jwt_authentication_is_reused_by_endpoint_dependency() -> None:
+    class CountingJWTAuthService(_AcceptingJWTAuthService):
+        calls = 0
+
+        async def get_user_from_api_token(
+            self, auth_header: str, request: object
+        ) -> dict:
+            self.calls += 1
+            return await super().get_user_from_api_token(auth_header, request)
+
+    auth_service = CountingJWTAuthService()
+    app = FastAPI()
+    app.state.auth_service = auth_service
+
+    @app.get("/api/notes/")
+    async def notes(
+        current_user: Annotated[dict, Depends(get_current_user)],
+    ) -> dict[str, object]:
+        return {"sub": current_user["sub"]}
+
+    app.add_middleware(AuthMiddleware, auth_service=auth_service)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as c:
+        response = await c.get("/api/notes/", headers={"Authorization": "Bearer jwt"})
+
+    assert response.status_code == 200
+    assert response.json() == {"sub": "jwt-user"}
+    assert auth_service.calls == 1
 
 
 @pytest.mark.asyncio
@@ -208,7 +244,16 @@ async def test_jwt_bearer_auth_is_not_persisted_into_session() -> None:
 
 
 @pytest.mark.asyncio
-async def test_expired_bound_jwt_invalidates_session() -> None:
+@pytest.mark.parametrize(
+    ("path", "expected_status"),
+    [
+        ("/api/notes/", 401),
+        ("/api/diagnostics/export", 200),
+    ],
+)
+async def test_expired_bound_jwt_invalidates_session(
+    path: str, expected_status: int
+) -> None:
     """A session bound to a JWT is rejected once that JWT's exp passes."""
 
     async def session_app(scope: Scope, receive: Receive, send: Send) -> None:
@@ -244,10 +289,12 @@ async def test_expired_bound_jwt_invalidates_session() -> None:
         assert seed.json().get("session_jwt_exp"), "seed failed"
 
         response = await c.get(
-            "/api/notes/",
+            path,
             headers={"Cookie": seed.headers["set-cookie"].split(";")[0]},
         )
-    assert response.status_code == 401
+    assert response.status_code == expected_status
+    if expected_status == 200:
+        assert response.json() == {}
 
 
 @pytest.mark.asyncio
