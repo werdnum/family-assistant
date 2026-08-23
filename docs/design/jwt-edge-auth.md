@@ -64,8 +64,10 @@ The review of this design established two constraints that shape everything else
    `/api/auth/browser-token`), external OAuth return targets (the browser can arrive from a
    provider's consent page after arbitrarily long — longer than the JWT lifetime — so the callback
    must reach its own state + session validation), public-by-design error intake, and scoped-auth
-   routes (diagnostics, whose readonly-token check lives in a route dependency). Every other
-   `/api/*` request requires authentication in `AuthMiddleware` — closing the LAN exposure of
+   routes — paths whose access control lives outside default auth, whether a route dependency
+   granting narrower access (diagnostics readonly token) or a custom transport-level credential
+   (the Asterisk WebSocket's query-token handshake, which cannot carry headers or cookies). Every
+   other `/api/*` request requires authentication in `AuthMiddleware` — closing the LAN exposure of
    dependency-less routers as a side effect, and making the system safe under any edge
    configuration. Scoped routes stay scoped: passing a diagnostics readonly token grants nothing
    beyond diagnostics. Error intake stays reachable without a session (capture before login / with
@@ -120,7 +122,8 @@ The review of this design established two constraints that shape everything else
    browser cookie, attached unconditionally to the HTTPRoute section matching `/api/*`, except the
    routes the backend classifies as not using default authentication: bootstrap receivers
    (`exchange`, `refresh`, `token`, `browser-token`), public-by-design error intake, and scoped-auth
-   diagnostics routes whose readonly-token check lives in a route dependency. There is no
+   routes — diagnostics readonly-token dependencies and custom-auth transports (the Asterisk
+   WebSocket) alike. There is no
    header-conditioned splitting and therefore no route an attacker can select by omitting anything;
    every exempted path is authenticated by something else or public by design with its own abuse
    controls. The backend is the single source of truth for that classification — it publishes it,
