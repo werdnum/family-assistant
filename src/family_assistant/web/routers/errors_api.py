@@ -10,6 +10,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage.database import Database
 from family_assistant.web.dependencies import get_db, get_diagnostics_reader
@@ -182,6 +183,32 @@ def _sweep_rate_limit_addresses(now: float) -> None:
             del _rate_limit_hits[address]
 
 
+def _session_bound_token_id(request: Request) -> int | None:
+    """Return the API-token id bound to the session user, when present.
+
+    None means there is no session credential to revalidate (no session
+    middleware, or a plain OIDC session without a token binding).
+    """
+    try:
+        if not request.session.get("user"):
+            return None
+    except AssertionError:
+        # Session middleware not installed; no session credential exists.
+        return None
+    return request.session.get("api_token_id")
+
+
+async def _token_bound_session_is_valid(engine: AsyncEngine, token_id: int) -> bool:
+    from family_assistant.storage import (  # noqa: PLC0415 - deferred to avoid circular import at module level
+        api_tokens as api_tokens_storage,
+    )
+    from family_assistant.storage.database import (  # noqa: PLC0415 - deferred to avoid circular import at module level
+        Database,
+    )
+
+    return await api_tokens_storage.is_token_valid(Database(engine), token_id)
+
+
 async def _reporter_is_authenticated(request: Request) -> bool:
     """Whether the reporter holds a valid session or API credential.
 
@@ -189,29 +216,22 @@ async def _reporter_is_authenticated(request: Request) -> bool:
     revoked or expired credential cannot keep writing persistent reports.
     Deployments without auth enabled are treated as trusted (LAN/dev model).
     """
-    try:
-        if request.session.get("user"):
-            token_id = request.session.get("api_token_id")
-            if not token_id:
-                return True
-            auth_service = getattr(request.app.state, "auth_service", None)
-            engine = getattr(auth_service, "database_engine", None) if auth_service else None
-            if not engine:
-                return True
-            from family_assistant.storage import (  # noqa: PLC0415 - deferred to avoid circular import at module level
-                api_tokens as api_tokens_storage,
-            )
-            from family_assistant.storage.database import (  # noqa: PLC0415 - deferred to avoid circular import at module level
-                Database,
-            )
-
-            return await api_tokens_storage.is_token_valid(Database(engine), token_id)
-    except AssertionError:
-        pass
-
     auth_service = getattr(request.app.state, "auth_service", None)
     if not auth_service or not auth_service.auth_enabled:
         return True
+
+    session_bound_token_id = _session_bound_token_id(request)
+    if session_bound_token_id is not None:
+        engine = getattr(auth_service, "database_engine", None)
+        if not engine:
+            return True
+        return await _token_bound_session_is_valid(engine, session_bound_token_id)
+
+    try:
+        if request.session.get("user"):
+            return True
+    except AssertionError:
+        pass
 
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):

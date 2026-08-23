@@ -16,6 +16,7 @@ from cryptography.hazmat.primitives.asymmetric.rsa import (
 )
 
 from family_assistant.web import jwt_tokens
+from family_assistant.web.jwt_tokens import coordinate_bytes
 
 
 @pytest.fixture
@@ -170,8 +171,6 @@ def test_non_p256_ec_key_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_coordinate_encoding_is_fixed_width() -> None:
     """A coordinate with a leading zero byte still encodes at 32 bytes."""
-    from family_assistant.web.jwt_tokens import _coordinate_bytes
-
-    assert len(_coordinate_bytes(1)) == 32
-    assert _coordinate_bytes(0)[0] == 0
-    assert _coordinate_bytes(2**256 - 1) == b"\xff" * 32
+    assert len(coordinate_bytes(1)) == 32
+    assert coordinate_bytes(0)[0] == 0
+    assert coordinate_bytes(2**256 - 1) == b"\xff" * 32

@@ -180,7 +180,7 @@ def _b64u(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 
 
-def _coordinate_bytes(value: int) -> bytes:
+def coordinate_bytes(value: int) -> bytes:
     """Encode a P-256 coordinate at its fixed 32-byte width.
 
     RFC 7518 requires the full fixed-width octet string; a coordinate whose
@@ -198,8 +198,8 @@ def jwks_document() -> dict[str, list[JsonWebKey]]:
     key: JsonWebKey = {
         "kty": "EC",
         "crv": "P-256",
-        "x": _b64u(_coordinate_bytes(public_numbers.x)),
-        "y": _b64u(_coordinate_bytes(public_numbers.y)),
+        "x": _b64u(coordinate_bytes(public_numbers.x)),
+        "y": _b64u(coordinate_bytes(public_numbers.y)),
         "kid": _key_id,
         "alg": "ES256",
         "use": "sig",
@@ -222,9 +222,9 @@ def _compute_key_id(key: EllipticCurvePrivateKey) -> str:
     public_numbers = key.public_key().public_numbers()
     canonical = (
         '{"crv":"P-256","kty":"EC","x":"'
-        + _b64u(_coordinate_bytes(public_numbers.x))
+        + _b64u(coordinate_bytes(public_numbers.x))
         + '","y":"'
-        + _b64u(_coordinate_bytes(public_numbers.y))
+        + _b64u(coordinate_bytes(public_numbers.y))
         + '"}'
     )
     return _b64u(hashlib.sha256(canonical.encode("utf-8")).digest())
