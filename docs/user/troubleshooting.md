@@ -17,6 +17,14 @@ page covers the general cases.
 4. In Telegram, check notifications are enabled for the bot.
 5. Try the other interface. If Telegram is quiet, the web interface may still work.
 
+## The iOS app says "authentication wall detected"
+
+This means the app reached a sign-in page or network access screen instead of the Family Assistant
+API. Open your Family Assistant web address in Safari and complete any sign-in page, then return to
+the app and tap the Chat connection indicator to reconnect. If the web address does not open either,
+check your connection. If it opens but the message keeps returning, contact the person who manages
+Family Assistant so they can check the server and access gateway.
+
 ## It misunderstood you
 
 - **Rephrase.** Slightly different wording often makes a large difference.

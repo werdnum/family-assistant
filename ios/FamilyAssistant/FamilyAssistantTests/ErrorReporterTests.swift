@@ -230,15 +230,22 @@ final class ErrorReporterTests: XCTestCase {
         XCTAssertEqual(spooledFiles().count, 1)
 
         MockErrorURLProtocol.respond { _ in .init(statusCode: 200) }
+        let providerEntered = ErrorReporterAsyncGate()
+        let releaseProvider = ErrorReporterAsyncGate()
         reporter.configure(
             baseURLProvider: { self.baseURL },
             authTokenProvider: {
-                try await Task.sleep(for: .milliseconds(10))
+                providerEntered.open()
+                await releaseProvider.wait()
                 return "refreshed-access-token"
             }
         )
 
-        await reporter.flushPersisted()
+        let flush = Task { await reporter.flushPersisted() }
+        await providerEntered.wait()
+        XCTAssertTrue(MockErrorURLProtocol.requests.isEmpty)
+        releaseProvider.open()
+        await flush.value
 
         let request = try XCTUnwrap(MockErrorURLProtocol.requests.first)
         XCTAssertEqual(
@@ -346,6 +353,36 @@ final class ErrorReporterTests: XCTestCase {
     private func spooledFiles() -> [URL] {
         (try? FileManager.default.contentsOfDirectory(at: spoolDirectory, includingPropertiesForKeys: nil))?
             .filter { $0.pathExtension == "json" } ?? []
+    }
+}
+
+private final class ErrorReporterAsyncGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var opened = false
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            lock.lock()
+            if opened {
+                lock.unlock()
+                continuation.resume()
+                return
+            }
+            continuations.append(continuation)
+            lock.unlock()
+        }
+    }
+
+    func open() {
+        lock.lock()
+        opened = true
+        let pending = continuations
+        continuations.removeAll()
+        lock.unlock()
+        for continuation in pending {
+            continuation.resume()
+        }
     }
 }
 
