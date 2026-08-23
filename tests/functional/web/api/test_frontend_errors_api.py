@@ -450,7 +450,15 @@ async def test_report_rejects_oversized_payload(
             "/api/errors/",
             json={"message": "x" * 9000, "url": "http://localhost/chat"},
         )
-    assert response.status_code == 422
+        assert response.status_code in {413, 422}
+
+        # A body beyond the hard streaming cap is rejected before parsing.
+        response = await client.post(
+            "/api/errors/",
+            content=b"x" * (200 * 1024),
+            headers={"Content-Type": "application/json"},
+        )
+    assert response.status_code == 413
 
 
 @pytest.mark.asyncio

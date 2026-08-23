@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage.database import Database
@@ -244,9 +244,27 @@ async def _reporter_is_authenticated(request: Request) -> bool:
     return api_user is not None
 
 
+ERROR_INTAKE_MAX_BODY_BYTES = 64 * 1024
+
+
+async def _read_limited_body(request: Request, max_bytes: int) -> bytes:
+    """Read the request body, aborting once it exceeds ``max_bytes``."""
+    chunks: list[bytes] = []
+    received = 0
+    async for chunk in request.stream():
+        received += len(chunk)
+        if received > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail="Error report payload too large.",
+            )
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 @errors_api_router.post("/")
 async def report_frontend_error(
-    error_report: FrontendErrorReport, request: Request
+    request: Request,
 ) -> FrontendErrorReportResponse:
     """Report a frontend JavaScript error.
 
@@ -263,14 +281,21 @@ async def report_frontend_error(
     capture works before login or with broken auth. Because it is therefore
     exposed unauthenticated (including past the edge under
     docs/design/jwt-edge-auth.md), abuse is bounded server-side rather than by
-    access control: per-client rate limiting, hard payload bounds on the
-    request model, and unauthenticated reports are clamped into the telemetry
-    ring buffer — never persisted to error_logs — regardless of claimed
-    severity.
+    access control: per-client rate limiting, a hard body-size cap enforced
+    while the body is still streaming (before it is ever fully buffered), field
+    limits on the report model, and unauthenticated reports are clamped into
+    the telemetry ring buffer — never persisted to error_logs — regardless of
+    claimed severity.
     """
     client_address = request.client.host if request.client else "unknown"
     if not check_error_intake_rate_limit(client_address):
         raise HTTPException(status_code=429, detail="Too many error reports.")
+
+    raw_body = await _read_limited_body(request, ERROR_INTAKE_MAX_BODY_BYTES)
+    try:
+        error_report = FrontendErrorReport.model_validate(json.loads(raw_body))
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     reporter_authenticated = await _reporter_is_authenticated(request)
     extra_data = {
