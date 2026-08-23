@@ -662,6 +662,9 @@ async def browser_token(
             )
 
     token = jwt_token_service.mint_access_token(user_identifier, api_token_id)
+    session_user = request.session.get("user")
+    if session_user and session_user.get("source") == "app_token_session":
+        request.session["session_jwt_exp"] = int(now.timestamp()) + ttl
     # The credential travels only via the HttpOnly cookie; the body carries no
     # token material so injected scripts cannot read it out of the response.
     response = JSONResponse(content={"expires_in": ttl})

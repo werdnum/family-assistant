@@ -299,6 +299,12 @@ class AuthService:
             )
             return None
 
+        await db.execute(
+            update(api_tokens_table)
+            .where(api_tokens_table.c.id == token_row["id"])
+            .values(last_used_at=now)
+        )
+
         user_identifier = str(claims["sub"])
         return {
             "sub": user_identifier,
@@ -443,6 +449,34 @@ class BootstrapBodyLimitMiddleware:
         if limit is None:
             await self.app(scope, receive, send)
             return
+
+        if route_auth.is_public_error_intake(scope["method"], scope["path"]):
+            from family_assistant.web.routers.errors_api import (  # noqa: PLC0415 - router imports auth helpers
+                ErrorIntakeRateLimiter,
+            )
+
+            app = scope.get("app")
+            limiter = getattr(
+                getattr(app, "state", None),
+                "error_intake_address_admission_limiter",
+                None,
+            )
+            if not isinstance(limiter, ErrorIntakeRateLimiter):
+                await JSONResponse(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    content={
+                        "detail": "Error intake admission limiter is unavailable."
+                    },
+                )(scope, receive, send)
+                return
+            client = scope.get("client")
+            client_address = client[0] if client else "unknown"
+            if not limiter.allow(f"address:{client_address}"):
+                await JSONResponse(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    content={"detail": "Too many error reports."},
+                )(scope, receive, send)
+                return
 
         headers = Headers(scope=scope)
         content_length = headers.get("content-length")
