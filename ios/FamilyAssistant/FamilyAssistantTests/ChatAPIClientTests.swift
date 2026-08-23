@@ -480,6 +480,32 @@ final class ChatAPIClientTests: XCTestCase {
         }
     }
 
+    func testConversationStreamDetectsNonSuccessMarkupBeforeStatusHandling() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json("<html><body>Access denied</body></html>", statusCode: 403)
+        }
+
+        do {
+            _ = try await makeClient().connectEvents(conversationID: "web_conv_auth_wall")
+            XCTFail("Expected non-success streamed markup to be detected as an auth wall")
+        } catch let error as ChatAPIError {
+            XCTAssertEqual(error, .authWall)
+        }
+    }
+
+    func testActivityStreamDetectsNonSuccessMarkupBeforeStatusHandling() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json("<html><body>Access denied</body></html>", statusCode: 401)
+        }
+
+        do {
+            _ = try await makeClient().connectActivityStream()
+            XCTFail("Expected non-success streamed markup to be detected as an auth wall")
+        } catch let error as ChatAPIError {
+            XCTAssertEqual(error, .authWall)
+        }
+    }
+
     func testStartTurnAlreadyCompleteReportsFlag() async throws {
         var sawStreamRequest = false
         ChatMockBackendURLProtocol.respond { request in

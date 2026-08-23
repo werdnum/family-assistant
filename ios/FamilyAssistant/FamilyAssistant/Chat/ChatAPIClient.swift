@@ -396,11 +396,11 @@ struct ChatAPIClient {
             url: apiURL("/api/v1/chat/activity/stream"),
             method: "GET"
         )
-        // Validate the response status before returning the stream (see
-        // `streamConversation` for why this matters to the reconnect backoff).
         let (bytes, response) = try await urlSession.bytes(for: request)
-        try validate(response: response, data: Data())
-        let (initialBytes, iterator) = try await validatedStreamStart(bytes)
+        let (initialBytes, iterator) = try await validatedStreamResponse(
+            bytes,
+            response: response
+        )
 
         return AsyncThrowingStream { continuation in
             let task = Task {
@@ -529,18 +529,14 @@ struct ChatAPIClient {
         }
         let request = try await authManager.authorizedRequest(url: url, method: "GET")
 
-        // Establish the connection and validate the response status BEFORE
-        // returning the stream. `URLSession.bytes(for:)` resolves once the
-        // response headers arrive (the body still streams lazily via
-        // AsyncBytes), so a connection failure or a non-2xx status throws here at
-        // the call site rather than surfacing later during iteration. Callers
-        // (notably the live-updates reconnect loop) rely on this to tell a real
-        // connection apart from a stream object that will immediately error —
-        // otherwise they would reset their backoff before the stream ever
-        // succeeded and tight-loop against a down or erroring endpoint.
+        // Establish and validate the connection before returning the stream.
+        // Callers rely on errors surfacing here so reconnect backoff is not reset
+        // for a stream object that immediately fails.
         let (bytes, response) = try await urlSession.bytes(for: request)
-        try validate(response: response, data: Data())
-        let (initialBytes, iterator) = try await validatedStreamStart(bytes)
+        let (initialBytes, iterator) = try await validatedStreamResponse(
+            bytes,
+            response: response
+        )
 
         return AsyncThrowingStream { continuation in
             let task = Task {
@@ -858,6 +854,30 @@ struct ChatAPIClient {
             }
         }
         throw ChatAPIError.invalidResponse
+    }
+
+    private func validatedStreamResponse(
+        _ bytes: URLSession.AsyncBytes,
+        response: URLResponse
+    ) async throws -> (Data, URLSession.AsyncBytes.AsyncIterator) {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw ChatAPIError.invalidResponse
+        }
+        if !(200 ..< 300).contains(httpResponse.statusCode) {
+            var errorBody = Data()
+            for try await byte in bytes {
+                errorBody.append(byte)
+            }
+            // The shared validator sniffs markup before status-driven error
+            // handling, so an edge wall cannot be mistaken for an API-token
+            // rejection and clear otherwise-valid app credentials.
+            try validate(response: httpResponse, data: errorBody)
+            throw ChatAPIError.invalidResponse
+        }
+
+        let start = try await validatedStreamStart(bytes)
+        try validate(response: httpResponse, data: start.0)
+        return start
     }
 
     private nonisolated static func multipartBody(
