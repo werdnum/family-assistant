@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { HttpResponse, http } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { server } from '../../test/setup.js';
@@ -28,6 +28,43 @@ describe('SessionBridgeGate', () => {
     expect(screen.getByText('Loading…')).toBeInTheDocument();
 
     await waitFor(() => expect(screen.getByText('app content')).toBeInTheDocument());
+  });
+
+  it('unmounts API consumers until an overdue resume refresh settles', async () => {
+    let attempts = 0;
+    let releaseRefresh!: () => void;
+    server.use(
+      http.get('/api/auth/browser-token', async () => {
+        attempts += 1;
+        if (attempts === 2) {
+          await new Promise<void>((resolve) => {
+            releaseRefresh = resolve;
+          });
+        }
+        return HttpResponse.json({ expires_in: 3600 });
+      })
+    );
+
+    render(
+      <SessionBridgeGate>
+        <div>app content</div>
+      </SessionBridgeGate>
+    );
+    await waitFor(() => expect(screen.getByText('app content')).toBeInTheDocument());
+
+    const now = Date.now();
+    const dateSpy = vi.spyOn(Date, 'now').mockReturnValue(now + 3600 * 1000);
+    try {
+      act(() => window.dispatchEvent(new Event('pageshow')));
+      await waitFor(() => expect(attempts).toBe(2));
+      expect(screen.queryByText('app content')).not.toBeInTheDocument();
+      expect(screen.getByText('Connecting…')).toBeInTheDocument();
+
+      act(() => releaseRefresh());
+      await waitFor(() => expect(screen.getByText('app content')).toBeInTheDocument());
+    } finally {
+      dateSpy.mockRestore();
+    }
   });
 
   it('routes a bridge 401 into the re-authentication reload', async () => {

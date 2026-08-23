@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   addBridgeSettlementListener,
+  refreshSessionBridgeAfterResume,
   reloadForReauthentication,
   startSessionBridge,
 } from '../api/browserTokenClient';
@@ -45,10 +46,28 @@ export default function SessionBridgeGate({ children }) {
       });
     });
 
+    const refreshAfterResume = () => {
+      if (document.visibilityState !== 'visible') {
+        return;
+      }
+      const refresh = refreshSessionBridgeAfterResume();
+      if (refresh) {
+        // A browser can suspend the scheduled timer past cookie expiry. Unmount
+        // API consumers while the overdue bridge request installs its new
+        // HttpOnly cookie; the settlement listener remounts them afterward.
+        setPhase('connecting');
+        void refresh;
+      }
+    };
+    document.addEventListener('visibilitychange', refreshAfterResume);
+    window.addEventListener('pageshow', refreshAfterResume);
+
     void startSessionBridge();
 
     return () => {
       cancelled = true;
+      document.removeEventListener('visibilitychange', refreshAfterResume);
+      window.removeEventListener('pageshow', refreshAfterResume);
       unsubscribe();
     };
   }, []);

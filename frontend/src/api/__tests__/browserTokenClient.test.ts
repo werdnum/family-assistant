@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { server } from '../../test/setup.js';
 import {
   addBridgeSettlementListener,
+  refreshSessionBridgeAfterResume,
   resetSessionBridge,
   startSessionBridge,
 } from '../browserTokenClient';
@@ -43,6 +44,26 @@ describe('startSessionBridge', () => {
 
     expect(tokenRequests).toBe(2);
     expect(vi.getTimerCount()).toBe(1);
+  });
+
+  it('refreshes an overdue cookie before a suspended page resumes', async () => {
+    server.use(tokenHandler(3600));
+    await startSessionBridge();
+
+    vi.setSystemTime(Date.now() + 3600 * 1000);
+    const refresh = refreshSessionBridgeAfterResume();
+
+    expect(refresh).not.toBeNull();
+    await refresh;
+    expect(tokenRequests).toBe(2);
+  });
+
+  it('does not refresh on resume while the cookie is still fresh', async () => {
+    server.use(tokenHandler(3600));
+    await startSessionBridge();
+
+    expect(refreshSessionBridgeAfterResume()).toBeNull();
+    expect(tokenRequests).toBe(1);
   });
 
   it('handles a 401 by skipping silently without scheduling anything', async () => {

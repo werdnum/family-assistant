@@ -30,6 +30,7 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 let inFlight: Promise<BridgeSettlement> | null = null;
 let retryDelayMs = RETRY_BASE_DELAY_MS;
 let bridgeGeneration = 0;
+let refreshDueAtMs: number | null = null;
 
 /** Outcome of a single bridge attempt. */
 export type BridgeSettlement =
@@ -124,6 +125,7 @@ async function attemptRefresh(cycleGeneration: number): Promise<AttemptResult> {
   // the margin would otherwise go non-positive and strand the cookie.
   const delayMs = Math.max(expiresIn * 1000 - REFRESH_MARGIN_MS - elapsed, 1_000);
   if (Number.isFinite(delayMs) && cycleGeneration === bridgeGeneration) {
+    refreshDueAtMs = Date.now() + delayMs;
     refreshTimer = setTimeout(() => {
       void startSessionBridge();
     }, delayMs);
@@ -150,14 +152,17 @@ async function runBridgeCycle(cycleGeneration: number): Promise<BridgeSettlement
     return 'refreshed';
   }
   if (result === 'not-configured') {
+    refreshDueAtMs = null;
     retryDelayMs = RETRY_BASE_DELAY_MS;
     notifySettlement('not-configured');
     return 'not-configured';
   }
   if (result === 'forbidden') {
+    refreshDueAtMs = null;
     notifySettlement('forbidden');
     return 'forbidden';
   }
+  refreshDueAtMs = null;
   notifySettlement('session-expired');
   return 'session-expired';
 }
@@ -192,10 +197,25 @@ export function startSessionBridge(): Promise<BridgeSettlement> {
   return tracked;
 }
 
+/**
+ * Refresh an overdue credential after a suspended/frozen page resumes.
+ *
+ * Returns null while the current cookie is still inside its safe lifetime.
+ * Callers that receive a promise must hold API consumers behind their gate
+ * until it settles, because browser timers may have been suspended past expiry.
+ */
+export function refreshSessionBridgeAfterResume(): Promise<BridgeSettlement> | null {
+  if (refreshDueAtMs === null || Date.now() < refreshDueAtMs) {
+    return null;
+  }
+  return startSessionBridge();
+}
+
 /** Cancel pending work and detach any request that is already in flight. */
 export function resetSessionBridge(): void {
   bridgeGeneration += 1;
   clearRefreshTimer();
   inFlight = null;
   retryDelayMs = RETRY_BASE_DELAY_MS;
+  refreshDueAtMs = null;
 }
