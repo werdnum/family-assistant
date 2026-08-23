@@ -557,7 +557,15 @@ class AuthMiddleware:
         )
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or not api_authentication_enabled(self.auth_service):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        app = scope.get("app")
+        auth_service = getattr(
+            getattr(app, "state", None), "auth_service", self.auth_service
+        )
+        if not api_authentication_enabled(auth_service):
             await self.app(scope, receive, send)
             return
 
@@ -606,7 +614,7 @@ class AuthMiddleware:
 
         if user:
             api_token_id = request.session.get("api_token_id")
-            if api_token_id and self.auth_service.database_engine:
+            if api_token_id and auth_service.database_engine:
                 now = time.monotonic()
                 cache_key = api_token_id
                 if len(self._token_valid_cache) > 1000:
@@ -622,7 +630,7 @@ class AuthMiddleware:
                         Database,
                     )
 
-                    db = Database(self.auth_service.database_engine)
+                    db = Database(auth_service.database_engine)
                     is_valid = await api_tokens_storage.is_token_valid(db, api_token_id)
                     self._token_valid_cache[cache_key] = {
                         "valid": is_valid,
@@ -653,7 +661,7 @@ class AuthMiddleware:
         if not user:
             credential = extract_api_credential(request)
             if credential:
-                api_user = await self.auth_service.get_user_from_api_token(
+                api_user = await auth_service.get_user_from_api_token(
                     f"Bearer {credential}", request
                 )
                 if api_user:
