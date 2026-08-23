@@ -448,12 +448,11 @@ final class NotificationManager {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NotificationError.invalidResponse
         }
-        if AuthWallDetection.isLikely(
-            contentType: httpResponse.value(forHTTPHeaderField: "Content-Type"),
-            data: data
-        ) {
-            throw NotificationError.authWall
-        }
+        try AuthWallDetection.rejectIfLikely(
+            response: httpResponse,
+            data: data,
+            throwing: NotificationError.authWall
+        )
         guard 200..<300 ~= httpResponse.statusCode else {
             let body = String(data: data, encoding: .utf8)
             throw NotificationError.server(statusCode: httpResponse.statusCode, body: body)

@@ -271,6 +271,9 @@ enum ChatErrorClassifier {
         if case ChatAPIError.authWall = error {
             return true
         }
+        if case AuthError.authWall = error {
+            return true
+        }
         return false
     }
 }

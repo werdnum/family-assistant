@@ -99,9 +99,13 @@ final class ChatErrorClassifierTests: XCTestCase {
         XCTAssertEqual(classify(.sendTurn, server(401), userInitiated: true), .authFlow)
     }
 
-    func testAuthTerminalErrorRoutesToAuthFlow() {
+    func testAuthErrorsUseDedicatedSurfaces() {
         XCTAssertEqual(classify(.conversationsRefresh, AuthError.noCredentials), .authFlow)
         XCTAssertEqual(classify(.pendingApprovalsPoll, AuthError.authRejected), .authFlow)
+        XCTAssertEqual(
+            classify(.conversationsRefresh, AuthError.authWall),
+            .inlineFeedback(reason: .authWall)
+        )
     }
 
     func test403OnConversationIsAccessChanged() {

@@ -106,12 +106,14 @@ struct NotesAPIClient {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw NotesAPIError.invalidResponse
         }
+        try AuthWallDetection.rejectIfLikely(
+            response: httpResponse,
+            data: data,
+            throwing: NotesAPIError.authWall
+        )
         guard (200 ..< 300).contains(httpResponse.statusCode) else {
             let detail = try? JSONDecoder().decode(ServerError.self, from: data).detail
             throw NotesAPIError.server(statusCode: httpResponse.statusCode, detail: detail)
-        }
-        if AuthWallDetection.isLikely(contentType: httpResponse.value(forHTTPHeaderField: "Content-Type"), data: data) {
-            throw NotesAPIError.authWall
         }
     }
 

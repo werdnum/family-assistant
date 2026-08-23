@@ -212,7 +212,12 @@ final class ErrorReporter: @unchecked Sendable {
         }
         request.httpBody = try JSONEncoder().encode(payload)
 
-        let (_, response) = try await session.data(for: request)
+        let (data, response) = try await session.data(for: request)
+        try AuthWallDetection.rejectIfLikely(
+            response: response,
+            data: data,
+            throwing: ReporterError.authWall
+        )
         guard let httpResponse = response as? HTTPURLResponse,
               200..<300 ~= httpResponse.statusCode
         else {
@@ -356,6 +361,7 @@ final class ErrorReporter: @unchecked Sendable {
     private enum ReporterError: Error {
         case invalidURL
         case badResponse
+        case authWall
     }
 }
 

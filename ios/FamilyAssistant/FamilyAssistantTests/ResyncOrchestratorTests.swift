@@ -195,6 +195,19 @@ final class ResyncOrchestratorTests: XCTestCase {
         XCTAssertEqual(host.phaseFinishCount, 1)
     }
 
+    func testAuthWallMidResyncRestartsStreams() async {
+        let host = FakeResyncHost(generation: 1, selectedConversationID: "conv-1")
+        host.authGateError = AuthError.authWall
+        let orchestrator = ResyncOrchestrator(host: host)
+
+        await orchestrator.request().value
+
+        XCTAssertEqual(host.authGateCount, 1)
+        XCTAssertEqual(host.listSnapshotCount, 0)
+        XCTAssertEqual(host.restartStreamsCount, 1)
+        XCTAssertEqual(host.phaseFinishCount, 1)
+    }
+
     func testNonAuthGateFailureRestartsStreams() async {
         // A non-`AuthError` failure from the gate is treated as transient for the
         // same reason: never leave the torn-down loops stranded.

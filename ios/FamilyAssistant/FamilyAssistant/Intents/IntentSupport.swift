@@ -127,7 +127,7 @@ enum IntentSupport {
             switch authError {
             case .authRejected, .noCredentials, .invalidServerURL:
                 return .needsSignIn
-            case .exchangeFailed, .transient:
+            case .authWall, .exchangeFailed, .transient:
                 return .requestFailed(authError.localizedDescription)
             }
         }

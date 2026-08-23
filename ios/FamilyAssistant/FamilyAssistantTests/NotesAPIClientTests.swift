@@ -181,6 +181,21 @@ final class NotesAPIClientTests: XCTestCase {
         } catch NotesAPIError.authWall {}
     }
 
+    func testNonSuccessMarkupSurfacesAuthWallBeforeStatusError() async throws {
+        MockBackendURLProtocol.respond { _ in
+            .json(
+                "<html><body>Access denied</body></html>",
+                statusCode: 403,
+                headers: ["Content-Type": "application/json"]
+            )
+        }
+
+        do {
+            _ = try await makeClient().listNotes()
+            XCTFail("Expected non-success markup to throw authWall")
+        } catch NotesAPIError.authWall {}
+    }
+
     private func makeClient() -> NotesAPIClient {
         let authManager = AuthManager()
         authManager.serverURL = serverURL

@@ -472,10 +472,11 @@ final class ResyncOrchestrator {
             }
             reportStep("gateAuth", edge: "exit", attempt: attempt, runID: runID)
             switch error {
-            case .transient:
-                // A TRANSIENT refresh failure (network error, 5xx) is NOT a
-                // rejection: `authRequired` is not latched and a re-auth trigger
-                // fires elsewhere only for real rejections. Because
+            case .authWall, .transient:
+                // An authentication wall or transient refresh failure (network
+                // error, 5xx) is NOT a credential rejection: `authRequired` is
+                // not latched and a re-auth trigger fires only for real
+                // rejections. Because
                 // `awaitStreamTermination()` above already tore both loops down,
                 // returning here would strand the app with NO loops running until
                 // some later trigger. Restart the loops instead so their own

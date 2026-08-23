@@ -94,6 +94,23 @@ final class AuthManagerTests: XCTestCase {
         XCTAssertEqual(AuthBackendURLProtocol.requests.first?.url?.path, "/api/auth/refresh")
     }
 
+    func testValidAccessTokenSurfacesRefreshAuthWallWithoutClearingCredentials() async throws {
+        seedStoredAuth(apiToken: "expired-api-token", refreshToken: "stored-refresh-token", expiresIn: -60)
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in
+            .json("<html><body>Sign in</body></html>")
+        }
+
+        do {
+            _ = try await authManager.validAccessToken()
+            XCTFail("Expected refresh markup to surface as an authentication wall")
+        } catch AuthError.authWall {}
+
+        XCTAssertEqual(KeychainHelper.readString(key: "fa_api_token"), "expired-api-token")
+        XCTAssertEqual(KeychainHelper.readString(key: "fa_refresh_token"), "stored-refresh-token")
+        XCTAssertFalse(authManager.authRequired)
+    }
+
     func testAuthorizedRequestClearsCredentialsWhenRefreshCredentialsAreMissing() async throws {
         KeychainHelper.save(key: "fa_api_token", string: "api-token-without-refresh")
         let authManager = makeAuthManager()
@@ -369,6 +386,18 @@ final class AuthManagerTests: XCTestCase {
         }
     }
 
+    func testEstablishSessionSurfacesAuthWallBeforeStatusHandling() async throws {
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in
+            .json("<html><body>Sign in</body></html>", statusCode: 403)
+        }
+
+        do {
+            try await authManager.establishSession(apiToken: "valid-token")
+            XCTFail("Expected session bridge markup to surface as an authentication wall")
+        } catch AuthError.authWall {}
+    }
+
     func testBootstrapSessionClearsLocalStateWhenRefreshIsRejected() async {
         seedStoredAuth(apiToken: "expired-api-token", refreshToken: "stored-refresh-token", expiresIn: -60)
         let authManager = makeAuthManager()
@@ -473,6 +502,7 @@ final class AuthManagerTests: XCTestCase {
         XCTAssertEqual(AuthError.exchangeFailed.errorDescription, "Failed to exchange authorization code")
         XCTAssertEqual(AuthError.authRejected.errorDescription, "Server rejected stored credentials")
         XCTAssertEqual(AuthError.noCredentials.errorDescription, "No stored credentials")
+        XCTAssertTrue(AuthError.authWall.errorDescription?.contains("authentication wall detected") == true)
         XCTAssertEqual(
             AuthError.transient(underlying: nil).errorDescription,
             "Temporary network or server error"

@@ -26,6 +26,15 @@ final class AppIntentsTests: XCTestCase {
         super.tearDown()
     }
 
+    func testAuthWallRemainsAnActionableRequestFailure() {
+        let error = IntentSupport.intentError(from: AuthError.authWall)
+
+        guard case let .requestFailed(message) = error else {
+            return XCTFail("Expected requestFailed, got \(error)")
+        }
+        XCTAssertTrue(message.contains("authentication wall detected"))
+    }
+
     // MARK: - sendMessage primitive
 
     func testSendMessagePostsWebPayloadAndDecodesReply() async throws {

@@ -248,6 +248,11 @@ final class AuthManager {
         ])
 
         let (data, response) = try await URLSession.shared.data(for: request)
+        try AuthWallDetection.rejectIfLikely(
+            response: response,
+            data: data,
+            throwing: AuthError.authWall
+        )
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
             throw AuthError.exchangeFailed
         }
@@ -618,6 +623,11 @@ final class AuthManager {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AuthError.transient(underlying: nil)
         }
+        try AuthWallDetection.rejectIfLikely(
+            response: httpResponse,
+            data: data,
+            throwing: AuthError.authWall
+        )
 
         switch httpResponse.statusCode {
         case 200:
@@ -671,9 +681,10 @@ final class AuthManager {
         request.timeoutInterval = authRequestTimeoutSeconds
         request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
 
+        let data: Data
         let response: URLResponse
         do {
-            (_, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await URLSession.shared.data(for: request)
         } catch {
             throw AuthError.transient(underlying: error)
         }
@@ -681,6 +692,11 @@ final class AuthManager {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AuthError.transient(underlying: nil)
         }
+        try AuthWallDetection.rejectIfLikely(
+            response: httpResponse,
+            data: data,
+            throwing: AuthError.authWall
+        )
 
         switch httpResponse.statusCode {
         case 200:
@@ -878,6 +894,7 @@ enum AuthError: LocalizedError {
     case exchangeFailed
     case authRejected
     case noCredentials
+    case authWall
     case transient(underlying: Error?)
 
     var errorDescription: String? {
@@ -886,6 +903,8 @@ enum AuthError: LocalizedError {
         case .exchangeFailed: "Failed to exchange authorization code"
         case .authRejected: "Server rejected stored credentials"
         case .noCredentials: "No stored credentials"
+        case .authWall:
+            "Server requires sign-in or is unreachable (authentication wall detected)."
         case .transient(let underlying):
             if let underlying { "Temporary failure: \(underlying.localizedDescription)" }
             else { "Temporary network or server error" }

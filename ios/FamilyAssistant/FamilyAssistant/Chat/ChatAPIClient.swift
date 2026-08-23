@@ -749,16 +749,12 @@ struct ChatAPIClient {
         data: Data,
         expectsJSON: Bool = true
     ) throws {
-        guard expectsJSON,
-              let httpResponse = response as? HTTPURLResponse,
-              AuthWallDetection.isLikely(
-                  contentType: httpResponse.value(forHTTPHeaderField: "Content-Type"),
-                  data: data
-              )
-        else {
-            return
-        }
-        throw ChatAPIError.authWall
+        guard expectsJSON else { return }
+        try AuthWallDetection.rejectIfLikely(
+            response: response,
+            data: data,
+            throwing: ChatAPIError.authWall
+        )
     }
 
     /// A rejected mutation must never be replayed automatically because the server
@@ -1157,6 +1153,22 @@ private struct ChatTurnConflictResponse: Decodable {
 /// `URLSession` follows it, so the client sees `200 text/html` where JSON was
 /// expected — without this check that surfaces as a cryptic decode failure.
 enum AuthWallDetection {
+    static func rejectIfLikely<E: Error>(
+        response: URLResponse,
+        data: Data,
+        throwing error: @autoclosure () -> E
+    ) throws {
+        guard let httpResponse = response as? HTTPURLResponse,
+              isLikely(
+                  contentType: httpResponse.value(forHTTPHeaderField: "Content-Type"),
+                  data: data
+              )
+        else {
+            return
+        }
+        throw error()
+    }
+
     static func isMarkupStart(
         byte: UInt8,
         awaitingFirstContentByte: inout Bool

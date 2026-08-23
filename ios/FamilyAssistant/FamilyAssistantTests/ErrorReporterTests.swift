@@ -194,6 +194,30 @@ final class ErrorReporterTests: XCTestCase {
         XCTAssertEqual(spooledFiles().count, 1)
     }
 
+    func testFlushPersistedKeepsReportsWhenSuccessResponseIsAuthWall() async throws {
+        let reporter = makeReporter()
+        await reporter.deliver(
+            message: "Queued",
+            component: "Notes.list.load",
+            errorType: .handled,
+            stack: nil,
+            extraData: [:]
+        )
+
+        MockErrorURLProtocol.respond { _ in
+            .init(
+                statusCode: 200,
+                data: Data("<html><body>Sign in</body></html>".utf8),
+                contentType: "application/json"
+            )
+        }
+        reporter.configure { self.baseURL }
+        await reporter.flushPersisted()
+
+        XCTAssertEqual(MockErrorURLProtocol.requests.count, 1)
+        XCTAssertEqual(spooledFiles().count, 1)
+    }
+
     func testFlushPersistedAwaitsRefreshedTokenProvider() async throws {
         let reporter = makeReporter()
         await reporter.deliver(
@@ -286,6 +310,18 @@ final class ErrorReporterTests: XCTestCase {
 private final class MockErrorURLProtocol: URLProtocol {
     struct Response {
         let statusCode: Int
+        let data: Data
+        let contentType: String
+
+        init(
+            statusCode: Int,
+            data: Data = Data("{\"status\":\"reported\"}".utf8),
+            contentType: String = "application/json"
+        ) {
+            self.statusCode = statusCode
+            self.data = data
+            self.contentType = contentType
+        }
     }
 
     typealias Handler = (URLRequest) -> Response
@@ -343,10 +379,10 @@ private final class MockErrorURLProtocol: URLProtocol {
             url: request.url!,
             statusCode: response.statusCode,
             httpVersion: "HTTP/1.1",
-            headerFields: ["Content-Type": "application/json"]
+            headerFields: ["Content-Type": response.contentType]
         )!
         client?.urlProtocol(self, didReceive: httpResponse, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: Data("{\"status\":\"reported\"}".utf8))
+        client?.urlProtocol(self, didLoad: response.data)
         client?.urlProtocolDidFinishLoading(self)
     }
 
