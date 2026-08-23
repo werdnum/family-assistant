@@ -750,11 +750,11 @@ private final class ControllableFollowStream {
 /// An activity stream a test drives: `emit` queues a ping, `finish` closes it.
 @MainActor
 private final class ControllableActivityStream {
-    private var continuation: AsyncThrowingStream<ChatConversationActivity, Error>.Continuation?
+    private var continuation: AsyncThrowingStream<ChatActivityStreamEvent, Error>.Continuation?
     private var finished = false
     private(set) var emittedCount = 0
 
-    func makeStream() -> AsyncThrowingStream<ChatConversationActivity, Error> {
+    func makeStream() -> AsyncThrowingStream<ChatActivityStreamEvent, Error> {
         AsyncThrowingStream { continuation in
             if finished {
                 continuation.finish()
@@ -767,7 +767,7 @@ private final class ControllableActivityStream {
     func emit() {
         emittedCount += 1
         continuation?.yield(
-            ChatConversationActivity(conversationID: "conv-any", reason: "turn_started")
+            .activity(ChatConversationActivity(conversationID: "conv-any", reason: "turn_started"))
         )
     }
 
@@ -870,7 +870,7 @@ private final class FakeResyncHost: ResyncHost {
 
     func establishActivityStream(
         generation _: Int
-    ) async -> AsyncThrowingStream<ChatConversationActivity, Error>? {
+    ) async -> AsyncThrowingStream<ChatActivityStreamEvent, Error>? {
         activityEstablishCount += 1
         return activityStreamSource?.makeStream()
     }

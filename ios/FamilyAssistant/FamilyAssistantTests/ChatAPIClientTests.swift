@@ -512,6 +512,40 @@ final class ChatAPIClientTests: XCTestCase {
         }
     }
 
+    func testActivityStreamSurfacesHeartbeatAsControlEvent() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .text("event: heartbeat\ndata: {}\n\n")
+        }
+
+        let stream = try await makeClient().connectActivityStream()
+        var events: [ChatActivityStreamEvent] = []
+        for try await event in stream {
+            events.append(event)
+        }
+
+        XCTAssertEqual(events, [.control])
+    }
+
+    func testActivityStreamDistinguishesConversationActivity() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .text(
+                "event: conversation_activity\n"
+                    + "data: {\"conversation_id\":\"conv-1\",\"reason\":\"turn_started\"}\n\n"
+            )
+        }
+
+        let stream = try await makeClient().connectActivityStream()
+        var events: [ChatActivityStreamEvent] = []
+        for try await event in stream {
+            events.append(event)
+        }
+
+        XCTAssertEqual(
+            events,
+            [.activity(ChatConversationActivity(conversationID: "conv-1", reason: "turn_started"))]
+        )
+    }
+
     func testConversationStreamDetectsNonSuccessMarkupBeforeStatusHandling() async throws {
         ChatMockBackendURLProtocol.respond { _ in
             .json("<html><body>Access denied</body></html>", statusCode: 403)

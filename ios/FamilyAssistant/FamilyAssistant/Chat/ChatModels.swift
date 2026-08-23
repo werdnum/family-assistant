@@ -58,6 +58,14 @@ struct ChatConversationActivity: Equatable {
     let reason: String?
 }
 
+/// A decoded frame from the account-global activity stream. Control frames are
+/// surfaced so connection health can recover on an otherwise-idle stream without
+/// treating heartbeats as conversation-list changes.
+enum ChatActivityStreamEvent: Equatable {
+    case activity(ChatConversationActivity)
+    case control
+}
+
 struct ChatProfile: Codable, Equatable, Identifiable {
     let id: String
     let description: String

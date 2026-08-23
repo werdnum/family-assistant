@@ -5121,7 +5121,7 @@ extension ChatViewModel: SyncStreamDelegate {
 
     func openActivityStream(
         generation _: Int
-    ) async throws -> AsyncThrowingStream<ChatConversationActivity, Error> {
+    ) async throws -> AsyncThrowingStream<ChatActivityStreamEvent, Error> {
         try await apiClient.connectActivityStream()
     }
 
@@ -5247,7 +5247,7 @@ extension ChatViewModel: ResyncHost {
 
     func establishActivityStream(
         generation _: Int
-    ) async -> AsyncThrowingStream<ChatConversationActivity, Error>? {
+    ) async -> AsyncThrowingStream<ChatActivityStreamEvent, Error>? {
         let timeout = resyncEstablishTimeoutSeconds
         let client = apiClient
         let result = await Self.raceResyncStreamEstablishment(timeoutSeconds: timeout) {

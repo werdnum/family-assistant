@@ -56,7 +56,7 @@ protocol SyncStreamDelegate: AnyObject {
     /// Open the account-global activity stream.
     func openActivityStream(
         generation: Int
-    ) async throws -> AsyncThrowingStream<ChatConversationActivity, Error>
+    ) async throws -> AsyncThrowingStream<ChatActivityStreamEvent, Error>
 
     /// Refresh the recent-conversation list (on activity connect and each ping).
     func activityStreamDidSignal(generation: Int) async
@@ -740,7 +740,7 @@ final class SyncCoordinator {
                     connectedAt = Date()
                     self.apply(.activityConnected(generation: generation))
                     await self.delegate?.activityStreamDidSignal(generation: generation)
-                    for try await _ in stream {
+                    for try await event in stream {
                         if Task.isCancelled {
                             break
                         }
@@ -750,7 +750,9 @@ final class SyncCoordinator {
                             authWallPresented = false
                             delay = initialDelay
                         }
-                        await self.delegate?.activityStreamDidSignal(generation: generation)
+                        if case .activity = event {
+                            await self.delegate?.activityStreamDidSignal(generation: generation)
+                        }
                     }
                 } catch {
                     streamError = error

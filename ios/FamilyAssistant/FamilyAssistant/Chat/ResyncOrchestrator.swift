@@ -65,7 +65,7 @@ protocol ResyncHost: AnyObject {
     /// once headers are received. Returns nil when the connect fails.
     func establishActivityStream(
         generation: Int
-    ) async -> AsyncThrowingStream<ChatConversationActivity, Error>?
+    ) async -> AsyncThrowingStream<ChatActivityStreamEvent, Error>?
 
     /// Snapshot the full conversation list with full-replacement semantics, so a
     /// conversation deleted server-side while backgrounded converges (disappears)
@@ -715,9 +715,11 @@ final class ResyncOrchestrator {
         if let activityStream {
             activityBufferingTask = Task { [weak self] in
                 do {
-                    for try await _ in activityStream {
+                    for try await event in activityStream {
                         if Task.isCancelled { break }
-                        self?.enqueue(.activitySignal)
+                        if case .activity = event {
+                            self?.enqueue(.activitySignal)
+                        }
                     }
                 } catch {}
             }

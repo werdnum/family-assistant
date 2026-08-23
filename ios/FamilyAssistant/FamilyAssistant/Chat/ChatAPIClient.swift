@@ -385,13 +385,12 @@ struct ChatAPIClient {
     /// Connect to the account-global conversation-activity stream for live
     /// conversation-list updates.
     ///
-    /// Emits a `ChatConversationActivity` whenever any conversation the caller
-    /// owns changes (a turn starts/ends, a delegated/scheduled reply lands) —
-    /// including conversations other than the one currently open, which the
-    /// per-conversation follow stream never sees. The frame is advisory; the
-    /// caller reacts by re-fetching the authoritative conversation list. Stays
-    /// open with server heartbeats; the caller resubscribes on close/error.
-    func connectActivityStream() async throws -> AsyncThrowingStream<ChatConversationActivity, Error> {
+    /// Emits an activity whenever any conversation the caller owns changes (a
+    /// turn starts/ends, a delegated/scheduled reply lands), including conversations
+    /// other than the one currently open. Heartbeats are emitted separately as
+    /// control events so they restore connection health without refreshing the list.
+    /// The caller resubscribes on close/error.
+    func connectActivityStream() async throws -> AsyncThrowingStream<ChatActivityStreamEvent, Error> {
         let request = try await authManager.authorizedRequest(
             url: apiURL("/api/v1/chat/activity/stream"),
             method: "GET"
@@ -426,7 +425,7 @@ struct ChatAPIClient {
     private func streamActivityEvents(
         initialBytes: Data,
         iterator: inout URLSession.AsyncBytes.AsyncIterator,
-        continuation: AsyncThrowingStream<ChatConversationActivity, Error>.Continuation
+        continuation: AsyncThrowingStream<ChatActivityStreamEvent, Error>.Continuation
     ) async throws {
         let parser = SSEParser()
         var awaitingFirstContentByte = true
@@ -440,9 +439,7 @@ struct ChatAPIClient {
         if let chunk = String(data: pendingUTF8, encoding: .utf8) {
             pendingUTF8.removeAll(keepingCapacity: true)
             for event in parser.append(chunk) {
-                if let activity = Self.activity(from: event) {
-                    continuation.yield(activity)
-                }
+                continuation.yield(Self.activityStreamEvent(from: event))
             }
         }
         while let byte = try await iterator.next() {
@@ -456,40 +453,35 @@ struct ChatAPIClient {
             }
             pendingUTF8.removeAll(keepingCapacity: true)
             for event in parser.append(chunk) {
-                if let activity = Self.activity(from: event) {
-                    continuation.yield(activity)
-                }
+                continuation.yield(Self.activityStreamEvent(from: event))
             }
         }
         if !pendingUTF8.isEmpty {
             for event in parser.append(String(decoding: pendingUTF8, as: UTF8.self)) {
-                if let activity = Self.activity(from: event) {
-                    continuation.yield(activity)
-                }
+                continuation.yield(Self.activityStreamEvent(from: event))
             }
         }
         for event in parser.flush() {
-            if let activity = Self.activity(from: event) {
-                continuation.yield(activity)
-            }
+            continuation.yield(Self.activityStreamEvent(from: event))
         }
     }
 
-    /// Map a raw SSE frame to a `ChatConversationActivity`, ignoring the
-    /// heartbeat/stream_dropped control frames (a closed stream surfaces as the
-    /// AsyncThrowingStream finishing, which the caller treats as "reconnect").
-    private static func activity(from event: ServerSentEvent) -> ChatConversationActivity? {
+    /// Preserve decoded control frames as health signals while distinguishing
+    /// them from conversation changes that require an authoritative list refresh.
+    private static func activityStreamEvent(from event: ServerSentEvent) -> ChatActivityStreamEvent {
         guard event.event == "conversation_activity" else {
-            return nil
+            return .control
         }
         guard let data = event.data.data(using: .utf8),
               let payload = try? JSONDecoder.chatDecoder.decode([String: JSONValue].self, from: data)
         else {
-            return ChatConversationActivity(conversationID: nil, reason: nil)
+            return .activity(ChatConversationActivity(conversationID: nil, reason: nil))
         }
-        return ChatConversationActivity(
-            conversationID: payload["conversation_id"]?.stringValue,
-            reason: payload["reason"]?.stringValue
+        return .activity(
+            ChatConversationActivity(
+                conversationID: payload["conversation_id"]?.stringValue,
+                reason: payload["reason"]?.stringValue
+            )
         )
     }
 
