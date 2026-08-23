@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { ThemeProvider } from '../shared/ThemeProvider';
+import SessionBridgeGate from '../shared/SessionBridgeGate';
 import ChatApp from './ChatApp';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { initializeErrorHandlers } from '../errors/errorHandlers';
@@ -20,9 +21,11 @@ function mountChatApp() {
     root.render(
       <React.StrictMode>
         <ThemeProvider defaultTheme="system" storageKey="family-assistant-theme">
-          <ErrorBoundary componentName="ChatApp">
-            <ChatApp />
-          </ErrorBoundary>
+          <SessionBridgeGate>
+            <ErrorBoundary componentName="ChatApp">
+              <ChatApp />
+            </ErrorBoundary>
+          </SessionBridgeGate>
         </ThemeProvider>
       </React.StrictMode>
     );
