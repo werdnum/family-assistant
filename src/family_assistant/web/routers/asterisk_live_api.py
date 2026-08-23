@@ -1483,6 +1483,7 @@ async def asterisk_live_endpoint(
 
     Authentication:
         - Set ASTERISK_SECRET_TOKEN env var to require token authentication
+          (mandatory when JWT edge authentication is enabled)
         - Pass token as query parameter: ?token=<secret>
         - Set ASTERISK_ALLOWED_EXTENSIONS to restrict by extension (comma-separated)
 
@@ -1498,6 +1499,14 @@ async def asterisk_live_endpoint(
         Dial(WebSocket/host:8000/api/asterisk/live?token=${TOKEN}&extension=${CALLERID(num)}&channel_id=${CHANNEL}&profile=telephone_external)
     """
     secret_token, allowed_extensions = get_asterisk_auth_config()
+    jwt_service = getattr(websocket.app.state, "jwt_token_service", None)
+    if getattr(jwt_service, "enabled", False) and not secret_token:
+        logger.error(
+            "Asterisk connection rejected: ASTERISK_SECRET_TOKEN is required "
+            "when JWT edge authentication is enabled"
+        )
+        await websocket.close(code=1008, reason="Asterisk authentication required")
+        return
 
     # Layer 1: Server authentication
     if secret_token and (not token or not secrets.compare_digest(token, secret_token)):

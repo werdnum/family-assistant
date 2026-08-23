@@ -1558,10 +1558,15 @@ Secret token for authenticating Asterisk WebSocket connections.
 
 | Property  | Value                          |
 | --------- | ------------------------------ |
-| Required  | No                             |
+| Required  | When `JWT_SIGNING_KEY` is set  |
 | Default   | None (authentication disabled) |
 | Sensitive | **Yes**                        |
 | Example   | `my-secure-token-123`          |
+
+The Asterisk WebSocket is exempt from gateway JWT enforcement because the
+client cannot attach a browser cookie or authorization header. When signed JWT
+authentication is enabled, the backend rejects all Asterisk connections unless
+this separate transport secret is configured.
 
 ______________________________________________________________________
 
