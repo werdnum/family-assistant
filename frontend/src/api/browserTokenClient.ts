@@ -24,12 +24,20 @@ class SessionExpiredError extends Error {}
 
 class BridgeNotConfiguredError extends Error {}
 
+class BridgeForbiddenError extends Error {}
+
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 let inFlight: Promise<BridgeSettlement> | null = null;
 let retryDelayMs = RETRY_BASE_DELAY_MS;
+let bridgeGeneration = 0;
 
 /** Outcome of a single bridge attempt. */
-export type BridgeSettlement = 'refreshed' | 'session-expired' | 'not-configured' | 'unreachable';
+export type BridgeSettlement =
+  | 'refreshed'
+  | 'session-expired'
+  | 'not-configured'
+  | 'unreachable'
+  | 'forbidden';
 
 const settlementListeners = new Set<(settlement: BridgeSettlement) => void>();
 
@@ -70,15 +78,23 @@ async function requestBrowserToken(): Promise<BrowserTokenResponse> {
     // gateway policy is disabled too, so no cookie is needed — proceed.
     throw new BridgeNotConfiguredError('Bridge endpoint not available');
   }
+  if (response.status === 403) {
+    throw new BridgeForbiddenError('Browser session authentication is not configured');
+  }
   if (!response.ok) {
     throw new Error(`Failed to fetch browser token: ${response.status} ${response.statusText}`);
   }
   return response.json();
 }
 
-type AttemptResult = 'refreshed' | 'session-expired' | 'not-configured' | 'transient-failure';
+type AttemptResult =
+  | 'refreshed'
+  | 'session-expired'
+  | 'not-configured'
+  | 'transient-failure'
+  | 'forbidden';
 
-async function attemptRefresh(): Promise<AttemptResult> {
+async function attemptRefresh(cycleGeneration: number): Promise<AttemptResult> {
   const startedAt = Date.now();
   let payload: BrowserTokenResponse;
   try {
@@ -89,6 +105,9 @@ async function attemptRefresh(): Promise<AttemptResult> {
     }
     if (error instanceof BridgeNotConfiguredError) {
       return 'not-configured';
+    }
+    if (error instanceof BridgeForbiddenError) {
+      return 'forbidden';
     }
     return 'transient-failure';
   }
@@ -101,7 +120,7 @@ async function attemptRefresh(): Promise<AttemptResult> {
   // Always schedule positive near-expiry work, even for very short TTLs where
   // the margin would otherwise go non-positive and strand the cookie.
   const delayMs = Math.max(expiresIn * 1000 - REFRESH_MARGIN_MS - elapsed, 1_000);
-  if (Number.isFinite(delayMs)) {
+  if (Number.isFinite(delayMs) && cycleGeneration === bridgeGeneration) {
     refreshTimer = setTimeout(() => {
       void startSessionBridge();
     }, delayMs);
@@ -109,8 +128,11 @@ async function attemptRefresh(): Promise<AttemptResult> {
   return 'refreshed';
 }
 
-async function runBridgeCycle(): Promise<BridgeSettlement> {
-  const result = await attemptRefresh();
+async function runBridgeCycle(cycleGeneration: number): Promise<BridgeSettlement> {
+  const result = await attemptRefresh(cycleGeneration);
+  if (cycleGeneration !== bridgeGeneration) {
+    return result === 'transient-failure' ? 'unreachable' : result;
+  }
   if (result === 'transient-failure') {
     refreshTimer = setTimeout(() => {
       void startSessionBridge();
@@ -128,6 +150,10 @@ async function runBridgeCycle(): Promise<BridgeSettlement> {
     retryDelayMs = RETRY_BASE_DELAY_MS;
     notifySettlement('not-configured');
     return 'not-configured';
+  }
+  if (result === 'forbidden') {
+    notifySettlement('forbidden');
+    return 'forbidden';
   }
   notifySettlement('session-expired');
   return 'session-expired';
@@ -153,14 +179,19 @@ export function startSessionBridge(): Promise<BridgeSettlement> {
     return inFlight;
   }
   clearRefreshTimer();
-  inFlight = runBridgeCycle().finally(() => {
-    inFlight = null;
+  const cycleGeneration = bridgeGeneration;
+  const tracked = runBridgeCycle(cycleGeneration).finally(() => {
+    if (inFlight === tracked) {
+      inFlight = null;
+    }
   });
-  return inFlight;
+  inFlight = tracked;
+  return tracked;
 }
 
-/** Cancel the pending refresh; used on logout / re-auth. */
+/** Cancel pending work and detach any request that is already in flight. */
 export function resetSessionBridge(): void {
+  bridgeGeneration += 1;
   clearRefreshTimer();
   inFlight = null;
   retryDelayMs = RETRY_BASE_DELAY_MS;

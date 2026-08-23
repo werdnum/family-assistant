@@ -31,6 +31,10 @@ export default function SessionBridgeGate({ children }) {
         reloadForReauthentication();
         return;
       }
+      if (settlement === 'forbidden') {
+        setPhase('forbidden');
+        return;
+      }
       // Once the gate has opened, later settlements must never close it —
       // only an expired session (handled above) does.
       setPhase((prev) => {
@@ -52,7 +56,11 @@ export default function SessionBridgeGate({ children }) {
   if (phase !== 'ready') {
     return (
       <div className="min-h-screen flex items-center justify-center text-muted-foreground">
-        {phase === 'connecting' ? 'Connecting…' : 'Loading…'}
+        {phase === 'forbidden'
+          ? 'Browser authentication is unavailable. Check the server session-authentication configuration.'
+          : phase === 'connecting'
+            ? 'Connecting…'
+            : 'Loading…'}
       </div>
     );
   }

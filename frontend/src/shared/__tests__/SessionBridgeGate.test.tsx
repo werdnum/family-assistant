@@ -52,6 +52,30 @@ describe('SessionBridgeGate', () => {
     reloadSpy.mockRestore();
   });
 
+  it('surfaces a terminal bridge 403 instead of retrying behind the gate', async () => {
+    server.use(
+      http.get('/api/auth/browser-token', () =>
+        HttpResponse.json(
+          { detail: 'Browser JWT bridge requires session authentication.' },
+          { status: 403 }
+        )
+      )
+    );
+
+    render(
+      <SessionBridgeGate>
+        <div>app content</div>
+      </SessionBridgeGate>
+    );
+
+    expect(
+      await screen.findByText(
+        'Browser authentication is unavailable. Check the server session-authentication configuration.'
+      )
+    ).toBeInTheDocument();
+    expect(screen.queryByText('app content')).not.toBeInTheDocument();
+  });
+
   it('stays gated across transient failures until a retry succeeds', async () => {
     vi.useFakeTimers();
     try {

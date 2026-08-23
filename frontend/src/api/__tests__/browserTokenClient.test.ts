@@ -59,6 +59,23 @@ describe('startSessionBridge', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('treats a 403 as terminal instead of retrying a configuration error', async () => {
+    server.use(
+      http.get('/api/auth/browser-token', () => {
+        tokenRequests += 1;
+        return HttpResponse.json(
+          { detail: 'Browser JWT bridge requires session authentication.' },
+          { status: 403 }
+        );
+      })
+    );
+
+    await expect(startSessionBridge()).resolves.toBe('forbidden');
+
+    expect(tokenRequests).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('treats an enabled:false payload as feature-disabled and proceeds', async () => {
     server.use(
       http.get('/api/auth/browser-token', () => {
@@ -108,6 +125,28 @@ describe('startSessionBridge', () => {
     await Promise.all([first, second]);
 
     expect(tokenRequests).toBe(1);
+  });
+
+  it('does not let a reset in-flight request re-arm refresh work', async () => {
+    let resolveFirst!: () => void;
+    server.use(
+      http.get('/api/auth/browser-token', async () => {
+        tokenRequests += 1;
+        await new Promise<void>((resolve) => {
+          resolveFirst = resolve;
+        });
+        return HttpResponse.json({ token: 'test-jwt', expires_in: 3600 });
+      })
+    );
+
+    const pending = startSessionBridge();
+    await vi.advanceTimersByTimeAsync(0);
+    resetSessionBridge();
+    resolveFirst();
+    await pending;
+
+    expect(tokenRequests).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('resolves as unreachable after a failed attempt, with a retry scheduled', async () => {
