@@ -48,7 +48,7 @@ final class ErrorReporter: @unchecked Sendable {
 
     private let lock = NSLock()
     private var baseURLProvider: (() -> URL?)?
-    private var authTokenProvider: (() -> String?)?
+    private var authTokenProvider: (() async throws -> String?)?
     private var recentReports: [String: Date] = [:]
 
     /// Cap on spooled reports so a server outage cannot grow the cache without bound.
@@ -73,7 +73,7 @@ final class ErrorReporter: @unchecked Sendable {
     /// landing in the persistent error lane on authenticated deployments.
     func configure(
         baseURLProvider: @escaping () -> URL?,
-        authTokenProvider: (() -> String?)? = nil
+        authTokenProvider: (() async throws -> String?)? = nil
     ) {
         lock.withLock {
             self.baseURLProvider = baseURLProvider
@@ -206,7 +206,8 @@ final class ErrorReporter: @unchecked Sendable {
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let token = lock.withLock({ authTokenProvider })?() {
+        let tokenProvider = lock.withLock { authTokenProvider }
+        if let token = try await tokenProvider?() {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         request.httpBody = try JSONEncoder().encode(payload)

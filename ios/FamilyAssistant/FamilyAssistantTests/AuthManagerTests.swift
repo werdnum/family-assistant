@@ -80,6 +80,20 @@ final class AuthManagerTests: XCTestCase {
         XCTAssertEqual(UserDefaults.standard.object(forKey: "fa_token_lifetime") as? Int, 3600)
     }
 
+    func testValidAccessTokenRefreshesExpiredStoredToken() async throws {
+        seedStoredAuth(apiToken: "expired-api-token", refreshToken: "stored-refresh-token", expiresIn: -60)
+        let authManager = makeAuthManager()
+        AuthBackendURLProtocol.respond { _ in
+            .json(#"{"api_token":"fresh-api-token","refresh_token":"fresh-refresh","expires_in":3600}"#)
+        }
+
+        let token = try await authManager.validAccessToken()
+
+        XCTAssertEqual(token, "fresh-api-token")
+        XCTAssertEqual(AuthBackendURLProtocol.requests.count, 1)
+        XCTAssertEqual(AuthBackendURLProtocol.requests.first?.url?.path, "/api/auth/refresh")
+    }
+
     func testAuthorizedRequestClearsCredentialsWhenRefreshCredentialsAreMissing() async throws {
         KeychainHelper.save(key: "fa_api_token", string: "api-token-without-refresh")
         let authManager = makeAuthManager()

@@ -194,6 +194,36 @@ final class ErrorReporterTests: XCTestCase {
         XCTAssertEqual(spooledFiles().count, 1)
     }
 
+    func testFlushPersistedAwaitsRefreshedTokenProvider() async throws {
+        let reporter = makeReporter()
+        await reporter.deliver(
+            message: "Queued",
+            component: "Chat.stream",
+            errorType: .handled,
+            stack: nil,
+            extraData: [:]
+        )
+        XCTAssertEqual(spooledFiles().count, 1)
+
+        MockErrorURLProtocol.respond { _ in .init(statusCode: 200) }
+        reporter.configure(
+            baseURLProvider: { self.baseURL },
+            authTokenProvider: {
+                try await Task.sleep(for: .milliseconds(10))
+                return "refreshed-access-token"
+            }
+        )
+
+        await reporter.flushPersisted()
+
+        let request = try XCTUnwrap(MockErrorURLProtocol.requests.first)
+        XCTAssertEqual(
+            request.value(forHTTPHeaderField: "Authorization"),
+            "Bearer refreshed-access-token"
+        )
+        XCTAssertTrue(spooledFiles().isEmpty)
+    }
+
     func testDeliverAttachesBearerTokenWhenConfigured() async throws {
         MockErrorURLProtocol.respond { _ in .init(statusCode: 200) }
         let reporter = makeReporter()

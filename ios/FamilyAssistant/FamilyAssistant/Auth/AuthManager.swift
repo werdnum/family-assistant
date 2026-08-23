@@ -768,10 +768,26 @@ final class AuthManager {
 
     // MARK: - Helpers
 
-    /// Current access token for components that attach credentials outside
-    /// `authorizedRequest` (e.g. error reporting).
-    func currentAccessToken() -> String? {
-        KeychainHelper.readString(key: Keys.apiToken)
+    /// Return a usable access token, refreshing first when it is due. Components
+    /// that send outside ``authorizedRequest`` (such as error reporting) use this
+    /// so launch-time work cannot race bootstrap and attach an expired token.
+    @MainActor
+    func validAccessToken() async throws -> String {
+        let capturedEpoch = authEpoch
+        do {
+            try await refreshIfNeeded()
+        } catch AuthError.authRejected, AuthError.noCredentials {
+            if isCurrentAuthEpoch(capturedEpoch) {
+                markAuthRequired()
+            }
+            throw AuthError.noCredentials
+        }
+
+        guard let apiToken = KeychainHelper.readString(key: Keys.apiToken) else {
+            markAuthRequired()
+            throw AuthError.noCredentials
+        }
+        return apiToken
     }
 
     func validatedServerURL() -> URL? {
@@ -791,24 +807,7 @@ final class AuthManager {
 
     @MainActor
     func authorizedRequest(url: URL, method: String) async throws -> URLRequest {
-        let capturedEpoch = authEpoch
-        do {
-            try await refreshIfNeeded()
-        } catch AuthError.authRejected, AuthError.noCredentials {
-            // Only clear state if the epoch hasn't changed since we started. If
-            // logout/relogin bumped the epoch while we were in an in-flight refresh,
-            // don't clear the new session's credentials; let the error propagate so
-            // the caller can retry with the current credentials.
-            if isCurrentAuthEpoch(capturedEpoch) {
-                markAuthRequired()
-            }
-            throw AuthError.noCredentials
-        }
-
-        guard let apiToken = KeychainHelper.readString(key: Keys.apiToken) else {
-            markAuthRequired()
-            throw AuthError.noCredentials
-        }
+        let apiToken = try await validAccessToken()
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")

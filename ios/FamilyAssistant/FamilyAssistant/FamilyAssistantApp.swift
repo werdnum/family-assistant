@@ -21,7 +21,9 @@ struct FamilyAssistantApp: App {
 
         ErrorReporter.shared.configure(
             baseURLProvider: { [weak authManager] in authManager?.validatedServerURL() },
-            authTokenProvider: { [weak authManager] in authManager?.currentAccessToken() }
+            authTokenProvider: { [weak authManager] in
+                try await authManager?.validAccessToken()
+            }
         )
         ErrorReporter.shared.installGlobalHandlers()
     }
