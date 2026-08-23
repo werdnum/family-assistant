@@ -146,7 +146,7 @@ def api_route_body_limit(method: str, path: str) -> int | None:
     auth routes are excluded — they legitimately carry large payloads such as
     attachment uploads.
     """
-    if api_route_requires_default_auth(method, path):
+    if not is_api_path(path) or api_route_requires_default_auth(method, path):
         return None
     if method.upper() not in {"POST", "PUT", "PATCH"}:
         return None
