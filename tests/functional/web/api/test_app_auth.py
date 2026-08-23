@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 from family_assistant.storage.base import api_tokens_table
 from family_assistant.storage.database import Database
 from family_assistant.web import jwt_tokens as jwt_tokens_module
+from family_assistant.web.dependencies import get_current_session_user
 from family_assistant.web.route_auth import api_route_classification
 from family_assistant.web.routers.app_auth import (
     auth_codes,
@@ -302,13 +303,22 @@ class TestJWTTokens:
     async def session_client(
         self, app_fixture: "FastAPI"
     ) -> AsyncGenerator[AsyncClient]:
-        """Client with SessionMiddleware enabled for browser-session testing."""
+        """Client with SessionMiddleware and an auth-enabled OIDC session."""
         app_fixture.add_middleware(SessionMiddleware, secret_key="test-secret")
+        original_overrides = dict(app_fixture.dependency_overrides)
+        app_fixture.state.auth_service = _SessionAuthService()
+        app_fixture.dependency_overrides[get_current_session_user] = lambda: {
+            "sub": "browser-user@example.com",
+            "user_identifier": "browser-user@example.com",
+            "email": "browser-user@example.com",
+        }
         transport = ASGITransport(app=app_fixture)
         async with AsyncClient(
             transport=transport, base_url="http://testserver"
         ) as client:
             yield client
+        app_fixture.dependency_overrides.clear()
+        app_fixture.dependency_overrides.update(original_overrides)
 
     @pytest_asyncio.fixture
     async def jwt_enabled(
@@ -496,3 +506,45 @@ class TestJWTTokens:
         jwt_tokens_module.reset_jwt_signing_for_tests()
         response = await api_test_client.get("/.well-known/jwks.json")
         assert response.status_code == 404
+
+
+class _SessionAuthService:
+    """Auth-enabled stand-in representing a deployment with OIDC sessions."""
+
+    auth_enabled = True
+    oauth = None
+    database_engine = None
+
+    async def get_user_from_api_token(self, auth_header: str, request: object) -> None:
+        return None
+
+    @pytest.mark.asyncio
+    async def test_browser_token_requires_session_auth(
+        self,
+        app_fixture: "FastAPI",
+        jwt_enabled: None,
+    ) -> None:
+        """Without session authentication the bridge must not mint credentials."""
+        original_overrides = dict(app_fixture.dependency_overrides)
+        app_fixture.state.auth_service = _NoAuthService()
+        app_fixture.dependency_overrides[get_current_session_user] = lambda: {
+            "sub": "anonymous",
+            "user_identifier": "anonymous",
+        }
+        try:
+            transport = ASGITransport(app=app_fixture)
+            async with AsyncClient(
+                transport=transport, base_url="http://testserver"
+            ) as client:
+                response = await client.get("/api/auth/browser-token")
+        finally:
+            app_fixture.dependency_overrides.clear()
+            app_fixture.dependency_overrides.update(original_overrides)
+        assert response.status_code == 403
+
+
+class _NoAuthService:
+    """Auth-enabled=False stand-in (API-token-only deployment)."""
+
+    auth_enabled = False
+    oauth = None

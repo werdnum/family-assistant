@@ -485,6 +485,7 @@ async def exchange_opaque_token(
 
 @api_auth_router.get("/browser-token")
 async def browser_token(
+    request: Request,
     db_context: Annotated[Database, Depends(get_db)],
     current_user: Annotated[dict, Depends(get_current_session_user)],
 ) -> JSONResponse:
@@ -498,6 +499,17 @@ async def browser_token(
     """
     if not jwt_tokens.jwt_auth_enabled():
         return JSONResponse(content={"enabled": False})
+
+    # Only deployments with session authentication may mint browser
+    # credentials: without it, get_current_session_user's unauthenticated
+    # fallback would let any caller obtain a signed cookie accepted across
+    # every gateway-protected /api route.
+    auth_service = getattr(request.app.state, "auth_service", None)
+    if not auth_service or not auth_service.auth_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Browser JWT bridge requires session authentication.",
+        )
     if current_user.get("readonly"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
