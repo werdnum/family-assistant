@@ -13,25 +13,32 @@ session-refresh path.
 
 ## Decision
 
-Authenticated browsing is exposed as a configured, bounded **site capability**, not as general
-model-facing cookie-jar management.
+Authenticated browsing is exposed as an operator-configured, bounded **site capability**, not as
+general model-facing cookie-jar management.
 
-A trusted user request or standing automation grant selects the site capability before any web
-content is read. Family Assistant then starts an isolated worker with exactly one saved login, a
-fixed browser scope, and no unrelated tools. Web content may influence actions inside that delegated
-site capability, including making poor but reversible choices. It may not acquire another saved
-login, retrieve a credential, invoke another household capability, or choose a new external
-destination.
+The implementation uses Family Assistant's existing processing-profile and delegation system:
 
-The operating assumption is deliberately stronger than "the model will resist prompt injection":
+- a trusted profile such as `default_assistant` invokes a high-level authenticated-site tool;
+- the tool creates a fresh browser-server session from the configured jar;
+- the task runs under the existing `browser_profile`, which may delegate visual steps to
+  `browser_visual_profile` while sharing the same browser session;
+- the browser profiles receive the normal browser tools, but no jar-selection or credential tools;
+- browser-server confines the session to the configured authenticated origins.
 
-> The site worker may become fully controlled by page content. The design remains acceptable when
-> the authority available to that worker is too narrow for the compromise to matter materially.
+There is no new per-site worker type, dynamically synthesized profile, or universal read-only
+browser mode.
 
-For accounts where the complete same-site browser authority is not an acceptable blast radius,
-generic authenticated browsing is the wrong mechanism. Those sites require a site-specific,
-deterministic commit adapter that enforces action invariants, or they remain unavailable to an
-autonomous agent.
+The governing principle is **bounded damage**:
+
+> When the operator enables a site, they are choosing to let the model exercise the authority that
+> the authenticated session exposes on the configured origins. The hard security boundary limits
+> where that authority can go. Everything that tries to make the model behave correctly inside the
+> boundary is defence in depth, not a proof.
+
+The model may make mistakes or follow malicious page instructions within the configured site. The
+design is acceptable when the worst credible result is within the operator's declared damage
+envelope. If the full same-site browser authority is unacceptable, the operator must use a narrower
+deterministic integration or leave the site human-operated.
 
 ## Why this replaces the earlier policy direction
 
@@ -39,254 +46,260 @@ The earlier saved-session design made loading a jar an always-confirmed high-sen
 and expected eventual turn-level taint enforcement to govern actions inside an authenticated
 browser. [Operational findings](runtime-taint-enforcement-operational-findings.md) show that the
 shipped taint matrix remains in observe mode because enforcing it would interrupt ordinary tasks too
-often. The follow-up [risk-adjudication design](risk-adjudicated-taint-enforcement.md) correctly
-identifies the structural problem: source tier and sink class alone do not express whether an action
-follows the trusted user's request.
+often. The follow-up [risk-adjudication design](risk-adjudicated-taint-enforcement.md) identifies the
+structural problem: source tier and sink class alone do not express whether an action follows the
+trusted user's request.
 
-Authenticated browsing makes that mismatch especially expensive. Every useful browser task reads
-untrusted page content and then performs state-changing actions. A policy that treats the resulting
-context as generally unable to act prevents the feature from doing its job. A policy that asks on
-every load or same-site submit trains confirmation rubber-stamping without creating a meaningful
-new decision for the user.
+Authenticated browsing magnifies that mismatch. Useful tasks necessarily read page content and then
+perform browser actions, many of which may mutate state. A policy that treats every page-derived
+turn as unable to act prevents the feature from doing its job. A policy that asks before every jar
+load or same-site action trains confirmation rubber-stamping without presenting the user with a new
+choice.
 
-The useful security question is narrower:
+At the same time, there is no generic browser primitive that means "understand and navigate this
+site, but never change anything":
 
-> Did the trusted user grant this authority before the untrusted content arrived, and can the
-> untrusted content expand that authority?
+- clicks may commit immediately;
+- fields may autosave before submission;
+- navigation can trigger state-changing endpoints;
+- applications often use POST, GraphQL, or background requests for both reads and writes;
+- page JavaScript can issue requests independently of the model's explicit action;
+- per-site URL, selector, or endpoint allowlists are brittle and expensive to maintain.
 
-This design makes that question enforceable without requiring general runtime taint enforcement.
+This design therefore makes a smaller and honest claim. It hardens the credential and cross-site
+boundaries, exposes the remaining same-site authority to the operator, and treats semantic action
+review as an imperfect mitigation.
+
+This is also a practical product assumption rather than an unprecedented security posture. Current
+consumer agent products already operate authenticated browser sessions with substantially less
+operator-visible confinement. Modern computer-use models are reliable enough for useful delegated
+work, while still fallible enough that the account's damage envelope must matter.
 
 ## Goals
 
 - Complete useful authenticated website tasks without routine confirmation prompts.
+- Use the existing processing-profile, delegation, browser-backend, and confirmation architecture.
 - Keep passwords, OTPs, cookies, and origin storage out of model-visible data.
-- Bound a compromised browser worker to one configured site capability.
-- Prevent page content from acquiring additional credentials, accounts, tools, or destinations.
-- Make accepted prompt-injection outcomes explicit and proportionate to the site's consequences.
-- Support unattended operation from an explicitly configured standing automation grant.
-- Preserve enough structured audit and result data to inspect and recover from poor choices.
+- Bind each browser run to one operator-configured jar and origin set.
+- Prevent the browser processing profile from directly selecting another jar or retrieving a
+  credential.
+- Keep unrelated household capabilities out of the browser profile's tool set.
+- Make the operator's accepted same-site damage envelope explicit.
+- Preserve ordinary multi-step reasoning after browser results rather than requiring every browser
+  task to terminate the caller's model loop.
+- Preserve untrusted provenance on browser observations and results for the existing taint and
+  future adjudication machinery.
+- Add practical mitigations without representing them as a complete read/write barrier.
 - Ship a small end-to-end household use case before building autonomous credential refresh.
 
 ## Non-goals
 
-- Proving that the browser worker followed only trusted instructions.
-- Preventing every poor or surprising action within an intentionally delegated low-consequence site.
-- Inferring purchases, account-security changes, or other high-consequence actions reliably from
-  generic browser clicks.
+- Proving that the model followed only trusted instructions.
+- Creating a generic read-only authenticated browser.
+- Reliably classifying every browser action as read-only or state-changing.
+- Maintaining fine-grained per-site endpoint, selector, or button allowlists.
+- Guaranteeing that a general browser session cannot purchase, cancel, agree, submit, or alter
+  account state.
+- Requiring authenticated-site tools to be terminal in the caller's model loop.
+- Treating typed JSON strings as trusted merely because they have a schema.
+- Inferring purchases, security changes, or legal commitments reliably from generic UI semantics.
 - Making arbitrary authenticated accounts safe through one universal browser policy.
 - Requiring deployment-wide taint enforcement before authenticated browsing is usable.
 - Building automatic MFA or SSO handling in the first release.
-- Giving the default assistant a persistent, general-purpose logged-in browser profile.
+- Giving the default assistant direct access to cookie jars or a persistent general-purpose logged-in
+  browser profile.
 
-## Threat model and accepted consequences
+## Threat model
 
-The realistic adversary remains scalable prompt injection embedded in web content, not a targeted
-operator who has compromised the host or an approved site origin.
+The realistic adversary remains scalable prompt injection embedded in content the model reads, plus
+ordinary model error. A targeted attacker who has compromised the host, browser-server, Keychute, or
+the operator-approved first-party origin is outside the mechanism's protection.
 
-The design distinguishes **quality failures** from **authority failures**.
+### Same origin is a damage boundary, not a trust label
 
-### Accepted quality failures
+Once a browser profile is operating on an authenticated origin, content from that origin may
+influence what it does on that origin. This is intentionally accepted when the site is configured as
+a general browser capability.
 
-For a low-consequence delegated site, a compromised worker may:
+For a service such as HelloFresh, malicious instructions in the site's own UI generally imply that
+HelloFresh, or code executing with HelloFresh's origin authority, is compromising its own account
+surface. The design does not attempt to defend the service from itself while still giving the model
+general control of that service.
 
-- select meals the household dislikes;
-- choose a less desirable appointment slot from an allowed set;
-- reorder preferences inside the delegated workflow;
-- produce a poor summary or recommendation;
-- require the user to undo a reversible site-local change.
+This does **not** mean same-origin content is trustworthy. It means that same-origin effects are
+inside the damage envelope the operator accepted. Sites that display attacker-controlled third-party
+content while also exposing valuable mutations have a larger envelope. Gmail, customer-support
+queues, social networks, and admin consoles may therefore be unsuitable as general browser
+capabilities even though all interaction occurs on one origin.
 
-Those outcomes are equivalent in kind to ordinary model mistakes. They are recorded and reported,
-but they are not treated as security-boundary failures.
+### Accepted failures
 
-### Rejected authority failures
+For a configured general browser capability, the model may:
 
-A compromised worker must not be able to:
+- choose meals the household dislikes;
+- select a poor appointment slot;
+- change a reversible preference;
+- follow a misleading page instruction that causes an unwanted same-site action;
+- produce an incorrect summary or recommendation;
+- require the user to inspect and undo a site-local change;
+- agree to or submit something the user did not intend, if that action is reachable inside the
+  accepted same-site authority.
 
-- load another site's saved session;
-- list the household's saved-login inventory;
-- ask Keychute for another secret;
-- access Gmail, Calendar, Notes, Home Assistant, messaging, code execution, or delegation unless the
-  trusted request admitted those capabilities before browsing started;
-- navigate authenticated state to an unapproved origin;
-- expose cookie or origin-storage values to the model;
-- change credentials, MFA, recovery details, or identity settings when that authority was not
-  explicitly delegated;
-- increase spending when the site's capability contract says spending is invariant;
-- convert page instructions into durable ambient prompt content without an explicit, separately
-  authorized write stage.
+The last item can still be serious. It is accepted only for sites whose reachable actions the
+operator has decided are tolerable. Semantic authorization and confirmation can reduce the
+probability; they do not turn a general browser into a hard-limited adapter.
 
-## Authority model
+### Rejected boundary failures
 
-### Authority is admitted before untrusted content
+The browser processing profile must not be able to:
 
-An authenticated site worker may be started from only one of these sources:
+- inspect or choose arbitrary cookie jars;
+- retrieve a password, OTP, cookie value, or origin-storage value;
+- load another authenticated site from within the browser task;
+- call Keychute for another secret;
+- invoke Gmail, Calendar, Notes, Home Assistant, messaging, code execution, task management, or other
+  household capabilities directly;
+- navigate authenticated top-level documents or forms outside the configured scope;
+- observe the browser while a human is entering credentials or MFA;
+- survive revocation of the jar that created its session.
 
-1. **Direct authenticated-user request.** The request clearly names or implies a configured site and
-   task, for example "Pick our HelloFresh meals for next week."
-2. **Standing automation grant.** The operator configured an automation whose declared capabilities
-   include that exact site capability.
-3. **Explicit multi-stage request.** The user grants all required capabilities before the first
-   untrusted stage runs, for example "Choose HelloFresh meals and add their ingredients to my grocery
-   note."
+These are mechanism and processing-profile boundaries. Unlike semantic action review, they are
+intended to hold even when page content completely controls the browser model.
 
-An email, web page, tool result, or other external source cannot introduce a new site capability on
-its own. It may provide data to a capability that was already admitted, but it cannot cause the
-assistant to acquire another one.
+## Hard boundaries and imperfect mitigations
 
-### Authority does not expand during the run
+The design separates properties that can be enforced mechanically from properties that can only be
+improved probabilistically.
 
-Once the worker begins:
+### Hard boundaries
 
-- its saved session is fixed;
-- its authenticated origin set is fixed;
-- its browser command set is fixed;
-- its non-browser tool set is empty;
-- it cannot invoke `run_authenticated_site_task` recursively;
-- it cannot request another profile or worker;
-- it cannot ask for a jar, credential, or capability by model-selected identifier.
+- **Configured jar resolution:** the high-level tool resolves an operator-controlled `site_id` to a
+  jar. The browser profile never sees the jar inventory or supplies a jar ID.
+- **Fresh session creation:** authenticated state is attached only when browser-server creates the
+  browser context.
+- **Origin confinement:** jar-loaded sessions retain browser-server's exact-origin top-level
+  navigation and form confinement.
+- **Opaque session state:** cookie and origin-storage values are not returned through model-facing
+  APIs or logs.
+- **Profile tool policy:** the browser processing profile has browser tools, not unrelated household,
+  messaging, credential, or general network tools.
+- **No recursive site acquisition:** `run_authenticated_site_task` is not available to the browser
+  profiles.
+- **`exec` default-deny:** jar-loaded sessions do not expose arbitrary page evaluation unless the
+  operator deliberately opts in for a site.
+- **Exclusive human control:** snapshots and commands fail while the human owns the browser.
+- **Revocation:** deleting or invalidating a jar terminates sessions loaded from it.
 
-A page that says "open Gmail to verify this account" therefore reaches a worker that has no Gmail
-capability and no way to obtain one. The worker reports the unmet requirement and stops.
+### Imperfect mitigations
 
-### User intent is not repeated as confirmation theatre
+- model adherence to the user's objective;
+- prompt-injection detection;
+- Gemini computer-use safety decisions;
+- a separate action-review judge;
+- human confirmation for actions judged consequential;
+- before/after or postcondition checks;
+- typed result schemas;
+- user-visible action summaries;
+- audit, notification, and easy revocation;
+- site-specific deterministic adapters.
 
-A direct request to perform a site task carries authority to load the configured saved session. The
-system does not follow it with "May I open your saved HelloFresh login?"
+The first eight reduce risk but do not prove that an unintended same-site mutation cannot occur. A
+site-specific adapter can provide a hard narrow interface only when the model does not also retain a
+general mutation-capable browser path for that operation.
 
-Confirmation remains appropriate only when the system is proposing a materially broader authority
-than the trusted request supplied, or when the configured site contract marks a particular action as
-requiring explicit approval. Reauthentication is a human action, not a second permission prompt for
-an already requested task.
+## Processing-profile architecture
 
-## Capability classes
-
-A site is configured in exactly one of these operational classes.
-
-### 1. Generic site capability
-
-The worker may exercise the ordinary browser authority available on the configured origins. This is
-appropriate only when the operator accepts the worst credible same-site outcome as low consequence
-and recoverable.
-
-Examples may include meal preference selection, content queues, or other accounts where an incorrect
-same-site action is an inconvenience rather than a material financial, identity, privacy, or safety
-failure.
-
-The important review question is not "does this site have a payment method on file?" in isolation.
-It is:
-
-> Is every action reachable through the granted same-site browser session within the operator's
-> accepted damage envelope?
-
-If the answer is no, do not use this class.
-
-### 2. Bounded-commit site capability
-
-The browser worker may inspect the authenticated site and propose a structured change, but a
-site-specific deterministic adapter performs the commit after validating invariants.
-
-For HelloFresh, the worker might return meal identifiers while the adapter verifies:
-
-- the existing scheduled box is unchanged;
-- box size and delivery frequency are unchanged;
-- no extras or add-ons were selected;
-- delivery address and payment settings are unchanged;
-- total price is unchanged or within a configured bound;
-- only meal-selection endpoints or known form fields are mutated.
-
-This class is required when the operator wants useful account automation but does not accept all
-same-site actions. The adapter may use a documented API, reverse-engineered stable requests, or a
-deterministic browser routine. The model does not control the commit destination or operation shape.
-
-### 3. No autonomous access
-
-Accounts whose acceptable authority cannot be represented by either class remain human-operated.
-The assistant may still provide public research or guide the user through the task.
-
-## Architecture
+Authenticated browsing fits into the existing profile system rather than introducing a second agent
+runtime.
 
 ```text
-trusted request / standing automation
+trusted caller profile
+(default_assistant, complex_tasks, or an explicitly configured automation profile)
+                |
+                | run_authenticated_site_task(site_id, objective)
+                v
+   high-level authenticated-site tool
+                |
+                | resolve configured jar + origins
+                | create fresh browser-server session
+                v
+          browser_profile
+  semantic snapshots / click / fill / wait
+                |
+                | existing delegation when visual action is needed
+                v
+     browser_visual_profile
+  Gemini native computer use + safety decisions
                 |
                 v
-      capability admission
-      (trusted configuration)
-                |
-                v
-  authenticated-site orchestrator
-                |
-                | site_id resolves to jar, origins,
-                | start URL, worker policy, result schema
-                v
-     isolated site worker
-  +----------------------------------+
-  | one jar-loaded browser session   |
-  | configured origins only          |
-  | browser interaction tools        |
-  | no jar or credential tools       |
-  | no household or egress tools     |
-  | structured result only           |
-  +----------------------------------+
-                |
-                +------ generic class: commit in browser
-                |
-                +------ bounded class: proposed change
-                                      |
-                                      v
-                              deterministic adapter
-                                      |
-                                      v
-                              validated site change
+       result returns to caller
+  with browser/external provenance preserved
 ```
 
-### Component responsibilities
+### Caller profile
 
-#### Family Assistant orchestrator
+The high-level tool is granted through the ordinary `tools_policy` system only to profiles the
+operator trusts to select configured site capabilities. It is not granted to `browser_profile`,
+`browser_visual_profile`, `event_handler`, externally triggered profiles, or other profiles that
+should not acquire authenticated sessions.
 
-- Resolves a trusted `site_id` to operator-controlled configuration.
-- Determines whether the current trigger has authority to use it.
-- Creates a fresh jar-loaded browser session.
-- Starts the restricted worker with the user's objective and a capability description.
-- Collects a typed result and audit summary.
-- Invokes a deterministic adapter for bounded-commit sites.
-- Returns `login_required`, `blocked_by_scope`, `needs_human`, or a completed result without silently
-  broadening authority.
+The default design does not introduce a request-bound admission token. Configuring a site and making
+the tool available to a caller profile is a standing operator grant: that profile may ask to use the
+site when reasoning about a task.
 
-#### browser-server
+This means untrusted context in the caller may influence which configured site it chooses. That is
+the existing cross-capability prompt-injection problem addressed by runtime taint, risk
+adjudication, profile segregation, and confirmations. It is not solved by the browser-session
+mechanism and remains an accepted residual while deployment-wide taint enforcement stays in observe
+mode.
 
-The shipped mechanism remains responsible for:
+Operators who need a narrower activation rule can use the mechanisms Family Assistant already has:
 
-- encrypted, opaque cookie jars;
-- no cookie or origin-storage values in API responses, events, or logs;
-- load only at fresh session creation;
-- immutable reporting of jar origins and generation;
-- exact-origin top-level navigation and form confinement;
-- `exec` default-deny in jar-loaded sessions;
-- no model observation while a human owns the browser;
-- revocation and invalidation closing live sessions;
-- freshness probes and bounded jar retention.
+- grant a site-specific wrapper tool only to a dedicated static processing profile;
+- expose the capability only through a slash command or configured automation profile;
+- put the high-level tool behind existing tool-policy confirmation;
+- require a model adjudication step once that design is implemented.
 
-These are mechanism invariants with negligible normal-use friction and remain hard requirements.
+The design does not require a new capability-admission object or another policy engine.
 
-#### Keychute
+### `browser_profile`
 
-Keychute is not part of the first useful path. A human creates and refreshes saved logins through the
-existing browser handoff.
+The existing semantic browser profile remains the main actor. The authenticated-site tool creates
+and binds the jar-loaded remote browser session before delegating the objective to the profile. The
+profile uses its current accessibility-snapshot browser tools.
 
-Later, browser-server may use Keychute's trusted-client autofill release to refresh a first-party
-credential jar. The login session remains terminal, the secret never enters Family Assistant, and
-only the refreshed jar survives. SSO and unusual MFA continue to use human handoff.
+If the shipped `browser_profile` policy contains a capability that exceeds the intended damage
+envelope, the implementation should tighten that static profile policy or add a normal static
+`authenticated_browser_profile` variant. That is standard processing-profile configuration, not a
+site-specific runtime or a dynamically generated worker.
 
-#### Site-specific adapter
+### `browser_visual_profile`
 
-A bounded-commit adapter owns the narrow mutation contract for one site. It accepts typed proposed
-state, reads any necessary current state, verifies invariants, and performs only its documented
-operation. Its interface contains no arbitrary URL, selector, script, request method, or request
-body selected by the model.
+The existing visual profile may be used through its current delegation path and shared browser tab.
+Its native Gemini computer-use integration already provides:
+
+- screenshot-level prompt-injection detection;
+- `safety_decision=require_confirmation` on selected proposed actions;
+- the existing Family Assistant confirmation callback;
+- fail-closed handling when confirmation is unavailable or the decision is malformed.
+
+Those controls are useful defence in depth. They do not create a comprehensive no-write guarantee,
+and DOM-based actions performed by `browser_profile` do not automatically receive the same semantic
+review.
+
+### Session binding
+
+The remote browser backend already keys ordinary sessions to a conversation. Authenticated-site
+execution needs explicit plumbing so the delegated browser profiles use the newly created jar-loaded
+session rather than opening a separate plain session. That binding should travel in trusted execution
+context or backend state, not through model-visible arguments.
+
+The browser session closes at the end of the delegated run unless the user takes human control. The
+saved jar remains the only durable browser capability.
 
 ## Configuration model
 
-Illustrative configuration:
+Illustrative operator configuration:
 
 ```yaml
 authenticated_sites:
@@ -297,62 +310,68 @@ authenticated_sites:
     authenticated_origins:
       - "https://www.hellofresh.com.au"
     navigation_allowlist: []
-    capability_class: "bounded_commit"
-    adapter: "hellofresh_meal_selection"
-    allowed_triggers:
-      direct_user: true
-      standing_automations:
-        - "weekly_hellofresh_selection"
-    result_schema: "hellofresh_meal_selection_v1"
+    caller_profiles:
+      - "default_assistant"
+    browser_profile: "browser_profile"
+    visual_profile: "browser_visual_profile"
+    damage_envelope: >-
+      The model may change ordinary meal selections and reversible preferences. It must not be
+      treated as guaranteed unable to add extras, change plan settings, or create charges.
+    mitigations:
+      native_computer_use_safety: true
+      action_review: "observe"
+      postcondition_check: "hellofresh_account_summary"
 ```
 
-The configuration is operator-controlled and not model-generated at runtime. In particular:
+The configuration is operator-controlled and not generated by the model. In particular:
 
-- `site_id` is a stable token, not a jar label supplied by the model;
-- `jar_id` is never exposed to the site worker;
-- the complete origin set is known before session creation;
-- the capability class cannot be weakened by page content;
-- a bounded adapter is selected by configuration, never by the worker;
-- standing automation grants name exact capability IDs.
+- `site_id` is a stable configured token, not a jar label;
+- `jar_id` is never exposed to either browser profile;
+- the complete origin set is fixed before session creation;
+- caller profiles are explicit processing-profile IDs;
+- browser and visual execution use existing processing-profile IDs;
+- the damage envelope is operator documentation, not a policy promise the runtime cannot enforce;
+- mitigation settings describe best-effort review rather than a read/write allowlist.
 
-Multiple household accounts on one site are separate capability IDs, for example
-`hellofresh_andrew` and `hellofresh_partner`, each bound to one jar. The user-facing capability name
-may be friendly, but resolution is deterministic and never fuzzy.
+Multiple household accounts on one site are separate site IDs, for example `hellofresh_andrew` and
+`hellofresh_partner`, each bound to one jar.
 
 ## Product surface
 
-### Primary tool
+### High-level tool
 
-The default assistant receives one high-level tool:
+The caller profile receives one high-level tool:
 
 ```text
 run_authenticated_site_task(
     site_id: str,
     objective: str,
-    expected_result: str | None = None,
 ) -> AuthenticatedSiteTaskResult
 ```
 
-The tool does not accept a jar ID, arbitrary start URL, origin list, profile ID, adapter name, or
-browser permissions. Those values come only from trusted configuration.
+The tool does not accept a jar ID, arbitrary start URL, origin set, profile ID, adapter name,
+browser permissions, or credential name. Those come only from trusted configuration.
 
-`site_id` values advertised to the model are filtered to capabilities available to the acting user
-and current trigger. An ambient or external-triggered profile sees no interactive site capabilities
-unless its standing automation configuration explicitly grants one.
+Available `site_id` values are filtered by the active caller processing profile and acting user. The
+browser profiles themselves do not receive this tool, so page content cannot recursively load a
+second authenticated session from inside the site task.
+
+A direct request to perform a configured site task carries enough user intent to run it without a
+second generic "open saved login?" prompt. Configuration and profile policy are the standing grant.
+A site may still opt into confirmation or action review when its damage envelope warrants it.
 
 ### Management surface
 
 Saved-login creation, inspection, refresh, and deletion remain human management operations in
 browser-server's authenticated UI for the first release. They are not general model tools.
 
-Family Assistant may later expose user-local status such as "HelloFresh login is stale" without
-returning the full jar inventory or model-controlled labels. A trusted settings page is the primary
+Family Assistant may expose user-local status such as "HelloFresh login is stale" without returning
+the full jar inventory or model-controlled labels. A trusted settings page remains the primary
 management surface.
 
-### Result contract
+### Result contract and continued reasoning
 
-The worker returns typed data rather than unconstrained prose wherever the site workflow permits it.
-A generic result envelope is:
+The delegated browser profile should return typed data where a workflow permits it, for example:
 
 ```json
 {
@@ -370,113 +389,161 @@ A generic result envelope is:
 }
 ```
 
-Strings copied from pages remain untrusted data. They do not become instructions to the caller. A
-multi-stage workflow consumes typed fields under capabilities already admitted by the original user
-request. It does not inspect the site's prose result and decide which new tools to acquire.
+A schema constrains shape, size, and auditability. It does **not** make copied page strings trusted.
+Browser-derived labels, summaries, warnings, and evidence retain the same external provenance as the
+page observations that produced them.
 
-## Worker confinement
+The result normally returns to the caller's existing model loop so the assistant can explain the
+outcome, answer follow-up questions, or continue a user-requested multi-stage task. Authenticated-site
+tools are not universally terminal.
 
-The site worker is a dedicated processing profile or delegated runtime whose effective capabilities
-are assembled per run.
+Consequently, page-derived output may influence later reasoning by a caller profile with broader
+tools. That risk is latent and orthogonal to the authenticated-session mechanism. The existing taint
+tracker should preserve it, and the risk-adjudication design is the intended place to distinguish a
+legitimate follow-up from an injected cross-capability instruction.
 
-It receives:
+A profile or workflow may choose deterministic terminal rendering or a more restricted continuation
+when warranted, but that is a policy option rather than the baseline architecture.
+
+## Browser authority inside the session
+
+### No generic read-only mode
+
+A general authenticated browser profile is mutation-capable by design. `click`, `fill`, `select`,
+`type`, `navigate`, and page-controlled JavaScript may all change account state. The implementation
+must not claim that a proposal or inspection phase is technically read-only merely because the model
+was instructed not to commit.
+
+Blocking HTTP methods or maintaining lists of write endpoints is explicitly out of scope. Such a
+system would both break legitimate sites and miss mutations expressed through unexpected routes,
+background requests, or application state.
+
+### Same-origin operation
+
+Inside the configured origin set, the browser profile may continue responding to page content and
+performing actions needed for the task. Runtime taint does not impose per-click confirmation inside
+that already delegated session.
+
+If HelloFresh places malicious instructions in its own UI, those instructions may influence the
+HelloFresh session. As a security matter that is a compromise of the configured first-party site
+within its own accepted damage envelope, not a cross-site authority escape.
+
+The operator must consider what content a site renders. A mailbox or issue tracker can display
+attacker-authored text under the service's own origin; granting general browser authority there may
+allow that text to drive meaningful same-site actions. Same-origin confinement bounds the damage but
+does not make the content benign.
+
+### Agreements, submissions, and purchases
+
+A general browser capability cannot guarantee that the model will not click an agreement, submit a
+form, add a paid extra, change a plan, or otherwise act on the user's behalf. Those are model and UI
+semantics, not properties browser-server can generally enforce.
+
+Where practical, Family Assistant may ask for confirmation or run an action judge before an
+apparently consequential action. The guarantee remains probabilistic. If the operator requires a
+hard narrow operation, the model must use a deterministic adapter without simultaneous access to a
+general mutation-capable browser path.
+
+## Defence in depth
+
+### Native Gemini computer-use authorization
+
+When the task delegates to `browser_visual_profile`, Gemini's native computer-use protocol may mark a
+proposed action with `safety_decision=require_confirmation`. Family Assistant already routes this
+through the normal confirmation callback and refuses the action when approval is unavailable.
+
+Prompt-injection detection is also enabled for that profile. These controls are useful, especially
+for actions such as confirming a payment or accepting a consequential dialog, but they apply only
+when the native visual action path emits the decision and must not be treated as complete coverage.
+
+### Optional action-review judge
+
+A later mitigation may evaluate:
 
 - the trusted user objective;
-- a short capability contract stating the site and allowed outcome;
-- the already-created jar-loaded browser session;
-- browser snapshot, click, fill, wait, navigation, and extraction operations needed for the site;
-- no aggregate household context unless explicitly required and admitted;
-- no saved-login metadata;
-- no credential access;
-- no general URL fetch, shell, Python, sandbox network, messaging, notes, calendar, email, Home
-  Assistant, task management, delegation, or worker-spawn tools.
+- the configured site's damage envelope;
+- the current snapshot or screenshot;
+- recent browser actions;
+- the next proposed action.
 
-`exec` remains disabled by default. A per-site opt-in is considered only after a real workflow proves
-that ordinary DOM/browser operations cannot complete it. Enabling it is a security-significant site
-configuration change because page JavaScript can expose non-HTTP-only cookie or origin-storage data.
+The output can be `allow`, `ask`, or `block`, using a provenance-shielded judge similar to the
+risk-adjudication design. It should escalate to confirmation for obvious plan changes, purchases,
+subscription changes, address changes, credential changes, or task-unrelated actions.
 
-The worker is disposable. The browser session closes after completion or failure; persistence lives
-only in the encrypted jar and the site's own server-side account state.
+This judge is not a hard policy boundary. It can misunderstand the UI, miss autosave, or be attacked.
+It exists to catch obvious misuse cheaply, not to replace the operator's damage-envelope decision.
 
-## Navigation and origin handling
+### Postcondition checks
 
-Credential and cookie scope remain exact-origin controls. The configured authenticated origin set is
-passed to browser-server and cannot be widened by the worker.
+A site may define a cheap before/after check such as:
 
-`navigation_allowlist` is for explicitly reviewed origins that the workflow must reach without
-capturing their storage in the jar. It is not an arbitrary-link permission and is displayed in the
-trusted configuration UI. Unexpected navigation produces `blocked_by_scope` rather than an
-interactive "allow this origin?" prompt sourced from page content.
+- total price;
+- selected box size;
+- delivery address;
+- subscription status;
+- number and type of extras;
+- site-reported completion state.
 
-A workflow that needs broad public research should run that research in a separate unauthenticated
-stage. The authenticated worker does not gain arbitrary web navigation merely because the current
-site linked elsewhere.
+These checks improve detection and recovery. Unless implemented through a narrow deterministic
+adapter, they do not prove that no transient or hidden mutation occurred.
 
-SSO login redirects are a provisioning concern, not a task-session permission. Human control may
-traverse the IdP during login; the resulting task jar should capture only the minimum application
-state needed for the configured site. Multi-origin application state is explicitly reviewed when
-saved.
+### Deterministic adapters
 
-## Consequence policy
+A site-specific adapter is optional and justified only when the value of a hard narrow operation
+exceeds the maintenance cost. Its model-facing interface contains structured domain arguments rather
+than arbitrary URLs, selectors, methods, or request bodies.
 
-The capability class, not generic taint state, determines the maximum allowed consequence.
+An adapter can enforce a property such as "change only these meal IDs and do not alter box size or
+price" only if the model cannot bypass it through a simultaneous general browser path. The design
+does not require an adapter for every site and explicitly rejects maintaining fine-grained endpoint
+lists for general browsing.
 
-### Routine delegated actions
+### Audit and recovery
 
-No additional confirmation is required when the action is within the site capability selected by
-the trusted request. This includes state-changing actions such as selecting meals when that is the
-purpose of the capability.
+Each run records enough metadata to inspect what happened without recording secrets:
 
-### Material commitments
+- acting user and caller processing profile;
+- site ID and configuration version;
+- jar generation and effective origin set;
+- browser and visual profile IDs and model versions;
+- start and end time;
+- major actions and typed result;
+- safety confirmations or judge decisions;
+- optional before/after checks;
+- final status and failure reason;
+- optional final screenshot or sanitized evidence.
 
-A site may define explicit sub-capabilities or adapter invariants for actions such as skipping a
-paid delivery, cancelling a subscription, changing a delivery address, or changing a plan. These are
-not discovered through a universal click classifier.
-
-The options are:
-
-- exclude the action from the deterministic adapter;
-- require a separate trusted user request naming the action;
-- expose a dedicated confirmed tool outside the generic worker; or
-- classify the whole account as unsuitable for autonomous access.
-
-### Money, security, and identity
-
-Generic authenticated browsing must not be presented as guaranteeing that these actions are blocked.
-If the account exposes them on the same origins and the operator does not accept that authority, the
-site must use a bounded adapter or remain human-only.
-
-This design intentionally rejects a generic "purchase detector" based on page text, button labels,
-DOM shape, or model judgment. Such a detector would be brittle precisely where a hard guarantee is
-required.
+For reversible sites, execute-and-report is preferable to routine pre-action confirmation. The user
+should be able to inspect the result, revoke the jar, and undo site-local changes through the site's
+normal controls.
 
 ## Relationship to taint and provenance
 
-Runtime taint remains useful for audit, provenance, ambient prompt admission, and future adjudication.
-It is not the authority mechanism for this feature and is not a prerequisite for enabling it.
+Runtime taint remains useful and is deliberately orthogonal to whether the browser session may act
+on its own origin.
 
-The authenticated worker's page observations and outputs remain marked as externally derived. That
-provenance may inform later review or durable-artifact policy. It does not cause per-click
-confirmation inside the already admitted site capability.
+### Intra-session
 
-The key enforcement rule is:
+Browser observations are external input, but the browser profile is expected to continue operating
+inside the already delegated origin set. Turning every same-origin action into a taint gate would
+recreate the unusable confirm-everything policy this design replaces.
 
-> External data may influence computation inside an admitted capability, but it cannot cause a new
-> capability to be admitted.
+### Return to the caller
 
-For explicit multi-stage requests, all capabilities are admitted from the trusted request before the
-external stage starts. Stages remain separated, and structured data is passed between them. For
-example:
+Browser results retain external provenance when returned to a broader caller profile. Typed fields
+remain untrusted strings. The current `LLMLoop` may continue with the caller's ordinary tools, so an
+injected result can attempt to influence later cross-capability actions.
 
-1. The user requests HelloFresh selection plus a grocery-note update.
-2. The orchestrator admits `site:hellofresh` and `notes:grocery-list` from that request.
-3. The site worker returns typed ingredients.
-4. A separate deterministic or notes-capable stage writes those ingredients as data.
-5. The site worker itself never receives Notes access.
+That is a genuine risk, but it is not specific to authenticated sessions: ordinary web search,
+email, documents, notes, and tool outputs already create the same transition. Runtime taint and the
+risk-adjudication design are the appropriate shared control. Until enforcement is enabled, this
+remains an accepted residual rather than a reason to make every browser tool terminal.
 
-Durable content derived from a site should not become ambient prompt instructions merely because it
-was written to a note. Existing prompt-admission and provenance mechanisms remain the appropriate
-chokepoint for that separate concern.
+### Durable artifacts
+
+Content derived from a site does not become trusted ambient instruction merely because it is written
+to a note, task, or other artifact. Existing provenance propagation and ambient prompt-admission
+controls remain the chokepoints for that separate concern.
 
 ## Login lifecycle
 
@@ -485,163 +552,162 @@ chokepoint for that separate concern.
 1. A human opens a browser-server session.
 2. The human signs in under exclusive browser control and completes MFA or SSO.
 3. The human saves the login as a cookie jar.
-4. The operator binds the jar to an authenticated-site configuration entry.
-5. A direct user task may use it without another load confirmation.
+4. The operator binds the jar to an authenticated-site configuration entry and documents the damage
+   envelope.
+5. The configured caller profiles may use it under their normal tool policy.
 
 ### Normal task
 
-1. Capability admission resolves the trusted `site_id`.
-2. Family Assistant creates a fresh session with that jar and browser-server confinement enabled.
+1. A caller profile invokes `run_authenticated_site_task` with a configured `site_id` and objective.
+2. The tool creates a fresh browser-server session from the configured jar with confinement enabled.
 3. It navigates to the configured start URL.
-4. The isolated worker completes the task or returns a bounded failure.
-5. The session closes and the user receives a structured action report.
+4. The objective is delegated through the existing processing-profile system to `browser_profile`.
+5. The browser profile may delegate visual steps to `browser_visual_profile` using the shared
+   session.
+6. The result returns with browser provenance preserved.
+7. The session closes unless a human handoff is active.
 
 ### Expired login
 
 1. A probe or task detects that the jar is stale.
-2. The task returns `login_required` with the site name and a trusted handoff action.
+2. The tool returns `login_required` with the site name and a trusted handoff action.
 3. A human signs in and refreshes the same jar in place.
-4. The original task may be retried from its trusted objective.
+4. The task may be retried from its original objective.
 
-The agent does not invalidate a jar solely because an untrusted page claims the session expired.
-Independent probing or explicit human action remains the source of truth.
+The agent does not invalidate a jar solely because a page claims the session expired. Independent
+probing or explicit human action remains the source of truth.
 
 ### Later autonomous refresh
 
 If measured expiry friction justifies it, browser-server may perform the Keychute-backed first-party
 credential fill described in
-[PR #1069](https://github.com/werdnum/family-assistant/pull/1069). The resulting flow refreshes
-the configured jar; it does not create a general authenticated browser capability or expose
-credentials to the worker.
+[PR #1069](https://github.com/werdnum/family-assistant/pull/1069). The flow refreshes the configured
+jar; it does not expose credentials to either browser profile. SSO and unusual MFA remain human
+handoff paths.
 
 ## Failure behavior
 
-The high-level tool returns one of a small set of actionable outcomes:
+The high-level tool returns a small set of actionable outcomes:
 
-- `completed`: requested workflow completed and was reported;
-- `login_required`: saved session is stale or missing;
-- `blocked_by_scope`: the site attempted an unconfigured origin transition;
-- `blocked_by_contract`: a bounded adapter rejected the proposed mutation;
+- `completed`: the browser profile reported task completion;
+- `login_required`: the saved session is stale or missing;
+- `blocked_by_scope`: browser-server blocked an unconfigured origin transition;
+- `review_blocked`: a native safety decision or optional judge refused an action;
 - `needs_human`: CAPTCHA, unsupported MFA, SSO, bot detection, or ambiguous workflow;
-- `site_changed`: configured selectors, routes, or result evidence no longer match;
-- `failed`: browser or worker failure with no claimed completion.
+- `site_changed`: expected site structure or completion evidence no longer matches;
+- `failed`: browser or delegated-profile failure with no claimed completion.
 
-Failures do not trigger capability broadening. A worker cannot solve `blocked_by_scope` by asking for
-an arbitrary origin, and it cannot solve `login_required` by requesting a model-visible password.
-
-## Audit and recovery
-
-Every run records metadata sufficient to understand what authority was exercised without recording
-secrets:
-
-- acting user and trusted trigger type;
-- site capability ID and configuration version;
-- jar ID or an opaque stable reference in privileged audit data, never worker-visible;
-- jar generation and effective origin set;
-- start and end time;
-- worker model/profile version;
-- major workflow actions and typed result;
-- bounded-adapter decision and invariant results;
-- final status and failure reason;
-- optional final screenshot or sanitized state evidence when configured.
-
-The user-facing completion report names the actions taken. For reversible sites, recovery is
-primarily inspect-and-undo rather than pre-action confirmation.
-
-Audit data is not itself an ambient prompt source. Page-derived labels remain data and are escaped or
-structured at every display boundary.
+A failure does not cause the browser profile to receive jar-management or credential tools. It may
+ask the user for help through the normal caller response or human-handoff flow.
 
 ## First vertical slice: HelloFresh meal selection
 
 The first release target is:
 
 > "Pick our HelloFresh meals for next week" completes end to end from a manually saved login, with
-> no routine confirmation prompt and no authority outside the configured HelloFresh capability.
+> no routine jar-load confirmation and no direct authority outside the configured HelloFresh
+> session.
+
+### Initial risk posture
+
+HelloFresh begins as a **general authenticated browser capability**, not as a purported read-only or
+bounded-commit browser.
+
+The operator accepts that the browser model may exercise any action reachable on the configured
+HelloFresh origins. The first implementation should make obvious unwanted actions less likely with:
+
+- `browser_visual_profile`'s native prompt-injection detection and safety decisions when the visual
+  path is used;
+- explicit user confirmation when the model or an optional reviewer identifies a consequential
+  action;
+- an action summary naming selected meals and other detected account changes;
+- cheap before/after checks for price, box size, extras, delivery address, and subscription state
+  where the site exposes them reliably;
+- immediate visibility and ordinary site-level undo/recovery.
+
+None of those is represented as a hard "no additional spending" guarantee. If experience shows that
+the reachable account authority is unacceptable, the choices are to build a maintained narrow
+HelloFresh adapter or keep the task human-operated.
 
 ### Acceptance criteria
 
 1. A human can save and bind one HelloFresh login.
-2. A direct authenticated-user request automatically admits the HelloFresh capability.
+2. The tool is available only to configured caller processing profiles.
 3. Family Assistant creates a fresh confined browser session from the bound jar.
-4. An isolated browser-only worker reads the available meals and account history needed for the
-   task.
+4. The task runs through the existing `browser_profile` and, when needed,
+   `browser_visual_profile`.
 5. It can select and save ordinary meal choices without asking for jar-load confirmation.
-6. It cannot access another jar, Keychute, Gmail, Notes, messaging, Home Assistant, code execution,
-   arbitrary network, or delegation.
-7. A page instruction asking for any unavailable capability fails without expanding authority.
-8. The result names the meals selected and whether the site reported the selection as saved.
+6. Neither browser profile can list or choose another jar, call Keychute, or invoke unrelated
+   household tools.
+7. Browser-server blocks top-level navigation and forms outside the configured origin set.
+8. The result names the meals selected and retains external/browser provenance when returned to the
+   caller.
 9. A stale session produces one clear human reauthentication workflow.
-10. Undesirable meal selection is accepted as a quality failure and is visible in the action report.
-11. If "no additional spending" is a hard requirement, completion is not claimed until a
-    HelloFresh-specific adapter proves the price/box invariants or the workflow is kept human-only.
-12. The end-to-end task succeeds without runtime taint enforcement being switched from observe mode.
-
-### Generic browser versus bounded adapter
-
-The first implementation should test the real HelloFresh account surface before deciding the class.
-If same-origin navigation exposes paid extras, box-size changes, address changes, subscription
-changes, or other unacceptable actions that cannot be removed from the worker's reach, HelloFresh
-uses the bounded-commit class from the outset.
-
-The design does not assume that a payment method on file automatically makes generic browsing
-unacceptable, nor that a meal-selection UI automatically makes it safe. The decision is made from
-the actual reachable authority and the operator's accepted damage envelope.
+10. Undesirable meal selection and other same-site mistakes are accepted residuals and are visible in
+    the action report.
+11. Optional action review and postcondition checks can be enabled without claiming complete write
+    prevention.
+12. The end-to-end task succeeds while runtime taint remains in observe mode.
 
 ## Implementation plan
 
 ### M1 — Configuration and backend session creation
 
 - Add `authenticated_sites` operator configuration and validation.
-- Add a trusted registry resolving `site_id` to jar, origins, start URL, capability class, trigger
-  grants, result schema, and optional adapter.
+- Resolve configured site IDs to jar, start URL, origin set, caller profile IDs, browser profile ID,
+  visual profile ID, damage-envelope text, and mitigation settings.
 - Add the minimal `RemoteBrowserBackend` jar methods needed to load a known jar into a fresh session
   and probe its status.
 - Never send `confine_navigation: false` or `allow_exec: true` by default.
 - Verify the created session's jar generation and origin metadata against trusted configuration.
 
-### M2 — Isolated worker and high-level tool
+### M2 — High-level tool and processing-profile wiring
 
-- Add `run_authenticated_site_task` to the trusted interactive profiles.
-- Create the restricted site-worker profile/runtime with a per-run browser capability.
-- Ensure the worker has no jar-management, credential, household, egress, delegation, or code tools.
-- Enforce a structured result envelope and close the browser session on every terminal path.
-- Add audit records and user-facing action reports.
+- Add `run_authenticated_site_task` through the existing local tool registry.
+- Grant it only to configured caller profiles through the ordinary tool-policy system.
+- Bind the created jar-loaded browser session into the delegated execution context.
+- Delegate the objective to the existing `browser_profile`.
+- Preserve the existing shared-session delegation to `browser_visual_profile`.
+- Ensure neither browser profile receives jar-management, credential, or recursive authenticated-site
+  tools.
+- Preserve browser result provenance when the result returns to the caller.
+- Close the browser session on completion and failure paths.
 
 ### M3 — Human provisioning and stale-session recovery
 
 - Use browser-server's existing human sign-in and saved-login UI for initial provisioning.
-- Add a trusted operator mapping from saved jar to site capability.
+- Add a trusted operator mapping from saved jar to site configuration.
 - Surface `login_required` without exposing the full jar inventory to the model.
 - Support human refresh of the same jar ID and retry from the original objective.
-- Resolve the existing browser-server refresh hint/UI gaps only as needed by this flow.
+- Resolve browser-server refresh/UI gaps only as required by this flow.
 
 ### M4 — HelloFresh end-to-end workflow
 
-- Build a site skill or worker guidance for reading menus, history, and household constraints.
-- Exercise the real workflow through browser-server, including bot-detection and session-lifetime
-  behavior.
-- Capture typed meal choices and stable completion evidence.
-- Measure reliability, intervention rate, and which browser primitives are missing.
+- Add profile guidance or a site skill for reading menus, history, and household constraints.
+- Exercise the real workflow through browser-server, including bot detection and session lifetime.
+- Measure reliability, interventions, same-site mutations, and missing browser primitives.
+- Add action summaries and cheap postcondition checks where reliable.
+- Document the actual accepted damage envelope from production use.
 
-### M5 — Consequence boundary
+### M5 — Optional semantic review
 
-- Inspect the actual reachable HelloFresh account actions.
-- If generic authority exceeds the accepted envelope, implement
-  `hellofresh_meal_selection` as a bounded deterministic commit adapter.
-- Test that paid extras, plan changes, address changes, subscription changes, and price increases are
-  structurally unavailable or rejected.
+- Evaluate whether Gemini's native computer-use safety decisions cover the useful visual path.
+- If needed, prototype an action-review judge modelled on risk adjudication.
+- Run it in observe mode first and measure false positives before enabling confirmation or blocking.
+- Do not introduce per-site endpoint or selector allowlists as a prerequisite.
 
 ### M6 — Measured follow-ups
 
 Only after the vertical slice is in regular use:
 
-- add scheduled standing-grant execution;
+- add scheduled execution under a dedicated existing processing profile;
 - add Keychute-backed jar refresh if expiry is a recurring burden;
-- add more configured sites based on explicit consequence review;
+- add more sites after an explicit damage-envelope review;
 - add per-site `exec` opt-ins only when required;
-- consider a trusted site-management UI rather than general model-facing jar tools;
-- use taint/adjudication data to improve audit and cross-stage policies without making it a release
-  gate.
+- build a narrow deterministic adapter only for a workflow whose hard guarantee justifies ongoing
+  maintenance;
+- improve cross-capability taint adjudication without making it a release gate for same-site browser
+  work.
 
 ## Changes to prior plans
 
@@ -661,95 +727,109 @@ Supersede:
 - the four general jar tools as the primary model surface;
 - confirmation on every `load_saved_session`;
 - jar inventory access as a normal model workflow;
-- runtime taint enforcement as the prerequisite or end-state controller for in-site actions;
-- per-click or per-submit same-origin escalation inside an already admitted low-consequence
-  capability.
+- runtime taint enforcement as a prerequisite for authenticated browsing;
+- per-click or per-submit same-origin escalation;
+- any implication that generic browser automation can be made reliably read-only.
 
 ### PR #1018
 
 The backend reconciliation in
 [PR #1018](https://github.com/werdnum/family-assistant/pull/1018) remains useful, especially its
-notes on shipped browser-server semantics. Its proposed Family Assistant product surface and work
-ordering should be replaced by this design. The useful backend subset is incorporated into M1 and
-M3 above.
+notes on shipped browser-server semantics. Its generic jar-management product surface and work
+ordering are replaced by the configured-site tool and existing-profile delegation described here.
 
 ### PR #1069
 
 The narrowed Keychute design in
-[PR #1069](https://github.com/werdnum/family-assistant/pull/1069) remains valid. Agent-driven login
-is still a jar-refresh path, not a live-session transfer. It moves behind the first useful
-saved-session workflow and feeds a configured site capability rather than general browser access.
+[PR #1069](https://github.com/werdnum/family-assistant/pull/1069) remains valid. Agent-driven login is
+a jar-refresh path, not a live-session transfer. It moves behind the first useful saved-session
+workflow and feeds configured browser sessions rather than exposing credentials to a model.
 
 ### Runtime taint designs
 
-Keep provenance collection, ambient prompt admission, diagnostics, and research into
-risk-adjudicated enforcement. Do not require deployment-wide enforcement for authenticated-site
-capabilities. The worker boundary and pre-admitted authority envelope provide the relevant runtime
-control for this feature.
+Keep provenance collection, ambient prompt admission, diagnostics, and risk-adjudicated enforcement.
+Do not require deployment-wide enforcement before authenticated-site capabilities ship.
+
+Browser output returning to a broader caller is a real taint transition. It is shared with ordinary
+web, email, document, and tool-output flows and should be solved once in the taint/adjudication
+system, not by making this one tool terminal.
 
 ## Security properties
 
-The design is successful when all of these are true:
+The hard design is successful when all of these are true:
 
-- A browser worker cannot choose which household account or jar it receives.
-- Page content cannot cause another capability to be admitted.
-- The worker cannot see credentials, cookie values, or origin-storage values.
-- The authenticated browser cannot issue top-level navigation or form requests outside configured
-  scope.
-- The worker cannot invoke unrelated household or egress tools.
-- A direct trusted request does not incur redundant jar-load confirmation.
-- A standing automation cannot use a capability it did not declare.
-- A bounded adapter's invariants are deterministic and cannot be weakened by model arguments.
-- Revoking a jar terminates live sessions using it.
+- The model cannot read cookie or origin-storage values through normal browser APIs.
+- The browser profiles cannot inspect or choose arbitrary saved jars.
+- A configured jar loads only into a fresh browser-server context.
+- The session's authenticated origin set is immutable and visible to trusted orchestration code.
+- Top-level navigation and forms are confined to configured origins.
+- The browser profiles have no direct credential, jar-management, unrelated household, messaging,
+  code-execution, or recursive authenticated-site tools.
 - Human control remains exclusive during credential and MFA entry.
-- Site-derived output is returned as data and cannot dynamically expand downstream authority.
+- Revoking a jar terminates live sessions using it.
+- A direct user request does not incur redundant jar-load confirmation.
+- Browser-derived results preserve external provenance when they return to a broader caller.
+
+The following are deliberately **not** security properties of a general browser capability:
+
+- that the model will follow the user's objective;
+- that it will not agree, submit, purchase, cancel, or change preferences;
+- that page content cannot influence its same-site behavior;
+- that typed results cannot influence later caller reasoning;
+- that a semantic judge will identify every consequential action.
 
 ## Accepted residuals
 
-- An approved site origin can read credentials that a password manager or future Keychute autofill
-  places into its own page. This is inherent to autofill and is accepted only for operator-approved
-  origins.
-- A compromised generic site worker can perform any same-site action the account and configured
-  browser scope make reachable. Generic capability use asserts that this damage envelope is
-  acceptable.
-- Same-origin application JavaScript may make subresource requests not covered by top-level
-  navigation confinement. Credentials remain origin-scoped, `exec` remains disabled, and sites with
-  an unacceptable residual require stronger browser egress controls or a bounded adapter.
-- Browser automation may break when a site changes. The failure must be visible and must not claim
-  completion without configured evidence.
-- Some sites will block automated or cloud browsers and require human operation.
-- Typed result fields may still contain attacker-controlled strings. They remain data, are bounded
-  and escaped, and do not confer authority.
+- A configured browser profile can perform any same-origin action reachable through the account and
+  browser UI. Enabling the site asserts that this damage envelope is acceptable.
+- Same-origin content may include attacker-authored third-party material. Origin confinement bounds
+  where it can act; it does not make the content trustworthy.
+- Browser results may influence later actions by a broader caller profile. Taint/adjudication is the
+  shared intended control and remains observe-only in the current deployment.
+- Native Gemini safety decisions and any later action judge may miss dangerous actions or request
+  unnecessary confirmations.
+- Same-origin page JavaScript may make subresource requests not covered by top-level navigation
+  confinement. Credentials remain origin-scoped and `exec` remains disabled by default.
+- A future autofill path necessarily exposes the entered credential to JavaScript running on the
+  approved login origin, as any password manager does.
+- Browser automation may break when a site changes. Failure must be visible and must not claim
+  completion without evidence.
+- Some sites will block automated or cloud browsers and remain human-operated.
 
 ## Review questions
 
-1. Is the high-level `run_authenticated_site_task` surface preferable to exposing generic jar
-   management tools to the model?
-2. Is the authority rule sufficiently clear: capabilities come only from the trusted request or a
-   standing grant, never from content encountered during execution?
-3. Should the restricted worker be a dynamic processing profile, a delegated agent with an ephemeral
-   tool provider, or a separate orchestration primitive?
-4. Is the generic-versus-bounded capability distinction the right place to express consequences that
-   generic browser actions cannot classify reliably?
-5. Should HelloFresh begin as generic browsing for empirical discovery, or should the presence of
-   possible paid extras require a bounded adapter before the first commit?
-6. Which browser-server follow-ups are truly required for the first slice: refresh-in-place,
-   multi-origin human save, stronger subresource egress, or none?
-7. Is the audit/result envelope sufficient to make execute-and-report preferable to routine
-   pre-action confirmations for low-consequence sites?
-8. Does any existing taint or confirmation machinery still need to gate capability admission, as
-   opposed to observing provenance after admission?
+1. Is the high-level `run_authenticated_site_task` surface preferable to generic model-facing jar
+   management?
+2. Does the bounded-damage principle state the real trust assumption clearly enough?
+3. Can the feature be implemented by binding a jar-loaded session into the existing
+   `browser_profile` and `browser_visual_profile` delegation path without a new runtime abstraction?
+4. Should the default caller grant be limited to `default_assistant`, with scheduled use getting a
+   dedicated static processing profile later?
+5. Which hard browser-server boundaries are still missing for the first HelloFresh slice?
+6. Is native Gemini computer-use safety sufficient initial defence in depth, or is an observe-only
+   action-review judge worth prototyping immediately?
+7. Which HelloFresh postcondition checks are cheap and stable enough to provide useful detection
+   without becoming a brittle endpoint-maintenance project?
+8. Are there any configured sites whose same-origin third-party content makes the accepted damage
+   envelope unexpectedly large?
+9. Does the current taint tracker preserve browser-result provenance across delegated-profile return
+   correctly, or is plumbing required before the result can safely participate in later
+   adjudication?
 
 ## Validation plan
 
 This is a design-only change. Before implementation:
 
 - review against browser-server's shipped jar API and confinement semantics;
-- review against Family Assistant's profile, delegation, and confirmation architecture;
+- review against Family Assistant's existing profile, delegation, confirmation, and browser-session
+  architecture;
+- verify which tools `browser_profile` and `browser_visual_profile` currently receive and remove any
+  direct cross-capability path from authenticated runs;
+- verify that a delegated profile can be bound to the intended jar-loaded remote session without
+  model-visible session identifiers;
 - threat-model the first HelloFresh configuration from the actual reachable account UI;
-- verify that the proposed worker can be assembled without inheriting global tools or aggregate
-  context;
-- decide the HelloFresh capability class and document its accepted damage envelope;
-- mutation-test the future tool registry so adding a global tool cannot silently reach the worker;
-- add end-to-end tests for capability non-expansion, stale login, scope block, worker cleanup, and
-  bounded-adapter rejection before enabling unattended execution.
+- document the operator-accepted damage envelope before enabling the site;
+- test native computer-use safety decisions and any optional judge in observe mode;
+- add end-to-end tests for jar opacity, origin confinement, human-control exclusivity, stale login,
+  session cleanup, revocation, result provenance, and inability of browser profiles to acquire a
+  second authenticated session.
