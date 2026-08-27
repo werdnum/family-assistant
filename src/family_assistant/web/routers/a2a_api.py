@@ -24,6 +24,7 @@ from starlette.responses import Response
 from family_assistant.a2a.attachments import (
     A2AAttachmentError,
     A2AAttachmentTransfer,
+    default_a2a_peer_taint_source,
 )
 from family_assistant.a2a.converters import error_to_artifact, text_to_a2a_part
 from family_assistant.a2a.types import (
@@ -50,10 +51,8 @@ from family_assistant.llm.content_parts import ContentPartDict
 from family_assistant.processing import DelegatableService, ProcessingService
 from family_assistant.security.taint import (
     A2A_TAINT_METADATA_KEY,
-    SourceTrustTier,
     TaintMetadata,
     TaintSource,
-    TaintSourceType,
     TurnTaintState,
     coerce_taint_metadata,
 )
@@ -331,7 +330,10 @@ async def _handle_send_message(
         content_parts: list[ContentPartDict] = await A2AAttachmentTransfer(
             attachment_registry, db_context
         ).message_to_content_parts(
-            message, conversation_id=conversation_id, owner_user_id=user_id
+            message,
+            conversation_id=conversation_id,
+            owner_user_id=user_id,
+            taint_sources=_initial_taint_sources_from_message(message),
         )
         if not content_parts:
             raise ValueError("Message contained no processable content parts")
@@ -913,7 +915,10 @@ async def _stream_message(
         content_parts: list[ContentPartDict] = await A2AAttachmentTransfer(
             _get_attachment_registry(request), db_context
         ).message_to_content_parts(
-            message, conversation_id=conversation_id, owner_user_id=user_id
+            message,
+            conversation_id=conversation_id,
+            owner_user_id=user_id,
+            taint_sources=_initial_taint_sources_from_message(message),
         )
         if not content_parts:
             raise ValueError("Message contained no processable content parts")
@@ -1151,15 +1156,10 @@ def _initial_taint_sources_from_message(message: Message) -> tuple[TaintSource, 
 
 
 def _default_a2a_peer_taint_source(message: Message) -> TaintSource:
-    return TaintSource(
-        source_type=TaintSourceType.MANUAL,
-        source_id=message.message_id,
-        tier=SourceTrustTier.RECOGNIZED_MACHINE,
-        labels=frozenset({"source_recognized_machine"}),
-        reason=(
-            "Inbound A2A message did not include Family Assistant runtime taint "
-            "metadata; defaulting peer content to recognized_machine."
-        ),
+    return default_a2a_peer_taint_source(
+        message.message_id,
+        "Inbound A2A message did not include Family Assistant runtime taint "
+        "metadata; defaulting peer content to recognized_machine.",
     )
 
 

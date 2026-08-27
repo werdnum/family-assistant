@@ -40,6 +40,12 @@ from family_assistant.llm.content_parts import (
     text_content,
 )
 from family_assistant.processing import ChatInteractionResult
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+    artifact_taint_sources,
+)
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 
@@ -317,6 +323,41 @@ class TestInboundMessage:
             db_context, parts[0]["attachment_id"], acting_user_id=None
         )
         assert content == b"hello"
+
+    @pytest.mark.asyncio
+    async def test_stored_file_carries_the_message_taint(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+    ) -> None:
+        """A peer's file must not read as untrusted-by-omission on a later turn."""
+        codec, registry, db_context = transfer
+        source = TaintSource(
+            source_type=TaintSourceType.EMAIL,
+            source_id="msg-1",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset({"source_unknown_external"}),
+            reason="forwarded email",
+        )
+        message = _message(
+            Part(
+                root=FilePart(file=FileWithBytes(bytes=base64.b64encode(b"x").decode()))
+            )
+        )
+
+        parts = await codec.message_to_content_parts(
+            message,
+            conversation_id=None,
+            owner_user_id=None,
+            taint_sources=[source],
+        )
+
+        part = parts[0]
+        assert part["type"] == "attachment"
+        metadata = await registry.get_attachment(
+            db_context, part["attachment_id"], acting_user_id=None
+        )
+        assert metadata is not None
+        assert artifact_taint_sources(metadata.metadata, source_id="att") == (source,)
 
     @pytest.mark.asyncio
     async def test_remote_uri_file_stays_a_reference(

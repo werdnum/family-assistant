@@ -51,6 +51,12 @@ Inbound, the task id is claimed before any of the peer's files are registered. A
 task id is answered with the existing task, and registering first would leave a durable copy of
 every file that no task will ever use.
 
+A file registered from a peer carries the taint of the message that brought it, in the shape
+`artifact_taint_sources` reads back. A stored artifact with no provenance reads as untainted, so
+without this a peer's file would re-enter a later turn — opened or summarized — as trusted content.
+Where the peer declares no taint of its own it gets the tier the A2A endpoints already give a peer's
+text: a file in a message is no less trusted than the words around it.
+
 ## Deliberate simplifications
 
 - **A remote `http(s)` file URI is not fetched.** It stays a reference (an `image_url` content part

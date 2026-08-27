@@ -46,8 +46,16 @@ from family_assistant.llm.content_parts import (
     image_url_content,
     text_content,
 )
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from family_assistant.processing.types import ChatInteractionResult
     from family_assistant.services.attachment_registry import (
         AttachmentMetadata,
@@ -276,6 +284,7 @@ class A2AAttachmentTransfer:
         *,
         conversation_id: str | None,
         owner_user_id: str | None,
+        taint_sources: Sequence[TaintSource] = (),
     ) -> list[ContentPartDict]:
         """Convert an inbound A2A message to FA content parts.
 
@@ -291,10 +300,14 @@ class A2AAttachmentTransfer:
             ValueError: If a part cannot be converted.
         """
         prepared = [_prepare_part(part) for part in message.parts]
+        provenance = a2a_provenance_metadata(taint_sources)
         return [
             attachment_content(
                 await self._store(
-                    item, conversation_id=conversation_id, owner_user_id=owner_user_id
+                    item,
+                    conversation_id=conversation_id,
+                    owner_user_id=owner_user_id,
+                    provenance=provenance,
                 )
             )
             if isinstance(item, InlineFile)
@@ -308,6 +321,7 @@ class A2AAttachmentTransfer:
         *,
         conversation_id: str | None,
         owner_user_id: str | None,
+        taint_sources: Sequence[TaintSource] = (),
     ) -> list[str]:
         """Register every inline file a task carries as an attachment.
 
@@ -329,9 +343,13 @@ class A2AAttachmentTransfer:
             for inline in [_inline_file(part.root)]
             if inline is not None
         ]
+        provenance = a2a_provenance_metadata(taint_sources)
         return [
             await self._store(
-                inline, conversation_id=conversation_id, owner_user_id=owner_user_id
+                inline,
+                conversation_id=conversation_id,
+                owner_user_id=owner_user_id,
+                provenance=provenance,
             )
             for inline in inline_files
         ]
@@ -342,6 +360,7 @@ class A2AAttachmentTransfer:
         *,
         conversation_id: str | None,
         owner_user_id: str | None,
+        provenance: dict[str, object],
     ) -> str:
         metadata = await self._registry.store_and_register_tool_attachment(
             file_content=inline.content,
@@ -351,6 +370,7 @@ class A2AAttachmentTransfer:
             description=f"File received over A2A: {inline.filename}",
             conversation_id=conversation_id,
             owner_user_id=owner_user_id,
+            metadata=provenance,
             db_context=self._db,
         )
         logger.info(
@@ -361,6 +381,47 @@ class A2AAttachmentTransfer:
             metadata.attachment_id,
         )
         return metadata.attachment_id
+
+
+def default_a2a_peer_taint_source(source_id: str | None, reason: str) -> TaintSource:
+    """The trust a peer's content carries when it declares none of its own.
+
+    The same tier the A2A endpoints already give a peer's *text*: an agent this
+    deployment was configured to talk to is a recognized machine, and a file in
+    a message is no less trusted than the words around it.
+    """
+    return TaintSource(
+        source_type=TaintSourceType.MANUAL,
+        source_id=source_id,
+        tier=SourceTrustTier.RECOGNIZED_MACHINE,
+        labels=frozenset({"source_recognized_machine"}),
+        reason=reason,
+    )
+
+
+def a2a_provenance_metadata(sources: Sequence[TaintSource]) -> dict[str, object]:
+    """Durable provenance for a file received over A2A.
+
+    A stored artifact with no provenance reads as untainted, so a peer's file
+    would re-enter a later turn as trusted content — the taint of the message
+    that carried it is recorded on the attachment itself instead. Mirrors the
+    shape ``email_provenance_metadata`` writes, which is what
+    ``artifact_taint_sources`` reads back.
+    """
+    if not sources:
+        return {}
+    state = TurnTaintState.empty()
+    for source in sources:
+        state = state.add_source(source)
+    strongest = max(sources, key=lambda source: source.tier.value)
+    return {
+        "source_trust_tier": strongest.tier.config_value,
+        "source_type": strongest.source_type.value,
+        "source_id": strongest.source_id,
+        "source_trust_reason": strongest.reason,
+        "provenance_labels": sorted(strongest.labels),
+        "taint_metadata": state.to_metadata(),
+    }
 
 
 def _prepare_part(part: Part) -> ContentPartDict | InlineFile:

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import a2a.types as a2a_types
 
+from family_assistant.a2a.attachments import default_a2a_peer_taint_source
 from family_assistant.a2a.types import Message, Part, Role, Task, TaskState
 
 if TYPE_CHECKING:
@@ -92,6 +93,13 @@ async def a2a_task_to_chat_result(
             task,
             conversation_id=conversation_id,
             owner_user_id=owner_user_id,
+            taint_sources=(
+                default_a2a_peer_taint_source(
+                    task.id,
+                    "File returned by a remote A2A agent; the agent's own inputs "
+                    "are not visible here, so its output carries peer trust.",
+                ),
+            ),
         )
 
     text_parts: list[str] = []
