@@ -153,11 +153,17 @@ The reviewer's context is a typed structure assembled deterministically:
 - **The trigger definition, for unattended runs.** An event-handler or scheduled turn has no trusted
   user message; its trusted intent is the human-authored definition that created the run — the
   listener's instruction, the automation's prompt, the scheduled task's objective. The definition
-  renders under the same taint-metadata rule as everything else: its stored provenance decides, so
-  an automation created from a tainted turn stubs like any other untrusted source (which is the
-  executable-persistence concern the risk document already covers), while the trigger *payload* —
-  the event data, deliberately untrusted — is always represented as a provenance stub, never
-  rendered.
+  renders under the same taint-metadata rule as everything else: its stored provenance decides, and
+  **absent provenance fails closed to a stub**, per the taint design's standing missing-tier rule.
+  The absent case is currently every case — the listener and schedule-automation tables persist only
+  creator identity (`processing_profile_id`, `created_by_user_id`), not taint provenance — so until
+  the risk document's artifact-provenance work stamps automation definitions at their authoring
+  chokepoint, trigger definitions render only as stubs and the reviewer for unattended runs works
+  from operator guidance and the delegating rule's context, with ambiguity taking the deferral path.
+  That is weaker signal, never a laundering path: an automation authored from a tainted turn (the
+  executable-persistence concern the risk document covers) cannot render as trusted intent, because
+  no definition can until stored provenance proves it. The trigger *payload* — the event data,
+  deliberately untrusted — is always represented as a provenance stub, never rendered.
 
 ### On rendering arguments: the auto-mode position, not the stub position
 
