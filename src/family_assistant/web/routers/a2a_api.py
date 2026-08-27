@@ -509,6 +509,13 @@ async def _artifact_for_result(
         logger.exception("A2A response attachment could not be sent")
         reason = f"Response prepared but not delivered: {exc}"
         return error_to_artifact(reason), TaskState.failed, reason
+    except Exception:
+        # The task row is claimed and durable, so any failure here has to come
+        # back as a terminal state: letting it escape leaves the row 'working'
+        # and every retry with this task id gets a task that never progresses.
+        logger.exception("Failed to build the A2A response artifact")
+        reason = "Response prepared but not delivered: internal error"
+        return error_to_artifact(reason), TaskState.failed, reason
 
 
 async def _start_background_send(
@@ -1021,10 +1028,15 @@ async def _stream_message(
             response_file_parts = await A2AAttachmentTransfer(
                 _get_attachment_registry(request), Database(db_engine)
             ).response_attachment_parts(attachment_ids, acting_user_id=user_id)
-        except A2AAttachmentError:
+        except A2AAttachmentError as exc:
             logger.exception("A2A response attachment could not be streamed")
             has_error = True
-            error_msg = "A response attachment could not be delivered"
+            error_msg = f"A response attachment could not be delivered: {exc}"
+        except Exception:
+            # As above: the claimed row must still reach a terminal state.
+            logger.exception("Failed to build the A2A response attachments")
+            has_error = True
+            error_msg = "A response attachment could not be delivered: internal error"
 
     # Emit final artifact chunk
     final_parts = (
