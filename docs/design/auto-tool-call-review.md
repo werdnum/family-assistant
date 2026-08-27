@@ -344,7 +344,9 @@ Semantics:
   under `review` they remain usable and only genuinely suspicious calls fail there.
 - **Execution**: the reviewer is invoked with the same input contract, the matched rule as the
   delegating context, and the static layer's guidance. A `confirm` verdict uses the ordinary
-  confirmation flow; in a context with no confirmation channel it degrades to deny-and-continue.
+  confirmation flow; in a context with no live confirmation channel it becomes a deferred durable
+  confirmation where the call is independent and terminal (the fire-and-forget sends and filings the
+  risk document's deferral rules already scope), and degrades to deny-and-continue otherwise.
 - **Layering**: `review` is an ordinary decision value in the existing priority system — profiles
   and operators place it with the same offsets and tie-breaking as today. No new lattice is needed
   at the static layer; an operator who wants a hard gate keeps `confirm` or `deny`, exactly as now.
