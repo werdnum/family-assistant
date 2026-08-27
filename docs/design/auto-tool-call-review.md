@@ -244,6 +244,16 @@ only the verdict's effect downgrades to `audit`. That is the free shadow phase: 
 against real traffic at zero user-visible cost, starting the day the defaults change, while the
 deployment's `mode` stays `observe`.
 
+The shadow property belongs to `observe` mode, not to the defaults change itself. For a deployment
+already running `mode: enforce`, adopting the new default matrix is a real posture change — cells
+that gated unconditionally become judged — and must not happen silently: the configuration
+reference's migration note tells enforce deployments to pin the previous outcomes before upgrading
+(an `operator_minimum` of `confirm` on the egress cells and `deny` on
+`unknown_external × sandbox_network` reproduces today's matrix exactly, and is a subset of the
+recommended hardening set) or to adopt the judged posture deliberately. Verdict floors and
+`operator_minimum` are tighten-only against the judge just as against profiles, so a pinned
+deployment loses nothing.
+
 ### Default matrix changes
 
 Relative to the currently shipped `_default_taint_matrix()`:
@@ -423,12 +433,16 @@ uses — that no untrusted-tier conversation row or free-text digest field rende
 
 **M2 — Taint `adjudicate` in shadow.** The new outcome with verdict-floor and rank semantics,
 provider invocation, deny-and-continue result, turn-local escalation counters, and the default
-matrix change. Production `mode` stays `observe`, so this lands as a pure shadow phase: real
-verdicts on real traffic in `taint_audit_events`, nothing user-visible. *Verify:* merge-semantics
-unit tests (profile cannot replace `adjudicate` with `audit`; floored form satisfies a `confirm`
-minimum; post-verdict `operator_minimum` never weakens a verdict); replayed email-intake injection
-fixtures produce verdicts, and none of them `allow` at the fixture's target sink; observe-mode
-evaluations invoke the reviewer and downgrade effect to `audit`.
+matrix change. Production `mode` stays `observe`, so this lands as a pure shadow phase there: real
+verdicts on real traffic in `taint_audit_events`, nothing user-visible. The milestone ships the
+enforce-deployment migration note alongside the defaults change (pin previous outcomes via
+`operator_minimum`, or adopt the judged posture — see the shadow-phase section), so no deployment's
+enforcement weakens without an explicit configuration decision. *Verify:* merge-semantics unit tests
+(profile cannot replace `adjudicate` with `audit`; floored form satisfies a `confirm` minimum;
+post-verdict `operator_minimum` never weakens a verdict); a config test that the documented pin
+reproduces the pre-change matrix outcomes cell-for-cell; replayed email-intake injection fixtures
+produce verdicts, and none of them `allow` at the fixture's target sink; observe-mode evaluations
+invoke the reviewer and downgrade effect to `audit`.
 
 **M3 — Deterministic short-circuit and echo signal.** The confined-profile egress exemption
 (computable clauses, fail-toward-review) and the trusted-destination echo signal as reviewer input.
