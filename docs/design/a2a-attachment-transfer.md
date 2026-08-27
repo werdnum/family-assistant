@@ -55,7 +55,15 @@ A file registered from a peer carries the taint of the message that brought it, 
 `artifact_taint_sources` reads back. A stored artifact with no provenance reads as untainted, so
 without this a peer's file would re-enter a later turn — opened or summarized — as trusted content.
 Where the peer declares no taint of its own it gets the tier the A2A endpoints already give a peer's
-text: a file in a message is no less trusted than the words around it.
+text: a file in a message is no less trusted than the words around it. A file coming *back* from a
+remote agent carries the taint of the turn that was sent to it as well, since the agent worked on
+what it was given — and where the caller cannot say what that was (the polled path holds only a
+remote task id) the file is recorded as unknown-external rather than assumed to be peer-trusted.
+
+An inbound file is also held to the registry's limit for its own type, not just the inline cap: a
+deployment sets `max_multimodal_size` because providers reject larger media, and a peer's file goes
+straight into a turn, so it is bounded like a user's upload of that type rather than like tool
+output.
 
 ## Deliberate simplifications
 

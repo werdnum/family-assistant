@@ -366,6 +366,8 @@ class A2AAttachmentTransfer:
         already written are removed instead, best-effort: a failed cleanup is
         logged rather than replacing the original error.
         """
+        for inline in inline_files:
+            self._reject_if_oversized(inline)
         provenance = a2a_provenance_metadata(taint_sources)
         stored: list[str] = []
         try:
@@ -391,6 +393,23 @@ class A2AAttachmentTransfer:
                     )
             raise
         return stored
+
+    def _reject_if_oversized(self, inline: InlineFile) -> None:
+        """Refuse a file the registry's own limit for its type would refuse.
+
+        The inline cap bounds what fits in a JSON-RPC payload; it is not the
+        limit that matters for media. A deployment sets `max_multimodal_size`
+        because providers reject larger images, audio and video, and a peer's
+        file goes straight into a turn — so it is held to the same limit a
+        user's upload of that type is, rather than the file-storage ceiling
+        that tool output gets.
+        """
+        limit = self._registry.size_limit_for_mime(inline.mime_type)
+        if len(inline.content) > limit:
+            raise A2AAttachmentError(
+                f"Received file '{inline.filename}' ({len(inline.content)} bytes) "
+                f"exceeds the {inline.mime_type} limit ({limit} bytes)"
+            )
 
     async def _store(
         self,

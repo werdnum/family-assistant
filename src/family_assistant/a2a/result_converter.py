@@ -11,8 +11,15 @@ import a2a.types as a2a_types
 
 from family_assistant.a2a.attachments import default_a2a_peer_taint_source
 from family_assistant.a2a.types import Message, Part, Role, Task, TaskState
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from family_assistant.a2a.attachments import A2AAttachmentTransfer
     from family_assistant.processing.types import ChatInteractionResult
 
@@ -37,6 +44,7 @@ async def a2a_task_to_chat_result(
     attachments: A2AAttachmentTransfer | None = None,
     conversation_id: str | None = None,
     owner_user_id: str | None = None,
+    turn_taint_sources: Sequence[TaintSource] | None = None,
 ) -> ChatInteractionResult:
     """Convert a completed A2A Task to a ChatInteractionResult.
 
@@ -93,13 +101,7 @@ async def a2a_task_to_chat_result(
             task,
             conversation_id=conversation_id,
             owner_user_id=owner_user_id,
-            taint_sources=(
-                default_a2a_peer_taint_source(
-                    task.id,
-                    "File returned by a remote A2A agent; the agent's own inputs "
-                    "are not visible here, so its output carries peer trust.",
-                ),
-            ),
+            taint_sources=_returned_file_taint_sources(task, turn_taint_sources),
         )
 
     text_parts: list[str] = []
@@ -126,6 +128,39 @@ async def a2a_task_to_chat_result(
         text_reply="\n\n".join(text_parts),
         attachment_ids=attachment_ids or None,
     )
+
+
+def _returned_file_taint_sources(
+    task: Task, turn_taint_sources: Sequence[TaintSource] | None
+) -> tuple[TaintSource, ...]:
+    """Taint to record on a file a remote agent returned.
+
+    The agent worked on what the turn sent it, so its output carries at least
+    that turn's taint: dropping it would let a file come back from an
+    unknown-external request as merely peer-trusted. A caller that cannot say
+    what the turn carried (the polled path, which holds only a remote task id)
+    gets the conservative tier rather than the peer default, since the file is
+    then of genuinely unknown provenance.
+    """
+    if turn_taint_sources is None:
+        return (
+            TaintSource(
+                source_type=TaintSourceType.MANUAL,
+                source_id=task.id,
+                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                labels=frozenset({"source_unknown_external"}),
+                reason=(
+                    "File returned by a remote A2A agent on a polled delegation, "
+                    "whose originating turn's taint is not available here."
+                ),
+            ),
+        )
+    peer = default_a2a_peer_taint_source(
+        task.id,
+        "File returned by a remote A2A agent; the agent's own inputs are not "
+        "visible here, so its output carries peer trust.",
+    )
+    return (peer, *turn_taint_sources)
 
 
 def _extract_text_from_message_parts(

@@ -130,6 +130,7 @@ class RemoteA2AService:
             attachments=self._attachments,
             conversation_id=conversation_id,
             owner_user_id=user_id,
+            turn_taint_sources=initial_taint_sources or (),
         )
 
     def _context_id(self, conversation_id: str, subconversation_id: str | None) -> str:
@@ -196,6 +197,7 @@ class RemoteA2AService:
                 attachments=self._attachments,
                 conversation_id=conversation_id,
                 owner_user_id=acting_user_id,
+                turn_taint_sources=initial_taint_sources or (),
             )
         )
         return RemoteSubmission(
@@ -211,9 +213,10 @@ class RemoteA2AService:
     ) -> ChatInteractionResult | PendingPoll:
         """Poll the remote task once; return PENDING if it is not yet terminal.
 
-        A polled run carries no acting user (the worker polls on behalf of a
-        persisted delegation), so files the remote returns here are registered
-        without an owner, like tool-generated attachments.
+        A polled run carries neither the acting user nor the originating turn's
+        taint (the worker polls on behalf of a persisted delegation, holding
+        only the remote task id), so files the remote returns here are
+        registered without an owner and with the conservative taint tier.
         """
         _ = remote_context_id
         task = await self._client.get_task(remote_task_id)

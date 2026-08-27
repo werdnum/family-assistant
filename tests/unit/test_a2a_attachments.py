@@ -477,6 +477,34 @@ class TestInboundMessage:
             )
 
 
+class TestInboundSizeLimits:
+    @pytest.mark.asyncio
+    async def test_media_over_the_multimodal_limit_is_refused(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A peer's image goes straight into a turn, so it gets the media limit."""
+        codec, registry, _db = transfer
+        monkeypatch.setattr(registry, "max_multimodal_size", 8)
+        message = _message(
+            Part(
+                root=FilePart(
+                    file=FileWithBytes(
+                        bytes=base64.b64encode(b"more than eight bytes").decode(),
+                        mime_type="image/png",
+                        name="big.png",
+                    )
+                )
+            )
+        )
+
+        with pytest.raises(A2AAttachmentError, match="exceeds the image/png limit"):
+            await codec.message_to_content_parts(
+                message, conversation_id=None, owner_user_id=None
+            )
+
+
 class TestTaskResultFiles:
     @pytest.mark.asyncio
     async def test_task_files_become_result_attachments(
@@ -508,6 +536,63 @@ class TestTaskResultFiles:
             db_context, result.attachment_ids[0], acting_user_id=OWNER
         )
         assert content == b"chart-bytes"
+
+    @pytest.mark.asyncio
+    async def test_returned_file_keeps_the_turn_taint(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+    ) -> None:
+        """A file coming back from an untrusted request must not be downgraded."""
+        codec, registry, db_context = transfer
+        turn_source = TaintSource(
+            source_type=TaintSourceType.EMAIL,
+            source_id="msg-9",
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset({"source_unknown_external"}),
+            reason="forwarded email",
+        )
+        task = _completed_task(
+            Part(
+                root=FilePart(file=FileWithBytes(bytes=base64.b64encode(b"z").decode()))
+            )
+        )
+
+        result = await a2a_task_to_chat_result(
+            task, attachments=codec, turn_taint_sources=[turn_source]
+        )
+
+        assert result.attachment_ids is not None
+        metadata = await registry.get_attachment(
+            db_context, result.attachment_ids[0], acting_user_id=None
+        )
+        assert metadata is not None
+        assert turn_source in artifact_taint_sources(metadata.metadata, source_id="a")
+
+    @pytest.mark.asyncio
+    async def test_polled_result_file_gets_the_conservative_tier(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+    ) -> None:
+        """The polled path knows nothing of the turn, so it must not assume trust."""
+        codec, registry, db_context = transfer
+        task = _completed_task(
+            Part(
+                root=FilePart(file=FileWithBytes(bytes=base64.b64encode(b"z").decode()))
+            )
+        )
+
+        result = await a2a_task_to_chat_result(task, attachments=codec)
+
+        assert result.attachment_ids is not None
+        metadata = await registry.get_attachment(
+            db_context, result.attachment_ids[0], acting_user_id=None
+        )
+        assert metadata is not None
+        tiers = {
+            source.tier
+            for source in artifact_taint_sources(metadata.metadata, source_id="a")
+        }
+        assert tiers == {SourceTrustTier.UNKNOWN_EXTERNAL}
 
     @pytest.mark.asyncio
     async def test_file_only_task_is_not_an_error(
