@@ -28,7 +28,11 @@ from a2a.client.errors import (
     A2AClientTimeoutError as SdkTimeoutError,
 )
 
-from family_assistant.a2a.converters import content_parts_to_a2a_parts
+from family_assistant.a2a.attachments import (
+    MAX_INLINE_ATTACHMENT_BYTES,
+    A2AAttachmentTransfer,
+)
+from family_assistant.a2a.converters import text_content_parts_to_a2a_parts
 from family_assistant.a2a.types import (
     AgentCard,
     Message,
@@ -58,9 +62,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Limit on base64-encoded size in the JSON-RPC payload (not decoded file size).
-# Base64 inflates by ~33%, so this allows ~7.5 MB raw files.
-MAX_INLINE_ATTACHMENT_BYTES = 10 * 1024 * 1024
 POLL_INTERVAL_SECONDS = 1.0
 TERMINAL_TASK_STATES = {
     TaskState.completed,
@@ -88,10 +89,12 @@ class A2AClientWrapper:
         agent_url: str,
         auth_config: A2AAuthConfig | None = None,
         timeout: float = 300.0,
+        attachments: A2AAttachmentTransfer | None = None,
     ) -> None:
         self._agent_url = agent_url
         self._auth_config = auth_config
         self._timeout = timeout
+        self._attachments = attachments
         self._agent_card: AgentCard | None = None
         self._httpx_client: httpx.AsyncClient | None = None
 
@@ -145,6 +148,7 @@ class A2AClientWrapper:
         context_id: str | None = None,
         task_id: str | None = None,
         metadata: dict[str, object] | None = None,
+        acting_user_id: str | None = None,
     ) -> Task:
         """Send a message to the remote A2A agent and return the completed task.
 
@@ -153,6 +157,8 @@ class A2AClientWrapper:
             context_id: Optional context ID for conversation grouping.
             task_id: Optional task ID to continue a prior task.
             metadata: Optional metadata (e.g., profile selection).
+            acting_user_id: Canonical id of the user on whose behalf the
+                attachments referenced by ``content_parts`` are read.
 
         Returns:
             The A2A Task from the remote agent.
@@ -161,7 +167,9 @@ class A2AClientWrapper:
             A2AClientError: On network errors, unexpected task states, or protocol errors.
         """
         card = await self.discover()
-        a2a_parts = self._convert_and_validate_parts(content_parts)
+        a2a_parts = await self._convert_and_validate_parts(
+            content_parts, acting_user_id=acting_user_id
+        )
 
         message = Message(
             role=Role.user,
@@ -218,6 +226,7 @@ class A2AClientWrapper:
         context_id: str | None = None,
         task_id: str | None = None,
         metadata: dict[str, object] | None = None,
+        acting_user_id: str | None = None,
     ) -> Task:
         """Submit a message without blocking and return the task as-is.
 
@@ -232,7 +241,9 @@ class A2AClientWrapper:
             A2AClientError: On network errors or protocol errors.
         """
         card = await self.discover()
-        a2a_parts = self._convert_and_validate_parts(content_parts)
+        a2a_parts = await self._convert_and_validate_parts(
+            content_parts, acting_user_id=acting_user_id
+        )
         message = Message(
             role=Role.user,
             parts=a2a_parts,
@@ -374,11 +385,26 @@ class A2AClientWrapper:
             return f"HTTP {exc.status_code} from A2A agent at {url}: {exc.message}"
         return f"A2A client error communicating with {url}: {exc}"
 
-    def _convert_and_validate_parts(
-        self, content_parts: list[ContentPartDict]
+    async def _convert_and_validate_parts(
+        self, content_parts: list[ContentPartDict], *, acting_user_id: str | None
     ) -> list[Part]:
-        """Convert FA content parts to A2A parts with size validation."""
-        a2a_parts = content_parts_to_a2a_parts(content_parts)
+        """Convert FA content parts to A2A parts with size validation.
+
+        Attachment bytes are resolved and inlined when this client was given an
+        attachment transfer; without one, an attachment part is a deterministic
+        local error rather than a bare identifier on the wire.
+        """
+        try:
+            a2a_parts = (
+                await self._attachments.to_a2a_parts(
+                    content_parts, acting_user_id=acting_user_id
+                )
+                if self._attachments is not None
+                else text_content_parts_to_a2a_parts(content_parts)
+            )
+        except ValueError as exc:
+            # Deterministic: the same content parts fail identically on retry.
+            raise A2APermanentError(f"Cannot send message parts: {exc}") from exc
         for part in a2a_parts:
             self._validate_part_size(part)
         return a2a_parts

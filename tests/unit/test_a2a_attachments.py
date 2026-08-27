@@ -1,0 +1,444 @@
+"""Unit tests for attachment transfer across the A2A boundary.
+
+Covers both directions: an FA attachment becoming inline wire bytes, and a
+peer's inline bytes becoming a registered FA attachment.
+"""
+
+from __future__ import annotations
+
+import base64
+import tempfile
+import uuid
+from typing import TYPE_CHECKING
+
+import pytest
+
+from family_assistant.a2a.attachments import (
+    A2AAttachmentError,
+    A2AAttachmentTransfer,
+)
+from family_assistant.a2a.result_converter import a2a_task_to_chat_result
+from family_assistant.a2a.types import (
+    Artifact,
+    DataPart,
+    FilePart,
+    FileWithBytes,
+    FileWithUri,
+    Message,
+    Part,
+    Role,
+    Task,
+    TaskState,
+    TaskStatus,
+    TextPart,
+)
+from family_assistant.llm.content_parts import (
+    ContentPartDict,
+    attachment_content,
+    image_url_content,
+    text_content,
+)
+from family_assistant.processing import ChatInteractionResult
+from family_assistant.services.attachment_registry import AttachmentRegistry
+from family_assistant.storage.database import Database
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
+OWNER = "user_owner"
+OTHER = "user_other"
+PDF_BYTES = b"%PDF-1.4 fake document"
+
+
+@pytest.fixture
+async def transfer(
+    db_engine: AsyncEngine,
+) -> AsyncGenerator[tuple[A2AAttachmentTransfer, AttachmentRegistry, Database]]:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        registry = AttachmentRegistry(
+            storage_path=temp_dir, db_engine=db_engine, config=None
+        )
+        db_context = Database(engine=db_engine)
+        yield A2AAttachmentTransfer(registry, db_context), registry, db_context
+
+
+async def _store(
+    registry: AttachmentRegistry,
+    db_context: Database,
+    *,
+    owner_user_id: str | None = OWNER,
+    filename: str = "report.pdf",
+    content_type: str = "application/pdf",
+    content: bytes = PDF_BYTES,
+) -> str:
+    metadata = await registry.store_and_register_tool_attachment(
+        file_content=content,
+        filename=filename,
+        content_type=content_type,
+        tool_name="test_tool",
+        owner_user_id=owner_user_id,
+        db_context=db_context,
+    )
+    return metadata.attachment_id
+
+
+def _message(*parts: Part) -> Message:
+    return Message(role=Role.user, parts=list(parts), message_id=str(uuid.uuid4()))
+
+
+def _completed_task(*parts: Part) -> Task:
+    return Task(
+        id="task-1",
+        context_id="ctx-1",
+        status=TaskStatus(state=TaskState.completed),
+        artifacts=[Artifact(artifact_id="art-1", parts=list(parts))],
+    )
+
+
+class TestOutbound:
+    @pytest.mark.asyncio
+    async def test_attachment_is_sent_inline_with_type_and_name(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+    ) -> None:
+        codec, registry, db_context = transfer
+        att_id = await _store(registry, db_context)
+
+        parts = await codec.to_a2a_parts(
+            [text_content("here it is"), attachment_content(att_id)],
+            acting_user_id=OWNER,
+        )
+
+        assert isinstance(parts[0].root, TextPart)
+        file_part = parts[1].root
+        assert isinstance(file_part, FilePart)
+        assert isinstance(file_part.file, FileWithBytes)
+        assert base64.b64decode(file_part.file.bytes) == PDF_BYTES
+        assert file_part.file.mime_type == "application/pdf"
+        assert file_part.file.name == "report.pdf"
+
+    @pytest.mark.asyncio
+    async def test_image_url_resolved_from_attachment_uses_real_metadata(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+    ) -> None:
+        codec, registry, db_context = transfer
+        att_id = await _store(
+            registry,
+            db_context,
+            filename="photo.png",
+            content_type="image/png",
+            content=b"\x89PNG fake",
+        )
+        part: ContentPartDict = image_url_content(
+            "data:image/png;base64,ignored", attachment_id=att_id
+        )
+
+        parts = await codec.to_a2a_parts([part], acting_user_id=OWNER)
+
+        file_part = parts[0].root
+        assert isinstance(file_part, FilePart)
+        assert isinstance(file_part.file, FileWithBytes)
+        assert base64.b64decode(file_part.file.bytes) == b"\x89PNG fake"
+        assert file_part.file.name == "photo.png"
+
+    @pytest.mark.asyncio
+    async def test_plain_image_url_passes_through(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+    ) -> None:
+        codec, _registry, _db = transfer
+        parts = await codec.to_a2a_parts(
+            [image_url_content("https://example.com/i.png")], acting_user_id=OWNER
+        )
+        file_part = parts[0].root
+        assert isinstance(file_part, FilePart)
+        assert isinstance(file_part.file, FileWithUri)
+        assert file_part.file.uri == "https://example.com/i.png"
+
+    @pytest.mark.asyncio
+    async def test_attachment_owned_by_someone_else_is_an_error(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+    ) -> None:
+        codec, registry, db_context = transfer
+        att_id = await _store(registry, db_context, owner_user_id=OWNER)
+
+        with pytest.raises(A2AAttachmentError, match="not available"):
+            await codec.to_a2a_parts([attachment_content(att_id)], acting_user_id=OTHER)
+
+
+class TestResultArtifact:
+    @pytest.mark.asyncio
+    async def test_result_attachments_are_inlined(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+    ) -> None:
+        codec, registry, db_context = transfer
+        att_id = await _store(registry, db_context)
+        result = ChatInteractionResult.success(
+            text_reply="See attached", attachment_ids=[att_id]
+        )
+
+        artifact = await codec.result_to_artifact(result, acting_user_id=OWNER)
+
+        assert artifact is not None
+        assert artifact.name == "response"
+        file_part = artifact.parts[1].root
+        assert isinstance(file_part, FilePart)
+        assert isinstance(file_part.file, FileWithBytes)
+        assert base64.b64decode(file_part.file.bytes) == PDF_BYTES
+        assert file_part.file.name == "report.pdf"
+
+    @pytest.mark.asyncio
+    async def test_unreadable_attachment_falls_back_to_download_url(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+    ) -> None:
+        """The answer must survive an attachment the caller cannot read."""
+        codec, registry, db_context = transfer
+        att_id = await _store(registry, db_context, owner_user_id=OWNER)
+        result = ChatInteractionResult.success(
+            text_reply="See attached", attachment_ids=[att_id]
+        )
+
+        artifact = await codec.result_to_artifact(
+            result,
+            acting_user_id=OTHER,
+            attachment_urls={att_id: f"https://fa.test/api/attachments/{att_id}"},
+        )
+
+        assert artifact is not None
+        file_part = artifact.parts[1].root
+        assert isinstance(file_part, FilePart)
+        assert isinstance(file_part.file, FileWithUri)
+        assert file_part.file.uri == f"https://fa.test/api/attachments/{att_id}"
+
+    @pytest.mark.asyncio
+    async def test_error_result_has_no_artifact(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+    ) -> None:
+        codec, _registry, _db = transfer
+        result = ChatInteractionResult.error(
+            text_reply="broke", error_traceback="broke"
+        )
+        assert await codec.result_to_artifact(result, acting_user_id=OWNER) is None
+
+    @pytest.mark.asyncio
+    async def test_empty_result_has_no_artifact(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+    ) -> None:
+        codec, _registry, _db = transfer
+        artifact = await codec.result_to_artifact(
+            ChatInteractionResult.success(), acting_user_id=OWNER
+        )
+        assert artifact is None
+
+
+class TestInboundMessage:
+    @pytest.mark.asyncio
+    async def test_inline_file_becomes_an_attachment(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+    ) -> None:
+        codec, registry, db_context = transfer
+        message = _message(
+            Part(root=TextPart(text="summarize this")),
+            Part(
+                root=FilePart(
+                    file=FileWithBytes(
+                        bytes=base64.b64encode(PDF_BYTES).decode(),
+                        mime_type="application/pdf",
+                        name="inbound.pdf",
+                    )
+                )
+            ),
+        )
+
+        parts = await codec.message_to_content_parts(
+            message, conversation_id="a2a-ctx", owner_user_id=OWNER
+        )
+
+        assert parts[0]["type"] == "text"
+        assert parts[1]["type"] == "attachment"
+        att_id = parts[1]["attachment_id"]
+        metadata = await registry.get_attachment(
+            db_context, att_id, acting_user_id=OWNER
+        )
+        assert metadata is not None
+        assert metadata.mime_type == "application/pdf"
+        assert metadata.conversation_id == "a2a-ctx"
+        assert metadata.metadata["original_filename"] == "inbound.pdf"
+        content = await registry.get_attachment_content(
+            db_context, att_id, acting_user_id=OWNER
+        )
+        assert content == PDF_BYTES
+
+    @pytest.mark.asyncio
+    async def test_data_uri_file_becomes_an_attachment(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+    ) -> None:
+        codec, registry, db_context = transfer
+        encoded = base64.b64encode(b"hello").decode()
+        message = _message(
+            Part(
+                root=FilePart(file=FileWithUri(uri=f"data:text/plain;base64,{encoded}"))
+            )
+        )
+
+        parts = await codec.message_to_content_parts(
+            message, conversation_id=None, owner_user_id=None
+        )
+
+        assert parts[0]["type"] == "attachment"
+        content = await registry.get_attachment_content(
+            db_context, parts[0]["attachment_id"], acting_user_id=None
+        )
+        assert content == b"hello"
+
+    @pytest.mark.asyncio
+    async def test_remote_uri_file_stays_a_reference(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+    ) -> None:
+        codec, _registry, _db = transfer
+        message = _message(
+            Part(root=FilePart(file=FileWithUri(uri="https://example.com/f.pdf")))
+        )
+
+        parts = await codec.message_to_content_parts(
+            message, conversation_id=None, owner_user_id=None
+        )
+
+        assert parts[0]["type"] == "image_url"
+        assert parts[0]["image_url"]["url"] == "https://example.com/f.pdf"
+
+    @pytest.mark.asyncio
+    async def test_data_part_becomes_json_text(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+    ) -> None:
+        codec, _registry, _db = transfer
+        message = _message(Part(root=DataPart(data={"key": "value"})))
+        parts = await codec.message_to_content_parts(
+            message, conversation_id=None, owner_user_id=None
+        )
+        assert parts[0]["type"] == "text"
+        assert '"key"' in parts[0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_invalid_base64_is_rejected(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+    ) -> None:
+        codec, _registry, _db = transfer
+        message = _message(
+            Part(root=FilePart(file=FileWithBytes(bytes="not base64!!")))
+        )
+        with pytest.raises(ValueError, match="not valid base64"):
+            await codec.message_to_content_parts(
+                message, conversation_id=None, owner_user_id=None
+            )
+
+
+class TestTaskResultFiles:
+    @pytest.mark.asyncio
+    async def test_task_files_become_result_attachments(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+    ) -> None:
+        codec, registry, db_context = transfer
+        task = _completed_task(
+            Part(root=TextPart(text="Here is your chart")),
+            Part(
+                root=FilePart(
+                    file=FileWithBytes(
+                        bytes=base64.b64encode(b"chart-bytes").decode(),
+                        mime_type="image/png",
+                        name="chart.png",
+                    )
+                )
+            ),
+        )
+
+        result = await a2a_task_to_chat_result(
+            task, attachments=codec, conversation_id="conv-1", owner_user_id=OWNER
+        )
+
+        assert result.has_error is False
+        assert result.text_reply == "Here is your chart"
+        assert result.attachment_ids is not None
+        content = await registry.get_attachment_content(
+            db_context, result.attachment_ids[0], acting_user_id=OWNER
+        )
+        assert content == b"chart-bytes"
+
+    @pytest.mark.asyncio
+    async def test_file_only_task_is_not_an_error(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+    ) -> None:
+        codec, _registry, _db = transfer
+        task = _completed_task(
+            Part(
+                root=FilePart(file=FileWithBytes(bytes=base64.b64encode(b"x").decode()))
+            )
+        )
+
+        result = await a2a_task_to_chat_result(task, attachments=codec)
+
+        assert result.has_error is False
+        assert result.attachment_ids is not None
+        assert len(result.attachment_ids) == 1
+
+    @pytest.mark.asyncio
+    async def test_remote_uri_file_is_described_not_stored(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+    ) -> None:
+        codec, _registry, _db = transfer
+        task = _completed_task(
+            Part(root=FilePart(file=FileWithUri(uri="https://example.com/f.pdf")))
+        )
+
+        result = await a2a_task_to_chat_result(task, attachments=codec)
+
+        assert result.attachment_ids is None
+        assert "https://example.com/f.pdf" in result.text_reply
+
+    @pytest.mark.asyncio
+    async def test_files_in_a_bare_agent_message_are_stored(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+    ) -> None:
+        """An agent that answers with a message rather than artifacts."""
+        codec, _registry, _db = transfer
+        message = Message(
+            role=Role.agent,
+            parts=[
+                Part(root=TextPart(text="done")),
+                Part(
+                    root=FilePart(
+                        file=FileWithBytes(bytes=base64.b64encode(b"y").decode())
+                    )
+                ),
+            ],
+            message_id="m1",
+        )
+        task = Task(
+            id="t",
+            context_id="c",
+            status=TaskStatus(state=TaskState.completed, message=message),
+            history=[message],
+        )
+
+        result = await a2a_task_to_chat_result(task, attachments=codec)
+
+        assert result.attachment_ids is not None
+        assert len(result.attachment_ids) == 1
+        assert result.text_reply == "done"

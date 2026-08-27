@@ -1634,6 +1634,9 @@ class Assistant:
 
     def _setup_remote_a2a_profile(self, profile_conf: ServiceProfile) -> None:
         """Create a RemoteA2AService for a remote A2A profile."""
+        from family_assistant.a2a.attachments import (  # noqa: PLC0415
+            A2AAttachmentTransfer,
+        )
         from family_assistant.a2a.auth import A2AAuthConfig  # noqa: PLC0415
         from family_assistant.a2a.client import A2AClientWrapper  # noqa: PLC0415
         from family_assistant.a2a.remote_service import (  # noqa: PLC0415
@@ -1661,10 +1664,20 @@ class Assistant:
                 "; ".join(auth_errors),
             )
 
+        if self.attachment_registry is None:
+            raise RuntimeError(
+                "AttachmentRegistry must be initialized before remote A2A profiles."
+            )
+        attachments = A2AAttachmentTransfer(
+            attachment_registry=self.attachment_registry,
+            db_context=self._database(),
+        )
+
         client = A2AClientWrapper(
             agent_url=remote_config.agent_url,
             auth_config=auth_config,
             timeout=remote_config.timeout_seconds,
+            attachments=attachments,
         )
 
         # The async wall-clock cap is decoupled from the per-HTTP-call timeout: an
@@ -1693,6 +1706,7 @@ class Assistant:
         service = RemoteA2AService(
             service_config=service_config,
             client=client,
+            attachments=attachments,
         )
 
         self.processing_services_registry[profile_conf.id] = service

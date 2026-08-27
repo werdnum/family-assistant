@@ -21,12 +21,8 @@ from pydantic import ValidationError
 from sse_starlette.sse import EventSourceResponse
 from starlette.responses import Response
 
-from family_assistant.a2a.converters import (
-    a2a_message_to_content_parts,
-    chat_result_to_artifact,
-    content_parts_to_a2a_parts,
-    error_to_artifact,
-)
+from family_assistant.a2a.attachments import A2AAttachmentTransfer
+from family_assistant.a2a.converters import error_to_artifact, text_to_a2a_part
 from family_assistant.a2a.types import (
     AgentCapabilities,
     AgentCard,
@@ -47,7 +43,7 @@ from family_assistant.a2a.types import (
     TaskStatusUpdateEvent,
     TextPart,
 )
-from family_assistant.llm.content_parts import ContentPartDict, text_content
+from family_assistant.llm.content_parts import ContentPartDict
 from family_assistant.processing import DelegatableService, ProcessingService
 from family_assistant.security.taint import (
     A2A_TAINT_METADATA_KEY,
@@ -66,6 +62,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.interfaces import ChatInterface
+    from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.telegram.protocols import ConfirmationUIManager
 
 logger = logging.getLogger(__name__)
@@ -87,6 +84,20 @@ def _get_processing_services(request: Request) -> dict[str, DelegatableService]:
 def _get_default_service(request: Request) -> ProcessingService | None:
     """Get the default processing service."""
     return getattr(request.app.state, "processing_service", None)
+
+
+def _get_attachment_registry(request: Request) -> "AttachmentRegistry":
+    """Get the attachment registry from app state.
+
+    Required: attachment bytes crossing the A2A boundary are stored and read
+    through it, so a deployment without one cannot serve A2A traffic correctly.
+    """
+    registry: AttachmentRegistry | None = getattr(
+        request.app.state, "attachment_registry", None
+    )
+    if registry is None:
+        raise RuntimeError("AttachmentRegistry is not configured on app state")
+    return registry
 
 
 def _get_a2a_cancel_events(request: Request) -> dict[str, asyncio.Event]:
@@ -283,10 +294,17 @@ async def _handle_send_message(
         )
 
     profile_id = service.service_config.id
+    user_id = str(current_user.get("user_identifier", "a2a_user"))
+    attachment_registry = _get_attachment_registry(request)
 
-    # Convert A2A message to FA content parts
+    # Convert A2A message to FA content parts, registering any inline files
+    # the peer sent as attachments owned by the authenticated caller.
     try:
-        content_parts: list[ContentPartDict] = a2a_message_to_content_parts(message)
+        content_parts: list[ContentPartDict] = await A2AAttachmentTransfer(
+            attachment_registry, db_context
+        ).message_to_content_parts(
+            message, conversation_id=conversation_id, owner_user_id=user_id
+        )
     except ValueError as e:
         return _jsonrpc_error(request_id, INVALID_PARAMS, f"Invalid message parts: {e}")
     if not content_parts:
@@ -296,7 +314,6 @@ async def _handle_send_message(
             "Message contained no processable content parts",
         )
 
-    user_id = str(current_user.get("user_identifier", "a2a_user"))
     history_entry = message.model_dump(exclude_none=True)
 
     chat_interfaces = getattr(request.app.state, "chat_interfaces", None)
@@ -339,6 +356,7 @@ async def _handle_send_message(
             chat_interfaces=chat_interfaces,
             confirmation_ui_managers=confirmation_ui_managers,
             base_url=base_url,
+            attachment_registry=attachment_registry,
         )
 
     existing = await db_context.a2a_tasks.create_task_if_absent(
@@ -366,6 +384,7 @@ async def _handle_send_message(
         chat_interfaces=chat_interfaces,
         confirmation_ui_managers=confirmation_ui_managers,
         base_url=base_url,
+        attachment_registry=attachment_registry,
     )
     return _jsonrpc_result(request_id, task.model_dump(exclude_none=True))
 
@@ -384,6 +403,7 @@ async def _execute_and_persist_send(
     chat_interfaces: "dict[str, ChatInterface] | None",
     confirmation_ui_managers: "dict[str, ConfirmationUIManager] | None",
     base_url: str,
+    attachment_registry: "AttachmentRegistry",
 ) -> Task:
     """Run the chat interaction and persist the terminal task; return it.
 
@@ -409,17 +429,17 @@ async def _execute_and_persist_send(
         final_status = TaskState.failed
     else:
         attachment_urls = _attachment_urls(base_url, result.attachment_ids)
-        artifact = chat_result_to_artifact(result, attachment_urls=attachment_urls)
+        artifact = await A2AAttachmentTransfer(
+            attachment_registry, db_context
+        ).result_to_artifact(
+            result, acting_user_id=user_id, attachment_urls=attachment_urls
+        )
         final_status = TaskState.completed
 
     artifacts = [artifact] if artifact else []
     artifacts_dicts = [a.model_dump(exclude_none=True) for a in artifacts]
 
-    response_parts = (
-        content_parts_to_a2a_parts([text_content(result.text_reply or "")])
-        if result.text_reply
-        else []
-    )
+    response_parts = [text_to_a2a_part(result.text_reply)] if result.text_reply else []
     agent_message = Message(
         role=Role.agent,
         parts=response_parts or [Part(root=TextPart(text=""))],
@@ -482,6 +502,7 @@ async def _start_background_send(
     chat_interfaces: "dict[str, ChatInterface] | None",
     confirmation_ui_managers: "dict[str, ConfirmationUIManager] | None",
     base_url: str,
+    attachment_registry: "AttachmentRegistry",
 ) -> JSONResponse:
     """Spawn background processing and return a non-terminal ``working`` task."""
     db_engine: AsyncEngine = request.app.state.database_engine
@@ -505,6 +526,7 @@ async def _start_background_send(
             chat_interfaces=chat_interfaces,
             confirmation_ui_managers=confirmation_ui_managers,
             base_url=base_url,
+            attachment_registry=attachment_registry,
             background_tasks=background_tasks,
             cancel_events=cancel_events,
         ),
@@ -541,6 +563,7 @@ async def _run_background_send(
     chat_interfaces: "dict[str, ChatInterface] | None",
     confirmation_ui_managers: "dict[str, ConfirmationUIManager] | None",
     base_url: str,
+    attachment_registry: "AttachmentRegistry",
     background_tasks: "dict[str, asyncio.Task[None]]",
     cancel_events: dict[str, asyncio.Event],
 ) -> None:
@@ -565,6 +588,7 @@ async def _run_background_send(
             chat_interfaces=chat_interfaces,
             confirmation_ui_managers=confirmation_ui_managers,
             base_url=base_url,
+            attachment_registry=attachment_registry,
         )
     except asyncio.CancelledError:
         # Cancelled by tasks/cancel (the DB row is already 'canceled') or by a
@@ -787,8 +811,14 @@ async def _stream_message(
         return
 
     profile_id = service.service_config.id
+    user_id = str(current_user.get("user_identifier", "a2a_user"))
+    db_engine = request.app.state.database_engine
     try:
-        content_parts: list[ContentPartDict] = a2a_message_to_content_parts(message)
+        content_parts: list[ContentPartDict] = await A2AAttachmentTransfer(
+            _get_attachment_registry(request), Database(db_engine)
+        ).message_to_content_parts(
+            message, conversation_id=conversation_id, owner_user_id=user_id
+        )
     except ValueError as e:
         event = TaskStatusUpdateEvent(
             task_id=task_id,
@@ -828,9 +858,7 @@ async def _stream_message(
         yield _sse_jsonrpc(request_id, "status", event.model_dump(exclude_none=True))
         return
 
-    user_id = str(current_user.get("user_identifier", "a2a_user"))
     history_entry = message.model_dump(exclude_none=True)
-    db_engine = request.app.state.database_engine
 
     # Create task in a short-lived context so it's immediately visible to
     # concurrent tasks/get and tasks/cancel requests.
