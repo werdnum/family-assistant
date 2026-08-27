@@ -458,15 +458,18 @@ The caller profile receives one high-level tool:
 run_authenticated_site_task(
     site_id: str,
     objective: str,
+    resume: str | None = None,
 ) -> AuthenticatedSiteTaskResult
 ```
 
 The tool does not accept a jar ID, arbitrary start URL, origin set, profile ID, adapter name,
 browser permissions, or credential name. Those come only from trusted configuration. The one
-additional input is an optional opaque resume handle minted by a previous invocation's
-`handoff_pending` result: it names a parked run, is resolved and authorized server-side under the
-existing same-caller resume rules, and grants nothing the caller did not already hold — the model
-never assembles delegation IDs, session IDs, or handback tokens from free text.
+additional input is `resume`, an opaque handle minted by a previous invocation's `handoff_pending`
+result: when present, the resumed run continues its own objective and a `site_id` that does not
+match the parked run's site fails closed. The handle it names a parked run, is resolved and
+authorized server-side under the existing same-caller resume rules, and grants nothing the caller
+did not already hold — the model never assembles delegation IDs, session IDs, or handback tokens
+from free text.
 
 Available `site_id` values are filtered by the active caller processing profile and by the acting
 user against the site's configured `authorized_users`. The browser profiles themselves do not
@@ -985,5 +988,7 @@ This is a design-only change. Before implementation:
 - document the operator-accepted damage envelope before enabling the site;
 - test native computer-use safety decisions and any optional judge in observe mode;
 - add end-to-end tests for jar opacity, origin confinement, human-control exclusivity, stale login,
-  session cleanup, revocation, result provenance, and inability of browser profiles to acquire a
-  second authenticated session.
+  session cleanup, revocation, result provenance, inability of browser profiles to acquire a second
+  authenticated session, and the complete handoff-and-resume cycle: takeover-link delivery,
+  server-side receipt of the handback token, and resumption with the parked session's browser state
+  preserved.
