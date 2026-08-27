@@ -252,7 +252,9 @@ reference's migration note tells enforce deployments to pin the previous outcome
 `unknown_external × sandbox_network` reproduces today's matrix exactly, and is a subset of the
 recommended hardening set) or to adopt the judged posture deliberately. Verdict floors and
 `operator_minimum` are tighten-only against the judge just as against profiles, so a pinned
-deployment loses nothing.
+deployment loses nothing. No known deployment runs `enforce` today — the maintainer's is the only
+known deployment, and it runs `observe` — so this is defence in depth for third-party deployments of
+a public codebase: a documented pin and a config test, not migration machinery.
 
 ### Default matrix changes
 
