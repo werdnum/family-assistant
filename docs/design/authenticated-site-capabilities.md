@@ -361,23 +361,25 @@ delegation hops in trusted execution context, not through model-visible argument
 conversation-keyed registry. The first release additionally serializes authenticated runs within a
 conversation — a second concurrent invocation waits or fails cleanly rather than racing.
 
-Delegation for authenticated runs executes inline: the async delegation handoff, which returns a
-background reference after a short wait, is disabled for these hops (`async_delegation_enabled` is
-already a per-profile setting). The session's lifetime therefore brackets the entire delegation tree
-— the high-level tool closes the session only after the delegated run completes or fails, and the
-caller receives the task result, never a background reference to a run whose session has been torn
-down beneath it.
+Authenticated delegation may hand off to the background as usual. Browser tasks are exactly the
+long-running workload the async delegation system exists for, and forcing the caller's loop to block
+inline for a whole browser run would defeat it. What the handoff must carry is **session
+ownership**: the jar-loaded session belongs to the delegated run, not to the high-level tool call. A
+run that completes within the inline window returns its result and the session closes; a run that
+hands off to the background takes the session with it, the caller receives the ordinary delegation
+reference, and the run closes the session when it reaches a terminal state, with the result arriving
+through the normal async completion path. Exactly one owner closes the session. An
+idle/maximum-lifetime backstop reclaims a session whose owning run dies without reaching a terminal
+state, and jar revocation still terminates the session immediately regardless of owner.
 
-Human handoff is terminal for the delegated run. Synchronous delegation cannot resume a
-subconversation, and the high-level tool deliberately accepts no resume token, so a run that hits a
-CAPTCHA, unsupported MFA, or bot detection returns `needs_human` with the handoff link and ends; the
-browser session either transfers to exclusive human control — where the user can finish the step or
-the whole task themselves — or closes. A retry is a fresh invocation from the original objective.
-Agent resumption of a half-finished authenticated run is out of scope for the first release; if
-experience shows that restarting from the objective loses meaningful progress often enough to
-matter, a durable resume surface is an M6 candidate.
+Human handoff rides the same lifecycle rather than ending the run. The delegated worker already has
+the browser-server handoff flow — share the one-time takeover link, wait under exclusive human
+control, resume via handback — and a run that has handed off to the background can span that wait
+without holding the caller's loop open. `needs_human` remains the terminal outcome only for steps a
+human cannot unblock mid-session (unsupported MFA or SSO at login, hard bot blocks), where the human
+path is refreshing the jar and retrying from the original objective.
 
-The browser session closes at the end of the delegated run unless the user takes human control. The
+The browser session closes when its owning run ends, unless the user has taken human control. The
 saved jar remains the only durable browser capability.
 
 ## Configuration model
@@ -776,9 +778,9 @@ HelloFresh adapter or keep the task human-operated.
   rejects a site configuration naming a profile that violates these constraints.
 - Bind the created jar-loaded browser session into the delegated execution context, keyed per run
   rather than per conversation, and serialize authenticated runs within a conversation.
-- Run authenticated delegation hops inline (async delegation disabled for these runs) so the
-  session's lifetime brackets the whole delegation tree and the caller receives the task result, not
-  a background reference.
+- Tie session lifetime to the delegated run's terminal state: ownership transfers with a background
+  handoff, exactly one owner closes the session, and an idle/maximum-lifetime backstop reclaims a
+  session whose owning run dies.
 - Delegate the objective to the authenticated browser profile.
 - Preserve the existing shared-session delegation mechanism for the visual variant.
 - Ensure neither browser profile receives jar-management, credential, or recursive
