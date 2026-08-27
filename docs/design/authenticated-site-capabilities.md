@@ -384,10 +384,15 @@ the session parks under exclusive human control — still origin-confined, still
 commands, still subject to revocation and the lifetime backstop. Delegation already supports
 resuming a terminal run for the same caller; after handback, a follow-up invocation resumes that run
 and rebinds the parked session, continuing from both the worker's context and the live browser state
-(URL, login, form progress) rather than restarting from the objective. `needs_human` remains the
-fully terminal outcome for steps a human cannot unblock mid-session (unsupported MFA or SSO at
-login, hard bot blocks), where the human path is refreshing the jar and retrying from the original
-objective.
+(URL, login, form progress) rather than restarting from the objective. The handback token that
+reclaims the lease is minted by browser-server only when the human finishes, so it cannot ride in
+the resume handle and must not ride in the conversation: it is exchanged server-side between
+browser-server and Family Assistant's trusted orchestration, bound to the parked session's record —
+whether by callback or by polling the session's handover state is construction detail for the
+implementing PR — so that consuming the resume handle finds the lease already reclaimable.
+`needs_human` remains the fully terminal outcome for steps a human cannot unblock mid-session
+(unsupported MFA or SSO at login, hard bot blocks), where the human path is refreshing the jar and
+retrying from the original objective.
 
 The browser session closes when its owning run ends, unless the user has taken human control. The
 saved jar remains the only durable browser capability.
@@ -820,7 +825,8 @@ HelloFresh adapter or keep the task human-operated.
 - Surface `login_required` without exposing the full jar inventory to the model.
 - Support human refresh of the same jar ID and retry from the original objective.
 - Park a handed-off session under exclusive human control, and rebind it when a follow-up invocation
-  resumes the terminal delegated run after handback.
+  resumes the terminal delegated run after handback, receiving the handback token from
+  browser-server server-side rather than through the conversation.
 - Resolve browser-server refresh/UI gaps only as required by this flow.
 
 ### M4 — HelloFresh end-to-end workflow
