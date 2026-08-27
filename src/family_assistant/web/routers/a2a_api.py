@@ -420,8 +420,9 @@ async def _execute_and_persist_send(
     if result.has_error:
         artifact = error_to_artifact(result.error_traceback or "Unknown error")
         final_status = TaskState.failed
+        reply_text = result.text_reply
     else:
-        artifact, final_status = await _artifact_for_result(
+        artifact, final_status, reply_text = await _artifact_for_result(
             result,
             attachment_registry=attachment_registry,
             db_context=db_context,
@@ -431,7 +432,7 @@ async def _execute_and_persist_send(
     artifacts = [artifact] if artifact else []
     artifacts_dicts = [a.model_dump(exclude_none=True) for a in artifacts]
 
-    response_parts = [text_to_a2a_part(result.text_reply)] if result.text_reply else []
+    response_parts = [text_to_a2a_part(reply_text)] if reply_text else []
     agent_message = Message(
         role=Role.agent,
         parts=response_parts or [Part(root=TextPart(text=""))],
@@ -485,12 +486,13 @@ async def _artifact_for_result(
     attachment_registry: "AttachmentRegistry",
     db_context: Database,
     user_id: str,
-) -> tuple[Artifact | None, TaskState]:
+) -> tuple[Artifact | None, TaskState, str]:
     """Build the response artifact, failing the task if a file cannot be sent.
 
-    An attachment the turn queued but that cannot be read is a fault worth
-    reporting: handing the peer a download URL it would be refused too just
-    turns the failure into a dangling reference on a 'completed' task.
+    Returns the artifact, the task's terminal state, and the text for its status
+    message — which on failure is the transfer error, not the turn's own reply:
+    a peer reads a failed task's status message as the reason, so leaving the
+    successful answer there would report "Here is your report" as the error.
     """
     try:
         return (
@@ -498,13 +500,12 @@ async def _artifact_for_result(
                 attachment_registry, db_context
             ).result_to_artifact(result, acting_user_id=user_id),
             TaskState.completed,
+            result.text_reply,
         )
-    except A2AAttachmentError:
+    except A2AAttachmentError as exc:
         logger.exception("A2A response attachment could not be sent")
-        return (
-            error_to_artifact("A response attachment could not be delivered"),
-            TaskState.failed,
-        )
+        reason = f"Response prepared but not delivered: {exc}"
+        return error_to_artifact(reason), TaskState.failed, reason
 
 
 async def _start_background_send(

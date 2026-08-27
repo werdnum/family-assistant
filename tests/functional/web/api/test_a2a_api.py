@@ -747,6 +747,47 @@ class TestResponseAttachments:
         persisted = get_resp.json()["result"]
         assert len(_file_parts(persisted["artifacts"][0]["parts"])) == 1
 
+    @pytest.mark.asyncio
+    async def test_undeliverable_file_fails_the_task_with_the_reason(
+        self,
+        a2a_client: AsyncClient,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+        attachment_registry_fixture: AttachmentRegistry,
+        db_engine: AsyncEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The peer must learn the file did not arrive, not read the reply as the error."""
+        monkeypatch.setattr(
+            "family_assistant.a2a.attachments.MAX_INLINE_ATTACHMENT_BYTES", 8
+        )
+        attachment = await attachment_registry_fixture.register_user_attachment(
+            db_context=Database(engine=db_engine),
+            content=b"more than eight bytes",
+            filename="big.txt",
+            mime_type="text/plain",
+        )
+        _attach_to_response_once(
+            api_mock_llm_client, attachment.attachment_id, "Here is the report."
+        )
+
+        resp = await a2a_client.post(
+            "/api/a2a",
+            json=_jsonrpc(
+                "message/send", params={"message": _a2a_message("send me the report")}
+            ),
+        )
+
+        assert resp.status_code == 200
+        task = resp.json()["result"]
+        assert task["status"]["state"] == "failed"
+        status_text = " ".join(
+            part["text"]
+            for part in task["status"]["message"]["parts"]
+            if part["kind"] == "text"
+        )
+        assert "exceeds the inline transfer limit" in status_text
+        assert "Here is the report." not in status_text
+
 
 class TestInboundFileIdempotency:
     @pytest.mark.asyncio

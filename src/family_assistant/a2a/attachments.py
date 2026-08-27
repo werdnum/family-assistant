@@ -283,47 +283,24 @@ class A2AAttachmentTransfer:
         file given only as a remote URI stays a reference (see the design doc's
         deliberate simplifications).
 
+        The whole message is decoded before anything is registered, so a
+        malformed or oversized part later in the message cannot leave the
+        earlier ones stored as attachments no task will ever use.
+
         Raises:
             ValueError: If a part cannot be converted.
         """
-        result: list[ContentPartDict] = []
-        for part in message.parts:
-            inner = part.root
-            if isinstance(inner, TextPart):
-                result.append(text_content(inner.text))
-            elif isinstance(inner, DataPart):
-                result.append(text_content(_data_part_text(inner)))
-            elif isinstance(inner, FilePart):
-                result.append(
-                    await self._file_part_to_content_part(
-                        inner,
-                        conversation_id=conversation_id,
-                        owner_user_id=owner_user_id,
-                    )
+        prepared = [_prepare_part(part) for part in message.parts]
+        return [
+            attachment_content(
+                await self._store(
+                    item, conversation_id=conversation_id, owner_user_id=owner_user_id
                 )
-            else:
-                raise ValueError(f"Unknown A2A part type: {type(inner).__name__}")
-        return result
-
-    async def _file_part_to_content_part(
-        self,
-        file_part: FilePart,
-        *,
-        conversation_id: str | None,
-        owner_user_id: str | None,
-    ) -> ContentPartDict:
-        inline = _inline_file(file_part)
-        if inline is None:
-            uri = (
-                file_part.file.uri if isinstance(file_part.file, FileWithUri) else None
             )
-            if uri is None:
-                raise ValueError("FilePart has neither URI nor bytes content")
-            return image_url_content(uri)
-        attachment_id = await self._store(
-            inline, conversation_id=conversation_id, owner_user_id=owner_user_id
-        )
-        return attachment_content(attachment_id)
+            if isinstance(item, InlineFile)
+            else item
+            for item in prepared
+        ]
 
     async def store_task_files(
         self,
@@ -339,25 +316,25 @@ class A2AAttachmentTransfer:
         an agent that answers with a bare message is not silently stripped of
         its files.
 
+        Like the inbound message path, every file is decoded before any of them
+        is registered, so one malformed part cannot leave the others stored.
+
         Returns the attachment ids, in the order the files appear.
         """
-        attachment_ids: list[str] = []
-        for parts in _file_carrying_parts(task):
-            for part in parts:
-                inner = part.root
-                if not isinstance(inner, FilePart):
-                    continue
-                inline = _inline_file(inner)
-                if inline is None:
-                    continue
-                attachment_ids.append(
-                    await self._store(
-                        inline,
-                        conversation_id=conversation_id,
-                        owner_user_id=owner_user_id,
-                    )
-                )
-        return attachment_ids
+        inline_files = [
+            inline
+            for parts in _file_carrying_parts(task)
+            for part in parts
+            if isinstance(part.root, FilePart)
+            for inline in [_inline_file(part.root)]
+            if inline is not None
+        ]
+        return [
+            await self._store(
+                inline, conversation_id=conversation_id, owner_user_id=owner_user_id
+            )
+            for inline in inline_files
+        ]
 
     async def _store(
         self,
@@ -384,6 +361,27 @@ class A2AAttachmentTransfer:
             metadata.attachment_id,
         )
         return metadata.attachment_id
+
+
+def _prepare_part(part: Part) -> ContentPartDict | InlineFile:
+    """Decode one inbound part, without storing anything.
+
+    An inline file comes back as an :class:`InlineFile` for the caller to
+    register; every other part is already a finished content part.
+    """
+    inner = part.root
+    if isinstance(inner, TextPart):
+        return text_content(inner.text)
+    if isinstance(inner, DataPart):
+        return text_content(_data_part_text(inner))
+    if isinstance(inner, FilePart):
+        inline = _inline_file(inner)
+        if inline is not None:
+            return inline
+        if isinstance(inner.file, FileWithUri):
+            return image_url_content(inner.file.uri)
+        raise ValueError("FilePart has neither URI nor bytes content")
+    raise ValueError(f"Unknown A2A part type: {type(inner).__name__}")
 
 
 def _file_carrying_parts(task: Task) -> list[list[Part]]:

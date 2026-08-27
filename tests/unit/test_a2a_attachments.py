@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import tempfile
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -333,6 +334,39 @@ class TestInboundMessage:
 
         assert parts[0]["type"] == "image_url"
         assert parts[0]["image_url"]["url"] == "https://example.com/f.pdf"
+
+    @pytest.mark.asyncio
+    async def test_a_bad_part_stores_none_of_the_message(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+    ) -> None:
+        """One malformed file must not leave its predecessors registered."""
+        codec, registry, db_context = transfer
+        message = _message(
+            Part(
+                root=FilePart(
+                    file=FileWithBytes(
+                        bytes=base64.b64encode(b"good one").decode(),
+                        mime_type="text/plain",
+                        name="good.txt",
+                    )
+                )
+            ),
+            Part(root=FilePart(file=FileWithBytes(bytes="not base64!!"))),
+        )
+
+        with pytest.raises(ValueError, match="not valid base64"):
+            await codec.message_to_content_parts(
+                message, conversation_id="a2a-partial", owner_user_id=OWNER
+            )
+
+        stored = await registry.get_recent_attachments_for_conversation(
+            db_context,
+            "a2a-partial",
+            datetime.now(UTC) - timedelta(minutes=5),
+            acting_user_id=OWNER,
+        )
+        assert stored == []
 
     @pytest.mark.asyncio
     async def test_data_part_becomes_json_text(
