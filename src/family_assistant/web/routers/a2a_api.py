@@ -21,7 +21,10 @@ from pydantic import ValidationError
 from sse_starlette.sse import EventSourceResponse
 from starlette.responses import Response
 
-from family_assistant.a2a.attachments import A2AAttachmentTransfer
+from family_assistant.a2a.attachments import (
+    A2AAttachmentError,
+    A2AAttachmentTransfer,
+)
 from family_assistant.a2a.converters import error_to_artifact, text_to_a2a_part
 from family_assistant.a2a.types import (
     AgentCapabilities,
@@ -62,6 +65,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.interfaces import ChatInterface
+    from family_assistant.processing.types import ChatInteractionResult
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.telegram.protocols import ConfirmationUIManager
 
@@ -296,25 +300,48 @@ async def _handle_send_message(
     profile_id = service.service_config.id
     user_id = str(current_user.get("user_identifier", "a2a_user"))
     attachment_registry = _get_attachment_registry(request)
+    history_entry = message.model_dump(exclude_none=True)
+
+    # Claim the task id before converting: conversion registers the peer's inline
+    # files as durable attachments, and a retry that reuses a task id must not
+    # store a second copy of every file only to be handed the existing task.
+    # create_task_if_absent handles concurrent retries with the same task_id
+    # atomically, returning the existing task rather than surfacing the
+    # unique-constraint loser as a JSON-RPC internal error. The 'working' row is
+    # durable when this returns, so a background task -- which runs on its own
+    # connection -- can see it.
+    existing = await db_context.a2a_tasks.create_task_if_absent(
+        task_id=task_id,
+        profile_id=profile_id,
+        conversation_id=conversation_id,
+        context_id=context_id,
+        status=TaskState.working,
+        history_json=[history_entry],
+    )
+    if existing is not None:
+        return _jsonrpc_result(
+            request_id, _row_to_task(existing).model_dump(exclude_none=True)
+        )
 
     # Convert A2A message to FA content parts, registering any inline files
-    # the peer sent as attachments owned by the authenticated caller.
+    # the peer sent as attachments owned by the authenticated caller. The task
+    # row is already claimed, so a bad message finalizes it as failed rather
+    # than leaving it 'working' forever.
     try:
         content_parts: list[ContentPartDict] = await A2AAttachmentTransfer(
             attachment_registry, db_context
         ).message_to_content_parts(
             message, conversation_id=conversation_id, owner_user_id=user_id
         )
+        if not content_parts:
+            raise ValueError("Message contained no processable content parts")
     except ValueError as e:
-        return _jsonrpc_error(request_id, INVALID_PARAMS, f"Invalid message parts: {e}")
-    if not content_parts:
-        return _jsonrpc_error(
-            request_id,
-            INVALID_PARAMS,
-            "Message contained no processable content parts",
+        await db_context.a2a_tasks.update_task_status(
+            task_id=task_id,
+            status=TaskState.failed,
+            artifacts_json=[error_to_artifact(str(e)).model_dump(exclude_none=True)],
         )
-
-    history_entry = message.model_dump(exclude_none=True)
+        return _jsonrpc_error(request_id, INVALID_PARAMS, f"Invalid message parts: {e}")
 
     chat_interfaces = getattr(request.app.state, "chat_interfaces", None)
     confirmation_ui_managers = getattr(
@@ -325,23 +352,6 @@ async def _handle_send_message(
     base_url = str(request.base_url).rstrip("/")
 
     if not _send_is_blocking(send_params):
-        # create_task_if_absent handles concurrent retries with the same task_id
-        # atomically, returning the existing task rather than surfacing the
-        # unique-constraint loser as a JSON-RPC internal error. The 'working'
-        # row is durable when this returns, so the background task -- which runs
-        # on its own connection -- can see it.
-        existing = await db_context.a2a_tasks.create_task_if_absent(
-            task_id=task_id,
-            profile_id=profile_id,
-            conversation_id=conversation_id,
-            context_id=context_id,
-            status=TaskState.working,
-            history_json=[history_entry],
-        )
-        if existing is not None:
-            return _jsonrpc_result(
-                request_id, _row_to_task(existing).model_dump(exclude_none=True)
-            )
         return await _start_background_send(
             request_id,
             request=request,
@@ -359,18 +369,6 @@ async def _handle_send_message(
             attachment_registry=attachment_registry,
         )
 
-    existing = await db_context.a2a_tasks.create_task_if_absent(
-        task_id=task_id,
-        profile_id=profile_id,
-        conversation_id=conversation_id,
-        context_id=context_id,
-        status=TaskState.working,
-        history_json=[history_entry],
-    )
-    if existing is not None:
-        return _jsonrpc_result(
-            request_id, _row_to_task(existing).model_dump(exclude_none=True)
-        )
     task = await _execute_and_persist_send(
         db_context=db_context,
         service=service,
@@ -428,13 +426,13 @@ async def _execute_and_persist_send(
         artifact = error_to_artifact(result.error_traceback or "Unknown error")
         final_status = TaskState.failed
     else:
-        attachment_urls = _attachment_urls(base_url, result.attachment_ids)
-        artifact = await A2AAttachmentTransfer(
-            attachment_registry, db_context
-        ).result_to_artifact(
-            result, acting_user_id=user_id, attachment_urls=attachment_urls
+        artifact, final_status = await _artifact_for_result(
+            result,
+            attachment_registry=attachment_registry,
+            db_context=db_context,
+            user_id=user_id,
+            base_url=base_url,
         )
-        final_status = TaskState.completed
 
     artifacts = [artifact] if artifact else []
     artifacts_dicts = [a.model_dump(exclude_none=True) for a in artifacts]
@@ -485,6 +483,39 @@ async def _execute_and_persist_send(
         artifacts=artifacts if artifacts else None,
         history=[message, agent_message],
     )
+
+
+async def _artifact_for_result(
+    result: "ChatInteractionResult",
+    *,
+    attachment_registry: "AttachmentRegistry",
+    db_context: Database,
+    user_id: str,
+    base_url: str,
+) -> tuple[Artifact | None, TaskState]:
+    """Build the response artifact, failing the task if a file cannot be sent.
+
+    An attachment the turn queued but that cannot be read is a fault worth
+    reporting: handing the peer a download URL it would be refused too just
+    turns the failure into a dangling reference on a 'completed' task.
+    """
+    try:
+        return (
+            await A2AAttachmentTransfer(
+                attachment_registry, db_context
+            ).result_to_artifact(
+                result,
+                acting_user_id=user_id,
+                attachment_urls=_attachment_urls(base_url, result.attachment_ids),
+            ),
+            TaskState.completed,
+        )
+    except A2AAttachmentError:
+        logger.exception("A2A response attachment could not be sent")
+        return (
+            error_to_artifact("A response attachment could not be delivered"),
+            TaskState.failed,
+        )
 
 
 async def _start_background_send(
@@ -813,6 +844,7 @@ async def _stream_message(
     profile_id = service.service_config.id
     user_id = str(current_user.get("user_identifier", "a2a_user"))
     db_engine = request.app.state.database_engine
+    base_url = str(request.base_url).rstrip("/")
     try:
         content_parts: list[ContentPartDict] = await A2AAttachmentTransfer(
             _get_attachment_registry(request), Database(db_engine)
@@ -905,6 +937,7 @@ async def _stream_message(
 
     # Stream the interaction with a separate DB context for ProcessingService
     accumulated_text = ""
+    attachment_ids: list[str] | None = None
     has_error = False
     is_canceled = False
     error_msg = ""
@@ -951,7 +984,14 @@ async def _stream_message(
                     has_error = True
                     error_msg = stream_event.error or "Unknown error"
                 elif stream_event.type == "done":
-                    break
+                    # 'done' closes an agentic turn, not the interaction: a turn
+                    # that called a tool emits one and keeps going, and the
+                    # attachments a tool queued are only known to the last one.
+                    # Stopping here would truncate every tool-using reply.
+                    if stream_event.metadata:
+                        attachment_ids = stream_event.metadata.get(
+                            "attachment_ids", attachment_ids
+                        )
         except Exception:
             logger.exception("Error during A2A streaming for task %s", task_id)
             has_error = True
@@ -959,15 +999,35 @@ async def _stream_message(
     finally:
         cancel_events.pop(task_id, None)
 
+    # Files the turn queued for its response are not part of the text stream, so
+    # they are resolved here and ride out on the final artifact chunk.
+    response_file_parts: list[Part] = []
+    if attachment_ids and not has_error and not is_canceled:
+        try:
+            response_file_parts = await A2AAttachmentTransfer(
+                _get_attachment_registry(request), Database(db_engine)
+            ).response_attachment_parts(
+                attachment_ids,
+                acting_user_id=user_id,
+                attachment_urls=_attachment_urls(base_url, attachment_ids),
+            )
+        except A2AAttachmentError:
+            logger.exception("A2A response attachment could not be streamed")
+            has_error = True
+            error_msg = "A response attachment could not be delivered"
+
     # Emit final artifact chunk
-    if accumulated_text and not has_error and not is_canceled:
+    final_parts = (
+        [Part(root=TextPart(text=accumulated_text))] if accumulated_text else []
+    ) + response_file_parts
+    if final_parts and not has_error and not is_canceled:
         final_artifact = TaskArtifactUpdateEvent(
             task_id=task_id,
             context_id=context_id,
             artifact=Artifact(
                 artifact_id=artifact_id,
                 name="response",
-                parts=[Part(root=TextPart(text=accumulated_text))],
+                parts=final_parts,
             ),
             last_chunk=True,
         )
@@ -1013,11 +1073,11 @@ async def _stream_message(
     if has_error:
         err_art = error_to_artifact(error_msg)
         artifacts_json = [err_art.model_dump(exclude_none=True)]
-    elif accumulated_text:
+    elif final_parts:
         art = Artifact(
             artifact_id=artifact_id,
             name="response",
-            parts=[Part(root=TextPart(text=accumulated_text))],
+            parts=final_parts,
         )
         artifacts_json = [art.model_dump(exclude_none=True)]
 

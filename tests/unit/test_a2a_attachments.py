@@ -193,20 +193,49 @@ class TestResultArtifact:
         assert file_part.file.name == "report.pdf"
 
     @pytest.mark.asyncio
-    async def test_unreadable_attachment_falls_back_to_download_url(
+    async def test_unreadable_attachment_is_an_error(
         self,
         transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
     ) -> None:
-        """The answer must survive an attachment the caller cannot read."""
+        """A dangling URL the peer would be refused is worse than a failure."""
         codec, registry, db_context = transfer
         att_id = await _store(registry, db_context, owner_user_id=OWNER)
         result = ChatInteractionResult.success(
             text_reply="See attached", attachment_ids=[att_id]
         )
 
+        with pytest.raises(A2AAttachmentError, match="not available"):
+            await codec.result_to_artifact(
+                result,
+                acting_user_id=OTHER,
+                attachment_urls={att_id: f"https://fa.test/api/attachments/{att_id}"},
+            )
+
+    @pytest.mark.asyncio
+    async def test_oversized_attachment_falls_back_to_download_url(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The answer must survive one file too large to inline."""
+        codec, registry, db_context = transfer
+        monkeypatch.setattr(
+            "family_assistant.a2a.attachments.MAX_INLINE_ATTACHMENT_BYTES", 8
+        )
+        att_id = await _store(
+            registry,
+            db_context,
+            filename="huge.bin",
+            content_type="application/octet-stream",
+            content=b"more than eight bytes",
+        )
+        result = ChatInteractionResult.success(
+            text_reply="See attached", attachment_ids=[att_id]
+        )
+
         artifact = await codec.result_to_artifact(
             result,
-            acting_user_id=OTHER,
+            acting_user_id=OWNER,
             attachment_urls={att_id: f"https://fa.test/api/attachments/{att_id}"},
         )
 
@@ -215,6 +244,7 @@ class TestResultArtifact:
         assert isinstance(file_part, FilePart)
         assert isinstance(file_part.file, FileWithUri)
         assert file_part.file.uri == f"https://fa.test/api/attachments/{att_id}"
+        assert file_part.file.name == "huge.bin"
 
     @pytest.mark.asyncio
     async def test_error_result_has_no_artifact(

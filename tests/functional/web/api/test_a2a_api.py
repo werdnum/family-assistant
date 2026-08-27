@@ -4,11 +4,13 @@ Validates protocol compliance against the official a2a-sdk types.
 """
 
 import asyncio
+import base64
 import contextlib
 import json
 import re
 import uuid
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -25,8 +27,12 @@ from a2a.types import TaskIdParams, TaskQueryParams
 from a2a.types import TextPart as SdkTextPart
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService
+from family_assistant.services.attachment_registry import AttachmentRegistry
+from family_assistant.storage.database import Database
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
@@ -619,6 +625,174 @@ class TestStreamMessage:
         resp = await a2a_client.post("/api/a2a/stream", json=body)
         assert resp.status_code == 200
         assert "text/event-stream" in resp.headers.get("content-type", "")
+
+
+def _attach_to_response_once(
+    mock_llm: RuleBasedMockLLMClient, attachment_id: str, text: str
+) -> None:
+    """Make the mock LLM queue an attachment on its first turn, then answer."""
+
+    def first_turn(args: dict) -> bool:
+        messages = args.get("messages", [])
+        return any(msg.role == "user" for msg in messages) and not any(
+            msg.role == "tool" for msg in messages
+        )
+
+    mock_llm.rules = [
+        (
+            first_turn,
+            MockLLMOutput(
+                content="Sending it over.",
+                tool_calls=[
+                    ToolCallItem(
+                        id="call_attach_a2a",
+                        type="function",
+                        function=ToolCallFunction(
+                            name="attach_to_response",
+                            arguments=json.dumps({"attachment_ids": [attachment_id]}),
+                        ),
+                    )
+                ],
+            ),
+        )
+    ]
+    mock_llm.default_response = MockLLMOutput(content=text)
+
+
+def _file_parts(parts: list[dict]) -> list[dict]:
+    return [part for part in parts if part.get("kind") == "file"]
+
+
+class TestResponseAttachments:
+    """Files a turn queues must reach the peer as bytes, not as an id or a URL."""
+
+    @pytest.mark.asyncio
+    async def test_send_returns_response_file_inline(
+        self,
+        a2a_client: AsyncClient,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+        attachment_registry_fixture: AttachmentRegistry,
+        db_engine: AsyncEngine,
+    ) -> None:
+        attachment = await attachment_registry_fixture.register_user_attachment(
+            db_context=Database(engine=db_engine),
+            content=b"report bytes",
+            filename="report.txt",
+            mime_type="text/plain",
+        )
+        _attach_to_response_once(
+            api_mock_llm_client, attachment.attachment_id, "Here is the report."
+        )
+
+        resp = await a2a_client.post(
+            "/api/a2a",
+            json=_jsonrpc(
+                "message/send", params={"message": _a2a_message("send me the report")}
+            ),
+        )
+
+        assert resp.status_code == 200
+        task = resp.json()["result"]
+        assert task["status"]["state"] == "completed"
+        files = _file_parts(task["artifacts"][0]["parts"])
+        assert len(files) == 1
+        assert base64.b64decode(files[0]["file"]["bytes"]) == b"report bytes"
+        assert files[0]["file"]["mimeType"] == "text/plain"
+        assert files[0]["file"]["name"] == "report.txt"
+
+    @pytest.mark.asyncio
+    async def test_stream_emits_response_file_in_final_artifact(
+        self,
+        a2a_client: AsyncClient,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+        attachment_registry_fixture: AttachmentRegistry,
+        db_engine: AsyncEngine,
+    ) -> None:
+        """The streamed text is not the whole response — files ride out too."""
+        attachment = await attachment_registry_fixture.register_user_attachment(
+            db_context=Database(engine=db_engine),
+            content=b"streamed bytes",
+            filename="streamed.txt",
+            mime_type="text/plain",
+        )
+        _attach_to_response_once(
+            api_mock_llm_client, attachment.attachment_id, "Streaming it over."
+        )
+
+        resp = await a2a_client.post(
+            "/api/a2a/stream",
+            json=_jsonrpc(
+                "message/stream",
+                params={
+                    "message": _a2a_message("stream me the file", task_id="stream-att")
+                },
+            ),
+        )
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        streamed_files = [
+            part
+            for event in events
+            for part in _file_parts(
+                event["result"].get("artifact", {}).get("parts", [])
+            )
+        ]
+        assert len(streamed_files) == 1
+        assert base64.b64decode(streamed_files[0]["file"]["bytes"]) == b"streamed bytes"
+
+        get_resp = await a2a_client.post(
+            "/api/a2a", json=_jsonrpc("tasks/get", params={"id": "stream-att"})
+        )
+        persisted = get_resp.json()["result"]
+        assert len(_file_parts(persisted["artifacts"][0]["parts"])) == 1
+
+
+class TestInboundFileIdempotency:
+    @pytest.mark.asyncio
+    async def test_retrying_a_task_id_does_not_re_store_its_files(
+        self,
+        a2a_client: AsyncClient,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+        attachment_registry_fixture: AttachmentRegistry,
+        db_engine: AsyncEngine,
+    ) -> None:
+        """A retry gets the existing task, so its files must not be stored twice."""
+        api_mock_llm_client.default_response = MockLLMOutput(content="got it")
+        file_part = {
+            "kind": "file",
+            "file": {
+                "bytes": base64.b64encode(b"inbound bytes").decode(),
+                "mimeType": "text/plain",
+                "name": "inbound.txt",
+            },
+        }
+        body = _jsonrpc(
+            "message/send",
+            params={
+                "message": _a2a_message(
+                    "read this",
+                    task_id="retry-att-task",
+                    context_id="retry-att-ctx",
+                    extra_parts=[file_part],
+                )
+            },
+        )
+
+        first = await a2a_client.post("/api/a2a", json=body)
+        second = await a2a_client.post("/api/a2a", json=body)
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        stored = (
+            await attachment_registry_fixture.get_recent_attachments_for_conversation(
+                Database(engine=db_engine),
+                "a2a-retry-att-ctx",
+                datetime.now(UTC) - timedelta(minutes=5),
+                acting_user_id="test_user",
+            )
+        )
+        assert len(stored) == 1
 
 
 def _parse_sse_events(raw: str) -> list[dict]:

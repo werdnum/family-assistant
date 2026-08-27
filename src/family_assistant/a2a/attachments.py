@@ -188,9 +188,12 @@ class A2AAttachmentTransfer:
     ) -> Artifact | None:
         """Convert a ChatInteractionResult to an A2A Artifact.
 
-        Attachments are inlined; one whose bytes exceed the inline cap (or that
-        cannot be read) falls back to its download URL, since dropping the whole
-        response over one oversized file would lose the answer with it.
+        Attachments are inlined; one whose bytes exceed the inline cap falls
+        back to its download URL, since dropping the whole response over one
+        oversized file would lose the answer with it.
+
+        Raises:
+            A2AAttachmentError: If a response attachment cannot be read.
         """
         if result.has_error:
             return None
@@ -199,14 +202,13 @@ class A2AAttachmentTransfer:
         if result.text_reply:
             parts.append(text_to_a2a_part(result.text_reply))
 
-        for attachment_id in result.attachment_ids or []:
-            parts.append(
-                await self._result_attachment_part(
-                    attachment_id,
-                    acting_user_id=acting_user_id,
-                    attachment_urls=attachment_urls or {},
-                )
+        parts.extend(
+            await self.response_attachment_parts(
+                result.attachment_ids,
+                acting_user_id=acting_user_id,
+                attachment_urls=attachment_urls,
             )
+        )
 
         if not parts:
             return None
@@ -216,6 +218,30 @@ class A2AAttachmentTransfer:
             name="response",
             parts=parts,
         )
+
+    async def response_attachment_parts(
+        self,
+        attachment_ids: list[str] | None,
+        *,
+        acting_user_id: str | None,
+        attachment_urls: dict[str, str] | None = None,
+    ) -> list[Part]:
+        """File parts for the attachments a turn queued for its response.
+
+        Raises:
+            A2AAttachmentError: If an attachment cannot be read. The turn
+                produced it, so an unreadable one is a fault to report, not a
+                dangling URL to hand the peer (the download endpoint applies
+                the same checks and would refuse it too).
+        """
+        return [
+            await self._result_attachment_part(
+                attachment_id,
+                acting_user_id=acting_user_id,
+                attachment_urls=attachment_urls or {},
+            )
+            for attachment_id in attachment_ids or []
+        ]
 
     async def _result_attachment_part(
         self,
@@ -227,18 +253,18 @@ class A2AAttachmentTransfer:
         metadata = await self._registry.get_attachment(
             self._db, attachment_id, acting_user_id=acting_user_id
         )
-        content = (
-            None
-            if metadata is None
-            else await self._registry.get_attachment_content(
-                self._db, attachment_id, acting_user_id=acting_user_id
+        if metadata is None:
+            raise A2AAttachmentError(
+                f"Response attachment {attachment_id} is not available to this user"
             )
+        content = await self._registry.get_attachment_content(
+            self._db, attachment_id, acting_user_id=acting_user_id
         )
-        if (
-            metadata is not None
-            and content is not None
-            and _encoded_size(len(content)) <= MAX_INLINE_ATTACHMENT_BYTES
-        ):
+        if content is None:
+            raise A2AAttachmentError(
+                f"Response attachment {attachment_id} has no stored content to send"
+            )
+        if _encoded_size(len(content)) <= MAX_INLINE_ATTACHMENT_BYTES:
             return _file_part(
                 InlineFile(
                     content=content,
@@ -246,20 +272,19 @@ class A2AAttachmentTransfer:
                     filename=attachment_filename(metadata),
                 )
             )
+        # Too large to inline: the download URL is the only way to offer it, and
+        # losing the whole answer over one oversized file would be worse.
         logger.info(
-            "Attachment %s sent to the A2A peer by URL rather than inline "
-            "(readable=%s, size=%s)",
+            "Attachment %s (%d bytes) sent to the A2A peer by URL rather than inline",
             attachment_id,
-            content is not None,
-            len(content) if content is not None else None,
+            len(content),
         )
         return Part(
             root=FilePart(
                 file=FileWithUri(
                     uri=attachment_urls.get(attachment_id, attachment_id),
-                    mime_type=(metadata.mime_type if metadata else None)
-                    or DEFAULT_MIME_TYPE,
-                    name=attachment_filename(metadata) if metadata else None,
+                    mime_type=metadata.mime_type or DEFAULT_MIME_TYPE,
+                    name=attachment_filename(metadata),
                 )
             )
         )

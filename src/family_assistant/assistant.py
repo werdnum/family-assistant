@@ -18,6 +18,7 @@ import uvicorn
 
 # Import Embedding interface/clients
 from family_assistant import embeddings
+from family_assistant.a2a.attachments import A2AAttachmentTransfer
 from family_assistant.config_models import (
     DEFAULT_REMOTE_MAX_ASYNC_SECONDS,
     AppConfig,  # Used at runtime
@@ -1634,9 +1635,6 @@ class Assistant:
 
     def _setup_remote_a2a_profile(self, profile_conf: ServiceProfile) -> None:
         """Create a RemoteA2AService for a remote A2A profile."""
-        from family_assistant.a2a.attachments import (  # noqa: PLC0415
-            A2AAttachmentTransfer,
-        )
         from family_assistant.a2a.auth import A2AAuthConfig  # noqa: PLC0415
         from family_assistant.a2a.client import A2AClientWrapper  # noqa: PLC0415
         from family_assistant.a2a.remote_service import (  # noqa: PLC0415
