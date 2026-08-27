@@ -353,10 +353,13 @@ review.
 
 ### Session binding
 
-The remote browser backend already keys ordinary sessions to a conversation. Authenticated-site
-execution needs explicit plumbing so the delegated browser profiles use the newly created jar-loaded
-session rather than opening a separate plain session. That binding should travel in trusted
-execution context or backend state, not through model-visible arguments.
+The remote browser backend already keys ordinary sessions to a conversation. That key is not the
+binding mechanism here: a caller can emit concurrent tool calls, and two authenticated runs sharing
+one conversation-keyed slot could overwrite each other's jar-loaded session or tear down the other's
+on cleanup. The binding is therefore keyed to the individual run and propagated through both
+delegation hops in trusted execution context, not through model-visible arguments or the
+conversation-keyed registry. The first release additionally serializes authenticated runs within a
+conversation — a second concurrent invocation waits or fails cleanly rather than racing.
 
 Delegation for authenticated runs executes inline: the async delegation handoff, which returns a
 background reference after a short wait, is disabled for these hops (`async_delegation_enabled` is
@@ -364,6 +367,15 @@ already a per-profile setting). The session's lifetime therefore brackets the en
 — the high-level tool closes the session only after the delegated run completes or fails, and the
 caller receives the task result, never a background reference to a run whose session has been torn
 down beneath it.
+
+Human handoff is terminal for the delegated run. Synchronous delegation cannot resume a
+subconversation, and the high-level tool deliberately accepts no resume token, so a run that hits a
+CAPTCHA, unsupported MFA, or bot detection returns `needs_human` with the handoff link and ends; the
+browser session either transfers to exclusive human control — where the user can finish the step or
+the whole task themselves — or closes. A retry is a fresh invocation from the original objective.
+Agent resumption of a half-finished authenticated run is out of scope for the first release; if
+experience shows that restarting from the objective loses meaningful progress often enough to
+matter, a durable resume surface is an M6 candidate.
 
 The browser session closes at the end of the delegated run unless the user takes human control. The
 saved jar remains the only durable browser capability.
@@ -762,7 +774,8 @@ HelloFresh adapter or keep the task human-operated.
   mechanically defined browser-server-mediated set (UCP shopping tools rejected fail closed).
   Authenticated runs delegate to them rather than the shipped profiles, and startup validation
   rejects a site configuration naming a profile that violates these constraints.
-- Bind the created jar-loaded browser session into the delegated execution context.
+- Bind the created jar-loaded browser session into the delegated execution context, keyed per run
+  rather than per conversation, and serialize authenticated runs within a conversation.
 - Run authenticated delegation hops inline (async delegation disabled for these runs) so the
   session's lifetime brackets the whole delegation tree and the caller receives the task result, not
   a background reference.
