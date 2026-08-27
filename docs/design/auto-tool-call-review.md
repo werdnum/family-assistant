@@ -233,7 +233,12 @@ latency:
   call per navigation. Any input the check cannot determine falls through to the reviewer, and the
   short-circuit applies only in unfloored cells: resolving to execute-with-audit is within what an
   `allow` verdict could produce there, while a floored cell excludes `allow` by configuration and is
-  therefore never exempted.
+  therefore never exempted. The exemption also discharges **only the taint layer's adjudication of
+  the disclosure sink** — its justification is confidentiality and nothing else — so an independent
+  requirement on the same call, a static `review` rule or a configured action review guarding an
+  integrity risk (an authenticated click or submission prompted by hostile page content, say), still
+  runs. The one-judgment merge combines the reviews that actually fire; one layer's exemption never
+  discharges another layer's requirement.
 
 A second deterministic computation is a **signal, never a bypass**:
 
