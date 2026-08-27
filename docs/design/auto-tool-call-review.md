@@ -230,8 +230,10 @@ latency:
   condition (its protected-history clause needs the M6 serialization work and joins the check when
   that lands; until then, absence of the history signal fails toward invoking the reviewer, not
   toward exemption). It is what keeps the browser profiles browsing freely instead of paying a judge
-  call per navigation. Any input the check cannot determine falls through to the reviewer, and the
-  short-circuit is valid only in cells whose verdict space includes `audit`.
+  call per navigation. Any input the check cannot determine falls through to the reviewer. The
+  short-circuit is valid only when the effective execution minimum permits `audit`: a configured
+  `confirm` or `deny` verdict floor, or a matching `operator_minimum`, disables the exemption and
+  invokes the reviewer within that tighter verdict space.
 
 A second deterministic computation is a **signal, never a bypass**:
 
@@ -267,9 +269,10 @@ The shadow property belongs to `observe` mode, not to the defaults change itself
 already running `mode: enforce`, adopting the new default matrix is a real posture change — cells
 that gated unconditionally become judged — and must not happen silently: the configuration
 reference's migration note tells enforce deployments to pin the previous outcomes before upgrading
-(an `operator_minimum` of `confirm` on the egress cells and `deny` on
-`unknown_external × sandbox_network` reproduces today's matrix exactly, and is a subset of the
-recommended hardening set) or to adopt the judged posture deliberately. Verdict floors and
+(an `operator_minimum` of `confirm` on the egress cells, `known_user_message`, and
+`sensitive_read_broadening`, plus `deny` on `unknown_external × sandbox_network`, reproduces
+today's matrix exactly and is a subset of the recommended hardening set) or to adopt the judged
+posture deliberately. Verdict floors and
 `operator_minimum` are tighten-only against the judge just as against profiles, so a pinned
 deployment loses nothing. No known deployment runs `enforce` today — the maintainer's is the only
 known deployment, and it runs `observe` — so this is defence in depth for third-party deployments of
@@ -484,7 +487,9 @@ the request, injection targeting X) reaches the reviewer rather than short-circu
 **M4 — Static `review` decision.** The new decision value, advertisement semantics, and the
 one-judgment-per-call merge with the taint layer. *Verify:* policy-engine tests for layering and
 priority with the new value; a call gated by both layers produces exactly one reviewer invocation
-and at most one confirmation; no-channel contexts degrade `confirm` verdicts to deny-and-continue.
+and at most one confirmation; an eligible independent terminal call without a live channel creates
+one deferred durable confirmation, while an ineligible no-channel call degrades the same `confirm`
+verdict to deny-and-continue.
 
 **M5 — Enforce on evidence.** Review the shadow data against the gates: reviewer false-allow ≈ 0 on
 the replayed injection fixture set, projected interactive confirmations within the friction budget,
