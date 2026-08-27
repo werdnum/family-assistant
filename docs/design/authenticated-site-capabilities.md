@@ -369,9 +369,13 @@ conversation — a second concurrent invocation waits or fails cleanly rather th
 Authenticated delegation may hand off to the background as usual. Browser tasks are exactly the
 long-running workload the async delegation system exists for, and forcing the caller's loop to block
 inline for a whole browser run would defeat it. What the handoff must carry is **session
-ownership**: the jar-loaded session belongs to the delegated run, not to the high-level tool call. A
-run that completes within the inline window returns its result and the session closes; a run that
-hands off to the background takes the session with it, the caller receives the ordinary delegation
+ownership**: the jar-loaded session belongs to the delegated run, not to the high-level tool call.
+Ownership does not fan out with nested delegation: the semantic-to-visual hop executes inline within
+the semantic worker's run — async handoff is disabled for that hop, since the worker needs the
+visual result to continue and the outer run is already backgroundable — so exactly one run owns the
+session for its whole lifetime and no backgrounded child can outlive its parent's cleanup. A run
+that completes within the inline window returns its result and the session closes; a run that hands
+off to the background takes the session with it, the caller receives the ordinary delegation
 reference, and the run closes the session when it reaches a terminal state. The background
 completion machinery persists only text and attachments and its notification is advisory, so the
 typed `AuthenticatedSiteTaskResult` — any resume handle included — is persisted durably on the
@@ -820,7 +824,8 @@ HelloFresh adapter or keep the task human-operated.
   handoff, exactly one owner closes the session, and an idle/maximum-lifetime backstop reclaims a
   session whose owning run dies.
 - Delegate the objective to the authenticated browser profile.
-- Preserve the existing shared-session delegation mechanism for the visual variant.
+- Preserve the existing shared-session delegation mechanism for the visual variant, running that hop
+  inline (async handoff disabled) within the owning semantic run.
 - Ensure neither browser profile receives jar-management, credential, or recursive
   authenticated-site tools.
 - Preserve browser result provenance when the result returns to the caller.
