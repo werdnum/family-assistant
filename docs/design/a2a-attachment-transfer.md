@@ -60,10 +60,11 @@ remote agent carries the taint of the turn that was sent to it as well, since th
 what it was given — and where the caller cannot say what that was (the polled path holds only a
 remote task id) the file is recorded as unknown-external rather than assumed to be peer-trusted.
 
-An inbound file is also held to the registry's limit for its own type, not just the inline cap: a
-deployment sets `max_multimodal_size` because providers reject larger media, and a peer's file goes
-straight into a turn, so it is bounded like a user's upload of that type rather than like tool
-output.
+A file arriving *in a message* is also held to the registry's limit for its own type, not just the
+inline cap: a deployment sets `max_multimodal_size` because providers reject larger media, and that
+file is there to be read, so it is bounded like a user's upload of that type. A file a remote agent
+*returns* is not — that is output the user asked for rather than input to a model, and the registry
+stores tool-produced media unbounded by the same limit for the same reason.
 
 ## Deliberate simplifications
 

@@ -504,6 +504,33 @@ class TestInboundSizeLimits:
                 message, conversation_id=None, owner_user_id=None
             )
 
+    @pytest.mark.asyncio
+    async def test_returned_media_is_not_media_limited(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A generated video the user asked for is output, not model input."""
+        codec, registry, _db = transfer
+        monkeypatch.setattr(registry, "max_multimodal_size", 8)
+        task = _completed_task(
+            Part(
+                root=FilePart(
+                    file=FileWithBytes(
+                        bytes=base64.b64encode(b"more than eight bytes").decode(),
+                        mime_type="video/mp4",
+                        name="rendered.mp4",
+                    )
+                )
+            )
+        )
+
+        attachment_ids = await codec.store_task_files(
+            task, conversation_id=None, owner_user_id=None
+        )
+
+        assert len(attachment_ids) == 1
+
 
 class TestTaskResultFiles:
     @pytest.mark.asyncio

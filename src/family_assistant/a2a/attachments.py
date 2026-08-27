@@ -300,6 +300,9 @@ class A2AAttachmentTransfer:
             ValueError: If a part cannot be converted.
         """
         prepared = [_prepare_part(part) for part in message.parts]
+        for item in prepared:
+            if isinstance(item, InlineFile):
+                self._reject_if_media_too_large_to_read(item)
         stored = await self._store_batch(
             [item for item in prepared if isinstance(item, InlineFile)],
             conversation_id=conversation_id,
@@ -366,8 +369,6 @@ class A2AAttachmentTransfer:
         already written are removed instead, best-effort: a failed cleanup is
         logged rather than replacing the original error.
         """
-        for inline in inline_files:
-            self._reject_if_oversized(inline)
         provenance = a2a_provenance_metadata(taint_sources)
         stored: list[str] = []
         try:
@@ -394,15 +395,20 @@ class A2AAttachmentTransfer:
             raise
         return stored
 
-    def _reject_if_oversized(self, inline: InlineFile) -> None:
-        """Refuse a file the registry's own limit for its type would refuse.
+    def _reject_if_media_too_large_to_read(self, inline: InlineFile) -> None:
+        """Refuse inbound media the model it is destined for would refuse.
 
-        The inline cap bounds what fits in a JSON-RPC payload; it is not the
-        limit that matters for media. A deployment sets `max_multimodal_size`
-        because providers reject larger images, audio and video, and a peer's
-        file goes straight into a turn — so it is held to the same limit a
-        user's upload of that type is, rather than the file-storage ceiling
-        that tool output gets.
+        A file arriving *in a message* is there to be read, so it is bounded
+        like a user's upload of that type: a deployment sets
+        `max_multimodal_size` precisely because providers reject larger images,
+        audio and video, and storing one only to have the turn fail helps
+        nobody.
+
+        Deliberately not applied to a file a remote agent *returns*, which is
+        output the user asked for rather than input to a model — the registry
+        stores tool-produced media unbounded by that limit for the same reason,
+        and discarding a large generated video to protect an injection that
+        will not happen would lose the work.
         """
         limit = self._registry.size_limit_for_mime(inline.mime_type)
         if len(inline.content) > limit:
