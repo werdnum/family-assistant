@@ -410,6 +410,46 @@ class TestInboundMessage:
         assert stored == []
 
     @pytest.mark.asyncio
+    async def test_a_storage_failure_removes_what_it_already_stored(
+        self,
+        transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Nothing collects a tool-source orphan, so the batch cleans up after itself."""
+        codec, registry, db_context = transfer
+        real_store = registry.store_and_register_tool_attachment
+        calls = {"n": 0}
+
+        async def _fail_on_second(*args: object, **kwargs: object) -> object:
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise OSError("disk on fire")
+            return await real_store(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(
+            registry, "store_and_register_tool_attachment", _fail_on_second
+        )
+        message = _message(*[
+            Part(
+                root=FilePart(file=FileWithBytes(bytes=base64.b64encode(body).decode()))
+            )
+            for body in (b"first", b"second")
+        ])
+
+        with pytest.raises(OSError, match="disk on fire"):
+            await codec.message_to_content_parts(
+                message, conversation_id="a2a-storage-fail", owner_user_id=OWNER
+            )
+
+        stored = await registry.get_recent_attachments_for_conversation(
+            db_context,
+            "a2a-storage-fail",
+            datetime.now(UTC) - timedelta(minutes=5),
+            acting_user_id=OWNER,
+        )
+        assert stored == []
+
+    @pytest.mark.asyncio
     async def test_data_part_becomes_json_text(
         self,
         transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],

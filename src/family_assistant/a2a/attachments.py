@@ -300,16 +300,15 @@ class A2AAttachmentTransfer:
             ValueError: If a part cannot be converted.
         """
         prepared = [_prepare_part(part) for part in message.parts]
-        provenance = a2a_provenance_metadata(taint_sources)
+        stored = await self._store_batch(
+            [item for item in prepared if isinstance(item, InlineFile)],
+            conversation_id=conversation_id,
+            owner_user_id=owner_user_id,
+            taint_sources=taint_sources,
+        )
+        stored_ids = iter(stored)
         return [
-            attachment_content(
-                await self._store(
-                    item,
-                    conversation_id=conversation_id,
-                    owner_user_id=owner_user_id,
-                    provenance=provenance,
-                )
-            )
+            attachment_content(next(stored_ids))
             if isinstance(item, InlineFile)
             else item
             for item in prepared
@@ -343,16 +342,55 @@ class A2AAttachmentTransfer:
             for inline in [_inline_file(part.root)]
             if inline is not None
         ]
+        return await self._store_batch(
+            inline_files,
+            conversation_id=conversation_id,
+            owner_user_id=owner_user_id,
+            taint_sources=taint_sources,
+        )
+
+    async def _store_batch(
+        self,
+        inline_files: list[InlineFile],
+        *,
+        conversation_id: str | None,
+        owner_user_id: str | None,
+        taint_sources: Sequence[TaintSource],
+    ) -> list[str]:
+        """Register a message's files, keeping none of them if one fails.
+
+        Registration is durable per file and there is no transaction spanning
+        the file writes, so a failure partway through would otherwise leave the
+        earlier files stored with nothing to reference them — and a tool-source
+        attachment is not something the registry's reaper collects. The ones
+        already written are removed instead, best-effort: a failed cleanup is
+        logged rather than replacing the original error.
+        """
         provenance = a2a_provenance_metadata(taint_sources)
-        return [
-            await self._store(
-                inline,
-                conversation_id=conversation_id,
-                owner_user_id=owner_user_id,
-                provenance=provenance,
-            )
-            for inline in inline_files
-        ]
+        stored: list[str] = []
+        try:
+            for inline in inline_files:
+                stored.append(
+                    await self._store(
+                        inline,
+                        conversation_id=conversation_id,
+                        owner_user_id=owner_user_id,
+                        provenance=provenance,
+                    )
+                )
+        except Exception:
+            for attachment_id in stored:
+                try:
+                    await self._registry.delete_attachment(
+                        self._db, attachment_id, acting_user_id=owner_user_id
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to remove partially stored A2A attachment %s",
+                        attachment_id,
+                    )
+            raise
+        return stored
 
     async def _store(
         self,
