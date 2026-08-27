@@ -184,16 +184,11 @@ class A2AAttachmentTransfer:
         result: ChatInteractionResult,
         *,
         acting_user_id: str | None,
-        attachment_urls: dict[str, str] | None = None,
     ) -> Artifact | None:
         """Convert a ChatInteractionResult to an A2A Artifact.
 
-        Attachments are inlined; one whose bytes exceed the inline cap falls
-        back to its download URL, since dropping the whole response over one
-        oversized file would lose the answer with it.
-
         Raises:
-            A2AAttachmentError: If a response attachment cannot be read.
+            A2AAttachmentError: If a response attachment cannot be sent.
         """
         if result.has_error:
             return None
@@ -204,9 +199,7 @@ class A2AAttachmentTransfer:
 
         parts.extend(
             await self.response_attachment_parts(
-                result.attachment_ids,
-                acting_user_id=acting_user_id,
-                attachment_urls=attachment_urls,
+                result.attachment_ids, acting_user_id=acting_user_id
             )
         )
 
@@ -224,31 +217,28 @@ class A2AAttachmentTransfer:
         attachment_ids: list[str] | None,
         *,
         acting_user_id: str | None,
-        attachment_urls: dict[str, str] | None = None,
     ) -> list[Part]:
         """File parts for the attachments a turn queued for its response.
 
         Raises:
-            A2AAttachmentError: If an attachment cannot be read. The turn
-                produced it, so an unreadable one is a fault to report, not a
-                dangling URL to hand the peer (the download endpoint applies
-                the same checks and would refuse it too).
+            A2AAttachmentError: If an attachment cannot be sent — unreadable,
+                or too large to inline. Inline bytes are the only transfer this
+                boundary has: FA's own download URL needs an FA credential the
+                peer does not hold, and a peer's URI is not fetched either, so
+                offering one would be a dangling reference on a task reported
+                completed. A signed, peer-usable transfer URL is what would
+                lift the size ceiling; until there is one, the ceiling is
+                reported rather than papered over.
         """
         return [
             await self._result_attachment_part(
-                attachment_id,
-                acting_user_id=acting_user_id,
-                attachment_urls=attachment_urls or {},
+                attachment_id, acting_user_id=acting_user_id
             )
             for attachment_id in attachment_ids or []
         ]
 
     async def _result_attachment_part(
-        self,
-        attachment_id: str,
-        *,
-        acting_user_id: str | None,
-        attachment_urls: dict[str, str],
+        self, attachment_id: str, *, acting_user_id: str | None
     ) -> Part:
         metadata = await self._registry.get_attachment(
             self._db, attachment_id, acting_user_id=acting_user_id
@@ -264,28 +254,17 @@ class A2AAttachmentTransfer:
             raise A2AAttachmentError(
                 f"Response attachment {attachment_id} has no stored content to send"
             )
-        if _encoded_size(len(content)) <= MAX_INLINE_ATTACHMENT_BYTES:
-            return _file_part(
-                InlineFile(
-                    content=content,
-                    mime_type=metadata.mime_type or DEFAULT_MIME_TYPE,
-                    filename=attachment_filename(metadata),
-                )
+        if _encoded_size(len(content)) > MAX_INLINE_ATTACHMENT_BYTES:
+            raise A2AAttachmentError(
+                f"Response attachment {attachment_id} ({len(content)} bytes) exceeds "
+                f"the inline transfer limit ({MAX_INLINE_ATTACHMENT_BYTES} bytes "
+                f"encoded)"
             )
-        # Too large to inline: the download URL is the only way to offer it, and
-        # losing the whole answer over one oversized file would be worse.
-        logger.info(
-            "Attachment %s (%d bytes) sent to the A2A peer by URL rather than inline",
-            attachment_id,
-            len(content),
-        )
-        return Part(
-            root=FilePart(
-                file=FileWithUri(
-                    uri=attachment_urls.get(attachment_id, attachment_id),
-                    mime_type=metadata.mime_type or DEFAULT_MIME_TYPE,
-                    name=attachment_filename(metadata),
-                )
+        return _file_part(
+            InlineFile(
+                content=content,
+                mime_type=metadata.mime_type or DEFAULT_MIME_TYPE,
+                filename=attachment_filename(metadata),
             )
         )
 

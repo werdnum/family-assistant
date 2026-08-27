@@ -205,19 +205,15 @@ class TestResultArtifact:
         )
 
         with pytest.raises(A2AAttachmentError, match="not available"):
-            await codec.result_to_artifact(
-                result,
-                acting_user_id=OTHER,
-                attachment_urls={att_id: f"https://fa.test/api/attachments/{att_id}"},
-            )
+            await codec.result_to_artifact(result, acting_user_id=OTHER)
 
     @pytest.mark.asyncio
-    async def test_oversized_attachment_falls_back_to_download_url(
+    async def test_oversized_attachment_is_an_error(
         self,
         transfer: tuple[A2AAttachmentTransfer, AttachmentRegistry, Database],
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The answer must survive one file too large to inline."""
+        """Inline bytes are the only transfer, so the ceiling is reported."""
         codec, registry, db_context = transfer
         monkeypatch.setattr(
             "family_assistant.a2a.attachments.MAX_INLINE_ATTACHMENT_BYTES", 8
@@ -233,18 +229,8 @@ class TestResultArtifact:
             text_reply="See attached", attachment_ids=[att_id]
         )
 
-        artifact = await codec.result_to_artifact(
-            result,
-            acting_user_id=OWNER,
-            attachment_urls={att_id: f"https://fa.test/api/attachments/{att_id}"},
-        )
-
-        assert artifact is not None
-        file_part = artifact.parts[1].root
-        assert isinstance(file_part, FilePart)
-        assert isinstance(file_part.file, FileWithUri)
-        assert file_part.file.uri == f"https://fa.test/api/attachments/{att_id}"
-        assert file_part.file.name == "huge.bin"
+        with pytest.raises(A2AAttachmentError, match="exceeds the inline transfer"):
+            await codec.result_to_artifact(result, acting_user_id=OWNER)
 
     @pytest.mark.asyncio
     async def test_error_result_has_no_artifact(

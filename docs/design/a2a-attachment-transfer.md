@@ -33,13 +33,13 @@ Both directions, on both the client and the server:
   registered with the registry, and the resulting attachment id becomes an `attachment` content part
   (server inbound) or an entry in `ChatInteractionResult.attachment_ids` (client inbound).
 
-Size is bounded by the existing inline cap (`MAX_INLINE_ATTACHMENT_BYTES`, 10 MB of base64). The
-download URL is the fallback for exactly one case — an attachment the server verified but cannot
-inline, where losing the whole answer over one oversized file would be worse. It is never a fallback
-for an attachment that could not be read: the download endpoint applies the same ownership and
-content checks, so a URL there would hand the peer a dangling reference on a task marked completed.
-That fails the task with the reason instead. Outbound from the client the cap stays a hard,
-deterministic error, as it was.
+Inline bytes are the *only* transfer this boundary has, and there is no URL fallback. FA's own
+download URL needs an FA credential the peer does not hold, and a peer's URI is not fetched either
+(below), so offering one would hand back a dangling reference on a task reported completed. An
+attachment that cannot be sent — unreadable, or past the inline cap (`MAX_INLINE_ATTACHMENT_BYTES`,
+10 MB of base64) — therefore fails the task with the reason, in both directions. A signed,
+peer-usable transfer URL is what would lift the size ceiling; until there is one, the ceiling is
+reported rather than papered over.
 
 A response leaves by more than one path, and all of them carry its files. On `message/stream` the
 queued files are not part of the text stream, so they are resolved once the stream closes and ride
