@@ -58,6 +58,17 @@ every file that no task will ever use.
   authenticated request to a URL chosen by the peer, which is a credential-leak and SSRF surface for
   an uncommon case. The common case — a peer that inlines its bytes, which is what FA itself now
   does — is handled fully.
+- **A file registered for work that then does not happen is left to the reaper.** Registration is
+  durable and the paths around it are not transactional, so a few narrow sequences can register a
+  file nothing ends up referencing: a deployment whose `max_file_size` is below the inline cap
+  rejecting the second file of a message after the first was stored, a storage error partway through
+  a batch, or a completed remote task polled twice after a crash between the poll and the run being
+  finalized. The registry already collects unreferenced attachments after a grace period, which is
+  the general mechanism for exactly this; keying registration to remote task and part identity, or
+  making a batch atomic, would buy a faster cleanup of rare cases at the cost of machinery on every
+  path. What is *not* left to a reaper is a claimed A2A task row: any failure after the claim
+  finalizes it as failed, because a row stuck `working` makes every retry with that task id hand
+  back a task that never progresses.
 - **Attachments stored from a polled async delegation are ownerless.** `poll_async` carries no
   acting user (the worker polls on behalf of a persisted run), so files a remote agent returns on
   that path are registered without an owner, like tool-generated attachments. The synchronous and

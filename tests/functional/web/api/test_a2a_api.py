@@ -836,6 +836,51 @@ class TestInboundFileIdempotency:
         assert len(stored) == 1
 
 
+class TestClaimedTaskFinalization:
+    @pytest.mark.asyncio
+    async def test_storage_failure_finalizes_the_claimed_task(
+        self,
+        a2a_client: AsyncClient,
+        attachment_registry_fixture: AttachmentRegistry,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A claimed row must never be left 'working' — retries would never progress."""
+
+        async def _explode(*_args: object, **_kwargs: object) -> None:
+            raise OSError("disk on fire")
+
+        monkeypatch.setattr(
+            attachment_registry_fixture,
+            "store_and_register_tool_attachment",
+            _explode,
+        )
+        file_part = {
+            "kind": "file",
+            "file": {
+                "bytes": base64.b64encode(b"inbound bytes").decode(),
+                "mimeType": "text/plain",
+            },
+        }
+
+        resp = await a2a_client.post(
+            "/api/a2a",
+            json=_jsonrpc(
+                "message/send",
+                params={
+                    "message": _a2a_message(
+                        "read this", task_id="storage-fail", extra_parts=[file_part]
+                    )
+                },
+            ),
+        )
+
+        assert resp.json()["error"]["code"] == -32603
+        get_resp = await a2a_client.post(
+            "/api/a2a", json=_jsonrpc("tasks/get", params={"id": "storage-fail"})
+        )
+        assert get_resp.json()["result"]["status"]["state"] == "failed"
+
+
 def _parse_sse_events(raw: str) -> list[dict]:
     """Extract JSON data payloads from raw SSE text."""
     events: list[dict] = []

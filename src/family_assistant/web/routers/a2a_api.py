@@ -336,12 +336,15 @@ async def _handle_send_message(
         if not content_parts:
             raise ValueError("Message contained no processable content parts")
     except ValueError as e:
-        await db_context.a2a_tasks.update_task_status(
-            task_id=task_id,
-            status=TaskState.failed,
-            artifacts_json=[error_to_artifact(str(e)).model_dump(exclude_none=True)],
-        )
+        await _fail_claimed_task(db_context, task_id, f"Invalid message parts: {e}")
         return _jsonrpc_error(request_id, INVALID_PARAMS, f"Invalid message parts: {e}")
+    except Exception:
+        # Storing the peer's files failed (disk, database). The claim is durable,
+        # so leaving the row 'working' would make every retry with this task id
+        # hand back a task that never progresses.
+        logger.exception("Failed to prepare A2A message for task %s", task_id)
+        await _fail_claimed_task(db_context, task_id, "Internal error")
+        raise
 
     chat_interfaces = getattr(request.app.state, "chat_interfaces", None)
     confirmation_ui_managers = getattr(
@@ -645,6 +648,15 @@ async def _run_background_send(
         cancel_events.pop(task_id, None)
 
 
+async def _fail_claimed_task(db_context: Database, task_id: str, reason: str) -> None:
+    """Finalize a task whose row was claimed before the work could start."""
+    await db_context.a2a_tasks.update_task_status(
+        task_id=task_id,
+        status=TaskState.failed,
+        artifacts_json=[error_to_artifact(reason).model_dump(exclude_none=True)],
+    )
+
+
 def _terminal_status_event(
     task_id: str,
     context_id: str,
@@ -907,6 +919,21 @@ async def _stream_message(
             "status",
             _terminal_status_event(
                 task_id, context_id, TaskState.failed, f"Invalid message parts: {e}"
+            ).model_dump(exclude_none=True),
+        )
+        return
+    except Exception:
+        # As on the send path: the claim is durable, so a storage failure must
+        # still finalize the row rather than leave it 'working' forever.
+        logger.exception("Failed to prepare A2A message for task %s", task_id)
+        await _mark_a2a_task_terminal(
+            db_engine, task_id, TaskState.failed, "Internal error"
+        )
+        yield _sse_jsonrpc(
+            request_id,
+            "status",
+            _terminal_status_event(
+                task_id, context_id, TaskState.failed, "Internal error"
             ).model_dump(exclude_none=True),
         )
         return
