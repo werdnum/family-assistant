@@ -372,10 +372,14 @@ inline for a whole browser run would defeat it. What the handoff must carry is *
 ownership**: the jar-loaded session belongs to the delegated run, not to the high-level tool call. A
 run that completes within the inline window returns its result and the session closes; a run that
 hands off to the background takes the session with it, the caller receives the ordinary delegation
-reference, and the run closes the session when it reaches a terminal state, with the result arriving
-through the normal async completion path. Exactly one owner closes the session. An
-idle/maximum-lifetime backstop reclaims a session whose owning run dies without reaching a terminal
-state, and jar revocation still terminates the session immediately regardless of owner.
+reference, and the run closes the session when it reaches a terminal state. The background
+completion machinery persists only text and attachments and its notification is advisory, so the
+typed `AuthenticatedSiteTaskResult` — any resume handle included — is persisted durably on the
+delegation run's record at terminal state, wherever the run executed; the caller retrieves it by
+presenting the run's opaque handle back to the high-level tool, never by reconstructing it from
+notification text. Exactly one owner closes the session. An idle/maximum-lifetime backstop reclaims
+a session whose owning run dies without reaching a terminal state, and jar revocation still
+terminates the session immediately regardless of owner.
 
 Across a human handoff, the durable object is the session, not the run. A backgrounded run has no
 input channel, so the design does not pretend the worker can wait live for the handback token: when
@@ -465,11 +469,12 @@ run_authenticated_site_task(
 The tool does not accept a jar ID, arbitrary start URL, origin set, profile ID, adapter name,
 browser permissions, or credential name. Those come only from trusted configuration. The one
 additional input is `resume`, an opaque handle minted by a previous invocation's `handoff_pending`
-result: when present, the resumed run continues its own objective and a `site_id` that does not
-match the parked run's site fails closed. The handle it names a parked run, is resolved and
-authorized server-side under the existing same-caller resume rules, and grants nothing the caller
-did not already hold — the model never assembles delegation IDs, session IDs, or handback tokens
-from free text.
+result or background delegation reference. Presenting a parked run's handle resumes it — the run
+continues its own objective, and a `site_id` that does not match the parked run's site fails closed;
+presenting a completed background run's handle returns its stored typed result. The handle names a
+prior run, is resolved and authorized server-side under the existing same-caller resume rules, and
+grants nothing the caller did not already hold — the model never assembles delegation IDs, session
+IDs, or handback tokens from free text.
 
 Available `site_id` values are filtered by the active caller processing profile and by the acting
 user against the site's configured `authorized_users`. The browser profiles themselves do not
@@ -819,6 +824,9 @@ HelloFresh adapter or keep the task human-operated.
 - Ensure neither browser profile receives jar-management, credential, or recursive
   authenticated-site tools.
 - Preserve browser result provenance when the result returns to the caller.
+- Persist the typed `AuthenticatedSiteTaskResult` on the delegation run record at terminal state,
+  retrievable via the run's opaque handle, so backgrounded runs deliver typed results without text
+  parsing.
 - Close the browser session on completion and failure paths.
 
 ### M3 — Human provisioning and stale-session recovery
