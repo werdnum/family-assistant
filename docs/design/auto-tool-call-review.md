@@ -107,8 +107,10 @@ Adopted from the risk-adjudication design, with one amendment each where marked:
    never rendered to the reviewer; it appears only as provenance stubs. The one deliberate exception
    is the payload under review itself — see the input contract below.
 4. **Fail closed, degrade to today or stricter.** Reviewer unavailable, timing out, or returning a
-   malformed verdict resolves to the configured `on_error` outcome, default `confirm`. No error path
-   resolves to `allow`.
+   malformed verdict resolves to the delegating cell or rule's **fallback outcome**: for an
+   `adjudicate` matrix cell that defaults to the outcome the cell had before adjudication (so a
+   deployment whose reviewer is absent runs exactly today's matrix — including the `deny` cells);
+   for a static `review` rule it defaults to `confirm`. No fallback is ever `allow`.
 5. **Friction is a budget.** The risk document's budget stands: ≤ 1 interactive confirmation per day
    p50, ≤ 3 p95, measured over 30 days from `taint_audit_events`.
 
@@ -184,17 +186,18 @@ It is an upgrade, not a prerequisite.
 - `deny` — a structured deny-and-continue tool result stating what was blocked, why, and what safer
   route exists. The model continues; hard errors are reserved for explicit floors.
 
-Malformed output, timeout, or provider error resolves to the configured `on_error` outcome (default
-`confirm`; a deployment may configure `deny`). Every verdict — including shadow-mode verdicts —
-writes a `taint_audit_events` row with verdict, reason, latency, and the delegating cell or rule,
-and the diagnostics endpoint grows verdict counts.
+Malformed output, timeout, or provider error resolves to the delegating cell or rule's fallback
+outcome, per design principle 4 — the pre-adjudication matrix outcome for taint cells, `confirm` for
+static `review` rules. Every verdict — including shadow-mode verdicts — writes a
+`taint_audit_events` row with verdict, reason, latency, and the delegating cell or rule, and the
+diagnostics endpoint grows verdict counts.
 
 ### Escalation and cost bounds
 
 Adopted from the risk document: after 3 consecutive denied calls or a configured per-turn total, the
 pattern converts to a single summarizing human confirmation, or ends the turn with an explanation in
 unattended contexts. A per-turn review budget caps model spend; exceeding it resolves remaining
-gated calls as `on_error`.
+gated calls at their fallback outcomes.
 
 **Deliberate v1 simplification:** escalation counters are turn-local and in-memory. A delegated run
 restarts them, so repeated fan-out can duck the threshold until the serialized-taint-schema
@@ -202,10 +205,10 @@ extension (risk document M6) lands. Accepted because the counters are a UX bound
 boundary — every individual call is still judged — and because blocking the reviewer on the
 serialization work would invert the priority this document exists to set.
 
-### Deterministic short-circuits
+### Deterministic short-circuits and signals
 
-The reviewer is not invoked when a cheaper deterministic check already answers the question. These
-run before the model call and resolve the evaluation without spend or latency:
+One deterministic check runs before the model call and can resolve the evaluation without spend or
+latency:
 
 - **Confined-profile egress exemption.** A profile that excludes aggregated context by construction
   and whose current turn has recorded no sensitive reads has nothing to exfiltrate; disclosure-sink
@@ -213,17 +216,20 @@ run before the model call and resolve the evaluation without spend or latency:
   condition (its protected-history clause needs the M6 serialization work and joins the check when
   that lands; until then, absence of the history signal fails toward invoking the reviewer, not
   toward exemption). It is what keeps the browser profiles browsing freely instead of paying a judge
-  call per navigation.
-- **Trusted-destination echo.** When the destination-bearing argument of an egress call is an exact
-  whole-value match (post-normalization) for a destination in the current request's trusted-tier
-  user text, the review short-circuits to `allow` with an audit record in unfloored cells. This is
-  the small, checkable subset of argument provenance matching — "the user pasted this URL in the
-  request being executed" — and per the risk document it never relaxes a configured floor, because
-  mention is not authorization.
+  call per navigation. Any input the check cannot determine falls through to the reviewer, and the
+  short-circuit is valid only in cells whose verdict space includes `audit`.
 
-Any input the short-circuit cannot determine falls through to the reviewer. Short-circuits are
-allow-shaped optimizations, so they are valid only in cells whose verdict space includes the outcome
-they produce.
+A second deterministic computation is a **signal, never a bypass**:
+
+- **Trusted-destination echo.** Whether the destination-bearing argument of an egress call is an
+  exact whole-value match (post-normalization) for a destination in the current request's
+  trusted-tier user text — the small, checkable subset of argument provenance matching. Per the risk
+  document, mention is not authorization: a request can name a destination while *forbidding* it,
+  and no string match can tell the difference, so a passing match never skips the reviewer and never
+  produces `allow` on its own — the payload still has to look benign against the request. The match
+  result feeds the reviewer as strong evidence ("destination appears verbatim in the current trusted
+  request" versus "destination appears nowhere the user wrote") and appears in verdict reasons and
+  confirmation prompts.
 
 ## Integration 1: runtime taint policy
 
@@ -264,9 +270,10 @@ Rationale for the rows that are not simply confirm→adjudicate:
 - **`sandbox_network` moves from hard deny to adjudicate**, superseding PR #1111's
   confirm-with-fail-closed correction in the same direction it was already moving. The reviewer can
   approve an interactive coding task *and* an unattended one whose call is benign relative to its
-  trigger — which confirmation never could, because unattended contexts have no one to ask. Error
-  and malformed-verdict paths fail closed, so no-reviewer degrades to `confirm`, which in unattended
-  contexts degrades to the deferred-confirmation path or denial exactly as today.
+  trigger — which confirmation never could, because unattended contexts have no one to ask. This
+  cell's fallback outcome stays `deny`: a reviewer that is absent, erroring, or over budget does not
+  soften the cell to a confirmable action — only an actual verdict does. The cell without its judge
+  is exactly today's cell.
 
 **No cell in the shipped default carries a verdict floor.** This is the deliberate answer to the
 floor question: the shipped baseline is judge-with-full-authority everywhere the matrix gates,
@@ -368,8 +375,7 @@ tool_call_review:
   model: "gemini-3.7-flash"
   retry_config: { ... }
   timeout_seconds: 10
-  on_error: "confirm"          # confirm | deny — never allow
-  max_reviews_per_turn: 25     # past this, gated calls resolve as on_error
+  max_reviews_per_turn: 25     # past this, gated calls resolve at their fallback outcomes
   escalation:
     consecutive_denials: 3
     total_denials_per_turn: 20
@@ -384,8 +390,12 @@ tool_call_review:
 - Static policy rules accept `decision: "review"`.
 - Authenticated-site configs reference the reviewer through their existing `mitigations` block
   (`action_review: "observe" | "enforce" | "off"`).
-- `enabled: false` (or an unconfigured block) degrades every `adjudicate`/`review` decision to
-  `confirm` — the system without its judgment layer is the system as designed today, never weaker.
+- Errors, timeouts, budget exhaustion, and `enabled: false` (or an unconfigured block) all resolve a
+  judged decision at its **fallback outcome**: for an `adjudicate` matrix cell, the outcome the cell
+  had before adjudication (`confirm` for the egress cells, `deny` for
+  `unknown_external × sandbox_network`); for a static `review` rule, `confirm`. The fallback is
+  per-cell precisely so that the system without its judgment layer is the system shipped today,
+  never weaker — a blanket confirm fallback would quietly soften the deny cells.
 
 `CONFIGURATION_REFERENCE.md` documents the block, the recommended hardening set (the floors an
 operator adds to reach the risk document's posture), and the shadow-phase metrics to consult before
@@ -406,8 +416,9 @@ construction detail is deferred to the PRs.
 
 **M1 — Reviewer core.** The reviewer component: config model, input assembly (taint-metadata row
 selection, fenced argument rendering, provenance digest, guidance), verdict schema and parsing,
-`on_error` handling, audit rows. No call sites yet. *Verify:* unit tests with a fake LLM covering
-verdict parsing, malformed-output fail-closed, and — via the same assembly functions the runtime
+fallback-outcome handling, audit rows. No call sites yet. *Verify:* unit tests with a fake LLM
+covering verdict parsing, malformed-output and timeout resolution to the per-cell fallback (a
+`deny`-fallback cell never softens to `confirm`), and — via the same assembly functions the runtime
 uses — that no untrusted-tier conversation row or free-text digest field renders.
 
 **M2 — Taint `adjudicate` in shadow.** The new outcome with verdict-floor and rank semantics,
@@ -419,11 +430,12 @@ minimum; post-verdict `operator_minimum` never weakens a verdict); replayed emai
 fixtures produce verdicts, and none of them `allow` at the fixture's target sink; observe-mode
 evaluations invoke the reviewer and downgrade effect to `audit`.
 
-**M3 — Deterministic short-circuits.** The confined-profile egress exemption (computable clauses,
-fail-toward-review) and the trusted-destination echo check. *Verify:* browser-profile navigation
-generates no reviewer calls; the same navigation from a context-bearing profile does; a user-pasted
-URL short-circuits to allow-with-audit; an appended-query-parameter variant does not match and
-reaches the reviewer.
+**M3 — Deterministic short-circuit and echo signal.** The confined-profile egress exemption
+(computable clauses, fail-toward-review) and the trusted-destination echo signal as reviewer input.
+*Verify:* browser-profile navigation generates no reviewer calls; the same navigation from a
+context-bearing profile does; a user-pasted URL reaches the reviewer with a positive echo signal and
+an appended-query-parameter variant with a negative one; the negation fixture ("never send to X" in
+the request, injection targeting X) reaches the reviewer rather than short-circuiting.
 
 **M4 — Static `review` decision.** The new decision value, advertisement semantics, and the
 one-judgment-per-call merge with the taint layer. *Verify:* policy-engine tests for layering and
@@ -453,8 +465,12 @@ When this design is working:
 
 - Every call the matrix or a policy rule gates is judged, confirmed, or denied — under `enforce`,
   nothing gated executes on silence.
-- No reviewer verdict, error, or outage ever resolves to `allow`: errors resolve to `on_error`
-  (confirm or deny), and an absent reviewer degrades every judged cell to `confirm`.
+- No reviewer error, outage, or absence ever resolves to `allow`: every no-verdict path resolves at
+  the per-cell fallback outcome, which is never weaker than the cell's pre-adjudication default —
+  the `deny` cells stay `deny` without a verdict.
+- No deterministic signal (the destination echo included) skips the reviewer or produces `allow` on
+  its own; the confined-profile exemption resolves only to `audit`, only where the verdict space
+  permits it.
 - No reviewer output writes provenance, lowers a tier, removes a source, or relaxes a configured
   floor or `operator_minimum`.
 - Untrusted conversation content is never rendered to the conversation reviewer; selection is by
@@ -492,7 +508,7 @@ When this design is working:
    until the taint-side shadow data validates the reviewer?
 5. Does the one-judgment-per-call merge across static and taint layers need anything beyond
    intersecting the verdict spaces?
-6. Is a per-turn review budget with `on_error` fallback the right cost bound, or should exhaustion
-   escalate to a human instead?
+6. Is a per-turn review budget resolving at fallback outcomes the right cost bound, or should
+   exhaustion escalate to a human instead?
 7. For the browser action reviewer, is objective-plus-envelope-plus-fenced-environment the complete
    trusted-context set, or should recent verdicts in the same session feed back in?
