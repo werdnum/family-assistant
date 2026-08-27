@@ -233,7 +233,12 @@ improved probabilistically.
   not same-site damage: it can be replayed from attacker infrastructure, outside every mitigation,
   audit, and confinement path, until revocation. Jar-loaded sessions therefore never expose `exec`;
   a workflow that needs scripted page access is the deterministic-adapter path, not an opt-in.
-- **Exclusive human control:** snapshots and commands fail while the human owns the browser.
+- **Exclusive human control:** snapshots and commands fail while the human owns the browser, and
+  they fail closed. The shipped backend transparently replaces a lost-lease or expired session with
+  a fresh one on navigate so ordinary conversations are never wedged; for a jar-bound run that
+  recovery would be an unconfined, jar-less escape hatch opened mid-handoff by page-controlled
+  input. A jar-bound run's backend never re-provisions a session on its own — recovery is handback
+  or the run ending.
 - **Revocation:** deleting or invalidating a jar terminates sessions loaded from it.
 
 ### Imperfect mitigations
@@ -761,6 +766,8 @@ HelloFresh adapter or keep the task human-operated.
   browser profile ID, visual profile ID, damage-envelope text, and mitigation settings.
 - Add the minimal `RemoteBrowserBackend` jar methods needed to load a known jar into a fresh session
   and probe its status.
+- Disable the backend's transparent lost-lease and gone-session re-provisioning for jar-bound
+  sessions: every command fails closed until handback or run end, never a fresh unconfined session.
 - Never send `confine_navigation: false` or `allow_exec: true` for jar-loaded sessions.
 - Verify the created session's jar generation and origin metadata against trusted configuration.
 
