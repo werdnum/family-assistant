@@ -377,12 +377,17 @@ through the normal async completion path. Exactly one owner closes the session. 
 idle/maximum-lifetime backstop reclaims a session whose owning run dies without reaching a terminal
 state, and jar revocation still terminates the session immediately regardless of owner.
 
-Human handoff rides the same lifecycle rather than ending the run. The delegated worker already has
-the browser-server handoff flow — share the one-time takeover link, wait under exclusive human
-control, resume via handback — and a run that has handed off to the background can span that wait
-without holding the caller's loop open. `needs_human` remains the terminal outcome only for steps a
-human cannot unblock mid-session (unsupported MFA or SSO at login, hard bot blocks), where the human
-path is refreshing the jar and retrying from the original objective.
+Across a human handoff, the durable object is the session, not the run. A backgrounded run has no
+input channel, so the design does not pretend the worker can wait live for the handback token: when
+the worker requests takeover it shares the one-time link and ends in a resumable terminal state, and
+the session parks under exclusive human control — still origin-confined, still fail-closed for agent
+commands, still subject to revocation and the lifetime backstop. Delegation already supports
+resuming a terminal run for the same caller; after handback, a follow-up invocation resumes that run
+and rebinds the parked session, continuing from both the worker's context and the live browser state
+(URL, login, form progress) rather than restarting from the objective. `needs_human` remains the
+fully terminal outcome for steps a human cannot unblock mid-session (unsupported MFA or SSO at
+login, hard bot blocks), where the human path is refreshing the jar and retrying from the original
+objective.
 
 The browser session closes when its owning run ends, unless the user has taken human control. The
 saved jar remains the only durable browser capability.
@@ -801,6 +806,8 @@ HelloFresh adapter or keep the task human-operated.
 - Add a trusted operator mapping from saved jar to site configuration.
 - Surface `login_required` without exposing the full jar inventory to the model.
 - Support human refresh of the same jar ID and retry from the original objective.
+- Park a handed-off session under exclusive human control, and rebind it when a follow-up invocation
+  resumes the terminal delegated run after handback.
 - Resolve browser-server refresh/UI gaps only as required by this flow.
 
 ### M4 — HelloFresh end-to-end workflow
