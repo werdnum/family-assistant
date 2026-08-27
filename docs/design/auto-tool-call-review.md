@@ -150,6 +150,14 @@ The reviewer's context is a typed structure assembled deterministically:
   household considers routine, plus — for action review — the site's configured damage envelope.
   This is operator configuration, the same trust class as a system prompt, and it is what makes the
   reviewer tunable without code changes.
+- **The trigger definition, for unattended runs.** An event-handler or scheduled turn has no trusted
+  user message; its trusted intent is the human-authored definition that created the run — the
+  listener's instruction, the automation's prompt, the scheduled task's objective. The definition
+  renders under the same taint-metadata rule as everything else: its stored provenance decides, so
+  an automation created from a tainted turn stubs like any other untrusted source (which is the
+  executable-persistence concern the risk document already covers), while the trigger *payload* —
+  the event data, deliberately untrusted — is always represented as a provenance stub, never
+  rendered.
 
 ### On rendering arguments: the auto-mode position, not the stub position
 
@@ -352,8 +360,12 @@ What this buys, concretely: today's static `confirm` on `delete_calendar_event` 
 rubber-stamp training; a `review` decision approves the aligned case and asks only when deletion
 appears from nowhere. In the other direction, a profile like `event_handler` that today gets a
 binary allow-or-nothing on `send_message_to_user` can hold it at `review` — judged against the
-triggering event, without confirmation fatigue in an unattended context. This is the flexibility the
-static engine lacks: a decision between "always ask" and "never ask".
+trusted listener definition per the input contract (the event payload itself is untrusted and
+renders only as a provenance stub), so a send the listener's instruction plainly anticipates is
+allowed without a human, and an invented one is not. An ambiguous `confirm` verdict in this
+unattended context lands in the deferred-confirmation tray rather than a live prompt — still a
+middle ground the binary decision lacks. This is the flexibility the static engine misses: a
+decision between "always ask" and "never ask".
 
 ## Integration 3: browser action review (PR #1136)
 
