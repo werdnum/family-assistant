@@ -20,8 +20,8 @@ The implementation uses Family Assistant's existing processing-profile and deleg
 
 - a trusted profile such as `default_assistant` invokes a high-level authenticated-site tool;
 - the tool creates a fresh browser-server session from the configured jar;
-- the task runs under the existing `browser_profile`, which may delegate visual steps to
-  `browser_visual_profile` while sharing the same browser session;
+- the task runs under static authenticated variants of the existing `browser_profile` and
+  `browser_visual_profile`, sharing the same browser session through the existing delegation path;
 - the browser profiles receive the normal browser tools, but no jar-selection or credential tools;
 - browser-server confines the session to the configured authenticated origins.
 
@@ -212,7 +212,12 @@ improved probabilistically.
 - **Opaque session state:** cookie and origin-storage values are not returned through model-facing
   APIs or logs.
 - **Profile tool policy:** the browser processing profile has browser tools, not unrelated
-  household, messaging, credential, or general network tools.
+  household, messaging, credential, or general network tools. The boundary is the *effective*
+  surface, not the profile-local policy: globally granted tools (`read_text_attachment`, `jq_query`,
+  `report_technical_problem`) land in a layer a profile's own policy cannot refuse and are withheld
+  via `excluded_global_tools`, and ambient household context providers (notes, calendar, known
+  users, weather, Home Assistant) are excluded via `excluded_context_providers`, so the browser
+  worker sees the objective and task-scoped facts, not the household's data.
 - **No recursive site acquisition:** `run_authenticated_site_task` is not available to the browser
   profiles.
 - **No `exec` in jar-loaded sessions:** arbitrary page evaluation reads non-HttpOnly cookies and
@@ -256,12 +261,12 @@ trusted caller profile
                 | resolve configured jar + origins
                 | create fresh browser-server session
                 v
-          browser_profile
+   authenticated_browser_profile
   semantic snapshots / click / fill / wait
                 |
                 | existing delegation when visual action is needed
                 v
-     browser_visual_profile
+   authenticated_browser_visual_profile
   Gemini native computer use + safety decisions
                 |
                 v
@@ -306,15 +311,24 @@ profile uses its current accessibility-snapshot browser tools.
 The shipped `browser_profile` is not usable as-is for authenticated runs: its tool policy allows
 `browser_exec`, and its system prompt actively directs the model to reach for it (shadow DOM,
 iframes, fetching JSON endpoints). That conflicts with the no-`exec` boundary above and would steer
-authenticated runs into a tool that must always fail. The implementation therefore adds a static
-`authenticated_browser_profile` variant with `exec` removed from both the tool policy and the
-prompt, and the remaining tool list reviewed against the intended damage envelope. That is standard
-processing-profile configuration, not a site-specific runtime or a dynamically generated worker.
+authenticated runs into a tool that must always fail. Nor does profile-local policy alone define the
+boundary: `global_tools_policy` grants tools in a layer the profile's own policy cannot refuse, and
+context providers inject household data into every profile's prompt by default.
+
+The implementation therefore adds a static `authenticated_browser_profile` variant defined by its
+effective surface, as `media_analyst` and `coder` already are: `exec` removed from both the tool
+policy and the prompt, the globally granted tools withheld via `excluded_global_tools`, ambient
+household context excluded via `excluded_context_providers`, and the remaining tool list reviewed
+against the intended damage envelope. That is standard processing-profile configuration, not a
+site-specific runtime or a dynamically generated worker.
 
 ### `browser_visual_profile`
 
-The existing visual profile may be used through its current delegation path and shared browser tab.
-Its native Gemini computer-use integration already provides:
+The visual path keeps its current delegation mechanism and shared browser tab, through an
+`authenticated_browser_visual_profile` variant carrying the same effective-surface exclusions as the
+semantic variant: the shipped visual profile also receives globally granted tools and ambient
+household context by default, and an authenticated run must not pair either with page-controlled
+input. The native Gemini computer-use integration already provides:
 
 - screenshot-level prompt-injection detection;
 - `safety_decision=require_confirmation` on selected proposed actions;
@@ -352,8 +366,8 @@ authenticated_sites:
       - "andrew"
     caller_profiles:
       - "default_assistant"
-    browser_profile: "browser_profile"
-    visual_profile: "browser_visual_profile"
+    browser_profile: "authenticated_browser_profile"
+    visual_profile: "authenticated_browser_visual_profile"
     damage_envelope: >-
       The model may change ordinary meal selections and reversible preferences. It must not be
       treated as guaranteed unable to add extras, change plan settings, or create charges.
@@ -371,7 +385,11 @@ The configuration is operator-controlled and not generated by the model. In part
 - `authorized_users` binds the site to the household identities allowed to act on the bound account,
   and resolution fails closed for anyone else;
 - caller profiles are explicit processing-profile IDs;
-- browser and visual execution use existing processing-profile IDs;
+- browser and visual execution use existing static processing-profile IDs, and startup validation
+  fails closed if a configured profile's effective surface violates the authenticated-run
+  constraints — `exec` reachable, a globally granted tool not withheld, or ambient household context
+  providers not excluded — so pointing a site at the shipped `browser_profile` is a configuration
+  error, not a silent widening;
 - the damage envelope is operator documentation, not a policy promise the runtime cannot enforce;
 - mitigation settings describe best-effort review rather than a read/write allowlist.
 
@@ -610,9 +628,10 @@ controls remain the chokepoints for that separate concern.
 1. A caller profile invokes `run_authenticated_site_task` with a configured `site_id` and objective.
 2. The tool creates a fresh browser-server session from the configured jar with confinement enabled.
 3. It navigates to the configured start URL.
-4. The objective is delegated through the existing processing-profile system to `browser_profile`.
-5. The browser profile may delegate visual steps to `browser_visual_profile` using the shared
-   session.
+4. The objective is delegated through the existing processing-profile system to
+   `authenticated_browser_profile`.
+5. The browser profile may delegate visual steps to `authenticated_browser_visual_profile` using the
+   shared session.
 6. The result returns with browser provenance preserved.
 7. The session closes unless a human handoff is active.
 
@@ -683,7 +702,8 @@ HelloFresh adapter or keep the task human-operated.
 02. The tool is available only to configured caller processing profiles, and only the site's
     configured authorized users can act on the bound account.
 03. Family Assistant creates a fresh confined browser session from the bound jar.
-04. The task runs through the existing `browser_profile` and, when needed, `browser_visual_profile`.
+04. The task runs through the authenticated browser profile variants, whose effective surface
+    excludes `exec`, globally granted tools, and ambient household context.
 05. It can select and save ordinary meal choices without asking for jar-load confirmation.
 06. Neither browser profile can list or choose another jar, call Keychute, or invoke unrelated
     household tools.
@@ -714,12 +734,14 @@ HelloFresh adapter or keep the task human-operated.
 - Add `run_authenticated_site_task` through the existing local tool registry.
 - Grant it only to configured caller profiles through the ordinary tool-policy system, and enforce
   the site's `authorized_users` check fail-closed before session creation.
-- Add the `authenticated_browser_profile` variant: no `exec` in policy or prompt, remaining tools
-  reviewed against the envelope. Authenticated runs delegate to it rather than the shipped
-  `browser_profile`.
+- Add the `authenticated_browser_profile` and `authenticated_browser_visual_profile` variants: no
+  `exec` in policy or prompt, globally granted tools withheld via `excluded_global_tools`, ambient
+  context providers excluded via `excluded_context_providers`, remaining tools reviewed against the
+  envelope. Authenticated runs delegate to them rather than the shipped profiles, and startup
+  validation rejects a site configuration naming a profile that violates these constraints.
 - Bind the created jar-loaded browser session into the delegated execution context.
 - Delegate the objective to the authenticated browser profile.
-- Preserve the existing shared-session delegation to `browser_visual_profile`.
+- Preserve the existing shared-session delegation mechanism for the visual variant.
 - Ensure neither browser profile receives jar-management, credential, or recursive
   authenticated-site tools.
 - Preserve browser result provenance when the result returns to the caller.
@@ -820,7 +842,9 @@ The hard design is successful when all of these are true:
 - The session's authenticated origin set is immutable and visible to trusted orchestration code.
 - Top-level navigation and forms are confined to configured origins.
 - The browser profiles have no direct credential, jar-management, unrelated household, messaging,
-  code-execution, or recursive authenticated-site tools.
+  code-execution, or recursive authenticated-site tools on their effective surface, globally granted
+  tools included.
+- Authenticated browser runs receive no ambient household context in their prompts.
 - Human control remains exclusive during credential and MFA entry.
 - Revoking a jar terminates live sessions using it.
 - A direct user request does not incur redundant jar-load confirmation.
@@ -879,8 +903,8 @@ This is a design-only change. Before implementation:
 - review against browser-server's shipped jar API and confinement semantics;
 - review against Family Assistant's existing profile, delegation, confirmation, and browser-session
   architecture;
-- verify which tools `browser_profile` and `browser_visual_profile` currently receive and remove any
-  direct cross-capability path from authenticated runs;
+- verify the authenticated profile variants' *effective* tool surface (global grants included) and
+  injected context, and remove any direct cross-capability path from authenticated runs;
 - verify that a delegated profile can be bound to the intended jar-loaded remote session without
   model-visible session identifiers;
 - threat-model the first HelloFresh configuration from the actual reachable account UI;
