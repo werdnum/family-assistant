@@ -240,9 +240,14 @@ out for a log line), `adjudicate` with a `confirm` floor ranks equal to plain `c
 `operator_minimum` applies to the *verdict* after adjudication on the strictness axis only — `deny`
 verdicts always stand, and adjudication is disallowed in cells whose minimum is `redact`. In
 `observe` mode the evaluator still returns `adjudicate` and the provider still invokes the reviewer;
-only the verdict's effect downgrades to `audit`. That is the free shadow phase: real verdicts
-against real traffic at zero user-visible cost, starting the day the defaults change, while the
-deployment's `mode` stays `observe`.
+only the verdict's effect downgrades to `audit`. And because the effect is `audit` whatever the
+verdict says, the observe-mode invocation runs off the critical path: the call proceeds immediately
+and the verdict is recorded asynchronously, so shadow adds no latency anywhere — including the
+browser hot path, whose every tool call resolves to an egress sink and would otherwise pay a
+blocking reviewer round-trip per action until the M3 exemption lands. That is the free shadow phase:
+real verdicts against real traffic at zero user-visible cost, starting the day the defaults change,
+while the deployment's `mode` stays `observe`. Under `enforce` the invocation necessarily blocks,
+which is why the M5 gate includes p95 reviewer latency.
 
 The shadow property belongs to `observe` mode, not to the defaults change itself. For a deployment
 already running `mode: enforce`, adopting the new default matrix is a real posture change — cells
@@ -338,7 +343,9 @@ Semantics:
 - **One judgment per call.** When static policy says `review` and the taint layer says `adjudicate`
   for the same call, the reviewer runs once with both delegating contexts, and one verdict satisfies
   both layers — the same single-payload rule that already governs double confirmation. The effective
-  verdict space is the intersection (the tighter of the two floors).
+  verdict space is the intersection (the tighter of the two floors), and the no-verdict paths merge
+  the same tighten-only way: the combined fallback is the strictest of the layers' fallbacks, so a
+  static `confirm` fallback never softens a taint-cell `deny` fallback.
 
 What this buys, concretely: today's static `confirm` on `delete_calendar_event` and
 `modify_calendar_event` interrupts the user on every deletion they just asked for, which is
@@ -435,7 +442,8 @@ uses — that no untrusted-tier conversation row or free-text digest field rende
 
 **M2 — Taint `adjudicate` in shadow.** The new outcome with verdict-floor and rank semantics,
 provider invocation, deny-and-continue result, turn-local escalation counters, and the default
-matrix change. Production `mode` stays `observe`, so this lands as a pure shadow phase there: real
+matrix change, with observe-mode invocations running off the critical path (see the shadow-phase
+section). Production `mode` stays `observe`, so this lands as a pure shadow phase there: real
 verdicts on real traffic in `taint_audit_events`, nothing user-visible. The milestone ships the
 enforce-deployment migration note alongside the defaults change (pin previous outcomes via
 `operator_minimum`, or adopt the judged posture — see the shadow-phase section), so no deployment's
@@ -444,7 +452,7 @@ enforcement weakens without an explicit configuration decision. *Verify:* merge-
 post-verdict `operator_minimum` never weakens a verdict); a config test that the documented pin
 reproduces the pre-change matrix outcomes cell-for-cell; replayed email-intake injection fixtures
 produce verdicts, and none of them `allow` at the fixture's target sink; observe-mode evaluations
-invoke the reviewer and downgrade effect to `audit`.
+invoke the reviewer without blocking the gated call and downgrade effect to `audit`.
 
 **M3 — Deterministic short-circuit and echo signal.** The confined-profile egress exemption
 (computable clauses, fail-toward-review) and the trusted-destination echo signal as reviewer input.
