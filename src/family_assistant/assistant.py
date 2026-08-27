@@ -18,6 +18,7 @@ import uvicorn
 
 # Import Embedding interface/clients
 from family_assistant import embeddings
+from family_assistant.a2a.attachments import A2AAttachmentTransfer
 from family_assistant.config_models import (
     DEFAULT_REMOTE_MAX_ASYNC_SECONDS,
     AppConfig,  # Used at runtime
@@ -1661,10 +1662,20 @@ class Assistant:
                 "; ".join(auth_errors),
             )
 
+        if self.attachment_registry is None:
+            raise RuntimeError(
+                "AttachmentRegistry must be initialized before remote A2A profiles."
+            )
+        attachments = A2AAttachmentTransfer(
+            attachment_registry=self.attachment_registry,
+            db_context=self._database(),
+        )
+
         client = A2AClientWrapper(
             agent_url=remote_config.agent_url,
             auth_config=auth_config,
             timeout=remote_config.timeout_seconds,
+            attachments=attachments,
         )
 
         # The async wall-clock cap is decoupled from the per-HTTP-call timeout: an
@@ -1693,6 +1704,7 @@ class Assistant:
         service = RemoteA2AService(
             service_config=service_config,
             client=client,
+            attachments=attachments,
         )
 
         self.processing_services_registry[profile_conf.id] = service

@@ -9,9 +9,18 @@ from typing import TYPE_CHECKING
 
 import a2a.types as a2a_types
 
+from family_assistant.a2a.attachments import default_a2a_peer_taint_source
 from family_assistant.a2a.types import Message, Part, Role, Task, TaskState
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from family_assistant.a2a.attachments import A2AAttachmentTransfer
     from family_assistant.processing.types import ChatInteractionResult
 
 logger = logging.getLogger(__name__)
@@ -29,11 +38,20 @@ def _extract_status_text(message: Message | None, fallback: str) -> str:
     return " ".join(texts) if texts else fallback
 
 
-def a2a_task_to_chat_result(task: Task) -> ChatInteractionResult:
+async def a2a_task_to_chat_result(
+    task: Task,
+    *,
+    attachments: A2AAttachmentTransfer | None = None,
+    conversation_id: str | None = None,
+    owner_user_id: str | None = None,
+    turn_taint_sources: Sequence[TaintSource] | None = None,
+) -> ChatInteractionResult:
     """Convert a completed A2A Task to a ChatInteractionResult.
 
     Extracts text and files from artifacts first, falling back to the
-    terminal agent message if no artifacts are present.
+    terminal agent message if no artifacts are present. Files the remote sent
+    inline are registered as FA attachments and returned as ``attachment_ids``;
+    a file offered only as a remote URI stays a textual reference.
     """
     from family_assistant.processing.types import ChatInteractionResult as CIR
 
@@ -77,34 +95,77 @@ def a2a_task_to_chat_result(task: Task) -> ChatInteractionResult:
             error_traceback=f"A2A task in non-terminal state: {task.status.state}",
         )
 
-    text_parts: list[str] = []
+    attachment_ids: list[str] = []
+    if attachments is not None:
+        attachment_ids = await attachments.store_task_files(
+            task,
+            conversation_id=conversation_id,
+            owner_user_id=owner_user_id,
+            taint_sources=_returned_file_taint_sources(task, turn_taint_sources),
+        )
 
-    _extract_text_from_parts(task.artifacts or [], text_parts)
+    text_parts: list[str] = []
+    # Inline files became real attachments above; describing them again as text
+    # would duplicate them in the reply.
+    stored_inline = attachments is not None
+    for artifact in task.artifacts or []:
+        _extract_text_from_message_parts(artifact.parts, text_parts, stored_inline)
 
     # Fall back to the terminal agent message if no artifacts produced text
     if not text_parts and task.history:
         for msg in reversed(task.history):
             if msg.role == Role.agent:
-                _extract_text_from_message_parts(msg.parts, text_parts)
+                _extract_text_from_message_parts(msg.parts, text_parts, stored_inline)
                 break
 
-    if not text_parts:
+    if not text_parts and not attachment_ids:
         return CIR.error(
             text_reply="Remote agent completed but produced no output.",
             error_traceback="A2A task completed with no text, data, or file parts",
         )
 
-    return CIR.success(text_reply="\n\n".join(text_parts))
+    return CIR.success(
+        text_reply="\n\n".join(text_parts),
+        attachment_ids=attachment_ids or None,
+    )
 
 
-def _extract_text_from_parts(
-    artifacts: list[a2a_types.Artifact], text_parts: list[str]
+def _returned_file_taint_sources(
+    task: Task, turn_taint_sources: Sequence[TaintSource] | None
+) -> tuple[TaintSource, ...]:
+    """Taint to record on a file a remote agent returned.
+
+    The agent worked on what the turn sent it, so its output carries at least
+    that turn's taint: dropping it would let a file come back from an
+    unknown-external request as merely peer-trusted. A caller that cannot say
+    what the turn carried (the polled path, which holds only a remote task id)
+    gets the conservative tier rather than the peer default, since the file is
+    then of genuinely unknown provenance.
+    """
+    if turn_taint_sources is None:
+        return (
+            TaintSource(
+                source_type=TaintSourceType.MANUAL,
+                source_id=task.id,
+                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                labels=frozenset({"source_unknown_external"}),
+                reason=(
+                    "File returned by a remote A2A agent on a polled delegation, "
+                    "whose originating turn's taint is not available here."
+                ),
+            ),
+        )
+    peer = default_a2a_peer_taint_source(
+        task.id,
+        "File returned by a remote A2A agent; the agent's own inputs are not "
+        "visible here, so its output carries peer trust.",
+    )
+    return (peer, *turn_taint_sources)
+
+
+def _extract_text_from_message_parts(
+    parts: list[Part], text_parts: list[str], stored_inline: bool
 ) -> None:
-    for artifact in artifacts:
-        _extract_text_from_message_parts(artifact.parts, text_parts)
-
-
-def _extract_text_from_message_parts(parts: list[Part], text_parts: list[str]) -> None:
     for part in parts:
         inner = part.root
         if isinstance(inner, a2a_types.TextPart):
@@ -112,9 +173,17 @@ def _extract_text_from_message_parts(parts: list[Part], text_parts: list[str]) -
         elif isinstance(inner, a2a_types.DataPart):
             text_parts.append(json.dumps(inner.data, indent=2))
         elif isinstance(inner, a2a_types.FilePart):
-            file = inner.file
-            if isinstance(file, a2a_types.FileWithUri):
-                text_parts.append(f"[File: {file.uri}]")
-            else:
-                mime = getattr(file, "mime_type", "unknown") or "unknown"
-                text_parts.append(f"[Inline file: {mime}]")
+            text_parts.extend(_describe_file_part(inner, stored_inline))
+
+
+def _describe_file_part(
+    file_part: a2a_types.FilePart, stored_inline: bool
+) -> list[str]:
+    """Textual stand-in for a file part that did not become an attachment."""
+    file = file_part.file
+    if isinstance(file, a2a_types.FileWithUri) and not file.uri.startswith("data:"):
+        return [f"[File: {file.uri}]"]
+    if stored_inline:
+        return []
+    mime = getattr(file, "mime_type", "unknown") or "unknown"
+    return [f"[Inline file: {mime}]"]

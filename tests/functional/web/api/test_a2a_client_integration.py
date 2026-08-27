@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock
 
@@ -17,9 +18,11 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from family_assistant.a2a.attachments import A2AAttachmentTransfer
 from family_assistant.a2a.client import (
     A2AClientError,
     A2AClientWrapper,
+    A2APermanentError,
     A2ATaskNotFoundError,
 )
 from family_assistant.a2a.remote_service import RemoteA2AService
@@ -35,7 +38,11 @@ from family_assistant.a2a.types import (
     TextPart,
 )
 from family_assistant.delegation_security import DelegationSecurityLevel
-from family_assistant.llm.content_parts import ContentPartDict, text_content
+from family_assistant.llm.content_parts import (
+    ContentPartDict,
+    attachment_content,
+    text_content,
+)
 from family_assistant.processing import PENDING, ChatInteractionResult
 from family_assistant.processing.types import RemoteServiceConfig
 from family_assistant.security.taint import (
@@ -115,9 +122,11 @@ class _CapturingA2AClient:
         context_id: str | None = None,
         task_id: str | None = None,
         metadata: dict[str, object] | None = None,
+        acting_user_id: str | None = None,
     ) -> Task:
         _ = content_parts
         _ = task_id
+        _ = acting_user_id
         self.captured_metadata = metadata
         return Task(
             id="captured-task",
@@ -138,9 +147,11 @@ class _CapturingA2AClient:
         context_id: str | None = None,
         task_id: str | None = None,
         metadata: dict[str, object] | None = None,
+        acting_user_id: str | None = None,
     ) -> Task:
         _ = content_parts
         _ = task_id
+        _ = acting_user_id
         self.captured_metadata = metadata
         return Task(
             id="captured-async-task",
@@ -294,10 +305,75 @@ class TestA2AClientIntegration:
         task = await a2a_client_wrapper.send_message([
             text_content("What is the meaning of life?")
         ])
-        result = a2a_task_to_chat_result(task)
+        result = await a2a_task_to_chat_result(task)
 
         assert not result.has_error
         assert "42" in result.text_reply
+
+    @pytest.mark.asyncio
+    async def test_attachment_reaches_the_remote_agent_as_a_file(
+        self,
+        a2a_client_wrapper: A2AClientWrapper,
+        app_fixture: FastAPI,
+        api_db_context: Database,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+    ) -> None:
+        """An attachment crosses the wire as bytes and is re-registered remotely.
+
+        The remote side is this project's own A2A server, so this covers both
+        halves of the outbound leg: the client inlining the file, and the server
+        turning it back into an attachment on the remote conversation.
+        """
+        registry = app_fixture.state.attachment_registry
+        a2a_client_wrapper._attachments = A2AAttachmentTransfer(
+            registry, api_db_context
+        )
+        api_mock_llm_client.default_response = MockLLMOutput(content="got the file")
+        stored = await registry.store_and_register_tool_attachment(
+            file_content=b"%PDF-1.4 the original bytes",
+            filename="brief.pdf",
+            content_type="application/pdf",
+            tool_name="test_tool",
+            db_context=api_db_context,
+        )
+
+        task = await a2a_client_wrapper.send_message(
+            [text_content("read this"), attachment_content(stored.attachment_id)],
+            context_id="attachment-ctx",
+        )
+
+        assert task.status.state.value == "completed"
+        received = await registry.get_recent_attachments_for_conversation(
+            api_db_context,
+            "a2a-attachment-ctx",
+            datetime.now(UTC) - timedelta(minutes=5),
+            acting_user_id="test_user",
+        )
+        assert len(received) == 1
+        assert received[0].attachment_id != stored.attachment_id
+        assert received[0].mime_type == "application/pdf"
+        assert received[0].metadata["original_filename"] == "brief.pdf"
+        content = await registry.get_attachment_content(
+            api_db_context, received[0].attachment_id, acting_user_id="test_user"
+        )
+        assert content == b"%PDF-1.4 the original bytes"
+
+    @pytest.mark.asyncio
+    async def test_unknown_attachment_fails_fast(
+        self,
+        a2a_client_wrapper: A2AClientWrapper,
+        app_fixture: FastAPI,
+        api_db_context: Database,
+    ) -> None:
+        """An unresolvable attachment is a permanent error, not a bare id sent."""
+        a2a_client_wrapper._attachments = A2AAttachmentTransfer(
+            app_fixture.state.attachment_registry, api_db_context
+        )
+
+        with pytest.raises(A2APermanentError, match="not available"):
+            await a2a_client_wrapper.send_message(
+                [attachment_content("does-not-exist")], context_id="missing-att-ctx"
+            )
 
     @pytest.mark.asyncio
     async def test_context_id_isolation(
@@ -345,7 +421,7 @@ class TestA2AClientAsyncMethods:
 
         polled = await a2a_client_wrapper.get_task(task.id)
         assert polled.status.state.value == "completed"
-        result = a2a_task_to_chat_result(polled)
+        result = await a2a_task_to_chat_result(polled)
         assert "async done" in result.text_reply
 
     @pytest.mark.postgres

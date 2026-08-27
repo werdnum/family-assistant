@@ -22,6 +22,7 @@ from family_assistant.security.taint import A2A_TAINT_METADATA_KEY, TurnTaintSta
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from family_assistant.a2a.attachments import A2AAttachmentTransfer
     from family_assistant.a2a.client import A2AClientWrapper
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.content_parts import ContentPartDict
@@ -48,9 +49,11 @@ class RemoteA2AService:
         self,
         service_config: RemoteServiceConfig,
         client: A2AClientWrapper,
+        attachments: A2AAttachmentTransfer | None = None,
     ) -> None:
         self._service_config = service_config
         self._client = client
+        self._attachments = attachments
 
     @property
     def service_config(self) -> RemoteServiceConfig:
@@ -109,6 +112,7 @@ class RemoteA2AService:
                 trigger_content_parts,
                 context_id=context_id,
                 metadata=metadata,
+                acting_user_id=user_id,
             )
         except A2AClientError as exc:
             logger.error(
@@ -121,7 +125,13 @@ class RemoteA2AService:
                 error_traceback=str(exc),
             )
 
-        return a2a_task_to_chat_result(task)
+        return await a2a_task_to_chat_result(
+            task,
+            attachments=self._attachments,
+            conversation_id=conversation_id,
+            owner_user_id=user_id,
+            turn_taint_sources=initial_taint_sources or (),
+        )
 
     def _context_id(self, conversation_id: str, subconversation_id: str | None) -> str:
         base = subconversation_id or conversation_id
@@ -153,14 +163,14 @@ class RemoteA2AService:
         poll. If the remote returned a terminal task on submit (a synchronous
         agent that ignored ``blocking=false``), the converted result is returned
         in ``terminal_result`` so the caller can complete without polling.
-        ``user_name``, ``db_context`` and ``acting_user_id`` and
-        ``initial_taint_state`` are unused: the
-        remote agent's own context_id already carries continuity, unlike a local
-        pollable target, and this service resolves no owner-scoped artifacts.
+        ``acting_user_id`` scopes the attachments this turn may send and owns
+        any file the remote returns terminally. ``user_name``, ``db_context``
+        and ``initial_taint_state`` are unused: the remote agent's own
+        context_id already carries continuity, unlike a local pollable target,
+        and this service reads attachments through its own registry handle.
         """
         _ = user_name
         _ = db_context
-        _ = acting_user_id
         _ = initial_taint_state
         context_id = self._context_id(conversation_id, subconversation_id)
         logger.info(
@@ -177,8 +187,19 @@ class RemoteA2AService:
             content_parts,
             context_id=context_id,
             metadata=metadata,
+            acting_user_id=acting_user_id,
         )
-        terminal_result = None if _is_pending(task) else a2a_task_to_chat_result(task)
+        terminal_result = (
+            None
+            if _is_pending(task)
+            else await a2a_task_to_chat_result(
+                task,
+                attachments=self._attachments,
+                conversation_id=conversation_id,
+                owner_user_id=acting_user_id,
+                turn_taint_sources=initial_taint_sources or (),
+            )
+        )
         return RemoteSubmission(
             remote_task_id=task.id,
             remote_context_id=task.context_id,
@@ -190,12 +211,20 @@ class RemoteA2AService:
         remote_task_id: str,
         remote_context_id: str | None,
     ) -> ChatInteractionResult | PendingPoll:
-        """Poll the remote task once; return PENDING if it is not yet terminal."""
+        """Poll the remote task once; return PENDING if it is not yet terminal.
+
+        A polled run carries neither the acting user nor the originating turn's
+        taint (the worker polls on behalf of a persisted delegation, holding
+        only the remote task id), so files the remote returns here are
+        registered without an owner and with the conservative taint tier.
+        """
         _ = remote_context_id
         task = await self._client.get_task(remote_task_id)
         if _is_pending(task):
             return PENDING
-        return a2a_task_to_chat_result(task)
+        return await a2a_task_to_chat_result(
+            task, attachments=self._attachments, owner_user_id=None
+        )
 
     async def cancel_async(self, remote_task_id: str) -> None:
         """Best-effort cancellation of the remote task.
