@@ -1392,8 +1392,7 @@ paths rather than shadow traffic.
 The shipped default matrix now replaces the old egress and sandbox gates with `adjudicate`, and
 makes `unknown_external` household messaging and sensitive-read broadening auditable. A deployment
 already running `taint_policy.mode: enforce` must either adopt that judged posture deliberately or
-pin the other previously deterministic gates before upgrading. This reminder-compatible pin
-intentionally leaves `unknown_external × known_user_message` at the shipped `audit` outcome:
+pin every previously deterministic gate before upgrading. This is the literal cell-for-cell pin:
 
 ```yaml
 taint_policy:
@@ -1409,23 +1408,21 @@ taint_policy:
     unknown_external:
       arbitrary_external_message: "confirm"
       attacker_addressable_egress: "confirm"
+      known_user_message: "confirm"
       sensitive_read_broadening: "confirm"
       sandbox_network: "deny"
 ```
 
-Do not add a `confirm` minimum for `unknown_external × known_user_message` if unattended reminders
-or callbacks must deliver automatically. Until automation-definition provenance is persisted, every
-unattended callback enters at `unknown_external`; that minimum makes a reminder's
+Until automation-definition provenance is persisted, every unattended callback enters at
+`unknown_external`; the `known_user_message` minimum therefore makes a reminder's
 `send_message_to_user` call create a deferred confirmation instead of delivering. A deployment that
-prefers a literal cell-for-cell pin may add `known_user_message: "confirm"`, but must accept that
-operational change. Remove that entry from any existing `operator_minimum` to restore the shipped
-`audit` behavior; a weaker matrix override cannot relax an operator minimum.
+requires automatic reminder delivery may deliberately omit that one entry while retaining the
+other minima. That is a reminder-compatible exception to the old posture, not a cell-for-cell pin.
+Remove the entry from `operator_minimum` to choose the shipped `audit` behavior; a weaker matrix
+override cannot relax an operator minimum.
 
-The reminder-compatible pin above is the current recommended hardening baseline for operators who
-want the reviewer to triage calls without granting it authority below the earlier deterministic
-egress, broadening, and sandbox gates. Keep production in `observe` until the audit data shows
-near-zero false allows on adversarial replays, acceptable projected confirmation volume, and
-acceptable p95 reviewer latency.
+Keep production in `observe` until the audit data shows near-zero false allows on adversarial
+replays, acceptable projected confirmation volume, and acceptable p95 reviewer latency.
 
 ______________________________________________________________________
 

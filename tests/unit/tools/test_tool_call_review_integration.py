@@ -11,7 +11,6 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-import family_assistant.tools.infrastructure as infrastructure_module
 from family_assistant.config_models import (
     ToolCallReviewConfig,
     ToolCallReviewEscalationConfig,
@@ -31,6 +30,7 @@ from family_assistant.security.taint import (
 )
 from family_assistant.services.confirmation_service import ConfirmationService
 from family_assistant.services.deferred_tool_confirmation import (
+    DeferredConfirmationCallbackAdapter,
     build_deferred_confirmation_callback,
 )
 from family_assistant.services.tool_call_review import (
@@ -731,6 +731,71 @@ async def test_hard_static_confirm_keeps_existing_unattended_deferral(
     assert len(pending) == 1
     assert pending[0]["tool_call_id"] == "hard-confirm-unattended-call"
     assert pending[0]["static_policy_reason"] is None
+
+
+async def test_adapted_deferred_placeholder_does_not_add_tool_output_taint(
+    db_engine: AsyncEngine,
+) -> None:
+    executions = 0
+
+    async def execute(**_kwargs: object) -> ToolResult:
+        nonlocal executions
+        executions += 1
+        return ToolResult(text="must only execute after approval")
+
+    async def queue_confirmation(
+        interface_type: str,
+        conversation_id: str,
+        turn_id: str | None,
+        tool_name: str,
+        call_id: str,
+        tool_args: ToolArguments,
+        timeout_seconds: float,
+        context: ToolExecutionContext,
+    ) -> ConfirmationOutcome:
+        del (
+            interface_type,
+            conversation_id,
+            turn_id,
+            tool_name,
+            call_id,
+            tool_args,
+            timeout_seconds,
+            context,
+        )
+        return ConfirmationOutcome(kind="completed", result="approval queued")
+
+    provider = _provider(
+        cast("ToolImplementation", execute),
+        reviewer_llm=None,
+        static_decision=ToolPolicyDecision.CONFIRM,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+        output_untrusted=True,
+    )
+    context = _context(
+        db_engine,
+        TurnTaintState.empty(),
+        confirmation=DeferredConfirmationCallbackAdapter(queue_confirmation),
+        turn_id="adapted-deferred-placeholder",
+    )
+
+    result = await provider.execute_tool(
+        "reviewed_tool",
+        {"destination": "friend@example.test"},
+        context,
+        "adapted-deferred-call",
+    )
+
+    assert result == "approval queued"
+    assert executions == 0
+    assert context.taint_tracker is not None
+    assert context.taint_tracker.snapshot() == TurnTaintState.empty()
+    assert (
+        TurnTaintState.from_metadata(
+            context.tool_result_taint_metadata["adapted-deferred-call"]
+        )
+        == TurnTaintState.empty()
+    )
 
 
 async def test_observe_taint_deny_floor_does_not_constrain_static_review(
@@ -1608,9 +1673,7 @@ async def test_genuine_model_denial_escalates_only_at_configured_threshold(
     assert context.tool_call_review_state.consecutive_denials == 0
     assert context.tool_call_review_state.total_denials == 0
     assert context.taint_tracker is not None
-    assert context.taint_tracker.snapshot().is_sink_approved(
-        SinkClass.ARBITRARY_EXTERNAL_MESSAGE
-    )
+    assert context.taint_tracker.snapshot().approved_sinks == frozenset()
     assert context.turn_id is not None
     events = await context.db_context.taint_audit_events.list_for_turn(context.turn_id)
     escalation_events = [
@@ -1845,7 +1908,9 @@ async def test_carried_sink_approval_skips_named_sink_readjudication(
     )
     context = _context(
         db_engine,
-        _unknown_external_state().approve_sink(SinkClass.SANDBOX_NETWORK),
+        _unknown_external_state().approve_sink(
+            SinkClass.SANDBOX_NETWORK, profile_id="coder"
+        ),
         turn_id="approved-profile-sink",
     )
 
@@ -1862,7 +1927,44 @@ async def test_carried_sink_approval_skips_named_sink_readjudication(
     assert await _review_events(context) == []
 
 
-async def test_named_sink_reviewer_allow_is_reused_for_unchanged_taint(
+async def test_carried_profile_approval_does_not_skip_another_named_sink(
+    db_engine: AsyncEngine,
+) -> None:
+    """A profile handoff approval is not a class-wide sandbox capability."""
+
+    async def execute(**_kwargs: object) -> ToolResult:
+        return ToolResult(text="unused")
+
+    llm = _ReviewLLM(ToolCallReviewVerdict.DENY)
+    taint_policy = TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE)
+    provider = _provider(
+        cast("ToolImplementation", execute),
+        reviewer_llm=llm,
+        static_decision=ToolPolicyDecision.ALLOW,
+        taint_policy=taint_policy,
+    )
+    context = _context(
+        db_engine,
+        _unknown_external_state().approve_sink(
+            SinkClass.SANDBOX_NETWORK, profile_id="coder"
+        ),
+        turn_id="approval-does-not-cross-profile",
+    )
+
+    with pytest.raises(ToolPolicyDeniedError):
+        await provider.authorize_taint_sink(
+            name="profile:engineer",
+            sink_class=SinkClass.SANDBOX_NETWORK,
+            arguments={"profile_id": "engineer"},
+            context=context,
+            call_id="different-profile-sink",
+            taint_policy=taint_policy,
+        )
+
+    assert llm.calls == 1
+
+
+async def test_every_named_sink_call_is_reviewed_in_enforce_mode(
     db_engine: AsyncEngine,
 ) -> None:
     async def execute(**_kwargs: object) -> ToolResult:
@@ -1904,86 +2006,11 @@ async def test_named_sink_reviewer_allow_is_reused_for_unchanged_taint(
             taint_policy=taint_policy,
         )
 
-    assert llm.calls == 1
-    assert context.tool_call_review_state.review_count == 1
-
-
-async def test_named_sink_reviewer_allow_is_not_reused_for_keychute_requests(
-    db_engine: AsyncEngine,
-) -> None:
-    async def execute(**_kwargs: object) -> ToolResult:
-        return ToolResult(text="unused")
-
-    llm = _ReviewLLM(ToolCallReviewVerdict.ALLOW)
-    taint_policy = TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE)
-    provider = _provider(
-        cast("ToolImplementation", execute),
-        reviewer_llm=llm,
-        static_decision=ToolPolicyDecision.ALLOW,
-        taint_policy=taint_policy,
-    )
-    context = _context(
-        db_engine,
-        _unknown_external_state(),
-        turn_id="repeated-keychute-sink",
-    )
-    arguments = _nested_sink_arguments(method="POST")
-
-    for _ in range(2):
-        await provider.authorize_taint_sink(
-            name="keychute_http_request",
-            sink_class=SinkClass.SANDBOX_NETWORK,
-            arguments=arguments,
-            context=context,
-            call_id=None,
-            taint_policy=taint_policy,
-        )
-
     assert llm.calls == 2
     assert context.tool_call_review_state.review_count == 2
 
 
-async def test_named_sink_reviewer_allow_is_invalidated_by_changed_arguments(
-    db_engine: AsyncEngine,
-) -> None:
-    async def execute(**_kwargs: object) -> ToolResult:
-        return ToolResult(text="unused")
-
-    llm = _ReviewLLM(ToolCallReviewVerdict.ALLOW)
-    taint_policy = TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE)
-    provider = _provider(
-        cast("ToolImplementation", execute),
-        reviewer_llm=llm,
-        static_decision=ToolPolicyDecision.ALLOW,
-        taint_policy=taint_policy,
-    )
-    context = _context(
-        db_engine,
-        _unknown_external_state(),
-        turn_id="changed-arguments-profile-sink",
-    )
-
-    argument_variants = (
-        _nested_sink_arguments(),
-        _nested_sink_arguments(url="https://other.example/v1/items"),
-        _nested_sink_arguments(secret="secret-b"),
-        _nested_sink_arguments(method="DELETE"),
-    )
-    for index, arguments in enumerate(argument_variants):
-        await provider.authorize_taint_sink(
-            name="keychute:request",
-            sink_class=SinkClass.SANDBOX_NETWORK,
-            arguments=arguments,
-            context=context,
-            call_id=f"changed-argument-{index}",
-            taint_policy=taint_policy,
-        )
-
-    assert llm.calls == 4
-    assert context.tool_call_review_state.review_count == 4
-
-
-async def test_named_sink_shadow_review_is_deduplicated_for_unchanged_taint(
+async def test_every_named_sink_call_is_reviewed_in_observe_mode(
     db_engine: AsyncEngine,
 ) -> None:
     async def execute(**_kwargs: object) -> ToolResult:
@@ -2021,212 +2048,10 @@ async def test_named_sink_shadow_review_is_deduplicated_for_unchanged_taint(
     )
     await provider.close()
 
-    assert llm.calls == 1
-    assert context.tool_call_review_state.review_count == 1
-    reviews = await _review_events(context)
-    assert len(reviews) == 1
-
-
-async def test_named_sink_argument_fingerprint_does_not_block_event_loop(
-    db_engine: AsyncEngine,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def execute(**_kwargs: object) -> ToolResult:
-        return ToolResult(text="unused")
-
-    fingerprint_entered = threading.Event()
-    release_fingerprint = threading.Event()
-    original_dumps = infrastructure_module.json.dumps
-
-    def blocking_dumps(*args: object, **kwargs: object) -> str:
-        fingerprint_entered.set()
-        release_fingerprint.wait(timeout=1)
-        return original_dumps(*args, **kwargs)
-
-    monkeypatch.setattr(infrastructure_module.json, "dumps", blocking_dumps)
-    llm = _ReviewLLM(ToolCallReviewVerdict.ALLOW)
-    taint_policy = TaintPolicyConfig(mode=TaintPolicyMode.OBSERVE)
-    provider = _provider(
-        cast("ToolImplementation", execute),
-        reviewer_llm=llm,
-        static_decision=ToolPolicyDecision.ALLOW,
-        taint_policy=taint_policy,
-    )
-    context = _context(
-        db_engine,
-        _unknown_external_state(),
-        turn_id="nonblocking-named-sink-fingerprint",
-    )
-    authorization = asyncio.create_task(
-        provider.authorize_taint_sink(
-            name="keychute_http_request",
-            sink_class=SinkClass.SANDBOX_NETWORK,
-            arguments=_nested_sink_arguments(),
-            context=context,
-            taint_policy=taint_policy,
-        )
-    )
-
-    try:
-        assert await asyncio.to_thread(fingerprint_entered.wait, 0.5)
-        event_loop_progressed = asyncio.Event()
-        asyncio.get_running_loop().call_soon(event_loop_progressed.set)
-        await asyncio.wait_for(event_loop_progressed.wait(), timeout=0.1)
-    finally:
-        release_fingerprint.set()
-
-    await authorization
-    await provider.close()
-
-    assert llm.calls == 1
-
-
-async def test_named_sink_shadow_review_repeats_after_arguments_change(
-    db_engine: AsyncEngine,
-) -> None:
-    async def execute(**_kwargs: object) -> ToolResult:
-        return ToolResult(text="unused")
-
-    llm = _ReviewLLM(ToolCallReviewVerdict.ALLOW)
-    taint_policy = TaintPolicyConfig(mode=TaintPolicyMode.OBSERVE)
-    provider = _provider(
-        cast("ToolImplementation", execute),
-        reviewer_llm=llm,
-        static_decision=ToolPolicyDecision.ALLOW,
-        taint_policy=taint_policy,
-    )
-    context = _context(
-        db_engine,
-        _unknown_external_state(),
-        turn_id="changed-arguments-shadow-sink",
-    )
-
-    argument_variants = (
-        _nested_sink_arguments(),
-        _nested_sink_arguments(url="https://other.example/v1/items"),
-        _nested_sink_arguments(secret="secret-b"),
-        _nested_sink_arguments(method="PATCH"),
-    )
-    for index, arguments in enumerate(argument_variants):
-        await provider.authorize_taint_sink(
-            name="keychute:request",
-            sink_class=SinkClass.SANDBOX_NETWORK,
-            arguments=arguments,
-            context=context,
-            call_id=f"changed-shadow-argument-{index}",
-            taint_policy=taint_policy,
-        )
-    await provider.close()
-
-    assert llm.calls == 4
-    assert context.tool_call_review_state.review_count == 4
-    reviews = await _review_events(context)
-    assert len(reviews) == 4
-
-
-async def test_named_sink_shadow_review_repeats_after_taint_changes(
-    db_engine: AsyncEngine,
-) -> None:
-    async def execute(**_kwargs: object) -> ToolResult:
-        return ToolResult(text="unused")
-
-    llm = _ReviewLLM(ToolCallReviewVerdict.ALLOW)
-    taint_policy = TaintPolicyConfig(mode=TaintPolicyMode.OBSERVE)
-    provider = _provider(
-        cast("ToolImplementation", execute),
-        reviewer_llm=llm,
-        static_decision=ToolPolicyDecision.ALLOW,
-        taint_policy=taint_policy,
-    )
-    context = _context(
-        db_engine,
-        _unknown_external_state(),
-        turn_id="changed-shadow-profile-sink",
-    )
-
-    await provider.authorize_taint_sink(
-        name="profile:coder",
-        sink_class=SinkClass.SANDBOX_NETWORK,
-        arguments={"profile_id": "coder"},
-        context=context,
-        call_id="profile-shadow-before-change",
-        taint_policy=taint_policy,
-    )
-    assert context.taint_tracker is not None
-    context.taint_tracker.add_source(
-        TaintSource(
-            source_type=TaintSourceType.TOOL_OUTPUT,
-            source_id="new-shadow-input",
-            tier=SourceTrustTier.KNOWN_CONTACT,
-            labels=frozenset(),
-            reason="Additional content entered the observed turn.",
-        )
-    )
-    await provider.authorize_taint_sink(
-        name="profile:coder",
-        sink_class=SinkClass.SANDBOX_NETWORK,
-        arguments={"profile_id": "coder"},
-        context=context,
-        call_id="profile-shadow-after-change",
-        taint_policy=taint_policy,
-    )
-    await provider.close()
-
     assert llm.calls == 2
     assert context.tool_call_review_state.review_count == 2
     reviews = await _review_events(context)
     assert len(reviews) == 2
-
-
-async def test_named_sink_reviewer_allow_is_invalidated_by_changed_taint(
-    db_engine: AsyncEngine,
-) -> None:
-    async def execute(**_kwargs: object) -> ToolResult:
-        return ToolResult(text="unused")
-
-    llm = _ReviewLLM(ToolCallReviewVerdict.ALLOW)
-    taint_policy = TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE)
-    provider = _provider(
-        cast("ToolImplementation", execute),
-        reviewer_llm=llm,
-        static_decision=ToolPolicyDecision.ALLOW,
-        taint_policy=taint_policy,
-    )
-    context = _context(
-        db_engine,
-        _unknown_external_state(),
-        turn_id="changed-profile-sink",
-    )
-
-    await provider.authorize_taint_sink(
-        name="profile:coder",
-        sink_class=SinkClass.SANDBOX_NETWORK,
-        arguments={"profile_id": "coder"},
-        context=context,
-        call_id="profile-sink-before-change",
-        taint_policy=taint_policy,
-    )
-    assert context.taint_tracker is not None
-    context.taint_tracker.add_source(
-        TaintSource(
-            source_type=TaintSourceType.TOOL_OUTPUT,
-            source_id="later-tool-output",
-            tier=SourceTrustTier.KNOWN_CONTACT,
-            labels=frozenset(),
-            reason="Additional content entered the turn.",
-        )
-    )
-    await provider.authorize_taint_sink(
-        name="profile:coder",
-        sink_class=SinkClass.SANDBOX_NETWORK,
-        arguments={"profile_id": "coder"},
-        context=context,
-        call_id="profile-sink-after-change",
-        taint_policy=taint_policy,
-    )
-
-    assert llm.calls == 2
-    assert context.tool_call_review_state.review_count == 2
 
 
 async def test_named_sink_reviewer_allow_cannot_bypass_later_confirm_floor(
@@ -2323,7 +2148,9 @@ async def test_named_sink_reviewer_confirmation_is_carried_but_deny_floor_wins(
         )
 
     assert context.taint_tracker is not None
-    assert context.taint_tracker.snapshot().is_sink_approved(SinkClass.SANDBOX_NETWORK)
+    assert context.taint_tracker.snapshot().is_sink_approved(
+        SinkClass.SANDBOX_NETWORK, profile_id="coder"
+    )
     assert llm.calls == 1
     assert manager.calls == 1
 
@@ -2394,7 +2221,9 @@ async def test_named_sink_hard_confirmation_is_carried_within_turn(
         )
 
     assert context.taint_tracker is not None
-    assert context.taint_tracker.snapshot().is_sink_approved(SinkClass.SANDBOX_NETWORK)
+    assert context.taint_tracker.snapshot().is_sink_approved(
+        SinkClass.SANDBOX_NETWORK, profile_id="coder"
+    )
     assert llm.calls == 0
     assert manager.calls == 1
 
@@ -2424,7 +2253,9 @@ async def test_carried_sink_approval_cannot_override_deny_verdict_floor(
     )
     context = _context(
         db_engine,
-        _unknown_external_state().approve_sink(SinkClass.SANDBOX_NETWORK),
+        _unknown_external_state().approve_sink(
+            SinkClass.SANDBOX_NETWORK, profile_id="coder"
+        ),
         turn_id="deny-floor-profile-sink",
     )
 

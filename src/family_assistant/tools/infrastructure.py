@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import hashlib
 import inspect
 import json
 import logging
@@ -1652,34 +1651,11 @@ def _destination_argument(
     return None
 
 
-def _canonical_arguments_fingerprint(
-    arguments: Mapping[str, object],
-) -> str | None:
-    """Return a stable identity for exact JSON-like tool arguments.
-
-    Sorting object keys makes equivalent nested mappings share an identity while
-    JSON's scalar and sequence encoding keeps changed destinations, methods,
-    secrets, and list contents distinct. Unsupported non-JSON values deliberately
-    disable reuse so an unusual argument can never inherit another call's review.
-    """
-    try:
-        canonical_arguments = json.dumps(
-            arguments,
-            allow_nan=False,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-    except (TypeError, ValueError):
-        return None
-    return hashlib.sha256(canonical_arguments.encode()).hexdigest()
-
-
-def _is_reusable_profile_sink(
+def _is_profile_sink(
     name: str,
     arguments: Mapping[str, object],
 ) -> bool:
-    """Return whether an internal profile-model gate can reuse a prior allow."""
+    """Return whether this is the internal gate for the named profile."""
     profile_id = arguments.get("profile_id")
     return (
         isinstance(profile_id, str)
@@ -1738,6 +1714,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
         context: ToolExecutionContext,
         descriptor: ToolDescriptor,
         sink_class: SinkClass,
+        arguments: Mapping[str, object],
     ) -> None:
         """Record that a human approved this turn's content for a sink.
 
@@ -1748,12 +1725,13 @@ class TaintTrackingToolsProvider(ToolsProvider):
         and recording passage as approval would answer that profile's question
         on a user's behalf.
 
-        Only for a delegation: an ordinary tool call *is* the sink, and marking
-        the turn would hand a later, unrelated gate an approval it never asked
-        for. A delegation is different -- the same content continues under the
-        target profile, whose own gate would otherwise have to infer whether
-        this one asked. Recording it on the taint means the evidence travels
-        with the content it is about, and is persisted with the delegation run.
+        Only for a delegation, and bound to its exact target profile: an ordinary
+        tool call *is* the sink, and a class-wide marker would hand a later,
+        unrelated named sink an approval it never asked for. A delegation is
+        different -- the same content continues under the named target profile,
+        whose own gate would otherwise have to infer whether this one asked.
+        Recording that exact handoff on the taint means the evidence travels with
+        the content it is about and is persisted with the delegation run.
         """
         tracker = context.taint_tracker
         if tracker is None:
@@ -1762,7 +1740,15 @@ class TaintTrackingToolsProvider(ToolsProvider):
             str(getattr(tag, "value", tag)) for tag in descriptor.tags
         }:
             return
-        tracker.replace(tracker.snapshot().approve_sink(sink_class))
+        target_profile_id = arguments.get("target_service_id")
+        if not isinstance(target_profile_id, str) or not target_profile_id:
+            return
+        tracker.replace(
+            tracker.snapshot().approve_sink(
+                sink_class,
+                profile_id=target_profile_id,
+            )
+        )
 
     async def get_tool_definitions(
         self,
@@ -1850,7 +1836,13 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 name,
                 f"{evaluation.reason}; redaction outcomes are not executable yet",
             )
-        if state.is_sink_approved(sink_class) and (
+        profile_id = arguments.get("profile_id")
+        carried_profile_approval = (
+            _is_profile_sink(name, arguments)
+            and isinstance(profile_id, str)
+            and state.is_sink_approved(sink_class, profile_id=profile_id)
+        )
+        if carried_profile_approval and (
             evaluation.effective_outcome is TaintPolicyOutcome.CONFIRM
             or (
                 evaluation.requested_outcome is TaintPolicyOutcome.ADJUDICATE
@@ -1869,36 +1861,6 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 else None,
             )
             return
-        argument_fingerprint = await asyncio.to_thread(
-            _canonical_arguments_fingerprint,
-            arguments,
-        )
-        named_sink_key = (
-            (name, sink_class.value, argument_fingerprint)
-            if argument_fingerprint is not None
-            else None
-        )
-        can_reuse_reviewer_allow = _is_reusable_profile_sink(name, arguments)
-        cached_allow_state = (
-            context.tool_call_review_state.named_sink_allows.get(named_sink_key)
-            if named_sink_key is not None and can_reuse_reviewer_allow
-            else None
-        )
-        if (
-            named_sink_key is not None
-            and evaluation.mode is TaintPolicyMode.ENFORCE
-            and evaluation.requested_outcome is TaintPolicyOutcome.ADJUDICATE
-            and evaluation.verdict_floor is None
-            and cached_allow_state == state
-        ):
-            logger.info(
-                "Reusing automatic reviewer allow for unchanged named sink: "
-                "tool=%s call_id=%s sink=%s",
-                name,
-                call_id,
-                sink_class.value,
-            )
-            return
         if evaluation.requested_outcome is TaintPolicyOutcome.ADJUDICATE:
             descriptor = ToolDescriptor(
                 name=name,
@@ -1914,29 +1876,6 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 origin="local",
             )
             if evaluation.mode is TaintPolicyMode.OBSERVE:
-                cached_shadow_state = (
-                    context.tool_call_review_state.named_sink_shadow_reviews.get(
-                        named_sink_key
-                    )
-                    if named_sink_key is not None
-                    else None
-                )
-                if named_sink_key is not None and cached_shadow_state == state:
-                    logger.info(
-                        "Skipping duplicate shadow review for unchanged named sink: "
-                        "tool=%s call_id=%s sink=%s",
-                        name,
-                        call_id,
-                        sink_class.value,
-                    )
-                    return
-                # Reserve synchronously before detaching. Repeated or concurrent
-                # authorizations cannot both spend reviewer budget for this exact
-                # named sink and immutable taint snapshot.
-                if named_sink_key is not None:
-                    context.tool_call_review_state.named_sink_shadow_reviews[
-                        named_sink_key
-                    ] = state
                 self._start_shadow_review(
                     descriptor=descriptor,
                     arguments=arguments,
@@ -1971,12 +1910,6 @@ class TaintTrackingToolsProvider(ToolsProvider):
                     reason=result.reason,
                     state=state,
                 )
-            elif (
-                result.verdict is ToolCallReviewVerdict.ALLOW
-                and named_sink_key is not None
-                and can_reuse_reviewer_allow
-            ):
-                context.tool_call_review_state.named_sink_allows[named_sink_key] = state
             return
         if evaluation.effective_outcome is TaintPolicyOutcome.CONFIRM:
             await self._request_named_sink_confirmation(
@@ -2062,8 +1995,18 @@ class TaintTrackingToolsProvider(ToolsProvider):
 
         if outcome.kind == "approved":
             tracker = context.taint_tracker
-            if tracker is not None:
-                tracker.replace(tracker.snapshot().approve_sink(sink_class))
+            profile_id = arguments.get("profile_id")
+            if (
+                tracker is not None
+                and _is_profile_sink(name, arguments)
+                and isinstance(profile_id, str)
+            ):
+                tracker.replace(
+                    tracker.snapshot().approve_sink(
+                        sink_class,
+                        profile_id=profile_id,
+                    )
+                )
             return
         detail_result = confirmation_outcome_to_tool_result(name=name, outcome=outcome)
         detail = (
@@ -2387,7 +2330,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
                             call_id or descriptor.name
                         ] = context.taint_tracker.snapshot().to_metadata()
                     return result
-                self._record_sink_approval(context, descriptor, sink_class)
+                self._record_sink_approval(context, descriptor, sink_class, arguments)
             elif review_result.verdict is ToolCallReviewVerdict.CONFIRM:
                 state_before_confirmation = (
                     context.taint_tracker.snapshot()
@@ -2436,7 +2379,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
                     tool_args=cast("ToolArguments", copy.deepcopy(dict(arguments))),
                     consumed=True,
                 )
-                self._record_sink_approval(context, descriptor, sink_class)
+                self._record_sink_approval(context, descriptor, sink_class, arguments)
 
         hard_confirm = (
             static_evaluation is not None
@@ -2488,7 +2431,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
                         context.taint_tracker.snapshot().to_metadata()
                     )
                 return confirmation_result.result
-            self._record_sink_approval(context, descriptor, sink_class)
+            self._record_sink_approval(context, descriptor, sink_class, arguments)
 
         state_before_execution = (
             context.taint_tracker.snapshot()

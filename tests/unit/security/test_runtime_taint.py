@@ -1450,9 +1450,15 @@ def test_an_approval_is_recorded_on_the_turn_taint_for_a_delegation() -> None:
         context,
         _tool_descriptor("delegate_to_service", ToolTag.DELEGATION),
         SinkClass.SANDBOX_NETWORK,
+        {"target_service_id": "coder"},
     )
 
-    assert tracker.snapshot().is_sink_approved(SinkClass.SANDBOX_NETWORK)
+    assert tracker.snapshot().is_sink_approved(
+        SinkClass.SANDBOX_NETWORK, profile_id="coder"
+    )
+    assert not tracker.snapshot().is_sink_approved(
+        SinkClass.SANDBOX_NETWORK, profile_id="other-coder"
+    )
 
 
 def test_an_ordinary_tool_call_records_no_approval() -> None:
@@ -1465,9 +1471,12 @@ def test_an_ordinary_tool_call_records_no_approval() -> None:
         context,
         _tool_descriptor("spawn_worker", ToolTag.CODE_EXECUTION),
         SinkClass.SANDBOX_NETWORK,
+        {},
     )
 
-    assert not tracker.snapshot().is_sink_approved(SinkClass.SANDBOX_NETWORK)
+    assert not tracker.snapshot().is_sink_approved(
+        SinkClass.SANDBOX_NETWORK, profile_id="coder"
+    )
 
 
 def _delegation_provider(mode: TaintPolicyMode) -> TaintTrackingToolsProvider:
@@ -1533,7 +1542,9 @@ async def test_observe_mode_delegation_records_no_approval(
         "call_observe",
     )
 
-    assert not tracker.snapshot().is_sink_approved(SinkClass.SANDBOX_NETWORK)
+    assert not tracker.snapshot().is_sink_approved(
+        SinkClass.SANDBOX_NETWORK, profile_id="coder"
+    )
 
 
 @pytest.mark.asyncio
@@ -1556,7 +1567,9 @@ async def test_an_unconfirmed_delegation_records_no_approval(
         "call_allowed",
     )
 
-    assert not tracker.snapshot().is_sink_approved(SinkClass.SANDBOX_NETWORK)
+    assert not tracker.snapshot().is_sink_approved(
+        SinkClass.SANDBOX_NETWORK, profile_id="coder"
+    )
 
 
 @pytest.mark.asyncio
@@ -1581,20 +1594,26 @@ async def test_an_approved_confirmation_records_the_approval(
         "call_confirmed",
     )
 
-    assert tracker.snapshot().is_sink_approved(SinkClass.SANDBOX_NETWORK)
+    assert tracker.snapshot().is_sink_approved(
+        SinkClass.SANDBOX_NETWORK, profile_id="coder"
+    )
 
 
 def test_an_approval_survives_serialization_but_not_a_history_read() -> None:
     """It travels with the turn's own taint, not into later turns quoting it."""
-    approved = TurnTaintState.empty().approve_sink(SinkClass.SANDBOX_NETWORK)
+    approved = TurnTaintState.empty().approve_sink(
+        SinkClass.SANDBOX_NETWORK, profile_id="coder"
+    )
 
     carried = TurnTaintState.from_metadata(approved.to_metadata())
     via_history = TurnTaintState.from_metadata(
         approved.to_metadata(), from_history=True
     )
 
-    assert carried.is_sink_approved(SinkClass.SANDBOX_NETWORK)
-    assert not via_history.is_sink_approved(SinkClass.SANDBOX_NETWORK)
+    assert carried.is_sink_approved(SinkClass.SANDBOX_NETWORK, profile_id="coder")
+    assert not via_history.is_sink_approved(
+        SinkClass.SANDBOX_NETWORK, profile_id="coder"
+    )
 
 
 def test_delegating_to_a_sandbox_profile_resolves_to_its_sink_not_delegation() -> None:

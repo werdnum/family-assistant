@@ -382,7 +382,7 @@ async def test_submit_async_honours_an_approval_persisted_with_the_run(
                 labels=frozenset(),
                 reason="Mail from a known contact.",
             )
-        ]).approve_sink(SinkClass.SANDBOX_NETWORK),
+        ]).approve_sink(SinkClass.SANDBOX_NETWORK, profile_id="research"),
     )
 
     assert submission.remote_task_id == "inter_confirmed"
@@ -585,7 +585,9 @@ async def test_an_approval_travelling_with_the_taint_permits_a_confirm(
 
     without_approval = service.sink_refusal_reason(_state_from(known_contact))
     with_approval = service.sink_refusal_reason(
-        _state_from(known_contact).approve_sink(SinkClass.SANDBOX_NETWORK)
+        _state_from(known_contact).approve_sink(
+            SinkClass.SANDBOX_NETWORK, profile_id="research"
+        )
     )
 
     assert without_approval is not None

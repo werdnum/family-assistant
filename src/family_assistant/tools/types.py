@@ -341,12 +341,6 @@ class ToolCallReviewTurnState:
     escalation_handled: bool = False
     terminal_denial_escalation_message: str | None = None
     pending_sensitive_read_count: int = 0
-    named_sink_allows: dict[tuple[str, str, str], TurnTaintState] = field(
-        default_factory=dict
-    )
-    named_sink_shadow_reviews: dict[tuple[str, str, str], TurnTaintState] = field(
-        default_factory=dict
-    )
 
 
 @dataclass

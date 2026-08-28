@@ -178,14 +178,14 @@ class TurnTaintState:
     history_high_taint_present: bool
     sequence: int = 0
     approved_sinks: frozenset[str] = frozenset()
-    """Sink classes a human has approved for *this* taint, by policy value.
+    """Exact profile-sink handoffs a human approved for *this* taint.
 
     Travels with the taint rather than beside it, because it is a fact about
-    the same content: "someone was shown this and said yes to sandbox_network".
-    A gate downstream of the one that asked can then read the approval instead
-    of inferring, from the shape of the call path, that an approval was
-    probably sought. Serialized with the rest of the state, so it survives the
-    delegation boundary the way the sources do.
+    the same content and handoff: "someone was shown this and said yes to the
+    coder profile's sandbox_network gate". A gate downstream of the one that
+    asked can then read the approval without granting the same sink class to a
+    different profile or named action. Serialized with the rest of the state,
+    so it survives the delegation boundary the way the sources do.
     """
 
     @classmethod
@@ -200,13 +200,26 @@ class TurnTaintState:
             sequence=0,
         )
 
-    def approve_sink(self, sink_class: SinkClass) -> TurnTaintState:
-        """Record that this turn's taint was cleared for one sink class."""
-        return replace(self, approved_sinks=self.approved_sinks | {sink_class.value})
+    @staticmethod
+    def _profile_sink_approval_key(profile_id: str, sink_class: SinkClass) -> str:
+        """Return an unambiguous persisted key for one profile handoff."""
+        return f"profile:{len(profile_id)}:{profile_id}:{sink_class.value}"
 
-    def is_sink_approved(self, sink_class: SinkClass) -> bool:
-        """Whether an approval for this sink travelled with the taint."""
-        return sink_class.value in self.approved_sinks
+    def approve_sink(
+        self,
+        sink_class: SinkClass,
+        *,
+        profile_id: str,
+    ) -> TurnTaintState:
+        """Record approval for this turn entering one exact sink profile."""
+        key = self._profile_sink_approval_key(profile_id, sink_class)
+        return replace(self, approved_sinks=self.approved_sinks | {key})
+
+    def is_sink_approved(self, sink_class: SinkClass, *, profile_id: str) -> bool:
+        """Whether exact-profile approval travelled with this turn's taint."""
+        return self._profile_sink_approval_key(profile_id, sink_class) in (
+            self.approved_sinks
+        )
 
     def add_source(
         self,

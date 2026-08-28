@@ -61,10 +61,12 @@ class _SynchronousRemoteClient:
         context_id: str | None = None,
         task_id: str | None = None,
         metadata: dict[str, object] | None = None,
+        acting_user_id: str | None = None,
     ) -> Task:
         _ = content_parts
         _ = task_id
         _ = metadata
+        _ = acting_user_id
         self.calls += 1
         return Task(
             id="synchronous-remote-task",

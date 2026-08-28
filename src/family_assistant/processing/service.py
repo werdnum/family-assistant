@@ -278,7 +278,7 @@ class ProcessingService:
             sorted(state.approved_sinks),
         )
         permitted = {TaintPolicyOutcome.ALLOW, TaintPolicyOutcome.AUDIT}
-        if state.is_sink_approved(sink_class):
+        if state.is_sink_approved(sink_class, profile_id=self.service_config.id):
             permitted |= {TaintPolicyOutcome.CONFIRM}
             if evaluation.verdict_floor is not TaintPolicyOutcome.DENY:
                 # A human approval carried with this exact turn already answers

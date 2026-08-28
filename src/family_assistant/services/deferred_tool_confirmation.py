@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -269,8 +269,8 @@ class DeferredConfirmationCallbackAdapter:
         timeout_seconds: float,
         context: ToolExecutionContext,
     ) -> ConfirmationOutcome:
-        """Delegate the confirmation request without changing its outcome."""
-        return await self.callback(
+        """Delegate while marking queued completion as not yet attempted."""
+        outcome = await self.callback(
             interface_type,
             conversation_id,
             turn_id,
@@ -280,6 +280,9 @@ class DeferredConfirmationCallbackAdapter:
             timeout_seconds,
             context,
         )
+        if outcome.kind == "completed":
+            return replace(outcome, action_attempted=False)
+        return outcome
 
 
 def build_deferred_confirmation_callback(

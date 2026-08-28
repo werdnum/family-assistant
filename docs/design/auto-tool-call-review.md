@@ -305,19 +305,20 @@ which is why the M5 gate includes p95 reviewer latency.
 The shadow property belongs to `observe` mode, not to the defaults change itself. For a deployment
 already running `mode: enforce`, adopting the new default matrix is a real posture change — cells
 that gated unconditionally become judged — and must not happen silently: the configuration
-reference's migration note tells enforce deployments to pin the previous egress, broadening, and
-sandbox outcomes before upgrading (an `operator_minimum` of `confirm` on the egress cells and
-`sensitive_read_broadening`, plus `deny` on `unknown_external × sandbox_network`) or to adopt the
-judged posture deliberately. A cell-for-cell pin would also set
-`unknown_external × known_user_message` to `confirm`, but that no longer reproduces the previous
-*callback behavior*: absent authoring provenance now puts every unattended callback at
-`unknown_external`, so reminder delivery through `send_message_to_user` would defer for confirmation
-instead of delivering. Deployments that rely on unattended reminders should leave that cell at the
-shipped `audit` outcome while pinning the other changed cells, accepting this one deliberate
-exception. Verdict floors and `operator_minimum` remain tighten-only against the judge just as
-against profiles. No known deployment runs `enforce` today — the maintainer's is the only known
-deployment, and it runs `observe` — so this is defence in depth for third-party deployments of a
-public codebase: a documented pin and a config test, not migration machinery.
+reference's migration note tells enforce deployments to pin every previous outcome before upgrading
+or to adopt the judged posture deliberately. The literal cell-for-cell pin is an
+`operator_minimum` of `confirm` on the egress cells, on
+`unknown_external × known_user_message`, and on
+`unknown_external × sensitive_read_broadening`, plus `deny` on
+`unknown_external × sandbox_network`. Absent authoring provenance now puts every unattended
+callback at `unknown_external`, so that literal pin also makes reminder delivery through
+`send_message_to_user` defer for confirmation instead of delivering. A deployment that relies on
+automatic reminders may deliberately omit only the `known_user_message` minimum, accepting a
+reminder-compatible exception to the old posture rather than calling it a cell-for-cell pin.
+Verdict floors and `operator_minimum` remain tighten-only against the judge just as against
+profiles. No known deployment runs `enforce` today — the maintainer's is the only known deployment,
+and it runs `observe` — so this is defence in depth for third-party deployments of a public
+codebase: a documented pin and a config test, not migration machinery.
 
 ### Default matrix changes
 
