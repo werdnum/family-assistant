@@ -2,7 +2,7 @@
 
 # pylint: disable=no-name-in-module
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pydantic import BaseModel
@@ -23,6 +23,25 @@ from tests.factories.messages import (
 
 class StructuredResult(BaseModel):
     answer: str
+
+
+@pytest.mark.no_db
+async def test_close_releases_async_and_sync_retry_clients() -> None:
+    primary = AsyncMock()
+    primary.close = AsyncMock()
+    fallback = AsyncMock()
+    fallback.close = MagicMock(return_value=None)
+    client = RetryingLLMClient(
+        primary_client=primary,
+        primary_model="primary",
+        fallback_client=fallback,
+        fallback_model="fallback",
+    )
+
+    await client.close()
+
+    primary.close.assert_awaited_once_with()
+    fallback.close.assert_called_once_with()
 
 
 @pytest.fixture

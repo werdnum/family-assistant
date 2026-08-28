@@ -703,6 +703,7 @@ def load_user_documentation(filenames: list[str]) -> str:
 PROFILE_OVERRIDABLE_PROCESSING_KEYS: tuple[str, ...] = (
     "provider",
     "llm_model",
+    "review_guidance",
     "timezone",
     "max_history_messages",
     "history_max_age_hours",

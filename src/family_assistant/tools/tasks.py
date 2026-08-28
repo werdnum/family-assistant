@@ -333,6 +333,9 @@ async def schedule_reminder_tool(
             "user_name": user_name,  # Save user_name in payload
             "callback_context": message,
             "scheduling_timestamp": scheduling_time.isoformat(),
+            "tool_call_review_trigger_type": "reminder",
+            "tool_call_review_trigger_definition": message,
+            "tool_call_review_trigger_payload_present": False,
             "reminder_config": {
                 "is_reminder": True,
                 "follow_up": follow_up,
@@ -423,6 +426,9 @@ async def schedule_future_callback_tool(
             "user_name": user_name,
             "callback_context": context,
             "scheduling_timestamp": scheduling_time.isoformat(),
+            "tool_call_review_trigger_type": "scheduled_callback",
+            "tool_call_review_trigger_definition": context,
+            "tool_call_review_trigger_payload_present": False,
         }
         if exec_context.user_id is not None:
             payload["created_by_user_id"] = exec_context.user_id

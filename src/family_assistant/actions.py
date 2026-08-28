@@ -79,6 +79,9 @@ async def execute_action(
     processing_profile_id: str | None = None,
     created_by_user_id: str | None = None,
     allow_wake_llm: bool = True,
+    tool_call_review_trigger_type: str | None = None,
+    tool_call_review_trigger_definition: str | None = None,
+    tool_call_review_trigger_payload_present: bool | None = None,
 ) -> None:
     """
     Execute an action. Used by both event listeners and scheduled tasks.
@@ -134,6 +137,23 @@ async def execute_action(
             "conversation_id": conversation_id,
             "callback_context": callback_context,
             "scheduling_timestamp": datetime.now(UTC).isoformat(),
+            "tool_call_review_trigger_type": (
+                tool_call_review_trigger_type or "scheduled_callback"
+            ),
+            "tool_call_review_trigger_definition": (
+                tool_call_review_trigger_definition
+                if tool_call_review_trigger_type is not None
+                else (
+                    str(action_config["context"])
+                    if isinstance(action_config.get("context"), str)
+                    else None
+                )
+            ),
+            "tool_call_review_trigger_payload_present": (
+                tool_call_review_trigger_payload_present
+                if tool_call_review_trigger_payload_present is not None
+                else False
+            ),
         }
         if user_name:
             payload["user_name"] = user_name

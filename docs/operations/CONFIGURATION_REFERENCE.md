@@ -1254,9 +1254,18 @@ Whether the Gmail/Drive tools require taint enforcement before they register.
 
 When `true`, the tools only register if `taint_policy.mode` is `enforce` **and** the effective
 policy matrix floors the key exfiltration sinks — `arbitrary_external_message`,
-`attacker_addressable_egress`, `sandbox_network`, and `sensitive_read_broadening` — at `confirm` for
-untrusted content. If the check fails, the tools are not registered and the integration status
-endpoint reports the unmet condition.
+`attacker_addressable_egress`, `sandbox_network`, and `sensitive_read_broadening` — at least at
+`confirm` for untrusted content. An `adjudicate` cell satisfies this check only when its effective
+reviewer verdict floor is `confirm` or `deny`, whether the floor comes from the cell's
+`verdict_floor` or from `operator_minimum`. Bare `adjudicate` can return `allow` and therefore does
+not satisfy the check.
+
+The shipped review-era defaults deliberately use bare, unfloored `adjudicate` cells and keep
+`sensitive_read_broadening` at `audit`, so merely changing the shipped `taint_policy.mode` from
+`observe` to `enforce` does not make this registration requirement pass. Add explicit floors or use
+the documented [migration pin](#migration-for-deployments-already-enforcing-taint-policy) to retain
+the earlier deterministic gates. If the check fails, the tools are not registered and the
+integration status endpoint reports the unmet condition.
 
 Setting it to `false` waives the check (logged at startup and surfaced on the status endpoint) and
 the tools register regardless of taint mode.
@@ -1278,6 +1287,148 @@ part of the floor check:
   shipped `default_profile_settings.tools_policy` carries a priority-20 `confirm` rule for
   `delete_calendar_event` and `modify_calendar_event`, so those remain confirmed whatever the matrix
   says. A soft taint outcome never removes a confirmation that tool policy imposes.
+
+______________________________________________________________________
+
+## Automatic Tool-Call Review
+
+### tool_call_review
+
+Configures the shared, non-agentic judge used by runtime-taint `adjudicate` cells and static
+tool-policy `review` rules.
+
+```yaml
+tool_call_review:
+  enabled: true
+  provider: "google"
+  model: "gemini-3.7-flash"
+  timeout_seconds: 10.0
+  max_reviews_per_turn: 25
+  escalation:
+    consecutive_denials: 3
+    total_denials_per_turn: 20
+  guidance: >-
+    Optional deployment-wide trusted guidance about routine workflows.
+```
+
+The reviewer gets no tools. It receives only explicitly trusted-tier conversation rows, an
+audit-safe provenance digest, the matched policy context, and the complete proposed arguments fenced
+as untrusted data. It returns `allow`, `confirm`, or `deny`. `confirm` uses the existing durable
+confirmation path; `deny` returns a structured refusal so the calling model can continue and choose
+another route. Provider errors, malformed output, timeouts, a disabled reviewer, and per-turn budget
+exhaustion all use the caller-owned fallback; no such path can resolve to `allow`. The configured
+reviewer provider is initialized on its first review rather than during application startup. A
+deployment that has not configured that provider's credentials can still start, while any attempted
+review fails closed through the same caller-owned fallback. Provider initialization failures are
+cached for the process lifetime, so restart after correcting credentials or provider configuration.
+
+Profiles can add trusted, additive instructions with `processing_config.review_guidance`. Do not put
+request data, trigger payloads, browser content, or secrets in either guidance field.
+
+Runtime-taint matrix cells accept either the short form `adjudicate` (whose fallback is derived from
+the pre-review default) or an explicit cell:
+
+```yaml
+taint_policy:
+  matrix_overrides:
+    unknown_external:
+      sandbox_network:
+        outcome: "adjudicate"
+        verdict_floor: "confirm" # optional: confirm or deny
+        fallback: "deny"         # required for a new cell: confirm or deny
+```
+
+A `confirm` floor limits the model to `confirm`/`deny`; a `deny` floor limits it to `deny`.
+`operator_minimum` is applied as a verdict floor and profiles cannot relax it. `redact` cannot be a
+minimum for an adjudicated cell. In `observe` mode, adjudication still runs but its effect is
+`audit`; taint-only reviews are detached from the execution path and drained during shutdown.
+
+Static policy can delegate a matched call in the same way:
+
+```yaml
+tools_policy:
+  rules:
+    - match: {tags_any: ["destructive"]}
+      decision: "review"
+      priority: 20
+      description: "Judge destructive operations against the trusted request"
+```
+
+`review` tools remain advertised even without a live confirmation channel. When static `review` and
+taint `adjudicate` match the same call, one reviewer invocation receives both contexts; their
+verdict spaces and fallbacks merge toward the stricter result. A `confirm` verdict with no available
+confirmation path degrades to a structured denial.
+
+The confined-profile exemption skips a taint-only disclosure review only when
+`include_aggregated_context` is `false`, the turn recorded no sensitive reads or high-taint history,
+no effective `confirm`/`deny` floor applies, and the reviewer message window proves it contains only
+the current turn (system scaffolding followed by the current user message, with no prior user,
+assistant, tool, or error rows). This taint-layer exemption also applies to browser-tagged actions;
+independent static/action-review rules are unchanged. Browser tools that return page content are
+tagged as sensitive reads, so a successful browser read disables the exemption for later
+disclosures. A missing or ambiguous message window fails toward review. The exemption resolves to
+`audit`, never `allow`. Destination-bearing local tools declare their destination argument in
+trusted metadata; an exact whole-value match in the current trusted request is passed to the
+reviewer as evidence, not as authorization. URL matching normalizes scheme and host case but
+preserves path, query, and fragment case; non-URL destinations retain case-insensitive text
+normalization.
+
+The central executor treats every successful tool tagged both `read_only` and `sensitive_data` as a
+sensitive read. A tool can record a narrower corpus scope itself; otherwise the executor records a
+conservative tool-level scope by comparing state before and after successful execution. There is no
+in-flight read reservation: a concurrent disclosure formed before the read returns cannot causally
+contain its result, while disclosures after return see the recorded read and cannot exempt.
+
+`GET /api/diagnostics/taint-audit` includes verdict and resolution-status counts. Individual
+`tool_call_review` audit events include the verdict, reason, latency, fallback use, delegating
+contexts, allowed verdicts, and destination-echo signal without storing raw tool arguments or the
+reviewer's free-form rationale. The reason is fixed trusted text; trusted local-schema argument
+names may appear in the argument summary, while every argument value is omitted and MCP or
+unexpected mapping keys are pseudonymized. For message-originated calls, `turn_id` and
+`tool_call_id` can locate the canonical stored assistant message for later reconstruction without
+duplicating it in the audit table. Direct named-sink and other non-message-originated authorizations
+may have no corresponding message row, so their structured event is the complete durable record.
+When a blocking-path model-denial threshold is reserved, one `tool_call_review_escalation` event is
+also recorded with review status `escalation_confirmation_requested` or
+`escalation_turn_terminated`. Detached observe-only reviews do not update denial counters, so these
+trip counts intentionally describe blocking static/enforce paths rather than shadow traffic.
+
+#### Migration for deployments already enforcing taint policy
+
+The shipped default matrix now replaces the old egress and sandbox gates with `adjudicate`, and
+makes `unknown_external` household messaging and sensitive-read broadening auditable. A deployment
+already running `taint_policy.mode: enforce` must either adopt that judged posture deliberately or
+pin every previously deterministic gate before upgrading. This is the literal cell-for-cell pin:
+
+```yaml
+taint_policy:
+  operator_minimum:
+    known_contact:
+      arbitrary_external_message: "confirm"
+      attacker_addressable_egress: "confirm"
+      sandbox_network: "confirm"
+    recognized_machine:
+      arbitrary_external_message: "confirm"
+      attacker_addressable_egress: "confirm"
+      sandbox_network: "confirm"
+    unknown_external:
+      arbitrary_external_message: "confirm"
+      attacker_addressable_egress: "confirm"
+      known_user_message: "confirm"
+      sensitive_read_broadening: "confirm"
+      sandbox_network: "deny"
+```
+
+Until automation-definition provenance is persisted, every unattended callback enters at
+`unknown_external`; the `known_user_message` minimum therefore makes a reminder's
+`send_message_to_user` call create a deferred confirmation instead of delivering. A deployment that
+requires automatic reminder delivery may deliberately omit that one entry while retaining the other
+minima. That is a reminder-compatible exception to the old posture, not a cell-for-cell pin. Remove
+the entry from `operator_minimum` to choose the shipped `audit` behavior; a weaker matrix override
+cannot relax an operator minimum.
+
+Keep production in `observe` until the audit data shows near-zero false allows on adversarial
+replays, acceptable projected confirmation volume, and acceptable p95 reviewer latency.
 
 ______________________________________________________________________
 
@@ -1563,10 +1714,9 @@ Secret token for authenticating Asterisk WebSocket connections.
 | Sensitive | **Yes**                        |
 | Example   | `my-secure-token-123`          |
 
-The Asterisk WebSocket is exempt from gateway JWT enforcement because the
-client cannot attach a browser cookie or authorization header. When signed JWT
-authentication is enabled, the backend rejects all Asterisk connections unless
-this separate transport secret is configured.
+The Asterisk WebSocket is exempt from gateway JWT enforcement because the client cannot attach a
+browser cookie or authorization header. When signed JWT authentication is enabled, the backend
+rejects all Asterisk connections unless this separate transport secret is configured.
 
 ______________________________________________________________________
 
@@ -1972,9 +2122,13 @@ on this profile counts as.
 | Values    | any `SinkClass` name, e.g. `sandbox_network`       |
 
 Runtime taint normally gates individual **tools**: `spawn_worker` is classified `sandbox_network`,
-so the shipped matrix denies it when the turn carries `unknown_external` content. A profile whose
-entire turn is the privileged operation — an agent that runs code in a sandbox — has no such tool to
-gate, and delegating to it would otherwise be classified as an ordinary delegation.
+and the shipped `unknown_external × sandbox_network` cell is bare `adjudicate`. Its reviewer may
+return `allow`, `confirm`, or `deny`; `deny` is the fail-closed fallback when review is unavailable,
+not a deterministic verdict floor. Deployments that need the earlier hard denial must set the
+`operator_minimum` shown in the
+[enforcement migration pin](#migration-for-deployments-already-enforcing-taint-policy). A profile
+whose entire turn is the privileged operation — an agent that runs code in a sandbox — has no such
+tool to gate, and delegating to it would otherwise be classified as an ordinary delegation.
 
 Declaring a sink here changes two things. `delegate_to_service` calls naming this profile as
 `target_service_id` are evaluated as that sink rather than as a generic delegation, so the caller is
@@ -1982,15 +2136,16 @@ refused (or asked to confirm) before a delegation run is created. And the profil
 the sink against the turn's taint before every model call, covering the entry points a tool gate
 does not see: slash commands, A2A requests and `wake_llm` automations. On a profile that declares a
 sink and also holds tools, that per-call evaluation is what stops a tool result from raising the
-turn's tier and then being fed to the model anyway. The profile gate has nobody to ask, so it
-refuses a `confirm` outcome as well as a `deny`.
+turn's tier and then being fed to the model anyway. An `adjudicate` outcome invokes the shared
+reviewer against the complete current state; a `confirm` verdict uses the turn's confirmation
+channel when one exists and otherwise fails closed.
 
 Attachments routed into such a profile contribute their own recorded provenance to that evaluation,
 so an untrusted file raises the turn's tier even when the request text is trusted.
 
 **A declared sink takes effect when `taint_policy.mode` does.** The deployment-wide mode defaults to
-`observe`, which downgrades every `confirm` and `deny` to `audit`, so a declared sink records rather
-than decides until the deployment switches to `enforce`. Do not reach for a profile-level
+`observe`, which downgrades every gating outcome to `audit`, so a declared sink records rather than
+decides until the deployment switches to `enforce`. Do not reach for a profile-level
 `taint_policy.mode: enforce` to get there sooner. A profile may tighten the deployment policy, but
 doing it here applies the shipped matrix to one profile ahead of the friction measurement that keeps
 the rollout in `observe` — and it refuses more than the untrusted input it is aimed at, because the

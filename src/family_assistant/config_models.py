@@ -60,6 +60,32 @@ class RetryConfig(BaseModel):
     fallback: RetryModelConfig | None = None
 
 
+class ToolCallReviewEscalationConfig(BaseModel):
+    """Turn-local thresholds used by tool-call review escalation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    consecutive_denials: int = Field(default=3, ge=1)
+    total_denials_per_turn: int = Field(default=20, ge=1)
+
+
+class ToolCallReviewConfig(BaseModel):
+    """Configuration for the non-agentic tool-call reviewer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    provider: str | None = "google"
+    model: str = "gemini-3.7-flash"
+    retry_config: RetryConfig | None = None
+    timeout_seconds: float = Field(default=10.0, gt=0)
+    max_reviews_per_turn: int = Field(default=25, ge=1)
+    escalation: ToolCallReviewEscalationConfig = Field(
+        default_factory=ToolCallReviewEscalationConfig
+    )
+    guidance: str = ""
+
+
 class ReolinkCameraItemConfig(BaseModel):
     """Configuration for a single Reolink camera."""
 
@@ -265,6 +291,7 @@ class ProcessingConfig(BaseModel):
     llm_model: str | None = None
     provider: str | None = None  # 'google', 'openai', 'anthropic'
     retry_config: RetryConfig | None = None
+    review_guidance: str = ""
     delegation_security_level: DelegationSecurityLevel = DelegationSecurityLevel.CONFIRM
     allowed_delegation_sources: list[str] | None = None
     home_assistant_api_url: str | None = None
@@ -1543,6 +1570,7 @@ class AppConfig(BaseSettings):
     # as report_technical_problem. Operator policy can still override these.
     global_tools_policy: ToolPolicyConfig | None = None
     taint_policy: TaintPolicyConfig = Field(default_factory=TaintPolicyConfig)
+    tool_call_review: ToolCallReviewConfig | None = None
 
     # Feature configurations
     calendar_config: CalendarConfig = Field(default_factory=CalendarConfig)

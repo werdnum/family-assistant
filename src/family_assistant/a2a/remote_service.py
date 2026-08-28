@@ -34,6 +34,7 @@ if TYPE_CHECKING:
         RequestConfirmationCallback,
     )
     from family_assistant.security.taint import TaintSource
+    from family_assistant.services.tool_call_review import TriggerReviewInput
     from family_assistant.storage.database import Database
     from family_assistant.telegram.protocols import ConfirmationUIManager
 
@@ -81,7 +82,9 @@ class RemoteA2AService:
         trigger_is_internal: bool = False,
         pinned_history_message_ids: list[int] | None = None,
         trigger_role: Literal["user", "system"] = "user",
+        reuse_existing_user_row: bool = False,
         initial_taint_sources: Sequence[TaintSource] | None = None,
+        tool_call_review_trigger: TriggerReviewInput | None = None,
     ) -> ChatInteractionResult:
         """Send the request to the remote A2A agent and return the result."""
         from family_assistant.processing.types import (  # noqa: PLC0415 - runtime import for .error()
@@ -102,6 +105,10 @@ class RemoteA2AService:
         _ = trigger_is_internal
         _ = pinned_history_message_ids
         _ = trigger_role
+        _ = reuse_existing_user_row
+        # Review trigger metadata is local authorization context. Remote A2A
+        # agents receive only the delegated request and taint metadata.
+        _ = tool_call_review_trigger
 
         metadata: dict[str, object] | None = None
         if initial_taint_sources:

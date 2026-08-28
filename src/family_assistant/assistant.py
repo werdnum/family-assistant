@@ -99,6 +99,7 @@ from family_assistant.services.oauth_integration_state import (
     filter_oauth_tool_registrations,
 )
 from family_assistant.services.push_notification import PushNotificationService
+from family_assistant.services.tool_call_review import ToolCallReviewer
 from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.services.worker_backend import get_worker_backend
 from family_assistant.skills import NoteRegistry, load_skills_from_directory
@@ -467,6 +468,7 @@ class Assistant:
         self.uvicorn_server_task: asyncio.Task | None = None
         self.health_monitor_task: asyncio.Task | None = None  # Track health monitor
         self.event_processor_task: asyncio.Task | None = None  # Track event processor
+        self._tool_call_reviewer: ToolCallReviewer | None = None
         self._is_shutdown_complete = False
 
         # Event system
@@ -1057,6 +1059,55 @@ class Assistant:
             for candidate in resolved_profiles
             if candidate.processing_config.taint_sink_class is not None
         }
+        review_config = self.config.tool_call_review
+        tool_call_reviewer: ToolCallReviewer | None = None
+        if review_config is not None and review_config.enabled:
+            review_llm_client = self.llm_client_overrides.get("__tool_call_reviewer__")
+            if review_llm_client is None:
+                review_llm_client = self.llm_client_overrides.get(
+                    self.config.default_service_profile_id
+                )
+            if review_llm_client is None and self.llm_client_overrides:
+                # Constructor overrides are used by tests and embedded callers to
+                # prevent external provider access. Reuse one for the shared judge
+                # unless a dedicated override was supplied.
+                review_llm_client = next(iter(self.llm_client_overrides.values()))
+            if review_llm_client is None:
+                if review_config.retry_config is not None:
+                    review_retry = review_config.retry_config.model_dump(
+                        exclude_none=True
+                    )
+                    primary = review_retry.setdefault("primary", {})
+                    primary.setdefault("provider", review_config.provider)
+                    primary.setdefault("model", review_config.model)
+                    primary.setdefault("model_parameters", self.config.llm_parameters)
+                    fallback = review_retry.get("fallback")
+                    if isinstance(fallback, dict):
+                        fallback.setdefault(
+                            "model_parameters", self.config.llm_parameters
+                        )
+                    # ast-grep-ignore: no-dict-any - Factory config is assembled dynamically.
+                    review_client_config: dict[str, Any] = {
+                        "retry_config": review_retry
+                    }
+                else:
+                    review_client_config = {
+                        "provider": review_config.provider,
+                        "model": review_config.model,
+                        "model_parameters": self.config.llm_parameters,
+                    }
+
+                def create_review_llm_client() -> LLMInterface:
+                    return LLMClientFactory.create_client(config=review_client_config)
+
+                tool_call_reviewer = ToolCallReviewer(
+                    None,
+                    review_config,
+                    llm_client_factory=create_review_llm_client,
+                )
+            else:
+                tool_call_reviewer = ToolCallReviewer(review_llm_client, review_config)
+        self._tool_call_reviewer = tool_call_reviewer
         for profile_conf in resolved_profiles:
             profile_id = profile_conf.id
 
@@ -1219,6 +1270,15 @@ class Assistant:
                 taint_policy=merged_taint_policy,
                 confirmation_timeout=confirmation_timeout,
                 delegation_sink_classes=delegation_sink_classes,
+                tool_call_reviewer=tool_call_reviewer,
+                review_config=review_config,
+                deployment_review_guidance=(
+                    review_config.guidance if review_config is not None else ""
+                ),
+                profile_review_guidance=profile_proc_conf.review_guidance,
+                include_aggregated_context=(
+                    profile_proc_conf.include_aggregated_context
+                ),
             )
             on_demand_tool_names = profile_tools_conf.get_on_demand_tool_names()
             on_demand_mcp_ids = set(profile_tools_conf.get_on_demand_mcp_server_ids())
@@ -2256,6 +2316,12 @@ class Assistant:
                 "Processing services registry not found, closing default tools_provider."
             )
             await self.default_processing_service.tools_provider.close()
+
+        if self._tool_call_reviewer is not None:
+            try:
+                await self._tool_call_reviewer.close()
+            except Exception:
+                logger.exception("Error closing shared tool-call reviewer")
 
         if self.shared_httpx_client:
             await self.shared_httpx_client.aclose()

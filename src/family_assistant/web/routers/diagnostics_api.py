@@ -148,6 +148,8 @@ class TaintAuditDiagnostics(BaseModel):
     by_sink_class: list[DiagnosticCount]
     by_requested_outcome: list[DiagnosticCount]
     by_effective_outcome: list[DiagnosticCount]
+    by_review_verdict: list[DiagnosticCount]
+    by_review_status: list[DiagnosticCount]
     by_tool: list[DiagnosticCount]
     source_type_occurrences: list[DiagnosticCount]
     source_tier_occurrences: list[DiagnosticCount]
@@ -595,6 +597,8 @@ async def get_taint_diagnostics(
     sink_class_counts: Counter[str | None] = Counter()
     requested_outcome_counts: Counter[str | None] = Counter()
     effective_outcome_counts: Counter[str | None] = Counter()
+    review_verdict_counts: Counter[str | None] = Counter()
+    review_status_counts: Counter[str | None] = Counter()
     tool_counts: Counter[str | None] = Counter()
     source_type_counts: Counter[str | None] = Counter()
     source_tier_counts: Counter[str | None] = Counter()
@@ -606,6 +610,8 @@ async def get_taint_diagnostics(
         sink_class_counts[event["sink_class"]] += 1
         requested_outcome_counts[event["requested_outcome"]] += 1
         effective_outcome_counts[event["effective_outcome"]] += 1
+        review_verdict_counts[event["review_verdict"]] += 1
+        review_status_counts[event["review_status"]] += 1
         tool_counts[event["tool_name"]] += 1
         for source in event["sources_json"]:
             source_type_counts[source["source_type"]] += 1
@@ -665,6 +671,8 @@ async def get_taint_diagnostics(
             by_sink_class=_diagnostic_counts(sink_class_counts),
             by_requested_outcome=_diagnostic_counts(requested_outcome_counts),
             by_effective_outcome=_diagnostic_counts(effective_outcome_counts),
+            by_review_verdict=_diagnostic_counts(review_verdict_counts),
+            by_review_status=_diagnostic_counts(review_status_counts),
             by_tool=_diagnostic_counts(tool_counts),
             source_type_occurrences=_diagnostic_counts(source_type_counts),
             source_tier_occurrences=_diagnostic_counts(source_tier_counts),

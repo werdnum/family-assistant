@@ -41,8 +41,10 @@ from family_assistant.tools.infrastructure import (
     PolicyEnforcingToolsProvider,
     find_provider_by_type,
 )
-from family_assistant.tools.policy import PolicyEvaluation
-from family_assistant.tools.types import ConfirmationOutcome
+from family_assistant.tools.types import (
+    ConfirmationOutcome,
+    ToolCallReviewAuthorization,
+)
 from tests.functional.telegram.test_telegram_handler import (
     create_context,
     create_mock_update,
@@ -100,6 +102,7 @@ class RecordingConfirmationService:
         decision_only: bool = False,
         processing_profile_id: str | None = None,
         taint_state_json: dict[str, object] | None = None,
+        tool_call_review_authorization: ToolCallReviewAuthorization | None = None,
     ) -> dict[str, object]:
         self.last_created_request = {
             "target_user_id": target_user_id,
@@ -112,6 +115,7 @@ class RecordingConfirmationService:
             "decision_only": decision_only,
             "processing_profile_id": processing_profile_id,
             "taint_state_json": taint_state_json,
+            "tool_call_review_authorization": tool_call_review_authorization,
         }
         return {"id": self.created_request_id}
 
@@ -329,6 +333,14 @@ async def test_durable_telegram_confirmation_persists_taint_policy_context() -> 
         )
         .to_metadata()
     )
+    review_authorization = ToolCallReviewAuthorization(
+        tool_name="record_tool",
+        call_id="call-id",
+        tool_args={"value": "test"},
+        sink_class="artifact_write",
+        static_policy_reason="Static review requested confirmation.",
+        taint_policy_reason=None,
+    )
 
     confirmation_task = asyncio.create_task(
         manager.request_confirmation(
@@ -344,6 +356,7 @@ async def test_durable_telegram_confirmation_persists_taint_policy_context() -> 
             source_message_internal_id=1,
             taint_state_json=taint_state_json,
             processing_profile_id="runtime-taint-test",
+            tool_call_review_authorization=review_authorization,
         )
     )
 
@@ -360,6 +373,10 @@ async def test_durable_telegram_confirmation_persists_taint_policy_context() -> 
     assert (
         confirmation_service.last_created_request["processing_profile_id"]
         == "runtime-taint-test"
+    )
+    assert (
+        confirmation_service.last_created_request["tool_call_review_authorization"]
+        is review_authorization
     )
 
     pending = manager.pending_confirmations[confirmation_service.created_request_id]
@@ -948,22 +965,8 @@ async def test_confirmation_via_inline_keyboard_does_not_deadlock(
         fix.tools_provider, PolicyEnforcingToolsProvider
     )
     assert policy_provider is not None
-    original_eval = policy_provider._policy_engine.evaluate_for_execution
-
-    def _patched_eval(
-        descriptor: Any,  # noqa: ANN401
-        # ast-grep-ignore: no-dict-any - policy engine signature uses object values
-        arguments: dict[str, Any] | None = None,
-        can_confirm: bool = True,
-    ) -> PolicyEvaluation:
-        if descriptor.name == TOOL_NAME_SENSITIVE and can_confirm:
-            return PolicyEvaluation(
-                decision=ToolPolicyDecision.CONFIRM,
-                reason="test: requires confirmation",
-            )
-        return original_eval(descriptor, arguments=arguments, can_confirm=can_confirm)
-
-    policy_provider._policy_engine.evaluate_for_execution = _patched_eval  # type: ignore[assignment]
+    original_policy_engine = policy_provider._policy_engine
+    _require_confirmation_for_test_tool(fix, TOOL_NAME_SENSITIVE)
 
     # --- 3. Mock LLM: first call returns a tool call, second returns text ---
     tool_call_id = f"call_keyboard_{uuid.uuid4()}"
@@ -1083,7 +1086,8 @@ async def test_confirmation_via_inline_keyboard_does_not_deadlock(
         assert note.content == note_content
 
     finally:
-        policy_provider._policy_engine.evaluate_for_execution = original_eval  # type: ignore[assignment]
+        policy_provider._policy_engine = original_policy_engine
+        policy_provider._tool_definitions_by_confirmation.clear()
         shutdown_event.set()
         wake_event.set()
         with contextlib.suppress(TimeoutError):

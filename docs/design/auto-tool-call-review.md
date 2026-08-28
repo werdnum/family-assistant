@@ -2,7 +2,11 @@
 
 ## Status
 
-Proposed.
+Implemented through the shared reviewer, taint/static runtime integrations, deterministic signals,
+audit diagnostics, and the environment-inclusive browser review contract. Production remains in the
+designed M2 shadow posture (`taint_policy.mode: observe`); the evidence-gated M5 enforcement
+decision is operational work, not a code default. The browser contract is ready for its DOM-path
+call site when PR #1136's authenticated-session runtime lands.
 
 This design promotes the adjudicator described in
 [risk-adjudicated-taint-enforcement.md](risk-adjudicated-taint-enforcement.md) from that document's
@@ -78,8 +82,9 @@ versus approval policy (when to ask) — already exists in this codebase, and th
 strong half:
 
 - Processing profiles are the hard capability boundary. The browser profiles hold no household
-  context or sensitive-read tools; `media_analyst` reaches no tools at all; `coder` runs in a
-  throwaway sandbox with no FA tool surface; the engineer profile confirms every side effect.
+  context (browser reads are tracked separately as potentially sensitive); `media_analyst` reaches
+  no tools at all; `coder` runs in a throwaway sandbox with no FA tool surface; the engineer profile
+  confirms every side effect.
 - Static tool policy is deny-by-default per profile, with tighten-only operator override layering.
 - Server-side validation makes sinks safe by construction where it matters most
   (`send_message_to_user` recipient validation, browser-server origin confinement, opaque cookie
@@ -133,23 +138,29 @@ The reviewer's context is a typed structure assembled deterministically:
   load-bearing: in email intake the sender-controlled body arrives represented as a `UserMessage`,
   so role-based selection would hand the judge the attacker's email verbatim. The per-row taint
   metadata this selection needs is already persisted.
+
 - **The tool call under review**: name, resolved sink class, and the tool description for local
   tools only (an MCP tool's description is remote-server content, so MCP tools render as server id
   plus annotation-derived tags).
+
 - **The arguments, rendered in full inside fenced data boundaries** with boundary neutralization
   (the `_neutralize_untrusted_evidence_boundaries` pattern). This is a deliberate divergence from
   the risk document's provenance-filtered rendering, discussed below.
+
 - **A provenance digest of the turn**: which sources are present, their tiers, types, and ordering
   (the sensitive-read records and fresh-taint sequence, where available in the current context).
   Closed-vocabulary fields render verbatim; free-text fields (reasons, artifact titles, sender
   addresses) render only for trusted-tier sources and are otherwise replaced by type-and-tier stubs,
   because reasons already interpolate artifact-controlled text today.
+
 - **The delegating policy cell or rule**, including its verdict space, so the reviewer knows which
   verdicts are available to it.
+
 - **Operator review guidance**: trusted deployment- and profile-level free text describing what the
   household considers routine, plus — for action review — the site's configured damage envelope.
   This is operator configuration, the same trust class as a system prompt, and it is what makes the
   reviewer tunable without code changes.
+
 - **The trigger definition, for unattended runs.** An event-handler or scheduled turn has no trusted
   user message; its trusted intent is the human-authored definition that created the run — the
   listener's instruction, the automation's prompt, the scheduled task's objective. The definition
@@ -164,6 +175,15 @@ The reviewer's context is a typed structure assembled deterministically:
   executable-persistence concern the risk document covers) cannot render as trusted intent, because
   no definition can until stored provenance proves it. The trigger *payload* — the event data,
   deliberately untrusted — is always represented as a provenance stub, never rendered.
+
+  Missing authoring provenance also affects the runtime taint state, not just what the reviewer can
+  render. At present **every unattended callback** enters as `unknown_external`, including event
+  listeners, script wakes and failures, schedule automations, `schedule_future_callback`, and
+  reminders. Its user-role trigger row and taint-derived assistant rows persist in conversation
+  history, so a later interactive turn that reloads that history can inherit the elevated tier and
+  incur adjudication, confirmation, or denial friction. This is the conservative interim behavior
+  until automation-definition provenance is stored at authoring time and threaded into callbacks;
+  creator identity alone is not enough to suppress it.
 
 ### On rendering arguments: the auto-mode position, not the stub position
 
@@ -196,7 +216,9 @@ It is an upgrade, not a prerequisite.
 - `confirm` — escalate to the existing durable confirmation machinery. The reviewer's reason is
   included in the rendered confirmation so the human sees *why* — this is what turns a generic
   "approve this tool call?" into "this message quotes your notes and goes to an address that appears
-  nowhere in your request".
+  nowhere in your request". A live confirmation for a non-tool named sink (a profile or brokered
+  request) also renders the complete request payload; if that payload cannot be rendered or does not
+  fit the confirmation channel, the request is refused rather than offering a truncated approval.
 - `deny` — a structured deny-and-continue tool result stating what was blocked, why, and what safer
   route exists. The model continues; hard errors are reserved for explicit floors.
 
@@ -206,11 +228,14 @@ static `review` rules. Every verdict — including shadow-mode verdicts — writ
 `taint_audit_events` row with structured verdict, status, latency, and delegating context, and the
 diagnostics endpoint grows verdict counts. Durable rows use a fixed trusted reason and deliberately
 omit the reviewer's free-form rationale; that rationale remains available only to the live
-confirmation or deny result. The audit row's `turn_id` and `tool_call_id` locate the canonical
-assistant message for later reconstruction when the call came from stored message history, without
-duplicating the conversation or arguments in the audit table. Direct named-sink and other
-non-message-originated authorizations can have no corresponding message row; their structured audit
-evidence is intentionally the complete durable record.
+confirmation or deny result. Argument summaries retain names declared by a trusted local tool schema
+and pseudonymize unexpected keys; MCP schema keys remain untrusted. All argument values are omitted
+regardless of origin. Source provenance retains closed-vocabulary type and tier, while externally
+authored identifiers, labels, and reasons are omitted. The audit row's `turn_id` and `tool_call_id`
+locate the canonical assistant message for later reconstruction when the call came from stored
+message history, without duplicating the conversation or arguments in the audit table. Direct
+named-sink and other non-message-originated authorizations can have no corresponding message row;
+their structured audit evidence is intentionally the complete durable record.
 
 ### Escalation and cost bounds
 
@@ -253,9 +278,11 @@ A second deterministic computation is a **signal, never a bypass**:
 
 - **Trusted-destination echo.** Whether the destination-bearing argument of an egress call is an
   exact whole-value match (post-normalization) for a destination in the current request's
-  trusted-tier user text — the small, checkable subset of argument provenance matching. Per the risk
-  document, mention is not authorization: a request can name a destination while *forbidding* it,
-  and no string match can tell the difference, so a passing match never skips the reviewer and never
+  trusted-tier user text — the small, checkable subset of argument provenance matching. Non-URL
+  values retain case-insensitive text normalization; for parsed URLs only the scheme and host are
+  case-insensitive, while path, query, and fragment case remain exact. Per the risk document,
+  mention is not authorization: a request can name a destination while *forbidding* it, and no
+  string match can tell the difference, so a passing match never skips the reviewer and never
   produces `allow` on its own — the payload still has to look benign against the request. The match
   result feeds the reviewer as strong evidence ("destination appears verbatim in the current trusted
   request" versus "destination appears nowhere the user wrote") and appears in verdict reasons and
@@ -282,16 +309,19 @@ which is why the M5 gate includes p95 reviewer latency.
 The shadow property belongs to `observe` mode, not to the defaults change itself. For a deployment
 already running `mode: enforce`, adopting the new default matrix is a real posture change — cells
 that gated unconditionally become judged — and must not happen silently: the configuration
-reference's migration note tells enforce deployments to pin the previous outcomes before upgrading
-or to adopt the judged posture deliberately. The pin covers **every changed cell**, the audit
-demotions included: an `operator_minimum` of `confirm` on the egress cells, on
-`unknown_external × known_user_message`, and on `unknown_external × sensitive_read_broadening`, plus
-`deny` on `unknown_external × sandbox_network`, reproduces today's matrix cell-for-cell (the egress
-and sandbox entries are a subset of the recommended hardening set). Verdict floors and
-`operator_minimum` are tighten-only against the judge just as against profiles, so a pinned
-deployment loses nothing. No known deployment runs `enforce` today — the maintainer's is the only
-known deployment, and it runs `observe` — so this is defence in depth for third-party deployments of
-a public codebase: a documented pin and a config test, not migration machinery.
+reference's migration note tells enforce deployments to pin every previous outcome before upgrading
+or to adopt the judged posture deliberately. The literal cell-for-cell pin is an `operator_minimum`
+of `confirm` on the egress cells, on `unknown_external × known_user_message`, and on
+`unknown_external × sensitive_read_broadening`, plus `deny` on `unknown_external × sandbox_network`.
+Absent authoring provenance now puts every unattended callback at `unknown_external`, so that
+literal pin also makes reminder delivery through `send_message_to_user` defer for confirmation
+instead of delivering. A deployment that relies on automatic reminders may deliberately omit only
+the `known_user_message` minimum, accepting a reminder-compatible exception to the old posture
+rather than calling it a cell-for-cell pin. Verdict floors and `operator_minimum` remain
+tighten-only against the judge just as against profiles. No known deployment runs `enforce` today —
+the maintainer's is the only known deployment, and it runs `observe` — so this is defence in depth
+for third-party deployments of a public codebase: a documented pin and a config test, not migration
+machinery.
 
 ### Default matrix changes
 
@@ -366,14 +396,17 @@ Semantics:
   `can_confirm`, because the reviewer can resolve to `allow` without a human. This fixes a standing
   gap where confirm-gated tools vanish from channels that cannot confirm (voice, some API contexts);
   under `review` they remain usable and only genuinely suspicious calls fail there.
+
 - **Execution**: the reviewer is invoked with the same input contract, the matched rule as the
   delegating context, and the static layer's guidance. A `confirm` verdict uses the ordinary
   confirmation flow; in a context with no live confirmation channel it becomes a deferred durable
   confirmation where the call is independent and terminal (the fire-and-forget sends and filings the
   risk document's deferral rules already scope), and degrades to deny-and-continue otherwise.
+
 - **Layering**: `review` is an ordinary decision value in the existing priority system — profiles
   and operators place it with the same offsets and tie-breaking as today. No new lattice is needed
   at the static layer; an operator who wants a hard gate keeps `confirm` or `deny`, exactly as now.
+
 - **One judgment per call.** When static policy says `review` and the taint layer says `adjudicate`
   for the same call, the reviewer runs once with both delegating contexts, and one verdict satisfies
   both layers — the same single-payload rule that already governs double confirmation. The effective
@@ -429,7 +462,7 @@ instead of building one.
 
 ## Configuration
 
-Approach-level sketch; exact spellings belong to the implementing PRs.
+Implemented configuration:
 
 ```yaml
 tool_call_review:
@@ -509,9 +542,9 @@ request, injection targeting X) reaches the reviewer rather than short-circuitin
 **M4 — Static `review` decision.** The new decision value, advertisement semantics, and the
 one-judgment-per-call merge with the taint layer. *Verify:* policy-engine tests for layering and
 priority with the new value; a call gated by both layers produces exactly one reviewer invocation
-and at most one confirmation; in a no-channel context a `confirm` verdict on a deferral-eligible
-(independent, terminal) call creates a deferred durable confirmation, and on an ineligible call
-degrades to deny-and-continue — both paths tested separately.
+and at most one confirmation; an eligible independent terminal call without a live channel creates
+one deferred durable confirmation, while an ineligible no-channel call degrades the same `confirm`
+verdict to deny-and-continue.
 
 **M5 — Enforce on evidence.** Review the shadow data against the gates: reviewer false-allow ≈ 0 on
 the replayed injection fixture set, projected interactive confirmations within the friction budget,

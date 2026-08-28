@@ -152,6 +152,16 @@ class TaintAuditArgumentsSummary(TypedDict):
     value_types: dict[str, str]
 
 
+class TaintAuditReviewContext(TypedDict):
+    """Audit-safe summary of the policy contexts delegated to a reviewer."""
+
+    delegating_contexts: list[str]
+    allowed_verdicts: list[str]
+    fallback_verdict: str
+    used_fallback: bool
+    destination_echo: bool | None
+
+
 class TaintAuditEventRow(TypedDict):
     """Type definition for durable runtime taint audit events."""
 
@@ -170,6 +180,10 @@ class TaintAuditEventRow(TypedDict):
     requested_outcome: str | None
     effective_outcome: str | None
     mode: str | None
+    review_verdict: str | None
+    review_status: str | None
+    review_latency_ms: float | None
+    review_context_json: TaintAuditReviewContext | None
     reason: str
     arguments_summary_json: TaintAuditArgumentsSummary | None
     artifact_id: str | None

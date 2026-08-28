@@ -24,6 +24,7 @@ if TYPE_CHECKING:
         RequestConfirmationCallback,
     )
     from family_assistant.security.taint import TaintSource, TurnTaintState
+    from family_assistant.services.tool_call_review import TriggerReviewInput
     from family_assistant.storage.database import Database
     from family_assistant.telegram.protocols import ConfirmationUIManager
 
@@ -64,7 +65,9 @@ class DelegatableService(Protocol):
         trigger_is_internal: bool = False,
         pinned_history_message_ids: list[int] | None = None,
         trigger_role: Literal["user", "system"] = "user",
+        reuse_existing_user_row: bool = False,
         initial_taint_sources: Sequence[TaintSource] | None = None,
+        tool_call_review_trigger: TriggerReviewInput | None = None,
     ) -> ChatInteractionResult: ...
 
 

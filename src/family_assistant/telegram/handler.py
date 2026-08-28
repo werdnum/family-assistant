@@ -54,7 +54,10 @@ from family_assistant.telegram.chunking import (
 )
 from family_assistant.telegram.markdown_utils import convert_to_telegram_markdown
 from family_assistant.telegram.types import AttachmentData, TriggerAttachment
-from family_assistant.tools.confirmation import TOOL_CONFIRMATION_RENDERERS
+from family_assistant.tools.confirmation import (
+    TOOL_CONFIRMATION_RENDERERS,
+    append_review_reason_to_confirmation,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -693,6 +696,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             prompt_text = await renderer(tool_args, context)
                         else:
                             prompt_text = f"Confirm execution of tool: {tool_name}"
+                        prompt_text = append_review_reason_to_confirmation(
+                            prompt_text, context
+                        )
 
                         source_message_internal_id = None
                         if turn_id is not None:
@@ -720,6 +726,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             source_message_internal_id=source_message_internal_id,
                             taint_state_json=taint_state_json,
                             processing_profile_id=context.processing_profile_id,
+                            tool_call_review_authorization=(
+                                context.tool_call_review_authorization
+                            ),
                         )
                         return result
 
@@ -1236,6 +1245,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     prompt_text = await renderer(tool_args, context)
                 else:
                     prompt_text = f"Confirm execution of tool: {tool_name}"
+                prompt_text = append_review_reason_to_confirmation(prompt_text, context)
 
                 source_message_internal_id = None
                 if turn_id is not None:
@@ -1244,6 +1254,12 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     )
                     if source_row is not None:
                         source_message_internal_id = source_row["internal_id"]
+
+                taint_state_json = (
+                    context.taint_tracker.snapshot().to_metadata()
+                    if context.taint_tracker is not None
+                    else None
+                )
 
                 return await self.confirmation_manager.request_confirmation(
                     conversation_id=conversation_id,
@@ -1256,6 +1272,11 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     target_user_id=resolved_user.user_id,
                     tool_call_id=call_id,
                     source_message_internal_id=source_message_internal_id,
+                    taint_state_json=taint_state_json,
+                    processing_profile_id=context.processing_profile_id,
+                    tool_call_review_authorization=(
+                        context.tool_call_review_authorization
+                    ),
                 )
 
             chat_interfaces = self._get_chat_interfaces()

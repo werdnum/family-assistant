@@ -9,6 +9,7 @@ from family_assistant.storage.taint_audit import taint_audit_events_table
 from family_assistant.storage.types import (
     TaintAuditArgumentsSummary,
     TaintAuditEventRow,
+    TaintAuditReviewContext,
     TaintAuditSourceSummary,
 )
 
@@ -36,6 +37,10 @@ class TaintAuditEventsRepository(BaseRepository):
         reason: str,
         arguments_summary: TaintAuditArgumentsSummary | None,
         artifact_id: str | None = None,
+        review_verdict: str | None = None,
+        review_status: str | None = None,
+        review_latency_ms: float | None = None,
+        review_context: TaintAuditReviewContext | None = None,
     ) -> None:
         """Persist a taint audit event."""
         stmt = insert(taint_audit_events_table).values(
@@ -53,6 +58,10 @@ class TaintAuditEventsRepository(BaseRepository):
             requested_outcome=requested_outcome,
             effective_outcome=effective_outcome,
             mode=mode,
+            review_verdict=review_verdict,
+            review_status=review_status,
+            review_latency_ms=review_latency_ms,
+            review_context_json=review_context,
             reason=reason,
             arguments_summary_json=arguments_summary,
             artifact_id=artifact_id,

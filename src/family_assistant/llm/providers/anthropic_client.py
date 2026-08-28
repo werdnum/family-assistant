@@ -150,6 +150,10 @@ class AnthropicClient(BaseLLMClient):
             f"model-specific parameters: {list(model_parameters.keys()) if model_parameters else []}"
         )
 
+    async def close(self) -> None:
+        """Close the owned asynchronous Anthropic SDK client."""
+        await self.client.close()
+
     def _supports_multimodal_tools(self) -> bool:
         """Anthropic supports images and PDFs in tool results natively."""
         return True

@@ -21,6 +21,9 @@ from family_assistant.security.taint import (
     TaintSourceType,
     TurnTaintState,
 )
+from family_assistant.services.deferred_tool_confirmation import (
+    DeferredConfirmationCallbackAdapter,
+)
 from family_assistant.storage.database import Database
 from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
 from family_assistant.tools.types import (
@@ -765,13 +768,13 @@ async def test_safety_confirmation_deferred_pending_not_acknowledged() -> None:
         "Waiting on the user to approve this in Telegram or the web UI "
         "(request abc123). It hasn't run yet."
     )
-    callback = StubConfirmationCallback(
+    wrapped_callback = StubConfirmationCallback(
         outcome=ConfirmationOutcome(
             kind="completed",
             result=pending_message,
-            action_attempted=False,
         )
     )
+    callback = DeferredConfirmationCallbackAdapter(wrapped_callback)
 
     tool_call = ToolCallItem(
         id="call_123",
@@ -802,6 +805,7 @@ async def test_safety_confirmation_deferred_pending_not_acknowledged() -> None:
 
     assert isinstance(result, ToolExecutionResult)
     assert provider.executed_tool_names == []
+    assert len(wrapped_callback.calls) == 1
     assert "hasn't run yet" in result.llm_message.content
     assert "safety_acknowledgement" not in result.llm_message.content
 

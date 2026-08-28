@@ -6,7 +6,9 @@ from typing import TYPE_CHECKING
 import pytest
 
 from family_assistant.assistant import Assistant
-from family_assistant.config_models import AppConfig
+from family_assistant.config_models import AppConfig, ToolCallReviewConfig
+from family_assistant.llm.factory import LLMClientFactory
+from family_assistant.services.tool_call_review import ToolCallReviewer
 from family_assistant.tools import (
     PolicyEnforcingToolsProvider,
     find_provider_by_type,
@@ -145,6 +147,49 @@ async def test_assistant_profile_tools_are_policy_enforced(
         assert names_with_confirm == {"get_note", "delete_note"}
     finally:
         await assistant.stop_services()
+
+
+@pytest.mark.asyncio
+async def test_enabled_reviewer_does_not_construct_provider_during_startup(
+    db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _build_test_config(db_engine, include_tools_policy=True)
+    config.tool_call_review = ToolCallReviewConfig(
+        enabled=True,
+        provider="google",
+        model="gemini-3.7-flash",
+    )
+    profile_client = RuleBasedMockLLMClient(rules=[])
+    created_configs: list[dict[str, object]] = []
+    reviewer_close_calls = 0
+
+    original_reviewer_close = ToolCallReviewer.close
+
+    async def close_reviewer(reviewer: ToolCallReviewer) -> None:
+        nonlocal reviewer_close_calls
+        reviewer_close_calls += 1
+        await original_reviewer_close(reviewer)
+
+    def create_client(config: dict[str, object]) -> RuleBasedMockLLMClient:
+        created_configs.append(config)
+        if config.get("provider") == "google":
+            raise AssertionError("reviewer provider was constructed during startup")
+        return profile_client
+
+    monkeypatch.setattr(LLMClientFactory, "create_client", create_client)
+    monkeypatch.setattr(ToolCallReviewer, "close", close_reviewer)
+    assistant = Assistant(config=config, database_engine=db_engine)
+
+    try:
+        await assistant.setup_dependencies()
+        assert created_configs
+        assert all(item.get("provider") != "google" for item in created_configs)
+    finally:
+        await assistant.stop_services()
+        await assistant.stop_services()
+
+    assert reviewer_close_calls == 1
 
 
 @pytest.mark.asyncio

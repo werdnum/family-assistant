@@ -20,7 +20,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
-from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.config_models import AppConfig, ToolCallReviewConfig, ToolsConfig
 from family_assistant.context_providers import NotesContextProvider
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import (
@@ -30,6 +30,12 @@ from family_assistant.llm import (
     ToolCallItem,
 )
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.security.taint import TaintPolicyConfig, TaintPolicyMode
+from family_assistant.services.tool_call_review import (
+    ToolCallReviewer,
+    ToolCallReviewResponse,
+    ToolCallReviewVerdict,
+)
 from family_assistant.storage import init_db
 from family_assistant.storage.confirmation_requests import confirmation_requests_table
 from family_assistant.storage.database import Database
@@ -43,6 +49,7 @@ from family_assistant.tools import (
     PolicyEnforcingToolsProvider,
     PolicyEngine,
     PolicyRule,
+    TaintTrackingToolsProvider,
     ToolMatcher,
     ToolPolicyConfig,
     ToolPolicyDecision,
@@ -62,7 +69,18 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def mock_llm_client() -> RuleBasedMockLLMClient:
-    return RuleBasedMockLLMClient(rules=[])
+    return RuleBasedMockLLMClient(
+        rules=[],
+        structured_rules=[
+            (
+                lambda _args: True,
+                ToolCallReviewResponse(
+                    verdict=ToolCallReviewVerdict.CONFIRM,
+                    reason="Reviewer requires human approval.",
+                ),
+            )
+        ],
+    )
 
 
 @pytest.fixture
@@ -79,8 +97,10 @@ def processing_service_config() -> ProcessingServiceConfig:
 
 
 @pytest_asyncio.fixture
-async def confirm_policy_tools_provider() -> ToolsProvider:
-    """Tools provider that requires confirmation for ``add_or_update_note``."""
+async def confirm_policy_tools_provider(
+    mock_llm_client: RuleBasedMockLLMClient,
+) -> ToolsProvider:
+    """Provider with hard confirmation and automatic-review policy examples."""
     local_provider = LocalToolsProvider(
         registrations=local_tool_registrations,
         embedding_generator=None,
@@ -102,13 +122,28 @@ async def confirm_policy_tools_provider() -> ToolsProvider:
                         decision=ToolPolicyDecision.CONFIRM,
                         priority=10,
                         description="require confirmation for note writes",
-                    )
+                    ),
+                    PolicyRule(
+                        match=ToolMatcher(names=["delete_note"]),
+                        decision=ToolPolicyDecision.REVIEW,
+                        priority=10,
+                        description="review note deletion",
+                    ),
                 ],
             )
         ),
     )
     await policy_provider.get_tool_definitions()
-    return policy_provider
+    review_config = ToolCallReviewConfig(timeout_seconds=1)
+    provider = TaintTrackingToolsProvider(
+        policy_provider,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+        tool_call_reviewer=ToolCallReviewer(mock_llm_client, review_config),
+        review_config=review_config,
+        include_aggregated_context=True,
+    )
+    await provider.get_tool_definitions()
+    return provider
 
 
 @pytest.fixture
@@ -223,3 +258,64 @@ async def test_confirm_policy_tool_records_durable_confirmation(
     assert [(row["tool_name"], row["status"]) for row in rows] == [
         ("add_or_update_note", "pending")
     ]
+    assert all(
+        call["method_name"] != "generate_structured"
+        for call in mock_llm_client.get_calls()
+    )
+
+
+@pytest.mark.asyncio
+async def test_reviewer_confirmation_for_ineligible_tool_is_not_deferred(
+    test_client: AsyncClient,
+    mock_llm_client: RuleBasedMockLLMClient,
+    db_engine: AsyncEngine,
+) -> None:
+    def calls_tool(args: MatcherArgs) -> bool:
+        messages = args.get("messages", [])
+        return not any(msg.role == "tool" for msg in messages)
+
+    def after_tool(args: MatcherArgs) -> bool:
+        messages = args.get("messages", [])
+        return any(msg.role == "tool" for msg in messages)
+
+    mock_llm_client.rules.append((
+        calls_tool,
+        LLMOutput(
+            content=None,
+            tool_calls=[
+                ToolCallItem(
+                    id="delete_note_call_1",
+                    type="function",
+                    function=ToolCallFunction(
+                        name="delete_note",
+                        arguments=json.dumps({"title": "Trip"}),
+                    ),
+                )
+            ],
+        ),
+    ))
+    mock_llm_client.rules.append((
+        after_tool,
+        LLMOutput(content="I couldn't delete that note without a live approval."),
+    ))
+
+    response = await test_client.post(
+        "/api/v1/chat/send_message",
+        json={"prompt": "Delete my trip note", "interface_type": "ios"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert (
+        response.json()["reply"]
+        == "I couldn't delete that note without a live approval."
+    )
+    db = Database(engine=db_engine)
+    rows = await db.fetch_all(select(confirmation_requests_table.c.id))
+    assert rows == []
+    assert (
+        sum(
+            call["method_name"] == "generate_structured"
+            for call in mock_llm_client.get_calls()
+        )
+        == 1
+    )

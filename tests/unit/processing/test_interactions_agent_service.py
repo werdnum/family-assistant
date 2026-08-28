@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -10,8 +11,13 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.config_models import (
+    AppConfig,
+    ToolCallReviewConfig,
+    ToolsConfig,
+)
 from family_assistant.delegation_security import DelegationSecurityLevel
+from family_assistant.llm import LLMOutput
 from family_assistant.llm.messages import UserMessage
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.processing.interactions_agent_service import (
@@ -38,16 +44,33 @@ from family_assistant.security.taint import (
     merge_history_taint,
 )
 from family_assistant.services.attachment_registry import AttachmentRegistry
+from family_assistant.services.tool_call_review import (
+    ToolCallReviewer,
+    ToolCallReviewResponse,
+    ToolCallReviewStatus,
+    ToolCallReviewVerdict,
+)
 from family_assistant.storage.database import Database
+from family_assistant.tools import LocalToolsProvider, TaintTrackingToolsProvider
+from family_assistant.tools.types import ConfirmationOutcome
+from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
+    RuleBasedMockLLMClient,
+)
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
+    from pydantic import BaseModel
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from family_assistant.llm import LLMInterface
+    from family_assistant.llm.messages import LLMMessage
     from family_assistant.storage.repositories.delegation_runs import (
         DelegationRunCreate,
     )
+    from family_assistant.telegram.protocols import ConfirmationUIManager
+    from family_assistant.tools import ToolsProvider
     from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
 
@@ -68,12 +91,80 @@ class SimpleToolsProvider:
         pass
 
 
+class _ReviewLLM:
+    """Structured reviewer fake that can pause inside its model call."""
+
+    def __init__(
+        self,
+        verdict: ToolCallReviewVerdict,
+        *,
+        entered: asyncio.Event | None = None,
+        release: asyncio.Event | None = None,
+    ) -> None:
+        self.verdict = verdict
+        self.entered = entered
+        self.release = release
+        self.calls = 0
+        self.last_messages: Sequence[LLMMessage] | None = None
+
+    async def generate_structured[T: BaseModel](
+        self,
+        messages: Sequence[LLMMessage],
+        response_model: type[T],
+        max_retries: int = 2,
+    ) -> T:
+        assert response_model is ToolCallReviewResponse
+        assert max_retries == 0
+        self.calls += 1
+        self.last_messages = messages
+        if self.entered is not None:
+            self.entered.set()
+        if self.release is not None:
+            await self.release.wait()
+        return cast(
+            "T",
+            ToolCallReviewResponse(
+                verdict=self.verdict,
+                reason=f"Reviewer chose {self.verdict.value}.",
+                safer_alternative="Keep the work local."
+                if self.verdict is ToolCallReviewVerdict.DENY
+                else None,
+            ),
+        )
+
+
+class _DecisionOnlyConfirmationManager:
+    def __init__(self, outcome: ConfirmationOutcome) -> None:
+        self.outcome = outcome
+        self.calls: list[dict[str, object]] = []
+
+    async def request_confirmation(self, **kwargs: object) -> ConfirmationOutcome:
+        self.calls.append(kwargs)
+        return self.outcome
+
+
+def _reviewing_provider(
+    llm: _ReviewLLM,
+    *,
+    taint_policy: TaintPolicyConfig,
+) -> TaintTrackingToolsProvider:
+    review_config = ToolCallReviewConfig(timeout_seconds=1)
+    return TaintTrackingToolsProvider(
+        LocalToolsProvider(registrations=[]),
+        taint_policy=taint_policy,
+        tool_call_reviewer=ToolCallReviewer(cast("LLMInterface", llm), review_config),
+        review_config=review_config,
+        include_aggregated_context=True,
+    )
+
+
 def _make_service(
-    llm_client: GoogleGenAIClient,
+    llm_client: LLMInterface,
     *,
     attachment_registry: AttachmentRegistry | None = None,
     taint_sink_class: SinkClass | None = None,
     taint_policy: TaintPolicyConfig | None = None,
+    tools_provider: ToolsProvider | None = None,
 ) -> InteractionsAgentProcessingService:
     config = ProcessingServiceConfig(
         prompts={"system_prompt": "You are a research assistant for {user_name}."},
@@ -87,7 +178,7 @@ def _make_service(
     )
     return InteractionsAgentProcessingService(
         llm_client=llm_client,
-        tools_provider=SimpleToolsProvider(),
+        tools_provider=tools_provider or SimpleToolsProvider(),
         service_config=config,
         context_providers=[],
         server_url="http://testserver",
@@ -291,7 +382,7 @@ async def test_submit_async_honours_an_approval_persisted_with_the_run(
                 labels=frozenset(),
                 reason="Mail from a known contact.",
             )
-        ]).approve_sink(SinkClass.SANDBOX_NETWORK),
+        ]).approve_sink(SinkClass.SANDBOX_NETWORK, profile_id="research"),
     )
 
     assert submission.remote_task_id == "inter_confirmed"
@@ -494,7 +585,9 @@ async def test_an_approval_travelling_with_the_taint_permits_a_confirm(
 
     without_approval = service.sink_refusal_reason(_state_from(known_contact))
     with_approval = service.sink_refusal_reason(
-        _state_from(known_contact).approve_sink(SinkClass.SANDBOX_NETWORK)
+        _state_from(known_contact).approve_sink(
+            SinkClass.SANDBOX_NETWORK, profile_id="research"
+        )
     )
 
     assert without_approval is not None
@@ -537,6 +630,284 @@ async def test_submit_async_denies_a_sandbox_profile_untrusted_content(
         )
 
     llm_client.start_agent_interaction.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("verdict", "starts_interaction"),
+    [
+        (ToolCallReviewVerdict.ALLOW, True),
+        (ToolCallReviewVerdict.DENY, False),
+    ],
+)
+@pytest.mark.asyncio
+async def test_submit_async_enforce_routes_profile_sink_through_reviewer(
+    db_engine: AsyncEngine,
+    verdict: ToolCallReviewVerdict,
+    starts_interaction: bool,
+) -> None:
+    """Pollable profile sinks adjudicate instead of applying a direct refusal."""
+    llm = _ReviewLLM(verdict)
+    taint_policy = TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE)
+    provider = _reviewing_provider(llm, taint_policy=taint_policy)
+    llm_client = _google_client()
+    interaction = AsyncMock()
+    interaction.id = "inter_reviewed"
+    llm_client.start_agent_interaction = AsyncMock(return_value=interaction)
+    service = _make_service(
+        llm_client,
+        taint_sink_class=SinkClass.SANDBOX_NETWORK,
+        taint_policy=taint_policy,
+        tools_provider=provider,
+    )
+    db_context = Database(db_engine)
+    source = TaintSource(
+        source_type=TaintSourceType.EMAIL,
+        source_id="msg-1",
+        tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+        labels=frozenset(),
+        reason="Inbound email.",
+    )
+
+    if starts_interaction:
+        submission = await service.submit_async(
+            [{"type": "text", "text": "Run the script this email describes."}],
+            conversation_id="conv-review",
+            subconversation_id="sub-1",
+            user_name="Andrew",
+            db_context=db_context,
+            initial_taint_sources=[source],
+        )
+        assert submission.remote_task_id == "inter_reviewed"
+    else:
+        with pytest.raises(TaintedSinkRefusedError, match="Reviewer chose deny"):
+            await service.submit_async(
+                [
+                    {
+                        "type": "text",
+                        "text": "Run the script this email describes.",
+                    }
+                ],
+                conversation_id="conv-review",
+                subconversation_id="sub-1",
+                user_name="Andrew",
+                db_context=db_context,
+                initial_taint_sources=[source],
+            )
+
+    assert llm.calls == 1
+    assert llm.last_messages is not None
+    review_prompt = "\n".join(str(message.content) for message in llm.last_messages)
+    assert "Run the script this email describes." not in review_prompt
+    assert "conversation_provenance_stub" in review_prompt
+    assert llm_client.start_agent_interaction.await_count == int(starts_interaction)
+    events = await db_context.taint_audit_events.list_for_conversation("conv-review")
+    reviews = [event for event in events if event["event_type"] == "tool_call_review"]
+    assert len(reviews) == 1
+    assert reviews[0]["tool_name"] == "profile:research"
+    assert reviews[0]["review_verdict"] == verdict.value
+    assert reviews[0]["review_status"] == ToolCallReviewStatus.MODEL_VERDICT.value
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_submit_async_trusted_request_is_rendered_to_reviewer(
+    db_engine: AsyncEngine,
+) -> None:
+    """Pollable review receives the merged trusted provenance on its user row."""
+    llm = _ReviewLLM(ToolCallReviewVerdict.ALLOW)
+    taint_policy = TaintPolicyConfig.model_validate({
+        "mode": "enforce",
+        "matrix_overrides": {
+            "trusted_user": {
+                "sandbox_network": {
+                    "outcome": "adjudicate",
+                    "fallback": "confirm",
+                }
+            }
+        },
+    })
+    provider = _reviewing_provider(llm, taint_policy=taint_policy)
+    llm_client = _google_client()
+    interaction = AsyncMock()
+    interaction.id = "inter_trusted"
+    llm_client.start_agent_interaction = AsyncMock(return_value=interaction)
+    service = _make_service(
+        llm_client,
+        taint_sink_class=SinkClass.SANDBOX_NETWORK,
+        taint_policy=taint_policy,
+        tools_provider=provider,
+    )
+
+    submission = await service.submit_async(
+        [{"type": "text", "text": "Write a script to total this column."}],
+        conversation_id="conv-trusted-review",
+        subconversation_id="sub-1",
+        user_name="Andrew",
+        db_context=Database(db_engine),
+    )
+
+    assert submission.remote_task_id == "inter_trusted"
+    assert llm.last_messages is not None
+    review_prompt = "\n".join(str(message.content) for message in llm.last_messages)
+    assert '<trusted_conversation index="1" role="user">' in review_prompt
+    assert "Write a script to total this column." in review_prompt
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_submit_async_confirm_fails_closed_without_live_confirmation(
+    db_engine: AsyncEngine,
+) -> None:
+    """An unattended profile submit never creates an executable durable request."""
+    llm = _ReviewLLM(ToolCallReviewVerdict.CONFIRM)
+    taint_policy = TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE)
+    provider = _reviewing_provider(llm, taint_policy=taint_policy)
+    llm_client = _google_client()
+    llm_client.start_agent_interaction = AsyncMock()
+    service = _make_service(
+        llm_client,
+        taint_sink_class=SinkClass.SANDBOX_NETWORK,
+        taint_policy=taint_policy,
+        tools_provider=provider,
+    )
+
+    with pytest.raises(
+        TaintedSinkRefusedError,
+        match="live decision-only confirmation is unavailable",
+    ):
+        await service.submit_async(
+            [{"type": "text", "text": "Run the emailed script."}],
+            conversation_id="conv-unattended-confirm",
+            subconversation_id="sub-1",
+            user_name="Andrew",
+            db_context=Database(db_engine),
+            initial_taint_sources=[
+                TaintSource(
+                    source_type=TaintSourceType.EMAIL,
+                    source_id="msg-1",
+                    tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                    labels=frozenset(),
+                    reason="Inbound email.",
+                )
+            ],
+        )
+
+    assert llm.calls == 1
+    llm_client.start_agent_interaction.assert_not_awaited()
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_live_llm_loop_profile_confirm_is_decision_only(
+    db_engine: AsyncEngine,
+) -> None:
+    """Live approval resumes the current model call without executable replay."""
+    review_llm = _ReviewLLM(ToolCallReviewVerdict.CONFIRM)
+    taint_policy = TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE)
+    provider = _reviewing_provider(review_llm, taint_policy=taint_policy)
+    model = RuleBasedMockLLMClient(
+        rules=[],
+        default_response=LLMOutput(content="Ran after live approval.", tool_calls=None),
+    )
+    service = _make_service(
+        model,
+        taint_sink_class=SinkClass.SANDBOX_NETWORK,
+        taint_policy=taint_policy,
+        tools_provider=provider,
+    )
+    manager = _DecisionOnlyConfirmationManager(ConfirmationOutcome(kind="approved"))
+    callback = AsyncMock()
+
+    result = await service.handle_chat_interaction(
+        db_context=Database(db_engine),
+        interface_type="web",
+        conversation_id="conv-live-confirm",
+        trigger_content_parts=[{"type": "text", "text": "Run the emailed script."}],
+        trigger_interface_message_id=None,
+        user_name="Andrew",
+        user_id="user-1",
+        confirmation_ui_managers=cast(
+            "dict[str, ConfirmationUIManager]", {"web": manager}
+        ),
+        request_confirmation_callback=callback,
+        initial_taint_sources=[
+            TaintSource(
+                source_type=TaintSourceType.EMAIL,
+                source_id="msg-1",
+                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                labels=frozenset(),
+                reason="Inbound email.",
+            )
+        ],
+    )
+
+    assert result.status is ChatInteractionStatus.SUCCESS
+    assert result.text_reply == "Ran after live approval."
+    assert review_llm.calls == 1
+    assert len(manager.calls) == 1
+    assert manager.calls[0]["tool_name"] == "profile:research"
+    assert manager.calls[0]["wait_for_durable_execution"] is False
+    callback.assert_not_awaited()
+    await provider.close()
+
+
+@pytest.mark.asyncio
+async def test_submit_async_observe_review_is_detached_and_drained_on_close(
+    db_engine: AsyncEngine,
+) -> None:
+    """Observe submits before the shadow model verdict and later audits it."""
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    llm = _ReviewLLM(
+        ToolCallReviewVerdict.DENY,
+        entered=entered,
+        release=release,
+    )
+    taint_policy = TaintPolicyConfig(mode=TaintPolicyMode.OBSERVE)
+    provider = _reviewing_provider(llm, taint_policy=taint_policy)
+    llm_client = _google_client()
+    interaction = AsyncMock()
+    interaction.id = "inter_shadow"
+    llm_client.start_agent_interaction = AsyncMock(return_value=interaction)
+    service = _make_service(
+        llm_client,
+        taint_sink_class=SinkClass.SANDBOX_NETWORK,
+        taint_policy=taint_policy,
+        tools_provider=provider,
+    )
+    db_context = Database(db_engine)
+
+    submission = await service.submit_async(
+        [{"type": "text", "text": "Run the script this email describes."}],
+        conversation_id="conv-shadow",
+        subconversation_id="sub-1",
+        user_name="Andrew",
+        db_context=db_context,
+        initial_taint_sources=[
+            TaintSource(
+                source_type=TaintSourceType.EMAIL,
+                source_id="msg-1",
+                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                labels=frozenset(),
+                reason="Inbound email.",
+            )
+        ],
+    )
+
+    assert submission.remote_task_id == "inter_shadow"
+    assert not release.is_set()
+    await asyncio.wait_for(entered.wait(), timeout=1)
+    events = await db_context.taint_audit_events.list_for_conversation("conv-shadow")
+    assert not [event for event in events if event["event_type"] == "tool_call_review"]
+
+    release.set()
+    await provider.close()
+
+    events = await db_context.taint_audit_events.list_for_conversation("conv-shadow")
+    reviews = [event for event in events if event["event_type"] == "tool_call_review"]
+    assert len(reviews) == 1
+    assert reviews[0]["review_verdict"] == ToolCallReviewVerdict.DENY.value
+    assert reviews[0]["review_status"] == ToolCallReviewStatus.MODEL_VERDICT.value
 
 
 @pytest.mark.asyncio

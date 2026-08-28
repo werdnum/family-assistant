@@ -115,6 +115,14 @@ async def test_execute_action_allows_permitted_wake_llm(
         processing_profile_id="default_assistant",
         allow_wake_llm=True,
     )
+    rows = await db.fetch_all(
+        select(tasks_table.c.payload).where(tasks_table.c.task_type == "llm_callback")
+    )
+    assert len(rows) == 1
+    payload = rows[0]["payload"]
+    assert payload["tool_call_review_trigger_type"] == "scheduled_callback"
+    assert payload["tool_call_review_trigger_definition"] == "hello"
+    assert payload["tool_call_review_trigger_payload_present"] is False
 
 
 # --- create_automation wake_llm denial for confined profiles ---
@@ -437,8 +445,7 @@ async def test_routed_wake_renders_trigger_in_routed_profile_timezone(
     db_engine: AsyncEngine,
     task_worker_manager: Callable[..., tuple[TaskWorker, asyncio.Event, asyncio.Event]],
 ) -> None:
-    """The trigger text of a profile-routed wake uses the routed profile's
-    timezone, not the worker default's."""
+    """A routed wake's tainted user-role trigger uses the routed timezone."""
     routed_service = _worker_service(
         service_id="complex_tasks",
         timezone=ZoneInfo("Australia/Sydney"),
@@ -479,7 +486,10 @@ async def test_routed_wake_renders_trigger_in_routed_profile_timezone(
     rows = await db_ctx.fetch_all(
         select(message_history_table.c.content).where(
             message_history_table.c.conversation_id == "conv_routed_wake",
-            message_history_table.c.role == "system",
+            # Callback payloads are deliberately user-role input: an
+            # application-generated wrapper must not grant unattended content
+            # system-instruction priority.
+            message_history_table.c.role == "user",
         )
     )
     trigger_texts = [row["content"] for row in rows]

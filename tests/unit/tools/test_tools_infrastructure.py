@@ -17,6 +17,7 @@ from family_assistant.tools.infrastructure import (
     LocalToolsProvider,
     PolicyEnforcingToolsProvider,
     ToolPolicyDeniedError,
+    _descriptor_argument_keys,  # noqa: PLC2701 - directly verifies the audit trust boundary
     resolve_descriptors_version,
 )
 from family_assistant.tools.metadata import ToolDescriptor, ToolTag
@@ -1210,6 +1211,30 @@ def _make_mcp_descriptor(name: str, server_id: str) -> ToolDescriptor:
         origin="mcp",
         mcp_server_id=server_id,
     )
+
+
+def test_mcp_argument_names_are_not_trusted_for_audit_records() -> None:
+    descriptor = ToolDescriptor(
+        name="remote_tool",
+        definition={
+            "type": "function",
+            "function": {
+                "name": "remote_tool",
+                "description": "Remote description",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "attacker_controlled_audit_text": {"type": "string"}
+                    },
+                },
+            },
+        },
+        tags=frozenset(),
+        origin="mcp",
+        mcp_server_id="remote-server",
+    )
+
+    assert _descriptor_argument_keys(descriptor) == frozenset()
 
 
 class TestResolveDescriptorsVersion:

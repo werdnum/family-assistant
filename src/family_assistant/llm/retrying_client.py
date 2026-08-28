@@ -8,6 +8,7 @@ Retry strategy:
 """
 
 import asyncio
+import inspect
 import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
@@ -175,6 +176,28 @@ class RetryingLLMClient:
             f"RetryingLLMClient initialized with primary model: {primary_model}, "
             f"fallback model: {fallback_model if fallback_client else 'None'}"
         )
+
+    async def close(self) -> None:
+        """Close each distinct client owned by this retry chain."""
+        closed_ids: set[int] = set()
+        first_error: Exception | None = None
+        for client in (self.primary_client, self.fallback_client):
+            if client is None or id(client) in closed_ids:
+                continue
+            closed_ids.add(id(client))
+            close = getattr(client, "close", None)
+            if not callable(close):
+                continue
+            try:
+                close_result = close()
+                if inspect.isawaitable(close_result):
+                    await close_result
+            except Exception as exc:
+                # Do not leak the fallback merely because primary cleanup failed.
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
 
     async def generate_response(
         self,

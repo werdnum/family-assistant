@@ -139,6 +139,18 @@ class ConfirmationRenderer(Protocol):
         ...
 
 
+def append_review_reason_to_confirmation(
+    prompt: str,
+    context: ToolExecutionContext,
+) -> str:
+    """Append the automatic judge's reason to a human confirmation prompt."""
+    reason = context.tool_call_review_confirmation_reason
+    if not reason:
+        return prompt
+    quoted_reason = "\n".join(f"> {line}" for line in reason.splitlines())
+    return f"{prompt}\n\nAutomatic review reason:\n{quoted_reason}"
+
+
 def _format_event_details_for_confirmation(
     details: CalendarEvent | None,
     timezone: ZoneInfo,

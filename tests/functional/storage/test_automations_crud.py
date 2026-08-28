@@ -1393,6 +1393,14 @@ class TestTaskQueueSync:
         pending = await _get_pending_tasks_for_automation(db_context, automation_id)
         assert len(pending) == 1
         assert pending[0]["payload"]["callback_context"] == "old context"
+        assert pending[0]["payload"]["tool_call_review_trigger_type"] == "schedule"
+        assert (
+            pending[0]["payload"]["tool_call_review_trigger_definition"]
+            == "old context"
+        )
+        assert (
+            pending[0]["payload"]["tool_call_review_trigger_payload_present"] is False
+        )
 
         # Update action_config
         await db_context.schedule_automations.update(
@@ -1406,6 +1414,10 @@ class TestTaskQueueSync:
         pending = await _get_pending_tasks_for_automation(db_context, automation_id)
         assert len(pending) == 1
         assert pending[0]["payload"]["callback_context"] == "new context"
+        assert (
+            pending[0]["payload"]["tool_call_review_trigger_definition"]
+            == "new context"
+        )
 
     @pytest.mark.asyncio
     async def test_update_action_config_script_reschedules_task(
