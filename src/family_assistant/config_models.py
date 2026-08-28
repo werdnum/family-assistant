@@ -78,7 +78,7 @@ class ToolCallReviewConfig(BaseModel):
     provider: str | None = "google"
     model: str = "gemini-3.7-flash"
     retry_config: RetryConfig | None = None
-    timeout_seconds: float = Field(default=10.0, gt=0)
+    timeout_seconds: float = Field(default=30.0, gt=0)
     max_reviews_per_turn: int = Field(default=25, ge=1)
     escalation: ToolCallReviewEscalationConfig = Field(
         default_factory=ToolCallReviewEscalationConfig
