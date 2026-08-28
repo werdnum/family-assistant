@@ -470,7 +470,7 @@ tool_call_review:
   provider: "google"
   model: "gemini-3.7-flash"
   retry_config: { ... }
-  timeout_seconds: 10
+  timeout_seconds: 30
   max_reviews_per_turn: 25     # past this, gated calls resolve at their fallback outcomes
   escalation:
     consecutive_denials: 3

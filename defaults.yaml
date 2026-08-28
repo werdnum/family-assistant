@@ -378,7 +378,7 @@ tool_call_review:
   enabled: true
   provider: "google"
   model: "gemini-3.7-flash"
-  timeout_seconds: 10.0
+  timeout_seconds: 30.0
   max_reviews_per_turn: 25
   escalation:
     consecutive_denials: 3

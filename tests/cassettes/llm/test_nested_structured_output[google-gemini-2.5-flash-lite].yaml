@@ -1,31 +1,29 @@
 interactions:
   - request:
-      body: '{"contents": [{"parts": [{"text": "Create a profile for Sarah, age 35, who works as a doctor. Also provide a one-sentence summary about her."}], "role": "user"}], "generationConfig": {"responseMimeType": "application/json", "responseSchema": {"description": "Response with nested model.", "properties": {"person": {"description": "Person information model.", "properties": {"name": {"title": "Name", "type": "STRING"}, "age": {"maximum": 150.0, "minimum": 0.0, "title": "Age", "type": "INTEGER"}, "occupation": {"nullable": true, "title": "Occupation", "type": "STRING"}}, "property_ordering": ["name", "age", "occupation"], "required": ["name", "age"], "title": "PersonInfo", "type": "OBJECT"}, "summary": {"title": "Summary", "type": "STRING"}}, "property_ordering": ["person", "summary"], "required": ["person", "summary"], "title": "NestedResponse", "type": "OBJECT"}, "mediaResolution": "MEDIA_RESOLUTION_HIGH"}}'
+      body: '{"contents": [{"parts": [{"text": "Create a profile for Sarah, age 35, who works as a doctor. Also provide a one-sentence summary about her."}], "role": "user"}], "generationConfig": {"responseMimeType": "application/json", "responseJsonSchema": {"$defs": {"PersonInfo": {"description": "Person information model.", "properties": {"name": {"title": "Name", "type": "string"}, "age": {"maximum": 150, "minimum": 0, "title": "Age", "type": "integer"}, "occupation": {"anyOf": [{"type": "string"}, {"type": "null"}], "default": null, "title": "Occupation"}}, "required": ["name", "age"], "title": "PersonInfo", "type": "object"}}, "description": "Response with nested model.", "properties": {"person": {"$ref": "#/$defs/PersonInfo"}, "summary": {"title": "Summary", "type": "string"}}, "required": ["person", "summary"], "title": "NestedResponse", "type": "object"}, "mediaResolution": "MEDIA_RESOLUTION_HIGH"}}'
       headers:
         Content-Type:
           - application/json
         user-agent:
-          - google-genai-sdk/1.56.0 gl-python/3.13.9
+          - google-genai-sdk/2.18.1 gl-python/3.13.12
         x-goog-api-client:
-          - google-genai-sdk/1.56.0 gl-python/3.13.9
+          - google-genai-sdk/2.18.1 gl-python/3.13.12
       method: post
       uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent
     response:
       body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"{\\n  \\\"person\\\": {\\n    \\\"name\\\": \\\"Sarah\\\",\\n    \\\"age\\\": 35,\\n    \\\"occupation\\\": \\\"Doctor\\\"\\n  },\\n  \\\"summary\\\": \\\"Sarah is a dedicated 35-year-old doctor committed to her patients' well-being.\\\"\\n}\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 28,\n    \"candidatesTokenCount\": 64,\n    \"totalTokenCount\": 92,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 28\n      }\n    ]\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"-gy3aaqMO5iE7M8PueatsQM\"\n}\n"
+        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"{\\n  \\\"person\\\": {\\n    \\\"name\\\": \\\"Sarah\\\",\\n    \\\"age\\\": 35,\\n    \\\"occupation\\\": \\\"Doctor\\\"\\n  },\\n  \\\"summary\\\": \\\"Sarah is a dedicated doctor with 35 years of experience.\\\"\\n}\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 28,\n    \"candidatesTokenCount\": 56,\n    \"totalTokenCount\": 84,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 28\n      }\n    ],\n    \"serviceTier\": \"standard\"\n  },\n  \"modelVersion\": \"gemini-2.5-flash-lite\",\n  \"responseId\": \"IV6Rase9N5SqsOIP1OvUcA\"\n}\n"
       headers:
-        Alt-Svc:
-          - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
         Content-Encoding:
           - gzip
         Content-Type:
           - application/json; charset=UTF-8
         Date:
-          - Sun, 15 Mar 2026 19:48:11 GMT
+          - Fri, 28 Aug 2026 10:08:34 GMT
         Server:
           - scaffolding on HTTPServer2
         Server-Timing:
-          - gfet4t7; dur=1380
+          - gfet4t7; dur=554
         Transfer-Encoding:
           - chunked
         Vary:
@@ -36,6 +34,8 @@ interactions:
           - nosniff
         X-Frame-Options:
           - SAMEORIGIN
+        X-Gemini-Service-Tier:
+          - standard
         X-XSS-Protection:
           - '0'
       status:
