@@ -458,13 +458,21 @@ class GoogleGenAIClient(BaseLLMClient):
         response_model: type[T],
         max_retries: int = 2,
     ) -> T:
-        """Generate structured output using Gemini's native response_schema mode."""
+        """Generate structured output using Gemini's native JSON Schema mode.
+
+        The schema goes to ``response_json_schema`` rather than ``response_schema``:
+        the latter is a restricted OpenAPI subset whose proto rejects any keyword it
+        does not model, so a Pydantic model with ``extra="forbid"`` or a mapping field
+        is refused outright with a 400. ``response_json_schema`` takes JSON Schema as
+        Pydantic emits it and ignores the keywords it does not implement, which the
+        validate-and-retry loop below already covers.
+        """
         self._validate_user_input(messages)
 
         attempt_messages = list(messages)
         generation_config = self._build_base_generation_config()
         generation_config.response_mime_type = "application/json"
-        generation_config.response_schema = response_model
+        generation_config.response_json_schema = response_model.model_json_schema()
 
         raw_response: str | None = None
         last_error: Exception | None = None

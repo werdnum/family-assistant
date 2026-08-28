@@ -2,11 +2,12 @@
 
 # pylint: disable=no-name-in-module
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from family_assistant.llm import UserMessage
 from family_assistant.llm.providers.anthropic_client import AnthropicClient
@@ -16,6 +17,15 @@ from family_assistant.llm.providers.openai_client import OpenAIClient
 
 class SampleResponse(BaseModel):
     answer: str
+
+
+class StrictResponse(BaseModel):
+    """Model whose JSON schema carries the extras guard and a mapping field."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    answer: str
+    values: dict[str, str]
 
 
 @pytest.mark.no_db
@@ -154,7 +164,38 @@ async def test_google_generate_structured_uses_response_schema() -> None:
     assert mock_generate.await_args is not None
     config = mock_generate.await_args.kwargs["config"]
     assert config.response_mime_type == "application/json"
-    assert config.response_schema is SampleResponse
+    assert config.response_json_schema == SampleResponse.model_json_schema()
+    assert config.response_schema is None
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_google_generate_structured_sends_strict_schema_unaltered() -> None:
+    """A model Gemini's OpenAPI subset would reject must reach the API intact.
+
+    ``extra="forbid"`` and mapping fields both emit ``additionalProperties``, which
+    the ``response_schema`` proto refuses outright. The JSON Schema path accepts it,
+    so the schema is passed through rather than sanitized.
+    """
+    client = GoogleGenAIClient(api_key="test", model="gemini-3.7-flash")
+    response = MagicMock()
+    response.text = '{"answer":"ok","values":{"a":"b"}}'
+
+    with patch.object(
+        client.client.aio.models, "generate_content", new_callable=AsyncMock
+    ) as mock_generate:
+        mock_generate.return_value = response
+
+        result = await client.generate_structured(
+            messages=[UserMessage(content="Return structured output")],
+            response_model=StrictResponse,
+        )
+
+    assert result == StrictResponse(answer="ok", values={"a": "b"})
+    assert mock_generate.await_args is not None
+    config = mock_generate.await_args.kwargs["config"]
+    assert config.response_json_schema == StrictResponse.model_json_schema()
+    assert "additionalProperties" in json.dumps(config.response_json_schema)
 
 
 @pytest.mark.no_db
