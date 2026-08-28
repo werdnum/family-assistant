@@ -1361,11 +1361,12 @@ confirmation path degrades to a structured denial.
 
 The confined-profile exemption skips a taint-only disclosure review only when
 `include_aggregated_context` is `false`, the turn recorded no sensitive reads or high-taint history,
-the tool is not browser-tagged, no effective `confirm`/`deny` floor applies, and the reviewer
-message window proves it contains only the current turn (system scaffolding followed by the current
-user message, with no prior user, assistant, tool, or error rows). Browser actions remain reviewable
-because authenticated page/environment state can be private without creating a sensitive-read
-record. A missing or ambiguous message window fails toward review. The exemption resolves to
+no effective `confirm`/`deny` floor applies, and the reviewer message window proves it contains only
+the current turn (system scaffolding followed by the current user message, with no prior user,
+assistant, tool, or error rows). This taint-layer exemption also applies to browser-tagged actions;
+independent static/action-review rules are unchanged. Browser tools that return page content are
+tagged as sensitive reads, so a successful browser read disables the exemption for later
+disclosures. A missing or ambiguous message window fails toward review. The exemption resolves to
 `audit`, never `allow`. Destination-bearing local tools declare their destination argument in
 trusted metadata; an exact whole-value match in the current trusted request is passed to the
 reviewer as evidence, not as authorization. URL matching normalizes scheme and host case but
@@ -1374,18 +1375,23 @@ normalization.
 
 The central executor treats every successful tool tagged both `read_only` and `sensitive_data` as a
 sensitive read. A tool can record a narrower corpus scope itself; otherwise the executor records a
-conservative tool-level scope. In-flight sensitive reads also disable the exemption, so a concurrent
-egress call cannot race a private read that has not returned yet.
+conservative tool-level scope by comparing state before and after successful execution. There is no
+in-flight read reservation: a concurrent disclosure formed before the read returns cannot causally
+contain its result, while disclosures after return see the recorded read and cannot exempt.
 
 `GET /api/diagnostics/taint-audit` includes verdict and resolution-status counts. Individual
 `tool_call_review` audit events include the verdict, reason, latency, fallback use, delegating
-contexts, allowed verdicts, and destination-echo signal without storing raw tool arguments. The
-rationale sanitizer may retain trusted local-schema argument names, but redacts every argument value
-and every MCP or unexpected mapping key. When a blocking-path model-denial threshold is reserved,
-one `tool_call_review_escalation` event is also recorded with review status
-`escalation_confirmation_requested` or `escalation_turn_terminated`. Detached observe-only reviews
-do not update denial counters, so these trip counts intentionally describe blocking static/enforce
-paths rather than shadow traffic.
+contexts, allowed verdicts, and destination-echo signal without storing raw tool arguments or the
+reviewer's free-form rationale. The reason is fixed trusted text; trusted local-schema argument
+names may appear in the argument summary, while every argument value is omitted and MCP or
+unexpected mapping keys are pseudonymized. For message-originated calls, `turn_id` and
+`tool_call_id` can locate the canonical stored assistant message for later reconstruction without
+duplicating it in the audit table. Direct named-sink and other non-message-originated authorizations
+may have no corresponding message row, so their structured event is the complete durable record.
+When a blocking-path model-denial threshold is reserved, one `tool_call_review_escalation` event is
+also recorded with review status `escalation_confirmation_requested` or
+`escalation_turn_terminated`. Detached observe-only reviews do not update denial counters, so these
+trip counts intentionally describe blocking static/enforce paths rather than shadow traffic.
 
 #### Migration for deployments already enforcing taint policy
 
@@ -1416,10 +1422,10 @@ taint_policy:
 Until automation-definition provenance is persisted, every unattended callback enters at
 `unknown_external`; the `known_user_message` minimum therefore makes a reminder's
 `send_message_to_user` call create a deferred confirmation instead of delivering. A deployment that
-requires automatic reminder delivery may deliberately omit that one entry while retaining the
-other minima. That is a reminder-compatible exception to the old posture, not a cell-for-cell pin.
-Remove the entry from `operator_minimum` to choose the shipped `audit` behavior; a weaker matrix
-override cannot relax an operator minimum.
+requires automatic reminder delivery may deliberately omit that one entry while retaining the other
+minima. That is a reminder-compatible exception to the old posture, not a cell-for-cell pin. Remove
+the entry from `operator_minimum` to choose the shipped `audit` behavior; a weaker matrix override
+cannot relax an operator minimum.
 
 Keep production in `observe` until the audit data shows near-zero false allows on adversarial
 replays, acceptable projected confirmation volume, and acceptable p95 reviewer latency.

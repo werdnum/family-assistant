@@ -35,13 +35,6 @@ MCP_SERVER_IDS = (
 CONFINED_NON_SENSITIVE_READ_ALLOWLIST = {
     # Static documentation shipped with the application, not acting-user data.
     "get_user_documentation_content": "packaged application documentation",
-    # Browser-tagged actions can expose authenticated page state, so the runtime
-    # categorically refuses the confined exemption for them regardless of reads.
-    "browser_extract": "browser action is never confined-exempt",
-    "browser_screenshot": "browser action is never confined-exempt",
-    "browser_snapshot": "browser action is never confined-exempt",
-    "browser_wait": "browser action is never confined-exempt",
-    "take_screenshot": "browser action is never confined-exempt",
 }
 
 
@@ -179,8 +172,6 @@ def test_confined_profile_private_read_inventory_is_sensitive_tagged() -> None:
                 "be tagged sensitive_data or explicitly justified in "
                 "CONFINED_NON_SENSITIVE_READ_ALLOWLIST"
             )
-            if descriptor.name != "get_user_documentation_content":
-                assert ToolTag.BROWSER in descriptor.tags, descriptor.name
             seen_allowlist_entries.add(descriptor.name)
 
     assert seen_allowlist_entries == set(CONFINED_NON_SENSITIVE_READ_ALLOWLIST)

@@ -82,8 +82,9 @@ versus approval policy (when to ask) — already exists in this codebase, and th
 strong half:
 
 - Processing profiles are the hard capability boundary. The browser profiles hold no household
-  context or sensitive-read tools; `media_analyst` reaches no tools at all; `coder` runs in a
-  throwaway sandbox with no FA tool surface; the engineer profile confirms every side effect.
+  context (browser reads are tracked separately as potentially sensitive); `media_analyst` reaches
+  no tools at all; `coder` runs in a throwaway sandbox with no FA tool surface; the engineer profile
+  confirms every side effect.
 - Static tool policy is deny-by-default per profile, with tighten-only operator override layering.
 - Server-side validation makes sinks safe by construction where it matters most
   (`send_message_to_user` recipient validation, browser-server origin confinement, opaque cookie
@@ -211,7 +212,7 @@ It is an upgrade, not a prerequisite.
 
 ### Verdicts
 
-- `allow` — execute, with a one-line reason written to the audit trail.
+- `allow` — execute; the structured verdict and resolution status are written to the audit trail.
 - `confirm` — escalate to the existing durable confirmation machinery. The reviewer's reason is
   included in the rendered confirmation so the human sees *why* — this is what turns a generic
   "approve this tool call?" into "this message quotes your notes and goes to an address that appears
@@ -222,16 +223,17 @@ It is an upgrade, not a prerequisite.
 Malformed output, timeout, or provider error resolves to the delegating cell or rule's fallback
 outcome, per design principle 4 — the pre-adjudication matrix outcome for taint cells, `confirm` for
 static `review` rules. Every verdict — including shadow-mode verdicts — writes a
-`taint_audit_events` row with verdict, reason, latency, and the delegating cell or rule, and the
-diagnostics endpoint grows verdict counts. The stored reason is a bounded, one-line form of the
-reviewer's actual rationale; exact argument values and conversation-evidence values (including
-non-trivial copied tokens) are redacted, and reviewer-controlled boundary markup is neutralized, so
-the audit trail cannot become a second store for raw untrusted prompt or tool-argument data.
-Argument summaries and sanitized rationales may retain names declared by a trusted local tool
-schema; unexpected keys are pseudonymized in summaries and redacted from rationales, while MCP
-schema keys remain untrusted. All argument values are redacted regardless of origin. Source
-provenance retains closed-vocabulary type and tier, while externally authored identifiers, labels,
-and reasons are omitted.
+`taint_audit_events` row with structured verdict, status, latency, and delegating context, and the
+diagnostics endpoint grows verdict counts. Durable rows use a fixed trusted reason and deliberately
+omit the reviewer's free-form rationale; that rationale remains available only to the live
+confirmation or deny result. Argument summaries retain names declared by a trusted local tool schema
+and pseudonymize unexpected keys; MCP schema keys remain untrusted. All argument values are omitted
+regardless of origin. Source provenance retains closed-vocabulary type and tier, while externally
+authored identifiers, labels, and reasons are omitted. The audit row's `turn_id` and `tool_call_id`
+locate the canonical assistant message for later reconstruction when the call came from stored
+message history, without duplicating the conversation or arguments in the audit table. Direct
+named-sink and other non-message-originated authorizations can have no corresponding message row;
+their structured audit evidence is intentionally the complete durable record.
 
 ### Escalation and cost bounds
 
@@ -251,24 +253,24 @@ serialization work would invert the priority this document exists to set.
 One deterministic check runs before the model call and can resolve the evaluation without spend or
 latency:
 
-- **Confined-profile egress exemption.** A non-browser profile that excludes aggregated context by
-  construction and whose current turn has recorded no sensitive reads has nothing to exfiltrate;
-  disclosure-sink reviews short-circuit to `audit`. This is the computable core of the risk
-  document's binding condition (its protected-history clause needs the M6 serialization work and
-  joins the check when that lands; until then, absence of the history signal fails toward invoking
-  the reviewer, not toward exemption). Browser-tagged actions are excluded because an authenticated
-  page or browser environment can contain private state without producing a sensitive-read record;
-  they remain reviewable until the browser runtime can positively prove private-state absence. Any
-  input the check cannot determine falls through to the reviewer. The short-circuit is valid only
-  when the effective execution minimum permits `audit`: a configured `confirm` or `deny` verdict
-  floor, or a matching `operator_minimum`, disables the exemption and invokes the reviewer within
-  that tighter verdict space.
+- **Confined-profile egress exemption.** A profile that excludes aggregated context by construction
+  and whose current turn has recorded no sensitive reads has nothing from the assistant context to
+  exfiltrate; disclosure-sink reviews short-circuit to `audit`. This is the computable core of the
+  risk document's binding condition (its protected-history clause needs the M6 serialization work
+  and joins the check when that lands; until then, absence of the history signal fails toward
+  invoking the reviewer, not toward exemption). The exemption applies at the taint layer to
+  browser-tagged actions too; any independent static/action-review rule still invokes the reviewer.
+  Browser tools that return page content are tagged as sensitive reads, so their successful return
+  prevents later disclosures from exempting. Any input the check cannot determine falls through to
+  the reviewer. The short-circuit is valid only when the effective execution minimum permits
+  `audit`: a configured `confirm` or `deny` verdict floor, or a matching `operator_minimum`,
+  disables the exemption and invokes the reviewer within that tighter verdict space.
 
-  The tool-execution chokepoint reserves every `read_only` + `sensitive_data` call before execution.
-  Any concurrent disclosure therefore falls through to review while the read is in flight. On
-  successful return the tool's explicit corpus scope is retained, or the chokepoint records a
-  conservative tool-level sensitive read when the implementation has no narrower instrumentation;
-  the reservation is cleared without adding that generic record when execution fails.
+  After every successful `read_only` + `sensitive_data` call, the tool-execution chokepoint retains
+  an explicit corpus scope recorded by the tool or adds a conservative tool-level sensitive read if
+  the live state did not change. Failed reads add nothing. This deliberately avoids a parallel
+  reservation protocol: an egress formed before a concurrent read returns cannot contain the read's
+  result, while a disclosure after return sees the recorded read and invokes the reviewer.
 
 A second deterministic computation is a **signal, never a bypass**:
 
@@ -306,19 +308,18 @@ The shadow property belongs to `observe` mode, not to the defaults change itself
 already running `mode: enforce`, adopting the new default matrix is a real posture change — cells
 that gated unconditionally become judged — and must not happen silently: the configuration
 reference's migration note tells enforce deployments to pin every previous outcome before upgrading
-or to adopt the judged posture deliberately. The literal cell-for-cell pin is an
-`operator_minimum` of `confirm` on the egress cells, on
-`unknown_external × known_user_message`, and on
-`unknown_external × sensitive_read_broadening`, plus `deny` on
-`unknown_external × sandbox_network`. Absent authoring provenance now puts every unattended
-callback at `unknown_external`, so that literal pin also makes reminder delivery through
-`send_message_to_user` defer for confirmation instead of delivering. A deployment that relies on
-automatic reminders may deliberately omit only the `known_user_message` minimum, accepting a
-reminder-compatible exception to the old posture rather than calling it a cell-for-cell pin.
-Verdict floors and `operator_minimum` remain tighten-only against the judge just as against
-profiles. No known deployment runs `enforce` today — the maintainer's is the only known deployment,
-and it runs `observe` — so this is defence in depth for third-party deployments of a public
-codebase: a documented pin and a config test, not migration machinery.
+or to adopt the judged posture deliberately. The literal cell-for-cell pin is an `operator_minimum`
+of `confirm` on the egress cells, on `unknown_external × known_user_message`, and on
+`unknown_external × sensitive_read_broadening`, plus `deny` on `unknown_external × sandbox_network`.
+Absent authoring provenance now puts every unattended callback at `unknown_external`, so that
+literal pin also makes reminder delivery through `send_message_to_user` defer for confirmation
+instead of delivering. A deployment that relies on automatic reminders may deliberately omit only
+the `known_user_message` minimum, accepting a reminder-compatible exception to the old posture
+rather than calling it a cell-for-cell pin. Verdict floors and `operator_minimum` remain
+tighten-only against the judge just as against profiles. No known deployment runs `enforce` today —
+the maintainer's is the only known deployment, and it runs `observe` — so this is defence in depth
+for third-party deployments of a public codebase: a documented pin and a config test, not migration
+machinery.
 
 ### Default matrix changes
 
@@ -393,20 +394,29 @@ Semantics:
   `can_confirm`, because the reviewer can resolve to `allow` without a human. This fixes a standing
   gap where confirm-gated tools vanish from channels that cannot confirm (voice, some API contexts);
   under `review` they remain usable and only genuinely suspicious calls fail there.
+
 - **Execution**: the reviewer is invoked with the same input contract, the matched rule as the
   delegating context, and the static layer's guidance. A `confirm` verdict uses the ordinary
   confirmation flow; in a context with no live confirmation channel it becomes a deferred durable
   confirmation where the call is independent and terminal (the fire-and-forget sends and filings the
   risk document's deferral rules already scope), and degrades to deny-and-continue otherwise.
+
 - **Layering**: `review` is an ordinary decision value in the existing priority system — profiles
   and operators place it with the same offsets and tie-breaking as today. No new lattice is needed
   at the static layer; an operator who wants a hard gate keeps `confirm` or `deny`, exactly as now.
+
 - **One judgment per call.** When static policy says `review` and the taint layer says `adjudicate`
   for the same call, the reviewer runs once with both delegating contexts, and one verdict satisfies
   both layers — the same single-payload rule that already governs double confirmation. The effective
   verdict space is the intersection (the tighter of the two floors), and the no-verdict paths merge
   the same tighten-only way: the combined fallback is the strictest of the layers' fallbacks, so a
   static `confirm` fallback never softens a taint-cell `deny` fallback.
+
+  Browser environment/action review is separate from this ordinary static-plus-taint judgment. It
+  has different evidence and authority, so PR #1136 invokes the environment-inclusive contract as a
+  second judgment rather than folding hostile page evidence into the conversation reviewer. Its
+  verdict and fallback merge tighten-only with ordinary authorization: either judgment can require
+  confirmation or block, and the browser judgment cannot loosen an ordinary policy result.
 
 What this buys, concretely: today's static `confirm` on `delete_calendar_event` and
 `modify_calendar_event` interrupts the user on every deletion they just asked for, which is
@@ -521,9 +531,9 @@ invoke the reviewer without blocking the gated call and downgrade effect to `aud
 
 **M3 — Deterministic short-circuit and echo signal.** The confined-profile egress exemption
 (computable clauses, fail-toward-review) and the trusted-destination echo signal as reviewer input.
-*Verify:* a confined non-browser disclosure generates no reviewer call; the same call from a
-context-bearing profile does; a browser-tagged action remains reviewed even in a confined
-current-turn-only profile; a user-pasted URL reaches the reviewer with a positive echo signal and an
+*Verify:* a confined disclosure, including a taint-only browser disclosure, generates no reviewer
+call; the same call from a context-bearing profile does; an independent static review still reviews
+a confined browser action; a user-pasted URL reaches the reviewer with a positive echo signal and an
 appended-query-parameter variant with a negative one; the negation fixture ("never send to X" in the
 request, injection targeting X) reaches the reviewer rather than short-circuiting.
 
@@ -542,9 +552,11 @@ moment. *Verify:* the standing metrics (verdict counts by cell and profile, esca
 trips, deny-and-continue recovery rate, confirmations per week) over 30 days.
 
 **M6 — Browser action review.** The environment-inclusive input contract, wired to PR #1136's
-mitigation settings, observe mode first, alongside that design's M5. *Verify:* per PR #1136 —
-observe-mode verdicts recorded for a real HelloFresh run; a fixture with an in-page instruction to
-change plan settings yields `ask` or `block`.
+mitigation settings, observe mode first, alongside that design's M5. This is a separate invocation
+from the ordinary static-plus-taint judgment, with results merged tighten-only at the browser action
+chokepoint. *Verify:* per PR #1136 — observe-mode verdicts recorded for a real HelloFresh run; a
+fixture with an in-page instruction to change plan settings yields `ask` or `block`; a stricter
+ordinary verdict or fallback is never loosened by the browser verdict, and vice versa.
 
 **Later, on evidence:** argument provenance matching (upgrading fenced rendering to
 proven-or-stubbed); counter serialization across the delegation boundary (with risk-document M6);
@@ -585,6 +597,10 @@ When this design is working:
   boundary; fixed by the serialization extension.
 - **The browser action reviewer reads the hostile page.** Bounded by the damage envelope and the
   mechanical confinement layer, per PR #1136's model.
+- **A disclosure concurrent with an unfinished sensitive read can still take the confined
+  exemption.** The disclosed call cannot causally contain a result that has not returned. Once the
+  read returns, its recorded scope disables the exemption for later disclosures. This avoids a
+  turn-wide pending-read reservation mechanism solely for an impossible data dependency.
 - **Shadow-then-enforce means a window where verdicts are recorded but nothing blocks.** Identical
   to today's posture; the window ends at M5.
 

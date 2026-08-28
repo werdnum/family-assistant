@@ -71,10 +71,7 @@ from family_assistant.tools.policy import (
     ToolPolicyDecision,
 )
 from family_assistant.tools.taint_helpers import (
-    begin_sensitive_read_call,
     merge_artifact_taint_into_context,
-    reset_sensitive_read_call,
-    sensitive_read_recorded_in_call,
 )
 from family_assistant.tools.types import (
     CalendarConfig,
@@ -102,9 +99,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_MAX_AUDIT_REVIEW_REASON_CHARS = 512
-_AUDIT_EVIDENCE_TOKEN_RE = re.compile(r"[\w@:/?&.=+#%\-]{4,}", re.UNICODE)
-_AUDIT_REDACTION = "[redacted evidence]"
+_TOOL_CALL_REVIEW_AUDIT_REASON = "Automatic reviewer decision recorded; reviewer rationale omitted from durable audit."
 
 
 @dataclass(frozen=True, slots=True)
@@ -1303,182 +1298,6 @@ def _bounded_audit_text(value: str, limit: int) -> str:
     return cleaned
 
 
-def _mark_audit_sensitive_fragment(
-    fragment: str,
-    *,
-    reason: str,
-    redacted: list[bool],
-) -> None:
-    """Mark every case-insensitive occurrence of one evidence fragment."""
-    if not fragment or fragment.casefold() not in reason.casefold():
-        return
-    if len(fragment) < 4 and fragment.isalnum():
-        pattern = rf"(?<!\w){re.escape(fragment)}(?!\w)"
-    else:
-        pattern = re.escape(fragment)
-    for match in re.finditer(pattern, reason, flags=re.IGNORECASE):
-        redacted[match.start() : match.end()] = [True] * len(match.group())
-
-
-def _mark_audit_sensitive_values(
-    value: object,
-    *,
-    reason: str,
-    redacted: list[bool],
-    safe_mapping_keys: Collection[str] = (),
-) -> None:
-    """Mark evidence copied into the already-bounded reviewer rationale."""
-    if isinstance(value, str):
-        normalized = _normalize_audit_text(value)
-        if normalized:
-            if len(normalized) <= len(reason):
-                _mark_audit_sensitive_fragment(
-                    normalized,
-                    reason=reason,
-                    redacted=redacted,
-                )
-            for token in _AUDIT_EVIDENCE_TOKEN_RE.findall(normalized):
-                _mark_audit_sensitive_fragment(
-                    token,
-                    reason=reason,
-                    redacted=redacted,
-                )
-        return
-    if isinstance(value, Mapping):
-        allowed_keys = set(safe_mapping_keys)
-        for key, child in value.items():
-            raw_key = str(key)
-            if raw_key not in allowed_keys:
-                _mark_audit_sensitive_values(
-                    raw_key,
-                    reason=reason,
-                    redacted=redacted,
-                )
-            _mark_audit_sensitive_values(
-                child,
-                reason=reason,
-                redacted=redacted,
-            )
-        return
-    if isinstance(value, Iterable) and not isinstance(value, bytes | bytearray):
-        for child in value:
-            _mark_audit_sensitive_values(
-                child,
-                reason=reason,
-                redacted=redacted,
-            )
-        return
-    if isinstance(value, bool | int | float):
-        _mark_audit_sensitive_fragment(
-            str(value),
-            reason=reason,
-            redacted=redacted,
-        )
-        return
-    text = getattr(value, "text", None)
-    if isinstance(text, str):
-        _mark_audit_sensitive_values(
-            text,
-            reason=reason,
-            redacted=redacted,
-        )
-
-
-def _redact_audit_review_reason(
-    reason: str,
-    *,
-    arguments: Mapping[str, object],
-    messages: Sequence[object],
-    state: TurnTaintState,
-    safe_argument_keys: Collection[str] = (),
-) -> str:
-    """Bound a reviewer rationale and remove raw evidence-derived values.
-
-    Reviewer output is untrusted and can quote its fenced arguments or conversation
-    evidence. Audit rows therefore retain the model's one-line rationale shape, but
-    redact every argument value, every mapping key outside the trusted local schema,
-    plus full message values and their non-trivial tokens. This is intentionally
-    conservative: verdict/status remain structured columns, so losing a common
-    evidence word is preferable to copying a secret into diagnostics.
-    """
-    # Review reasons are schema-bounded to 2,000 characters. Redact that complete
-    # normalized value before applying the smaller audit display bound; truncating
-    # first can turn a long copied secret into an unmatched raw prefix.
-    sanitized = _normalize_audit_text(reason)
-    redacted = [False] * len(sanitized)
-    _mark_audit_sensitive_values(
-        arguments,
-        reason=sanitized,
-        redacted=redacted,
-        safe_mapping_keys=safe_argument_keys,
-    )
-    for source in state.sources:
-        _mark_audit_sensitive_values(
-            source.source_id,
-            reason=sanitized,
-            redacted=redacted,
-        )
-        _mark_audit_sensitive_values(
-            source.labels,
-            reason=sanitized,
-            redacted=redacted,
-        )
-        _mark_audit_sensitive_values(
-            source.reason,
-            reason=sanitized,
-            redacted=redacted,
-        )
-    for message in messages:
-        content = (
-            message.get("content")
-            if isinstance(message, Mapping)
-            else getattr(message, "content", None)
-        )
-        _mark_audit_sensitive_values(
-            content,
-            reason=sanitized,
-            redacted=redacted,
-        )
-    pieces: list[str] = []
-    index = 0
-    while index < len(sanitized):
-        if redacted[index]:
-            pieces.append(_AUDIT_REDACTION)
-            while index < len(sanitized) and redacted[index]:
-                index += 1
-            continue
-        pieces.append(sanitized[index])
-        index += 1
-    sanitized = "".join(pieces)
-    # Reviewer-controlled markup has no meaning in an audit row. Neutralizing it
-    # also prevents copied prompt-boundary tags from looking authoritative later.
-    sanitized = sanitized.replace("<", "‹").replace(">", "›")
-    if not sanitized:
-        sanitized = "[reviewer rationale fully redacted]"
-    if len(sanitized) > _MAX_AUDIT_REVIEW_REASON_CHARS:
-        sanitized = sanitized[: _MAX_AUDIT_REVIEW_REASON_CHARS - 1].rstrip() + "…"
-    return sanitized
-
-
-async def _audit_safe_review_reason(
-    reason: str,
-    *,
-    arguments: Mapping[str, object],
-    messages: Sequence[object],
-    state: TurnTaintState,
-    safe_argument_keys: Collection[str] = (),
-) -> str:
-    """Redact a rationale off the event loop using bounded output memory."""
-    return await asyncio.to_thread(
-        _redact_audit_review_reason,
-        reason,
-        arguments=arguments,
-        messages=messages,
-        state=state,
-        safe_argument_keys=safe_argument_keys,
-    )
-
-
 def _collect_attachment_argument_ids(
     value: object,
     *,
@@ -2093,41 +1912,6 @@ class TaintTrackingToolsProvider(ToolsProvider):
         static_evaluation: PolicyEvaluation | None,
         execute_authorized: AuthorizedToolExecutor,
     ) -> str | ToolResult:
-        """Reserve sensitive reads before any concurrent disclosure can exempt."""
-        review_state = context.tool_call_review_state
-        reserved_sensitive_read = (
-            context.taint_tracker is not None
-            and _is_sensitive_read_descriptor(descriptor)
-        )
-        if reserved_sensitive_read:
-            review_state.pending_sensitive_read_count += 1
-        try:
-            return await self._authorize_and_execute_tool_after_reservation(
-                name=name,
-                arguments=arguments,
-                context=context,
-                call_id=call_id,
-                descriptor=descriptor,
-                static_evaluation=static_evaluation,
-                execute_authorized=execute_authorized,
-            )
-        finally:
-            if reserved_sensitive_read:
-                assert review_state.pending_sensitive_read_count > 0
-                review_state.pending_sensitive_read_count -= 1
-
-    async def _authorize_and_execute_tool_after_reservation(
-        self,
-        *,
-        name: str,
-        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
-        arguments: dict[str, Any],
-        context: ToolExecutionContext,
-        call_id: str | None,
-        descriptor: ToolDescriptor,
-        static_evaluation: PolicyEvaluation | None,
-        execute_authorized: AuthorizedToolExecutor,
-    ) -> str | ToolResult:
         """Merge static and taint decisions, then invoke authorized dispatch once."""
 
         state = TurnTaintState.empty()
@@ -2217,9 +2001,6 @@ class TaintTrackingToolsProvider(ToolsProvider):
                     context.tool_call_review_trigger.active_request_role
                     if context.tool_call_review_trigger is not None
                     else "user"
-                ),
-                pending_sensitive_read_count=(
-                    context.tool_call_review_state.pending_sensitive_read_count
                 ),
             )
         )
@@ -2441,8 +2222,6 @@ class TaintTrackingToolsProvider(ToolsProvider):
         previous_confirmation_authorization = context.tool_confirmation_authorization
         if inline_confirmation_authorization is not None:
             context.tool_confirmation_authorization = inline_confirmation_authorization
-        sensitive_read_token = begin_sensitive_read_call()
-        explicit_sensitive_read = False
         try:
             result = await execute_authorized()
         except Exception:
@@ -2455,8 +2234,6 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 )
             raise
         finally:
-            explicit_sensitive_read = sensitive_read_recorded_in_call()
-            reset_sensitive_read_call(sensitive_read_token)
             if inline_confirmation_authorization is not None:
                 context.tool_confirmation_authorization = (
                     previous_confirmation_authorization
@@ -2466,7 +2243,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             self._record_generic_sensitive_read(
                 descriptor=descriptor,
                 context=context,
-                explicit_sensitive_read=explicit_sensitive_read,
+                state_before_execution=state_before_execution,
             )
             await self._record_result_taint_and_audit(
                 descriptor=descriptor,
@@ -2485,18 +2262,12 @@ class TaintTrackingToolsProvider(ToolsProvider):
         evaluation: TaintPolicyEvaluation,
         review_messages: Sequence[object] | None,
         active_request_role: Literal["user", "system"],
-        pending_sensitive_read_count: int,
     ) -> bool:
         """Return whether a disclosure review can safely resolve to audit."""
-        # Authenticated browser state can contain private data without creating a
-        # SensitiveReadScope, so absence from ``state.sensitive_reads`` is not
-        # proof of confinement for a browser action.
         return (
             self._include_aggregated_context is False
             and sink_class in _REVIEW_DISCLOSURE_SINKS
-            and ToolTag.BROWSER not in descriptor.tags
             and not state.sensitive_reads
-            and pending_sensitive_read_count == 0
             and not state.history_high_taint_present
             and _review_messages_are_current_turn_only(
                 review_messages,
@@ -2682,7 +2453,6 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 destination_echo.matched if destination_echo is not None else None
             ),
             result=result,
-            messages=messages,
             mode=taint_evaluation.mode if taint_evaluation is not None else None,
         )
         if update_denial_counters:
@@ -2758,7 +2528,6 @@ class TaintTrackingToolsProvider(ToolsProvider):
         constraints: ToolCallReviewConstraints,
         destination_echo: bool | None,
         result: ToolCallReviewResult,
-        messages: Sequence[object],
         mode: TaintPolicyMode | None,
     ) -> None:
         review_context: TaintAuditReviewContext = {
@@ -2772,13 +2541,6 @@ class TaintTrackingToolsProvider(ToolsProvider):
             "used_fallback": result.used_fallback,
             "destination_echo": destination_echo,
         }
-        audit_reason = await _audit_safe_review_reason(
-            result.reason,
-            arguments=arguments,
-            messages=messages,
-            state=state,
-            safe_argument_keys=_descriptor_argument_keys(descriptor),
-        )
         await context.db_context.taint_audit_events.add(
             event_id=str(uuid.uuid4()),
             event_type="tool_call_review",
@@ -2794,11 +2556,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             requested_outcome="review",
             effective_outcome=result.verdict.value,
             mode=mode.value if mode is not None else None,
-            reason=(
-                "Automatic reviewer resolved the proposed action as "
-                f"'{result.verdict.value}' with status '{result.status.value}'. "
-                "Reviewer rationale: " + audit_reason
-            ),
+            reason=_TOOL_CALL_REVIEW_AUDIT_REASON,
             arguments_summary=_summarize_tool_arguments(
                 arguments,
                 safe_keys=_descriptor_argument_keys(descriptor),
@@ -3231,18 +2989,20 @@ class TaintTrackingToolsProvider(ToolsProvider):
         *,
         descriptor: ToolDescriptor,
         context: ToolExecutionContext,
-        explicit_sensitive_read: bool,
+        state_before_execution: TurnTaintState | None,
     ) -> None:
         """Record the conservative fallback for an uninstrumented private read."""
         tracker = context.taint_tracker
+        if tracker is None or not _is_sensitive_read_descriptor(descriptor):
+            return
+        live_state = tracker.snapshot()
         if (
-            tracker is None
-            or explicit_sensitive_read
-            or not _is_sensitive_read_descriptor(descriptor)
+            state_before_execution is not None
+            and live_state.sensitive_reads != state_before_execution.sensitive_reads
         ):
             return
         tracker.replace(
-            tracker.snapshot().add_sensitive_read(
+            live_state.add_sensitive_read(
                 SensitiveReadScope(
                     kind="tool",
                     qualifier=f"tool:{descriptor.name}",

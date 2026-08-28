@@ -1245,6 +1245,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     "take_screenshot": _metadata(
         ToolTag.BROWSER,
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
@@ -1266,6 +1267,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     "browser_snapshot": _metadata(
         ToolTag.BROWSER,
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
@@ -1290,18 +1292,21 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     "browser_wait": _metadata(
         ToolTag.BROWSER,
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "browser_extract": _metadata(
         ToolTag.BROWSER,
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
     "browser_screenshot": _metadata(
         ToolTag.BROWSER,
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
     ),

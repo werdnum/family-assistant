@@ -620,11 +620,16 @@ proof — holds structurally forever.
   part of implementing this input.
 - The profile id and the matrix cell that delegated the decision, including its floor.
 
-**Verdicts:** `allow` (with one-line reason, audited), `confirm` (escalate to the existing durable
-confirmation machinery, judge's reason included in the rendered prompt so the human sees *why*),
-`deny_and_continue` (structured refusal tool result). Malformed output, timeout, or provider error ⇒
-`confirm`. Every verdict writes a `taint_audit_events` row with the verdict, reason, and latency;
-the existing diagnostics endpoint grows verdict counts.
+**Verdicts:** `allow` (with structured verdict and status audited), `confirm` (escalate to the
+existing durable confirmation machinery, judge's reason included in the rendered prompt so the human
+sees *why*), `deny_and_continue` (structured refusal tool result). Malformed output, timeout, or
+provider error ⇒ `confirm`. Every verdict writes a `taint_audit_events` row with verdict, status,
+latency, delegating context, and a fixed trusted reason; the judge's free-form rationale is not
+copied into durable audit storage. For message-originated calls, the existing `turn_id` plus
+`tool_call_id` correlation locates the canonical stored assistant message if later reconstruction is
+needed. Direct named-sink and other non-message-originated authorizations may have no corresponding
+message row and retain only the structured audit evidence. The existing diagnostics endpoint grows
+verdict counts.
 
 **The judge is itself an injection target, so it never reads the attacker.** The naive design — show
 the judge the full arguments and rely on fencing — would hand untrusted natural language a second

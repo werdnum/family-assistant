@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from contextvars import ContextVar, Token
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from family_assistant.security.taint import (
@@ -19,37 +17,6 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
 
     from family_assistant.tools.types import ToolExecutionContext
-
-
-@dataclass
-class SensitiveReadCallMarker:
-    """Call-local signal shared with child tasks and worker threads."""
-
-    recorded: bool = False
-
-
-_sensitive_read_call_marker: ContextVar[SensitiveReadCallMarker | None] = ContextVar(
-    "sensitive_read_call_marker",
-    default=None,
-)
-
-
-def begin_sensitive_read_call() -> Token[SensitiveReadCallMarker | None]:
-    """Start tracking explicit sensitive-read recording for one tool call."""
-    return _sensitive_read_call_marker.set(SensitiveReadCallMarker())
-
-
-def sensitive_read_recorded_in_call() -> bool:
-    """Return whether the active tool call recorded a scoped sensitive read."""
-    marker = _sensitive_read_call_marker.get()
-    return marker is not None and marker.recorded
-
-
-def reset_sensitive_read_call(
-    token: Token[SensitiveReadCallMarker | None],
-) -> None:
-    """Restore the enclosing sensitive-read tracking scope."""
-    _sensitive_read_call_marker.reset(token)
 
 
 def record_sensitive_read(
@@ -74,9 +41,6 @@ def record_sensitive_read(
     tracker.replace(
         tracker.snapshot().add_sensitive_read(scope, query_origin=query_origin)
     )
-    marker = _sensitive_read_call_marker.get()
-    if marker is not None:
-        marker.recorded = True
 
 
 def merge_artifact_taint_into_context(

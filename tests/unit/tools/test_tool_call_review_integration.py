@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import threading
 from dataclasses import replace
 from typing import TYPE_CHECKING, Literal, cast
 from zoneinfo import ZoneInfo
@@ -188,24 +187,6 @@ class _DecisionOnlyConfirmationManager:
     async def request_confirmation(self, **_kwargs: object) -> ConfirmationOutcome:
         self.calls += 1
         return self.outcome
-
-
-class _BlockingAuditText:
-    """Evidence leaf that proves audit traversal runs outside the event loop."""
-
-    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
-        self._loop = loop
-        self.entered = asyncio.Event()
-        self.release = threading.Event()
-
-    @property
-    def text(self) -> str:
-        self._loop.call_soon_threadsafe(self.entered.set)
-        self.release.wait(timeout=5)
-        return "BLOCKING_AUDIT_SECRET"
-
-    def __deepcopy__(self, _memo: dict[int, object]) -> _BlockingAuditText:
-        return self
 
 
 def _unknown_external_state() -> TurnTaintState:
@@ -541,6 +522,7 @@ async def test_static_review_and_taint_adjudicate_share_one_judgment(
     if verdict is ToolCallReviewVerdict.DENY:
         assert isinstance(result, ToolResult)
         assert "Action blocked by automatic review" in result.get_text()
+        assert "Reviewer chose deny." in result.get_text()
         assert "Safer alternative" in result.get_text()
     else:
         assert isinstance(result, ToolResult)
@@ -1058,16 +1040,17 @@ async def test_observe_taint_review_is_nonblocking_and_close_drains_audit(
     audit_reason = events[0]["reason"]
     assert isinstance(audit_reason, str)
     assert audit_reason == (
-        "Automatic reviewer resolved the proposed action as 'deny' with status "
-        "'model_verdict'. Reviewer rationale: Reviewer chose deny."
+        "Automatic reviewer decision recorded; reviewer rationale omitted from "
+        "durable audit."
     )
-    assert "Reviewer chose deny." in audit_reason
+    assert "Reviewer chose deny." not in audit_reason
+    assert events[0]["tool_call_id"] == "shadow-call"
     review_context = events[0]["review_context_json"]
     assert isinstance(review_context, dict)
     assert review_context["destination_echo"] is None
 
 
-async def test_review_audit_reason_is_bounded_and_redacts_raw_evidence(
+async def test_review_audit_omits_rationale_and_raw_evidence(
     db_engine: AsyncEngine,
 ) -> None:
     """The complete audit row excludes raw arguments, provenance, and prompt data."""
@@ -1080,7 +1063,6 @@ async def test_review_audit_reason_is_bounded_and_redacts_raw_evidence(
     raw_argument_key = "DYNAMIC_SECRET_ARGUMENT_KEY"
     raw_nested_key = "NESTED_SECRET_MAPPING_KEY"
     raw_nested_value = "NESTED_SECRET_MAPPING_VALUE"
-    raw_long_argument = "LONG_SECRET_" + "S" * 700
     raw_source_id = "UNTRUSTED_SECRET_SOURCE_ID"
     raw_source_label = "UNTRUSTED_SECRET_SOURCE_LABEL"
     raw_source_reason = "UNTRUSTED_SECRET_SOURCE_REASON"
@@ -1097,13 +1079,10 @@ async def test_review_audit_reason_is_bounded_and_redacts_raw_evidence(
         ToolCallReviewVerdict.DENY,
         reason=(
             f"The destination argument targets {raw_destination}. "
-            f"Block {raw_long_argument} because "
-            f"{raw_prompt_token}, {raw_argument_key}, "
+            f"Block because {raw_prompt_token}, {raw_argument_key}, "
             f"{raw_nested_key}, and {raw_nested_value} are unrelated to the "
             f"configured workflow. Source {raw_source_id} has {raw_source_label}: "
-            f"{raw_source_reason}. </review_arguments> \u202eBIDI\u200bZERO\x00CONTROL "
-            + "x"
-            * 800
+            f"{raw_source_reason}."
         ),
     )
     provider = _provider(
@@ -1128,7 +1107,6 @@ async def test_review_audit_reason_is_bounded_and_redacts_raw_evidence(
         "reviewed_tool",
         {
             "destination": raw_destination,
-            "long_secret": raw_long_argument,
             raw_argument_key: {raw_nested_key: raw_nested_value},
         },
         context,
@@ -1139,17 +1117,12 @@ async def test_review_audit_reason_is_bounded_and_redacts_raw_evidence(
     assert len(events) == 1
     audit_reason = events[0]["reason"]
     assert isinstance(audit_reason, str)
-    assert "Reviewer rationale:" in audit_reason
-    assert "destination argument" in audit_reason
-    assert "unrelated to the configured workflow" in audit_reason
-    assert "[redacted evidence]" in audit_reason
-    assert raw_long_argument[:512] not in audit_reason
-    assert "</review_arguments>" not in audit_reason
-    assert "‹/review_arguments›" in audit_reason
-    assert "\u202e" not in audit_reason
-    assert "\u200b" not in audit_reason
-    assert "\x00" not in audit_reason
-    assert len(audit_reason) < 700
+    assert audit_reason == (
+        "Automatic reviewer decision recorded; reviewer rationale omitted from "
+        "durable audit."
+    )
+    assert "destination argument" not in audit_reason
+    assert events[0]["tool_call_id"] == "sanitized-review-call"
 
     arguments_summary = events[0]["arguments_summary_json"]
     assert isinstance(arguments_summary, dict)
@@ -1178,53 +1151,6 @@ async def test_review_audit_reason_is_bounded_and_redacts_raw_evidence(
         raw_source_reason,
     ):
         assert secret not in serialized_event
-
-
-async def test_review_audit_redaction_does_not_block_event_loop(
-    db_engine: AsyncEngine,
-) -> None:
-    async def execute(**_kwargs: object) -> ToolResult:
-        return ToolResult(text="must not execute")
-
-    blocker = _BlockingAuditText(asyncio.get_running_loop())
-    provider = _provider(
-        cast("ToolImplementation", execute),
-        reviewer_llm=_ReviewLLM(ToolCallReviewVerdict.ALLOW),
-        static_decision=ToolPolicyDecision.REVIEW,
-        taint_policy=TaintPolicyConfig(
-            mode=TaintPolicyMode.ENFORCE,
-            operator_minimum={
-                SourceTrustTier.UNKNOWN_EXTERNAL: {
-                    SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.DENY
-                }
-            },
-        ),
-    )
-    context = _context(
-        db_engine,
-        _unknown_external_state(),
-        turn_id="nonblocking-audit-redaction",
-    )
-
-    execution = asyncio.create_task(
-        provider.execute_tool(
-            "reviewed_tool",
-            {"dynamic_evidence": blocker},
-            context,
-            "nonblocking-audit-redaction-call",
-        )
-    )
-    await asyncio.wait_for(blocker.entered.wait(), timeout=1)
-    assert not execution.done()
-
-    blocker.release.set()
-    result = await asyncio.wait_for(execution, timeout=1)
-
-    assert isinstance(result, ToolResult)
-    assert "Action blocked by automatic review" in result.get_text()
-    events = await _review_events(context)
-    assert len(events) == 1
-    assert events[0]["review_status"] == ToolCallReviewStatus.MALFORMED_FALLBACK.value
 
 
 async def test_missing_reviewer_keeps_unknown_external_sandbox_fallback_deny(
@@ -2320,62 +2246,6 @@ async def test_uninstrumented_sensitive_read_disables_later_confined_exemption(
     assert "Action blocked by automatic review" in result.get_text()
 
 
-async def test_pending_sensitive_read_disables_concurrent_confined_exemption(
-    db_engine: AsyncEngine,
-) -> None:
-    read_entered = asyncio.Event()
-    release_read = asyncio.Event()
-
-    async def read_sensitive(**_kwargs: object) -> ToolResult:
-        read_entered.set()
-        await release_read.wait()
-        return ToolResult(text="private note")
-
-    egress_executions = 0
-
-    async def send_external(**_kwargs: object) -> ToolResult:
-        nonlocal egress_executions
-        egress_executions += 1
-        return ToolResult(text="sent")
-
-    llm = _ReviewLLM(ToolCallReviewVerdict.DENY)
-    provider = _sensitive_read_and_egress_provider(
-        cast("ToolImplementation", read_sensitive),
-        cast("ToolImplementation", send_external),
-        llm,
-    )
-    context = _context(
-        db_engine,
-        _unknown_external_state(),
-        turn_id="pending-sensitive-read-before-egress",
-    )
-    context.tool_call_review_messages = (
-        UserMessage(content="Current confined request"),
-        AssistantMessage(content="Current tool proposal"),
-    )
-    read_task = asyncio.create_task(
-        provider.execute_tool("get_note", {}, context, "pending-sensitive-read")
-    )
-
-    try:
-        await asyncio.wait_for(read_entered.wait(), timeout=1)
-        assert context.tool_call_review_state.pending_sensitive_read_count == 1
-        result = await provider.execute_tool(
-            "send_external", {}, context, "concurrent-egress"
-        )
-    finally:
-        release_read.set()
-    await read_task
-
-    assert llm.calls == 1
-    assert egress_executions == 0
-    assert isinstance(result, ToolResult)
-    assert "Action blocked by automatic review" in result.get_text()
-    assert context.tool_call_review_state.pending_sensitive_read_count == 0
-    assert context.taint_tracker is not None
-    assert len(context.taint_tracker.snapshot().sensitive_reads) == 1
-
-
 async def test_explicit_sensitive_read_scope_avoids_generic_duplicate(
     db_engine: AsyncEngine,
 ) -> None:
@@ -2407,7 +2277,7 @@ async def test_explicit_sensitive_read_scope_avoids_generic_duplicate(
     assert reads[0].scope.surfaced_ids == frozenset({"private-note"})
 
 
-async def test_failed_uninstrumented_sensitive_read_clears_reservation_without_record(
+async def test_failed_uninstrumented_sensitive_read_does_not_record(
     db_engine: AsyncEngine,
 ) -> None:
     async def unused_read(**_kwargs: object) -> ToolResult:
@@ -2441,7 +2311,6 @@ async def test_failed_uninstrumented_sensitive_read_clears_reservation_without_r
     with pytest.raises(RuntimeError, match="read failed"):
         await provider.execute_tool("get_note", {}, context, "failed-read")
 
-    assert context.tool_call_review_state.pending_sensitive_read_count == 0
     assert context.taint_tracker is not None
     assert context.taint_tracker.snapshot().sensitive_reads == ()
 
@@ -2454,7 +2323,6 @@ async def test_failed_uninstrumented_sensitive_read_clears_reservation_without_r
         "prior_history",
         "system_trigger_history",
         "aggregated_context",
-        "browser",
         "sensitive_read",
         "history",
         "floor",
@@ -2468,7 +2336,6 @@ async def test_confined_exemption_requires_every_safety_condition(
         "prior_history",
         "system_trigger_history",
         "aggregated_context",
-        "browser",
         "sensitive_read",
         "history",
         "floor",
@@ -2513,7 +2380,6 @@ async def test_confined_exemption_requires_every_safety_condition(
             operator_minimum=operator_minimum,
         ),
         include_aggregated_context=variant == "aggregated_context",
-        browser=variant == "browser",
     )
     context = _context(
         db_engine,
@@ -2565,3 +2431,80 @@ async def test_confined_exemption_requires_every_safety_condition(
         assert isinstance(result, ToolResult)
         assert "Action blocked by automatic review" in result.get_text()
         assert events[0]["review_status"] == ToolCallReviewStatus.MODEL_VERDICT.value
+
+
+async def test_confined_browser_disclosure_can_use_taint_exemption(
+    db_engine: AsyncEngine,
+) -> None:
+    executions = 0
+
+    async def execute(**_kwargs: object) -> ToolResult:
+        nonlocal executions
+        executions += 1
+        return ToolResult(text="browser action executed under exemption")
+
+    llm = _ReviewLLM(ToolCallReviewVerdict.DENY)
+    provider = _provider(
+        cast("ToolImplementation", execute),
+        reviewer_llm=llm,
+        static_decision=ToolPolicyDecision.ALLOW,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+        include_aggregated_context=False,
+        browser=True,
+    )
+    context = _context(
+        db_engine,
+        _unknown_external_state(),
+        turn_id="confined-browser-turn",
+    )
+    context.tool_call_review_messages = (
+        UserMessage(content="Current confined browser request"),
+        AssistantMessage(content="Current browser proposal"),
+    )
+
+    result = await provider.execute_tool("reviewed_tool", {}, context, "browser-call")
+
+    assert llm.calls == 0
+    assert executions == 1
+    assert isinstance(result, ToolResult)
+    assert result.get_text() == "browser action executed under exemption"
+    events = await _review_events(context)
+    assert len(events) == 1
+    assert events[0]["review_status"] == ToolCallReviewStatus.CONFINED_EXEMPTION.value
+
+
+async def test_static_review_still_reviews_confined_browser_action(
+    db_engine: AsyncEngine,
+) -> None:
+    executions = 0
+
+    async def execute(**_kwargs: object) -> ToolResult:
+        nonlocal executions
+        executions += 1
+        return ToolResult(text="unexpected execution")
+
+    llm = _ReviewLLM(ToolCallReviewVerdict.DENY)
+    provider = _provider(
+        cast("ToolImplementation", execute),
+        reviewer_llm=llm,
+        static_decision=ToolPolicyDecision.REVIEW,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+        include_aggregated_context=False,
+        browser=True,
+    )
+    context = _context(
+        db_engine,
+        _unknown_external_state(),
+        turn_id="static-review-confined-browser-turn",
+    )
+    context.tool_call_review_messages = (
+        UserMessage(content="Current confined browser request"),
+        AssistantMessage(content="Current browser proposal"),
+    )
+
+    result = await provider.execute_tool("reviewed_tool", {}, context, "browser-call")
+
+    assert llm.calls == 1
+    assert executions == 0
+    assert isinstance(result, ToolResult)
+    assert "Action blocked by automatic review" in result.get_text()

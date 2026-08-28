@@ -340,7 +340,6 @@ class ToolCallReviewTurnState:
     total_denials: int = 0
     escalation_handled: bool = False
     terminal_denial_escalation_message: str | None = None
-    pending_sensitive_read_count: int = 0
 
 
 @dataclass
