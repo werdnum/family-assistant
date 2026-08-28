@@ -46,6 +46,7 @@ from family_assistant.services.notification_targets import notify_conversation
 from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
 from family_assistant.storage.database import Database
 from family_assistant.telegram.protocols import ConfirmationUIManager
+from family_assistant.tools.confirmation import append_review_reason_to_confirmation
 from family_assistant.tools.types import (
     ConfirmationOutcome,
     ToolArguments,
@@ -176,6 +177,9 @@ async def run_turn_producer(
         confirmation_prompt = (
             f"Do you want to execute '{tool_name}' with these parameters?"
         )
+        confirmation_prompt = append_review_reason_to_confirmation(
+            confirmation_prompt, context
+        )
         source_message_internal_id: int | None = None
         if turn_id is not None:
             source_row = (
@@ -204,6 +208,7 @@ async def run_turn_producer(
             source_message_internal_id=source_message_internal_id,
             taint_state_json=taint_state_json,
             processing_profile_id=context.processing_profile_id,
+            tool_call_review_authorization=context.tool_call_review_authorization,
         )
 
     try:

@@ -2,7 +2,11 @@
 
 ## Status
 
-Proposed.
+Implemented through the shared reviewer, taint/static runtime integrations, deterministic signals,
+audit diagnostics, and the environment-inclusive browser review contract. Production remains in the
+designed M2 shadow posture (`taint_policy.mode: observe`); the evidence-gated M5 enforcement
+decision is operational work, not a code default. The browser contract is ready for its DOM-path
+call site when PR #1136's authenticated-session runtime lands.
 
 This design promotes the adjudicator described in
 [risk-adjudicated-taint-enforcement.md](risk-adjudicated-taint-enforcement.md) from that document's
@@ -133,23 +137,29 @@ The reviewer's context is a typed structure assembled deterministically:
   load-bearing: in email intake the sender-controlled body arrives represented as a `UserMessage`,
   so role-based selection would hand the judge the attacker's email verbatim. The per-row taint
   metadata this selection needs is already persisted.
+
 - **The tool call under review**: name, resolved sink class, and the tool description for local
   tools only (an MCP tool's description is remote-server content, so MCP tools render as server id
   plus annotation-derived tags).
+
 - **The arguments, rendered in full inside fenced data boundaries** with boundary neutralization
   (the `_neutralize_untrusted_evidence_boundaries` pattern). This is a deliberate divergence from
   the risk document's provenance-filtered rendering, discussed below.
+
 - **A provenance digest of the turn**: which sources are present, their tiers, types, and ordering
   (the sensitive-read records and fresh-taint sequence, where available in the current context).
   Closed-vocabulary fields render verbatim; free-text fields (reasons, artifact titles, sender
   addresses) render only for trusted-tier sources and are otherwise replaced by type-and-tier stubs,
   because reasons already interpolate artifact-controlled text today.
+
 - **The delegating policy cell or rule**, including its verdict space, so the reviewer knows which
   verdicts are available to it.
+
 - **Operator review guidance**: trusted deployment- and profile-level free text describing what the
   household considers routine, plus — for action review — the site's configured damage envelope.
   This is operator configuration, the same trust class as a system prompt, and it is what makes the
   reviewer tunable without code changes.
+
 - **The trigger definition, for unattended runs.** An event-handler or scheduled turn has no trusted
   user message; its trusted intent is the human-authored definition that created the run — the
   listener's instruction, the automation's prompt, the scheduled task's objective. The definition
@@ -164,6 +174,15 @@ The reviewer's context is a typed structure assembled deterministically:
   executable-persistence concern the risk document covers) cannot render as trusted intent, because
   no definition can until stored provenance proves it. The trigger *payload* — the event data,
   deliberately untrusted — is always represented as a provenance stub, never rendered.
+
+  Missing authoring provenance also affects the runtime taint state, not just what the reviewer can
+  render. At present **every unattended callback** enters as `unknown_external`, including event
+  listeners, script wakes and failures, schedule automations, `schedule_future_callback`, and
+  reminders. Its user-role trigger row and taint-derived assistant rows persist in conversation
+  history, so a later interactive turn that reloads that history can inherit the elevated tier and
+  incur adjudication, confirmation, or denial friction. This is the conservative interim behavior
+  until automation-definition provenance is stored at authoring time and threaded into callbacks;
+  creator identity alone is not enough to suppress it.
 
 ### On rendering arguments: the auto-mode position, not the stub position
 
@@ -204,7 +223,15 @@ Malformed output, timeout, or provider error resolves to the delegating cell or 
 outcome, per design principle 4 — the pre-adjudication matrix outcome for taint cells, `confirm` for
 static `review` rules. Every verdict — including shadow-mode verdicts — writes a
 `taint_audit_events` row with verdict, reason, latency, and the delegating cell or rule, and the
-diagnostics endpoint grows verdict counts.
+diagnostics endpoint grows verdict counts. The stored reason is a bounded, one-line form of the
+reviewer's actual rationale; exact argument values and conversation-evidence values (including
+non-trivial copied tokens) are redacted, and reviewer-controlled boundary markup is neutralized, so
+the audit trail cannot become a second store for raw untrusted prompt or tool-argument data.
+Argument summaries and sanitized rationales may retain names declared by a trusted local tool
+schema; unexpected keys are pseudonymized in summaries and redacted from rationales, while MCP
+schema keys remain untrusted. All argument values are redacted regardless of origin. Source
+provenance retains closed-vocabulary type and tier, while externally authored identifiers, labels,
+and reasons are omitted.
 
 ### Escalation and cost bounds
 
@@ -224,24 +251,34 @@ serialization work would invert the priority this document exists to set.
 One deterministic check runs before the model call and can resolve the evaluation without spend or
 latency:
 
-- **Confined-profile egress exemption.** A profile that excludes aggregated context by construction
-  and whose current turn has recorded no sensitive reads has nothing to exfiltrate; disclosure-sink
-  reviews short-circuit to `audit`. This is the computable core of the risk document's binding
-  condition (its protected-history clause needs the M6 serialization work and joins the check when
-  that lands; until then, absence of the history signal fails toward invoking the reviewer, not
-  toward exemption). It is what keeps the browser profiles browsing freely instead of paying a judge
-  call per navigation. Any input the check cannot determine falls through to the reviewer. The
-  short-circuit is valid only when the effective execution minimum permits `audit`: a configured
-  `confirm` or `deny` verdict floor, or a matching `operator_minimum`, disables the exemption and
-  invokes the reviewer within that tighter verdict space.
+- **Confined-profile egress exemption.** A non-browser profile that excludes aggregated context by
+  construction and whose current turn has recorded no sensitive reads has nothing to exfiltrate;
+  disclosure-sink reviews short-circuit to `audit`. This is the computable core of the risk
+  document's binding condition (its protected-history clause needs the M6 serialization work and
+  joins the check when that lands; until then, absence of the history signal fails toward invoking
+  the reviewer, not toward exemption). Browser-tagged actions are excluded because an authenticated
+  page or browser environment can contain private state without producing a sensitive-read record;
+  they remain reviewable until the browser runtime can positively prove private-state absence. Any
+  input the check cannot determine falls through to the reviewer. The short-circuit is valid only
+  when the effective execution minimum permits `audit`: a configured `confirm` or `deny` verdict
+  floor, or a matching `operator_minimum`, disables the exemption and invokes the reviewer within
+  that tighter verdict space.
+
+  The tool-execution chokepoint reserves every `read_only` + `sensitive_data` call before execution.
+  Any concurrent disclosure therefore falls through to review while the read is in flight. On
+  successful return the tool's explicit corpus scope is retained, or the chokepoint records a
+  conservative tool-level sensitive read when the implementation has no narrower instrumentation;
+  the reservation is cleared without adding that generic record when execution fails.
 
 A second deterministic computation is a **signal, never a bypass**:
 
 - **Trusted-destination echo.** Whether the destination-bearing argument of an egress call is an
   exact whole-value match (post-normalization) for a destination in the current request's
-  trusted-tier user text — the small, checkable subset of argument provenance matching. Per the risk
-  document, mention is not authorization: a request can name a destination while *forbidding* it,
-  and no string match can tell the difference, so a passing match never skips the reviewer and never
+  trusted-tier user text — the small, checkable subset of argument provenance matching. Non-URL
+  values retain case-insensitive text normalization; for parsed URLs only the scheme and host are
+  case-insensitive, while path, query, and fragment case remain exact. Per the risk document,
+  mention is not authorization: a request can name a destination while *forbidding* it, and no
+  string match can tell the difference, so a passing match never skips the reviewer and never
   produces `allow` on its own — the payload still has to look benign against the request. The match
   result feeds the reviewer as strong evidence ("destination appears verbatim in the current trusted
   request" versus "destination appears nowhere the user wrote") and appears in verdict reasons and
@@ -268,15 +305,19 @@ which is why the M5 gate includes p95 reviewer latency.
 The shadow property belongs to `observe` mode, not to the defaults change itself. For a deployment
 already running `mode: enforce`, adopting the new default matrix is a real posture change — cells
 that gated unconditionally become judged — and must not happen silently: the configuration
-reference's migration note tells enforce deployments to pin the previous outcomes before upgrading
-(an `operator_minimum` of `confirm` on the egress cells, `known_user_message`, and
-`sensitive_read_broadening`, plus `deny` on `unknown_external × sandbox_network`, reproduces
-today's matrix exactly and is a subset of the recommended hardening set) or to adopt the judged
-posture deliberately. Verdict floors and
-`operator_minimum` are tighten-only against the judge just as against profiles, so a pinned
-deployment loses nothing. No known deployment runs `enforce` today — the maintainer's is the only
-known deployment, and it runs `observe` — so this is defence in depth for third-party deployments of
-a public codebase: a documented pin and a config test, not migration machinery.
+reference's migration note tells enforce deployments to pin the previous egress, broadening, and
+sandbox outcomes before upgrading (an `operator_minimum` of `confirm` on the egress cells and
+`sensitive_read_broadening`, plus `deny` on `unknown_external × sandbox_network`) or to adopt the
+judged posture deliberately. A cell-for-cell pin would also set
+`unknown_external × known_user_message` to `confirm`, but that no longer reproduces the previous
+*callback behavior*: absent authoring provenance now puts every unattended callback at
+`unknown_external`, so reminder delivery through `send_message_to_user` would defer for confirmation
+instead of delivering. Deployments that rely on unattended reminders should leave that cell at the
+shipped `audit` outcome while pinning the other changed cells, accepting this one deliberate
+exception. Verdict floors and `operator_minimum` remain tighten-only against the judge just as
+against profiles. No known deployment runs `enforce` today — the maintainer's is the only known
+deployment, and it runs `observe` — so this is defence in depth for third-party deployments of a
+public codebase: a documented pin and a config test, not migration machinery.
 
 ### Default matrix changes
 
@@ -408,7 +449,7 @@ instead of building one.
 
 ## Configuration
 
-Approach-level sketch; exact spellings belong to the implementing PRs.
+Implemented configuration:
 
 ```yaml
 tool_call_review:
@@ -479,10 +520,11 @@ invoke the reviewer without blocking the gated call and downgrade effect to `aud
 
 **M3 — Deterministic short-circuit and echo signal.** The confined-profile egress exemption
 (computable clauses, fail-toward-review) and the trusted-destination echo signal as reviewer input.
-*Verify:* browser-profile navigation generates no reviewer calls; the same navigation from a
-context-bearing profile does; a user-pasted URL reaches the reviewer with a positive echo signal and
-an appended-query-parameter variant with a negative one; the negation fixture ("never send to X" in
-the request, injection targeting X) reaches the reviewer rather than short-circuiting.
+*Verify:* a confined non-browser disclosure generates no reviewer call; the same call from a
+context-bearing profile does; a browser-tagged action remains reviewed even in a confined
+current-turn-only profile; a user-pasted URL reaches the reviewer with a positive echo signal and an
+appended-query-parameter variant with a negative one; the negation fixture ("never send to X" in the
+request, injection targeting X) reaches the reviewer rather than short-circuiting.
 
 **M4 — Static `review` decision.** The new decision value, advertisement semantics, and the
 one-judgment-per-call merge with the taint layer. *Verify:* policy-engine tests for layering and

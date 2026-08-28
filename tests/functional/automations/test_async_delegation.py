@@ -39,6 +39,7 @@ from family_assistant.security.taint import (
     TurnTaintState,
 )
 from family_assistant.services.attachment_registry import AttachmentRegistry
+from family_assistant.services.tool_call_review import TriggerReviewInput
 from family_assistant.storage import message_history_table
 from family_assistant.storage.database import Database
 from family_assistant.storage.delegation_runs import delegation_runs_table
@@ -58,7 +59,11 @@ from family_assistant.tools.services import (
     get_delegation_status_tool,
     list_delegations_tool,
 )
-from family_assistant.tools.types import ConfirmationOutcome, ToolExecutionContext
+from family_assistant.tools.types import (
+    ConfirmationOutcome,
+    ToolCallReviewAuthorization,
+    ToolExecutionContext,
+)
 from family_assistant.utils.clock import SystemClock
 
 if TYPE_CHECKING:
@@ -79,6 +84,7 @@ class FakeDelegationCall(TypedDict):
 
     request_confirmation_callback: object
     subconversation_id: object
+    tool_call_review_trigger: TriggerReviewInput
 
 
 class FakeConfirmationRequest(TypedDict):
@@ -118,10 +124,15 @@ class FakeConfirmationUIManager:
         tool_call_id: str | None = None,
         source_message_internal_id: int | None = None,
         wait_for_durable_execution: bool = True,
-        taint_state_json: object | None = None,
+        taint_state_json: TaintMetadata | None = None,
         processing_profile_id: str | None = None,
+        tool_call_review_authorization: ToolCallReviewAuthorization | None = None,
     ) -> ConfirmationOutcome:
-        _ = (taint_state_json, processing_profile_id)
+        _ = (
+            taint_state_json,
+            processing_profile_id,
+            tool_call_review_authorization,
+        )
         self.requests.append(
             FakeConfirmationRequest(
                 conversation_id=conversation_id,
@@ -315,10 +326,12 @@ class FakeWakeCapableSourceService:
         self.response_attachment_ids = response_attachment_ids
         self.persist_assistant_message = persist_assistant_message
         self.wake_call_count = 0
+        self.wake_review_triggers: list[TriggerReviewInput | None] = []
         self.wake_assistant_message_ids: list[int] = []
 
     async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401 - test fake accepts the ProcessingService keyword surface
         self.wake_call_count += 1
+        self.wake_review_triggers.append(kwargs.get("tool_call_review_trigger"))
         db_context = cast("Database", kwargs["db_context"])
         turn_id = cast("str", kwargs["turn_id"])
         thread_root_id = cast("int | None", kwargs["thread_root_id"])
@@ -546,6 +559,13 @@ async def test_delegate_to_service_background_reference_and_completion_notificat
     assert len(target_service.calls) == 1
     assert target_service.calls[0]["request_confirmation_callback"] is not None
     assert target_service.calls[0]["subconversation_id"]
+    assert target_service.calls[0]["tool_call_review_trigger"] == TriggerReviewInput(
+        trigger_type="delegation_request",
+        active_request_role="user",
+        definition="do this in the background",
+        definition_taint_metadata=None,
+        payload_present=False,
+    )
     assert len(confirmation_manager.requests) == 1
     confirmation_request = confirmation_manager.requests[0]
     assert confirmation_manager.requests == [
@@ -928,6 +948,15 @@ async def test_source_wake_delivery_failure_falls_back_without_recording_deliver
     )
 
     assert processing_service.wake_call_count == 1
+    assert processing_service.wake_review_triggers == [
+        TriggerReviewInput(
+            trigger_type="delegation_completion",
+            active_request_role="system",
+            definition="do the thing",
+            definition_taint_metadata=None,
+            payload_present=True,
+        )
+    ]
     assert chat_interface.send_message.await_count == 2
     fallback_kwargs = chat_interface.send_message.await_args_list[1].kwargs
     assert "Delegated task delegation_source_send_fails" in fallback_kwargs["text"]
@@ -1915,6 +1944,13 @@ async def test_delegation_runs_synchronously_when_async_disabled(
 
     assert result.text == "background delegation done"
     assert len(target_service.calls) == 1
+    assert target_service.calls[0]["tool_call_review_trigger"] == TriggerReviewInput(
+        trigger_type="delegation_request",
+        active_request_role="user",
+        definition='[{"text": "do it now", "type": "text"}]',
+        definition_taint_metadata=None,
+        payload_present=False,
+    )
 
     db_context = Database(engine=db_engine)
     runs = await db_context.delegation_runs.list_for_conversation(

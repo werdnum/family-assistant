@@ -1115,6 +1115,11 @@ async def test_steer_running_turn_injects_user_input(
     assert all(
         "MID-TURN USER UPDATE" not in str(row["content"]) for row in steer_rows
     ), "Steering message must persist as raw text, not the internal wrapper"
+    assert all(
+        TurnTaintState.from_metadata(row["taint_metadata_json"]).max_tier
+        is SourceTrustTier.TRUSTED_USER
+        for row in steer_rows
+    ), "Authenticated steering rows must persist explicit trusted-user provenance"
 
 
 async def test_retried_steer_with_the_same_input_id_is_queued_once(

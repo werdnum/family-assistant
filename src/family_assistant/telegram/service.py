@@ -30,7 +30,10 @@ if TYPE_CHECKING:
         ConfirmationResultWaiterRegistry,
     )
     from family_assistant.storage.database import Database
-    from family_assistant.tools.types import ConfirmationOutcome
+    from family_assistant.tools.types import (
+        ConfirmationOutcome,
+        ToolCallReviewAuthorization,
+    )
 
 
 logger = logging.getLogger(__name__)
@@ -218,6 +221,7 @@ class TelegramService:
         wait_for_durable_execution: bool = True,
         taint_state_json: TaintMetadata | None = None,
         processing_profile_id: str | None = None,
+        tool_call_review_authorization: ToolCallReviewAuthorization | None = None,
     ) -> ConfirmationOutcome:
         """Public method to request confirmation, called by policy enforcement."""
         # Delegate directly to the confirmation manager
@@ -236,6 +240,7 @@ class TelegramService:
                 wait_for_durable_execution=wait_for_durable_execution,
                 taint_state_json=taint_state_json,
                 processing_profile_id=processing_profile_id,
+                tool_call_review_authorization=tool_call_review_authorization,
             )
         else:
             logger.error(

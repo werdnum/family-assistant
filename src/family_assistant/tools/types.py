@@ -9,7 +9,15 @@ import base64
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal, NotRequired, Protocol, TypedDict
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    NotRequired,
+    Protocol,
+    TypedDict,
+    runtime_checkable,
+)
 
 # Note: CalendarConfig TypedDict kept here for backward compatibility with tool functions
 # The Pydantic CalendarConfig in config_models.py is used for config file validation
@@ -225,6 +233,7 @@ if TYPE_CHECKING:
     from family_assistant.events.sources import EventSource
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface  # Import the new interface
+    from family_assistant.llm.messages import LLMMessage
     from family_assistant.processing import ProcessingService
     from family_assistant.security.taint import (
         TaintMetadata,
@@ -237,6 +246,7 @@ if TYPE_CHECKING:
         ConfirmationResultWaiterRegistry,
     )
     from family_assistant.services.oauth_credentials import OAuthCredentialResolver
+    from family_assistant.services.tool_call_review import TriggerReviewInput
     from family_assistant.skills.registry import NoteRegistry
     from family_assistant.storage.database import Database
     from family_assistant.storage.repositories.notes import NoteWritePolicy
@@ -300,6 +310,15 @@ class RequestConfirmationCallback(Protocol):
         ...
 
 
+@runtime_checkable
+class DeferredConfirmationCallback(RequestConfirmationCallback, Protocol):
+    """Marker for a confirmation channel that executes approved calls later."""
+
+    def is_deferred_confirmation(self) -> bool:
+        """Return true when approval does not resume the current tool call."""
+        ...
+
+
 class CalendarEvent(TypedDict):
     """Represents a calendar event with structured data."""
 
@@ -310,6 +329,53 @@ class CalendarEvent(TypedDict):
     all_day: bool
     calendar_url: str | None
     similarity: float | None
+
+
+@dataclass
+class ToolCallReviewTurnState:
+    """Mutable reviewer budget and escalation counters shared by one turn."""
+
+    review_count: int = 0
+    consecutive_denials: int = 0
+    total_denials: int = 0
+    escalation_handled: bool = False
+    terminal_denial_escalation_message: str | None = None
+    pending_sensitive_read_count: int = 0
+    named_sink_allows: dict[tuple[str, str, str], TurnTaintState] = field(
+        default_factory=dict
+    )
+    named_sink_shadow_reviews: dict[tuple[str, str, str], TurnTaintState] = field(
+        default_factory=dict
+    )
+
+
+@dataclass
+class ToolCallReviewAuthorization:
+    """One-shot authorization for an exact, human-approved reviewed call.
+
+    Durable confirmations reconstruct this marker from the stored tool payload and
+    the review policy contexts recorded with it.  It can satisfy only the same
+    review gates for the same call and is consumed before execution, so it is not
+    a reusable capability for nested calls.
+    """
+
+    tool_name: str
+    call_id: str
+    tool_args: ToolArguments
+    sink_class: str
+    static_policy_reason: str | None
+    taint_policy_reason: str | None
+    consumed: bool = False
+
+
+@dataclass
+class ToolConfirmationAuthorization:
+    """One-shot authorization for an exact durably approved tool call."""
+
+    tool_name: str
+    call_id: str
+    tool_args: ToolArguments
+    consumed: bool = False
 
 
 @dataclass
@@ -410,6 +476,14 @@ class ToolExecutionContext:
     taint_tracker: TurnTaintTracker | None = None
     taint_policy_snapshot: TurnTaintState | None = None
     tool_result_taint_metadata: dict[str, TaintMetadata] = field(default_factory=dict)
+    tool_call_review_state: ToolCallReviewTurnState = field(
+        default_factory=ToolCallReviewTurnState
+    )
+    tool_call_review_messages: Sequence[LLMMessage] | None = None
+    tool_call_review_trigger: TriggerReviewInput | None = None
+    tool_call_review_confirmation_reason: str | None = None
+    tool_call_review_authorization: ToolCallReviewAuthorization | None = None
+    tool_confirmation_authorization: ToolConfirmationAuthorization | None = None
 
     def note_write_policy(self) -> NoteWritePolicy:
         """Derive the note write policy for the active profile from this context.

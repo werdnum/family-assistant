@@ -13,15 +13,14 @@ from family_assistant.email_intake.taint import email_initial_taint_source
 from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.llm.messages import text_content
 from family_assistant.services.deferred_tool_confirmation import (
-    create_deferred_tool_confirmation,
+    build_deferred_confirmation_callback,
 )
 from family_assistant.storage.email import received_emails_table
-from family_assistant.tools.types import ConfirmationOutcome, ToolExecutionContext
 
 if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface
     from family_assistant.processing import ProcessingService
-    from family_assistant.tools.types import ToolArguments
+    from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
 
@@ -147,30 +146,6 @@ def _resolve_email_processing_service(
     return cast("ProcessingService", candidate)
 
 
-async def _create_email_confirmation_callback(
-    *,
-    context: ToolExecutionContext,
-    tool_name: str,
-    call_id: str,
-    tool_args: ToolArguments,
-    timeout_seconds: float,
-) -> ConfirmationOutcome:
-    if context.user_id is None:
-        return ConfirmationOutcome(
-            kind="failed",
-            result="Cannot request confirmation without a resolved user id.",
-        )
-    return await create_deferred_tool_confirmation(
-        context=context,
-        tool_name=tool_name,
-        call_id=call_id,
-        tool_args=tool_args,
-        timeout_seconds=timeout_seconds,
-        target_user_id=context.user_id,
-        source_prefix="From your email — approve to run:",
-    )
-
-
 async def handle_email_intake_action(
     exec_context: ToolExecutionContext,
     payload: EmailIntakeActionPayload,
@@ -204,27 +179,6 @@ async def handle_email_intake_action(
     if exec_context.chat_interfaces is not None:
         email_interface = exec_context.chat_interfaces.get("email")
 
-    async def confirmation_callback(
-        interface_type: str,
-        conversation_id: str,
-        turn_id: str | None,
-        tool_name: str,
-        call_id: str,
-        tool_args: ToolArguments,
-        timeout_seconds: float,
-        context: ToolExecutionContext,
-    ) -> ConfirmationOutcome:
-        _ = interface_type
-        _ = conversation_id
-        _ = turn_id
-        return await _create_email_confirmation_callback(
-            context=context,
-            tool_name=tool_name,
-            call_id=call_id,
-            tool_args=tool_args,
-            timeout_seconds=timeout_seconds,
-        )
-
     result = await processing_service.handle_chat_interaction(
         db_context=exec_context.db_context,
         interface_type="email",
@@ -236,7 +190,13 @@ async def handle_email_intake_action(
         chat_interface=email_interface,
         chat_interfaces=exec_context.chat_interfaces,
         confirmation_ui_managers=exec_context.confirmation_ui_managers,
-        request_confirmation_callback=confirmation_callback,
+        request_confirmation_callback=build_deferred_confirmation_callback(
+            target_user_id=target_user_id,
+            source_prefix="From your email — approve to run:",
+            missing_owner_message=lambda tool_name: (
+                f"Cannot request confirmation for {tool_name} without a resolved user id."
+            ),
+        ),
         initial_taint_sources=(initial_taint_source,),
     )
     if result.text_reply and email_interface is not None:

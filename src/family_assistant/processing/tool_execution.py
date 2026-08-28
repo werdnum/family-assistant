@@ -33,7 +33,11 @@ from family_assistant.tools.infrastructure import (
     ToolDescriptorProvider,
     confirmation_outcome_to_tool_result,
 )
-from family_assistant.tools.types import ToolAttachment, ToolResult
+from family_assistant.tools.types import (
+    ToolAttachment,
+    ToolCallReviewTurnState,
+    ToolResult,
+)
 
 from .types import (
     RequestConfirmationCallback,
@@ -43,13 +47,14 @@ from .types import (
 from .utils import get_file_extension_from_mime_type
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     from family_assistant.camera.protocol import CameraBackend
     from family_assistant.events.indexing_source import IndexingSource
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.google_types import GeminiProviderMetadata
+    from family_assistant.llm.messages import LLMMessage
     from family_assistant.llm.tool_call import ToolCallItem
     from family_assistant.security.taint import (
         TaintMetadata,
@@ -58,6 +63,7 @@ if TYPE_CHECKING:
     from family_assistant.services.api_backend import ApiBackend
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.services.oauth_credentials import OAuthCredentialResolver
+    from family_assistant.services.tool_call_review import TriggerReviewInput
     from family_assistant.storage.database import Database
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools.types import EventSourcesById
@@ -202,7 +208,7 @@ class ToolExecutor:
         )
         return queued_attachment_ids, {"attachments": attachment_metadata_list}
 
-    def _build_execution_context(
+    def build_execution_context(
         self,
         *,
         interface_type: str,
@@ -222,6 +228,9 @@ class ToolExecutor:
         event_sources: EventSourcesById | None,
         taint_tracker: TurnTaintTracker | None,
         taint_policy_snapshot: TurnTaintState | None,
+        tool_call_review_state: ToolCallReviewTurnState | None,
+        tool_call_review_messages: Sequence[LLMMessage] | None,
+        tool_call_review_trigger: TriggerReviewInput | None,
     ) -> ToolExecutionContext:
         chat_interfaces_dict = chat_interfaces
         if chat_interfaces_dict is None and chat_interface:
@@ -262,6 +271,13 @@ class ToolExecutor:
             note_registry=self.config.note_registry,
             taint_tracker=taint_tracker,
             taint_policy_snapshot=taint_policy_snapshot,
+            tool_call_review_state=(
+                tool_call_review_state
+                if tool_call_review_state is not None
+                else ToolCallReviewTurnState()
+            ),
+            tool_call_review_messages=tool_call_review_messages,
+            tool_call_review_trigger=tool_call_review_trigger,
         )
 
     @staticmethod
@@ -827,6 +843,9 @@ class ToolExecutor:
         event_sources: EventSourcesById | None = None,
         taint_tracker: TurnTaintTracker | None = None,
         taint_policy_snapshot: TurnTaintState | None = None,
+        tool_call_review_state: ToolCallReviewTurnState | None = None,
+        tool_call_review_messages: Sequence[LLMMessage] | None = None,
+        tool_call_review_trigger: TriggerReviewInput | None = None,
     ) -> ToolExecutionResult:
         """Execute a single tool call and return the result.
 
@@ -953,7 +972,7 @@ class ToolExecutor:
                 sorted(arguments.keys()),
             )
 
-            tool_execution_context = self._build_execution_context(
+            tool_execution_context = self.build_execution_context(
                 interface_type=interface_type,
                 conversation_id=conversation_id,
                 user_name=user_name,
@@ -971,6 +990,9 @@ class ToolExecutor:
                 event_sources=event_sources,
                 taint_tracker=taint_tracker,
                 taint_policy_snapshot=taint_policy_snapshot,
+                tool_call_review_state=tool_call_review_state,
+                tool_call_review_messages=tool_call_review_messages,
+                tool_call_review_trigger=tool_call_review_trigger,
             )
 
             # Result of a durable "completed" confirmation that already

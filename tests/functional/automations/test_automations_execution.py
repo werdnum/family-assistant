@@ -17,6 +17,7 @@ from family_assistant.events.processor import EventProcessor
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.scripting.errors import ScriptError
+from family_assistant.services.tool_call_review import TriggerReviewInput
 from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.task_worker import (
@@ -162,6 +163,65 @@ add_or_update_note(title="Provenance {test_run_id}", content="written by script"
     notes = await db_ctx.notes.get_all(visibility_grants=None)
     matching = [n for n in notes if f"Provenance {test_run_id}" in n.title]
     assert len(matching) == 1
+
+
+@pytest.mark.asyncio
+async def test_event_script_propagates_stubbed_reviewer_trigger(
+    db_engine: AsyncEngine,
+) -> None:
+    captured: list[TriggerReviewInput | None] = []
+
+    async def capture_trigger(exec_context: ToolExecutionContext) -> str:
+        captured.append(exec_context.tool_call_review_trigger)
+        return "captured"
+
+    provider = CompositeToolsProvider(
+        providers=[
+            LocalToolsProvider(
+                definitions=[
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "capture_trigger",
+                            "description": "Capture the execution trigger.",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                    }
+                ],
+                implementations={"capture_trigger": capture_trigger},
+            )
+        ]
+    )
+    service = _make_processing_service(
+        profile_id="script_profile",
+        tools_provider=provider,
+    )
+    db_ctx = Database(engine=db_engine)
+
+    await handle_script_execution(
+        _build_script_exec_context(
+            db_ctx=db_ctx,
+            conversation_id="event-script-trigger",
+            processing_service=service,
+        ),
+        {
+            "script_code": "capture_trigger()",
+            "conversation_id": "event-script-trigger",
+            "listener_id": "listener-1",
+            "event_data": {"external": "payload"},
+            "config": {},
+        },
+    )
+
+    assert captured == [
+        TriggerReviewInput(
+            trigger_type="event_script",
+            active_request_role="system",
+            definition="capture_trigger()",
+            definition_taint_metadata=None,
+            payload_present=True,
+        )
+    ]
 
 
 @pytest.mark.asyncio

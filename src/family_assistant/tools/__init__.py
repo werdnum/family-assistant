@@ -516,9 +516,19 @@ __all__ = [
 # Note: Runtime tool access is denied unless tools_policy allows it.
 
 
-def _metadata(*tags: ToolTag, summary: str | None = None) -> LocalToolMetadata:
+def _metadata(
+    *tags: ToolTag,
+    summary: str | None = None,
+    destination_argument_paths: tuple[str, ...] = (),
+    deferred_confirmation_eligible: bool = False,
+) -> LocalToolMetadata:
     """Create validated metadata for a local tool registration."""
-    return make_local_tool_metadata(list(tags), summary=summary)
+    return make_local_tool_metadata(
+        list(tags),
+        summary=summary,
+        destination_argument_paths=destination_argument_paths,
+        deferred_confirmation_eligible=deferred_confirmation_eligible,
+    )
 
 
 _LOCAL_TOOL_DEFINITIONS: list[ToolDefinition] = (
@@ -766,6 +776,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     ),
     "list_pending_callbacks": _metadata(
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.SCHEDULING,
         ToolTag.OUTPUT_TRUSTED,
     ),
@@ -804,6 +815,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.DOCUMENTS,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
+        destination_argument_paths=("url_to_ingest",),
     ),
     "reindex_email": _metadata(
         ToolTag.STATE_CHANGING,
@@ -835,11 +847,13 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     ),
     "list_automations": _metadata(
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.AUTOMATION,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "get_automation": _metadata(
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.AUTOMATION,
         ToolTag.OUTPUT_TRUSTED,
     ),
@@ -870,6 +884,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     ),
     "get_automation_stats": _metadata(
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.AUTOMATION,
         ToolTag.OUTPUT_TRUSTED,
     ),
@@ -1003,6 +1018,10 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.KNOWN_USER_COMM,
         ToolTag.SENSITIVE_DATA,
         ToolTag.OUTPUT_TRUSTED,
+        # The send is complete without consuming its result, so an unattended
+        # reviewer confirmation may safely execute it later as a durable outbox
+        # item. Other tools fail closed unless they opt in just as explicitly.
+        deferred_confirmation_eligible=True,
     ),
     "get_attachment_info": _metadata(
         ToolTag.READ_ONLY,
@@ -1023,10 +1042,12 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     ),
     "list_scripts": _metadata(
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "get_script": _metadata(
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.OUTPUT_TRUSTED,
     ),
     "delete_script": _metadata(
@@ -1080,6 +1101,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     ),
     "jq_query": _metadata(
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.DATA,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
@@ -1097,6 +1119,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.EXTERNAL_COMM,
         ToolTag.MEDIA,
         ToolTag.OUTPUT_UNTRUSTED,
+        destination_argument_paths=("url",),
     ),
     "mock_camera_snapshot": _metadata(
         ToolTag.READ_ONLY,
@@ -1205,6 +1228,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.STATE_CHANGING,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
+        destination_argument_paths=("url",),
     ),
     "go_back": _metadata(
         ToolTag.BROWSER,
@@ -1237,6 +1261,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.STATE_CHANGING,
         ToolTag.EXTERNAL_COMM,
         ToolTag.OUTPUT_UNTRUSTED,
+        destination_argument_paths=("url",),
     ),
     "browser_snapshot": _metadata(
         ToolTag.BROWSER,
@@ -1467,6 +1492,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     ),
     "ucp_get_cart": _metadata(
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
         ToolTag.EXTERNAL_COMM,
         ToolTag.SHOPPING,
         ToolTag.OUTPUT_UNTRUSTED,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import ssl
@@ -72,6 +73,19 @@ class KeychuteScriptError(RuntimeError):
 
 class _TransientKeychuteError(KeychuteScriptError):
     """A transport failure that is safe to retry before proxying."""
+
+
+def _reviewable_request_body(request_body: bytes | None) -> dict[str, str] | None:
+    """Represent the exact outbound body as JSON-safe reviewer input."""
+    if request_body is None:
+        return None
+    try:
+        return {"encoding": "utf-8", "content": request_body.decode("utf-8")}
+    except UnicodeDecodeError:
+        return {
+            "encoding": "base64",
+            "content": base64.b64encode(request_body).decode("ascii"),
+        }
 
 
 class _AccessRequestStatus(TypedDict):
@@ -472,6 +486,13 @@ class KeychuteScriptHttpClient:
             secret_name=secret_name,
             url=url,
             method=normalized_method,
+            headers=headers,
+            request_body=request_body,
+            reason=reason,
+            ttl_seconds=ttl_seconds,
+            max_uses=max_uses,
+            approval_timeout_seconds=approval_timeout_seconds,
+            request_timeout_seconds=request_timeout_seconds,
         )
         idempotency_key = str(uuid.uuid4())
         status = await self._create_access_request(
@@ -537,6 +558,13 @@ class KeychuteScriptHttpClient:
         secret_name: str,
         url: str,
         method: str,
+        headers: Mapping[str, str] | None,
+        request_body: bytes | None,
+        reason: str,
+        ttl_seconds: int,
+        max_uses: int,
+        approval_timeout_seconds: int,
+        request_timeout_seconds: float,
     ) -> None:
         """Apply the profile's runtime-taint policy before contacting Keychute."""
         context = self._execution_context
@@ -571,6 +599,15 @@ class KeychuteScriptHttpClient:
                     "secret_name": secret_name,
                     "url": url,
                     "method": method,
+                    "headers": dict(headers or {}),
+                    "body": await asyncio.to_thread(
+                        _reviewable_request_body, request_body
+                    ),
+                    "reason": reason,
+                    "ttl_seconds": ttl_seconds,
+                    "max_uses": max_uses,
+                    "approval_timeout_seconds": approval_timeout_seconds,
+                    "request_timeout_seconds": request_timeout_seconds,
                 },
                 context=context,
             )

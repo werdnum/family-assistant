@@ -131,8 +131,8 @@ def test_shipped_coder_profile_does_not_override_the_rollout_mode() -> None:
     assert merged.mode is config.taint_policy.mode
 
 
-def test_the_shipped_matrix_denies_a_sandbox_run_untrusted_content() -> None:
-    """The declaration is only worth anything if the matrix backs it."""
+def test_the_shipped_matrix_adjudicates_a_sandbox_run_untrusted_content() -> None:
+    """The reviewer may allow the run, but its unavailable fallback stays deny."""
     evaluator = TaintPolicyEvaluator(TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE))
     state = TurnTaintState.empty().add_source(
         TaintSource(
@@ -146,7 +146,9 @@ def test_the_shipped_matrix_denies_a_sandbox_run_untrusted_content() -> None:
 
     evaluation = evaluator.evaluate(state=state, sink_class=SinkClass.SANDBOX_NETWORK)
 
-    assert evaluation.effective_outcome is TaintPolicyOutcome.DENY
+    assert evaluation.effective_outcome is TaintPolicyOutcome.ADJUDICATE
+    assert evaluation.verdict_floor is None
+    assert evaluation.fallback_outcome is TaintPolicyOutcome.DENY
 
 
 def test_shipped_coder_config_reaches_the_agent_config_payload() -> None:

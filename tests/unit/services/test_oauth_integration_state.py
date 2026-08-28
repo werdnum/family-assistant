@@ -114,6 +114,21 @@ def _enforce_taint() -> TaintPolicyConfig:
     return TaintPolicyConfig.model_validate({"mode": "enforce"})
 
 
+def _enforce_taint_with_confirm_floor() -> TaintPolicyConfig:
+    """Enforce with the OAuth integration's required adjudication floor."""
+    return TaintPolicyConfig.model_validate({
+        "mode": "enforce",
+        "operator_minimum": {
+            "unknown_external": {
+                "arbitrary_external_message": "confirm",
+                "attacker_addressable_egress": "confirm",
+                "sandbox_network": "confirm",
+                "sensitive_read_broadening": "confirm",
+            }
+        },
+    })
+
+
 # --- Ordered enablement conditions -----------------------------------------
 
 
@@ -234,10 +249,27 @@ def test_empty_users_block_refuses_even_with_auth_enabled() -> None:
 # --- Taint floor ------------------------------------------------------------
 
 
-def test_floor_passes_with_enforce_and_default_matrix() -> None:
+def test_floor_rejects_bare_adjudicate_in_default_matrix() -> None:
     config = _app_config(
         _google_config(),
         taint_policy=_enforce_taint(),
+        profiles=[_profile("default_assistant", tools_policy=_allow_google_policy())],
+    )
+    state = evaluate_oauth_integration_state(
+        GOOGLE_PROVIDER,
+        config,
+        auth_enabled=True,
+        tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+    )
+    assert state.enabled is False
+    assert "adjudicate" in (state.reason or "")
+    assert "reviewer verdict floor 'allow'" in (state.reason or "")
+
+
+def test_floor_accepts_adjudicate_with_confirm_operator_minimum() -> None:
+    config = _app_config(
+        _google_config(),
+        taint_policy=_enforce_taint_with_confirm_floor(),
         profiles=[_profile("default_assistant", tools_policy=_allow_google_policy())],
     )
     state = evaluate_oauth_integration_state(
@@ -338,7 +370,7 @@ def test_floor_ignores_profiles_that_do_not_allow_google_tools() -> None:
     })
     config = _app_config(
         _google_config(),
-        taint_policy=_enforce_taint(),
+        taint_policy=_enforce_taint_with_confirm_floor(),
         profiles=[
             _profile("default_assistant", tools_policy=_allow_google_policy()),
             _profile(
@@ -368,7 +400,7 @@ def test_floor_rejects_profile_taint_policy_that_relaxes_a_floor_sink() -> None:
     })
     config = _app_config(
         _google_config(),
-        taint_policy=_enforce_taint(),
+        taint_policy=_enforce_taint_with_confirm_floor(),
         profiles=[
             _profile(
                 "default_assistant",
@@ -394,7 +426,7 @@ def test_floor_rejects_profile_taint_policy_that_relaxes_a_floor_sink() -> None:
 def test_enabled_tool_names_gmail_only() -> None:
     config = _app_config(
         _google_config(scopes=[GMAIL_SCOPE]),
-        taint_policy=_enforce_taint(),
+        taint_policy=_enforce_taint_with_confirm_floor(),
         profiles=[_profile("default_assistant", tools_policy=_allow_google_policy())],
     )
     state = evaluate_oauth_integration_state(
@@ -414,7 +446,7 @@ def test_enabled_tool_names_gmail_only() -> None:
 def test_enabled_tool_names_drive_metadata_only_has_search_not_get_file() -> None:
     config = _app_config(
         _google_config(scopes=[DRIVE_METADATA_SCOPE]),
-        taint_policy=_enforce_taint(),
+        taint_policy=_enforce_taint_with_confirm_floor(),
         profiles=[_profile("default_assistant", tools_policy=_allow_google_policy())],
     )
     state = evaluate_oauth_integration_state(
@@ -431,7 +463,7 @@ def test_enabled_tool_names_drive_metadata_only_has_search_not_get_file() -> Non
 def test_enabled_tool_names_write_scopes_only() -> None:
     config = _app_config(
         _google_config(scopes=[GMAIL_COMPOSE_SCOPE, DRIVE_FILE_SCOPE]),
-        taint_policy=_enforce_taint(),
+        taint_policy=_enforce_taint_with_confirm_floor(),
         profiles=[_profile("default_assistant", tools_policy=_allow_google_policy())],
     )
     state = evaluate_oauth_integration_state(
@@ -449,7 +481,7 @@ def test_enabled_tool_names_write_scopes_only() -> None:
 def test_enabled_tool_names_full_scopes() -> None:
     config = _app_config(
         _google_config(scopes=[GMAIL_SCOPE, DRIVE_SCOPE]),
-        taint_policy=_enforce_taint(),
+        taint_policy=_enforce_taint_with_confirm_floor(),
         profiles=[_profile("default_assistant", tools_policy=_allow_google_policy())],
     )
     state = evaluate_oauth_integration_state(

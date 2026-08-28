@@ -49,6 +49,9 @@ from family_assistant.services.confirmation_service import (
 from family_assistant.services.confirmation_waiters import (
     ConfirmationResultWaiterRegistry,
 )
+from family_assistant.services.deferred_tool_confirmation import (
+    DeferredConfirmationCallbackAdapter,
+)
 from family_assistant.services.user_identity import (
     UserIdentityResolver,
 )
@@ -56,6 +59,7 @@ from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.conversation_shares import ConversationShare
 from family_assistant.storage.types import MessageHistoryRow
 from family_assistant.tools import MCPToolsProvider, find_provider_by_type
+from family_assistant.tools.confirmation import append_review_reason_to_confirmation
 from family_assistant.tools.infrastructure import ToolDescriptorProvider
 from family_assistant.tools.types import ConfirmationOutcome, ToolExecutionContext
 from family_assistant.web.confirmation_manager import web_confirmation_manager
@@ -2317,8 +2321,9 @@ async def api_chat_send_message(
                 tool_name=tool_name,
                 tool_call_id=call_id,
                 tool_args=tool_args,
-                confirmation_prompt=(
-                    f"Do you want to execute '{tool_name}' with these parameters?"
+                confirmation_prompt=append_review_reason_to_confirmation(
+                    f"Do you want to execute '{tool_name}' with these parameters?",
+                    context,
                 ),
                 timeout_seconds=timeout_seconds,
                 turn_id=turn_id,
@@ -2327,6 +2332,7 @@ async def api_chat_send_message(
                 origin_interface_type=context.interface_type,
                 origin_conversation_id=context.conversation_id,
                 taint_state_json=taint_state_json,
+                tool_call_review_authorization=(context.tool_call_review_authorization),
             )
             return ConfirmationOutcome(
                 kind="completed",
@@ -2349,7 +2355,9 @@ async def api_chat_send_message(
             chat_interface=web_chat_interface,  # Use WebChatInterface for message delivery
             chat_interfaces=chat_interfaces,  # Pass all registered chat interfaces
             confirmation_ui_managers=confirmation_ui_managers,
-            request_confirmation_callback=api_confirmation_callback,
+            request_confirmation_callback=DeferredConfirmationCallbackAdapter(
+                api_confirmation_callback
+            ),
             trigger_attachments=trigger_attachments,  # Pass attachment metadata
             turn_id=response_turn_id,  # Persist under the (idempotency) turn_id
         )

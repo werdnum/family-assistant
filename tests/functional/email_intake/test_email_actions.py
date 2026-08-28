@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 import httpx
 import pytest
 
-from family_assistant.config_models import AppConfig, ToolsConfig
+from family_assistant.config_models import AppConfig, ToolCallReviewConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.email_intake.actions import (
     build_email_action_prompt,
@@ -25,7 +25,13 @@ from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from family_assistant.llm.messages import AssistantMessage, ToolMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.security.taint import TaintPolicyConfig, TaintPolicyMode
 from family_assistant.services.confirmation_service import ConfirmationService
+from family_assistant.services.tool_call_review import (
+    ToolCallReviewer,
+    ToolCallReviewResponse,
+    ToolCallReviewVerdict,
+)
 from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.storage.database import Database
 from family_assistant.storage.email import ParsedEmailData
@@ -37,6 +43,7 @@ from family_assistant.tools import (
     LocalToolsProvider,
     PolicyEnforcingToolsProvider,
     PolicyEngine,
+    TaintTrackingToolsProvider,
     ToolExecutionContext,
     ToolPolicyConfig,
     build_local_tool_registrations,
@@ -50,7 +57,9 @@ if TYPE_CHECKING:
 
     from family_assistant.interfaces import ChatInterface
     from family_assistant.processing.protocol import DelegatableService
+    from family_assistant.security.taint import TaintMetadata
     from family_assistant.telegram.protocols import ConfirmationUIManager
+    from family_assistant.tools.types import ToolCallReviewAuthorization
 
 
 @dataclass
@@ -123,8 +132,9 @@ class FakeTelegramConfirmationUIManager:
         tool_call_id: str | None = None,
         source_message_internal_id: int | None = None,
         wait_for_durable_execution: bool = True,
-        taint_state_json: object | None = None,
+        taint_state_json: TaintMetadata | None = None,
         processing_profile_id: str | None = None,
+        tool_call_review_authorization: ToolCallReviewAuthorization | None = None,
     ) -> ConfirmationOutcome:
         _ = (
             conversation_id,
@@ -140,6 +150,7 @@ class FakeTelegramConfirmationUIManager:
             wait_for_durable_execution,
             taint_state_json,
             processing_profile_id,
+            tool_call_review_authorization,
         )
         return ConfirmationOutcome(kind="failed", result="unexpected wait")
 
@@ -153,7 +164,17 @@ class FakeTelegramConfirmationUIManager:
         return ConfirmationOutcome(kind="completed")
 
 
-def _email_policy() -> ToolPolicyConfig:
+def _email_policy(
+    *,
+    review_tool_names: tuple[str, ...] = (),
+) -> ToolPolicyConfig:
+    review_rules: list[dict[str, object]] = []
+    if review_tool_names:
+        review_rules.append({
+            "match": {"names": list(review_tool_names)},
+            "decision": "review",
+            "priority": 60,
+        })
     return ToolPolicyConfig.model_validate({
         "default_decision": "deny",
         "rules": [
@@ -171,6 +192,7 @@ def _email_policy() -> ToolPolicyConfig:
                 "decision": "deny",
                 "priority": 90,
             },
+            *review_rules,
             {
                 "match": {
                     "names": [
@@ -233,6 +255,9 @@ def _first_turn(kwargs: MatcherArgs) -> bool:
 def _build_email_processing_service(
     app_config: AppConfig,
     llm_client: RuleBasedMockLLMClient,
+    *,
+    reviewer_llm_client: RuleBasedMockLLMClient | None = None,
+    review_tool_names: tuple[str, ...] = (),
 ) -> ProcessingService:
     registrations = build_local_tool_registrations(
         definitions=TOOLS_DEFINITION,
@@ -242,9 +267,23 @@ def _build_email_processing_service(
     local_provider = LocalToolsProvider(registrations=registrations)
     policy_provider = PolicyEnforcingToolsProvider(
         wrapped_provider=local_provider,
-        policy_engine=PolicyEngine.from_policy_config(_email_policy()),
+        policy_engine=PolicyEngine.from_policy_config(
+            _email_policy(review_tool_names=review_tool_names)
+        ),
         confirmation_timeout=3600.0,
     )
+    tools_provider = policy_provider
+    if reviewer_llm_client is not None:
+        review_config = ToolCallReviewConfig(timeout_seconds=1.0)
+        tools_provider = TaintTrackingToolsProvider(
+            policy_provider,
+            taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+            tool_call_reviewer=ToolCallReviewer(
+                reviewer_llm_client,
+                review_config,
+            ),
+            review_config=review_config,
+        )
     registry: dict[str, DelegatableService] = {}
     service_config = ProcessingServiceConfig(
         prompts={"system_prompt": "Email intake test profile for {user_name}."},
@@ -259,7 +298,7 @@ def _build_email_processing_service(
     )
     service = ProcessingService(
         llm_client=llm_client,
-        tools_provider=policy_provider,
+        tools_provider=tools_provider,
         service_config=service_config,
         context_providers=[],
         server_url="http://testserver",
@@ -737,6 +776,89 @@ async def test_email_action_seeds_unknown_external_taint_on_saved_reply(
     assert isinstance(sources, list)
     assert sources[-1]["source_type"] == "email"
     assert sources[-1]["source_id"] == str(email_db_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_email_action_reviewer_confirmation_does_not_defer_ineligible_tool(
+    db_engine: AsyncEngine,
+) -> None:
+    outbound_client = FakeOutboundEmailClient()
+    app_config = AppConfig.model_validate({
+        "telegram_enabled": False,
+        "model": "mock-model",
+        "embedding_model": "mock-deterministic-embedder",
+        "embedding_dimensions": 10,
+        "users": [
+            {
+                "id": "buyer@example.com",
+                "email_intake": {"sender_addresses": ["buyer@example.com"]},
+            }
+        ],
+        "email_intake": {
+            "enable_actions": True,
+            "action_profile_id": "email_intake",
+            "outbound_from_address": "assistant@example.net",
+        },
+    })
+    email_interface = _email_chat_interface(
+        db_engine=db_engine,
+        outbound_client=outbound_client,
+        app_config=app_config,
+    )
+    llm = RuleBasedMockLLMClient(
+        rules=[
+            (
+                _first_turn,
+                LLMOutput(
+                    tool_calls=[_tool_call("get_note", {"title": "Soccer tickets"})]
+                ),
+            ),
+            (
+                _contains_tool_result,
+                LLMOutput(content="I could not read that note from this email."),
+            ),
+        ]
+    )
+    reviewer_llm = RuleBasedMockLLMClient(
+        rules=[],
+        structured_rules=[
+            (
+                lambda _args: True,
+                ToolCallReviewResponse(
+                    verdict=ToolCallReviewVerdict.CONFIRM,
+                    reason="Ask the user before reading private notes.",
+                ),
+            )
+        ],
+    )
+    service = _build_email_processing_service(
+        app_config,
+        llm,
+        reviewer_llm_client=reviewer_llm,
+        review_tool_names=("get_note",),
+    )
+    email_db_id = await _store_email(db_engine)
+
+    db = Database(engine=db_engine)
+    await handle_email_intake_action(
+        _execution_context(
+            db=db,
+            service=service,
+            email_interface=email_interface,
+            email_db_id=email_db_id,
+        ),
+        {"email_db_id": email_db_id},
+    )
+
+    assert (
+        await db.confirmation_requests.list_pending_for_user("buyer@example.com") == []
+    )
+    assert [call["method_name"] for call in reviewer_llm.get_calls()] == [
+        "generate_structured"
+    ]
+    assert len(outbound_client.sent) == 1
+    assert "could not read that note" in outbound_client.sent[0].text
 
 
 @pytest.mark.asyncio

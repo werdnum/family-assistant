@@ -1072,11 +1072,12 @@ counter fields.
 (profile excludes ambient context ∧ no sensitive reads ∧ no protected history, fail-closed) in the
 evaluator path for `arbitrary_external_message`/`attacker_addressable_egress`. The second clause is
 only sound if every acquisition path records: `jq_query` resolves any acting-user-owned attachment,
-is granted globally (so the browser profile reaches it), and today records no sensitive read and
-carries no `SENSITIVE_DATA` tag — it gains `record_sensitive_read` on attachment resolution, as
-`read_text_attachment` and the document tools already do, and a test walks each exempt profile's
-tool inventory asserting that every tool able to resolve acting-user data records sensitive reads.
-*Verify:* both directions of the acceptance criterion — browser-profile turn unfloored,
+is granted globally (so the browser profile reaches it), and therefore carries `SENSITIVE_DATA`. The
+central tool-execution chokepoint reserves every read-only sensitive call before execution and
+records a conservative tool-level read after success unless the implementation supplied a narrower
+scope, as `read_text_attachment` and the document tools already do. A test walks each exempt
+profile's tool inventory asserting that every tool able to resolve acting-user data reaches this
+chokepoint. *Verify:* both directions of the acceptance criterion — browser-profile turn unfloored,
 context-bearing turn floored, indeterminate input floored, and post-handback/cookie-jar
 credential-bearing sessions re-floored via recorded sensitive reads.
 

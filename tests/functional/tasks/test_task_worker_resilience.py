@@ -16,7 +16,9 @@ import pytest
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.llm.messages import UserMessage
 from family_assistant.storage.database import Database
+from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.tasks import TasksRepository
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.types import ActionConfig, TaskDict
@@ -1115,6 +1117,119 @@ async def test_successful_schedule_llm_callback_reschedules_once(
     automation = await db_context.schedule_automations.get_by_id(automation_id)
     assert automation is not None
     assert automation["execution_count"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("genuine_response", [False, True])
+async def test_follow_up_reminder_retry_distinguishes_trigger_from_user_response(
+    db_engine: AsyncEngine,
+    mock_clock: MockClock,
+    genuine_response: bool,
+) -> None:
+    """A retry ignores only its trigger, while a real response still cancels."""
+    callback_turn_id = "retrying-follow-up-reminder-turn"
+    conversation_id = "retrying-follow-up-reminder-conversation"
+    processing_service = _processing_service_with_callback_result(
+        SimpleNamespace(
+            text_reply="Reminder delivered after retry.",
+            assistant_message_internal_id=None,
+            reasoning_info=None,
+            error_traceback=None,
+            attachment_ids=[],
+        )
+    )
+    processing_service.service_config.allow_wake_llm = True
+    successful_result = processing_service.handle_chat_interaction.return_value
+    processing_service.handle_chat_interaction.side_effect = [
+        RuntimeError("fail after persisting trigger"),
+        successful_result,
+    ]
+    chat_interface = AsyncMock()
+    chat_interface.send_message.return_value = "delivered-reminder-id"
+    db_context = Database(engine=db_engine)
+    exec_context = ToolExecutionContext(
+        interface_type="telegram",
+        conversation_id=conversation_id,
+        user_name="Reminder User",
+        turn_id=callback_turn_id,
+        db_context=db_context,
+        processing_service=processing_service,
+        clock=mock_clock,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
+        timezone=ZoneInfo("UTC"),
+        chat_interface=chat_interface,
+    )
+    payload = {
+        "interface_type": "telegram",
+        "conversation_id": conversation_id,
+        "user_name": "Reminder User",
+        "callback_context": "Take the medication",
+        "scheduling_timestamp": (mock_clock.now() - timedelta(minutes=1)).isoformat(),
+        "reminder_config": {
+            "is_reminder": True,
+            "follow_up": True,
+            "follow_up_interval": "30 minutes",
+            "max_follow_ups": 2,
+            "current_attempt": 1,
+        },
+    }
+
+    with pytest.raises(RuntimeError, match="fail after persisting trigger"):
+        await handle_llm_callback(exec_context, cast("Any", payload))
+
+    trigger_rows_after_failure = await db_context.fetch_all(
+        select(message_history_table.c.internal_id).where(
+            message_history_table.c.turn_id == callback_turn_id,
+            message_history_table.c.role == "user",
+            message_history_table.c.interface_message_id.is_(None),
+        )
+    )
+    assert len(trigger_rows_after_failure) == 1
+
+    if genuine_response:
+        await db_context.message_history.add_message(
+            UserMessage(content="I handled the reminder already."),
+            interface_type="telegram",
+            conversation_id=conversation_id,
+            interface_message_id="genuine-user-response-id",
+            turn_id=callback_turn_id,
+            timestamp=mock_clock.now() + timedelta(seconds=1),
+            user_id="reminder-user",
+        )
+
+    await handle_llm_callback(exec_context, cast("Any", payload))
+
+    trigger_rows_after_retry = await db_context.fetch_all(
+        select(message_history_table.c.internal_id).where(
+            message_history_table.c.turn_id == callback_turn_id,
+            message_history_table.c.role == "user",
+            message_history_table.c.interface_message_id.is_(None),
+        )
+    )
+    assert trigger_rows_after_retry == trigger_rows_after_failure
+    follow_ups = await db_context.fetch_all(
+        select(tasks_table).where(
+            tasks_table.c.task_type == "llm_callback",
+            tasks_table.c.status == "pending",
+        )
+    )
+    if genuine_response:
+        assert processing_service.handle_chat_interaction.await_count == 1
+        chat_interface.send_message.assert_not_awaited()
+        assert follow_ups == []
+    else:
+        assert processing_service.handle_chat_interaction.await_count == 2
+        chat_interface.send_message.assert_awaited_once()
+        assert chat_interface.send_message.await_args.kwargs["text"] == (
+            "Reminder delivered after retry."
+        )
+        assert len(follow_ups) == 1
+        assert follow_ups[0]["payload"]["reminder_config"]["current_attempt"] == 2
 
 
 @pytest.mark.asyncio

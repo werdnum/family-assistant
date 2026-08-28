@@ -250,6 +250,11 @@ class ScheduleAutomationsRepository(BaseRepository):
                             automation_type="schedule",
                             callback_context=action_config.get("context", ""),
                             scheduling_timestamp=datetime.now(UTC).isoformat(),
+                            tool_call_review_trigger_type="schedule",
+                            tool_call_review_trigger_definition=action_config.get(
+                                "context", ""
+                            ),
+                            tool_call_review_trigger_payload_present=False,
                         )
                     )
                     if created_by_user_id is not None:
@@ -506,6 +511,11 @@ class ScheduleAutomationsRepository(BaseRepository):
                             automation_type="schedule",
                             callback_context=action_config.get("context", ""),
                             scheduling_timestamp=datetime.now(UTC).isoformat(),
+                            tool_call_review_trigger_type="schedule",
+                            tool_call_review_trigger_definition=action_config.get(
+                                "context", ""
+                            ),
+                            tool_call_review_trigger_payload_present=False,
                         )
                     )
                     created_by = automation.get("created_by_user_id")
@@ -1002,6 +1012,11 @@ class ScheduleAutomationsRepository(BaseRepository):
                 automation_type="schedule",
                 callback_context=final_action_config.get("context", ""),
                 scheduling_timestamp=datetime.now(UTC).isoformat(),
+                tool_call_review_trigger_type="schedule",
+                tool_call_review_trigger_definition=final_action_config.get(
+                    "context", ""
+                ),
+                tool_call_review_trigger_payload_present=False,
             )
             created_by = automation.get("created_by_user_id")
             if created_by is not None:
@@ -1143,6 +1158,11 @@ class ScheduleAutomationsRepository(BaseRepository):
                         automation_type="schedule",
                         callback_context=action_config.get("context", ""),
                         scheduling_timestamp=datetime.now(UTC).isoformat(),
+                        tool_call_review_trigger_type="schedule",
+                        tool_call_review_trigger_definition=action_config.get(
+                            "context", ""
+                        ),
+                        tool_call_review_trigger_payload_present=False,
                     )
                 )
                 created_by = automation.get("created_by_user_id")

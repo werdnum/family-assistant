@@ -139,6 +139,10 @@ class OpenAIClient(BaseLLMClient):
             f"model-specific parameters: {model_parameters}"
         )
 
+    async def close(self) -> None:
+        """Close the owned asynchronous OpenAI SDK client."""
+        await self.client.close()
+
     def _supports_multimodal_tools(self) -> bool:
         """OpenAI doesn't support multimodal tool responses"""
         return False

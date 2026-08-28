@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 
 from family_assistant.llm.content_parts import attachment_content, text_content
 from family_assistant.security.taint import TaintMetadata, TaintSource, TurnTaintState
+from family_assistant.services.tool_call_review import TriggerReviewInput
 from family_assistant.storage.delegation_runs import TERMINAL_DELEGATION_STATUSES
 from family_assistant.tools.confirmation import (
     MAX_DELEGATION_REQUEST_CHARS,
@@ -23,6 +24,7 @@ from family_assistant.tools.confirmation import (
 )
 from family_assistant.tools.types import (
     ConfirmationOutcome,
+    ToolArguments,
     ToolAttachment,
     ToolDefinition,
     ToolResult,
@@ -383,6 +385,13 @@ async def _synchronous_delegation_result(
             subconversation_id=subconversation_id,
             initial_taint_sources=_taint_sources_from_metadata(
                 _current_taint_metadata(exec_context)
+            ),
+            tool_call_review_trigger=TriggerReviewInput(
+                trigger_type="delegation_request",
+                active_request_role="user",
+                definition=json.dumps(content_parts, sort_keys=True),
+                definition_taint_metadata=None,
+                payload_present=False,
             ),
         )
     except Exception as e:
@@ -762,6 +771,47 @@ async def delegate_to_service_tool(
     confirmation_timeout_seconds = exec_context.processing_service.service_config.tools_config.confirmation_timeout_seconds
     actual_confirm_delegation = confirm_delegation
 
+    confirmation_tool_args: ToolArguments = {
+        "target_service_id": target_service_id,
+        "user_request": user_request,
+        "confirm_delegation": actual_confirm_delegation,
+        **({"attachment_ids": attachment_ids} if attachment_ids is not None else {}),
+        **(
+            {"resume_delegation_id": resume_delegation_id}
+            if resume_delegation_id is not None
+            else {}
+        ),
+    }
+    durable_authorization = exec_context.tool_confirmation_authorization
+    effective_arguments: dict[str, object] = {
+        "target_service_id": target_service_id,
+        "user_request": user_request,
+        "confirm_delegation": actual_confirm_delegation,
+        "attachment_ids": attachment_ids,
+        "handoff_after_seconds": handoff_after_seconds,
+        "delivery_hint": delivery_hint,
+        "resume_delegation_id": resume_delegation_id,
+    }
+    durable_authorization_matches = (
+        durable_authorization is not None
+        and durable_authorization.tool_name == "delegate_to_service"
+        and {"target_service_id", "user_request"}.issubset(
+            durable_authorization.tool_args
+        )
+        and all(
+            key in effective_arguments
+            and (
+                ((value or "").strip() or None)
+                if key == "resume_delegation_id" and isinstance(value, str)
+                else value
+            )
+            == effective_arguments[key]
+            for key, value in durable_authorization.tool_args.items()
+        )
+    )
+    if durable_authorization_matches and durable_authorization is not None:
+        confirmation_tool_args = dict(durable_authorization.tool_args)
+
     if actual_confirm_delegation:
         # This hand-off will be approved against a confirmation prompt, so refuse
         # a request too long to show there in full rather than ask the user to
@@ -778,7 +828,17 @@ async def delegate_to_service_tool(
             )
             return ToolResult(text=over_length_reason, attachments=None)
 
-        if not exec_context.request_confirmation_callback:
+        if (
+            durable_authorization_matches
+            and durable_authorization is not None
+            and durable_authorization.consumed
+        ):
+            logger.info(
+                "Durable approval already satisfied confirmation for exact "
+                "delegate_to_service call %s",
+                durable_authorization.call_id,
+            )
+        elif not exec_context.request_confirmation_callback:
             logger.error(
                 f"Confirmation required for delegating to '{target_service_id}', but no confirmation callback is available. Aborting delegation."
             )
@@ -793,22 +853,13 @@ async def delegate_to_service_tool(
                     conversation_id=exec_context.conversation_id,
                     turn_id=exec_context.turn_id,
                     tool_name="delegate_to_service",
-                    call_id=f"delegate_to_service_{uuid.uuid4()}",
-                    tool_args={
-                        "target_service_id": target_service_id,
-                        "user_request": user_request,
-                        "confirm_delegation": actual_confirm_delegation,
-                        **(
-                            {"attachment_ids": attachment_ids}
-                            if attachment_ids is not None
-                            else {}
-                        ),
-                        **(
-                            {"resume_delegation_id": resume_delegation_id}
-                            if resume_delegation_id is not None
-                            else {}
-                        ),
-                    },
+                    call_id=(
+                        durable_authorization.call_id
+                        if durable_authorization_matches
+                        and durable_authorization is not None
+                        else f"delegate_to_service_{uuid.uuid4()}"
+                    ),
+                    tool_args=confirmation_tool_args,
                     timeout_seconds=confirmation_timeout_seconds,
                     context=exec_context,
                 )

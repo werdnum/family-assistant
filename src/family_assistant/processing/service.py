@@ -69,6 +69,7 @@ if TYPE_CHECKING:
     from family_assistant.services.api_backend import ApiBackend
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.services.oauth_credentials import OAuthCredentialResolver
+    from family_assistant.services.tool_call_review import TriggerReviewInput
     from family_assistant.storage.database import Database
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools import OnDemandToolsView, ToolsProvider
@@ -279,6 +280,10 @@ class ProcessingService:
         permitted = {TaintPolicyOutcome.ALLOW, TaintPolicyOutcome.AUDIT}
         if state.is_sink_approved(sink_class):
             permitted |= {TaintPolicyOutcome.CONFIRM}
+            if evaluation.verdict_floor is not TaintPolicyOutcome.DENY:
+                # A human approval carried with this exact turn already answers
+                # a confirmable adjudication. A deny floor remains absolute.
+                permitted |= {TaintPolicyOutcome.ADJUDICATE}
         if evaluation.effective_outcome in permitted:
             return None
 
@@ -1073,6 +1078,7 @@ class ProcessingService:
         mid_turn_input_provider: MidTurnInputProvider | None = None,
         initial_taint_sources: Sequence[TaintSource] | None = None,
         taint_tracker: TurnTaintTracker | None = None,
+        tool_call_review_trigger: TriggerReviewInput | None = None,
     ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
@@ -1103,6 +1109,7 @@ class ProcessingService:
             mid_turn_input_provider=mid_turn_input_provider,
             initial_taint_sources=initial_taint_sources,
             taint_tracker=taint_tracker,
+            tool_call_review_trigger=tool_call_review_trigger,
         )
 
     async def process_message_stream(
@@ -1122,6 +1129,7 @@ class ProcessingService:
         mid_turn_input_provider: MidTurnInputProvider | None = None,
         initial_taint_sources: Sequence[TaintSource] | None = None,
         taint_tracker: TurnTaintTracker | None = None,
+        tool_call_review_trigger: TriggerReviewInput | None = None,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """
         Streaming version of process_message that yields LLMStreamEvent objects as they are generated.
@@ -1152,6 +1160,7 @@ class ProcessingService:
             mid_turn_input_provider=mid_turn_input_provider,
             initial_taint_sources=initial_taint_sources,
             taint_tracker=taint_tracker,
+            tool_call_review_trigger=tool_call_review_trigger,
         ):
             yield item
 
@@ -1177,7 +1186,9 @@ class ProcessingService:
         trigger_is_internal: bool = False,
         pinned_history_message_ids: list[int] | None = None,
         trigger_role: Literal["user", "system"] = "user",
+        reuse_existing_user_row: bool = False,
         initial_taint_sources: Sequence[TaintSource] | None = None,
+        tool_call_review_trigger: TriggerReviewInput | None = None,
     ) -> ChatInteractionResult:
         """
         Handles a complete chat interaction from user input to final response.
@@ -1246,6 +1257,7 @@ class ProcessingService:
                 trigger_is_internal=trigger_is_internal,
                 pinned_history_message_ids=pinned_history_message_ids,
                 trigger_role=trigger_role,
+                reuse_existing_user_row=reuse_existing_user_row,
                 initial_taint_sources=initial_taint_sources,
             )
 
@@ -1272,6 +1284,7 @@ class ProcessingService:
                     *context_taint_sources,
                     *(initial_taint_sources or ()),
                 ),
+                tool_call_review_trigger=tool_call_review_trigger,
             )
             final_reasoning_info = final_reasoning_info_from_process_msg
 
@@ -1409,6 +1422,7 @@ class ProcessingService:
         reuse_existing_user_row: bool = False,
         initial_taint_sources: Sequence[TaintSource] | None = None,
         taint_tracker: TurnTaintTracker | None = None,
+        tool_call_review_trigger: TriggerReviewInput | None = None,
     ) -> AsyncIterator[LLMStreamEvent]:
         """
         Streaming version of handle_chat_interaction.
@@ -1493,6 +1507,7 @@ class ProcessingService:
                             *(initial_taint_sources or ()),
                         ),
                         taint_tracker=taint_tracker,
+                        tool_call_review_trigger=tool_call_review_trigger,
                     ):
                         # A ``user_input`` echo is the client's proof that its
                         # steering message was delivered: seeing one is what
