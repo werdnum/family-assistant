@@ -356,12 +356,12 @@ for profile_def in resolved_profiles:
 
 ### Content Part Mapping
 
-The existing `src/family_assistant/a2a/converters.py` already handles most of the conversion:
-
-- **Outbound (FA -> A2A)**: `content_parts_to_a2a_parts()` converts `ContentPartDict` lists to A2A
-  `Part` lists. The client adds a size guard for inline attachments
-  (`MAX_INLINE_ATTACHMENT_BYTES = 10 MB`) before calling this converter.
-- **Inbound (A2A -> FA)**: `a2a_parts_to_content_parts()` converts A2A parts back to FA format.
+Conversion is split by whether it needs the attachment registry.
+`src/family_assistant/a2a/converters.py` holds the I/O-free part (text and plain URL references);
+everything carrying attachment bytes goes through `A2AAttachmentTransfer` in
+`src/family_assistant/a2a/attachments.py`, in both directions and on both the client and the server.
+See [a2a-attachment-transfer.md](a2a-attachment-transfer.md); the size guard for inline attachments
+(`MAX_INLINE_ATTACHMENT_BYTES = 10 MB`) lives there and is applied by the client before sending.
 
 The client adds one new function for extracting a `ChatInteractionResult` from a completed A2A task:
 

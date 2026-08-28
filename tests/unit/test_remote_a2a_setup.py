@@ -1,6 +1,7 @@
 """Unit tests for resolving async-delegation config when registering a remote A2A profile."""
 
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 from family_assistant.a2a.remote_service import RemoteA2AService
 from family_assistant.assistant import Assistant
@@ -14,12 +15,16 @@ from family_assistant.config_models import (
 def _register(profile: ServiceProfile) -> RemoteA2AService:
     """Run ``_setup_remote_a2a_profile`` against a minimal stand-in self.
 
-    The method only reads ``self.processing_services_registry``, so a lightweight
-    namespace is sufficient and avoids constructing a full Assistant.
+    The method reads only the registries it wires the service from, so a
+    lightweight namespace is sufficient and avoids constructing a full Assistant.
     """
-    fake_self = SimpleNamespace(processing_services_registry={})
-    # _setup_remote_a2a_profile reads only self.processing_services_registry, so a
-    # SimpleNamespace stand-in exercises the real method without constructing a full
+    fake_self = SimpleNamespace(
+        processing_services_registry={},
+        attachment_registry=MagicMock(),
+        _database=MagicMock(),
+    )
+    # _setup_remote_a2a_profile reads only these attributes, so a SimpleNamespace
+    # stand-in exercises the real method without constructing a full
     # Assistant; the arg-type suppression covers that deliberate duck-typed self.
     Assistant._setup_remote_a2a_profile(fake_self, profile)  # type: ignore[arg-type]
     return fake_self.processing_services_registry[profile.id]

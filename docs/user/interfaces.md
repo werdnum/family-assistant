@@ -235,6 +235,13 @@ status of a delegation reference at any time.
 Delegations can also be continued, so a specialist keeps its earlier context — useful for a
 follow-up question to a previous research delegation.
 
+Files travel with a delegation in both directions. A photo, PDF or spreadsheet from your
+conversation can be handed to the specialist to work on, and any file it produces — a chart, a
+converted document — comes back attached to the reply in the conversation, ready to open or
+download. This works the same way whether the specialist runs here or on another agent elsewhere.
+Very large files are the exception: if one is too big to hand over, the assistant tells you rather
+than quietly leaving it out.
+
 If the follow-up can't be delivered on the channel you asked from — a result too long for the chat
 app to accept, say — the assistant is told so and sends you something that does fit, such as a
 shorter summary or a note it saved with the full text. The complete result is kept in the

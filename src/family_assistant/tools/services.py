@@ -600,7 +600,7 @@ SERVICE_TOOLS_DEFINITION: list[ToolDefinition] = [
                     "attachment_ids": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Optional list of attachment UUIDs to include with the delegated request. These attachments must be accessible in the current conversation and will be passed to the target service for processing.",
+                        "description": "Optional list of attachment UUIDs to include with the delegated request. These attachments must be accessible in the current conversation and are passed to the target service for processing -- including a service running on a remote agent, which receives the file itself rather than a reference. Files the service produces come back attached to its result, so you can pass them on or work with them by id.",
                     },
                     "handoff_after_seconds": {
                         "type": "number",
