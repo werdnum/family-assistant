@@ -100,6 +100,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _TOOL_CALL_REVIEW_AUDIT_REASON = "Automatic reviewer decision recorded; reviewer rationale omitted from durable audit."
+_NAMED_SINK_CONFIRMATION_MAX_CHARS = 3800
 
 
 @dataclass(frozen=True, slots=True)
@@ -1778,10 +1779,32 @@ class TaintTrackingToolsProvider(ToolsProvider):
             )
             if source_row is not None:
                 source_message_internal_id = source_row["internal_id"]
+        try:
+            rendered_arguments = json.dumps(
+                dict(arguments),
+                ensure_ascii=False,
+                indent=2,
+                sort_keys=True,
+            )
+        except (TypeError, ValueError) as exc:
+            raise ToolPolicyDeniedError(
+                name,
+                "live confirmation refused because the complete request payload "
+                "could not be rendered for the approver",
+            ) from exc
+        quoted_reason = "\n".join(f"> {line}" for line in reason.splitlines())
         prompt = (
             f"Allow the current request to enter '{name}'?\n\n"
-            f"Automatic review reason:\n> {reason}"
+            f"Complete request payload:\n{rendered_arguments}\n\n"
+            f"Automatic review reason:\n{quoted_reason}"
         )
+        if len(prompt) > _NAMED_SINK_CONFIRMATION_MAX_CHARS:
+            raise ToolPolicyDeniedError(
+                name,
+                "live confirmation refused because the complete request payload "
+                f"does not fit in the {_NAMED_SINK_CONFIRMATION_MAX_CHARS}-character "
+                "confirmation message",
+            )
         try:
             outcome = await manager.request_confirmation(
                 conversation_id=context.conversation_id,

@@ -216,7 +216,9 @@ It is an upgrade, not a prerequisite.
 - `confirm` — escalate to the existing durable confirmation machinery. The reviewer's reason is
   included in the rendered confirmation so the human sees *why* — this is what turns a generic
   "approve this tool call?" into "this message quotes your notes and goes to an address that appears
-  nowhere in your request".
+  nowhere in your request". A live confirmation for a non-tool named sink (a profile or brokered
+  request) also renders the complete request payload; if that payload cannot be rendered or does not
+  fit the confirmation channel, the request is refused rather than offering a truncated approval.
 - `deny` — a structured deny-and-continue tool result stating what was blocked, why, and what safer
   route exists. The model continues; hard errors are reserved for explicit floors.
 

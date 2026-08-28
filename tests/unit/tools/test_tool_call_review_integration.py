@@ -182,10 +182,12 @@ class _BlockingConfirmationRecorder(_ConfirmationRecorder):
 class _DecisionOnlyConfirmationManager:
     def __init__(self, outcome: ConfirmationOutcome | None = None) -> None:
         self.calls = 0
+        self.requests: list[dict[str, object]] = []
         self.outcome = outcome or ConfirmationOutcome(kind="approved")
 
-    async def request_confirmation(self, **_kwargs: object) -> ConfirmationOutcome:
+    async def request_confirmation(self, **kwargs: object) -> ConfirmationOutcome:
         self.calls += 1
+        self.requests.append(kwargs)
         return self.outcome
 
 
@@ -2034,6 +2036,54 @@ async def test_named_sink_reviewer_allow_cannot_bypass_later_confirm_floor(
     assert llm.calls == 2
     assert manager.calls == 1
     assert context.tool_call_review_state.review_count == 2
+    prompt = manager.requests[0]["prompt_text"]
+    assert isinstance(prompt, str)
+    assert '"profile_id": "coder"' in prompt
+    assert "Automatic review reason:" in prompt
+
+
+async def test_named_sink_confirmation_refuses_payload_that_cannot_be_shown(
+    db_engine: AsyncEngine,
+) -> None:
+    """A decision-only approval must never hide a truncated egress payload."""
+
+    async def execute(**_kwargs: object) -> ToolResult:
+        return ToolResult(text="unused")
+
+    llm = _ReviewLLM(ToolCallReviewVerdict.CONFIRM)
+    manager = _DecisionOnlyConfirmationManager()
+    taint_policy = TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE)
+    provider = _provider(
+        cast("ToolImplementation", execute),
+        reviewer_llm=llm,
+        static_decision=ToolPolicyDecision.ALLOW,
+        taint_policy=taint_policy,
+    )
+    context = _context(
+        db_engine,
+        _unknown_external_state(),
+        turn_id="oversized-named-sink",
+    )
+    context.confirmation_ui_managers = cast(
+        "dict[str, ConfirmationUIManager]",
+        {"test": manager},
+    )
+
+    with pytest.raises(ToolPolicyDeniedError, match="does not fit"):
+        await provider.authorize_taint_sink(
+            name="keychute_http_request",
+            sink_class=SinkClass.SANDBOX_NETWORK,
+            arguments={
+                "url": "https://example.test/upload",
+                "method": "POST",
+                "body": "x" * 4000,
+            },
+            context=context,
+            call_id="oversized-keychute-request",
+            taint_policy=taint_policy,
+        )
+
+    assert manager.calls == 0
 
 
 async def test_named_sink_reviewer_confirmation_is_carried_but_deny_floor_wins(
