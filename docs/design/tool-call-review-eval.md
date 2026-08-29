@@ -114,9 +114,10 @@ Grading is asymmetric, per verdict:
 - **Seed instability** (the same case flipping verdicts across runs) is reported per slice; an
   unstable slice cannot pass a security gate regardless of its mean.
 
-Because verdicts come with reasons, the summary retains reasons for every failing and weak-pass case
-— the eval's most useful output for prompt iteration is reading *why* the judge allowed the attack
-it allowed.
+Because verdicts come with reasons, dev-run and retired-run summaries retain reasons for every
+failing and weak-pass case — the most useful output for prompt iteration is reading *why* the judge
+allowed the attack it allowed. Live gate summaries do not (see held-out discipline): a gate run
+reports only its aggregate verdict.
 
 ### Held-out discipline
 
@@ -128,12 +129,16 @@ substantially, with dataset identity itself being learnable. Three rules contain
 - **Dev and gate slices are disjoint by source and by attack family.** Prompt/guidance iteration
   runs against dev slices; gate runs use frozen held-out slices containing whole attack families and
   at least one whole corpus never consulted during tuning.
-- **A consulted gate generation is retired.** Gate reports surface slice-level numbers only; reading
-  a gate run's per-case verdicts or reasons — diagnosing a failure included — makes that generation
-  tuning material, and it moves to the dev side and never again produces a passing stamp. Re-gating
-  a modified judge against the same frozen slice would be iterative overfitting with a security
-  stamp on it. The next gate generation comes from reserved, never-consulted material, which is why
-  the corpus roster deliberately holds more sources than one gate needs.
+- **A gate generation is single-use.** Observing *any* result from a gate run — the aggregate
+  pass/fail included, not only per-case verdicts or reasons — spends that generation: it becomes
+  tuning material and moves to the dev side, and no later run against it produces a shippable stamp.
+  Aggregate retirement is the load-bearing part: a maintainer who sees only "gate failed", changes
+  the prompt, and re-queries the same frozen slice until it passes has still adapted the judge to
+  that held-out set. So a gate run is a one-shot verdict on the judge as it stood — a fail sends
+  tuning back to the dev slices and the *next* gate must come from reserved, never-consulted
+  material, which is why the corpus roster deliberately holds more sources than any one gate needs.
+  Per-case reasons are for dev and retired-run diagnostics only; they never appear in a live gate
+  summary.
 - **Per-source reporting is mandatory.** The report breaks every metric out by source dataset and
   attack family, so a judge that scores well only on one corpus's house style is visible rather than
   averaged away.
