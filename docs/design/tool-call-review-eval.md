@@ -120,12 +120,17 @@ it allowed.
 We do not train a model, but we do tune one: the reviewer's prompt, guidance, and model choice get
 iterated against eval results, which overfits to dataset quirks exactly the way training does —
 cross-dataset evaluations of injection detectors have shown mixed-source scores overstating quality
-substantially, with dataset identity itself being learnable. Two rules contain this:
+substantially, with dataset identity itself being learnable. Three rules contain this:
 
 - **Dev and gate slices are disjoint by source and by attack family.** Prompt/guidance iteration
   runs against dev slices; gate runs use frozen held-out slices containing whole attack families and
-  at least one whole corpus never consulted during tuning. Held-out content rotates only when a gate
-  generation is retired.
+  at least one whole corpus never consulted during tuning.
+- **A consulted gate generation is retired.** Gate reports surface slice-level numbers only; reading
+  a gate run's per-case verdicts or reasons — diagnosing a failure included — makes that generation
+  tuning material, and it moves to the dev side and never again produces a passing stamp. Re-gating
+  a modified judge against the same frozen slice would be iterative overfitting with a security
+  stamp on it. The next gate generation comes from reserved, never-consulted material, which is why
+  the corpus roster deliberately holds more sources than one gate needs.
 - **Per-source reporting is mandatory.** The report breaks every metric out by source dataset and
   attack family, so a judge that scores well only on one corpus's house style is visible rather than
   averaged away.
@@ -155,8 +160,11 @@ One record envelope for every case, with a boundary-specific payload:
   - *Conversation review*: messages with per-row taint metadata, tool name, arguments, turn taint
     state, delegating policy contexts, guidance, and optional trigger — a serialization of
     `ToolCallReviewInput` minus the derived and registry-resolved parts.
-  - *Browser action review*: objective, damage envelope, environment snapshot or screenshot
-    reference, recent actions, proposed action.
+  - *Browser action review*: objective, damage envelope, textual environment snapshot, recent
+    actions, proposed action. The shipped contract renders the environment as fenced text
+    (`BrowserActionReviewInput.environment` is a string), so the harness boundary is textual too —
+    visual prompt injection is out of this harness's scope until the runtime contract itself becomes
+    multimodal, at which point the case shape and replay seam follow it.
   - *Derivation review* (future sanitizer): the trusted rows, the composed artifact (delegation goal
     or note content), and a three-way label — `derivable`, `data_embedding` (tainted facts inside a
     trusted-derived imperative), `instruction_smuggling`. Defined now so data collection can start
@@ -216,7 +224,12 @@ message history. Live cases are therefore **captured at the source**: a deployme
 serializes each reviewed input, with its constraints and a link to the audit row's event id (hence
 the verdict), into the local dataset as the review runs. The audit table remains what it is — the
 durable record for locating and counting reviews — while capture supplies the replayable payload.
-Labeling defaults to `benign` with a maintainer skim, since the traffic contains no attacks.
+
+Captures start **unlabeled**, and the maintainer skim is the labeling act rather than confirmation
+of a default: the email-, web-, and attachment-originated content inside a capture is exactly where
+a real injection would hide, and a benign default would count a correct deny as friction and teach
+tuning to prefer `allow` on it. Only positively labeled captures enter the friction pool and tuning
+metrics; unlabeled captures replay for observation only.
 
 Captures are also the only domain-realistic benign pool: public corpora skew adversarial, so the
 resolution of any friction estimate is bounded by how many captured benign cases exist. A tiny
