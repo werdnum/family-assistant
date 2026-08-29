@@ -53,6 +53,8 @@ from family_assistant.tools import (
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from google.genai.interactions import Interaction
+
     from family_assistant.llm.content_parts import ContentPartDict
     from family_assistant.llm.messages import LLMMessage
     from family_assistant.services.attachment_registry import AttachmentMetadata
@@ -155,6 +157,27 @@ def _attachment_taint_sources(
             reason="Attachment routed into the sandbox.",
         ),
     )
+
+
+def _describe_interaction_errors(interaction: Interaction) -> str:
+    """Render ``interaction.errors`` for logs/tracebacks, or "" when absent.
+
+    The Interactions API records diagnostic faults / platform errors on the
+    interaction (e.g. the concurrency-limit cancellation it returns while a
+    same-account agent run is already in flight), and without them a terminal
+    status alone says nothing about *why*. Errors are optional on the SDK
+    model, and each carries only an optional code and message.
+    """
+    rendered = []
+    for error in interaction.errors or []:
+        fields = []
+        if error.code:
+            fields.append(f"code={error.code}")
+        if error.message:
+            fields.append(f"message={error.message}")
+        if fields:
+            rendered.append("{" + ", ".join(fields) + "}")
+    return "; ".join(rendered)
 
 
 class InteractionsAgentProcessingService(ProcessingService):
@@ -469,9 +492,21 @@ class InteractionsAgentProcessingService(ProcessingService):
                 text_reply=interaction.output_text or ""
             )
         if is_interaction_terminal_error_status(interaction.status):
+            error_detail = _describe_interaction_errors(interaction)
+            logger.warning(
+                "Interactions API run on '%s' ended with status %s (interaction %s)%s",
+                self.service_config.id,
+                interaction.status,
+                remote_task_id,
+                f"; errors: {error_detail}" if error_detail else "",
+            )
             return ChatInteractionResult.error(
                 text_reply=f"The {self.service_config.id} run {interaction.status}.",
-                error_traceback=f"Interaction {remote_task_id} ended with status {interaction.status!r}.",
+                error_traceback=(
+                    f"Interaction {remote_task_id} ended with status "
+                    f"{interaction.status!r}."
+                    + (f" Errors: {error_detail}" if error_detail else "")
+                ),
             )
         return PENDING
 

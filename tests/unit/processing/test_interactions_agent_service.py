@@ -4,12 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
 
 import pytest
+from google.genai.interactions import (
+    Error,
+    Interaction,
+    InteractionStatus,
+    ModelOutputStep,
+    TextContent,
+    UserInputStep,
+)
 
 from family_assistant.config_models import (
     AppConfig,
@@ -1095,8 +1104,7 @@ async def test_poll_async_pending_states() -> None:
     service = _make_service(llm_client)
 
     for status in ("in_progress", "requires_action"):
-        interaction = AsyncMock()
-        interaction.status = status
+        interaction = Interaction(status=status)
         llm_client.get_agent_interaction = AsyncMock(return_value=interaction)
         result = await service.poll_async("inter_x", None)
         assert result is PENDING
@@ -1111,8 +1119,7 @@ async def test_poll_async_unrecognized_status_stays_pending() -> None:
     is treated as still pending instead of failing the delegation outright.
     """
     llm_client = _google_client()
-    interaction = AsyncMock()
-    interaction.status = "queued"
+    interaction = Interaction(status="queued")
     llm_client.get_agent_interaction = AsyncMock(return_value=interaction)
     service = _make_service(llm_client)
 
@@ -1125,9 +1132,13 @@ async def test_poll_async_unrecognized_status_stays_pending() -> None:
 async def test_poll_async_completed_returns_success() -> None:
     """A completed interaction becomes a successful ChatInteractionResult."""
     llm_client = _google_client()
-    interaction = AsyncMock()
-    interaction.status = "completed"
-    interaction.output_text = "The final research report."
+    interaction = Interaction(
+        status="completed",
+        steps=[
+            UserInputStep(content=[TextContent(text="hi")]),
+            ModelOutputStep(content=[TextContent(text="The final research report.")]),
+        ],
+    )
     llm_client.get_agent_interaction = AsyncMock(return_value=interaction)
     service = _make_service(llm_client)
 
@@ -1147,8 +1158,7 @@ async def test_poll_async_terminal_error_states_return_error_result(
 ) -> None:
     """Terminal non-success statuses become an error ChatInteractionResult."""
     llm_client = _google_client()
-    interaction = AsyncMock()
-    interaction.status = status
+    interaction = Interaction(status=cast("InteractionStatus", status))
     llm_client.get_agent_interaction = AsyncMock(return_value=interaction)
     service = _make_service(llm_client)
 
@@ -1157,6 +1167,61 @@ async def test_poll_async_terminal_error_states_return_error_result(
     assert isinstance(result, ChatInteractionResult)
     assert result.has_error
     assert status in result.text_reply
+
+
+@pytest.mark.asyncio
+async def test_poll_async_terminal_error_captures_interaction_errors(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The API's diagnostic faults surface in the traceback, not just the status.
+
+    Google can cancel an agent interaction while a same-account run is
+    already in flight, recording the reason on ``interaction.errors``. A
+    bare status string loses that; the error detail must reach the log and
+    the persisted error_traceback.
+    """
+    llm_client = _google_client()
+    interaction = Interaction(
+        status="cancelled",
+        errors=[
+            Error(code="err/concurrency_limit", message="agent session in flight"),
+            Error(message="retry after the running agent completes"),
+        ],
+    )
+    llm_client.get_agent_interaction = AsyncMock(return_value=interaction)
+    service = _make_service(llm_client)
+
+    with caplog.at_level(logging.WARNING):
+        result = await service.poll_async("inter_x", None)
+
+    assert isinstance(result, ChatInteractionResult)
+    assert result.has_error
+    assert result.error_traceback is not None
+    assert (
+        "Errors: {code=err/concurrency_limit, message=agent session in flight}; "
+        "{message=retry after the running agent completes}" in result.error_traceback
+    )
+    assert any(
+        "errors: {code=err/concurrency_limit" in record.message
+        for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_poll_async_terminal_error_without_errors_leaves_traceback_bare() -> None:
+    """No errors payload means no fabricated detail in the traceback."""
+    llm_client = _google_client()
+    interaction = Interaction(status="cancelled")
+    llm_client.get_agent_interaction = AsyncMock(return_value=interaction)
+    service = _make_service(llm_client)
+
+    result = await service.poll_async("inter_x", None)
+
+    assert isinstance(result, ChatInteractionResult)
+    assert result.has_error
+    assert result.error_traceback == (
+        "Interaction inter_x ended with status 'cancelled'."
+    )
 
 
 @pytest.mark.asyncio
