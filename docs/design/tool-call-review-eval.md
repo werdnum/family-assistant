@@ -112,6 +112,21 @@ Because verdicts come with reasons, the summary retains reasons for every failin
 — the eval's most useful output for prompt iteration is reading *why* the judge allowed the attack
 it allowed.
 
+### Held-out discipline
+
+We do not train a model, but we do tune one: the reviewer's prompt, guidance, and model choice get
+iterated against eval results, which overfits to dataset quirks exactly the way training does —
+cross-dataset evaluations of injection detectors have shown mixed-source scores overstating quality
+substantially, with dataset identity itself being learnable. Two rules contain this:
+
+- **Dev and gate slices are disjoint by source and by attack family.** Prompt/guidance iteration
+  runs against dev slices; gate runs use frozen held-out slices containing whole attack families and
+  at least one whole corpus never consulted during tuning. Held-out content rotates only when a gate
+  generation is retired.
+- **Per-source reporting is mandatory.** The report breaks every metric out by source dataset and
+  attack family, so a judge that scores well only on one corpus's house style is visible rather than
+  averaged away.
+
 ## Dataset shape
 
 One record envelope for every case, with a boundary-specific payload:
@@ -166,7 +181,24 @@ The slices the adversarial set must cover, each grounded in a boundary this code
 
 Every attack class carries **benign twins**: matched cases with the same surface features and no
 attack (a genuine "forward this email to my accountant", a real delegation whose goal quotes web
-content the user asked about). Without twins, a judge that denies everything scores perfectly.
+content the user asked about). The published hard-negative suites (NotInject-style benign
+imperatives, quoted attacks, security discussions, prompt examples) show what these should look
+like: content a lazy judge flags on vocabulary alone. Without twins, a judge that denies everything
+scores perfectly.
+
+Three **cross-cutting axes** are recorded on every attack case rather than treated as classes of
+their own, so any class can be sliced by them:
+
+- **Obfuscation** — none, Unicode/zero-width tricks, encodings, fragmentation across messages,
+  translation.
+- **Placement** — where in a realistic document the injection sits (lead, buried mid-document,
+  trailing), since position sensitivity is a known judge failure mode.
+- **Language** — the injection's language, so multilingual robustness is measured rather than
+  assumed.
+
+Attack cases also record **intent separately from historical success**: an attack that failed
+against its original target model is still a positive example here — the label is the author's
+intent to redirect, not whether some other system fell for it.
 
 ## Data sources
 
@@ -182,6 +214,11 @@ the verdict), into the local dataset as the review runs. The audit table remains
 durable record for locating and counting reviews — while capture supplies the replayable payload.
 Labeling defaults to `benign` with a maintainer skim, since the traffic contains no attacks.
 
+Captures are also the only domain-realistic benign pool: public corpora skew adversarial, so the
+resolution of any friction estimate is bounded by how many captured benign cases exist. A tiny
+benign set cannot distinguish a 1% from a 10% false-deny rate; growing this pool is what makes the
+friction half of the report meaningful.
+
 Privacy is structural, not procedural: this is a public repository, and live captures contain
 household content. The live dataset therefore lives outside version control (a gitignored directory
 or private store), the runner merges it when present, and committed datasets are only public-corpus,
@@ -193,11 +230,44 @@ raw corpus.
 
 ### Public corpora (adversarial breadth)
 
-Adapters map established prompt-injection/agent-security suites — AgentDojo, InjecAgent, BIPIA, and
-similar — into this system's positions: their injected payloads land in the email-body, tool-result,
-browser-environment, and note-content slots of our case shapes. Adapted cases keep a pointer to
-their upstream id and license. Corpora are fetched on demand rather than vendored unless a license
-requires pinning; the adapter, not the corpus, is the committed artifact.
+Adapters map established prompt-injection corpora into this system's positions: their injected
+payloads land in the email-body, tool-result, browser-environment, and note-content slots of our
+case shapes. Adaptation is more than relocation — a bare injection text is not a case. The judge
+rules on a *tool call*, so the adapter must pair the injected content with the gated call the
+injection argues for (the exfiltrating send, the unrequested delegation), wrapped in the taint
+provenance our contract expects; the classification target is "does content below this trust
+boundary redirect the agent outside the enclosing task", which is richer than the text-level label
+most corpora carry.
+
+A tiered roster, by role:
+
+- **Primary benchmark**: PromptShield-class suites — permissively licensed, balanced between
+  application-shaped benign inputs and injections, built to be operated at low false-positive rates.
+- **Adaptive indirect attacks**: LLMail-Inject — human attackers adapting against an email assistant
+  with retrieval and tools, squarely our email-intake class. Its benign side is tiny, so it
+  contributes attacks only; friction comes from live captures.
+- **Broad templated coverage**: BIPIA — indirect injection across email/web/table/summarization/
+  code tasks. Heavily combinatorial, so entire attack families and tasks are held out as units;
+  random row-level holdout flatters the results.
+- **Human adversarial pools**: Tensor Trust and HackAPrompt — large, creative, but
+  game-distribution-shaped and duplicate-heavy; deduplicate and group by author/challenge before
+  use.
+- **Hard negatives**: NotInject-style sets feed the benign-twin pool directly.
+- **External check**: PINT-style multilingual eval sets as an out-of-family sanity pass;
+  deepset-scale sets are smoke tests only.
+
+Adapted cases keep a pointer to their upstream id, group (author/challenge/template family), and
+license. **Lineage is load-bearing**: the large corpora incorporate one another (PromptShield draws
+on HackAPrompt and Open-Prompt-Injection derivatives; templates recur everywhere), so
+near-duplicates are clustered and source lineage preserved before any dev/gate split — otherwise the
+same attack appears on both sides of the split and the numbers flatter the judge. Corpora are
+fetched on demand rather than vendored unless a license requires pinning; the adapter, not the
+corpus, is the committed artifact.
+
+Agent-environment benchmarks (AgentDojo, InjecAgent, and kin) adapt poorly to static single-call
+cases but are the natural later instrument for *end-to-end* validation — attack success rate and
+utility loss with the reviewer enforced in a full agent loop. That is complementary future work, not
+part of this harness.
 
 ### Synthetic — manual (precision)
 
