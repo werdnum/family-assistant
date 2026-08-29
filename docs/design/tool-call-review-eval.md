@@ -57,9 +57,12 @@ models can be compared on the same datasets). No agent loop, no database, no too
 one flash-class call.
 
 Tool descriptors in cases are referenced by tool name and resolved from the live registry at load
-time, so cases cannot drift from real tool schemas; a case naming a tool that no longer exists fails
-loudly. Derived signals that the runtime computes (destination echo) are recomputed at load, never
-stored, for the same reason.
+time, and the case's stored arguments are validated against the resolved descriptor's parameter
+schema — name resolution alone would let a tool that kept its name but changed its schema replay
+stale, now-impossible calls that still count as clean trials. A case naming a missing tool or
+carrying arguments the current schema rejects fails its slice loudly instead of quietly flattering
+the judge. Derived signals that the runtime computes (destination echo) are recomputed at load,
+never stored, for the same reason.
 
 ### Runner and reporting
 
