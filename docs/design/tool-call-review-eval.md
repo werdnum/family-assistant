@@ -113,14 +113,14 @@ One record envelope for every case, with a boundary-specific payload:
 - **`label`** — `attack` or `benign`.
 - **`attack_class`** — for attacks, the vector taxonomy entry (below); for benign cases, the matched
   class where the case is a benign twin.
-- **`source`** — `manual`, `live_extract`, `public:<corpus>`, `generated`, or `incident`, with
+- **`source`** — `manual`, `live_capture`, `public:<corpus>`, `generated`, or `incident`, with
   provenance/license notes for public data.
 - **`expected`** — the pass condition under the scoring rules above (most cases need only the label;
   `expected` exists for cases whose correct verdict is deliberately `confirm`, e.g. genuine
   ambiguity fixtures).
 - **`constraints`** — the verdict space and fallback the delegating context supplied
   (`ToolCallReviewConstraints`), which the runtime renders into the prompt and uses to reject
-  out-of-space verdicts. Live extracts record the runtime call's actual constraints; manual and
+  out-of-space verdicts. Live captures record the runtime call's actual constraints; manual and
   adapted cases state them explicitly (typically the full space with the delegating cell's
   fallback). The runner never invents a verdict space.
 - **`payload`** — the serialized review input for the boundary:
@@ -161,20 +161,25 @@ content the user asked about). Without twins, a judge that denies everything sco
 
 ## Data sources
 
-### Live extracts (friction set)
+### Live captures (friction set)
 
-An exporter script reads `taint_audit_events` (which stores `turn_id`, `tool_call_id`, sink class,
-tier, verdict — deliberately not argument values), joins the canonical message history those keys
-locate, and reconstructs full conversation-review cases. Labeling defaults to `benign` with a
-maintainer skim, since the traffic contains no attacks.
+The runtime's review chokepoint holds the complete typed input — `ToolCallReviewInput` plus its
+constraints — in memory at the moment of each review, and nowhere else: the audit table deliberately
+persists only identifiers and audit-safe summaries, and the in-memory message window, guidance,
+policy contexts, and taint state actually reviewed are not recoverable from a post-hoc join against
+message history. Live cases are therefore **captured at the source**: a deployment capture flag
+serializes each reviewed input, with its constraints and a link to the audit row's event id (hence
+the verdict), into the local dataset as the review runs. The audit table remains what it is — the
+durable record for locating and counting reviews — while capture supplies the replayable payload.
+Labeling defaults to `benign` with a maintainer skim, since the traffic contains no attacks.
 
-Privacy is structural, not procedural: this is a public repository, and live extracts contain
+Privacy is structural, not procedural: this is a public repository, and live captures contain
 household content. The live dataset therefore lives outside version control (a gitignored directory
 or private store), the runner merges it when present, and committed datasets are only public-corpus,
-synthetic, and manual cases. Extracts are stored **raw**: byte-level fidelity is what both the
+synthetic, and manual cases. Captures are stored **raw**: byte-level fidelity is what both the
 assembly-parity check and the judge consume, and substituting names or addresses can itself change a
 verdict (the destination-echo signal matches literal values). A pseudonymized copy is generated on
-demand, per case, only when an extract needs to be quoted or shared; evaluation always runs on the
+demand, per case, only when a capture needs to be quoted or shared; evaluation always runs on the
 raw corpus.
 
 ### Public corpora (adversarial breadth)
@@ -219,11 +224,11 @@ eight attack classes with benign twins (small — a few cases per class). *Verif
 produces a per-slice report against the configured judge; the delegation blind-deny case and its
 benign twin both appear with their current (pre-fix) verdicts recorded as the baseline.
 
-**M2 — Live extractor.** The audit-join-history exporter writing raw extracts (including the runtime
-call's constraints) to the uncommitted live dataset; labeling workflow; on-demand pseudonymized
-export for quoting. *Verify:* extracted cases replay through the harness byte-identically to a
-runtime-assembled review of the same call (assembly parity test), and no committed file contains
-extract content.
+**M2 — Live capture.** The capture flag serializing each reviewed input, with constraints and
+audit-row linkage, into the uncommitted live dataset; labeling workflow; on-demand pseudonymized
+export for quoting. *Verify:* a captured case replayed at the same code version assembles a
+byte-identical prompt to the runtime's (parity holds per code version — a later assembly change is
+supposed to change the prompt), and no committed file contains capture content.
 
 **M3 — Public corpus adapters.** At least two corpora mapped into the case shapes. *Verify:* adapter
 output validates against the schema; spot-checked cases preserve the upstream attack semantics in
