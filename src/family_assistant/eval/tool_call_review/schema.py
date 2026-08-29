@@ -13,7 +13,7 @@ from __future__ import annotations
 import functools
 from typing import TYPE_CHECKING, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
 from family_assistant.llm.messages import dict_to_message
 from family_assistant.security.taint import SinkClass, TurnTaintState
@@ -41,6 +41,7 @@ __all__ = [
     "DerivationPayload",
     "EvalCase",
     "ToolResolutionError",
+    "TriggerSpec",
     "resolve_tool_descriptor",
 ]
 
@@ -109,6 +110,35 @@ class CaseConstraints(BaseModel):
         )
 
 
+class TriggerSpec(BaseModel):
+    """Serialized trigger context for a conversation case.
+
+    ``payload_present`` is a strict bool: a YAML author who quotes ``"false"``
+    means false, and lax coercion would replay the case with the opposite
+    trigger semantics instead of rejecting it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    trigger_type: str
+    active_request_role: Literal["user", "system"]
+    definition: str | None = None
+    definition_taint_metadata: dict[str, object] | None = None
+    payload_present: StrictBool = True
+
+    def to_trigger_input(self) -> TriggerReviewInput:
+        """Build the runtime trigger input this spec serializes."""
+        return TriggerReviewInput(
+            trigger_type=self.trigger_type,
+            active_request_role=self.active_request_role,
+            definition=self.definition,
+            definition_taint_metadata=cast(
+                "TaintMetadata | None", self.definition_taint_metadata
+            ),
+            payload_present=self.payload_present,
+        )
+
+
 class ConversationPayload(BaseModel):
     """Serialized ``ToolCallReviewInput`` minus derived and resolved parts.
 
@@ -129,7 +159,7 @@ class ConversationPayload(BaseModel):
     policy_contexts: list[dict[str, object]] = Field(default_factory=list)
     deployment_guidance: str = ""
     profile_guidance: str = ""
-    trigger: dict[str, object] | None = None
+    trigger: TriggerSpec | None = None
     destination_arg_key: str | None = None
 
 
@@ -223,6 +253,11 @@ class EvalCase(BaseModel):
             raise ValueError(
                 "expected_verdict must be within the case's available_verdicts."
             )
+        if self.label == "attack" and self.attack_class is None:
+            raise ValueError(
+                "attack cases must declare an attack_class; an unclassified attack "
+                "would dodge the per-family slice gates."
+            )
         return self
 
     def to_review_input(
@@ -266,7 +301,9 @@ class EvalCase(BaseModel):
             payload.tool_name, registry=descriptor_registry
         )
         messages = [dict_to_message(row) for row in payload.messages]
-        trigger = _build_trigger(payload.trigger)
+        trigger = (
+            payload.trigger.to_trigger_input() if payload.trigger is not None else None
+        )
         destination_echo = None
         if payload.destination_arg_key is not None:
             destination = payload.arguments.get(payload.destination_arg_key)
@@ -308,32 +345,3 @@ class EvalCase(BaseModel):
 
 def _build_policy_context(context: Mapping[str, object]) -> DelegatingPolicyContext:
     return DelegatingPolicyContext.model_validate(dict(context))
-
-
-def _build_trigger(trigger: Mapping[str, object] | None) -> TriggerReviewInput | None:
-    if trigger is None:
-        return None
-    trigger_type = trigger.get("trigger_type")
-    active_request_role = trigger.get("active_request_role")
-    if not isinstance(trigger_type, str) or active_request_role not in {
-        "user",
-        "system",
-    }:
-        raise ValueError(
-            "trigger requires a string trigger_type and an active_request_role of "
-            "'user' or 'system'."
-        )
-    definition = trigger.get("definition")
-    definition_taint_metadata = trigger.get("definition_taint_metadata")
-    payload_present = trigger.get("payload_present", True)
-    return TriggerReviewInput(
-        trigger_type=trigger_type,
-        active_request_role=cast("Literal['user', 'system']", active_request_role),
-        definition=definition if isinstance(definition, str) else None,
-        definition_taint_metadata=(
-            cast("TaintMetadata", definition_taint_metadata)
-            if isinstance(definition_taint_metadata, dict)
-            else None
-        ),
-        payload_present=bool(payload_present),
-    )

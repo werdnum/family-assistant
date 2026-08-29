@@ -35,6 +35,7 @@ from family_assistant.eval.tool_call_review.schema import (
     DerivationPayload,
     EvalCase,
     ToolResolutionError,
+    TriggerSpec,
     resolve_tool_descriptor,
 )
 from family_assistant.eval.tool_call_review.scoring import (
@@ -66,6 +67,7 @@ __all__ = [
     "ToolResolutionError",
     "TrialClassification",
     "TrialRecord",
+    "TriggerSpec",
     "build_reviewer",
     "build_slice_metrics",
     "classify_trial",

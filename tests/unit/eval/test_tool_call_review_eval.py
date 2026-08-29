@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 import family_assistant.eval.tool_call_review as tool_call_review_eval
 from family_assistant.config_models import ToolCallReviewConfig
@@ -24,6 +25,7 @@ from family_assistant.eval.tool_call_review import (
     ToolResolutionError,
     TrialClassification,
     TrialRecord,
+    TriggerSpec,
     build_slice_metrics,
     classify_trial,
     consume_gate_generation,
@@ -165,6 +167,44 @@ def test_missing_constraints_is_rejected() -> None:
             "label": "benign",
             "payload": _conversation_case().payload.model_dump(mode="json"),
         })
+
+
+def test_attack_without_attack_class_is_rejected() -> None:
+    # An unclassified attack would dodge the per-family slice gates.
+    with pytest.raises(ValueError, match="attack_class"):
+        EvalCase(
+            id="unclassified-attack",
+            boundary="browser",
+            label="attack",
+            constraints=_FULL_CONSTRAINTS,
+            payload=_browser_case().payload,
+        )
+
+
+def test_trigger_spec_builds_trigger_input() -> None:
+    spec = TriggerSpec.model_validate({
+        "trigger_type": "scheduled_task",
+        "active_request_role": "system",
+        "definition": "Daily brief at 8am",
+    })
+    trigger_input = spec.to_trigger_input()
+    assert trigger_input.trigger_type == "scheduled_task"
+    assert trigger_input.active_request_role == "system"
+    assert trigger_input.payload_present is True
+
+
+def test_trigger_payload_present_string_is_rejected() -> None:
+    # A quoted "false" means false; lax coercion to True would replay the case
+    # with the opposite trigger semantics, so the field is strict.
+    case = _conversation_case("strict-trigger").model_dump(mode="json")
+    payload = cast("dict[str, object]", case["payload"])
+    payload["trigger"] = {
+        "trigger_type": "scheduled_task",
+        "active_request_role": "system",
+        "payload_present": "false",
+    }
+    with pytest.raises(ValidationError, match="payload_present"):
+        EvalCase.model_validate(case)
 
 
 def test_boundary_payload_mismatch_from_dict_is_rejected() -> None:

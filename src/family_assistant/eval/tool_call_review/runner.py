@@ -39,8 +39,17 @@ __all__ = [
     "run_eval",
 ]
 
-DEFAULT_GENERATION_LEDGER_DIR = Path(".review-eval-local/consumed_generations")
-"""Default marker store for consumed gate generations, under the private dir."""
+DEFAULT_GENERATION_LEDGER_DIR = (
+    Path(__file__).parent / "datasets" / "consumed_generations"
+)
+"""Default marker store for consumed gate generations.
+
+This lives in the repository-tracked tree, not the gitignored private dir: a
+gitignored ledger exists only in the worktree that ran the gate, so a fresh
+clone or second worktree could re-stamp an already-consumed generation.
+Markers must be committed alongside any shippable stamp, which makes
+consumption durable, visible in diffs, and deleting a marker an auditable act.
+"""
 
 
 def build_reviewer(

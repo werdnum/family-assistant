@@ -78,8 +78,12 @@ A script (per `scripts/` conventions, exposed as a poe task) that:
 
 Run outputs are local artifacts (gitignored); the committed record of "the eval was run and passed"
 is a summary stamp updated alongside changes to the reviewer — the same convention as recording an
-M5 decision in the design doc's status. Full-eval runs are maintainer-invoked; CI runs only
-mechanics tests plus, where credentials exist, a smoke slice of a handful of canonical cases.
+M5 decision in the design doc's status — together with the consumed-generation marker the gate run
+recorded. The marker ledger is repository-tracked, not gitignored: markers hold only the generation
+hash, gate status, ceiling and timestamp (no case content), and committing them is what makes
+consumption survive fresh clones and second worktrees. Full-eval runs are maintainer-invoked; CI
+runs only mechanics tests plus, where credentials exist, a smoke slice of a handful of canonical
+cases.
 
 ### Scoring
 
@@ -374,13 +378,14 @@ Each milestone is a PR-sized unit; construction detail belongs to the PRs.
 **M1 — Harness and seed set.** Runner, case schema, scoring, report; manual seed set covering all
 eight attack classes with benign twins (small — a few cases per class). Single-use gate generations
 are a **harness-enforced outcome, not prose**: a gate run records that it consumed its generation (a
-durable marker keyed to the generation's content hash), and a second gate run against a consumed
-generation refuses to emit a shippable stamp — it errors or downgrades to a dev-only run. The
-held-out discipline degrades to nothing if a maintainer can simply re-invoke the gate, so the
-runner, not the reader's discipline, holds the line. *Verify:* the runner produces a per-slice
-report against the configured judge; the delegation blind-deny case and its benign twin both appear
-with their current (pre-fix) verdicts recorded as the baseline; and a repeated gate run against an
-already-consumed generation is refused a shippable stamp.
+durable marker keyed to the generation's content hash, kept in a repository-tracked ledger so
+consumption survives fresh clones and deleting a marker is an auditable act), and a second gate run
+against a consumed generation refuses to emit a shippable stamp — it errors or downgrades to a
+dev-only run. The held-out discipline degrades to nothing if a maintainer can simply re-invoke the
+gate, so the runner, not the reader's discipline, holds the line. *Verify:* the runner produces a
+per-slice report against the configured judge; the delegation blind-deny case and its benign twin
+both appear with their current (pre-fix) verdicts recorded as the baseline; and a repeated gate run
+against an already-consumed generation is refused a shippable stamp.
 
 **M2 — Live capture.** The capture flag serializing each reviewed input, with constraints and
 audit-row linkage, into the uncommitted live dataset; labeling workflow; on-demand pseudonymized
