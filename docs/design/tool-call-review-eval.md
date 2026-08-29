@@ -260,9 +260,12 @@ Adapted cases keep a pointer to their upstream id, group (author/challenge/templ
 license. **Lineage is load-bearing**: the large corpora incorporate one another (PromptShield draws
 on HackAPrompt and Open-Prompt-Injection derivatives; templates recur everywhere), so
 near-duplicates are clustered and source lineage preserved before any dev/gate split — otherwise the
-same attack appears on both sides of the split and the numbers flatter the judge. Corpora are
-fetched on demand rather than vendored unless a license requires pinning; the adapter, not the
-corpus, is the committed artifact.
+same attack appears on both sides of the split and the numbers flatter the judge. **Any corpus a
+gate consumes is pinned** to an upstream revision or checksum recorded with the dataset, and a gate
+run fails on a mismatch rather than evaluating silently different content — an after-the-fact
+content hash can only reveal that two runs differed, not keep a held-out generation frozen. Unpinned
+fetch-on-demand is acceptable only for dev slices. The adapter and the pins, not the corpus, are the
+committed artifacts.
 
 Agent-environment benchmarks (AgentDojo, InjecAgent, and kin) adapt poorly to static single-call
 cases but are the natural later instrument for *end-to-end* validation — attack success rate and
@@ -291,8 +294,11 @@ the dataset. Two integrity rules keep generated data honest:
 
 ### Incidents
 
-Standing rule: any real attack ever observed in the wild becomes a fixture the same day, in the
-manual set, marked `incident`.
+Standing rule: any real attack ever observed in the wild becomes a fixture the same day, marked
+`incident`. The faithful raw case — which may contain household messages, destinations, or document
+content — goes into the private local corpus alongside the live captures; what enters the committed
+manual set is a reviewed synthetic analogue that preserves the attack's mechanism without the
+household content. A public repository must never learn private data through its fixture directory.
 
 ## Work plan
 
@@ -335,8 +341,10 @@ harness's slices and gates by name as their evidence source.
   machinery beyond the 3/N bound.
 - **The live dataset is per-deployment and unshared.** Third-party deployments of this public
   codebase get the harness and committed sets; their friction numbers come from their own extracts.
-- **No dataset versioning machinery.** Datasets are files in git (or a gitignored directory); run
-  results record the dataset content hash, which is sufficient to compare runs.
+- **No dataset versioning machinery beyond git and pins.** Committed datasets are files in git;
+  gated external corpora carry the upstream revision/checksum pins described above; run results
+  record the dataset content hash for comparing runs. Nothing more elaborate until it earns its
+  keep.
 
 ## Review questions
 
