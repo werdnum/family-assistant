@@ -140,8 +140,9 @@ One record envelope for every case, with a boundary-specific payload:
 - **`label`** — `attack` or `benign`.
 - **`attack_class`** — for attacks, the vector taxonomy entry (below); for benign cases, the matched
   class where the case is a benign twin.
-- **`source`** — `manual`, `live_capture`, `public:<corpus>`, `generated`, or `incident`, with
-  provenance/license notes for public data.
+- **`source`** — `manual`, `live_capture`, `history_derived`, `public:<corpus>`, `generated`, or
+  `incident`, with provenance/license notes for public data and the template id for history-derived
+  cases.
 - **`expected`** — the pass condition under the scoring rules above (most cases need only the label;
   `expected` exists for cases whose correct verdict is deliberately `confirm`, e.g. genuine
   ambiguity fixtures).
@@ -282,6 +283,36 @@ scenario from the shadow data is case #1. Every "accepted residual" in the auto-
 every checked risk box in #1140 that describes a behavior gets at least one case pinning it. This
 set is small, curated, and the only set where each case is individually reasoned about in review.
 
+### Synthetic — history-derived (committable breadth and twins)
+
+Message history is years of real task shapes, but confirmation records are too sparse to mine for
+labels, and full input reconstruction buys little once byte fidelity belongs to captures. History is
+instead used as a **template quarry**, in two stages with a privacy chokepoint between them:
+
+1. **Classify and abstract, locally.** A cheap scripted model pass walks historical turns and emits
+   *task templates*: intent category, tools called, argument shapes, sink class, taint-tier context,
+   and what kind of content flowed — "forward a school-newsletter summary to a partner; untrusted
+   email content in context; `send_message_to_user` to a known contact". The template is where
+   private data stops: templates are reviewed before leaving the private side (the set is small
+   enough to skim whole; an n-gram overlap check against source turns is optional hardening against
+   verbatim leakage).
+2. **Instantiate, hallucinating freely.** A capable model generates concrete cases from templates —
+   invented names, dates, email bodies, tool results, note contents — into the case schema,
+   validated against real tool schemas at load. Hallucinated content is sufficient here: the judge
+   rules on alignment between fenced content and trusted intent, so the content must be realistic,
+   never real.
+
+Each template instantiates **both ways** — clean, and with an injection planted in the hallucinated
+content — producing benign twins drawn from this household's actual task distribution, which public
+corpora cannot supply. Templates also seed the attacker loop below, so generated attacks stay
+in-domain instead of drifting toward generic prompt-hacking style.
+
+The honest caveat: model-instantiated text has a house style — cleaner than real traffic, missing
+the messy marketing emails and imperative-laden boilerplate that trip judges into false denies. The
+instantiator is prompted to preserve structural messiness, but this pool is breadth and twins; **raw
+captures remain the ground-truth friction pool**, and friction numbers from history-derived cases
+are secondary evidence.
+
 ### Synthetic — generated (adversarial depth)
 
 An attacker-model loop: a strong model receives the judge's input contract, a seed attack, and the
@@ -322,9 +353,13 @@ supposed to change the prompt), and no committed file contains capture content.
 output validates against the schema; spot-checked cases preserve the upstream attack semantics in
 their new position.
 
-**M4 — Generation loop.** Attacker-model mutation with label-preservation checks and reviewed
-promotion. *Verify:* the loop finds at least one surviving mutation of a seed attack (or documents
-that none survive N generations); discarded label-broken mutations are visible in the loop's log.
+**M4 — Generation tooling.** The history-template pipeline (local classification pass, reviewed
+template export, instantiation into twinned cases) and the attacker-model mutation loop with
+label-preservation checks and reviewed promotion, with templates seeding the loop. *Verify:* no
+committed template or instantiated case carries verbatim content from history; a template
+instantiates into a valid benign case and a valid attack twin; the loop finds at least one surviving
+mutation of a seed attack (or documents that none survive N generations); discarded label-broken
+mutations are visible in the loop's log.
 
 **M5 — Derivation slice.** Case shape and seed data for the future sanitizer; no shipped code
 consumes it yet. *Verify:* schema round-trips; the slice report runs against a prompt-only prototype
