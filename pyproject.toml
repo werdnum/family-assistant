@@ -355,6 +355,10 @@ shell = "for mod in $(monkeytype list-modules | grep '^family_assistant\\.'); do
 help = "Apply MonkeyType-inferred types, overwriting existing annotations (use with caution)"
 shell = "for mod in $(monkeytype list-modules | grep '^family_assistant\\.'); do monkeytype apply --ignore-existing-annotations $mod; done"
 
+[tool.poe.tasks.review-eval]
+help = "Replay the tool-call reviewer over labeled cases and report per-slice scores"
+cmd = "python scripts/tool_call_review_eval.py"
+
 
 [tool.ruff.lint.isort]
 known-first-party = ["family_assistant"]
