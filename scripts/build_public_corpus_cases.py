@@ -135,7 +135,12 @@ def _build(args: argparse.Namespace) -> int:
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     cases_path = args.out_dir / f"{args.corpus}.jsonl"
-    lineage_path = args.out_dir / f"{args.corpus}.lineage.jsonl"
+    # The lineage sidecar is not a case and would abort validation if the loader
+    # parsed it, so it goes in a `lineage/` subdirectory the loader excludes
+    # rather than beside the case JSONL.
+    lineage_dir = args.out_dir / "lineage"
+    lineage_dir.mkdir(parents=True, exist_ok=True)
+    lineage_path = lineage_dir / f"{args.corpus}.lineage.jsonl"
     with cases_path.open("w", encoding="utf-8") as handle:
         for item in adapted:
             handle.write(

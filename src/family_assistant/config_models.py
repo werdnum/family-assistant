@@ -81,12 +81,32 @@ class ToolCallReviewCaptureConfig(BaseModel):
     a gitignored path (``.review-eval-local/`` is ignored by the repository);
     it is never committed. Ships OFF: the friction dataset is a per-deployment,
     unshared artifact a maintainer opts into.
+
+    ``directory`` is required to live under a ``.review-eval-local`` path
+    component so a typo like ``captures/`` cannot write raw household content to
+    a commit-visible location; a deployment that deliberately captures elsewhere
+    (a mounted private volume) must set ``allow_external_directory: true`` to say
+    so explicitly.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = False
     directory: str = ".review-eval-local/captures"
+    allow_external_directory: bool = False
+
+    @model_validator(mode="after")
+    def _validate_directory_is_private(self) -> ToolCallReviewCaptureConfig:
+        if self.allow_external_directory:
+            return self
+        if ".review-eval-local" not in Path(self.directory).parts:
+            raise ValueError(
+                "tool_call_review.capture.directory must live under a "
+                "'.review-eval-local' path component (it holds raw household "
+                f"content); got {self.directory!r}. Set allow_external_directory: "
+                "true to capture to an explicitly private location elsewhere."
+            )
+        return self
 
 
 class ToolCallReviewConfig(BaseModel):

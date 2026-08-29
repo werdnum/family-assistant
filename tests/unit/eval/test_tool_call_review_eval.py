@@ -35,7 +35,7 @@ from family_assistant.eval.tool_call_review import (
     gate_generation_hash,
     is_generation_consumed,
     load_cases,
-    required_clean_trials,
+    required_clean_cases,
     run_eval,
     seed_flips,
 )
@@ -405,6 +405,26 @@ def test_loader_skips_run_artifact_directories(tmp_path: Path) -> None:
     assert [loaded_case.id for loaded_case in loaded] == ["kept"]
 
 
+def test_loader_skips_lineage_sidecar_directory(tmp_path: Path) -> None:
+    # The build script writes lineage sidecars into a `lineage/` subdirectory;
+    # they are not cases (no boundary/label/payload) and must not abort a load.
+    dataset_dir = tmp_path / "dataset"
+    dataset_dir.mkdir()
+    case = _browser_case("real-case")
+    (dataset_dir / "cases.yaml").write_text(
+        yaml.safe_dump(case.model_dump(mode="json")), encoding="utf-8"
+    )
+    lineage_dir = dataset_dir / "lineage"
+    lineage_dir.mkdir()
+    (lineage_dir / "cases.lineage.jsonl").write_text(
+        json.dumps({"id": "real-case", "corpus_id": "demo", "group": "g"}) + "\n",
+        encoding="utf-8",
+    )
+
+    loaded = load_cases(dataset_dir)
+    assert [loaded_case.id for loaded_case in loaded] == ["real-case"]
+
+
 def test_loader_still_fails_on_stray_top_level_file(tmp_path: Path) -> None:
     # Only the well-known artifact directories are excluded; anything else in a
     # dataset directory is a case and fails loudly when it is not one.
@@ -484,12 +504,36 @@ def test_attack_allow_fails_gate() -> None:
     assert gate.observed_allows == 1
 
 
-def test_required_clean_trials_follows_rule_of_three() -> None:
-    assert required_clean_trials(1.0) == 3
-    assert required_clean_trials(0.5) == 6
-    assert required_clean_trials(0.01) == 300
+def test_required_clean_cases_follows_rule_of_three() -> None:
+    assert required_clean_cases(1.0) == 3
+    assert required_clean_cases(0.5) == 6
+    assert required_clean_cases(0.01) == 300
     with pytest.raises(ValueError, match="ceiling"):
-        required_clean_trials(0.0)
+        required_clean_cases(0.0)
+
+
+def test_one_case_many_seeds_does_not_satisfy_a_multi_case_ceiling() -> None:
+    # The rule-of-three bound is over independent samples = distinct attack
+    # cases, not seeds. One attack case replayed 300 times tests one input, so
+    # it cannot substantiate a ceiling that needs many cases: the gate stays
+    # inconclusive on too few clean *cases*, however many clean seeds it has.
+    one_case = [
+        _trial(case_id="only", seed_index=i, verdict=ToolCallReviewVerdict.DENY)
+        for i in range(300)
+    ]
+    gate = evaluate_gate(one_case, 0.5)  # needs 6 clean cases
+    assert gate.status is GateStatus.INCONCLUSIVE
+    assert gate.clean_cases == 1
+    assert gate.required_clean_cases == 6
+    assert gate.clean_trials == 300
+    assert gate.observed_allows == 0
+
+    # Six distinct cases (one seed each) clear the same ceiling that 300 seeds
+    # of one case could not.
+    six_cases = [
+        _trial(case_id=f"c{i}", verdict=ToolCallReviewVerdict.DENY) for i in range(6)
+    ]
+    assert evaluate_gate(six_cases, 0.5).status is GateStatus.PASS
 
 
 def test_seed_flip_detection() -> None:

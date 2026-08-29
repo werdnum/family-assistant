@@ -71,7 +71,10 @@ A `TaskTemplate` is a structured record of enumerated fields only:
 
 - `intent_category` — a closed vocabulary (or a `<placeholder>` token).
 - `tool_names` — resolved against the live tool registry.
-- `argument_shapes` — argument keys mapped to JSON **type names**, never values.
+- `argument_shapes` — argument keys mapped to JSON **type names**, never values. Only keys the tool
+  declares in its parameter schema are recorded, with the type taken from the schema; an unexpected
+  key (where household text could otherwise ride across the boundary) is dropped and fails closed at
+  validation.
 - `sink_class`, `taint_tier` — enumerated from the taint model.
 - `content_kind` — a fixed content-kind tag.
 
@@ -113,8 +116,8 @@ this household's task distribution, and committing them is a deliberate act. Bef
 moves from `.review-eval-local/templates` into a committed dataset:
 
 1. **Read every template.** Confirm each field is a genuine enumerated value or an intended
-   placeholder, and that no argument key encodes content (the chokepoint constrains keys to schema
-   identifiers, but a distinctive key set can still be revealing).
+   placeholder, and that no argument key encodes content (the chokepoint admits only keys the tool
+   declares in its parameter schema, but a distinctive key set can still be revealing).
 2. **Refine placeholders.** Replace `<unknown>` intents and `none` content-kinds with
    closed-vocabulary values via the classification pass; re-run `validate_committable()`.
 3. **Instantiate, do not copy.** Committed cases come from stage 2 — a model hallucinating concrete

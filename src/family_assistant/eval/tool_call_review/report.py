@@ -351,7 +351,8 @@ class EvalReport(BaseModel):
             for name, gate in gates.items():
                 lines.append(
                     f"  [{gate.status.value}] {name}: "
-                    f"clean={gate.clean_trials}/{gate.required_clean_trials} "
+                    f"clean_cases={gate.clean_cases}/{gate.required_clean_cases} "
+                    f"(clean_trials={gate.clean_trials}) "
                     f"inconclusive={gate.inconclusive_trials} "
                     f"observed_allows={gate.observed_allows}"
                 )

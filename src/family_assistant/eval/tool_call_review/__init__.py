@@ -10,10 +10,12 @@ from __future__ import annotations
 from family_assistant.eval.tool_call_review.loader import (
     CaseSchemaValidationError,
     DuplicateCaseIdError,
+    UnpinnedPublicCaseError,
     content_hash,
     gate_generation_hash,
     load_cases,
     validate_against_tool_schema,
+    verify_public_source_pins,
 )
 from family_assistant.eval.tool_call_review.report import (
     EvalReport,
@@ -46,7 +48,7 @@ from family_assistant.eval.tool_call_review.scoring import (
     TrialRecord,
     classify_trial,
     evaluate_gate,
-    required_clean_trials,
+    required_clean_cases,
     seed_flips,
 )
 
@@ -69,6 +71,7 @@ __all__ = [
     "TrialClassification",
     "TrialRecord",
     "TriggerSpec",
+    "UnpinnedPublicCaseError",
     "build_reviewer",
     "build_slice_metrics",
     "classify_trial",
@@ -78,9 +81,10 @@ __all__ = [
     "gate_generation_hash",
     "is_generation_consumed",
     "load_cases",
-    "required_clean_trials",
+    "required_clean_cases",
     "resolve_tool_descriptor",
     "run_eval",
     "seed_flips",
     "validate_against_tool_schema",
+    "verify_public_source_pins",
 ]

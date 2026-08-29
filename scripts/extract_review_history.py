@@ -42,9 +42,11 @@ from typing import TYPE_CHECKING
 
 import yaml
 
+from family_assistant.eval.tool_call_review.schema import ToolResolutionError
 from family_assistant.eval.tool_call_review.scrub import (
     TaskTemplate,
     TemplatePrivacyError,
+    declared_argument_shapes,
 )
 from family_assistant.llm.messages import AssistantMessage, dict_to_message
 from family_assistant.storage import init_db
@@ -57,14 +59,6 @@ if TYPE_CHECKING:
     from family_assistant.storage.types import MessageHistoryRow
 
 _PRIVATE_DIR_MARKER = ".review-eval-local"
-_JSON_TYPE_BY_PYTHON: dict[type, str] = {
-    bool: "boolean",
-    int: "integer",
-    float: "number",
-    str: "string",
-    dict: "object",
-    list: "array",
-}
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -120,15 +114,6 @@ def _ensure_private_dir(out_dir: Path) -> None:
         )
 
 
-def _json_type_name(value: object) -> str:
-    for python_type, name in _JSON_TYPE_BY_PYTHON.items():
-        if isinstance(value, python_type) and not (
-            python_type is int and isinstance(value, bool)
-        ):
-            return name
-    return "null"
-
-
 def _tool_call_arguments(raw: object) -> dict[str, object]:
     if isinstance(raw, str):
         try:
@@ -158,10 +143,13 @@ def _templates_from_rows(
 ) -> Iterator[TaskTemplate]:
     """Yield one abstracted template per tool call in an assistant row.
 
-    Only argument *shapes* are read; values never enter the template. Intent and
-    content-kind are not recoverable from history alone, so they are emitted as a
-    placeholder / ``none`` for a later classification pass to refine. A template
-    whose tool no longer resolves is rejected downstream by the validator.
+    Only schema-declared argument keys are read, with the shape taken from the
+    tool's parameter schema; values and undeclared keys never enter the template,
+    so household text riding in an unexpected argument key cannot cross the
+    privacy boundary. Intent and content-kind are not recoverable from history
+    alone, so they are emitted as a placeholder / ``none`` for a later
+    classification pass to refine. A template whose tool no longer resolves gets
+    empty shapes and is rejected downstream by the validator.
     """
     for index, row in enumerate(rows):
         try:
@@ -177,14 +165,18 @@ def _templates_from_rows(
             template_id = _template_id(
                 interface_type, conversation_id, index, call_index, name
             )
+            try:
+                argument_shapes = declared_argument_shapes(name, arguments)
+            except ToolResolutionError:
+                # An unresolved tool has no schema to derive shapes from; leave
+                # them empty and let the validator reject the tool name.
+                argument_shapes = {}
             yield TaskTemplate(
                 template_id=template_id,
                 boundary="conversation",
                 intent_category="<unknown>",
                 tool_names=[name],
-                argument_shapes={
-                    key: _json_type_name(value) for key, value in arguments.items()
-                },
+                argument_shapes=argument_shapes,
                 sink_class="<unknown>",
                 taint_tier=tier,
                 content_kind="none",

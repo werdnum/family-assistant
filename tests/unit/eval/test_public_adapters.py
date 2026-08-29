@@ -8,6 +8,7 @@ mapping is exercised without a configured judge.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import pytest
@@ -32,8 +33,10 @@ from family_assistant.eval.tool_call_review.adapters.pins import (
     verify_pin,
 )
 from family_assistant.eval.tool_call_review.loader import (
+    UnpinnedPublicCaseError,
     load_cases,
     validate_against_tool_schema,
+    verify_public_source_pins,
 )
 from family_assistant.eval.tool_call_review.schema import ConversationPayload
 from family_assistant.services.tool_call_review import ToolCallReviewInput
@@ -130,7 +133,8 @@ def test_lineage_fields_populated(adapter_cls: type[Adapter]) -> None:
         assert lineage.group
         assert lineage.license == adapter_cls.license
         assert lineage.text_key
-        assert lineage.dedup_key == (lineage.group, lineage.text_key)
+        # Dedup identity is the normalized text alone, independent of group.
+        assert lineage.dedup_key == lineage.text_key
 
 
 def test_lineage_aware_dedup_collapses_repeats() -> None:
@@ -141,6 +145,29 @@ def test_lineage_aware_dedup_collapses_repeats() -> None:
     deduped = lineage_aware_dedup(duplicated)
     assert len(deduped) == len(adapted)
     assert [item.case.id for item in deduped] == [item.case.id for item in adapted]
+
+
+def test_lineage_aware_dedup_collapses_identical_text_across_groups() -> None:
+    """The same injection text under different corpus groups deduplicates to one.
+
+    Group is corpus-specific (``deepset:…`` vs ``injecagent:…``), so keeping it
+    in the dedup identity would let the same attack straddle a dev/gate split.
+    """
+    adapter = InjecAgentAdapter.from_sample()
+    original = next(iter(adapter.iter_adapted()))
+    twin_key = original.lineage.text_key
+    same_text_other_corpus = AdaptedCase(
+        case=original.case,
+        lineage=replace(
+            original.lineage,
+            corpus_id="deepset_prompt_injections",
+            group=f"deepset:{twin_key[:16]}",
+        ),
+    )
+    assert same_text_other_corpus.lineage.group != original.lineage.group
+    deduped = lineage_aware_dedup([original, same_text_other_corpus])
+    assert len(deduped) == 1
+    assert deduped[0] is original
 
 
 def test_normalized_text_key_folds_whitespace_and_case() -> None:
@@ -251,6 +278,68 @@ def test_from_path_reads_sample_csv() -> None:
     adapter = DeepsetPromptInjectionsAdapter.from_path(sample)
     cases = list(adapter.iter_cases())
     assert len(cases) == 6
+
+
+def _write_deepset_dataset(tmp_path: Path) -> Path:
+    adapter = DeepsetPromptInjectionsAdapter.from_sample()
+    cases_file = tmp_path / f"{adapter.corpus_id}.jsonl"
+    with cases_file.open("w", encoding="utf-8") as handle:
+        for case in adapter.iter_cases():
+            handle.write(json.dumps(case.model_dump(mode="json"), ensure_ascii=False))
+            handle.write("\n")
+    return cases_file
+
+
+def _write_pins(tmp_path: Path, corpus_id: str, checksum: str) -> Path:
+    pins_path = tmp_path / "PINS.toml"
+    pins_path.write_text(
+        f"[{corpus_id}]\n"
+        'upstream = "https://example/demo"\n'
+        'revision = "test-rev"\n'
+        f'checksum = "{checksum}"\n'
+        'license = "test"\n',
+        encoding="utf-8",
+    )
+    return pins_path
+
+
+def test_public_case_fails_the_gate_without_a_matching_pin(tmp_path: Path) -> None:
+    """A public:* dataset the gate consumes must be pinned; unpinned fails closed."""
+    cases_file = _write_deepset_dataset(tmp_path)
+    cases = load_cases(cases_file)
+    assert all(case.source.startswith("public:") for case in cases)
+
+    # No pin recorded for the corpus at all.
+    empty_pins = _write_pins(tmp_path, "unrelated_corpus", "sha256:whatever")
+    with pytest.raises(PinNotFoundError):
+        verify_public_source_pins(cases, pins_path=empty_pins)
+
+
+def test_public_case_passes_the_gate_with_a_matching_pin(tmp_path: Path) -> None:
+    """A public:* dataset whose origin file matches its pin verifies."""
+    cases_file = _write_deepset_dataset(tmp_path)
+    cases = load_cases(cases_file)
+    corpus_id = DeepsetPromptInjectionsAdapter.corpus_id
+    pins_path = _write_pins(tmp_path, corpus_id, corpus_checksum(cases_file))
+
+    # Matching pin: no exception.
+    verify_public_source_pins(cases, pins_path=pins_path)
+
+    # Edit the origin file after pinning: the gate must now refuse it.
+    cases_file.write_text(
+        cases_file.read_text(encoding="utf-8") + "\n", encoding="utf-8"
+    )
+    edited = load_cases(cases_file)
+    with pytest.raises(PinMismatchError):
+        verify_public_source_pins(edited, pins_path=pins_path)
+
+
+def test_unstamped_public_case_fails_the_gate() -> None:
+    """A public:* case with no stamped origin (built in memory) fails closed."""
+    case = next(iter(DeepsetPromptInjectionsAdapter.from_sample().iter_cases()))
+    assert case.origin_path is None
+    with pytest.raises(UnpinnedPublicCaseError):
+        verify_public_source_pins([case])
 
 
 def test_adapted_case_dataclass_pairs_case_and_lineage() -> None:

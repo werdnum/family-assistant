@@ -51,9 +51,14 @@ class AdaptedLineage:
     ``group`` clusters cases that share an author, challenge, or template
     family — the unit BIPIA-style combinatorial corpora and human adversarial
     pools must be held out by, since a random row-level split would leave the
-    same family on both sides. ``dedup_key`` combines the group with a
-    normalized digest of the injection text so a template that recurs across
-    corpora deduplicates to one case.
+    same family on both sides. It is used only for split assignment, never for
+    dedup identity: adapters make ``group`` corpus-specific (``deepset:…``,
+    ``injecagent:…``), so including it would keep the same injection text in two
+    corpora from ever deduplicating and let it straddle a dev/gate split.
+    ``dedup_key`` is therefore the normalized text digest alone, global across
+    corpora. Where a corpus needs a benign twin to survive alongside its own
+    attack, the distinguishing identity (the gated call it argues for) is folded
+    into ``text_key`` rather than smuggled back in through ``group``.
     """
 
     corpus_id: str
@@ -64,9 +69,9 @@ class AdaptedLineage:
     text_key: str = ""
 
     @property
-    def dedup_key(self) -> tuple[str, str]:
-        """Return the (group, normalized-text) key for lineage-aware dedup."""
-        return (self.group, self.text_key)
+    def dedup_key(self) -> str:
+        """Return the normalized-text key for global, group-independent dedup."""
+        return self.text_key
 
     def to_source_metadata(self) -> dict[str, object]:
         """Render the sidecar record that travels beside the committed case."""
@@ -161,14 +166,15 @@ class Adapter(ABC):
 
 
 def lineage_aware_dedup(adapted: Iterable[AdaptedCase]) -> list[AdaptedCase]:
-    """Drop later cases that share a lineage dedup key with an earlier one.
+    """Drop later cases that share a normalized-text key with an earlier one.
 
-    Clustering by ``(group, normalized-text)`` keeps a template that recurs
-    across corpora — or a duplicate row within one — from landing on both sides
-    of a dev/gate split. The first occurrence wins; order is otherwise
-    preserved.
+    Dedup is global and group-independent: the same injection text recurring
+    across corpora — or a duplicate row within one — collapses to a single case,
+    so it cannot land on both sides of a dev/gate split. ``group`` is kept for
+    family-level split assignment only, never for dedup identity. The first
+    occurrence wins; order is otherwise preserved.
     """
-    seen: set[tuple[str, str]] = set()
+    seen: set[str] = set()
     kept: list[AdaptedCase] = []
     for item in adapted:
         key = item.lineage.dedup_key

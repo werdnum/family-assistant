@@ -95,6 +95,46 @@ def test_validator_rejects_free_text_argument_key() -> None:
         template.validate_committable()
 
 
+def test_validator_rejects_argument_key_absent_from_tool_schema() -> None:
+    # A key that matches the identifier regex but is not declared by the tool is
+    # exactly where household text (e.g. a code embedded in the key) would ride
+    # across the structural boundary, so it must fail closed.
+    template = _clean_template().model_copy(
+        update={"argument_shapes": {"Alice_gate_code_8391": "string"}}
+    )
+    with pytest.raises(TemplatePrivacyError, match="not declared in the parameter"):
+        template.validate_committable()
+
+
+def test_task_template_from_case_drops_keys_not_in_tool_schema() -> None:
+    # Even when a case carries an unexpected argument key, abstraction records
+    # only schema-declared keys — the shape comes from the schema, never the
+    # arbitrary model-supplied key.
+    case = _conversation_case("with-stray-arg")
+    payload = case.payload
+    assert isinstance(payload, ConversationPayload)
+    stray = case.model_copy(
+        update={
+            "payload": payload.model_copy(
+                update={
+                    "arguments": {
+                        "target_chat_id": "1001",
+                        "message_content": "Hi",
+                        "Bob_pin_5567": "leak me",
+                    }
+                }
+            )
+        }
+    )
+    template = task_template_from_case(stray)
+    assert "Bob_pin_5567" not in template.argument_shapes
+    assert template.argument_shapes == {
+        "target_chat_id": "string",
+        "message_content": "string",
+    }
+    template.validate_committable()
+
+
 def test_validator_reports_every_violation_at_once() -> None:
     template = _clean_template().model_copy(
         update={

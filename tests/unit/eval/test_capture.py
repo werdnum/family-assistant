@@ -143,7 +143,7 @@ async def test_serialize_and_write_produces_loadable_file(tmp_path: Path) -> Non
 
 
 async def test_capture_enabled_writes_file(tmp_path: Path) -> None:
-    directory = tmp_path / "captures"
+    directory = tmp_path / ".review-eval-local" / "captures"
     config = ToolCallReviewConfig(
         capture=ToolCallReviewCaptureConfig(enabled=True, directory=str(directory))
     )
@@ -162,7 +162,7 @@ async def test_capture_enabled_writes_file(tmp_path: Path) -> None:
 
 
 async def test_capture_disabled_writes_nothing(tmp_path: Path) -> None:
-    directory = tmp_path / "captures"
+    directory = tmp_path / ".review-eval-local" / "captures"
     config = ToolCallReviewConfig(
         capture=ToolCallReviewCaptureConfig(enabled=False, directory=str(directory))
     )
@@ -181,7 +181,7 @@ async def test_capture_disabled_writes_nothing(tmp_path: Path) -> None:
 async def test_capture_failure_never_breaks_review(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    directory = tmp_path / "captures"
+    directory = tmp_path / ".review-eval-local" / "captures"
 
     def _boom(*_args: object, **_kwargs: object) -> object:
         raise RuntimeError("serialization exploded")
@@ -207,3 +207,22 @@ async def test_capture_failure_never_breaks_review(
 def test_shipped_default_capture_is_disabled() -> None:
     assert ToolCallReviewConfig().capture.enabled is False
     assert ToolCallReviewConfig().capture.directory == ".review-eval-local/captures"
+
+
+def test_capture_directory_outside_private_tree_is_rejected() -> None:
+    # A typo like `captures/` would write raw household content to a
+    # commit-visible location, so a directory without a `.review-eval-local`
+    # path component fails validation.
+    with pytest.raises(ValueError, match=".review-eval-local"):
+        ToolCallReviewCaptureConfig(enabled=True, directory="captures")
+
+
+def test_capture_directory_override_allows_external_path() -> None:
+    # An explicit opt-in permits capturing to a deliberately private location
+    # outside the gitignored tree (e.g. a mounted volume).
+    config = ToolCallReviewCaptureConfig(
+        enabled=True,
+        directory="/mnt/private/captures",
+        allow_external_directory=True,
+    )
+    assert config.directory == "/mnt/private/captures"

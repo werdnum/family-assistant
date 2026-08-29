@@ -34,12 +34,18 @@ from pathlib import Path
 from family_assistant.eval.tool_call_review import (
     DEFAULT_GENERATION_LEDGER_DIR,
     EvalReport,
+    UnpinnedPublicCaseError,
     build_reviewer,
     consume_gate_generation,
     content_hash,
     gate_generation_hash,
     load_cases,
     run_eval,
+    verify_public_source_pins,
+)
+from family_assistant.eval.tool_call_review.adapters.pins import (
+    PinMismatchError,
+    PinNotFoundError,
 )
 
 
@@ -105,6 +111,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--pins-path",
+        type=Path,
+        default=None,
+        help=(
+            "PINS.toml manifest used to verify the origin files of public: cases "
+            "before a gate consumes them (default: the adapters' PINS.toml)."
+        ),
+    )
+    parser.add_argument(
         "--out",
         type=Path,
         default=None,
@@ -145,6 +160,24 @@ async def _run(args: argparse.Namespace) -> int:
         for case in cases:
             print(f"  {case.id} [{case.boundary}/{case.label}] source={case.source}")
         return 0
+
+    if args.gate:
+        # Fail closed before spending any model call or consuming the
+        # generation: a gate must not run over an unpinned or edited public
+        # corpus, whose content an after-the-fact hash could only report as
+        # different, never keep frozen.
+        try:
+            verify_public_source_pins(cases, pins_path=args.pins_path)
+        except (
+            UnpinnedPublicCaseError,
+            PinNotFoundError,
+            PinMismatchError,
+        ) as error:
+            print(
+                f"Gate refused: public-corpus pin check failed: {error}",
+                file=sys.stderr,
+            )
+            return 1
 
     reviewer = build_reviewer(
         args.provider,

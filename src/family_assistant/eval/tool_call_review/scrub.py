@@ -49,6 +49,7 @@ __all__ = [
     "Pseudonymizer",
     "TaskTemplate",
     "TemplatePrivacyError",
+    "declared_argument_shapes",
     "pseudonymize_case",
     "pseudonymize_text",
     "task_template_from_case",
@@ -194,15 +195,29 @@ class TaskTemplate(BaseModel):
                 f"content_kind {self.content_kind!r} is not a fixed content-kind tag"
             )
 
+        declared_keys: set[str] = set()
+        any_tool_resolved = False
         for name in self.tool_names:
             try:
-                resolve_tool_descriptor(name, registry=descriptor_registry)
+                descriptor = resolve_tool_descriptor(name, registry=descriptor_registry)
             except ToolResolutionError:
                 errors.append(f"tool_name {name!r} does not resolve in the registry")
+                continue
+            any_tool_resolved = True
+            declared_keys.update(_schema_properties(descriptor))
 
         for key, shape in self.argument_shapes.items():
             if not _ARG_KEY_RE.match(key):
                 errors.append(f"argument key {key!r} is not a schema identifier")
+            elif any_tool_resolved and key not in declared_keys:
+                # A key not in the tool's parameter schema is exactly where
+                # household text (e.g. ``Alice_gate_code_8391``) would ride
+                # across the boundary while still matching the identifier regex.
+                errors.append(
+                    f"argument key {key!r} is not declared in the parameter schema "
+                    f"of {self.tool_names}; only schema-declared keys may cross the "
+                    "privacy boundary"
+                )
             if not (shape in JSON_TYPE_NAMES or _is_placeholder(shape)):
                 errors.append(
                     f"argument {key!r} shape {shape!r} is not a JSON type name"
@@ -215,20 +230,51 @@ class TaskTemplate(BaseModel):
             )
 
 
-def _json_type_name(value: object) -> str:
-    if isinstance(value, bool):
-        return "boolean"
-    if isinstance(value, int):
-        return "integer"
-    if isinstance(value, float):
-        return "number"
-    if isinstance(value, str):
-        return "string"
-    if isinstance(value, dict):
-        return "object"
-    if isinstance(value, (list, tuple)):
-        return "array"
-    return "null"
+def _schema_properties(descriptor: ToolDescriptor) -> Mapping[str, object]:
+    """Return a tool descriptor's declared parameter properties, or ``{}``."""
+    function = descriptor.definition.get("function")
+    if not isinstance(function, dict):
+        return {}
+    parameters = function.get("parameters")
+    if not isinstance(parameters, dict):
+        return {}
+    properties = parameters.get("properties")
+    return properties if isinstance(properties, dict) else {}
+
+
+def _schema_type_name(prop_schema: object) -> str:
+    """Return a declared property's JSON type name, or a placeholder token."""
+    if isinstance(prop_schema, dict):
+        declared = prop_schema.get("type")
+        if isinstance(declared, str) and declared in JSON_TYPE_NAMES:
+            return declared
+    return "<unknown>"
+
+
+def declared_argument_shapes(
+    tool_name: str,
+    arguments: Mapping[str, object],
+    *,
+    descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
+) -> dict[str, str]:
+    """Return schema-derived shapes for the arguments a tool actually declares.
+
+    Only argument keys present in the tool's parameter schema are recorded, and
+    each shape is the schema's declared JSON type (or ``<unknown>``), never a
+    type inferred from a model-supplied value. A key absent from the schema —
+    the seam private household text would ride into the template through (an
+    unexpected key like ``Alice_gate_code_8391`` matches the identifier regex
+    but carries content) — is dropped here, and fails closed at
+    :meth:`TaskTemplate.validate_committable` if it reaches a template another
+    way.
+    """
+    descriptor = resolve_tool_descriptor(tool_name, registry=descriptor_registry)
+    properties = _schema_properties(descriptor)
+    return {
+        key: _schema_type_name(properties[key])
+        for key in arguments
+        if key in properties
+    }
 
 
 def task_template_from_case(
@@ -237,15 +283,19 @@ def task_template_from_case(
     template_id: str | None = None,
     intent_category: str = "<unknown>",
     content_kind: str = "none",
+    descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
 ) -> TaskTemplate:
     """Abstract a conversation case into an enumerated task template.
 
-    Argument *shapes* (key and JSON type) are derived from the case's arguments;
-    values never cross into the template. Intent and content-kind are not
-    recoverable from a case alone, so they default to a placeholder and ``none``
-    respectively — a classification pass overrides them with closed-vocabulary
-    values before the template is committed. The result is not automatically
-    committable; the caller must run :meth:`TaskTemplate.validate_committable`.
+    Argument *shapes* are recorded only for keys the resolved tool declares in
+    its parameter schema, with the shape taken from the schema — never from an
+    arbitrary model-supplied key or value, so household text in an unexpected
+    argument key cannot cross the structural privacy boundary. Intent and
+    content-kind are not recoverable from a case alone, so they default to a
+    placeholder and ``none`` respectively — a classification pass overrides them
+    with closed-vocabulary values before the template is committed. The result
+    is not automatically committable; the caller must run
+    :meth:`TaskTemplate.validate_committable`.
     """
     payload = case.payload
     if not isinstance(payload, ConversationPayload):
@@ -258,9 +308,11 @@ def task_template_from_case(
         boundary=case.boundary,
         intent_category=intent_category,
         tool_names=[payload.tool_name],
-        argument_shapes={
-            key: _json_type_name(value) for key, value in payload.arguments.items()
-        },
+        argument_shapes=declared_argument_shapes(
+            payload.tool_name,
+            payload.arguments,
+            descriptor_registry=descriptor_registry,
+        ),
         sink_class=payload.sink_class,
         taint_tier=_case_taint_tier(payload),
         content_kind=content_kind,
