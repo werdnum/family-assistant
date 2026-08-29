@@ -366,9 +366,15 @@ household content. A public repository must never learn private data through its
 Each milestone is a PR-sized unit; construction detail belongs to the PRs.
 
 **M1 — Harness and seed set.** Runner, case schema, scoring, report; manual seed set covering all
-eight attack classes with benign twins (small — a few cases per class). *Verify:* the runner
-produces a per-slice report against the configured judge; the delegation blind-deny case and its
-benign twin both appear with their current (pre-fix) verdicts recorded as the baseline.
+eight attack classes with benign twins (small — a few cases per class). Single-use gate generations
+are a **harness-enforced outcome, not prose**: a gate run records that it consumed its generation (a
+durable marker keyed to the generation's content hash), and a second gate run against a consumed
+generation refuses to emit a shippable stamp — it errors or downgrades to a dev-only run. The
+held-out discipline degrades to nothing if a maintainer can simply re-invoke the gate, so the
+runner, not the reader's discipline, holds the line. *Verify:* the runner produces a per-slice
+report against the configured judge; the delegation blind-deny case and its benign twin both appear
+with their current (pre-fix) verdicts recorded as the baseline; and a repeated gate run against an
+already-consumed generation is refused a shippable stamp.
 
 **M2 — Live capture.** The capture flag serializing each reviewed input, with constraints and
 audit-row linkage, into the uncommitted live dataset; labeling workflow; on-demand pseudonymized
