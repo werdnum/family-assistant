@@ -314,12 +314,15 @@ labels, and full input reconstruction buys little once byte fidelity belongs to 
 instead used as a **template quarry**, in two stages with a privacy chokepoint between them:
 
 1. **Classify and abstract, locally.** A cheap scripted model pass walks historical turns and emits
-   *task templates*: intent category, tools called, argument shapes, sink class, taint-tier context,
-   and what kind of content flowed — "forward a school-newsletter summary to a partner; untrusted
-   email content in context; `send_message_to_user` to a known contact". The template is where
-   private data stops: templates are reviewed before leaving the private side (the set is small
-   enough to skim whole; an n-gram overlap check against source turns is optional hardening against
-   verbatim leakage).
+   *task templates*. A template is a **structured record of enumerated fields, not free text**:
+   intent category (from a closed vocabulary), tool names (from the registry), argument *shapes*
+   (keys and types, never values), sink class, taint-tier context, and a content-kind tag drawn from
+   a fixed list ("school-newsletter-summary", "known-contact-message"). No field admits verbatim
+   household text. The privacy chokepoint is therefore **structural, enforced by a mandatory
+   validator that fails closed**: a template is committable only if every field parses as its
+   enumerated type or a placeholder token, and any free-text or unrecognized value aborts the
+   export. The maintainer skim is a second layer on top of the validator, not the boundary itself —
+   the boundary is that private text has no field to travel in.
 2. **Instantiate, hallucinating freely.** A capable model generates concrete cases from templates —
    invented names, dates, email bodies, tool results, note contents — into the case schema,
    validated against real tool schemas at load. Hallucinated content is sufficient here: the judge
