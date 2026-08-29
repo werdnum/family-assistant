@@ -1,0 +1,32 @@
+# Upstream-revision pins for gated public corpora.
+#
+# "Any corpus a gate consumes is pinned" (docs/design/tool-call-review-eval.md,
+# Public corpora). A gate run fails on a mismatch rather than evaluating
+# silently different content. Unpinned fetch-on-demand is acceptable only for
+# dev slices.
+#
+# The `checksum` fields ship as the placeholder "sha256:PLACEHOLDER" because the
+# real corpora are NOT vendored in this repository — only tiny synthetic samples
+# under adapters/samples/ are committed. Before a gate consumes a corpus, a
+# maintainer fetches it at the pinned `revision`, hashes it with
+# `pins.corpus_checksum(path)`, records the result here, and confirms the
+# LICENSE at that revision. `verify_pin()` fails on a placeholder, so a gate can
+# never silently run against an unpinned corpus.
+
+[deepset_prompt_injections]
+upstream = "https://huggingface.co/datasets/deepset/prompt-injections"
+revision = "REPLACE_WITH_PINNED_COMMIT_SHA"
+checksum = "sha256:PLACEHOLDER"
+# License: the deepset/prompt-injections dataset card does not declare a
+# standard SPDX identifier; treat as research-use only and confirm the terms at
+# the pinned revision before a gate consumes it. Dev-slice use only until then.
+license = "unverified-see-dataset-card"
+
+[injecagent]
+upstream = "https://github.com/uiuc-kang-lab/InjecAgent"
+revision = "REPLACE_WITH_PINNED_COMMIT_SHA"
+checksum = "sha256:PLACEHOLDER"
+# License: InjecAgent is published under the MIT license in its GitHub
+# repository; confirm the LICENSE file at the pinned revision before a gate
+# consumes it.
+license = "MIT (verify at pinned revision)"

@@ -28,6 +28,14 @@ from family_assistant.services.tool_call_review import (
 )
 from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS
 
+# The harness must stay byte-faithful to the runtime's own signal derivation:
+# the destination the reviewer sees comes from the descriptor's declared
+# destination argument paths (first nonblank, nested paths supported), and a
+# reimplementation here would drift from the runtime the eval claims to
+# measure. So the runtime's private helper is imported and used verbatim rather
+# than reproduced.
+from family_assistant.tools.infrastructure import _destination_argument
+
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -102,6 +110,23 @@ class CaseConstraints(BaseModel):
     available_verdicts: list[ToolCallReviewVerdict]
     fallback_verdict: ToolCallReviewVerdict
 
+    @model_validator(mode="after")
+    def _validate_verdict_space(self) -> CaseConstraints:
+        """Mirror the runtime constraint invariants at load time.
+
+        ``ToolCallReviewConstraints`` rejects these combinations, but only once
+        a case is converted for a live run — a ``--dry-run`` validation pass
+        would otherwise report an impossible case as loadable and the failure
+        would surface mid-run instead.
+        """
+        if not self.available_verdicts:
+            raise ValueError("available_verdicts must not be empty")
+        if self.fallback_verdict is ToolCallReviewVerdict.ALLOW:
+            raise ValueError("review fallback must never be allow")
+        if self.fallback_verdict not in self.available_verdicts:
+            raise ValueError("fallback_verdict must be in available_verdicts")
+        return self
+
     def to_constraints(self) -> ToolCallReviewConstraints:
         """Render the runtime constraints object the reviewer validates against."""
         return ToolCallReviewConstraints(
@@ -147,6 +172,11 @@ class ConversationPayload(BaseModel):
     ``delegation_sink_classes``) that replay cannot recover from the descriptor
     and arguments alone, so a delegation case must carry the sink the runtime
     actually reviewed.
+
+    The destination is not a field here: it is derived from the descriptor and
+    the stored arguments by the runtime's own extractor at load, so a case can
+    neither name a destination the runtime would not have read nor go stale
+    when a tool's declared destination paths change.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -160,7 +190,6 @@ class ConversationPayload(BaseModel):
     deployment_guidance: str = ""
     profile_guidance: str = ""
     trigger: TriggerSpec | None = None
-    destination_arg_key: str | None = None
 
 
 class BrowserPayload(BaseModel):
@@ -304,14 +333,11 @@ class EvalCase(BaseModel):
         trigger = (
             payload.trigger.to_trigger_input() if payload.trigger is not None else None
         )
-        destination_echo = None
-        if payload.destination_arg_key is not None:
-            destination = payload.arguments.get(payload.destination_arg_key)
-            destination_echo = compute_trusted_destination_echo(
-                destination if isinstance(destination, str) else None,
-                messages,
-                trigger=trigger,
-            )
+        destination_echo = compute_trusted_destination_echo(
+            _destination_argument(descriptor, payload.arguments),
+            messages,
+            trigger=trigger,
+        )
         return ToolCallReviewInput(
             messages=messages,
             descriptor=descriptor,

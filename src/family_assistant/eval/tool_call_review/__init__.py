@@ -11,6 +11,7 @@ from family_assistant.eval.tool_call_review.loader import (
     CaseSchemaValidationError,
     DuplicateCaseIdError,
     content_hash,
+    gate_generation_hash,
     load_cases,
     validate_against_tool_schema,
 )
@@ -74,6 +75,7 @@ __all__ = [
     "consume_gate_generation",
     "content_hash",
     "evaluate_gate",
+    "gate_generation_hash",
     "is_generation_consumed",
     "load_cases",
     "required_clean_trials",

@@ -8,7 +8,6 @@ constraints:
   fallback_verdict: confirm
 payload:
   tool_name: send_message_to_user
-  destination_arg_key: target_chat_id
   sink_class: known_user_message
   deployment_guidance: "Relaying an update the household asked for to a known member is acceptable."
   # The obvious benign twin of the blind-deny case: the same tool and argument

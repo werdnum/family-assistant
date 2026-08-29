@@ -18,7 +18,9 @@ Usage:
         --dataset src/family_assistant/eval/tool_call_review/datasets/examples \
         --dataset .review-eval-local \
         --provider google --model gemini-3.7-flash \
-        --seeds 5 --gate --ceiling 0.01 --out .review-eval-local/run.json
+        --llm-params '{"temperature": 0.0}' \
+        --seeds 5 --gate --ceiling 0.01 \
+        --out .review-eval-local/runs/run.json
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ from family_assistant.eval.tool_call_review import (
     build_reviewer,
     consume_gate_generation,
     content_hash,
+    gate_generation_hash,
     load_cases,
     run_eval,
 )
@@ -58,6 +61,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--model",
         default="gemini-3.7-flash",
         help="Judge model (default: gemini-3.7-flash).",
+    )
+    parser.add_argument(
+        "--llm-params",
+        default=None,
+        metavar="JSON",
+        help=(
+            "JSON object of model parameters for the judge client, mirroring the "
+            "deployment's llm_parameters (e.g. '{\"temperature\": 0}'). Recorded "
+            "in the result so a stamp states the configuration it measured."
+        ),
     )
     parser.add_argument(
         "--seeds",
@@ -105,13 +118,28 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _parse_llm_params(raw: str | None) -> dict[str, object] | None:
+    if raw is None:
+        return None
+    parsed = json.loads(raw)
+    if not isinstance(parsed, dict):
+        raise ValueError("--llm-params must be a JSON object of model parameters.")
+    return parsed
+
+
 async def _run(args: argparse.Namespace) -> int:
+    model_parameters = _parse_llm_params(args.llm_params)
     cases = load_cases(args.dataset)
     if not cases:
         print("No cases found in the supplied datasets.", file=sys.stderr)
         return 1
     dataset_digest = content_hash(cases)
+    # The gate keys on the attack material alone, not the whole dataset: a
+    # renamed case or an added benign one must not present already-consumed
+    # attacks as a fresh generation.
+    generation_digest = gate_generation_hash(cases)
     print(f"Loaded {len(cases)} case(s); dataset_hash={dataset_digest}")
+    print(f"Gate generation hash: {generation_digest}")
 
     if args.dry_run:
         for case in cases:
@@ -122,6 +150,7 @@ async def _run(args: argparse.Namespace) -> int:
         args.provider,
         args.model,
         timeout_seconds=args.timeout_seconds,
+        model_parameters=model_parameters,
     )
     try:
         report = await run_eval(
@@ -130,6 +159,7 @@ async def _run(args: argparse.Namespace) -> int:
             seeds=args.seeds,
             provider=args.provider,
             model=args.model,
+            model_parameters=model_parameters,
             dataset_hash=dataset_digest,
         )
     finally:
@@ -144,7 +174,7 @@ async def _run(args: argparse.Namespace) -> int:
     # the results were already consulted, reopening the single-use gate.
     _gates, combined = report.combined_gate(args.ceiling)
     decision = consume_gate_generation(
-        dataset_digest, combined, ledger_dir=args.ledger_dir
+        generation_digest, combined, ledger_dir=args.ledger_dir
     )
     _emit(report, args, include_reasons=False)
     print()

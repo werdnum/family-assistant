@@ -384,6 +384,15 @@ tool_call_review:
     consecutive_denials: 3
     total_denials_per_turn: 20
   guidance: ""
+  # On-source capture of reviewed inputs into a private, gitignored dataset for
+  # the tool-call review eval harness (friction set). SHIPPED OFF: captures
+  # contain household content and are a per-deployment, unshared artifact a
+  # maintainer opts into. When enabled, each reviewed input is serialized as a
+  # raw EvalCase under `directory`, best-effort and off the review's critical
+  # path. `directory` MUST be gitignored (`.review-eval-local/` already is).
+  capture:
+    enabled: false
+    directory: ".review-eval-local/captures"
 
 # --- Runtime Taint Policy ---
 # Tracks whether the current turn has incorporated untrusted external content

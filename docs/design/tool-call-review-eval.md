@@ -61,8 +61,8 @@ time, and the case's stored arguments are validated against the resolved descrip
 schema — name resolution alone would let a tool that kept its name but changed its schema replay
 stale, now-impossible calls that still count as clean trials. A case naming a missing tool or
 carrying arguments the current schema rejects fails its slice loudly instead of quietly flattering
-the judge. Derived signals that the runtime computes (destination echo) are recomputed at load,
-never stored, for the same reason.
+the judge. Derived signals that the runtime computes (destination echo) are recomputed at load by
+the runtime's own derivation code, never stored or restated by a case, for the same reason.
 
 ### Runner and reporting
 
@@ -378,14 +378,15 @@ Each milestone is a PR-sized unit; construction detail belongs to the PRs.
 **M1 — Harness and seed set.** Runner, case schema, scoring, report; manual seed set covering all
 eight attack classes with benign twins (small — a few cases per class). Single-use gate generations
 are a **harness-enforced outcome, not prose**: a gate run records that it consumed its generation (a
-durable marker keyed to the generation's content hash, kept in a repository-tracked ledger so
-consumption survives fresh clones and deleting a marker is an auditable act), and a second gate run
-against a consumed generation refuses to emit a shippable stamp — it errors or downgrades to a
-dev-only run. The held-out discipline degrades to nothing if a maintainer can simply re-invoke the
-gate, so the runner, not the reader's discipline, holds the line. *Verify:* the runner produces a
-per-slice report against the configured judge; the delegation blind-deny case and its benign twin
-both appear with their current (pre-fix) verdicts recorded as the baseline; and a repeated gate run
-against an already-consumed generation is refused a shippable stamp.
+durable marker keyed to a hash of the generation's attack material alone — not of the whole dataset,
+whose ids and benign cases would otherwise let a rename re-open a consumed generation — kept in a
+repository-tracked ledger so consumption survives fresh clones and deleting a marker is an auditable
+act), and a second gate run against a consumed generation refuses to emit a shippable stamp — it
+errors or downgrades to a dev-only run. The held-out discipline degrades to nothing if a maintainer
+can simply re-invoke the gate, so the runner, not the reader's discipline, holds the line. *Verify:*
+the runner produces a per-slice report against the configured judge; the delegation blind-deny case
+and its benign twin both appear with their current (pre-fix) verdicts recorded as the baseline; and
+a repeated gate run against an already-consumed generation is refused a shippable stamp.
 
 **M2 — Live capture.** The capture flag serializing each reviewed input, with constraints and
 audit-row linkage, into the uncommitted live dataset; labeling workflow; on-demand pseudonymized
@@ -425,7 +426,8 @@ harness's slices and gates by name as their evidence source.
   codebase get the harness and committed sets; their friction numbers come from their own extracts.
 - **No dataset versioning machinery beyond git and pins.** Committed datasets are files in git;
   gated external corpora carry the upstream revision/checksum pins described above; run results
-  record the dataset content hash for comparing runs. Nothing more elaborate until it earns its
+  record the dataset content hash for comparing runs, which is a separate digest from the
+  attack-only generation hash the gate ledger keys on. Nothing more elaborate until it earns its
   keep.
 
 ## Review questions

@@ -57,11 +57,17 @@ def build_reviewer(
     model: str,
     *,
     timeout_seconds: float = 30.0,
+    model_parameters: Mapping[str, object] | None = None,
 ) -> ToolCallReviewer:
     """Build a real reviewer from a provider/model, deferring client creation.
 
     The client is created lazily through a factory so constructing the reviewer
     (e.g. for a load-only check) never triggers a network dependency.
+
+    ``model_parameters`` mirrors the deployment's ``llm_parameters``, which the
+    runtime passes to the same factory: temperature and reasoning options change
+    the judgments being measured, so a run that omits them measures a different
+    configuration than the one deployed.
     """
     config = ToolCallReviewConfig(
         enabled=True,
@@ -69,12 +75,13 @@ def build_reviewer(
         model=model,
         timeout_seconds=timeout_seconds,
     )
+    parameters = dict(model_parameters or {})
 
     def factory() -> LLMInterface:
         return LLMClientFactory.create_client({
             "provider": provider,
             "model": model,
-            "model_parameters": {},
+            "model_parameters": parameters,
         })
 
     return ToolCallReviewer(None, config, llm_client_factory=factory)
@@ -87,6 +94,7 @@ async def run_eval(
     seeds: int = 5,
     provider: str | None = None,
     model: str | None = None,
+    model_parameters: Mapping[str, object] | None = None,
     dataset_hash: str | None = None,
     descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
 ) -> EvalReport:
@@ -95,7 +103,9 @@ async def run_eval(
     Derivation cases are skipped with a note: no shipped judge consumes them.
     Cases are processed in deterministic id order. ``descriptor_registry``
     overrides the local tool registry for deployments replaying captures that
-    involve MCP or named-sink tools.
+    involve MCP or named-sink tools. ``model_parameters`` is recorded, not
+    applied: the reviewer's client already carries them, and the report states
+    the configuration the numbers were measured under.
     """
     if seeds < 1:
         raise ValueError("seeds must be at least 1.")
@@ -139,6 +149,7 @@ async def run_eval(
         seeds=seeds,
         provider=provider,
         model=model,
+        model_parameters=dict(model_parameters) if model_parameters else None,
         dataset_hash=dataset_hash,
     )
 

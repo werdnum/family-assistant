@@ -6,6 +6,7 @@ well only on one corpus's house style must be visible rather than averaged away.
 
 from __future__ import annotations
 
+import json
 import statistics
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -152,6 +153,7 @@ class EvalReport(BaseModel):
     seeds: int
     provider: str | None = None
     model: str | None = None
+    model_parameters: dict[str, object] | None = None
     dataset_hash: str | None = None
     generated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
@@ -306,6 +308,11 @@ class EvalReport(BaseModel):
             f"  cases_run={len({trial.case_id for trial in self.trials})} "
             f"trials={len(self.trials)} skipped={len(self.skipped_case_ids)}"
         )
+        if self.model_parameters:
+            lines.append(
+                "  model_parameters="
+                + json.dumps(self.model_parameters, sort_keys=True, ensure_ascii=False)
+            )
         if self.dataset_hash:
             lines.append(f"  dataset_hash={self.dataset_hash}")
         lines.append("")

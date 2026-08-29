@@ -69,6 +69,26 @@ class ToolCallReviewEscalationConfig(BaseModel):
     total_denials_per_turn: int = Field(default=20, ge=1)
 
 
+class ToolCallReviewCaptureConfig(BaseModel):
+    """On-source capture of reviewed inputs into a private local dataset.
+
+    The audit table persists only identifiers and audit-safe summaries; the
+    in-memory typed input the reviewer actually saw (message window, guidance,
+    policy contexts, taint state) is not recoverable from a post-hoc join. When
+    ``enabled`` the review chokepoint serializes each reviewed input into
+    ``directory`` as a raw ``EvalCase``, best-effort and off the review's
+    critical path. Captures contain household content, so ``directory`` must be
+    a gitignored path (``.review-eval-local/`` is ignored by the repository);
+    it is never committed. Ships OFF: the friction dataset is a per-deployment,
+    unshared artifact a maintainer opts into.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    directory: str = ".review-eval-local/captures"
+
+
 class ToolCallReviewConfig(BaseModel):
     """Configuration for the non-agentic tool-call reviewer."""
 
@@ -84,6 +104,9 @@ class ToolCallReviewConfig(BaseModel):
         default_factory=ToolCallReviewEscalationConfig
     )
     guidance: str = ""
+    capture: ToolCallReviewCaptureConfig = Field(
+        default_factory=ToolCallReviewCaptureConfig
+    )
 
 
 class ReolinkCameraItemConfig(BaseModel):

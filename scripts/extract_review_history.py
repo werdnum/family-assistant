@@ -1,0 +1,286 @@
+#!/usr/bin/env python3
+"""Abstract message history into committable task templates for the review eval.
+
+This is stage 1 of the history-derived pipeline described in
+``docs/design/tool-call-review-eval.md``: walk historical turns, abstract each
+tool call into an *enumerated* :class:`TaskTemplate` (intent, registry tool
+names, argument *shapes* rather than values, sink class, taint tier,
+content-kind tag), and run every template through the structural privacy
+chokepoint (:meth:`TaskTemplate.validate_committable`) before it may be written.
+
+The chokepoint fails closed: a template with any free-text or unrecognized
+field aborts rather than being written, so private household text has no field
+to travel in. Output is written only under the gitignored ``.review-eval-local/``
+tree; the script refuses any other destination.
+
+Nothing here instantiates cases with content — stage 2 (a capable model
+hallucinating concrete cases from committed templates) is a separate,
+maintainer-run step. See ``docs/development/review-eval-history-extraction.md``.
+
+Usage:
+
+    # Dry run against a dev SQLite DB: classify, validate, report, write nothing.
+    python scripts/extract_review_history.py \
+        --database-url "sqlite+aiosqlite:///family_assistant.db" --dry-run
+
+    # Write committable templates into the private dir.
+    python scripts/extract_review_history.py \
+        --database-url "sqlite+aiosqlite:///family_assistant.db" \
+        --out-dir .review-eval-local/templates
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import hashlib
+import json
+import os
+import sys
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import yaml
+
+from family_assistant.eval.tool_call_review.scrub import (
+    TaskTemplate,
+    TemplatePrivacyError,
+)
+from family_assistant.llm.messages import AssistantMessage, dict_to_message
+from family_assistant.storage import init_db
+from family_assistant.storage.base import create_engine_with_sqlite_optimizations
+from family_assistant.storage.database import Database
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    from family_assistant.storage.types import MessageHistoryRow
+
+_PRIVATE_DIR_MARKER = ".review-eval-local"
+_JSON_TYPE_BY_PYTHON: dict[type, str] = {
+    bool: "boolean",
+    int: "integer",
+    float: "number",
+    str: "string",
+    dict: "object",
+    list: "array",
+}
+
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--database-url",
+        default=os.environ.get(
+            "DATABASE_URL", "sqlite+aiosqlite:///family_assistant.db"
+        ),
+        help="SQLAlchemy async URL (default: $DATABASE_URL or a dev sqlite file).",
+    )
+    parser.add_argument(
+        "--out-dir",
+        default=f"{_PRIVATE_DIR_MARKER}/templates",
+        help=(
+            "Destination for committable templates. Must live under "
+            f"{_PRIVATE_DIR_MARKER}/ — household-derived material never leaves the "
+            "private tree."
+        ),
+    )
+    parser.add_argument(
+        "--interface-type",
+        default=None,
+        help="Restrict to one interface type (default: all).",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Stop after abstracting this many committable templates.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Classify, validate, and report only; write nothing.",
+    )
+    return parser.parse_args(argv)
+
+
+def _ensure_private_dir(out_dir: Path) -> None:
+    """Abort unless ``out_dir`` lives under the gitignored private tree.
+
+    The guard is structural, not advisory: the script has no committable output,
+    so a destination outside the private tree is always a mistake and is refused
+    before any read happens.
+    """
+    resolved = out_dir.resolve()
+    if _PRIVATE_DIR_MARKER not in resolved.parts:
+        raise SystemExit(
+            f"Refusing to write to {out_dir}: history-derived output must live "
+            f"under a {_PRIVATE_DIR_MARKER}/ directory (gitignored). "
+            "Household content must never leave the private tree."
+        )
+
+
+def _json_type_name(value: object) -> str:
+    for python_type, name in _JSON_TYPE_BY_PYTHON.items():
+        if isinstance(value, python_type) and not (
+            python_type is int and isinstance(value, bool)
+        ):
+            return name
+    return "null"
+
+
+def _tool_call_arguments(raw: object) -> dict[str, object]:
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+    if isinstance(raw, dict):
+        return raw
+    return {}
+
+
+def _row_taint_tier(row: MessageHistoryRow) -> str:
+    metadata = row.get("taint_metadata")
+    if isinstance(metadata, dict):
+        tier = metadata.get("max_tier")
+        if isinstance(tier, str):
+            return tier
+    return "<unknown>"
+
+
+def _templates_from_rows(
+    rows: list[MessageHistoryRow],
+    *,
+    interface_type: str,
+    conversation_id: str,
+) -> Iterator[TaskTemplate]:
+    """Yield one abstracted template per tool call in an assistant row.
+
+    Only argument *shapes* are read; values never enter the template. Intent and
+    content-kind are not recoverable from history alone, so they are emitted as a
+    placeholder / ``none`` for a later classification pass to refine. A template
+    whose tool no longer resolves is rejected downstream by the validator.
+    """
+    for index, row in enumerate(rows):
+        try:
+            message = dict_to_message(dict(row))
+        except (KeyError, ValueError, TypeError):
+            continue
+        if not isinstance(message, AssistantMessage) or not message.tool_calls:
+            continue
+        tier = _row_taint_tier(row)
+        for call_index, tool_call in enumerate(message.tool_calls):
+            name = tool_call.function.name
+            arguments = _tool_call_arguments(tool_call.function.arguments)
+            template_id = _template_id(
+                interface_type, conversation_id, index, call_index, name
+            )
+            yield TaskTemplate(
+                template_id=template_id,
+                boundary="conversation",
+                intent_category="<unknown>",
+                tool_names=[name],
+                argument_shapes={
+                    key: _json_type_name(value) for key, value in arguments.items()
+                },
+                sink_class="<unknown>",
+                taint_tier=tier,
+                content_kind="none",
+            )
+
+
+def _template_id(
+    interface_type: str,
+    conversation_id: str,
+    row_index: int,
+    call_index: int,
+    tool_name: str,
+) -> str:
+    seed = "\x1f".join([
+        interface_type,
+        conversation_id,
+        str(row_index),
+        str(call_index),
+        tool_name,
+    ])
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:12]
+    return f"tmpl-{digest}"
+
+
+async def _collect_templates(
+    database_url: str,
+    *,
+    interface_type: str | None,
+    limit: int | None,
+) -> tuple[list[TaskTemplate], list[tuple[str, str]]]:
+    engine = create_engine_with_sqlite_optimizations(database_url)
+    committable: list[TaskTemplate] = []
+    rejected: list[tuple[str, str]] = []
+    try:
+        await init_db(engine)
+        db = Database(engine)
+        grouped = await db.message_history.get_all_grouped(
+            interface_type=interface_type,
+            include_subconversations=True,
+        )
+        for (iface, conversation_id), rows in grouped.items():
+            for template in _templates_from_rows(
+                rows, interface_type=iface, conversation_id=conversation_id
+            ):
+                try:
+                    template.validate_committable()
+                except TemplatePrivacyError as error:
+                    rejected.append((template.template_id, str(error)))
+                    continue
+                committable.append(template)
+                if limit is not None and len(committable) >= limit:
+                    return committable, rejected
+    finally:
+        await engine.dispose()
+    return committable, rejected
+
+
+def _write_templates(templates: list[TaskTemplate], out_dir: Path) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for template in templates:
+        # Revalidate at the write boundary: nothing reaches disk without passing
+        # the fail-closed chokepoint immediately before it is written.
+        template.validate_committable()
+        path = out_dir / f"{template.template_id}.yaml"
+        path.write_text(
+            yaml.safe_dump(template.model_dump(mode="json"), sort_keys=False),
+            encoding="utf-8",
+        )
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    out_dir = Path(args.out_dir)
+    _ensure_private_dir(out_dir)
+
+    committable, rejected = asyncio.run(
+        _collect_templates(
+            args.database_url,
+            interface_type=args.interface_type,
+            limit=args.limit,
+        )
+    )
+
+    print(f"Committable templates: {len(committable)}")
+    print(f"Rejected by privacy chokepoint: {len(rejected)}")
+    for template_id, reason in rejected[:20]:
+        print(f"  - {template_id}: {reason}")
+
+    if args.dry_run:
+        print("Dry run: no files written.")
+        return 0
+
+    _write_templates(committable, out_dir)
+    print(f"Wrote {len(committable)} templates to {out_dir}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -25,11 +25,19 @@ __all__ = [
     "CaseSchemaValidationError",
     "DuplicateCaseIdError",
     "content_hash",
+    "gate_generation_hash",
     "load_cases",
     "validate_against_tool_schema",
 ]
 
 _CASE_SUFFIXES = (".jsonl", ".yaml", ".yml", ".json")
+
+# Run reports and consumed-generation markers are harness *outputs*, and a
+# report written under a scanned dataset directory would otherwise be parsed as
+# a case on the next load. Excluding well-known directory names is
+# deterministic; sniffing file contents to guess what is a case would instead
+# make a malformed case disappear silently.
+_EXCLUDED_DIR_NAMES = frozenset({"consumed_generations", "runs"})
 
 
 class CaseSchemaValidationError(Exception):
@@ -106,11 +114,51 @@ def load_cases(
 
 
 def content_hash(cases: Sequence[EvalCase]) -> str:
-    """Return a stable content hash of a set of cases for run comparison."""
+    """Return a stable content hash of a set of cases for run comparison.
+
+    This covers every field of every case, so it answers "did two runs see the
+    same dataset?". It is deliberately *not* the gate identity: renaming a case
+    or adding a benign one changes it, which would let already-consumed attack
+    material be re-gated as a fresh generation. Gate consumption keys on
+    :func:`gate_generation_hash`.
+    """
     serialized = [
         case.model_dump(mode="json") for case in sorted(cases, key=lambda case: case.id)
     ]
     encoded = json.dumps(serialized, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def gate_generation_hash(cases: Sequence[EvalCase]) -> str:
+    """Return the digest identifying a gate generation's held-out material.
+
+    A generation's identity is the attack material a gate run actually
+    consulted: each attack case's payload and the verdict space it was judged
+    under. Envelope metadata (ids, source, axis labels) and benign cases are
+    excluded, so re-labelling or extending a dataset cannot mint a "new"
+    generation over attacks that have already been consumed — only changing
+    what an attack proposes, or the space it is judged in, does. A dataset with
+    no attack cases digests to the empty generation, which costs nothing: such
+    a run has no attack trials and cannot pass a gate anyway.
+    """
+    serialized = sorted(
+        json.dumps(
+            {
+                "payload": case.payload.model_dump(mode="json"),
+                "constraints": {
+                    "available_verdicts": sorted(
+                        verdict.value for verdict in case.constraints.available_verdicts
+                    ),
+                    "fallback_verdict": case.constraints.fallback_verdict.value,
+                },
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+        )
+        for case in cases
+        if case.label == "attack"
+    )
+    encoded = json.dumps(serialized, ensure_ascii=False)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
@@ -128,7 +176,11 @@ def _collect_files(paths: str | Path | Iterable[str | Path]) -> list[Path]:
             matched = sorted(
                 path
                 for path in candidate.rglob("*")
-                if path.is_file() and path.suffix.lower() in _CASE_SUFFIXES
+                if path.is_file()
+                and path.suffix.lower() in _CASE_SUFFIXES
+                and not _EXCLUDED_DIR_NAMES.intersection(
+                    path.relative_to(candidate).parts[:-1]
+                )
             )
         else:
             matched = [candidate]
