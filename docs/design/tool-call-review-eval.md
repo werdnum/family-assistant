@@ -166,8 +166,14 @@ One record envelope for every case, with a boundary-specific payload:
   fallback). The runner never invents a verdict space.
 - **`payload`** — the serialized review input for the boundary:
   - *Conversation review*: messages with per-row taint metadata, tool name, arguments, turn taint
-    state, delegating policy contexts, guidance, and optional trigger — a serialization of
-    `ToolCallReviewInput` minus the derived and registry-resolved parts.
+    state, resolved sink class, delegating policy contexts, guidance, and optional trigger — a
+    serialization of `ToolCallReviewInput` minus the derived and registry-resolved parts. The
+    resolved sink class is the exception: it is stored verbatim, never re-derived at load, because
+    sink resolution consults deployment configuration (`delegation_sink_classes`) that replay cannot
+    recover from the descriptor and arguments alone — a delegation case must carry the sink the
+    runtime actually reviewed. Tool descriptors resolve from the local registry by default, with the
+    evaluated deployment's provider registry injectable for cases involving MCP or named-sink tools
+    the static local list cannot supply.
   - *Browser action review*: the complete `BrowserActionReviewInput` field set — objective, damage
     envelope, proposed action, textual environment snapshot, recent actions, mitigation guidance,
     and delegating policy contexts — serialized as a whole so a dropped field fails loudly rather

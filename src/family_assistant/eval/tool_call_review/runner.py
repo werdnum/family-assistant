@@ -24,10 +24,11 @@ from family_assistant.services.tool_call_review import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from family_assistant.eval.tool_call_review.schema import EvalCase
     from family_assistant.llm import LLMInterface
+    from family_assistant.tools.metadata import ToolDescriptor
 
 __all__ = [
     "DEFAULT_GENERATION_LEDGER_DIR",
@@ -78,11 +79,14 @@ async def run_eval(
     provider: str | None = None,
     model: str | None = None,
     dataset_hash: str | None = None,
+    descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
 ) -> EvalReport:
     """Run every case ``seeds`` times against ``reviewer`` and score the results.
 
     Derivation cases are skipped with a note: no shipped judge consumes them.
-    Cases are processed in deterministic id order.
+    Cases are processed in deterministic id order. ``descriptor_registry``
+    overrides the local tool registry for deployments replaying captures that
+    involve MCP or named-sink tools.
     """
     if seeds < 1:
         raise ValueError("seeds must be at least 1.")
@@ -93,7 +97,9 @@ async def run_eval(
         if case.boundary == "derivation":
             skipped.append(case.id)
             continue
-        review_input, constraints = case.to_review_input()
+        review_input, constraints = case.to_review_input(
+            descriptor_registry=descriptor_registry
+        )
         allow_in_space = ToolCallReviewVerdict.ALLOW in constraints.available_verdicts
         for seed_index in range(seeds):
             if isinstance(review_input, BrowserActionReviewInput):

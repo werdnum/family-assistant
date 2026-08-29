@@ -17,7 +17,9 @@ from family_assistant.eval.tool_call_review.schema import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
+
+    from family_assistant.tools.metadata import ToolDescriptor
 
 __all__ = [
     "CaseSchemaValidationError",
@@ -38,18 +40,26 @@ class DuplicateCaseIdError(Exception):
     """Two loaded cases share the same id."""
 
 
-def validate_against_tool_schema(case: EvalCase) -> None:
+def validate_against_tool_schema(
+    case: EvalCase,
+    *,
+    descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
+) -> None:
     """Validate a conversation case's arguments against the live tool schema.
 
     Name resolution alone would let a tool that kept its name but changed its
     schema replay stale, now-impossible calls that still count as clean trials,
     so a missing tool (via :func:`resolve_tool_descriptor`) or schema-invalid
-    arguments must fail loudly here rather than passing silently.
+    arguments must fail loudly here rather than passing silently. Pass the
+    evaluated deployment's ``descriptor_registry`` when cases involve MCP or
+    named-sink tools the local registry cannot supply.
     """
     payload = case.payload
     if not isinstance(payload, ConversationPayload):
         return
-    descriptor = resolve_tool_descriptor(payload.tool_name)
+    descriptor = resolve_tool_descriptor(
+        payload.tool_name, registry=descriptor_registry
+    )
     function = descriptor.definition.get("function")
     if not isinstance(function, dict):
         raise CaseSchemaValidationError(
@@ -70,7 +80,11 @@ def validate_against_tool_schema(case: EvalCase) -> None:
         ) from exc
 
 
-def load_cases(paths: str | Path | Iterable[str | Path]) -> list[EvalCase]:
+def load_cases(
+    paths: str | Path | Iterable[str | Path],
+    *,
+    descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
+) -> list[EvalCase]:
     """Load, validate, and de-duplicate cases from files or directories.
 
     Accepts ``.jsonl`` (one case per line), ``.yaml``/``.yml``, and ``.json``
@@ -82,7 +96,7 @@ def load_cases(paths: str | Path | Iterable[str | Path]) -> list[EvalCase]:
     by_id: dict[str, EvalCase] = {}
     for file_path in files:
         for case in _parse_file(file_path):
-            validate_against_tool_schema(case)
+            validate_against_tool_schema(case, descriptor_registry=descriptor_registry)
             if case.id in by_id:
                 raise DuplicateCaseIdError(
                     f"Duplicate case id {case.id!r} (seen again in {file_path})."

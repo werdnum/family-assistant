@@ -135,29 +135,37 @@ async def _run(args: argparse.Namespace) -> int:
     finally:
         await reviewer.close()
 
-    _emit(report, args)
+    if not args.gate:
+        _emit(report, args, include_reasons=True)
+        return 0
 
-    if args.gate:
-        gate = report.gate(args.ceiling)
-        decision = consume_gate_generation(
-            dataset_digest, gate, ledger_dir=args.ledger_dir
-        )
-        print()
-        if decision.already_consumed:
-            print(
-                "NON-SHIPPABLE (dev-only): this gate generation was already consumed."
-            )
-        print(f"Gate status: {gate.status.value} -- {gate.reason}")
-        print(f"Shippable stamp: {'yes' if decision.shippable else 'no'}")
-        print(f"Generation marker: {decision.marker_path}")
-        if not decision.shippable:
-            return 1
-    return 0
-
-
-def _emit(report: EvalReport, args: argparse.Namespace) -> None:
+    # Consume the generation BEFORE exposing any result: printing the summary
+    # or writing --out first would let a failed export leave no marker after
+    # the results were already consulted, reopening the single-use gate.
+    _gates, combined = report.combined_gate(args.ceiling)
+    decision = consume_gate_generation(
+        dataset_digest, combined, ledger_dir=args.ledger_dir
+    )
+    _emit(report, args, include_reasons=False)
     print()
-    print(report.to_text_summary(gate_ceiling=args.ceiling if args.gate else None))
+    if decision.already_consumed:
+        print("NON-SHIPPABLE (dev-only): this gate generation was already consumed.")
+    print(f"Gate status: {combined.status.value} -- {combined.reason}")
+    print(f"Shippable stamp: {'yes' if decision.shippable else 'no'}")
+    print(f"Generation marker: {decision.marker_path}")
+    return 0 if decision.shippable else 1
+
+
+def _emit(
+    report: EvalReport, args: argparse.Namespace, *, include_reasons: bool
+) -> None:
+    print()
+    print(
+        report.to_text_summary(
+            gate_ceiling=args.ceiling if args.gate else None,
+            include_reasons=include_reasons,
+        )
+    )
     if args.out is not None:
         args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(

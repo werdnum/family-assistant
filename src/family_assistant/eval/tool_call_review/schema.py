@@ -54,37 +54,52 @@ class ToolResolutionError(Exception):
 
 
 @functools.cache
-def _tool_descriptor_map() -> dict[str, ToolDescriptor]:
+def _local_tool_descriptor_map() -> dict[str, ToolDescriptor]:
     """Build a name->descriptor map from the live local tool registry."""
     return {descriptor.name: descriptor for descriptor in LOCAL_TOOL_DESCRIPTORS}
 
 
-def resolve_tool_descriptor(tool_name: str) -> ToolDescriptor:
+def resolve_tool_descriptor(
+    tool_name: str,
+    registry: Mapping[str, ToolDescriptor] | None = None,
+) -> ToolDescriptor:
     """Resolve a tool descriptor by name, failing loudly when it is missing.
 
     A case naming a tool that no longer exists must fail its slice rather than
     quietly flattering the judge, so the missing-tool path raises here rather
     than returning ``None``.
+
+    ``registry`` defaults to the local tool registry. The runtime reviewer also
+    sees dynamically discovered MCP tools and direct named-sink descriptors from
+    its wrapped provider, which the static local list cannot supply — a
+    deployment replaying captures that involve those tools must pass the same
+    provider registry it evaluates with, so those cases resolve instead of
+    silently dropping out of the harness.
     """
-    descriptor_map = _tool_descriptor_map()
+    descriptor_map = registry if registry is not None else _local_tool_descriptor_map()
     try:
         return descriptor_map[tool_name]
     except KeyError as exc:
         raise ToolResolutionError(
-            f"Case references unknown tool {tool_name!r}; the live registry has no "
-            "descriptor for it."
+            f"Case references unknown tool {tool_name!r}; the supplied registry has "
+            "no descriptor for it."
         ) from exc
 
 
 class CaseConstraints(BaseModel):
-    """Verdict space and fail-closed fallback the delegating context supplied."""
+    """Verdict space and fail-closed fallback the delegating context supplied.
+
+    Both fields are required: the constraints render into the prompt and gate
+    out-of-space verdicts, so a case that omitted them would replay under
+    invented semantics instead of failing validation. Live captures record the
+    runtime call's actual constraints; manual and adapted cases must state
+    theirs explicitly.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    available_verdicts: list[ToolCallReviewVerdict] = Field(
-        default_factory=lambda: list(ToolCallReviewVerdict)
-    )
-    fallback_verdict: ToolCallReviewVerdict = ToolCallReviewVerdict.CONFIRM
+    available_verdicts: list[ToolCallReviewVerdict]
+    fallback_verdict: ToolCallReviewVerdict
 
     def to_constraints(self) -> ToolCallReviewConstraints:
         """Render the runtime constraints object the reviewer validates against."""
@@ -95,7 +110,14 @@ class CaseConstraints(BaseModel):
 
 
 class ConversationPayload(BaseModel):
-    """Serialized ``ToolCallReviewInput`` minus derived and resolved parts."""
+    """Serialized ``ToolCallReviewInput`` minus derived and resolved parts.
+
+    ``sink_class`` is the *resolved* sink stored verbatim, never re-derived at
+    load: sink resolution consults deployment configuration (e.g.
+    ``delegation_sink_classes``) that replay cannot recover from the descriptor
+    and arguments alone, so a delegation case must carry the sink the runtime
+    actually reviewed.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -160,7 +182,7 @@ class EvalCase(BaseModel):
     obfuscation: str | None = None
     placement: str | None = None
     language: str | None = None
-    constraints: CaseConstraints = Field(default_factory=CaseConstraints)
+    constraints: CaseConstraints
     payload: ConversationPayload | BrowserPayload | DerivationPayload
 
     @model_validator(mode="before")
@@ -205,6 +227,8 @@ class EvalCase(BaseModel):
 
     def to_review_input(
         self,
+        *,
+        descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
     ) -> tuple[
         ToolCallReviewInput | BrowserActionReviewInput, ToolCallReviewConstraints
     ]:
@@ -213,10 +237,18 @@ class EvalCase(BaseModel):
         Registry resolution and derived-signal recomputation happen here, so a
         tool whose schema changed or a destination that no longer echoes is
         reflected in the replay rather than frozen into the stored case.
+        ``descriptor_registry`` overrides the local tool registry; pass the
+        evaluated deployment's provider registry when replaying captures that
+        involve MCP or named-sink tools.
         """
         constraints = self.constraints.to_constraints()
         if isinstance(self.payload, ConversationPayload):
-            return self._conversation_review_input(self.payload), constraints
+            return (
+                self._conversation_review_input(
+                    self.payload, descriptor_registry=descriptor_registry
+                ),
+                constraints,
+            )
         if isinstance(self.payload, BrowserPayload):
             return self._browser_review_input(self.payload), constraints
         raise ValueError(
@@ -227,8 +259,12 @@ class EvalCase(BaseModel):
     @staticmethod
     def _conversation_review_input(
         payload: ConversationPayload,
+        *,
+        descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
     ) -> ToolCallReviewInput:
-        descriptor = resolve_tool_descriptor(payload.tool_name)
+        descriptor = resolve_tool_descriptor(
+            payload.tool_name, registry=descriptor_registry
+        )
         messages = [dict_to_message(row) for row in payload.messages]
         trigger = _build_trigger(payload.trigger)
         destination_echo = None
