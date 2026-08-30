@@ -105,11 +105,16 @@ class _RejectedRow:
 
 
 def _utc_datetime(raw: str) -> datetime:
-    """Parse an ISO 8601 date or datetime, anchoring a naive one to UTC.
+    """Parse an ISO 8601 date or datetime and return it as an instant in UTC.
 
-    ``message_history.timestamp`` is timezone-aware, and comparing it against a
-    naive datetime is an error on PostgreSQL and a silently wrong comparison on
-    SQLite, so the boundary is resolved here rather than left to the driver.
+    ``message_history.timestamp`` is timezone-aware, and the boundary is
+    resolved here rather than left to the driver, in both directions. A naive
+    value is read as UTC, because comparing one against the column is an error
+    on PostgreSQL and a silently wrong comparison on SQLite. An *offset* value
+    is converted rather than passed through: SQLite does not preserve the
+    offset, so ``2026-06-01T12:30:00-07:00`` would be compared as the wall clock
+    ``12:30`` instead of the instant ``19:30``, quietly widening the window on
+    one backend and not the other.
     """
     try:
         parsed = datetime.fromisoformat(raw)
@@ -117,7 +122,9 @@ def _utc_datetime(raw: str) -> datetime:
         raise argparse.ArgumentTypeError(
             f"{raw!r} is not an ISO 8601 date or datetime (e.g. 2026-06-01)."
         ) from exc
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
