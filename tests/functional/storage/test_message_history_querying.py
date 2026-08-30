@@ -1405,8 +1405,8 @@ async def test_legacy_tool_call_without_an_id_is_skipped_not_raised(
 
 @pytest.mark.parametrize(
     "missing_field",
-    ["type", "function"],
-    ids=["no-type", "no-function"],
+    ["type", "function", "function.name", "function.arguments"],
+    ids=["no-type", "no-function", "no-name", "no-arguments"],
 )
 async def test_other_malformed_tool_call_shapes_are_skipped_too(
     db_engine: AsyncEngine, missing_field: str
@@ -1436,7 +1436,9 @@ async def test_other_malformed_tool_call_shapes_are_skipped_too(
         "type": "function",
         "function": {"name": "add_calendar_event", "arguments": {}},
     }
-    del stored[missing_field]
+    parent, _, leaf = missing_field.rpartition(".")
+    target = cast("dict[str, object]", stored[parent]) if parent else stored
+    del target[leaf]
     await db.execute(
         message_history_table
         .update()

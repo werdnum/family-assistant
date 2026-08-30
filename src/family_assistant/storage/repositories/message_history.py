@@ -2397,6 +2397,12 @@ class MessageHistoryRepository(BaseRepository):
         one archived call. It is skipped, and the row named, so the scope stays
         discoverable in the logs.
 
+        Skipped, not repaired: a missing field has no defensible substitute.
+        ``arguments`` is the one that tempts a default, and ``""`` is not a
+        valid one -- it is not JSON, so it survives the read only to fail in
+        the provider adapters, a turn later and a long way from the row that
+        caused it.
+
         Shared by the two readers because the same strict reconstruction existed
         in both, which is how one of them raising went unnoticed until an
         extraction read every row.
@@ -2412,8 +2418,11 @@ class MessageHistoryRepository(BaseRepository):
         missing = [key for key in ("id", "type") if tc_dict.get(key) is None]
         if not isinstance(function, dict):
             missing.append("function")
-        elif function.get("name") is None:
-            missing.append("function.name")
+        else:
+            if function.get("name") is None:
+                missing.append("function.name")
+            if not isinstance(function.get("arguments"), str | dict):
+                missing.append("function.arguments")
         if missing or not isinstance(function, dict):
             self._logger.warning(
                 "Skipping malformed tool_call in message %s: missing %s",
@@ -2427,7 +2436,7 @@ class MessageHistoryRepository(BaseRepository):
             type=tc_dict["type"],
             function=ToolCallFunction(
                 name=function["name"],
-                arguments=function.get("arguments", ""),
+                arguments=function["arguments"],
             ),
             provider_metadata=provider_metadata,
         )
