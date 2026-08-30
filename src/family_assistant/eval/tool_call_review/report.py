@@ -246,6 +246,7 @@ class EvalReport(BaseModel):
     timeout_seconds: float | None = None
     deployment_guidance: str | None = None
     dataset_hash: str | None = None
+    registry_hash: str | None = None
     generated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def scored_case_count(self) -> int:
@@ -403,6 +404,11 @@ class EvalReport(BaseModel):
                 "deployment_guidance_digest": _config_digest(self.deployment_guidance),
             },
             "dataset_hash": self.dataset_hash,
+            # The registry is an input to every reviewer prompt, not a detail of
+            # the judge: tags, destination paths and the MCP server id all render
+            # into the tool context, so two runs over one dataset under two
+            # snapshots measure different inputs and must not stamp alike.
+            "registry_hash": self.registry_hash,
             "seeds": self.seeds,
             "scored_cases": self.scored_case_count(),
             "scored_trials": len(self.trials),

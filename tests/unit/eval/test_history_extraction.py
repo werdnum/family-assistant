@@ -16,12 +16,18 @@ from family_assistant.eval.private_paths import (
     PrivateEvalPathError,
     resolve_private_eval_path,
 )
+from family_assistant.eval.tool_call_review.registry_snapshot import (
+    descriptors_to_snapshot,
+    snapshot_to_registry,
+)
 from family_assistant.eval.tool_call_review.scrub import TaskTemplate
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.paths import PROJECT_ROOT
 from family_assistant.storage.types import MessageHistoryRow
+from family_assistant.tools.metadata import ToolDescriptor, ToolTag
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from pathlib import Path
     from types import ModuleType
 
@@ -431,6 +437,7 @@ def test_a_dry_run_does_not_care_about_the_output_directory(
         interface_type: str | None,
         limit: int | None,
         since: datetime | None = None,
+        descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
     ) -> tuple[list[TaskTemplate], list[tuple[str, str]]]:
         return [], []
 
@@ -511,6 +518,88 @@ def test_since_defaults_to_reading_all_history() -> None:
     assert (
         script._parse_args(["--database-url", "sqlite+aiosqlite:///x.db"]).since is None
     )
+
+
+def test_the_extractor_abstracts_a_call_to_a_tool_only_a_snapshot_supplies(
+    tmp_path: Path,
+) -> None:
+    """A registry snapshot is what makes MCP tool calls extractable at all.
+
+    Without one the extractor resolves only tools compiled into this source
+    tree, so a deployment's whole MCP surface -- transport, search, maps --
+    was abstracted into templates that the chokepoint then refused for an
+    unresolvable tool name.
+    """
+    script = _load_history_extraction_script()
+    registry = snapshot_to_registry(
+        descriptors_to_snapshot([
+            ToolDescriptor(
+                name="plan_trip",
+                definition={
+                    "type": "function",
+                    "function": {
+                        "name": "plan_trip",
+                        "description": "Plan a public transport trip.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"origin": {"type": "string"}},
+                        },
+                    },
+                },
+                tags=frozenset({ToolTag.READ_ONLY}),
+                origin="mcp",
+                mcp_server_id="transport",
+            )
+        ])
+    )
+    rows = [
+        cast(
+            "MessageHistoryRow",
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    ToolCallItem(
+                        id="call-1",
+                        type="function",
+                        function=ToolCallFunction(
+                            name="plan_trip",
+                            arguments={"origin": "Central"},
+                        ),
+                    )
+                ],
+                "taint_metadata": _TRUSTED,
+            },
+        )
+    ]
+    grouped = {("telegram", "conv-1"): rows}
+
+    committable, rejected = script._partition_templates(
+        grouped, limit=None, descriptor_registry=registry
+    )
+
+    assert rejected == []
+    assert [template.tool_names for template in committable] == [["plan_trip"]]
+    assert committable[0].argument_shapes == {"origin": "string"}
+
+    without_snapshot, refused = script._partition_templates(grouped, limit=None)
+    assert without_snapshot == []
+    assert "does not resolve in the registry" in refused[0][1]
+
+
+def test_a_broken_tool_registry_stops_the_run_naming_the_file(tmp_path: Path) -> None:
+    """A snapshot that cannot be read is not silently replaced by the local list.
+
+    Falling back would run the whole extraction against a registry the
+    maintainer did not ask for and report its rejections as history's shape.
+    """
+    script = _load_history_extraction_script()
+    broken = tmp_path / "registry.json"
+    broken.write_text("{not json", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="not valid JSON"):
+        script._load_registry(str(broken))
+
+    assert script._load_registry(None) is None
 
 
 def _load_history_extraction_script() -> ModuleType:

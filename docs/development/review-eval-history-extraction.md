@@ -102,6 +102,41 @@ poe review-eval-extract-history -- \
 naive datetime is read as UTC, because `timestamp` is timezone-aware and a naive bound is an error
 on PostgreSQL and a silently wrong comparison on SQLite.
 
+**Pass `--tool-registry` or you will lose every MCP tool call.** The extractor resolves tool names
+against the tools compiled into this source tree; a deployment's MCP tools — transport, search,
+maps, time — exist only in a process that has connected to the configured servers, so without a
+snapshot every call to one is rejected as an unknown tool. Take the snapshot from the deployment
+itself:
+
+```bash
+# In the deployment container, where the MCP servers are configured:
+python scripts/dump_tool_registry.py --out /tmp/registry.json --allow-external-out
+
+# Then extract against it:
+poe review-eval-extract-history -- \
+    --database-url "$DATABASE_URL" --since 2026-06-01 \
+    --tool-registry .review-eval-local/registry/deployment.json \
+    --out-dir .review-eval-local/templates
+```
+
+A server that does not come back connected **with at least one tool** aborts the dump rather than
+writing a partial registry: its tools would simply be missing, and a missing tool is
+indistinguishable from one that never existed, so the next extraction would reject those calls and
+report a smaller corpus instead of a broken input. The overlay is resolved as `$CONFIG_FILE` then
+`config.yaml`, the same way the application entry point resolves it, so the snapshot describes the
+deployment the dump runs inside; `--config-file` overrides it. `--local-only` snapshots just the
+built-in list, which is what the extractor already does by default and is useful mainly for testing.
+
+A `stamp` run records a `registry_hash` alongside its `dataset_hash`. The registry is an input to
+every reviewer prompt — tags, destination paths and the MCP server id all render into the tool
+context — so two runs over one dataset under two snapshots are two measurements, and the record says
+so.
+
+Keep the snapshot with the templates. `scripts/tool_call_review_eval.py` takes the same
+`--tool-registry`, and a template set extracted under one registry needs that registry to replay;
+schemas from a deployment's MCP servers can enumerate household vocabulary, so the destination
+resolves inside the private tree unless `--allow-external-out` names somewhere else private.
+
 The dry run is the default posture for inspection: it reports how many templates are committable and
 how many were rejected (with reasons) — by the privacy chokepoint, or because the row itself could
 not be abstracted, as when its recorded tool-call arguments are not a JSON object. A rejected row is

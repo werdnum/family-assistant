@@ -67,6 +67,33 @@ dataset it arrived in still runs. Derived signals that the runtime computes (des
 recomputed at load by the runtime's own derivation code, never stored or restated by a case, for the
 same reason.
 
+### Registry snapshots
+
+"The live registry" is smaller than a deployment's. Local tools are compiled into the source tree;
+MCP tools exist only in a process that has connected to the configured servers. So an environment
+resolving against the local list cannot see a deployment's MCP surface at all, and every case or
+template naming one of those tools drops out — not as an error, as a smaller corpus. The first real
+extraction hit this: an entire household's transport, search and maps calls abstracted into
+templates that were then refused for an unresolvable tool name.
+
+A **registry snapshot** is the running registry written down: `scripts/dump_tool_registry.py`
+connects once through the same provider the application uses, merges what the servers advertise with
+the local descriptors, and writes one JSON file. Both the extractor and the runner read it with
+`--tool-registry`, so a template extracted under a deployment's registry replays under the same one
+— including on a machine with no MCP servers, which is where the eval usually runs.
+
+Two properties make it a snapshot rather than a cache. It **fails loudly**: an unknown version, an
+unrecognized tag or a missing descriptor field raises instead of resolving what it can, because a
+registry that quietly loses entries is indistinguishable from a dataset that has fewer of that
+shape. And it is **deployment data, not source** — MCP parameter schemas can enumerate a household's
+own vocabulary, so a snapshot resolves into the private eval tree with the templates.
+
+Resolving MCP tools does not widen what argument *values* or model-invented keys may cross the
+privacy boundary — the schema is what the argument-key filter needs in order to *apply*, and before
+the snapshot those templates carried no argument shapes at all because there was no schema to select
+keys against. It does widen one thing, recorded under "Deliberate simplifications" below: the names
+themselves now come from a deployment rather than from the source tree.
+
 ### Runner and reporting
 
 One script (per `scripts/` conventions, exposed as a poe task) with **two modes and nothing else**:
@@ -503,13 +530,31 @@ apart from clean trials.
   the error runs pessimistic — it overstates friction rather than flattering the judge. Left as it
   is until a friction number actually drives a decision.
 
-- **No deployment descriptor registry is assembled for a run.** The loader and runner accept one,
-  but nothing constructs it: MCP descriptors are discovered by connecting to the deployment's
-  servers, and the direct named-sink descriptor is synthesized inside the review chokepoint and
-  exists in no registry at all. Standing live services up behind an offline replay costs more than
-  the slice is worth today, so cases naming tools this environment cannot resolve are skipped by
-  name and the rest of the dataset runs. If those cases ever matter, the cheap path is exporting a
-  running deployment's descriptors as data, not rebuilding its providers here.
+- **The direct named-sink descriptor is in no registry.** It is synthesized inside the review
+  chokepoint rather than registered, so no export can carry it and cases involving it are skipped by
+  name while the rest of the dataset runs. Local and MCP tools no longer share this fate: a
+  deployment's registry is exported as data by `scripts/dump_tool_registry.py` and read back by
+  `--tool-registry` (see **Registry snapshots** above), which was the cheap path this section
+  predicted. The named-sink case needs the descriptor to exist somewhere first, which is a change to
+  the chokepoint, not to the eval.
+
+- **A committable template's tool and argument-key names come from the deployment, not the source
+  tree.** A local tool's name and parameter schema are source-code constants, so a template naming
+  one carries nothing a reader of this repository cannot already see. An MCP tool's are whatever its
+  server advertises, and `_templates_from_rows` copies both into the template verbatim; before
+  registry snapshots those templates were rejected as unresolvable, so this is a real widening, not
+  a pre-existing one. A server that named tools or schema properties after household vocabulary —
+  `set_alice_bedroom` — would put that vocabulary in a committable artifact, and resolution against
+  the snapshot is not evidence to the contrary: the snapshot is private precisely because its
+  schemas may enumerate such vocabulary.
+
+  Accepted rather than closed, because the alternatives are worse than the exposure. Refusing
+  non-local tool names re-rejects every MCP template, which is the loss snapshots exist to fix; an
+  allowlist adds an artifact to maintain for a risk that is a property of a deployment's server set
+  rather than of the design. What holds the line instead is what already held it for the maintainer
+  skim: templates are written only into the gitignored private tree, and a human reads them before
+  any of it is committed. Deployments whose servers *do* generate names from household data should
+  treat that skim as load-bearing for names, not only for shapes.
 
 - **The private dataset is per-deployment and unshared.** Third-party deployments of this public
   codebase get the harness and committed sets; their friction numbers come from their own extracts.
