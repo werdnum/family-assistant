@@ -69,6 +69,7 @@ import json
 import os
 import sys
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import yaml
@@ -103,6 +104,22 @@ class _RejectedRow:
     reason: str
 
 
+def _utc_datetime(raw: str) -> datetime:
+    """Parse an ISO 8601 date or datetime, anchoring a naive one to UTC.
+
+    ``message_history.timestamp`` is timezone-aware, and comparing it against a
+    naive datetime is an error on PostgreSQL and a silently wrong comparison on
+    SQLite, so the boundary is resolved here rather than left to the driver.
+    """
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"{raw!r} is not an ISO 8601 date or datetime (e.g. 2026-06-01)."
+        ) from exc
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
+
+
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -125,6 +142,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--interface-type",
         default=None,
         help="Restrict to one interface type (default: all).",
+    )
+    parser.add_argument(
+        "--since",
+        type=_utc_datetime,
+        default=None,
+        help=(
+            "Only read messages at or after this ISO 8601 date or datetime, "
+            "e.g. 2026-06-01. A bare date means midnight UTC; a naive datetime "
+            "is read as UTC. Default: all history."
+        ),
     )
     parser.add_argument(
         "--limit",
@@ -364,6 +391,7 @@ async def _collect_templates(
     *,
     interface_type: str | None,
     limit: int | None,
+    since: datetime | None = None,
 ) -> tuple[list[TaskTemplate], list[tuple[str, str]]]:
     engine = create_engine_with_sqlite_optimizations(
         _read_only_url(database_url), apply_sqlite_pragmas=False
@@ -372,6 +400,7 @@ async def _collect_templates(
         db = Database(engine)
         grouped = await db.message_history.get_all_grouped(
             interface_type=interface_type,
+            date_from=since,
             include_subconversations=True,
         )
     finally:
@@ -406,6 +435,7 @@ def main(argv: list[str] | None = None) -> int:
             args.database_url,
             interface_type=args.interface_type,
             limit=args.limit,
+            since=args.since,
         )
     )
 

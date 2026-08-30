@@ -1338,3 +1338,112 @@ async def test_conversation_summaries_preview_is_latest_message(
 
     assert len(summaries) == 1
     assert summaries[0]["last_message"] == "assistant 2 in preview_conv"
+
+
+async def test_legacy_tool_call_without_an_id_is_skipped_not_raised(
+    db_engine: AsyncEngine,
+) -> None:
+    """A tool call stored by an older shape must not break reading history.
+
+    The writer serializes a ``ToolCallItem``, whose ``id``, ``type`` and
+    ``function`` are all required, so a stored call missing one came from an
+    earlier version of this code. Reading is shared by the chat API and the
+    diagnostics export, and raising there costs the reader the whole
+    conversation over one archived call — found by an extraction that read all
+    history and hit `KeyError: 'id'`.
+    """
+    db = Database(engine=db_engine)
+    now = datetime.now(UTC)
+    await db.message_history.add_message(
+        AssistantMessage(
+            content=None,
+            tool_calls=[
+                ToolCallItem(
+                    id="call-good",
+                    type="function",
+                    function=ToolCallFunction(name="add_calendar_event", arguments={}),
+                )
+            ],
+        ),
+        interface_type="test",
+        conversation_id="legacy",
+        timestamp=now,
+        turn_id="turn-1",
+        user_id="user-a",
+        processing_profile_id="default",
+    )
+
+    # Rewrite the stored JSON into the legacy shape the writer can no longer
+    # produce: one call missing "id", beside one that is intact.
+    await db.execute(
+        message_history_table
+        .update()
+        .where(message_history_table.c.conversation_id == "legacy")
+        .values(
+            tool_calls=[
+                {
+                    "type": "function",
+                    "function": {"name": "add_calendar_event", "arguments": {}},
+                },
+                {
+                    "id": "call-good",
+                    "type": "function",
+                    "function": {"name": "add_calendar_event", "arguments": {}},
+                },
+            ]
+        )
+    )
+
+    grouped = await db.message_history.get_all_grouped(interface_type="test")
+
+    messages = grouped[("test", "legacy")]
+    assert len(messages) == 1
+    tool_calls = messages[0]["tool_calls"]
+    assert tool_calls is not None
+    assert [call.id for call in tool_calls] == ["call-good"]
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    ["type", "function"],
+    ids=["no-type", "no-function"],
+)
+async def test_other_malformed_tool_call_shapes_are_skipped_too(
+    db_engine: AsyncEngine, missing_field: str
+) -> None:
+    db = Database(engine=db_engine)
+    now = datetime.now(UTC)
+    await db.message_history.add_message(
+        AssistantMessage(
+            content=None,
+            tool_calls=[
+                ToolCallItem(
+                    id="call-1",
+                    type="function",
+                    function=ToolCallFunction(name="add_calendar_event", arguments={}),
+                )
+            ],
+        ),
+        interface_type="test",
+        conversation_id="legacy",
+        timestamp=now,
+        turn_id="turn-1",
+        user_id="user-a",
+        processing_profile_id="default",
+    )
+    stored: dict[str, object] = {
+        "id": "call-1",
+        "type": "function",
+        "function": {"name": "add_calendar_event", "arguments": {}},
+    }
+    del stored[missing_field]
+    await db.execute(
+        message_history_table
+        .update()
+        .where(message_history_table.c.conversation_id == "legacy")
+        .values(tool_calls=[stored])
+    )
+
+    grouped = await db.message_history.get_all_grouped(interface_type="test")
+
+    assert grouped[("test", "legacy")][0]["tool_calls"] == []

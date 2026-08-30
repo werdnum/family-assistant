@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import sqlite3
 import sys
@@ -425,7 +426,11 @@ def test_a_dry_run_does_not_care_about_the_output_directory(
     monkeypatch.setattr(script, "_require_empty_out_dir", _fail_if_called, raising=True)
 
     async def _no_templates(
-        _url: str, *, interface_type: str | None, limit: int | None
+        _url: str,
+        *,
+        interface_type: str | None,
+        limit: int | None,
+        since: datetime | None = None,
     ) -> tuple[list[TaskTemplate], list[tuple[str, str]]]:
         return [], []
 
@@ -443,6 +448,47 @@ def test_a_dry_run_does_not_care_about_the_output_directory(
 
 def _fail_if_called(_out_dir: Path) -> None:
     raise AssertionError("--dry-run must not check the output directory")
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        pytest.param("2026-06-01", datetime(2026, 6, 1, tzinfo=UTC), id="bare-date"),
+        pytest.param(
+            "2026-06-01T12:30:00",
+            datetime(2026, 6, 1, 12, 30, tzinfo=UTC),
+            id="naive-datetime-is-utc",
+        ),
+        pytest.param(
+            "2026-06-01T12:30:00+00:00",
+            datetime(2026, 6, 1, 12, 30, tzinfo=UTC),
+            id="explicit-offset-kept",
+        ),
+    ],
+)
+def test_since_parses_iso_and_anchors_naive_values_to_utc(
+    raw: str, expected: datetime
+) -> None:
+    """`timestamp` is timezone-aware, so a naive bound must not reach the driver.
+
+    PostgreSQL errors on the comparison and SQLite compares silently wrong, so
+    the boundary is resolved at the argument rather than left to either.
+    """
+    script = _load_history_extraction_script()
+    assert script._utc_datetime(raw) == expected
+
+
+def test_since_rejects_something_that_is_not_a_date() -> None:
+    script = _load_history_extraction_script()
+    with pytest.raises(argparse.ArgumentTypeError, match="ISO 8601"):
+        script._utc_datetime("last tuesday")
+
+
+def test_since_defaults_to_reading_all_history() -> None:
+    script = _load_history_extraction_script()
+    assert (
+        script._parse_args(["--database-url", "sqlite+aiosqlite:///x.db"]).since is None
+    )
 
 
 def _load_history_extraction_script() -> ModuleType:
