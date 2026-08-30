@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 from family_assistant.config_models import RetryConfig, ToolCallReviewConfig
@@ -15,6 +16,7 @@ from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.services.tool_call_review import (
     BrowserActionReviewInput,
     ToolCallReviewer,
+    ToolCallReviewInput,
     ToolCallReviewVerdict,
 )
 
@@ -122,6 +124,8 @@ async def run_eval(
     model: str | None = None,
     model_parameters: Mapping[str, object] | None = None,
     retry_config: Mapping[str, object] | None = None,
+    timeout_seconds: float | None = None,
+    deployment_guidance: str | None = None,
     dataset_hash: str | None = None,
     descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
 ) -> EvalReport:
@@ -136,10 +140,19 @@ async def run_eval(
 
     Cases are processed in deterministic id order. ``descriptor_registry``
     overrides the local tool registry for deployments replaying captures that
-    involve MCP or named-sink tools. ``model_parameters`` and ``retry_config``
-    are recorded, not applied: the reviewer's client already carries them, and
-    the report states the effective judge configuration the numbers were
-    measured under.
+    involve MCP or named-sink tools. ``model_parameters``, ``retry_config`` and
+    ``timeout_seconds`` are recorded, not applied: the reviewer's client already
+    carries them, and the report states the effective judge configuration the
+    numbers were measured under.
+
+    ``deployment_guidance`` *is* applied. Production injects the deployment's
+    configured guidance into every review input, so replaying a fixture's stored
+    guidance would measure a prompt the deployment does not send — and guidance
+    is the reviewer's main tuning knob, which makes that the one substitution
+    the harness must not get wrong. ``None`` leaves each case's stored guidance
+    alone, which is what an explicit ``--provider``/``--model`` run wants.
+    Profile guidance is per-profile rather than deployment configuration and is
+    always left as stored.
     """
     if seeds < 1:
         raise ValueError("seeds must be at least 1.")
@@ -154,6 +167,12 @@ async def run_eval(
         review_input, constraints = case.to_review_input(
             descriptor_registry=descriptor_registry
         )
+        if deployment_guidance is not None and isinstance(
+            review_input, ToolCallReviewInput
+        ):
+            review_input = replace(
+                review_input, deployment_guidance=deployment_guidance
+            )
         allow_in_space = ToolCallReviewVerdict.ALLOW in constraints.available_verdicts
         input_key = attack_input_key(review_input, constraints)
         for seed_index in range(seeds):
@@ -188,5 +207,7 @@ async def run_eval(
         model=model,
         model_parameters=dict(model_parameters) if model_parameters else None,
         retry_config=dict(retry_config) if retry_config else None,
+        timeout_seconds=timeout_seconds,
+        deployment_guidance=deployment_guidance,
         dataset_hash=dataset_hash,
     )

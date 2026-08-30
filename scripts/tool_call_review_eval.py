@@ -223,6 +223,12 @@ class _JudgeConfig:
     timeout_seconds: float
     model_parameters: Mapping[str, object] | None
     retry_config: dict[str, object] | None
+    # None means "leave each case's stored guidance alone", which is what an
+    # explicit --provider/--model run wants. A deployment replay always carries
+    # a value, empty string included: production injects review_config.guidance
+    # into every review input, so replaying stored guidance would measure a
+    # prompt the deployment does not send.
+    deployment_guidance: str | None
 
 
 def _resolve_judge_config(args: argparse.Namespace) -> _JudgeConfig:
@@ -248,6 +254,7 @@ def _resolve_judge_config(args: argparse.Namespace) -> _JudgeConfig:
             timeout_seconds=args.timeout_seconds,
             model_parameters=model_parameters,
             retry_config=None,
+            deployment_guidance=None,
         )
     app_config = load_config(
         defaults_file_path=DEFAULT_DEFAULTS_FILE,
@@ -277,6 +284,7 @@ def _resolve_judge_config(args: argparse.Namespace) -> _JudgeConfig:
         timeout_seconds=review_cfg.timeout_seconds,
         model_parameters=model_parameters,
         retry_config=retry_config,
+        deployment_guidance=review_cfg.guidance,
     )
 
 
@@ -354,6 +362,8 @@ async def _run(args: argparse.Namespace) -> int:
             model=judge.model,
             model_parameters=judge.model_parameters,
             retry_config=judge.retry_config,
+            timeout_seconds=judge.timeout_seconds,
+            deployment_guidance=judge.deployment_guidance,
             dataset_hash=dataset_digest,
         )
     finally:

@@ -14,6 +14,7 @@ explicitly not a score.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import statistics
 from datetime import UTC, datetime
@@ -86,6 +87,18 @@ class LatencyStats(BaseModel):
             p95_ms=ordered[index],
             max_ms=ordered[-1],
         )
+
+
+def _guidance_digest(guidance: str | None) -> str | None:
+    """Short digest of the deployment guidance a run replayed under.
+
+    ``None`` means the run left each case's stored guidance alone; an empty
+    string means the deployment configures none. Both are distinct from a run
+    under actual guidance, and all three need to be tellable apart.
+    """
+    if guidance is None:
+        return None
+    return hashlib.sha256(guidance.encode("utf-8")).hexdigest()[:12]
 
 
 def _quantile_index(length: int, quantile: float) -> int:
@@ -261,6 +274,8 @@ class EvalReport(BaseModel):
     model: str | None = None
     model_parameters: dict[str, object] | None = None
     retry_config: dict[str, object] | None = None
+    timeout_seconds: float | None = None
+    deployment_guidance: str | None = None
     dataset_hash: str | None = None
     generated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
@@ -443,6 +458,13 @@ class EvalReport(BaseModel):
                 "model": self.model,
                 "model_parameters": self.model_parameters,
                 "retry_config": self.retry_config,
+                "timeout_seconds": self.timeout_seconds,
+                # The guidance text itself is operator-authored config, but it
+                # can be long and is not what a reader compares; a digest is
+                # enough to tell two runs apart, which is the point.
+                "deployment_guidance_digest": _guidance_digest(
+                    self.deployment_guidance
+                ),
             },
             "dataset_hash": self.dataset_hash,
             "seeds": self.seeds,

@@ -1209,6 +1209,8 @@ async def test_report_records_the_retry_config_it_measured_under() -> None:
         "model": "gemini-3.7-flash",
         "model_parameters": None,
         "retry_config": retry_config,
+        "timeout_seconds": None,
+        "deployment_guidance_digest": None,
     }
 
 
@@ -1406,3 +1408,41 @@ def test_loader_aborts_on_an_empty_case_file(tmp_path: Path) -> None:
 
     with pytest.raises(tool_call_review_eval.CaseParseError):
         load_cases(tmp_path)
+
+
+async def test_deployment_guidance_reaches_the_prompt_the_judge_is_given() -> None:
+    """Production injects the deployment's guidance into every review input.
+
+    Replaying a fixture's stored guidance would measure a prompt the deployment
+    never sends, and guidance is the reviewer's main tuning knob — so a run that
+    ignored it would report the old prompt's numbers for the new one. The input
+    key is derived from the assembled prompt, so a changed key is proof the
+    guidance actually reached the judge rather than merely being recorded.
+    """
+    case = _attack_conversation_case("guided")
+
+    stored = await run_eval([case], _denying_reviewer(), seeds=1)
+    guided = await run_eval(
+        [case], _denying_reviewer(), seeds=1, deployment_guidance="Be strict."
+    )
+
+    assert stored.deployment_guidance is None
+    assert guided.deployment_guidance == "Be strict."
+    assert guided.trials[0].attack_input_key != stored.trials[0].attack_input_key
+
+
+async def test_stamp_records_the_timeout_and_guidance_it_measured_under() -> None:
+    # Two runs differing only in timeout or guidance produce different rates, so
+    # a record that cannot tell them apart cannot be compared against.
+    case = _attack_conversation_case("recorded")
+    report = await run_eval(
+        [case],
+        _denying_reviewer(),
+        seeds=1,
+        timeout_seconds=12.5,
+        deployment_guidance="Be strict.",
+    )
+
+    judge = cast("dict[str, object]", report.to_stamp_record()["judge"])
+    assert judge["timeout_seconds"] == 12.5
+    assert judge["deployment_guidance_digest"] not in {None, ""}

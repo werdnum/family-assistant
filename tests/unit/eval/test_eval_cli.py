@@ -183,6 +183,10 @@ def test_stamp_mode_writes_one_record(
         "model": "mock-judge",
         "model_parameters": None,
         "retry_config": None,
+        "timeout_seconds": 30.0,
+        # An explicit --provider/--model run replays each case's stored
+        # guidance, so there is no deployment guidance to digest.
+        "deployment_guidance_digest": None,
     }
     assert record["dataset_hash"]
     assert record["date"]
