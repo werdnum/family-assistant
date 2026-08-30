@@ -2320,28 +2320,11 @@ class MessageHistoryRepository(BaseRepository):
                     # Already a ToolCallItem, keep it as-is
                     tool_call_items.append(tc_dict)
                 elif isinstance(tc_dict, dict):
-                    # Deserialize provider_metadata if present
-                    provider_metadata = tc_dict.get("provider_metadata")
-                    if (
-                        isinstance(provider_metadata, dict)
-                        and provider_metadata.get("provider") == "google"
-                    ):
-                        provider_metadata = GeminiProviderMetadata.from_dict(
-                            provider_metadata
-                        )
-
-                    # Create ToolCallItem with typed provider_metadata
-                    tool_call_items.append(
-                        ToolCallItem(
-                            id=tc_dict["id"],
-                            type=tc_dict["type"],
-                            function=ToolCallFunction(
-                                name=tc_dict["function"]["name"],
-                                arguments=tc_dict["function"]["arguments"],
-                            ),
-                            provider_metadata=provider_metadata,
-                        )
+                    item = self._tool_call_from_stored(
+                        tc_dict, internal_id=msg.get("internal_id")
                     )
+                    if item is not None:
+                        tool_call_items.append(item)
                 else:
                     self._logger.warning(
                         f"Unexpected tool_call type: {type(tc_dict)}, skipping"
@@ -2397,6 +2380,67 @@ class MessageHistoryRepository(BaseRepository):
         # Convert dict to typed LLMMessage
         return self._dict_to_typed_message(msg)
 
+    def _tool_call_from_stored(
+        self,
+        tc_dict: Mapping[str, Any],
+        *,
+        internal_id: object = None,
+    ) -> ToolCallItem | None:
+        """Rebuild a stored tool call, or return ``None`` if it cannot be read.
+
+        The writer serializes a ``ToolCallItem``, whose ``id``, ``type`` and
+        ``function`` are all required, so a stored call missing any of them was
+        written by an older shape of this code. Reading history is not the place
+        to insist on the current shape: the row cannot be corrected from here,
+        and raising would cost the reader the whole conversation -- in the chat
+        API and the diagnostics export, both of which share this path -- over
+        one archived call. It is skipped, and the row named, so the scope stays
+        discoverable in the logs.
+
+        Skipped, not repaired: a missing field has no defensible substitute.
+        ``arguments`` is the one that tempts a default, and ``""`` is not a
+        valid one -- it is not JSON, so it survives the read only to fail in
+        the provider adapters, a turn later and a long way from the row that
+        caused it.
+
+        Shared by the two readers because the same strict reconstruction existed
+        in both, which is how one of them raising went unnoticed until an
+        extraction read every row.
+        """
+        provider_metadata = tc_dict.get("provider_metadata")
+        if (
+            isinstance(provider_metadata, dict)
+            and provider_metadata.get("provider") == "google"
+        ):
+            provider_metadata = GeminiProviderMetadata.from_dict(provider_metadata)
+
+        function = tc_dict.get("function")
+        missing = [key for key in ("id", "type") if tc_dict.get(key) is None]
+        if not isinstance(function, dict):
+            missing.append("function")
+        else:
+            if function.get("name") is None:
+                missing.append("function.name")
+            if not isinstance(function.get("arguments"), str | dict):
+                missing.append("function.arguments")
+        if missing or not isinstance(function, dict):
+            self._logger.warning(
+                "Skipping malformed tool_call in message %s: missing %s",
+                internal_id,
+                ", ".join(missing),
+            )
+            return None
+
+        return ToolCallItem(
+            id=tc_dict["id"],
+            type=tc_dict["type"],
+            function=ToolCallFunction(
+                name=function["name"],
+                arguments=function["arguments"],
+            ),
+            provider_metadata=provider_metadata,
+        )
+
     def _process_message_row_as_dict(self, row: Mapping[str, Any]) -> MessageHistoryRow:
         """
         Process a message row and return as dict with all database fields preserved.
@@ -2432,28 +2476,11 @@ class MessageHistoryRepository(BaseRepository):
                     # Already a ToolCallItem, keep it as-is
                     tool_call_items.append(tc_dict)
                 elif isinstance(tc_dict, dict):
-                    # Deserialize provider_metadata if present
-                    provider_metadata = tc_dict.get("provider_metadata")
-                    if (
-                        isinstance(provider_metadata, dict)
-                        and provider_metadata.get("provider") == "google"
-                    ):
-                        provider_metadata = GeminiProviderMetadata.from_dict(
-                            provider_metadata
-                        )
-
-                    # Create ToolCallItem with typed provider_metadata
-                    tool_call_items.append(
-                        ToolCallItem(
-                            id=tc_dict["id"],
-                            type=tc_dict["type"],
-                            function=ToolCallFunction(
-                                name=tc_dict["function"]["name"],
-                                arguments=tc_dict["function"]["arguments"],
-                            ),
-                            provider_metadata=provider_metadata,
-                        )
+                    item = self._tool_call_from_stored(
+                        tc_dict, internal_id=msg.get("internal_id")
                     )
+                    if item is not None:
+                        tool_call_items.append(item)
                 else:
                     self._logger.warning(
                         f"Unexpected tool_call type: {type(tc_dict)}, skipping"

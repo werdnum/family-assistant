@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import sqlite3
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -425,7 +426,11 @@ def test_a_dry_run_does_not_care_about_the_output_directory(
     monkeypatch.setattr(script, "_require_empty_out_dir", _fail_if_called, raising=True)
 
     async def _no_templates(
-        _url: str, *, interface_type: str | None, limit: int | None
+        _url: str,
+        *,
+        interface_type: str | None,
+        limit: int | None,
+        since: datetime | None = None,
     ) -> tuple[list[TaskTemplate], list[tuple[str, str]]]:
         return [], []
 
@@ -443,6 +448,69 @@ def test_a_dry_run_does_not_care_about_the_output_directory(
 
 def _fail_if_called(_out_dir: Path) -> None:
     raise AssertionError("--dry-run must not check the output directory")
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        pytest.param("2026-06-01", datetime(2026, 6, 1, tzinfo=UTC), id="bare-date"),
+        pytest.param(
+            "2026-06-01T12:30:00",
+            datetime(2026, 6, 1, 12, 30, tzinfo=UTC),
+            id="naive-datetime-is-utc",
+        ),
+        pytest.param(
+            "2026-06-01T12:30:00+00:00",
+            datetime(2026, 6, 1, 12, 30, tzinfo=UTC),
+            id="utc-offset",
+        ),
+        pytest.param(
+            # SQLite does not preserve the offset, so passing this through
+            # would compare the wall clock 12:30 rather than the instant it
+            # names — widening the window on one backend and not the other.
+            "2026-06-01T12:30:00-07:00",
+            datetime(2026, 6, 1, 19, 30, tzinfo=UTC),
+            id="negative-offset-converted-to-the-instant",
+        ),
+        pytest.param(
+            "2026-06-01T12:30:00+10:00",
+            datetime(2026, 6, 1, 2, 30, tzinfo=UTC),
+            id="positive-offset-converted-to-the-instant",
+        ),
+    ],
+)
+def test_since_resolves_every_form_to_an_instant_in_utc(
+    raw: str, expected: datetime
+) -> None:
+    """`timestamp` is timezone-aware, so the bound is resolved before the driver.
+
+    PostgreSQL errors on a naive comparison and SQLite compares silently wrong;
+    SQLite also drops the offset, so an offset value has to arrive already
+    converted rather than merely equal.
+
+    Equality alone cannot check that: Python compares aware datetimes by
+    instant, so ``12:30-07:00 == 19:30+00:00`` is true however the value was
+    produced. The offset itself is the assertion that matters.
+    """
+    script = _load_history_extraction_script()
+    resolved = script._utc_datetime(raw)
+
+    assert resolved == expected
+    assert resolved.utcoffset() == timedelta(0)
+    assert resolved.replace(tzinfo=None) == expected.replace(tzinfo=None)
+
+
+def test_since_rejects_something_that_is_not_a_date() -> None:
+    script = _load_history_extraction_script()
+    with pytest.raises(argparse.ArgumentTypeError, match="ISO 8601"):
+        script._utc_datetime("last tuesday")
+
+
+def test_since_defaults_to_reading_all_history() -> None:
+    script = _load_history_extraction_script()
+    assert (
+        script._parse_args(["--database-url", "sqlite+aiosqlite:///x.db"]).since is None
+    )
 
 
 def _load_history_extraction_script() -> ModuleType:

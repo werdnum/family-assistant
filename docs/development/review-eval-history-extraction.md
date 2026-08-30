@@ -90,7 +90,17 @@ poe review-eval-extract-history -- --database-url "sqlite+aiosqlite:///family_as
 poe review-eval-extract-history -- \
     --database-url "sqlite+aiosqlite:///family_assistant.db" \
     --out-dir .review-eval-local/templates
+
+# Recent history only, which is usually what you want: the task shapes a
+# template set is meant to describe are the ones in use now.
+poe review-eval-extract-history -- \
+    --database-url "sqlite+aiosqlite:///family_assistant.db" \
+    --since 2026-06-01 --out-dir .review-eval-local/templates
 ```
+
+`--since` takes an ISO 8601 date or datetime and is inclusive; a bare date means midnight UTC and a
+naive datetime is read as UTC, because `timestamp` is timezone-aware and a naive bound is an error
+on PostgreSQL and a silently wrong comparison on SQLite.
 
 The dry run is the default posture for inspection: it reports how many templates are committable and
 how many were rejected (with reasons) — by the privacy chokepoint, or because the row itself could
