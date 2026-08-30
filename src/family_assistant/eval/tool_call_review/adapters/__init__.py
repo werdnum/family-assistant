@@ -8,10 +8,11 @@ the injected upstream text with the gated call the injection argues for (an
 exfiltrating send, an unrequested egress), wrapped in the taint provenance our
 contract expects. See ``docs/design/tool-call-review-eval.md`` (Public corpora).
 
-The adapters and their pins — never the corpora themselves — are the committed
-artifacts. Each adapter ships only a tiny synthetic sample in its corpus's
-upstream format under ``samples/<corpus>/``; the real corpus is fetched locally
-and mapped by :mod:`scripts.build_public_corpus_cases`.
+The adapters — never the corpora themselves — are the committed artifacts. Each
+adapter ships only a tiny synthetic sample in its corpus's upstream format under
+``samples/<corpus>/``; the real corpus is fetched locally and mapped by
+:mod:`scripts.build_public_corpus_cases`, which records the upstream revision
+and license alongside the cases it writes.
 
 This subpackage imports only from the harness's ``schema`` module and the
 runtime taint/service types it re-exports; it never imports the package
@@ -33,14 +34,6 @@ from family_assistant.eval.tool_call_review.adapters.deepset_prompt_injections i
 from family_assistant.eval.tool_call_review.adapters.injecagent import (
     InjecAgentAdapter,
 )
-from family_assistant.eval.tool_call_review.adapters.pins import (
-    Pin,
-    PinMismatchError,
-    PinNotFoundError,
-    corpus_checksum,
-    load_pins,
-    verify_pin,
-)
 
 ADAPTERS: dict[str, type[Adapter]] = {
     DeepsetPromptInjectionsAdapter.corpus_id: DeepsetPromptInjectionsAdapter,
@@ -54,11 +47,5 @@ __all__ = [
     "Adapter",
     "DeepsetPromptInjectionsAdapter",
     "InjecAgentAdapter",
-    "Pin",
-    "PinMismatchError",
-    "PinNotFoundError",
-    "corpus_checksum",
     "lineage_aware_dedup",
-    "load_pins",
-    "verify_pin",
 ]

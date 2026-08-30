@@ -6,21 +6,40 @@ provider, real model — over stored cases and reports asymmetric, expected-awar
 error rates per slice. Cases are serialized reviewer inputs, so this always
 measures the current system.
 
+Two modes, and nothing else:
+
+``report`` (default)
+    Run the datasets and print everything: per-slice attack allow/confirm rates,
+    benign friction, expectation misses, seed flips, fallback counts, latency,
+    and the judge's reason for every failing and weak-pass trial. This is the
+    iteration loop — run it, read the reasons, change the prompt, run it again.
+
+``stamp``
+    The same run, plus one JSON record of what was measured and under what
+    configuration (judge, dataset digest, date, per-slice numbers, supported
+    bound), written to ``--out``. A record, not a permission: nothing consults
+    it, and no run is refused because of it.
+
+Either mode exits nonzero when the judge allowed an attack.
+
 Usage:
 
-    # Load and validate only, no network:
+    # Load and validate cases only, no network:
     python scripts/tool_call_review_eval.py \
-        --dataset src/family_assistant/eval/tool_call_review/datasets/examples \
+        --dataset src/family_assistant/eval/tool_call_review/datasets/manual \
         --dry-run
 
-    # Score against a judge and enforce a false-allow ceiling:
+    # Iterate against a judge:
     python scripts/tool_call_review_eval.py \
-        --dataset src/family_assistant/eval/tool_call_review/datasets/examples \
+        --dataset src/family_assistant/eval/tool_call_review/datasets/manual \
         --dataset .review-eval-local \
-        --provider google --model gemini-3.7-flash \
-        --llm-params '{"temperature": 0.0}' \
-        --seeds 5 --gate --ceiling 0.01 \
-        --out .review-eval-local/runs/run.json
+        --provider google --model gemini-3.7-flash --seeds 5
+
+    # Record what the deployed judge scored today:
+    python scripts/tool_call_review_eval.py \
+        --dataset src/family_assistant/eval/tool_call_review/datasets/manual \
+        --config-file config.yaml --mode stamp \
+        --out .review-eval-local/runs/stamp.json
 """
 
 from __future__ import annotations
@@ -31,26 +50,21 @@ import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-import yaml
-
+from family_assistant.config_loader import DEFAULT_DEFAULTS_FILE, load_config
 from family_assistant.config_models import ToolCallReviewConfig
 from family_assistant.eval.tool_call_review import (
-    DEFAULT_GENERATION_LEDGER_DIR,
+    DEFAULT_FALSE_ALLOW_CEILING,
     EvalReport,
-    UnpinnedPublicCaseError,
     build_reviewer,
-    consume_gate_generation,
     content_hash,
-    gate_generation_hash,
     load_cases,
     run_eval,
-    verify_public_source_pins,
 )
-from family_assistant.eval.tool_call_review.adapters.pins import (
-    PinMismatchError,
-    PinNotFoundError,
-)
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -61,6 +75,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         required=True,
         metavar="PATH",
         help="Dataset file or directory (repeatable).",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("report", "stamp"),
+        default="report",
+        help=(
+            "report (default): print every number and reason. stamp: the same "
+            "run plus one JSON record of what was measured, written to --out."
+        ),
     )
     parser.add_argument(
         "--provider",
@@ -81,12 +104,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         metavar="YAML",
         help=(
-            "A config/defaults YAML to read the judge's 'tool_call_review' section "
-            "from (provider, model, timeout, and retry_config), plus top-level "
-            "'llm_parameters'. Use this to replay the deployed judge faithfully, "
-            "including a primary/fallback retry client that a single --provider/"
-            "--model cannot express. Overrides --provider/--model/--timeout-seconds "
-            "and, unless --llm-params is given, --llm-params."
+            "A deployment's operator config YAML. It is resolved through the same "
+            "layered loader the runtime uses (defaults.yaml, then this file, then "
+            "environment overrides), so the judge measured here is the judge "
+            "production runs — including a primary/fallback retry client and the "
+            "shipped llm_parameters a single --provider/--model cannot express. "
+            "Run from the repository root so defaults.yaml resolves. Overrides "
+            "--provider/--model/--timeout-seconds, and supplies --llm-params "
+            "unless that flag is given."
         ),
     )
     parser.add_argument(
@@ -95,8 +120,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         metavar="JSON",
         help=(
             "JSON object of model parameters for the judge client, mirroring the "
-            "deployment's llm_parameters (e.g. '{\"temperature\": 0}'). Recorded "
-            "in the result so a stamp states the configuration it measured."
+            "deployment's llm_parameters pattern map (e.g. "
+            '\'{"gemini-3.7-flash": {"temperature": 0}}\'). Recorded in the '
+            "result so a stamp states the configuration it measured."
         ),
     )
     parser.add_argument(
@@ -112,39 +138,23 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Per-review timeout for the judge (default: 30).",
     )
     parser.add_argument(
-        "--gate",
-        action="store_true",
-        help="Enforce the false-allow ceiling; exit nonzero unless the gate passes.",
-    )
-    parser.add_argument(
         "--ceiling",
         type=float,
-        default=0.01,
-        help="Accepted false-allow ceiling for the gate (default: 0.01).",
-    )
-    parser.add_argument(
-        "--ledger-dir",
-        type=Path,
-        default=DEFAULT_GENERATION_LEDGER_DIR,
+        default=DEFAULT_FALSE_ALLOW_CEILING,
         help=(
-            "Marker store for consumed gate generations "
-            f"(default: {DEFAULT_GENERATION_LEDGER_DIR})."
-        ),
-    )
-    parser.add_argument(
-        "--pins-path",
-        type=Path,
-        default=None,
-        help=(
-            "PINS.toml manifest used to verify the origin files of public: cases "
-            "before a gate consumes them (default: the adapters' PINS.toml)."
+            "False-allow ceiling the per-slice bounds are reported against "
+            f"(default: {DEFAULT_FALSE_ALLOW_CEILING}). Reported for a human to "
+            "read; only an observed allow fails a run."
         ),
     )
     parser.add_argument(
         "--out",
         type=Path,
         default=None,
-        help="Path to write the machine-readable JSON result.",
+        help=(
+            "Where to write JSON: the full run record in report mode, the stamp "
+            "record in stamp mode (required there)."
+        ),
     )
     parser.add_argument(
         "--dry-run",
@@ -170,18 +180,20 @@ class _JudgeConfig:
     provider: str | None
     model: str
     timeout_seconds: float
-    model_parameters: dict[str, object] | None
+    model_parameters: Mapping[str, object] | None
     retry_config: dict[str, object] | None
 
 
 def _resolve_judge_config(args: argparse.Namespace) -> _JudgeConfig:
-    """Resolve the judge from CLI flags, or a config file when supplied.
+    """Resolve the judge from CLI flags, or a deployment config when supplied.
 
-    A ``--config-file`` faithfully replays the deployed judge — including a
-    primary/fallback retry client — by reading the same ``tool_call_review``
-    section the runtime loads, so the harness gates on the judge production runs.
+    ``--config-file`` goes through :func:`load_config`, not a bare YAML read:
+    production deep-merges ``defaults.yaml``, the operator file, and environment
+    overrides, so reading one file would measure a judge assembled differently
+    from the deployed one — most visibly by dropping the shipped
+    ``llm_parameters`` a configured fallback leg relies on.
     """
-    model_parameters = _parse_llm_params(args.llm_params)
+    model_parameters: Mapping[str, object] | None = _parse_llm_params(args.llm_params)
     if args.config_file is None:
         return _JudgeConfig(
             provider=args.provider,
@@ -190,18 +202,18 @@ def _resolve_judge_config(args: argparse.Namespace) -> _JudgeConfig:
             model_parameters=model_parameters,
             retry_config=None,
         )
-    loaded = yaml.safe_load(args.config_file.read_text(encoding="utf-8")) or {}
-    review_section = loaded.get("tool_call_review") or {}
-    review_cfg = ToolCallReviewConfig.model_validate(review_section)
+    app_config = load_config(
+        defaults_file_path=DEFAULT_DEFAULTS_FILE,
+        config_file_path=str(args.config_file),
+    )
+    review_cfg = app_config.tool_call_review or ToolCallReviewConfig()
     retry_config = (
         review_cfg.retry_config.model_dump(exclude_none=True)
         if review_cfg.retry_config is not None
         else None
     )
-    if model_parameters is None:
-        top_params = loaded.get("llm_parameters")
-        if isinstance(top_params, dict):
-            model_parameters = top_params
+    if model_parameters is None and app_config.llm_parameters:
+        model_parameters = app_config.llm_parameters
     return _JudgeConfig(
         provider=review_cfg.provider,
         model=review_cfg.model,
@@ -212,48 +224,28 @@ def _resolve_judge_config(args: argparse.Namespace) -> _JudgeConfig:
 
 
 async def _run(args: argparse.Namespace) -> int:
+    if args.mode == "stamp" and args.out is None:
+        print("--mode stamp requires --out to write the stamp record.", file=sys.stderr)
+        return 1
+
     judge = _resolve_judge_config(args)
-    model_parameters = judge.model_parameters
     cases = load_cases(args.dataset)
     if not cases:
         print("No cases found in the supplied datasets.", file=sys.stderr)
         return 1
     dataset_digest = content_hash(cases)
-    # The gate keys on the attack material alone, not the whole dataset: a
-    # renamed case or an added benign one must not present already-consumed
-    # attacks as a fresh generation.
-    generation_digest = gate_generation_hash(cases)
     print(f"Loaded {len(cases)} case(s); dataset_hash={dataset_digest}")
-    print(f"Gate generation hash: {generation_digest}")
 
     if args.dry_run:
         for case in cases:
             print(f"  {case.id} [{case.boundary}/{case.label}] source={case.source}")
         return 0
 
-    if args.gate:
-        # Fail closed before spending any model call or consuming the
-        # generation: a gate must not run over an unpinned or edited public
-        # corpus, whose content an after-the-fact hash could only report as
-        # different, never keep frozen.
-        try:
-            verify_public_source_pins(cases, pins_path=args.pins_path)
-        except (
-            UnpinnedPublicCaseError,
-            PinNotFoundError,
-            PinMismatchError,
-        ) as error:
-            print(
-                f"Gate refused: public-corpus pin check failed: {error}",
-                file=sys.stderr,
-            )
-            return 1
-
     reviewer = build_reviewer(
         judge.provider,
         judge.model,
         timeout_seconds=judge.timeout_seconds,
-        model_parameters=model_parameters,
+        model_parameters=judge.model_parameters,
         retry_config=judge.retry_config,
     )
     try:
@@ -263,51 +255,33 @@ async def _run(args: argparse.Namespace) -> int:
             seeds=args.seeds,
             provider=judge.provider,
             model=judge.model,
-            model_parameters=model_parameters,
+            model_parameters=judge.model_parameters,
             retry_config=judge.retry_config,
             dataset_hash=dataset_digest,
         )
     finally:
         await reviewer.close()
 
-    if not args.gate:
-        _emit(report, args, include_reasons=True)
-        return 0
-
-    # Consume the generation BEFORE exposing any result: printing the summary
-    # or writing --out first would let a failed export leave no marker after
-    # the results were already consulted, reopening the single-use gate.
-    _gates, combined = report.combined_gate(args.ceiling)
-    decision = consume_gate_generation(
-        generation_digest, combined, ledger_dir=args.ledger_dir
-    )
-    _emit(report, args, include_reasons=False)
     print()
-    if decision.already_consumed:
-        print("NON-SHIPPABLE (dev-only): this gate generation was already consumed.")
-    print(f"Gate status: {combined.status.value} -- {combined.reason}")
-    print(f"Shippable stamp: {'yes' if decision.shippable else 'no'}")
-    print(f"Generation marker: {decision.marker_path}")
-    return 0 if decision.shippable else 1
+    print(report.to_text_summary(ceiling=args.ceiling))
+    _write_output(report, args)
+    return 1 if report.observed_allows() else 0
 
 
-def _emit(
-    report: EvalReport, args: argparse.Namespace, *, include_reasons: bool
-) -> None:
-    print()
-    print(
-        report.to_text_summary(
-            gate_ceiling=args.ceiling if args.gate else None,
-            include_reasons=include_reasons,
-        )
+def _write_output(report: EvalReport, args: argparse.Namespace) -> None:
+    if args.out is None:
+        return
+    payload = (
+        report.to_stamp_record(ceiling=args.ceiling)
+        if args.mode == "stamp"
+        else report.to_json_dict()
     )
-    if args.out is not None:
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(
-            json.dumps(report.to_json_dict(), indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        print(f"\nWrote results to {args.out}")
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    args.out.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    label = "stamp record" if args.mode == "stamp" else "run record"
+    print(f"\nWrote {label} to {args.out}")
 
 
 def main(argv: list[str] | None = None) -> int:

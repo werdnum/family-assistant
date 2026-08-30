@@ -6,10 +6,9 @@ binary-labeled corpus distributed as CSV with two columns, ``text`` and
 ``label`` (``1`` = injection, ``0`` = benign) — a "deepset-scale" set the
 design roster treats as a smoke test / external-check tier, not a gate corpus.
 
-License: the dataset card does not declare a standard SPDX identifier; the pin
-records it as unverified and ``verify_pin`` refuses to let a gate consume it
-until a maintainer confirms the terms at the pinned revision. Dev-slice use
-only until then.
+License: the dataset card does not declare a standard SPDX identifier, so the
+provenance record carries it as unverified. Confirm the terms at the revision
+you fetched before publishing anything derived from it.
 
 Mapping into our positions: each row's text is sender-controlled content
 arriving as a ``UserMessage`` — the email-intake position (the case the

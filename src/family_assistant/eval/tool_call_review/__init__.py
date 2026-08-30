@@ -10,13 +10,10 @@ from __future__ import annotations
 from family_assistant.eval.tool_call_review.loader import (
     CaseSchemaValidationError,
     DuplicateCaseIdError,
-    UnpinnedPublicCaseError,
     canonical_attack_input,
     content_hash,
-    gate_generation_hash,
     load_cases,
     validate_against_tool_schema,
-    verify_public_source_pins,
 )
 from family_assistant.eval.tool_call_review.report import (
     EvalReport,
@@ -24,14 +21,7 @@ from family_assistant.eval.tool_call_review.report import (
     SliceMetrics,
     build_slice_metrics,
 )
-from family_assistant.eval.tool_call_review.runner import (
-    DEFAULT_GENERATION_LEDGER_DIR,
-    GateRunDecision,
-    build_reviewer,
-    consume_gate_generation,
-    is_generation_consumed,
-    run_eval,
-)
+from family_assistant.eval.tool_call_review.runner import build_reviewer, run_eval
 from family_assistant.eval.tool_call_review.schema import (
     BrowserPayload,
     CaseConstraints,
@@ -43,18 +33,20 @@ from family_assistant.eval.tool_call_review.schema import (
     resolve_tool_descriptor,
 )
 from family_assistant.eval.tool_call_review.scoring import (
+    DEFAULT_FALSE_ALLOW_CEILING,
     GateEvaluation,
     GateStatus,
     TrialClassification,
     TrialRecord,
     classify_trial,
+    clean_attack_case_count,
     evaluate_gate,
     required_clean_cases,
     seed_flips,
 )
 
 __all__ = [
-    "DEFAULT_GENERATION_LEDGER_DIR",
+    "DEFAULT_FALSE_ALLOW_CEILING",
     "BrowserPayload",
     "CaseConstraints",
     "CaseSchemaValidationError",
@@ -64,7 +56,6 @@ __all__ = [
     "EvalCase",
     "EvalReport",
     "GateEvaluation",
-    "GateRunDecision",
     "GateStatus",
     "LatencyStats",
     "SliceMetrics",
@@ -72,21 +63,17 @@ __all__ = [
     "TrialClassification",
     "TrialRecord",
     "TriggerSpec",
-    "UnpinnedPublicCaseError",
     "build_reviewer",
     "build_slice_metrics",
     "canonical_attack_input",
     "classify_trial",
-    "consume_gate_generation",
+    "clean_attack_case_count",
     "content_hash",
     "evaluate_gate",
-    "gate_generation_hash",
-    "is_generation_consumed",
     "load_cases",
     "required_clean_cases",
     "resolve_tool_descriptor",
     "run_eval",
     "seed_flips",
     "validate_against_tool_schema",
-    "verify_public_source_pins",
 ]

@@ -10,8 +10,8 @@ keys such as ``User Instruction``, ``Tool Response Template`` (carrying an
 ``<Attacker Instruction>`` placeholder), ``Attacker Instruction``, and
 ``Attacker Tools`` — the format the committed sample mirrors.
 
-License: MIT in the upstream repository; the pin records it for confirmation at
-the pinned revision before a gate consumes it.
+License: MIT in the upstream repository; the provenance record the build script
+writes carries it alongside the revision the maintainer fetched.
 
 Mapping into our positions: the tool response is the tool-result-injection slot
 — a non-trusted-tier ``ToolMessage`` whose taint marks it as fetched, untrusted
@@ -90,7 +90,7 @@ class InjecAgentAdapter(Adapter):
     """Map an InjecAgent-style corpus into tool-result-injection cases."""
 
     corpus_id: ClassVar[str] = "injecagent"
-    license: ClassVar[str] = "MIT (verify at pinned revision)"
+    license: ClassVar[str] = "MIT (as declared upstream)"
     upstream: ClassVar[str] = "https://github.com/uiuc-kang-lab/InjecAgent"
 
     @classmethod

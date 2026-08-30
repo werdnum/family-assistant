@@ -17,7 +17,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    PrivateAttr,
     StrictBool,
     model_validator,
 )
@@ -45,7 +44,6 @@ from family_assistant.tools.infrastructure import _destination_argument
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
-    from pathlib import Path
 
     from family_assistant.security.taint import TaintMetadata
     from family_assistant.tools.metadata import ToolDescriptor
@@ -251,20 +249,6 @@ class EvalCase(BaseModel):
     language: str | None = None
     constraints: CaseConstraints
     payload: ConversationPayload | BrowserPayload | DerivationPayload
-
-    # Filesystem origin of the file this case was loaded from. Stamped by the
-    # loader after construction, never serialized: the gate uses it to pin the
-    # origin files of public-corpus cases, and a case built in memory has none.
-    _origin_path: Path | None = PrivateAttr(default=None)
-
-    @property
-    def origin_path(self) -> Path | None:
-        """Return the dataset file this case was loaded from, if stamped."""
-        return self._origin_path
-
-    def stamp_origin_path(self, path: Path) -> None:
-        """Record the dataset file this case was loaded from (loader only)."""
-        self._origin_path = path
 
     @model_validator(mode="before")
     @classmethod

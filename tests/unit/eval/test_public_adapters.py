@@ -1,4 +1,4 @@
-"""Unit tests for the public-corpus adapters and their pin mechanism.
+"""Unit tests for the public-corpus adapters.
 
 These import the adapter subpackage and the harness loader/schema by full path
 rather than through the package ``__init__`` (which pulls in the runner), so the
@@ -24,19 +24,9 @@ from family_assistant.eval.tool_call_review.adapters.base import (
     Adapter,
     normalized_text_key,
 )
-from family_assistant.eval.tool_call_review.adapters.pins import (
-    Pin,
-    PinMismatchError,
-    PinNotFoundError,
-    corpus_checksum,
-    load_pins,
-    verify_pin,
-)
 from family_assistant.eval.tool_call_review.loader import (
-    UnpinnedPublicCaseError,
     load_cases,
     validate_against_tool_schema,
-    verify_public_source_pins,
 )
 from family_assistant.eval.tool_call_review.schema import ConversationPayload
 from family_assistant.services.tool_call_review import ToolCallReviewInput
@@ -186,80 +176,6 @@ def test_case_ids_are_unique_within_an_adapter() -> None:
         assert len(ids) == len(set(ids))
 
 
-def test_pins_file_lists_every_adapter() -> None:
-    """PINS.toml records a pin for each registered adapter."""
-    pins = load_pins()
-    for corpus_id in ADAPTERS:
-        assert corpus_id in pins
-        assert isinstance(pins[corpus_id], Pin)
-
-
-def test_verify_pin_passes_on_matching_checksum(tmp_path: Path) -> None:
-    """A corpus whose checksum matches its pin verifies."""
-    corpus = tmp_path / "corpus.csv"
-    corpus.write_text("text,label\nhello,0\n", encoding="utf-8")
-    checksum = corpus_checksum(corpus)
-    pin = Pin(
-        corpus_id="demo",
-        upstream="https://example/demo",
-        revision="abc123",
-        checksum=checksum,
-        license="MIT",
-    )
-    verified = verify_pin("demo", corpus, pins={"demo": pin})
-    assert verified is pin
-
-
-def test_verify_pin_fails_on_tampered_checksum(tmp_path: Path) -> None:
-    """A corpus edited after pinning fails verification."""
-    corpus = tmp_path / "corpus.csv"
-    corpus.write_text("text,label\nhello,0\n", encoding="utf-8")
-    pin = Pin(
-        corpus_id="demo",
-        upstream="https://example/demo",
-        revision="abc123",
-        checksum=corpus_checksum(corpus),
-        license="MIT",
-    )
-    corpus.write_text("text,label\nhello,1\n", encoding="utf-8")
-    with pytest.raises(PinMismatchError):
-        verify_pin("demo", corpus, pins={"demo": pin})
-
-
-def test_verify_pin_fails_on_placeholder(tmp_path: Path) -> None:
-    """The unfilled placeholder checksum refuses gate consumption."""
-    corpus = tmp_path / "corpus.csv"
-    corpus.write_text("x", encoding="utf-8")
-    pin = Pin(
-        corpus_id="demo",
-        upstream="https://example/demo",
-        revision="abc123",
-        checksum="sha256:PLACEHOLDER",
-        license="MIT",
-    )
-    assert pin.is_placeholder
-    with pytest.raises(PinMismatchError):
-        verify_pin("demo", corpus, pins={"demo": pin})
-
-
-def test_verify_pin_missing_corpus_raises(tmp_path: Path) -> None:
-    """An unpinned corpus cannot be gate-consumed."""
-    corpus = tmp_path / "corpus.csv"
-    corpus.write_text("x", encoding="utf-8")
-    with pytest.raises(PinNotFoundError):
-        verify_pin("nope", corpus, pins={})
-
-
-def test_corpus_checksum_handles_directories(tmp_path: Path) -> None:
-    """A directory checksum changes when any contained file changes."""
-    corpus_dir = tmp_path / "corpus"
-    corpus_dir.mkdir()
-    (corpus_dir / "a.json").write_text("[]", encoding="utf-8")
-    before = corpus_checksum(corpus_dir)
-    (corpus_dir / "b.json").write_text("[1]", encoding="utf-8")
-    assert corpus_checksum(corpus_dir) != before
-
-
 def test_deepset_attack_and_benign_split_matches_labels() -> None:
     """deepset label 1 rows become attacks; label 0 rows become benign twins."""
     adapter = DeepsetPromptInjectionsAdapter.from_sample()
@@ -278,68 +194,6 @@ def test_from_path_reads_sample_csv() -> None:
     adapter = DeepsetPromptInjectionsAdapter.from_path(sample)
     cases = list(adapter.iter_cases())
     assert len(cases) == 6
-
-
-def _write_deepset_dataset(tmp_path: Path) -> Path:
-    adapter = DeepsetPromptInjectionsAdapter.from_sample()
-    cases_file = tmp_path / f"{adapter.corpus_id}.jsonl"
-    with cases_file.open("w", encoding="utf-8") as handle:
-        for case in adapter.iter_cases():
-            handle.write(json.dumps(case.model_dump(mode="json"), ensure_ascii=False))
-            handle.write("\n")
-    return cases_file
-
-
-def _write_pins(tmp_path: Path, corpus_id: str, checksum: str) -> Path:
-    pins_path = tmp_path / "PINS.toml"
-    pins_path.write_text(
-        f"[{corpus_id}]\n"
-        'upstream = "https://example/demo"\n'
-        'revision = "test-rev"\n'
-        f'checksum = "{checksum}"\n'
-        'license = "test"\n',
-        encoding="utf-8",
-    )
-    return pins_path
-
-
-def test_public_case_fails_the_gate_without_a_matching_pin(tmp_path: Path) -> None:
-    """A public:* dataset the gate consumes must be pinned; unpinned fails closed."""
-    cases_file = _write_deepset_dataset(tmp_path)
-    cases = load_cases(cases_file)
-    assert all(case.source.startswith("public:") for case in cases)
-
-    # No pin recorded for the corpus at all.
-    empty_pins = _write_pins(tmp_path, "unrelated_corpus", "sha256:whatever")
-    with pytest.raises(PinNotFoundError):
-        verify_public_source_pins(cases, pins_path=empty_pins)
-
-
-def test_public_case_passes_the_gate_with_a_matching_pin(tmp_path: Path) -> None:
-    """A public:* dataset whose origin file matches its pin verifies."""
-    cases_file = _write_deepset_dataset(tmp_path)
-    cases = load_cases(cases_file)
-    corpus_id = DeepsetPromptInjectionsAdapter.corpus_id
-    pins_path = _write_pins(tmp_path, corpus_id, corpus_checksum(cases_file))
-
-    # Matching pin: no exception.
-    verify_public_source_pins(cases, pins_path=pins_path)
-
-    # Edit the origin file after pinning: the gate must now refuse it.
-    cases_file.write_text(
-        cases_file.read_text(encoding="utf-8") + "\n", encoding="utf-8"
-    )
-    edited = load_cases(cases_file)
-    with pytest.raises(PinMismatchError):
-        verify_public_source_pins(edited, pins_path=pins_path)
-
-
-def test_unstamped_public_case_fails_the_gate() -> None:
-    """A public:* case with no stamped origin (built in memory) fails closed."""
-    case = next(iter(DeepsetPromptInjectionsAdapter.from_sample().iter_cases()))
-    assert case.origin_path is None
-    with pytest.raises(UnpinnedPublicCaseError):
-        verify_public_source_pins([case])
 
 
 def test_adapted_case_dataclass_pairs_case_and_lineage() -> None:

@@ -85,6 +85,22 @@ def _full_constraints() -> ToolCallReviewConstraints:
     )
 
 
+def _external_capture_config(
+    directory: Path, *, enabled: bool = True
+) -> ToolCallReviewCaptureConfig:
+    """Capture into a tmp directory, which is outside the repository tree.
+
+    Containment is validated against ``<repo root>/.review-eval-local/``, so a
+    test exercising the *write* path must opt out of it explicitly rather than
+    dressing a tmp path up with the marker name.
+    """
+    return ToolCallReviewCaptureConfig(
+        enabled=enabled,
+        directory=str(directory),
+        allow_external_directory=True,
+    )
+
+
 class _CaptureHarness:
     """Minimal stand-in exercising the real capture methods off the wrapper.
 
@@ -143,10 +159,8 @@ async def test_serialize_and_write_produces_loadable_file(tmp_path: Path) -> Non
 
 
 async def test_capture_enabled_writes_file(tmp_path: Path) -> None:
-    directory = tmp_path / ".review-eval-local" / "captures"
-    config = ToolCallReviewConfig(
-        capture=ToolCallReviewCaptureConfig(enabled=True, directory=str(directory))
-    )
+    directory = tmp_path / "captures"
+    config = ToolCallReviewConfig(capture=_external_capture_config(directory))
     harness = _CaptureHarness(config)
 
     harness._start_review_capture(
@@ -162,9 +176,9 @@ async def test_capture_enabled_writes_file(tmp_path: Path) -> None:
 
 
 async def test_capture_disabled_writes_nothing(tmp_path: Path) -> None:
-    directory = tmp_path / ".review-eval-local" / "captures"
+    directory = tmp_path / "captures"
     config = ToolCallReviewConfig(
-        capture=ToolCallReviewCaptureConfig(enabled=False, directory=str(directory))
+        capture=_external_capture_config(directory, enabled=False)
     )
     harness = _CaptureHarness(config)
 
@@ -181,16 +195,14 @@ async def test_capture_disabled_writes_nothing(tmp_path: Path) -> None:
 async def test_capture_failure_never_breaks_review(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    directory = tmp_path / ".review-eval-local" / "captures"
+    directory = tmp_path / "captures"
 
     def _boom(*_args: object, **_kwargs: object) -> object:
         raise RuntimeError("serialization exploded")
 
     monkeypatch.setattr(infrastructure, "build_review_capture_case", _boom)
 
-    config = ToolCallReviewConfig(
-        capture=ToolCallReviewCaptureConfig(enabled=True, directory=str(directory))
-    )
+    config = ToolCallReviewConfig(capture=_external_capture_config(directory))
     harness = _CaptureHarness(config)
 
     # The scheduling call must return normally even though the write will fail.
@@ -209,20 +221,43 @@ def test_shipped_default_capture_is_disabled() -> None:
     assert ToolCallReviewConfig().capture.directory == ".review-eval-local/captures"
 
 
-def test_capture_directory_outside_private_tree_is_rejected() -> None:
-    # A typo like `captures/` would write raw household content to a
-    # commit-visible location, so a directory without a `.review-eval-local`
-    # path component fails validation.
+@pytest.mark.parametrize(
+    "directory",
+    [
+        pytest.param("captures", id="no-marker"),
+        # Names the marker but resolves out of it again.
+        pytest.param(".review-eval-local/../captures", id="traversal"),
+        # Carries the marker name, but `.gitignore` ignores only the
+        # repository-root `.review-eval-local/`, so this lands in a *tracked*
+        # directory and would commit raw household content.
+        pytest.param("nested/.review-eval-local/captures", id="nested-marker"),
+    ],
+)
+def test_capture_directory_outside_private_tree_is_rejected(directory: str) -> None:
     with pytest.raises(ValueError, match=".review-eval-local"):
-        ToolCallReviewCaptureConfig(enabled=True, directory="captures")
+        ToolCallReviewCaptureConfig(enabled=True, directory=directory)
 
 
-def test_capture_directory_override_allows_external_path() -> None:
+def test_capture_directory_inside_repository_private_tree_is_accepted() -> None:
+    config = ToolCallReviewCaptureConfig(
+        enabled=True, directory=".review-eval-local/captures/friction"
+    )
+    assert config.directory == ".review-eval-local/captures/friction"
+
+
+@pytest.mark.parametrize(
+    "directory",
+    [
+        pytest.param("/mnt/private/captures", id="absolute"),
+        pytest.param("nested/.review-eval-local/captures", id="nested-marker"),
+    ],
+)
+def test_capture_directory_override_allows_external_path(directory: str) -> None:
     # An explicit opt-in permits capturing to a deliberately private location
     # outside the gitignored tree (e.g. a mounted volume).
     config = ToolCallReviewCaptureConfig(
         enabled=True,
-        directory="/mnt/private/captures",
+        directory=directory,
         allow_external_directory=True,
     )
-    assert config.directory == "/mnt/private/captures"
+    assert config.directory == directory

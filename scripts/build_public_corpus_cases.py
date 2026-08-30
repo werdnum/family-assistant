@@ -2,29 +2,29 @@
 """Adapt a locally-fetched public injection corpus into eval cases.
 
 Runs one public-corpus adapter over a corpus you have fetched locally and writes
-schema-valid :class:`EvalCase` records (plus a lineage sidecar) into a target
-directory the harness can load. The corpora themselves are never committed — the
-adapter and its pin are the committed artifacts — so this script is how a
-maintainer materializes cases from a corpus fetched at its pinned revision.
+schema-valid :class:`EvalCase` records into a target directory the harness can
+load, alongside a Markdown provenance record naming the upstream, the revision
+you fetched, and the license. The corpora themselves are never committed — the
+adapter is the committed artifact — so this script is how a maintainer
+materializes cases from a corpus they hold locally.
 
-Any corpus a gate consumes must be pinned: pass ``--verify-pin`` to fail unless
-the fetched corpus matches the checksum recorded in ``adapters/PINS.toml``.
-Unpinned fetch-on-demand is acceptable only for dev slices.
+Provenance is recorded, not verified: pass ``--upstream-revision`` so the record
+says which revision the cases came from. Nothing re-checks it at run time.
 
 Usage:
 
-    # Dev slice from a locally-fetched corpus (unpinned):
+    # Adapt a locally-fetched corpus:
     python scripts/build_public_corpus_cases.py \\
         --corpus deepset_prompt_injections \\
         --input ~/corpora/deepset-prompt-injections/train.csv \\
         --out-dir .review-eval-local/public/deepset
 
-    # Gate slice: verify the pin first, and stamp the revision into lineage:
+    # Record the revision the cases came from, and deduplicate:
     python scripts/build_public_corpus_cases.py \\
         --corpus injecagent \\
         --input ~/corpora/InjecAgent/data \\
         --out-dir .review-eval-local/public/injecagent \\
-        --verify-pin --upstream-revision <commit-sha> --dedup
+        --upstream-revision <commit-sha> --dedup
 
     # Smoke-check the mapping with the committed synthetic sample:
     python scripts/build_public_corpus_cases.py \\
@@ -42,14 +42,15 @@ from typing import TYPE_CHECKING
 
 from family_assistant.eval.tool_call_review.adapters import (
     ADAPTERS,
-    corpus_checksum,
     lineage_aware_dedup,
-    verify_pin,
 )
 from family_assistant.eval.tool_call_review.loader import load_cases
 
 if TYPE_CHECKING:
-    from family_assistant.eval.tool_call_review.adapters.base import AdaptedCase
+    from family_assistant.eval.tool_call_review.adapters.base import (
+        AdaptedCase,
+        Adapter,
+    )
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -79,20 +80,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Directory to write the case file and lineage sidecar into.",
     )
     parser.add_argument(
-        "--verify-pin",
-        action="store_true",
-        help="Fail unless the fetched corpus matches its recorded pin (gate use).",
-    )
-    parser.add_argument(
-        "--pins-path",
-        type=Path,
-        default=None,
-        help="Override the PINS.toml location (default: the adapters' PINS.toml).",
-    )
-    parser.add_argument(
         "--upstream-revision",
         default=None,
-        help="Revision to stamp into each case's lineage record.",
+        help="Revision to record in the provenance output and each lineage record.",
     )
     parser.add_argument(
         "--dedup",
@@ -112,14 +102,6 @@ def _build(args: argparse.Namespace) -> int:
         if not args.input.exists():
             print(f"Input corpus not found: {args.input}", file=sys.stderr)
             return 1
-        if args.verify_pin:
-            pin = verify_pin(args.corpus, args.input, pins_path=args.pins_path)
-            print(f"Pin verified: {args.corpus} @ {pin.revision} ({pin.checksum}).")
-        else:
-            print(
-                f"Corpus checksum (unverified): {corpus_checksum(args.input)}",
-                file=sys.stderr,
-            )
         adapter = adapter_cls.from_path(
             args.input, upstream_revision=args.upstream_revision
         )
@@ -135,30 +117,58 @@ def _build(args: argparse.Namespace) -> int:
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
     cases_path = args.out_dir / f"{args.corpus}.jsonl"
-    # The lineage sidecar is not a case and would abort validation if the loader
-    # parsed it, so it goes in a `lineage/` subdirectory the loader excludes
-    # rather than beside the case JSONL.
-    lineage_dir = args.out_dir / "lineage"
-    lineage_dir.mkdir(parents=True, exist_ok=True)
-    lineage_path = lineage_dir / f"{args.corpus}.lineage.jsonl"
     with cases_path.open("w", encoding="utf-8") as handle:
         for item in adapted:
             handle.write(
                 json.dumps(item.case.model_dump(mode="json"), ensure_ascii=False)
             )
             handle.write("\n")
-    with lineage_path.open("w", encoding="utf-8") as handle:
-        for item in adapted:
-            record = {"id": item.case.id, **item.lineage.to_source_metadata()}
-            handle.write(json.dumps(record, ensure_ascii=False))
-            handle.write("\n")
+    # Markdown, and beside the cases rather than under a subdirectory: the
+    # loader skips it on suffix alone, so the provenance record needs no
+    # excluded-directory rule to stay out of the case set.
+    provenance_path = args.out_dir / f"{args.corpus}.provenance.md"
+    provenance_path.write_text(
+        _render_provenance(adapter_cls, args.upstream_revision, adapted),
+        encoding="utf-8",
+    )
 
     # Load the written cases back through the harness loader so a mapping that
     # produced a schema-invalid or duplicate-id case fails here, not at eval time.
     loaded = load_cases(cases_path)
     print(f"Wrote {len(loaded)} case(s) to {cases_path}")
-    print(f"Wrote lineage sidecar to {lineage_path}")
+    print(f"Wrote provenance record to {provenance_path}")
     return 0
+
+
+def _render_provenance(
+    adapter_cls: type[Adapter],
+    upstream_revision: str | None,
+    adapted: list[AdaptedCase],
+) -> str:
+    """Render the provenance record that travels with an adapted corpus.
+
+    It documents where these cases came from — upstream, the revision the
+    maintainer fetched, the license, and each case's upstream id and group. It
+    is a record for a reader, not an integrity check: committed datasets are
+    pinned by git, and nothing re-verifies this at run time.
+    """
+    lines = [
+        f"# Provenance: {adapter_cls.corpus_id}",
+        "",
+        f"- **Upstream**: {adapter_cls.upstream}",
+        f"- **Revision**: {upstream_revision or 'unrecorded'}",
+        f"- **License**: {adapter_cls.license}",
+        f"- **Cases**: {len(adapted)}",
+        "",
+        "| Case id | Upstream id | Group |",
+        "| --- | --- | --- |",
+    ]
+    lines.extend(
+        f"| {item.case.id} | {item.lineage.upstream_id} | {item.lineage.group} |"
+        for item in adapted
+    )
+    lines.append("")
+    return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:

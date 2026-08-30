@@ -1420,7 +1420,7 @@ tool_call_review:
 | Property                   | Default                       | Meaning                                                                                   |
 | -------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------- |
 | `enabled`                  | `false`                       | Ships **off**. When true, each reviewed conversation input is serialized as it is judged. |
-| `directory`                | `.review-eval-local/captures` | Where captures are written. Must contain a `.review-eval-local` path component.           |
+| `directory`                | `.review-eval-local/captures` | Where captures are written. Must resolve inside `<repo root>/.review-eval-local/`.        |
 | `allow_external_directory` | `false`                       | Escape hatch to write outside the private tree (e.g. a mounted private volume).           |
 
 Privacy is structural. Captures hold **raw** household content — the exact `ToolCallReviewInput` the
@@ -1431,10 +1431,14 @@ pseudonymized copy is generated on demand only when a capture must be quoted or 
 
 Because the content is raw, `directory` must stay under the gitignored `.review-eval-local/` tree —
 this is a public repository, and a typo like `captures/` would write household content to a
-commit-visible path. The configuration model **rejects a `directory` without a `.review-eval-local`
-path component at load** unless `allow_external_directory: true` is set to opt into an explicitly
-private location elsewhere. Capture is best-effort and off the review's critical path; a capture
-failure never adds latency to or breaks a review.
+commit-visible path. `.gitignore` ignores the repository-root path `/.review-eval-local/`, so the
+configuration model checks **containment, not the name**: at load it resolves `directory` (relative
+paths against the repository root, which is also the deployment's working directory) and rejects
+anything that does not land inside `<repo root>/.review-eval-local/`. That rejects `captures/`,
+`.review-eval-local/../captures`, and `nested/.review-eval-local/captures` — the last of which
+carries the marker name but sits in a *tracked* directory. Set `allow_external_directory: true` to
+opt into an explicitly private location elsewhere, such as a mounted volume. Capture is best-effort
+and off the review's critical path; a capture failure never adds latency to or breaks a review.
 
 Captures are stored **raw and interim-unlabeled**: they carry a placeholder `label: benign` only
 because the schema's label is not yet nullable, and that interim label is not a real label. Only

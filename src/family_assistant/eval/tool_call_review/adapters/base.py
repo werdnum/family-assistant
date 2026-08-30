@@ -74,7 +74,7 @@ class AdaptedLineage:
         return self.text_key
 
     def to_source_metadata(self) -> dict[str, object]:
-        """Render the sidecar record that travels beside the committed case."""
+        """Render the provenance record that travels beside the adapted case."""
         return {
             "corpus_id": self.corpus_id,
             "upstream_id": self.upstream_id,

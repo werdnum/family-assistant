@@ -1,0 +1,229 @@
+"""End-to-end tests for the two modes of the review-eval CLI.
+
+The script is loaded by path: ``scripts/`` is not an importable package, and the
+entry point is what the maintainer actually runs, so exercising ``main()``
+covers the argument surface and the exit codes rather than the library alone.
+"""
+
+from __future__ import annotations
+
+# pylint: disable=no-name-in-module
+import importlib.util
+import json
+import sys
+from pathlib import Path
+from typing import TYPE_CHECKING, cast
+
+import pytest
+import yaml
+
+import family_assistant.eval.tool_call_review as tool_call_review_eval
+from family_assistant.services.tool_call_review import (
+    ToolCallReviewResponse,
+    ToolCallReviewVerdict,
+)
+from tests.mocks.mock_llm import RuleBasedMockLLMClient
+
+if TYPE_CHECKING:
+    from types import ModuleType
+
+    from family_assistant.llm import LLMInterface
+
+pytestmark = pytest.mark.no_db
+
+_SCRIPT_PATH = (
+    Path(tool_call_review_eval.__file__).parents[3].parent
+    / "scripts"
+    / "tool_call_review_eval.py"
+)
+
+
+def _load_cli() -> ModuleType:
+    spec = importlib.util.spec_from_file_location(
+        "tool_call_review_eval_cli", _SCRIPT_PATH
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture(scope="module")
+def cli() -> ModuleType:
+    return _load_cli()
+
+
+def _dataset_dir(name: str) -> str:
+    return str(Path(tool_call_review_eval.__file__).parent / "datasets" / name)
+
+
+def _install_fake_judge(
+    monkeypatch: pytest.MonkeyPatch, verdict: ToolCallReviewVerdict
+) -> None:
+    """Point the judge factory at a mock that returns one fixed verdict."""
+    mock = RuleBasedMockLLMClient(
+        rules=[],
+        structured_rules=[
+            (
+                lambda _args: True,
+                ToolCallReviewResponse(verdict=verdict, reason="scripted verdict"),
+            )
+        ],
+    )
+
+    def _create_client(_config: dict[str, object]) -> LLMInterface:
+        return cast("LLMInterface", mock)
+
+    monkeypatch.setattr(
+        "family_assistant.eval.tool_call_review.runner.LLMClientFactory.create_client",
+        _create_client,
+    )
+
+
+def test_dry_run_validates_the_manual_dataset_without_a_judge(
+    cli: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert cli.main(["--dataset", _dataset_dir("manual"), "--dry-run"]) == 0
+    output = capsys.readouterr().out
+    assert "dataset_hash=" in output
+    assert "manual-dgsm-attack-delegate [conversation/attack] source=manual" in output
+
+
+def test_report_mode_runs_end_to_end_against_a_fake_judge(
+    cli: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _install_fake_judge(monkeypatch, ToolCallReviewVerdict.DENY)
+    exit_code = cli.main([
+        "--dataset",
+        _dataset_dir("examples"),
+        "--seeds",
+        "2",
+        "--provider",
+        "mock",
+        "--model",
+        "mock-judge",
+    ])
+    output = capsys.readouterr().out
+
+    assert exit_code == 0
+    assert "By source dataset:" in output
+    assert "By attack class:" in output
+    assert "deduplicated clean attack cases" in output
+    assert "No observed attack allows." in output
+
+
+def test_report_mode_prints_the_judge_reason_for_every_weak_pass(
+    cli: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Reasons are the iteration loop's whole point, so they are never withheld:
+    # confirming an attack is a weak pass, and its reason is printed with it.
+    _install_fake_judge(monkeypatch, ToolCallReviewVerdict.CONFIRM)
+    cli.main(["--dataset", _dataset_dir("manual"), "--seeds", "1"])
+    output = capsys.readouterr().out
+    assert "Failing, weak-pass and expectation-miss reasons:" in output
+    assert "[weak_pass] manual-dgsm-attack-delegate -> confirm: scripted verdict" in (
+        output
+    )
+
+
+def test_observed_attack_allow_exits_nonzero(
+    cli: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _install_fake_judge(monkeypatch, ToolCallReviewVerdict.ALLOW)
+    exit_code = cli.main(["--dataset", _dataset_dir("manual"), "--seeds", "1"])
+    assert exit_code == 1
+    assert "attack trial(s) were allowed" in capsys.readouterr().out
+
+
+def test_stamp_mode_writes_one_record(
+    cli: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_fake_judge(monkeypatch, ToolCallReviewVerdict.DENY)
+    out_path = tmp_path / "runs" / "stamp.json"
+    exit_code = cli.main([
+        "--dataset",
+        _dataset_dir("manual"),
+        "--mode",
+        "stamp",
+        "--seeds",
+        "1",
+        "--provider",
+        "mock",
+        "--model",
+        "mock-judge",
+        "--out",
+        str(out_path),
+    ])
+    assert exit_code == 0
+
+    record = json.loads(out_path.read_text(encoding="utf-8"))
+    assert record["judge"] == {
+        "provider": "mock",
+        "model": "mock-judge",
+        "model_parameters": None,
+        "retry_config": None,
+    }
+    assert record["dataset_hash"]
+    assert record["date"]
+    assert record["observed_allows"] == 0
+    assert record["clean_attack_cases"] > 0
+    assert record["supported_bound"] == pytest.approx(
+        3.0 / record["clean_attack_cases"]
+    )
+    assert record["by_attack_class"]
+    assert "overall" in record["slice_bounds"]
+
+
+def test_stamp_mode_without_out_is_refused(
+    cli: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    exit_code = cli.main([
+        "--dataset",
+        _dataset_dir("manual"),
+        "--mode",
+        "stamp",
+    ])
+    assert exit_code == 1
+    assert "--out" in capsys.readouterr().err
+
+
+def test_config_file_resolves_the_judge_through_the_layered_loader(
+    cli: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # defaults.yaml ships llm_parameters an operator file does not repeat, so
+    # reading that one file would measure a differently-parameterised fallback
+    # judge than the deployment actually runs.
+    monkeypatch.chdir(Path(tool_call_review_eval.__file__).parents[3].parent)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({
+            "tool_call_review": {
+                "model": "gemini-3.7-flash",
+                "retry_config": {
+                    "fallback": {"provider": "openai", "model": "gpt-5.6-terra"}
+                },
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    args = cli._parse_args([
+        "--dataset",
+        _dataset_dir("manual"),
+        "--config-file",
+        str(config_path),
+    ])
+    judge = cli._resolve_judge_config(args)
+
+    assert judge.model == "gemini-3.7-flash"
+    assert judge.retry_config is not None
+    assert judge.retry_config["fallback"]["model"] == "gpt-5.6-terra"
+    assert judge.model_parameters is not None
+    assert "gpt-5.6-terra" in judge.model_parameters

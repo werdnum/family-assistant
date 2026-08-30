@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING
 import jsonschema
 import yaml
 
-from family_assistant.eval.tool_call_review.adapters.pins import verify_pin
 from family_assistant.eval.tool_call_review.schema import (
     ConversationPayload,
     EvalCase,
@@ -25,26 +24,20 @@ if TYPE_CHECKING:
 __all__ = [
     "CaseSchemaValidationError",
     "DuplicateCaseIdError",
-    "UnpinnedPublicCaseError",
     "canonical_attack_input",
     "content_hash",
-    "gate_generation_hash",
     "load_cases",
     "validate_against_tool_schema",
-    "verify_public_source_pins",
 ]
 
 _CASE_SUFFIXES = (".jsonl", ".yaml", ".yml", ".json")
 
-_PUBLIC_SOURCE_PREFIX = "public:"
-
-# Run reports and consumed-generation markers are harness *outputs*, and a
-# report written under a scanned dataset directory would otherwise be parsed as
-# a case on the next load. Excluding well-known directory names is
-# deterministic; sniffing file contents to guess what is a case would instead
-# make a malformed case disappear silently. ``lineage`` holds the build
-# script's lineage sidecars, which are not cases and would abort validation.
-_EXCLUDED_DIR_NAMES = frozenset({"consumed_generations", "runs", "lineage"})
+# Run reports are harness *outputs*, and a report written under a scanned
+# dataset directory would otherwise be parsed as a case on the next load.
+# Excluding a well-known directory name is deterministic; sniffing file
+# contents to guess what is a case would instead make a malformed case
+# disappear silently.
+_EXCLUDED_DIR_NAMES = frozenset({"runs"})
 
 
 class CaseSchemaValidationError(Exception):
@@ -53,10 +46,6 @@ class CaseSchemaValidationError(Exception):
 
 class DuplicateCaseIdError(Exception):
     """Two loaded cases share the same id."""
-
-
-class UnpinnedPublicCaseError(Exception):
-    """A ``public:*``-sourced case reached a gate without a verifiable pin."""
 
 
 def validate_against_tool_schema(
@@ -120,53 +109,17 @@ def load_cases(
                 raise DuplicateCaseIdError(
                     f"Duplicate case id {case.id!r} (seen again in {file_path})."
                 )
-            case.stamp_origin_path(file_path)
             by_id[case.id] = case
     return [by_id[case_id] for case_id in sorted(by_id)]
-
-
-def verify_public_source_pins(
-    cases: Iterable[EvalCase],
-    *,
-    pins_path: Path | None = None,
-) -> None:
-    """Verify every ``public:*``-sourced case's origin file against a pin.
-
-    ``--gate`` loads plain JSONL and would otherwise gate an unpinned or edited
-    public-corpus dataset without noticing. This fails closed before a gate
-    consumes its generation: each public-sourced case's stamped origin file is
-    checksum-verified against the pins manifest (``adapters/PINS.toml`` by
-    default, overridable via ``pins_path``). A public case with no stamped
-    origin, an unpinned corpus (:class:`PinNotFoundError`), or a file that no
-    longer matches its recorded checksum (:class:`PinMismatchError`) each abort
-    rather than being gated silently.
-    """
-    checked: set[tuple[str, Path]] = set()
-    for case in cases:
-        if not case.source.startswith(_PUBLIC_SOURCE_PREFIX):
-            continue
-        corpus_id = case.source[len(_PUBLIC_SOURCE_PREFIX) :]
-        origin = case.origin_path
-        if origin is None:
-            raise UnpinnedPublicCaseError(
-                f"Public-sourced case {case.id!r} has no stamped origin file; a gate "
-                "cannot verify its pin. Load public cases from disk before gating."
-            )
-        key = (corpus_id, origin)
-        if key in checked:
-            continue
-        checked.add(key)
-        verify_pin(corpus_id, origin, pins_path=pins_path)
 
 
 def content_hash(cases: Sequence[EvalCase]) -> str:
     """Return a stable content hash of a set of cases for run comparison.
 
     This covers every field of every case, so it answers "did two runs see the
-    same dataset?". It is deliberately *not* the gate identity: renaming a case
-    or adding a benign one changes it, which would let already-consumed attack
-    material be re-gated as a fresh generation. Gate consumption keys on
-    :func:`gate_generation_hash`.
+    same dataset?" — which is what a stamp records and what a regression diff
+    compares. Committed datasets are pinned by git; this digest is how a run
+    states which dataset it measured.
     """
     serialized = [
         case.model_dump(mode="json") for case in sorted(cases, key=lambda case: case.id)
@@ -197,39 +150,6 @@ def canonical_attack_input(case: EvalCase) -> str:
         sort_keys=True,
         ensure_ascii=False,
     )
-
-
-def gate_generation_hash(cases: Sequence[EvalCase]) -> str:
-    """Return the digest identifying a gate generation's held-out material.
-
-    A generation's identity is the attack material a gate run actually
-    consulted: each attack case's payload and the verdict space it was judged
-    under. Envelope metadata (ids, source, axis labels) and benign cases are
-    excluded, so re-labelling or extending a dataset cannot mint a "new"
-    generation over attacks that have already been consumed — only changing
-    what an attack proposes, or the space it is judged in, does. A dataset with
-    no attack cases digests to the empty generation, which costs nothing: such
-    a run has no attack trials and cannot pass a gate anyway.
-    """
-    serialized = sorted(
-        json.dumps(
-            {
-                "payload": case.payload.model_dump(mode="json"),
-                "constraints": {
-                    "available_verdicts": sorted(
-                        verdict.value for verdict in case.constraints.available_verdicts
-                    ),
-                    "fallback_verdict": case.constraints.fallback_verdict.value,
-                },
-            },
-            sort_keys=True,
-            ensure_ascii=False,
-        )
-        for case in cases
-        if case.label == "attack"
-    )
-    encoded = json.dumps(serialized, ensure_ascii=False)
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _collect_files(paths: str | Path | Iterable[str | Path]) -> list[Path]:

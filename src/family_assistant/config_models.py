@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 
 from .config_sources import DeepMergedYamlSource
 from .delegation_security import DelegationSecurityLevel
+from .paths import PROJECT_ROOT
 from .security.taint import SinkClass, TaintPolicyConfig
 from .tools.policy import (
     ToolPolicyConfig,
@@ -69,6 +70,10 @@ class ToolCallReviewEscalationConfig(BaseModel):
     total_denials_per_turn: int = Field(default=20, ge=1)
 
 
+_PRIVATE_CAPTURE_DIR_NAME = ".review-eval-local"
+"""The one directory ``.gitignore`` ignores, as a repository-root-anchored path."""
+
+
 class ToolCallReviewCaptureConfig(BaseModel):
     """On-source capture of reviewed inputs into a private local dataset.
 
@@ -82,13 +87,17 @@ class ToolCallReviewCaptureConfig(BaseModel):
     it is never committed. Ships OFF: the friction dataset is a per-deployment,
     unshared artifact a maintainer opts into.
 
-    ``directory`` is required to *resolve* under a ``.review-eval-local`` path
-    component so a typo like ``captures/`` cannot write raw household content to
-    a commit-visible location; a deployment that deliberately captures elsewhere
-    (a mounted private volume) must set ``allow_external_directory: true`` to say
-    so explicitly. Normalization is load-bearing: ``.review-eval-local/../captures``
-    names a ``.review-eval-local`` component but resolves outside the private
-    tree, so the check normalizes the path and rejects any ``..`` traversal.
+    ``directory`` is required to resolve *inside the one directory the
+    repository actually ignores* — ``<repo root>/.review-eval-local/`` — so a
+    typo like ``captures/`` cannot write raw household content to a
+    commit-visible location; a deployment that deliberately captures elsewhere
+    (a mounted private volume) must set ``allow_external_directory: true`` to
+    say so explicitly. Containment, not a name match, is what is checked:
+    ``.gitignore`` ignores the root-anchored path, so ``nested/.review-eval-local/
+    captures`` carries the marker name yet lands in a tracked directory, and
+    ``.review-eval-local/../captures`` names the marker while resolving outside
+    it. Both are rejected. Relative paths are anchored at the repository root,
+    which is also the working directory the deployment runs from.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -101,18 +110,21 @@ class ToolCallReviewCaptureConfig(BaseModel):
     def _validate_directory_is_private(self) -> ToolCallReviewCaptureConfig:
         if self.allow_external_directory:
             return self
-        # Normalize first: a component check alone accepts
-        # ``.review-eval-local/../captures``, which resolves outside the private
-        # tree. After ``normpath`` that path collapses to ``captures`` (marker
-        # gone), and any escaping traversal leaves a ``..`` component behind.
-        normalized_parts = Path(os.path.normpath(self.directory)).parts
-        if ".." in normalized_parts or ".review-eval-local" not in normalized_parts:
+        candidate = Path(self.directory)
+        if not candidate.is_absolute():
+            candidate = PROJECT_ROOT / candidate
+        # Normalize lexically rather than resolving: the directory need not
+        # exist yet, and a ``..`` segment must be collapsed before the
+        # containment check or it would walk straight out of the private tree.
+        normalized = Path(os.path.normpath(candidate))
+        private_root = Path(os.path.normpath(PROJECT_ROOT / _PRIVATE_CAPTURE_DIR_NAME))
+        if not normalized.is_relative_to(private_root):
             raise ValueError(
                 "tool_call_review.capture.directory must resolve to a location "
-                "under a '.review-eval-local' path component with no '..' "
-                "traversal (it holds raw household content); got "
-                f"{self.directory!r}. Set allow_external_directory: true to "
-                "capture to an explicitly private location elsewhere."
+                f"inside {private_root} (the gitignored tree that holds raw "
+                f"household content); got {self.directory!r}, which resolves to "
+                f"{normalized}. Set allow_external_directory: true to capture to "
+                "an explicitly private location elsewhere."
             )
         return self
 
