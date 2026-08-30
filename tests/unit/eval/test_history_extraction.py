@@ -297,6 +297,33 @@ async def test_history_extraction_never_migrates_the_source_database(
     assert tables == set()
 
 
+async def test_history_extraction_leaves_the_sqlite_journal_mode_alone(
+    tmp_path: Path,
+) -> None:
+    """Reading must not convert the source file to WAL.
+
+    ``create_engine_with_sqlite_optimizations`` is the application's engine and
+    its connect hook issues ``PRAGMA journal_mode=WAL``, which is a persistent
+    property of the file and leaves ``-wal``/``-shm`` sidecars. Pointed at a
+    production database or an archival copy, a reader that used it would change
+    the file's storage mode.
+    """
+    script = _load_history_extraction_script()
+    db_path = tmp_path / "delete-mode.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA journal_mode=DELETE")
+        connection.execute("CREATE TABLE probe (id INTEGER PRIMARY KEY)")
+
+    with pytest.raises(Exception, match="message_history"):
+        await script._collect_templates(
+            f"sqlite+aiosqlite:///{db_path}", interface_type=None, limit=None
+        )
+
+    with sqlite3.connect(db_path) as connection:
+        mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+    assert mode == "delete"
+
+
 def _load_history_extraction_script() -> ModuleType:
     """Load the export script by path; ``scripts/`` is not an importable package."""
     script_path = PROJECT_ROOT / "scripts" / "extract_review_history.py"

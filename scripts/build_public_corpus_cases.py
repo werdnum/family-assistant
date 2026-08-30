@@ -93,6 +93,15 @@ def _build(args: argparse.Namespace) -> int:
     adapter_cls = ADAPTERS[args.corpus]
 
     if args.use_sample:
+        if args.upstream_revision is not None:
+            print(
+                "--upstream-revision cannot be combined with --use-sample: the "
+                "sample is committed here, so its revision is 'sample' and the "
+                "supplied value would only disagree with what each lineage "
+                "record already carries.",
+                file=sys.stderr,
+            )
+            return 1
         adapter = adapter_cls.from_sample()
         print(f"Adapting the committed sample for {args.corpus}.")
     else:
@@ -120,8 +129,11 @@ def _build(args: argparse.Namespace) -> int:
     # loader skips it on suffix alone, so the provenance record needs no
     # excluded-directory rule to stay out of the case set.
     provenance_path = args.out_dir / f"{args.corpus}.provenance.md"
+    # The adapter's own revision, not the CLI value: ``from_sample`` records
+    # "sample", so passing the flag through would print "unrecorded" in the
+    # sidecar while every lineage record beside it said "sample".
     provenance_path.write_text(
-        _render_provenance(adapter_cls, args.upstream_revision, adapted),
+        _render_provenance(adapter_cls, adapter.upstream_revision, adapted),
         encoding="utf-8",
     )
 

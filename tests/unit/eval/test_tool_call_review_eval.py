@@ -925,6 +925,44 @@ def test_taint_state_the_decoder_would_repair_is_rejected(
         )
 
 
+def test_a_message_rows_taint_metadata_is_checked_too() -> None:
+    # A row's tier decides whether the reviewer renders its content or replaces
+    # it with a provenance stub, so metadata the decoder repairs on the way in
+    # changes what the judge reads — checking only the turn state would leave
+    # the field that decides that unchecked.
+    broken = {k: v for k, v in _TRUSTED.items() if k != "max_tier"}
+    broken["max_teir"] = "unknown_external"
+    with pytest.raises(ValidationError, match=r"messages\[0\]\.taint_metadata"):
+        ConversationPayload(
+            messages=[{"role": "user", "taint_metadata": broken}],
+            tool_name="send_message_to_user",
+            sink_class="none",
+            taint_state=dict(_TRUSTED),
+        )
+
+
+def test_a_message_row_without_taint_metadata_is_accepted() -> None:
+    payload = ConversationPayload(
+        messages=[{"role": "user", "content": "hello"}],
+        tool_name="send_message_to_user",
+        sink_class="none",
+        taint_state=dict(_TRUSTED),
+    )
+    assert payload.messages[0].get("taint_metadata") is None
+
+
+def test_a_triggers_definition_taint_metadata_is_checked_too() -> None:
+    broken = {k: v for k, v in _TRUSTED.items() if k != "max_tier"}
+    broken["max_teir"] = "unknown_external"
+    with pytest.raises(ValidationError, match="definition_taint_metadata"):
+        TriggerSpec(
+            trigger_type="schedule",
+            active_request_role="system",
+            definition="Send the morning brief.",
+            definition_taint_metadata=broken,
+        )
+
+
 def test_canonical_taint_state_is_accepted() -> None:
     payload = ConversationPayload(
         messages=[],

@@ -7,7 +7,9 @@ mapping is exercised without a configured judge.
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -32,10 +34,12 @@ from family_assistant.eval.tool_call_review.loader import (
     validate_against_tool_schema,
 )
 from family_assistant.eval.tool_call_review.schema import ConversationPayload
+from family_assistant.paths import PROJECT_ROOT
 from family_assistant.services.tool_call_review import ToolCallReviewInput
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from types import ModuleType
 
 _ADAPTER_CLASSES = (DeepsetPromptInjectionsAdapter, InjecAgentAdapter)
 
@@ -396,3 +400,54 @@ def test_adapted_case_dataclass_pairs_case_and_lineage() -> None:
     assert [item.case for item in adapted] == list(
         InjecAgentAdapter.from_sample().iter_cases()
     )
+
+
+def test_sample_build_records_the_revision_the_lineage_carries(tmp_path: Path) -> None:
+    """The sidecar's revision must be the adapter's, not the unused CLI value.
+
+    ``from_sample`` records "sample"; passing ``args.upstream_revision`` (None
+    by default) to the renderer printed "Revision: unrecorded" beside lineage
+    records that all said "sample".
+    """
+    script = _load_corpus_build_script()
+    exit_code = script.main([
+        "--corpus",
+        "deepset_prompt_injections",
+        "--use-sample",
+        "--out-dir",
+        str(tmp_path),
+    ])
+    assert exit_code == 0
+
+    provenance = (tmp_path / "deepset_prompt_injections.provenance.md").read_text(
+        encoding="utf-8"
+    )
+    assert "**Revision**: sample" in provenance
+    assert "unrecorded" not in provenance
+
+
+def test_upstream_revision_cannot_contradict_the_sample(tmp_path: Path) -> None:
+    script = _load_corpus_build_script()
+    exit_code = script.main([
+        "--corpus",
+        "deepset_prompt_injections",
+        "--use-sample",
+        "--upstream-revision",
+        "abc123",
+        "--out-dir",
+        str(tmp_path),
+    ])
+    assert exit_code == 1
+
+
+def _load_corpus_build_script() -> ModuleType:
+    """Load the build script by path; ``scripts/`` is not an importable package."""
+    script_path = PROJECT_ROOT / "scripts" / "build_public_corpus_cases.py"
+    spec = importlib.util.spec_from_file_location(
+        "build_public_corpus_cases_script", script_path
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module

@@ -26,14 +26,24 @@ Nothing here instantiates cases with content — stage 2 (a capable model
 hallucinating concrete cases from committed templates) is a separate,
 maintainer-run step. See ``docs/development/review-eval-history-extraction.md``.
 
-The source database is only ever **read**. In particular the schema is not
-initialized: the application's ``init_db`` runs ``alembic upgrade head`` on a
-managed database and creates and stamps one that is not, so calling it here
-would migrate whatever ``--database-url`` names — a live deployment, or an
-older copy kept deliberately at its original revision — and would do it under
-``--dry-run`` too. A database whose schema predates the tables this reads fails
-on the query instead, which is the right outcome for a tool pointed at the
-wrong place.
+The source database is only ever **read**, and ``--database-url`` is expected
+to name the real one, so nothing here may write to it — under ``--dry-run``
+least of all. Two things follow, and neither is the default path.
+
+The schema is not initialized. The application's ``init_db`` runs ``alembic
+upgrade head`` on a managed database and creates and stamps one that is not, so
+calling it here would migrate a live deployment, or a copy kept deliberately at
+its original revision. A database whose schema predates the tables this reads
+fails on the query instead, which is the right outcome for a tool pointed at the
+wrong place; this therefore needs a database already at a compatible revision,
+not a fresh one.
+
+The SQLite tuning pragmas are off. The engine factory's connect hook issues
+``PRAGMA journal_mode=WAL``, which is a persistent property of the file: opening
+a production SQLite database or an archival copy with it converts the file's
+journal mode and leaves ``-wal`` and ``-shm`` sidecars behind. A tool that only
+reads a database it does not own has no business doing either, so it asks for
+``apply_sqlite_pragmas=False``.
 
 Usage:
 
@@ -281,7 +291,9 @@ async def _collect_templates(
     interface_type: str | None,
     limit: int | None,
 ) -> tuple[list[TaskTemplate], list[tuple[str, str]]]:
-    engine = create_engine_with_sqlite_optimizations(database_url)
+    engine = create_engine_with_sqlite_optimizations(
+        database_url, apply_sqlite_pragmas=False
+    )
     try:
         db = Database(engine)
         grouped = await db.message_history.get_all_grouped(

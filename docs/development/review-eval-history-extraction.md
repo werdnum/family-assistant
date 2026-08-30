@@ -96,8 +96,13 @@ The dry run is the default posture for inspection: it reports how many templates
 how many were rejected (with reasons) — by the privacy chokepoint, or because the row itself could
 not be abstracted, as when its recorded tool-call arguments are not a JSON object. A rejected row is
 reported and dropped, never abstracted into an argument-less template that would look well formed
-and quietly thin the task-shape quarry. The dry run touches no disk. It runs cleanly against an
-empty or fresh dev database (it initializes the schema and finds zero turns).
+and quietly thin the task-shape quarry.
+
+The dry run writes nothing — not to disk, and not to the database. It needs one already at a
+compatible schema revision: the extractor never initializes or migrates the database
+`--database-url` names, and connects with a plain engine rather than the application's, so it cannot
+convert a SQLite file's journal mode either. Point it at an empty or fresh database and the
+`message_history` query fails, which is the intended answer for a tool aimed at the wrong place.
 
 ### Human-review step before anything leaves the private tree
 

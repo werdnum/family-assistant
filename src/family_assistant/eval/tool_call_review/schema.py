@@ -56,6 +56,7 @@ __all__ = [
     "EvalCase",
     "ToolResolutionError",
     "TriggerSpec",
+    "require_canonical_taint_metadata",
     "resolve_tool_descriptor",
 ]
 
@@ -140,6 +141,53 @@ class CaseConstraints(BaseModel):
         )
 
 
+def require_canonical_taint_metadata(metadata: object, *, field: str) -> None:
+    """Reject taint metadata the runtime decoder would silently repair.
+
+    ``TurnTaintState.from_metadata`` is deliberately tolerant: it decodes
+    persisted history, where the safe response to a value it cannot read is to
+    assume the worst and carry on, so a misspelled key or an unreadable tier
+    yields the unknown-external sentinel rather than an error. A case file is
+    not history. Accepting the same input would replay a fixture under
+    provenance it does not declare -- and it would pass ``--dry-run``, which
+    advertises itself as the validation boundary -- so the run would report a
+    verdict, and a bound, for a case nobody wrote.
+
+    The check is a round trip rather than a field-by-field schema, so it needs
+    no second copy of the decoder's rules and cannot fall behind them: whatever
+    ``from_metadata`` ignored is missing when the state is serialized back, and
+    whatever it repaired comes back changed. It also turns a stale case into a
+    load error instead of a quietly incomparable number -- metadata that
+    predates a change to the engine's serialization stops matching, which is the
+    signal to regenerate it (see "What a case is: a journey, not a recording" in
+    the design doc).
+
+    Every field a case carries taint metadata in resolves through here, because
+    the reviewer decodes all of them: the turn state, each message row's
+    ``taint_metadata`` (which decides whether a row renders as content or as a
+    provenance stub), and a trigger's ``definition_taint_metadata`` (which
+    decides the same for the trigger definition, and feeds the trusted
+    destination echo). Validating only the turn state would leave the fields
+    that decide what the judge actually reads unchecked.
+
+    ``None`` is a real value here -- a message row with no taint metadata, a
+    trigger with no definition provenance -- and decodes without repair, so it
+    passes.
+    """
+    if metadata is None:
+        return
+    decoded = TurnTaintState.from_metadata(metadata).to_metadata()
+    if decoded != metadata:
+        raise ValueError(
+            f"{field} is not what TurnTaintState.from_metadata reads it as: the "
+            f"case declares {metadata!r} but the runtime decoder resolves that "
+            f"to {decoded!r}. Write the metadata TurnTaintState.to_metadata() "
+            "produces for the state the case means to test, or regenerate it if "
+            "the taint engine's serialization has changed since the case was "
+            "written."
+        )
+
+
 class TriggerSpec(BaseModel):
     """Serialized trigger context for a conversation case.
 
@@ -155,6 +203,13 @@ class TriggerSpec(BaseModel):
     definition: str | None = None
     definition_taint_metadata: dict[str, object] | None = None
     payload_present: StrictBool = True
+
+    @model_validator(mode="after")
+    def _require_canonical_definition_taint(self) -> TriggerSpec:
+        require_canonical_taint_metadata(
+            self.definition_taint_metadata, field="trigger.definition_taint_metadata"
+        )
+        return self
 
     def to_trigger_input(self) -> TriggerReviewInput:
         """Build the runtime trigger input this spec serializes."""
@@ -197,40 +252,19 @@ class ConversationPayload(BaseModel):
     trigger: TriggerSpec | None = None
 
     @model_validator(mode="after")
-    def _require_canonical_taint_state(self) -> ConversationPayload:
-        """Reject taint metadata the runtime decoder would silently repair.
+    def _require_canonical_taint_metadata(self) -> ConversationPayload:
+        """Check every taint-bearing field, not only the turn state.
 
-        ``TurnTaintState.from_metadata`` is deliberately tolerant: it is decoding
-        persisted history, where the safe response to a value it cannot read is
-        to assume the worst and carry on, so a misspelled key or an unreadable
-        tier yields the unknown-external sentinel rather than an error. A case
-        file is not history. Accepting the same input here would replay a
-        fixture under provenance it does not declare -- and it would pass
-        ``--dry-run``, which advertises itself as the validation boundary --
-        so the run would report a verdict, and a bound, for a case nobody wrote.
-
-        The check is a round trip rather than a field-by-field schema, so it
-        needs no second copy of the decoder's rules and cannot fall behind them:
-        whatever ``from_metadata`` ignored is missing when the state is
-        serialized back, and whatever it repaired comes back changed. It also
-        makes a stale case fail loudly instead of quietly: taint metadata that
-        predates a change to the engine's serialization stops matching, which is
-        the signal to regenerate it (see "What a case is: a journey, not a
-        recording" in the design doc).
-
-        Every producer already writes canonical metadata -- the adapters build
-        it with ``to_metadata()`` for exactly this reason -- so this rejects
-        malformed input without constraining how a case is authored.
+        See :func:`require_canonical_taint_metadata`. The message rows matter as
+        much as the turn state: a row's tier decides whether the reviewer
+        renders its content or replaces it with a provenance stub, so metadata
+        repaired on the way in changes what the judge reads.
         """
-        decoded = TurnTaintState.from_metadata(self.taint_state).to_metadata()
-        if decoded != self.taint_state:
-            raise ValueError(
-                "taint_state is not what TurnTaintState.from_metadata reads it "
-                f"as: the case declares {self.taint_state!r} but the runtime "
-                f"decoder resolves that to {decoded!r}. Write the metadata "
-                "TurnTaintState.to_metadata() produces for the state the case "
-                "means to test, or regenerate it if the taint engine's "
-                "serialization has changed since the case was written."
+        require_canonical_taint_metadata(self.taint_state, field="taint_state")
+        for index, message in enumerate(self.messages):
+            require_canonical_taint_metadata(
+                message.get("taint_metadata"),
+                field=f"messages[{index}].taint_metadata",
             )
         return self
 
