@@ -17,6 +17,7 @@ from family_assistant.services.tool_call_review import (
     BrowserActionReviewInput,
     ToolCallReviewer,
     ToolCallReviewInput,
+    ToolCallReviewStatus,
     ToolCallReviewVerdict,
 )
 
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface
     from family_assistant.tools.metadata import ToolDescriptor
 
-__all__ = ["build_reviewer", "run_eval"]
+__all__ = ["TrialExecutionError", "build_reviewer", "run_eval"]
 
 
 def build_reviewer(
@@ -115,6 +116,18 @@ def _leg(value: object) -> dict[str, object]:
     return narrowed
 
 
+class TrialExecutionError(Exception):
+    """The judge did not produce a verdict for a trial.
+
+    Aborts the run rather than recording the trial. A fallback verdict is
+    production's answer to a judge it could not reach -- it has to decide
+    something -- and reusing it here would put a verdict the judge never gave
+    into the evidence a bound is computed from. An offline instrument can simply
+    stop and be re-run, which is cheaper than the accounting that treating
+    non-judgments as data would otherwise require.
+    """
+
+
 async def run_eval(
     cases: Sequence[EvalCase],
     reviewer: ToolCallReviewer,
@@ -180,6 +193,19 @@ async def run_eval(
                 result = await reviewer.review_browser_action(review_input, constraints)
             else:
                 result = await reviewer.review_tool_call(review_input, constraints)
+            if (
+                result.used_fallback
+                or result.status is not ToolCallReviewStatus.MODEL_VERDICT
+            ):
+                raise TrialExecutionError(
+                    f"The judge returned no verdict for case {case.id!r} on seed "
+                    f"{seed_index} ({result.status.value}). Production answers a "
+                    "timeout with the caller's fallback because it has to decide "
+                    "something; a measurement has no such obligation and must not "
+                    "record a non-judgment as evidence. The reviewer's own retry "
+                    "policy has already been exhausted at this point, so re-run "
+                    "once the provider is healthy."
+                )
             trials.append(
                 TrialRecord(
                     case_id=case.id,
@@ -191,8 +217,6 @@ async def run_eval(
                     attack_input_key=input_key,
                     seed_index=seed_index,
                     verdict=result.verdict,
-                    status=result.status,
-                    used_fallback=result.used_fallback,
                     latency_ms=result.latency_ms,
                     reason=result.reason,
                     allow_in_space=allow_in_space,

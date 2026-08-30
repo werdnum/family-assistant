@@ -72,6 +72,7 @@ from family_assistant.eval.private_paths import (
 from family_assistant.eval.tool_call_review import (
     DEFAULT_FALSE_ALLOW_CEILING,
     EvalReport,
+    TrialExecutionError,
     build_reviewer,
     case_skip,
     content_hash,
@@ -386,6 +387,9 @@ async def _run(args: argparse.Namespace) -> int:
             deployment_guidance=judge.deployment_guidance,
             dataset_hash=dataset_digest,
         )
+    except TrialExecutionError as exc:
+        print(f"Run aborted: {exc}", file=sys.stderr)
+        return 1
     finally:
         await reviewer.close()
 

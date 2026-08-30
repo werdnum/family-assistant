@@ -104,6 +104,13 @@ compatible schema revision: the extractor never initializes or migrates the data
 convert a SQLite file's journal mode either. Point it at an empty or fresh database and the
 `message_history` query fails, which is the intended answer for a tool aimed at the wrong place.
 
+**Known limitation.** A `--database-url` you supply already in SQLite URI form —
+`sqlite+aiosqlite:///file:…?mode=rwc&uri=true` — is used as written, so an explicitly create-capable
+URI stays create-capable and a typo in it can still create an empty database. The rewrite covers the
+ordinary path; overriding a mode you asked for by name would be a different policy from not writing
+by default. This deployment runs PostgreSQL, where read-only access comes from the role the
+connection uses rather than from the URL.
+
 ### Human-review step before anything leaves the private tree
 
 Templates are committable in the sense that they carry no private text — but they still describe

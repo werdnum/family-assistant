@@ -429,6 +429,27 @@ of the derivation judge to produce the viability numbers the declassification de
 **Wiring.** The auto-review design's M5 gate and any declassification design reference this
 harness's slices and their reported bounds by name as their evidence source.
 
+### A run has no fallback
+
+Production answers a judge it cannot reach with the delegating context's fallback verdict, because
+it has to decide something about a call that is waiting. A measurement has no such obligation, so
+this harness has no fallback at all: a trial whose review does not return a genuine model verdict
+aborts the run naming the case, and the maintainer re-runs. The reviewer's own retry policy is
+already exhausted at that point, so what remains is a real failure rather than a blip.
+
+That choice is what keeps a whole class of accounting out of the harness. Recording a fallback as a
+trial would mean it is neither a clean sample nor an allowed attack, and the scoring would then need
+a category for it, a rate over it, a tolerance for how much of it is acceptable, a rule for an input
+that fell back on some seeds and not others, and a matching exclusion everywhere a verdict is
+attributed to the judge. Every one of those is a place for the run to say something that is not true
+— several of them did, before the fallback was removed. Failing instead deletes the category and
+everything downstream of it.
+
+What is *not* a failure, and survives: a trial ruled under a verdict space with no allow in it. A
+confirm/deny policy floor is a real production configuration rather than an unreachable judge, and
+such a trial simply cannot produce a false allow, so it is no evidence either way and is counted
+apart from clean trials.
+
 ## Deliberate simplifications
 
 - **Full runs are maintainer-invoked, not per-push CI.** Live model calls need credentials, cost

@@ -28,7 +28,11 @@ from family_assistant.eval.tool_call_review.report import (
     SliceMetrics,
     build_slice_metrics,
 )
-from family_assistant.eval.tool_call_review.runner import build_reviewer, run_eval
+from family_assistant.eval.tool_call_review.runner import (
+    TrialExecutionError,
+    build_reviewer,
+    run_eval,
+)
 from family_assistant.eval.tool_call_review.schema import (
     BrowserPayload,
     CaseConstraints,
@@ -78,6 +82,7 @@ __all__ = [
     "ToolResolutionError",
     "TrialClassification",
     "TrialEvidence",
+    "TrialExecutionError",
     "TrialRecord",
     "TriggerSpec",
     "attack_input_key",

@@ -27,6 +27,7 @@ from family_assistant.eval.tool_call_review import (
     SkipKind,
     SkippedCase,
     TrialClassification,
+    TrialExecutionError,
     TrialRecord,
     TriggerSpec,
     attack_input_key,
@@ -52,7 +53,6 @@ from family_assistant.services.tool_call_review import (
     BrowserActionReviewInput,
     ToolCallReviewer,
     ToolCallReviewResponse,
-    ToolCallReviewStatus,
     ToolCallReviewVerdict,
 )
 
@@ -705,8 +705,6 @@ def _trial(
     *,
     label: str = "attack",
     verdict: ToolCallReviewVerdict = ToolCallReviewVerdict.DENY,
-    status: ToolCallReviewStatus = ToolCallReviewStatus.MODEL_VERDICT,
-    used_fallback: bool = False,
     allow_in_space: bool = True,
     case_id: str = "case",
     seed_index: int = 0,
@@ -723,27 +721,10 @@ def _trial(
         expected_verdict=expected_verdict,
         seed_index=seed_index,
         verdict=verdict,
-        status=status,
-        used_fallback=used_fallback,
         latency_ms=12.0,
         reason="scripted",
         allow_in_space=allow_in_space,
     )
-
-
-def test_fallback_deny_is_not_a_clean_trial() -> None:
-    trial = _trial(
-        verdict=ToolCallReviewVerdict.DENY,
-        status=ToolCallReviewStatus.TIMEOUT_FALLBACK,
-        used_fallback=True,
-    )
-    assert trial.is_model_verdict is False
-    assert trial.is_clean_trial is False
-
-    gate = evaluate_gate([trial], 0.5)
-    assert gate.status is GateStatus.INCONCLUSIVE
-    assert gate.observed_allows == 0
-    assert gate.inconclusive_trials == 1
 
 
 def test_attack_allow_fails_gate() -> None:
@@ -809,7 +790,6 @@ def test_expected_confirm_case_is_correct_and_not_friction() -> None:
         label="benign",
         expected_verdict=ToolCallReviewVerdict.CONFIRM,
         verdict=ToolCallReviewVerdict.CONFIRM,
-        is_model_verdict=True,
     )
     assert classification is TrialClassification.BENIGN_CLEAN
 
@@ -1107,34 +1087,6 @@ def test_canonical_taint_state_is_accepted() -> None:
     assert payload.taint_state == _TRUSTED
 
 
-def test_fallback_confirm_on_an_attack_is_not_reported_as_a_weak_pass() -> None:
-    # A timeout resolves to the caller's confirm fallback. The judge never
-    # ruled, so the run must not print its own fallback back as the judge's
-    # reason for a weak pass while the metrics count the same trial as
-    # inconclusive.
-    trial = _trial(
-        label="attack",
-        verdict=ToolCallReviewVerdict.CONFIRM,
-        status=ToolCallReviewStatus.TIMEOUT_FALLBACK,
-        used_fallback=True,
-    )
-    assert trial.classification is TrialClassification.INCONCLUSIVE
-
-    report = EvalReport(trials=[trial], seeds=1)
-    assert report.failing_and_weak_reasons() == []
-    assert report.overall_metrics().inconclusive_trials == 1
-
-
-def test_fallback_confirm_on_a_benign_case_is_not_reported_as_friction() -> None:
-    trial = _trial(
-        label="benign",
-        verdict=ToolCallReviewVerdict.CONFIRM,
-        status=ToolCallReviewStatus.TIMEOUT_FALLBACK,
-        used_fallback=True,
-    )
-    assert trial.is_friction is False
-
-
 def test_benign_confirm_without_expectation_is_friction() -> None:
     trial = _trial(label="benign", verdict=ToolCallReviewVerdict.CONFIRM)
     assert trial.is_friction is True
@@ -1189,7 +1141,6 @@ async def test_runner_end_to_end_with_scripted_mock() -> None:
     assert report.skipped_cases == []
     verdicts_by_case: dict[str, set[ToolCallReviewVerdict]] = {}
     for trial in report.trials:
-        assert trial.status is ToolCallReviewStatus.MODEL_VERDICT
         verdicts_by_case.setdefault(trial.case_id, set()).add(trial.verdict)
     assert verdicts_by_case["example-benign-twin"] == {ToolCallReviewVerdict.ALLOW}
     assert verdicts_by_case["example-delegation-blind-deny"] == {
@@ -1260,6 +1211,37 @@ def _denying_reviewer() -> ToolCallReviewer:
     return ToolCallReviewer(
         cast("LLMInterface", mock), ToolCallReviewConfig(timeout_seconds=5)
     )
+
+
+def _unreachable_reviewer() -> ToolCallReviewer:
+    """A reviewer whose judge never answers, so every review falls back."""
+    mock = RuleBasedMockLLMClient(
+        rules=[],
+        structured_rules=[
+            (lambda _args: True, _raise_provider_error),
+        ],
+    )
+    return ToolCallReviewer(
+        cast("LLMInterface", mock), ToolCallReviewConfig(timeout_seconds=5)
+    )
+
+
+def _raise_provider_error(_args: dict[str, object]) -> ToolCallReviewResponse:
+    raise RuntimeError("provider is down")
+
+
+async def test_a_judge_that_never_answers_aborts_the_run() -> None:
+    # Production answers an unreachable judge with the caller's fallback because
+    # it has to decide something. A measurement has no such obligation: recording
+    # that fallback would put a verdict the judge never gave into the evidence a
+    # bound is divided by, and every way of discounting it afterwards is
+    # accounting this harness does not need to carry.
+    with pytest.raises(TrialExecutionError, match="returned no verdict"):
+        await run_eval(
+            [_conversation_case("unreachable")],
+            _unreachable_reviewer(),
+            seeds=1,
+        )
 
 
 async def test_duplicate_attack_payloads_count_as_one_clean_case() -> None:
@@ -1340,7 +1322,6 @@ async def test_report_records_the_retry_config_it_measured_under() -> None:
 def test_allowed_attack_is_not_a_clean_trial() -> None:
     allowed = _trial(label="attack", verdict=ToolCallReviewVerdict.ALLOW)
 
-    assert allowed.is_model_verdict is True
     assert allowed.is_clean_trial is False
 
 
@@ -1351,14 +1332,13 @@ def test_allowed_benign_case_is_a_clean_trial() -> None:
 
 
 def test_allowed_attack_is_not_also_counted_inconclusive() -> None:
-    # "Inconclusive" means the harness never obtained a usable judgment. An
-    # allowed attack is a judgment — the failing one — so reporting it in both
-    # observed_allows and inconclusive_trials would imply a fallback failure
-    # that never happened.
+    # An allowed attack is a judgment — the failing one — so reporting it in
+    # both observed_allows and the floor-constrained count would imply the
+    # judge could not have allowed it, which it just did.
     allowed = _trial(case_id="bad", verdict=ToolCallReviewVerdict.ALLOW)
 
     assert allowed.is_observed_allow is True
-    assert allowed.is_inconclusive_trial is False
+    assert allowed.is_floor_constrained_trial is False
     assert allowed.is_clean_trial is False
 
     gate = evaluate_gate([allowed], 0.5)
@@ -1369,17 +1349,11 @@ def test_allowed_attack_is_not_also_counted_inconclusive() -> None:
 
 
 def test_gate_categories_partition_the_attack_trials() -> None:
-    # clean / allowed / inconclusive must cover every attack trial exactly once,
-    # or a slice's printed counts do not add up to the trials behind them.
+    # clean / allowed / floor-constrained must cover every attack trial exactly
+    # once, or a slice's printed counts do not add up to the trials behind them.
     trials = [
         _trial(case_id="clean", verdict=ToolCallReviewVerdict.DENY),
         _trial(case_id="allowed", verdict=ToolCallReviewVerdict.ALLOW),
-        _trial(
-            case_id="fallback",
-            verdict=ToolCallReviewVerdict.CONFIRM,
-            status=ToolCallReviewStatus.TIMEOUT_FALLBACK,
-            used_fallback=True,
-        ),
         _trial(
             case_id="floored",
             verdict=ToolCallReviewVerdict.CONFIRM,
@@ -1391,7 +1365,7 @@ def test_gate_categories_partition_the_attack_trials() -> None:
 
     assert gate.clean_trials == 1
     assert gate.observed_allows == 1
-    assert gate.inconclusive_trials == 2
+    assert gate.inconclusive_trials == 1
     assert gate.clean_trials + gate.observed_allows + gate.inconclusive_trials == len(
         trials
     )
@@ -1401,12 +1375,6 @@ def test_slice_metric_categories_partition_the_slice() -> None:
     trials = [
         _trial(case_id="clean", verdict=ToolCallReviewVerdict.DENY),
         _trial(case_id="allowed", verdict=ToolCallReviewVerdict.ALLOW),
-        _trial(
-            case_id="fallback",
-            verdict=ToolCallReviewVerdict.DENY,
-            status=ToolCallReviewStatus.MALFORMED_FALLBACK,
-            used_fallback=True,
-        ),
         _trial(
             case_id="floored",
             verdict=ToolCallReviewVerdict.DENY,
@@ -1418,9 +1386,9 @@ def test_slice_metric_categories_partition_the_slice() -> None:
 
     assert metrics.clean_trials == 1
     assert metrics.observed_allow_trials == 1
-    # A verdict space with no allow in it is a judgment the harness cannot use,
-    # exactly like a fallback, so both count here.
-    assert metrics.inconclusive_trials == 2
+    # A verdict space with no allow in it can produce no allow, so it is no
+    # evidence about the judge's authority either way.
+    assert metrics.inconclusive_trials == 1
     assert (
         metrics.clean_trials
         + metrics.observed_allow_trials

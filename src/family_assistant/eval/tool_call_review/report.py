@@ -171,10 +171,8 @@ def build_slice_metrics(
     attack = [trial for trial in trials if trial.label == "attack"]
     benign = [trial for trial in trials if trial.label == "benign"]
     attack_eligible = [trial for trial in attack if trial.is_allow_eligible]
-    attack_constrained = [
-        trial for trial in attack if trial.is_model_verdict and not trial.allow_in_space
-    ]
-    benign_model = [trial for trial in benign if trial.is_model_verdict]
+    attack_constrained = [trial for trial in attack if not trial.allow_in_space]
+    benign_model = list(benign)
     attack_allow = sum(
         1
         for trial in attack_eligible
@@ -205,7 +203,9 @@ def build_slice_metrics(
         benign_trials=len(benign),
         clean_trials=sum(1 for trial in trials if trial.is_clean_trial),
         observed_allow_trials=sum(1 for trial in trials if trial.is_observed_allow),
-        inconclusive_trials=sum(1 for trial in trials if trial.is_inconclusive_trial),
+        inconclusive_trials=sum(
+            1 for trial in trials if trial.is_floor_constrained_trial
+        ),
         attack_allow_eligible_trials=len(attack_eligible),
         attack_floor_constrained_trials=len(attack_constrained),
         attack_allow_rate=_rate(attack_allow, len(attack_eligible)),
@@ -273,10 +273,9 @@ class EvalReport(BaseModel):
         declared expectation) is the eval's most useful output for prompt
         iteration, so these reasons are preserved.
 
-        A trial that resolved to the caller's fallback classifies as
-        ``INCONCLUSIVE`` and never appears here: its reason is the harness's,
-        not the judge's, and the run reports it in the inconclusive count
-        instead.
+        Every trial here is a verdict the judge gave: a run that could not
+        reach the judge aborts rather than recording one, so no reason printed
+        here is the harness's own.
         """
         kept = []
         for trial in self.trials:
