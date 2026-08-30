@@ -2564,8 +2564,9 @@ class TaintTrackingToolsProvider(ToolsProvider):
             "used_fallback": result.used_fallback,
             "destination_echo": destination_echo,
         }
+        event_id = str(uuid.uuid4())
         await context.db_context.taint_audit_events.add(
-            event_id=str(uuid.uuid4()),
+            event_id=event_id,
             event_type="tool_call_review",
             conversation_id=context.conversation_id,
             turn_id=context.turn_id,
