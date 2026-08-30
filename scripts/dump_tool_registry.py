@@ -61,10 +61,10 @@ from family_assistant.tools import (
     MCPServerConfig,
     MCPToolsProvider,
 )
-from family_assistant.tools.mcp import MCP_SERVER_STATUS_CONNECTED
+from family_assistant.tools.mcp import MCP_SERVER_STATUS_CONNECTED, MCPServerStatus
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
 
     from family_assistant.tools.metadata import ToolDescriptor
 
@@ -142,25 +142,53 @@ async def _mcp_descriptors(
     )
     try:
         await provider.initialize()
-        statuses = provider.get_server_statuses()
-        unavailable = sorted(
-            server_id
-            for server_id, status in statuses.items()
-            if status.get("status") != MCP_SERVER_STATUS_CONNECTED
+        descriptors = await provider.get_tool_descriptors()
+        _require_every_server_contributed(
+            server_configs, provider.get_server_statuses(), descriptors
         )
-        if unavailable:
-            raise SystemExit(
-                "Refusing to write a partial registry snapshot: "
-                f"{', '.join(unavailable)} did not connect. Their tools would be "
-                "absent from the snapshot, and an absent tool is "
-                "indistinguishable from one that never existed -- the next "
-                "extraction would reject those calls and report a smaller "
-                "corpus. Fix the server, or remove it from the configuration "
-                "this runs against."
-            )
-        return await provider.get_tool_descriptors()
+        return descriptors
     finally:
         await provider.close()
+
+
+def _require_every_server_contributed(
+    server_configs: Mapping[str, MCPServerConfig],
+    statuses: Mapping[str, MCPServerStatus],
+    descriptors: Sequence[ToolDescriptor],
+) -> None:
+    """Abort unless every configured server is connected *and* contributed.
+
+    Connected is not the same as useful: the provider marks a session connected
+    before it lists tools, and a server that comes back with an empty list stays
+    connected and simply advertises nothing. Both outcomes reach a snapshot the
+    same way -- that server's whole surface missing -- and a missing tool is
+    indistinguishable from one that never existed, so the next extraction would
+    reject those calls and report a smaller corpus instead of a broken input.
+    That is the failure this script exists to prevent, so it is not something to
+    write down and discover later. `scripts/check_mcp_servers.py` holds the same
+    line for the same reason.
+    """
+    contributed = {
+        descriptor.mcp_server_id
+        for descriptor in descriptors
+        if descriptor.mcp_server_id is not None
+    }
+    problems = [
+        f"{server_id} ({status})"
+        for server_id in sorted(server_configs)
+        for status in [statuses.get(server_id, {}).get("status", "unknown")]
+        if status != MCP_SERVER_STATUS_CONNECTED or server_id not in contributed
+    ]
+    if problems:
+        raise SystemExit(
+            "Refusing to write a partial registry snapshot: "
+            f"{', '.join(problems)} did not come back connected with at least "
+            "one tool. Those tools would be absent from the snapshot, and an "
+            "absent tool is indistinguishable from one that never existed -- "
+            "the next extraction would reject those calls and report a smaller "
+            "corpus. Fix the server, or remove it from the configuration this "
+            "runs against."
+        )
 
 
 def main(argv: Sequence[str] | None = None) -> int:

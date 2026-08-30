@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -19,16 +21,20 @@ from family_assistant.eval.tool_call_review.scrub import (
     TemplatePrivacyError,
     declared_argument_shapes,
 )
+from family_assistant.paths import PROJECT_ROOT
 from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS
 from family_assistant.tools.metadata import ToolDescriptor, ToolTag
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from types import ModuleType
 
 pytestmark = pytest.mark.no_db
 
 
-def _mcp_descriptor(name: str = "plan_trip") -> ToolDescriptor:
+def _mcp_descriptor(
+    name: str = "plan_trip", server_id: str = "transport"
+) -> ToolDescriptor:
     """A stand-in for a tool that exists only on a configured MCP server."""
     return ToolDescriptor(
         name=name,
@@ -49,7 +55,7 @@ def _mcp_descriptor(name: str = "plan_trip") -> ToolDescriptor:
         },
         tags=frozenset({ToolTag.READ_ONLY, ToolTag.OPEN_WORLD}),
         origin="mcp",
-        mcp_server_id="transport",
+        mcp_server_id=server_id,
         summary="Plan a trip.",
         destination_argument_paths=("destination",),
     )
@@ -180,6 +186,25 @@ def test_a_malformed_snapshot_raises_rather_than_resolving_what_it_can(
         snapshot_to_registry(payload)
 
 
+@pytest.mark.parametrize(
+    "omitted",
+    ["destination_argument_paths", "deferred_confirmation_eligible", "tags"],
+)
+def test_an_omitted_descriptor_field_is_malformed_not_a_default(omitted: str) -> None:
+    """Absent is not empty, for fields whose empty value is also their default.
+
+    ``destination_argument_paths`` is the one that bites: defaulting it to ``()``
+    loads the snapshot happily and then drops the trusted-destination echo from
+    every case using that tool, changing the reviewer input rather than failing
+    to read the file.
+    """
+    payload = descriptors_to_snapshot([_mcp_descriptor()])
+    del payload["tools"]["plan_trip"][omitted]  # type: ignore[index]
+
+    with pytest.raises(RegistrySnapshotError, match=f"missing '{omitted}'|no tag list"):
+        snapshot_to_registry(payload)
+
+
 def test_a_snapshot_that_is_not_json_names_the_file(tmp_path: Path) -> None:
     path = tmp_path / "registry.json"
     path.write_text("{not json", encoding="utf-8")
@@ -195,3 +220,50 @@ def test_a_missing_snapshot_file_is_reported_not_ignored(tmp_path: Path) -> None
 
 def test_the_envelope_states_its_version() -> None:
     assert descriptors_to_snapshot([])["snapshot_version"] == SNAPSHOT_VERSION
+
+
+def test_a_connected_server_that_advertises_nothing_aborts_the_dump() -> None:
+    """Connected is not contributed, and only one of them is the point.
+
+    ``MCPToolsProvider`` marks a session connected before it lists tools, so a
+    server that comes back with an empty list stays connected and advertises
+    nothing. That reaches a snapshot as the server's whole surface missing --
+    the same silent, biased corpus this script exists to prevent.
+    """
+    script = _load_dump_registry_script()
+    configs = {"transport": {}, "brave": {}}
+    statuses = {
+        "transport": {"status": "connected"},
+        "brave": {"status": "connected"},
+    }
+
+    script._require_every_server_contributed(
+        configs,
+        statuses,
+        [_mcp_descriptor(), _mcp_descriptor("brave_web_search", "brave")],
+    )
+
+    with pytest.raises(SystemExit, match="brave"):
+        script._require_every_server_contributed(configs, statuses, [_mcp_descriptor()])
+
+
+def test_a_server_that_did_not_connect_aborts_the_dump() -> None:
+    script = _load_dump_registry_script()
+
+    with pytest.raises(SystemExit, match="transport"):
+        script._require_every_server_contributed(
+            {"transport": {}}, {"transport": {"status": "failed"}}, []
+        )
+
+
+def _load_dump_registry_script() -> ModuleType:
+    """Load the dump script by path; ``scripts/`` is not an importable package."""
+    script_path = PROJECT_ROOT / "scripts" / "dump_tool_registry.py"
+    spec = importlib.util.spec_from_file_location(
+        "dump_tool_registry_script", script_path
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module

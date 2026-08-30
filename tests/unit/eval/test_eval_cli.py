@@ -18,10 +18,14 @@ import yaml
 
 import family_assistant.eval.tool_call_review as tool_call_review_eval
 from family_assistant.eval import private_paths
+from family_assistant.eval.tool_call_review.registry_snapshot import (
+    descriptors_to_snapshot,
+)
 from family_assistant.services.tool_call_review import (
     ToolCallReviewResponse,
     ToolCallReviewVerdict,
 )
+from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS
 
 # pylint cannot resolve the tests namespace package, so it reports a
 # false no-name-in-module here only.
@@ -440,3 +444,38 @@ def test_out_of_range_ceiling_is_refused_before_any_trial(
     ])
 
     assert exit_code == 1
+
+
+def test_the_snapshot_governs_case_loading_not_only_execution(
+    cli: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Load and run must see the same registry, or validation is skipped.
+
+    `load_cases` validates each case's arguments against its resolved tool and
+    reconstructs its reviewer input; a case whose tool the registry cannot
+    resolve is loaded unvalidated so one missing tool does not take the dataset
+    down. Give the runner a snapshot but not the loader and those two rules
+    combine badly: every MCP case loads unvalidated and then executes under the
+    snapshot, so schema-invalid arguments run as clean trials.
+    """
+    snapshot = tmp_path / "registry.json"
+    snapshot.write_text(
+        json.dumps(descriptors_to_snapshot(LOCAL_TOOL_DESCRIPTORS)), encoding="utf-8"
+    )
+    seen: dict[str, object] = {}
+
+    def _capture(paths: object, *, descriptor_registry: object = None) -> list[object]:
+        seen["registry"] = descriptor_registry
+        return []
+
+    monkeypatch.setattr(cli, "load_cases", _capture, raising=True)
+    cli.main([
+        "--dataset",
+        _dataset_dir("manual"),
+        "--tool-registry",
+        str(snapshot),
+        "--dry-run",
+    ])
+
+    assert seen["registry"] is not None
+    assert "add_calendar_event" in cast("dict[str, object]", seen["registry"])

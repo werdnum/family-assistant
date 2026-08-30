@@ -378,7 +378,7 @@ async def _run(args: argparse.Namespace) -> int:
         )
         return 1
     descriptor_registry = _load_registry(args.tool_registry)
-    cases = load_cases(args.dataset)
+    cases = load_cases(args.dataset, descriptor_registry=descriptor_registry)
     if not cases:
         print("No cases found in the supplied datasets.", file=sys.stderr)
         return 1

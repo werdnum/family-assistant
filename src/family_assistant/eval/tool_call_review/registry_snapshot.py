@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any, cast
 from family_assistant.tools.metadata import ToolDescriptor, ToolTag
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
     from pathlib import Path
 
     from family_assistant.tools.types import ToolDefinition
@@ -139,10 +139,10 @@ def _descriptor_from_entry(name: str, entry: object) -> ToolDescriptor:
         mcp_server_id=_optional_str(name, "mcp_server_id", fields.get("mcp_server_id")),
         summary=_optional_str(name, "summary", fields.get("summary")),
         destination_argument_paths=_paths_from_entry(
-            name, fields.get("destination_argument_paths")
+            name, _required(name, fields, "destination_argument_paths")
         ),
         deferred_confirmation_eligible=_bool_from_entry(
-            name, fields.get("deferred_confirmation_eligible")
+            name, _required(name, fields, "deferred_confirmation_eligible")
         ),
     )
 
@@ -166,9 +166,25 @@ def _tags_from_entry(name: str, raw: object) -> frozenset[ToolTag]:
     return frozenset(tags)
 
 
+def _required(name: str, fields: Mapping[str, object], key: str) -> object:
+    """Return a field that every serialized descriptor carries, or raise.
+
+    Absent is not empty. ``descriptors_to_snapshot`` writes every key, so a
+    missing one means a snapshot this build did not produce, and defaulting it
+    would answer a question the file never asked -- an omitted
+    ``destination_argument_paths`` would silently drop the trusted-destination
+    echo from every case using that tool, changing the reviewer input rather
+    than failing to read the file.
+    """
+    if key not in fields:
+        raise RegistrySnapshotError(
+            f"Snapshot entry for {name!r} is missing {key!r}; it was not "
+            "written by scripts/dump_tool_registry.py."
+        )
+    return fields[key]
+
+
 def _paths_from_entry(name: str, raw: object) -> tuple[str, ...]:
-    if raw is None:
-        return ()
     if not isinstance(raw, list) or not all(
         isinstance(item, str) for item in cast("list[object]", raw)
     ):
@@ -187,8 +203,6 @@ def _optional_str(name: str, field: str, raw: object) -> str | None:
 
 
 def _bool_from_entry(name: str, raw: object) -> bool:
-    if raw is None:
-        return False
     if isinstance(raw, bool):
         return raw
     raise RegistrySnapshotError(
