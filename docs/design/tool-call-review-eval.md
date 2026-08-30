@@ -431,6 +431,7 @@ harness's slices and their reported bounds by name as their evidence source.
   money, and are non-deterministic; CI keeps mechanics tests plus an optional smoke slice. Freshness
   is a documented process rule (re-run on judge model/prompt/guidance change), not enforcement
   machinery, until neglect is actually observed.
+
 - **The eval's integrity adversary is the maintainer, and we do not defend against them.** Held-out
   discipline — disjoint dev and gate corpora, one never-consulted corpus per ship decision, recorded
   in the stamp — is a convention, not a mechanism. Nothing refuses a re-run, retires a corpus, or
@@ -439,21 +440,35 @@ harness's slices and their reported bounds by name as their evidence source.
   flag or one deleted file away. Machinery here buys the appearance of rigour at the cost of
   friction on the person it is supposedly protecting, and friction is what stops an eval from being
   run.
+
 - **Committed datasets are pinned by git; upstream corpora are recorded, not verified.** The build
   script writes the upstream revision and license as provenance beside the cases it produces, and
   the run records a dataset content hash so two runs can be compared. Nothing re-checks a checksum
   at run time. The corpora are not vendored, so a run-time check could only ever compare against
   what the maintainer last chose to record.
+
 - **Gate statistics are reported, not enforced as a lattice.** Every slice's rule-of-three bound and
   `required_clean_cases` are printed for a human to interpret; only an observed false allow fails a
   run automatically. An all-must-pass gate over per-family slices reads as rigour and behaves as
   noise while families are unevenly sampled.
+
 - **Ceilings near 1% are aspirational until the corpus grows.** 1% needs on the order of 300 clean
   attack cases; the committed corpus holds a small fraction of that. The stamp records the bound the
   evidence actually supports rather than the ceiling that was requested, so the shortfall is visible
   in the record instead of implied by a passing run.
+
 - **Two run profiles, not one.** Cheap small-N runs (default ~5 seeds) serve regression comparison
   and prompt iteration. No confidence machinery beyond the 3/N bound.
+
+- **Attack rates are per trial; only the bound is per input.** `clean_attack_case_count` keys on the
+  reviewer-input identity, so the rule-of-three bound counts independent inputs. The allow and
+  confirm rates count trials, which means a slice holding several cases that assemble the same
+  prompt weights that prompt by its copies. Per-trial is a defensible reading of a rate and keeps
+  the seed dimension visible, and deduplicating it would mean choosing seed-aggregation semantics —
+  exactness this harness does not need. Where duplicate prompts actually distort a slice today it is
+  a corpus-placement symptom (see the injection-corpus note under Data sources), and the fix belongs
+  there: deduplicating the rate would make such a slice look healthier while it still tests little.
+
 - **The friction rate keeps a coarser denominator than the attack rates.** Both attack rates count
   only allow-eligible trials, because a trial the reviewer could never have allowed is a guaranteed
   zero that flatters the false-allow number. The friction rate is over every benign model verdict,
@@ -462,6 +477,7 @@ harness's slices and their reported bounds by name as their evidence source.
   Splitting them is a redefinition of what friction is measured over, not a denominator tweak, and
   the error runs pessimistic — it overstates friction rather than flattering the judge. Left as it
   is until a friction number actually drives a decision.
+
 - **No deployment descriptor registry is assembled for a run.** The loader and runner accept one,
   but nothing constructs it: MCP descriptors are discovered by connecting to the deployment's
   servers, and the direct named-sink descriptor is synthesized inside the review chokepoint and
@@ -469,6 +485,7 @@ harness's slices and their reported bounds by name as their evidence source.
   the slice is worth today, so cases naming tools this environment cannot resolve are skipped by
   name and the rest of the dataset runs. If those cases ever matter, the cheap path is exporting a
   running deployment's descriptors as data, not rebuilding its providers here.
+
 - **The live dataset is per-deployment and unshared.** Third-party deployments of this public
   codebase get the harness and committed sets; their friction numbers come from their own extracts.
 
