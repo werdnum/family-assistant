@@ -173,6 +173,25 @@ def test_duplicate_tool_names_are_refused() -> None:
             id="definition-not-an-object",
         ),
         pytest.param(
+            lambda payload: payload["tools"]["plan_trip"].__setitem__("definition", {}),
+            "definition with no function",
+            id="definition-empty",
+        ),
+        pytest.param(
+            lambda payload: payload["tools"]["plan_trip"]["definition"][
+                "function"
+            ].__setitem__("name", "something_else"),
+            "the key and the definition must agree",
+            id="name-disagrees-with-key",
+        ),
+        pytest.param(
+            lambda payload: payload["tools"]["plan_trip"]["definition"]["function"].pop(
+                "parameters"
+            ),
+            "declares no parameter schema",
+            id="no-parameter-schema",
+        ),
+        pytest.param(
             lambda payload: payload["tools"]["plan_trip"].__setitem__(
                 "mcp_server_id", None
             ),
@@ -344,3 +363,23 @@ def test_a_named_overlay_that_is_not_there_aborts_the_dump(tmp_path: Path) -> No
 
     with pytest.raises(SystemExit, match="does not exist"):
         script._configured_servers(str(tmp_path / "typo.yaml"))
+
+
+def test_a_named_env_overlay_that_is_not_there_aborts_the_dump(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`$CONFIG_FILE` names an overlay as much as `--config-file` does.
+
+    It is also the documented deployment path, so guarding only the flag guards
+    the route nobody uses in production. What makes a missing overlay an error
+    is that someone named it, not which mechanism they named it with; only the
+    fallback stays optional, because a deployment with no overlay is ordinary.
+    """
+    script = _load_dump_registry_script()
+
+    monkeypatch.setenv("CONFIG_FILE", str(tmp_path / "typo.yaml"))
+    with pytest.raises(SystemExit, match=r"\$CONFIG_FILE.*does not exist"):
+        script._configured_servers(None)
+
+    monkeypatch.delenv("CONFIG_FILE")
+    script._configured_servers(None)

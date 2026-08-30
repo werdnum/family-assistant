@@ -141,23 +141,28 @@ def _configured_servers(config_file: str | None) -> dict[str, MCPServerConfig]:
     this script exists to prevent, arriving through the config file instead of
     through a dead server.
     """
-    if config_file is not None:
-        # `load_config` treats every overlay as optional and silently omits one
-        # that does not exist, so a mistyped path would produce a plausible
-        # snapshot of the shipped defaults instead of an error -- this script's
-        # own failure again, arriving through a typo. A path named explicitly is
-        # required to exist; the env/default path keeps the optional behaviour,
-        # because a deployment with no overlay at all is ordinary.
-        if not Path(config_file).exists():
-            raise SystemExit(
-                f"Refusing to read the registry: --config-file {config_file} "
-                "does not exist. An overlay that is not there would be skipped "
-                "silently and the snapshot would describe the shipped defaults."
-            )
-        resolved = config_file
-    else:
-        resolved = os.getenv("CONFIG_FILE", DEFAULT_CONFIG_FILE)
-    config = load_config(config_file_path=resolved)
+    # `load_config` treats every overlay as optional and silently omits one that
+    # does not exist, so a mistyped path would produce a plausible snapshot of
+    # the shipped defaults instead of an error -- this script's own failure
+    # again, arriving through a typo.
+    #
+    # What distinguishes the two cases is whether anyone *named* an overlay, not
+    # which mechanism named it: `--config-file` and `CONFIG_FILE` are both
+    # assertions that a particular file is the one to read, and a typo in either
+    # is a typo. Only the fallback is optional, because a deployment with no
+    # overlay at all is ordinary.
+    named, source = (
+        (config_file, "--config-file")
+        if config_file is not None
+        else (os.getenv("CONFIG_FILE"), "$CONFIG_FILE")
+    )
+    if named is not None and not Path(named).exists():
+        raise SystemExit(
+            f"Refusing to read the registry: {source} {named} does not exist. "
+            "An overlay that is not there would be skipped silently and the "
+            "snapshot would describe the shipped defaults."
+        )
+    config = load_config(config_file_path=named or DEFAULT_CONFIG_FILE)
     return {
         server_id: cast("MCPServerConfig", server_config.model_dump())
         for server_id, server_config in config.mcp_config.mcpServers.items()

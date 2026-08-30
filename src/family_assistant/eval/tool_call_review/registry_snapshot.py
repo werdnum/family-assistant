@@ -169,10 +169,7 @@ def _descriptor_from_entry(name: str, entry: object) -> ToolDescriptor:
         )
 
     definition = fields["definition"]
-    if not isinstance(definition, dict):
-        raise RegistrySnapshotError(
-            f"Snapshot entry for {name!r} has no tool definition object."
-        )
+    _require_usable_definition(name, definition)
 
     origin = fields["origin"]
     if origin not in _ORIGINS:
@@ -214,6 +211,39 @@ def _tags_from_entry(name: str, raw: object) -> frozenset[ToolTag]:
                 "it was taken from a different build than this one."
             ) from exc
     return frozenset(tags)
+
+
+def _require_usable_definition(name: str, definition: object) -> None:
+    """Reject a definition that is shaped like one but cannot serve as one.
+
+    An empty or partial object passes an ``isinstance`` check and then resolves,
+    which is worse than not resolving: the extractor derives no argument shapes
+    from the absent schema and emits a well-formed, argument-less template
+    describing a task shape nothing recorded. The name is checked against the
+    key for the same reason -- the reviewer is told the tool's name from the
+    definition, so an entry filed under one name and describing another reviews
+    the wrong tool while looking resolved.
+    """
+    if not isinstance(definition, dict):
+        raise RegistrySnapshotError(
+            f"Snapshot entry for {name!r} has no tool definition object."
+        )
+    function = cast("dict[str, object]", definition).get("function")
+    if not isinstance(function, dict):
+        raise RegistrySnapshotError(
+            f"Snapshot entry for {name!r} has a definition with no function."
+        )
+    declared = cast("dict[str, object]", function)
+    if declared.get("name") != name:
+        raise RegistrySnapshotError(
+            f"Snapshot entry for {name!r} describes a tool named "
+            f"{declared.get('name')!r}; the key and the definition must agree."
+        )
+    if not isinstance(declared.get("parameters"), dict):
+        raise RegistrySnapshotError(
+            f"Snapshot entry for {name!r} declares no parameter schema; a tool "
+            "with no schema resolves and then contributes no argument shapes."
+        )
 
 
 def _server_id_from_entry(name: str, origin: object, raw: object) -> str | None:
