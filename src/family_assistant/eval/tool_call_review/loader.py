@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -38,9 +40,11 @@ __all__ = [
     "CaseInputConstructionError",
     "CaseParseError",
     "CaseSchemaValidationError",
+    "CaseSkip",
     "DuplicateCaseIdError",
+    "SkipKind",
     "attack_input_key",
-    "case_skip_reason",
+    "case_skip",
     "content_hash",
     "load_cases",
     "validate_against_tool_schema",
@@ -119,11 +123,33 @@ class CaseInputConstructionError(Exception):
     """A case cannot be rebuilt into the typed input the reviewer replays."""
 
 
-def case_skip_reason(
+class SkipKind(StrEnum):
+    """Why a run could not execute a case, as a closed vocabulary.
+
+    Decided where the skip is decided, so nothing downstream has to recover it
+    by matching on the prose -- and so a committable record can say *what*
+    happened without quoting text the case supplied.
+    """
+
+    DERIVATION = "derivation"
+    """A derivation case: no shipped judge consumes this boundary."""
+    UNRESOLVABLE_TOOL = "unresolvable_tool"
+    """The case names a tool this deployment's registry cannot supply."""
+
+
+@dataclass(frozen=True)
+class CaseSkip:
+    """A skip, as a category plus the prose that explains it."""
+
+    kind: SkipKind
+    reason: str
+
+
+def case_skip(
     case: EvalCase,
     *,
     descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
-) -> str | None:
+) -> CaseSkip | None:
     """Return why this environment cannot execute ``case``, or ``None`` if it can.
 
     "Cannot run here" is not "malformed". A case naming a tool this deployment's
@@ -131,15 +157,23 @@ def case_skip_reason(
     well-formed data the harness simply cannot replay, so it is named and
     skipped the way derivation cases are, and the rest of a mixed dataset still
     runs. Malformed data keeps failing loudly at load.
+
+    The reason quotes the case's own tool name, which a case is free to make up
+    — that is why it was skipped — so the prose can carry whatever a private
+    case's author wrote. Callers that publish choose ``kind``; callers that
+    inform a maintainer at the terminal use ``reason``.
     """
     if case.boundary == "derivation":
-        return "derivation cases have no shipped review contract"
+        return CaseSkip(
+            kind=SkipKind.DERIVATION,
+            reason="derivation cases have no shipped review contract",
+        )
     payload = case.payload
     if isinstance(payload, ConversationPayload):
         try:
             resolve_tool_descriptor(payload.tool_name, registry=descriptor_registry)
         except ToolResolutionError as exc:
-            return str(exc)
+            return CaseSkip(kind=SkipKind.UNRESOLVABLE_TOOL, reason=str(exc))
     return None
 
 
@@ -154,14 +188,14 @@ def validate_against_tool_schema(
     schema replay stale, now-impossible calls that still count as clean trials,
     so schema-invalid arguments must fail loudly here rather than passing
     silently. A case whose tool this environment cannot resolve at all has no
-    schema to check against and is left to :func:`case_skip_reason`. Pass the
+    schema to check against and is left to :func:`case_skip`. Pass the
     evaluated deployment's ``descriptor_registry`` when cases involve MCP or
     named-sink tools the local registry cannot supply.
     """
     payload = case.payload
     if not isinstance(payload, ConversationPayload):
         return
-    if case_skip_reason(case, descriptor_registry=descriptor_registry) is not None:
+    if case_skip(case, descriptor_registry=descriptor_registry) is not None:
         return
     descriptor = resolve_tool_descriptor(
         payload.tool_name, registry=descriptor_registry
@@ -201,7 +235,7 @@ def validate_review_input_constructible(
     here instead. A case the runner will skip — a derivation case, or one naming
     a tool this environment cannot resolve — is not reconstructed.
     """
-    if case_skip_reason(case, descriptor_registry=descriptor_registry) is not None:
+    if case_skip(case, descriptor_registry=descriptor_registry) is not None:
         return
     try:
         review_input, constraints = case.to_review_input(
@@ -239,7 +273,7 @@ def load_cases(
 
     Every executable case is fully reconstructed here, not merely parsed, so an
     unusable dataset is rejected at load rather than mid-run. A case this
-    environment cannot execute at all (see :func:`case_skip_reason`) is loaded
+    environment cannot execute at all (see :func:`case_skip`) is loaded
     unvalidated and skipped by the runner with its reason, so one unresolvable
     tool does not take the whole dataset down with it.
     """

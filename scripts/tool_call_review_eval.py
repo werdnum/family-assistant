@@ -73,7 +73,7 @@ from family_assistant.eval.tool_call_review import (
     DEFAULT_FALSE_ALLOW_CEILING,
     EvalReport,
     build_reviewer,
-    case_skip_reason,
+    case_skip,
     content_hash,
     load_cases,
     run_eval,
@@ -358,8 +358,8 @@ async def _run(args: argparse.Namespace) -> int:
 
     if args.dry_run:
         for case in cases:
-            skip_reason = case_skip_reason(case)
-            suffix = f" SKIPPED: {skip_reason}" if skip_reason is not None else ""
+            skip = case_skip(case)
+            suffix = f" SKIPPED: {skip.reason}" if skip is not None else ""
             print(
                 f"  {case.id} [{case.boundary}/{case.label}] "
                 f"source={case.source}{suffix}"

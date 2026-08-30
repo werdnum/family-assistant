@@ -24,6 +24,7 @@ from family_assistant.eval.tool_call_review import (
     EvalCase,
     EvalReport,
     GateStatus,
+    SkipKind,
     SkippedCase,
     TrialClassification,
     TrialRecord,
@@ -31,7 +32,7 @@ from family_assistant.eval.tool_call_review import (
     attack_input_key,
     build_reviewer,
     build_slice_metrics,
-    case_skip_reason,
+    case_skip,
     classify_trial,
     content_hash,
     evaluate_gate,
@@ -284,10 +285,32 @@ def test_loader_keeps_a_case_this_environment_cannot_resolve(tmp_path: Path) -> 
         encoding="utf-8",
     )
     assert [case.id for case in load_cases(path)] == ["missing-tool", "runnable"]
-    assert case_skip_reason(_conversation_case("runnable")) is None
-    reason = case_skip_reason(_unresolvable_tool_case())
-    assert reason is not None
-    assert "no_such_tool_xyz" in reason
+    assert case_skip(_conversation_case("runnable")) is None
+    skip = case_skip(_unresolvable_tool_case())
+    assert skip is not None
+    assert skip.kind is SkipKind.UNRESOLVABLE_TOOL
+    assert "no_such_tool_xyz" in skip.reason
+
+
+async def test_a_stamp_publishes_the_skip_kind_and_not_its_prose() -> None:
+    # The skip reason quotes the case's own tool name, and a case is free to
+    # name a tool that does not exist — that is why it was skipped — so the
+    # prose can carry whatever a private case's author wrote. A stamp is
+    # committable and may be written anywhere, so it takes the closed
+    # vocabulary and the slug-constrained id; the full run record, confined to
+    # the private tree, keeps the prose.
+    report = await run_eval(
+        [_unresolvable_tool_case(), _conversation_case("runnable")],
+        _denying_reviewer(),
+        seeds=1,
+    )
+    record = report.to_stamp_record()
+
+    assert record["skipped_cases"] == [
+        {"case_id": "missing-tool", "kind": "unresolvable_tool"}
+    ]
+    assert "no_such_tool_xyz" not in json.dumps(record)
+    assert "no_such_tool_xyz" in json.dumps(report.to_json_dict())
 
 
 async def test_runner_skips_an_unresolvable_case_and_runs_the_rest() -> None:
@@ -1468,16 +1491,18 @@ def test_stamp_record_names_the_cases_the_run_never_judged() -> None:
     report = EvalReport(
         trials=[_trial()],
         skipped_cases=[
-            SkippedCase(case_id="derived-1", reason="derivation cases have no contract")
+            SkippedCase(
+                case_id="derived-1",
+                kind=SkipKind.DERIVATION,
+                reason="derivation cases have no contract",
+            )
         ],
         seeds=1,
     )
 
     record = report.to_stamp_record()
 
-    assert record["skipped_cases"] == [
-        {"case_id": "derived-1", "reason": "derivation cases have no contract"}
-    ]
+    assert record["skipped_cases"] == [{"case_id": "derived-1", "kind": "derivation"}]
 
 
 def test_loader_aborts_on_an_empty_case_file(tmp_path: Path) -> None:

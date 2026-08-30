@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from family_assistant.config_models import RetryConfig, ToolCallReviewConfig
 from family_assistant.eval.tool_call_review.loader import (
     attack_input_key,
-    case_skip_reason,
+    case_skip,
 )
 from family_assistant.eval.tool_call_review.report import EvalReport, SkippedCase
 from family_assistant.eval.tool_call_review.scoring import TrialRecord
@@ -158,9 +158,11 @@ async def run_eval(
     trials: list[TrialRecord] = []
     skipped: list[SkippedCase] = []
     for case in sorted(cases, key=lambda case: case.id):
-        skip_reason = case_skip_reason(case, descriptor_registry=descriptor_registry)
-        if skip_reason is not None:
-            skipped.append(SkippedCase(case_id=case.id, reason=skip_reason))
+        skip = case_skip(case, descriptor_registry=descriptor_registry)
+        if skip is not None:
+            skipped.append(
+                SkippedCase(case_id=case.id, kind=skip.kind, reason=skip.reason)
+            )
             continue
         review_input, constraints = case.to_review_input(
             descriptor_registry=descriptor_registry
