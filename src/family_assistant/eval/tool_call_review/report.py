@@ -91,16 +91,29 @@ class LatencyStats(BaseModel):
         )
 
 
-def _guidance_digest(guidance: str | None) -> str | None:
-    """Short digest of the deployment guidance a run replayed under.
+def _config_digest(value: object) -> str | None:
+    """Short digest of a piece of operator-authored configuration.
 
-    ``None`` means the run left each case's stored guidance alone; an empty
-    string means the deployment configures none. Both are distinct from a run
-    under actual guidance, and all three need to be tellable apart.
+    A stamp is committable and ``--mode stamp`` may write it anywhere, so what
+    it carries from the deployment's configuration is governed by one rule:
+    **typed, bounded configuration travels verbatim; free-form operator-authored
+    values travel as a digest.** ``retry_config`` is a closed pydantic model of
+    provider and model names, so it is printed as-is and is worth reading.
+    ``llm_parameters`` is ``dict[str, dict[str, Any]]`` — whatever an operator
+    put there, which may be private endpoints, account identifiers or provider
+    metadata — and the deployment guidance is prose, so both are digested.
+
+    A digest still answers the question a stamp exists to answer: were these two
+    runs configured the same way. Stating the rule rather than listing the
+    fields is what stops the next free-form field from being added verbatim.
+
+    ``None`` is preserved rather than hashed, because "not supplied" and "supplied
+    and empty" are different facts about a run.
     """
-    if guidance is None:
+    if value is None:
         return None
-    return hashlib.sha256(guidance.encode("utf-8")).hexdigest()[:12]
+    encoded = json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:12]
 
 
 def _quantile_index(length: int, quantile: float) -> int:
@@ -383,15 +396,11 @@ class EvalReport(BaseModel):
             "judge": {
                 "provider": self.provider,
                 "model": self.model,
-                "model_parameters": self.model_parameters,
+                # See _config_digest for which of these travel verbatim and why.
+                "model_parameters_digest": _config_digest(self.model_parameters),
                 "retry_config": self.retry_config,
                 "timeout_seconds": self.timeout_seconds,
-                # The guidance text itself is operator-authored config, but it
-                # can be long and is not what a reader compares; a digest is
-                # enough to tell two runs apart, which is the point.
-                "deployment_guidance_digest": _guidance_digest(
-                    self.deployment_guidance
-                ),
+                "deployment_guidance_digest": _config_digest(self.deployment_guidance),
             },
             "dataset_hash": self.dataset_hash,
             "seeds": self.seeds,

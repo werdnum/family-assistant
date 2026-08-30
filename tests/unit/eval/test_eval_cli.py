@@ -181,7 +181,9 @@ def test_stamp_mode_writes_one_record(
     assert record["judge"] == {
         "provider": "mock",
         "model": "mock-judge",
-        "model_parameters": None,
+        # Free-form operator config is digested, not printed; None survives as
+        # None so "not supplied" stays distinct from "supplied and empty".
+        "model_parameters_digest": None,
         "retry_config": None,
         "timeout_seconds": 30.0,
         # An explicit --provider/--model run replays each case's stored

@@ -1351,6 +1351,32 @@ def test_retry_config_builds_a_retrying_judge_client(
     assert [leg["model_parameters"] for leg in captured] == [parameters, parameters]
 
 
+async def test_a_stamp_digests_free_form_model_parameters() -> None:
+    # llm_parameters is dict[str, dict[str, Any]] — whatever an operator put
+    # there, which may be private endpoints or account identifiers — and a stamp
+    # is committable and may be written anywhere. A digest still answers the
+    # question a stamp exists to answer: were two runs configured the same.
+    parameters = {"gemini-3.7-flash": {"api_base": "https://internal.example/v1"}}
+    report = await run_eval(
+        [_attack_conversation_case()],
+        _denying_reviewer(),
+        seeds=1,
+        provider="google",
+        model="gemini-3.7-flash",
+        model_parameters=parameters,
+    )
+    record = report.to_stamp_record()
+
+    assert "internal.example" not in json.dumps(record)
+    judge = record["judge"]
+    assert isinstance(judge, dict)
+    digest = judge["model_parameters_digest"]
+    assert isinstance(digest, str)
+    assert len(digest) == 12
+    # The full record keeps them: it is confined to the private tree.
+    assert "internal.example" in json.dumps(report.to_json_dict())
+
+
 async def test_report_records_the_retry_config_it_measured_under() -> None:
     retry_config = {"fallback": {"provider": "openai", "model": "gpt-5.6-terra"}}
     report = await run_eval(
@@ -1363,10 +1389,12 @@ async def test_report_records_the_retry_config_it_measured_under() -> None:
     )
     assert report.retry_config == retry_config
     assert "retry_config" in report.to_text_summary()
+    # retry_config is a closed model of provider and model names, so a stamp
+    # prints it: it is bounded, and which fallback leg served is worth reading.
     assert report.to_stamp_record()["judge"] == {
         "provider": "google",
         "model": "gemini-3.7-flash",
-        "model_parameters": None,
+        "model_parameters_digest": None,
         "retry_config": retry_config,
         "timeout_seconds": None,
         "deployment_guidance_digest": None,
