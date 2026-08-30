@@ -64,9 +64,9 @@ _LABEL_VOCABULARY: Final[Mapping[str, int]] = {"0": 0, "1": 1}
 class DeepsetRow:
     """One row of the flat corpus.
 
-    The label is validated on construction, so no row carrying anything but a
-    declared 0 or 1 exists to be adapted — a directly-constructed row is held to
-    the same vocabulary as a parsed one.
+    Text and label are both validated on construction, so no row that cannot
+    become a case exists to be adapted — a directly-constructed row is held to
+    the same rules as a parsed one.
     """
 
     index: int
@@ -74,6 +74,11 @@ class DeepsetRow:
     label: int
 
     def __post_init__(self) -> None:
+        if not self.text.strip():
+            raise ValueError(
+                f"deepset row {self.index}: text is empty; a row carrying no "
+                "content cannot be adapted into a case."
+            )
         if self.label not in _LABEL_VOCABULARY.values():
             raise ValueError(
                 f"deepset row {self.index}: label {self.label!r} is outside the "
@@ -108,7 +113,12 @@ class DeepsetPromptInjectionsAdapter(Adapter):
             for index, raw in enumerate(reader):
                 text = (raw.get("text") or "").strip()
                 if not text:
-                    continue
+                    raise ValueError(
+                        f"{path} row {index}: text is missing or whitespace-only; "
+                        "a row that yields no case cannot be dropped silently, or "
+                        "the corpus size the false-allow bound is computed over "
+                        "stops matching the corpus it names."
+                    )
                 rows.append(
                     DeepsetRow(
                         index=index,

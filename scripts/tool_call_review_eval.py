@@ -66,7 +66,6 @@ from family_assistant.config_loader import DEFAULT_DEFAULTS_FILE, load_config
 from family_assistant.config_models import (
     PRIVATE_EVAL_DIR_NAME,
     PrivateEvalPathError,
-    ToolCallReviewConfig,
     anchor_private_eval_path,
     resolve_private_eval_path,
 )
@@ -133,7 +132,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "shipped llm_parameters a single --provider/--model cannot express. "
             "Run from the repository root so defaults.yaml resolves. Overrides "
             "--provider/--model/--timeout-seconds, and supplies --llm-params "
-            "unless that flag is given."
+            "unless that flag is given. A deployment whose reviewer is disabled "
+            "or unconfigured is refused: it runs no judge for a measurement to "
+            "describe. Use --provider/--model to measure an arbitrary judge."
         ),
     )
     parser.add_argument(
@@ -209,6 +210,10 @@ def _parse_llm_params(raw: str | None) -> dict[str, object] | None:
     return parsed
 
 
+class _DeploymentJudgeError(RuntimeError):
+    """The deployment named by ``--config-file`` runs no reviewer to replay."""
+
+
 @dataclass(frozen=True, slots=True)
 class _JudgeConfig:
     """The effective judge configuration a run measures under."""
@@ -228,6 +233,12 @@ def _resolve_judge_config(args: argparse.Namespace) -> _JudgeConfig:
     overrides, so reading one file would measure a judge assembled differently
     from the deployed one — most visibly by dropping the shipped
     ``llm_parameters`` a configured fallback leg relies on.
+
+    That flag claims the run measures *this deployment's* judge, so a deployment
+    that builds no reviewer — the block disabled, or absent altogether once the
+    operator file sets it to null or no defaults file supplies one — is refused
+    rather than replayed against a substituted default. Measuring a judge no
+    deployment runs is what ``--provider``/``--model`` are for.
     """
     model_parameters: Mapping[str, object] | None = _parse_llm_params(args.llm_params)
     if args.config_file is None:
@@ -242,7 +253,17 @@ def _resolve_judge_config(args: argparse.Namespace) -> _JudgeConfig:
         defaults_file_path=DEFAULT_DEFAULTS_FILE,
         config_file_path=str(args.config_file),
     )
-    review_cfg = app_config.tool_call_review or ToolCallReviewConfig()
+    review_cfg = app_config.tool_call_review
+    if review_cfg is None:
+        raise _DeploymentJudgeError(
+            f"{args.config_file} resolves to no tool_call_review configuration "
+            "at all, so this deployment builds no reviewer."
+        )
+    if not review_cfg.enabled:
+        raise _DeploymentJudgeError(
+            f"{args.config_file} sets tool_call_review.enabled: false, so this "
+            "deployment builds no reviewer."
+        )
     retry_config = (
         review_cfg.retry_config.model_dump(exclude_none=True)
         if review_cfg.retry_config is not None
@@ -290,7 +311,16 @@ async def _run(args: argparse.Namespace) -> int:
         )
         return 1
 
-    judge = _resolve_judge_config(args)
+    try:
+        judge = _resolve_judge_config(args)
+    except _DeploymentJudgeError as exc:
+        print(
+            f"Refusing to measure a deployment that runs no judge: {exc} A run "
+            "under --config-file states the judge that deployment serves; use "
+            "--provider/--model to measure an arbitrary judge instead.",
+            file=sys.stderr,
+        )
+        return 1
     cases = load_cases(args.dataset)
     if not cases:
         print("No cases found in the supplied datasets.", file=sys.stderr)

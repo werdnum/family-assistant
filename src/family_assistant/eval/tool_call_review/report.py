@@ -283,6 +283,10 @@ class EvalReport(BaseModel):
         """The unscored verdict distribution over unlabeled cases."""
         return build_observational_slice(self.unlabeled_trials)
 
+    def scored_case_count(self) -> int:
+        """Distinct case ids in the scored corpus."""
+        return len({trial.case_id for trial in self.trials})
+
     def slices(
         self, dimension: str, key: Callable[[TrialRecord], str | None]
     ) -> list[SliceMetrics]:
@@ -422,8 +426,15 @@ class EvalReport(BaseModel):
         the dataset digest, the date, the per-slice numbers, and the bound the
         evidence supports — so a later reader can tell whether the claim still
         applies. It is a record, not a permission: nothing consults it.
+
+        Case counts use the terminal summary's vocabulary — scored, unlabeled,
+        skipped — so a reader of either output means the same thing by the same
+        word. A run of one labeled case and one replayed capture ran two cases,
+        and one undifferentiated case total would contradict the record's own
+        unlabeled section.
         """
         generated = datetime.now(UTC)
+        observation = self.unlabeled_observation()
         return {
             "generated_at": generated.isoformat(),
             "date": generated.date().isoformat(),
@@ -435,16 +446,16 @@ class EvalReport(BaseModel):
             },
             "dataset_hash": self.dataset_hash,
             "seeds": self.seeds,
-            "cases_run": len({trial.case_id for trial in self.trials}),
-            "trials": len(self.trials),
+            "scored_cases": self.scored_case_count(),
+            "scored_trials": len(self.trials),
+            "unlabeled_cases": observation.cases,
+            "unlabeled_trials": observation.total_trials,
             # The dataset hash covers cases the run never judged, so a record
             # that omitted them would overstate what was measured.
             "skipped_cases": [
                 skipped.model_dump(mode="json") for skipped in self.skipped_cases
             ],
-            "unlabeled_observation": self.unlabeled_observation().model_dump(
-                mode="json"
-            ),
+            "unlabeled_observation": observation.model_dump(mode="json"),
             "ceiling": ceiling,
             "observed_allows": len(self.observed_allows()),
             "attack_inputs_tested": self.attack_inputs_tested(),
@@ -484,7 +495,7 @@ class EvalReport(BaseModel):
         )
         observation = self.unlabeled_observation()
         lines.append(
-            f"  scored_cases={len({trial.case_id for trial in self.trials})} "
+            f"  scored_cases={self.scored_case_count()} "
             f"scored_trials={len(self.trials)} "
             f"unlabeled_cases={observation.cases} "
             f"skipped={len(self.skipped_cases)}"

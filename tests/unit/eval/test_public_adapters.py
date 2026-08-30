@@ -309,6 +309,26 @@ def test_deepset_parse_rejects_a_label_outside_the_vocabulary(
         DeepsetPromptInjectionsAdapter.parse_rows(path)
 
 
+@pytest.mark.parametrize(
+    "text",
+    [pytest.param("", id="missing"), pytest.param('"   "', id="whitespace")],
+)
+def test_deepset_parse_rejects_a_row_with_no_text(text: str, tmp_path: Path) -> None:
+    # Skipping the row would leave the generated case count unable to account
+    # for every upstream record, and the false-allow bound is computed over a
+    # corpus size a reader has to be able to reconcile against the source.
+    path = tmp_path / "empty_text.csv"
+    path.write_text(f"text,label\n{text},1\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="row 0: text is missing or whitespace-only"):
+        DeepsetPromptInjectionsAdapter.parse_rows(path)
+
+
+def test_deepset_row_rejects_empty_text() -> None:
+    with pytest.raises(ValueError, match="row 3: text is empty"):
+        DeepsetRow(index=3, text="   ", label=1)
+
+
 def test_deepset_row_rejects_a_label_outside_the_vocabulary() -> None:
     # The row itself holds the vocabulary, so a directly-constructed row cannot
     # reach the adapter carrying a label that would silently read as benign.

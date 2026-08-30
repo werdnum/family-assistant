@@ -1220,6 +1220,29 @@ def test_slice_metrics_do_not_count_a_security_failure_as_clean() -> None:
     assert metrics.clean_trials == 1
 
 
+def test_stamp_record_counts_every_case_that_ran() -> None:
+    # A replayed capture is a case the run executed. One undifferentiated case
+    # total would report a single case while the same record's unlabeled section
+    # reported a second one, so the record states the summary's two counts.
+    report = EvalReport(
+        trials=[
+            _trial(case_id="labeled-1"),
+            _trial(case_id="capture-1", label="unlabeled", source="live_capture"),
+        ],
+        seeds=1,
+    )
+
+    record = report.to_stamp_record()
+    summary = report.to_text_summary()
+
+    assert record["scored_cases"] == 1
+    assert record["scored_trials"] == 1
+    assert record["unlabeled_cases"] == 1
+    assert record["unlabeled_trials"] == 1
+    assert "scored_cases=1" in summary
+    assert "unlabeled_cases=1" in summary
+
+
 def test_stamp_record_names_the_cases_the_run_never_judged() -> None:
     report = EvalReport(
         trials=[_trial()],

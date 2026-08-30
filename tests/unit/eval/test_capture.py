@@ -382,6 +382,23 @@ def test_private_eval_path_rejects_a_symlink_out_of_the_private_tree(
         resolve_private_eval_path(".review-eval-local/captures")
 
 
+def test_private_eval_path_rejects_a_symlinked_private_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A symlinked marker makes containment vacuous, not merely inaccurate.
+
+    Candidate and root both resolve under the link's target, so every write
+    passes the check on its way into a tracked directory.
+    """
+    monkeypatch.setattr(config_models, "PROJECT_ROOT", tmp_path)
+    tracked = tmp_path / "src" / "datasets"
+    tracked.mkdir(parents=True)
+    (tmp_path / ".review-eval-local").symlink_to(tracked)
+
+    with pytest.raises(PrivateEvalPathError, match="is a symlink"):
+        resolve_private_eval_path(".review-eval-local/captures")
+
+
 def test_private_eval_path_accepts_a_real_path_under_the_private_tree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

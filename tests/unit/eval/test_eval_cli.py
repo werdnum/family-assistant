@@ -36,11 +36,12 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.no_db
 
-_SCRIPT_PATH = (
-    Path(tool_call_review_eval.__file__).parents[3].parent
-    / "scripts"
-    / "tool_call_review_eval.py"
-)
+
+def _repo_root() -> Path:
+    return Path(tool_call_review_eval.__file__).parents[3].parent
+
+
+_SCRIPT_PATH = _repo_root() / "scripts" / "tool_call_review_eval.py"
 
 
 def _load_cli() -> ModuleType:
@@ -61,6 +62,14 @@ def cli() -> ModuleType:
 
 def _dataset_dir(name: str) -> str:
     return str(Path(tool_call_review_eval.__file__).parent / "datasets" / name)
+
+
+def _write_config(tmp_path: Path, block: object) -> Path:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump({"tool_call_review": block}), encoding="utf-8"
+    )
+    return config_path
 
 
 def _install_fake_judge(
@@ -264,7 +273,7 @@ def test_stamp_mode_out_is_writable_anywhere(
     ])
     assert exit_code == 0
     record = json.loads(out_path.read_text(encoding="utf-8"))
-    assert "trials" in record
+    assert record["scored_trials"]
     assert record["overall"]
     # No judge reason reaches the stamp: the only "reason" fields it carries are
     # the harness's own statistical notes on each slice's bound.
@@ -290,18 +299,15 @@ def test_config_file_resolves_the_judge_through_the_layered_loader(
     # defaults.yaml ships llm_parameters an operator file does not repeat, so
     # reading that one file would measure a differently-parameterised fallback
     # judge than the deployment actually runs.
-    monkeypatch.chdir(Path(tool_call_review_eval.__file__).parents[3].parent)
-    config_path = tmp_path / "config.yaml"
-    config_path.write_text(
-        yaml.safe_dump({
-            "tool_call_review": {
-                "model": "gemini-3.7-flash",
-                "retry_config": {
-                    "fallback": {"provider": "openai", "model": "gpt-5.6-terra"}
-                },
-            }
-        }),
-        encoding="utf-8",
+    monkeypatch.chdir(_repo_root())
+    config_path = _write_config(
+        tmp_path,
+        {
+            "model": "gemini-3.7-flash",
+            "retry_config": {
+                "fallback": {"provider": "openai", "model": "gpt-5.6-terra"}
+            },
+        },
     )
 
     args = cli._parse_args([
@@ -317,3 +323,71 @@ def test_config_file_resolves_the_judge_through_the_layered_loader(
     assert judge.retry_config["fallback"]["model"] == "gpt-5.6-terra"
     assert judge.model_parameters is not None
     assert "gpt-5.6-terra" in judge.model_parameters
+
+
+def test_config_file_with_the_reviewer_disabled_is_refused(
+    cli: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    # A deployment with the reviewer off constructs no judge, so a run stamped
+    # with its provider and model would describe a judge nothing there runs.
+    monkeypatch.chdir(_repo_root())
+    config_path = _write_config(tmp_path, {"enabled": False})
+
+    exit_code = cli.main([
+        "--dataset",
+        _dataset_dir("manual"),
+        "--config-file",
+        str(config_path),
+        "--dry-run",
+    ])
+
+    assert exit_code == 1
+    error = capsys.readouterr().err
+    assert "tool_call_review.enabled: false" in error
+    assert "--provider/--model" in error
+
+
+def test_config_file_with_no_reviewer_block_is_refused(
+    cli: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    # Substituting a fresh default reviewer would stamp a configuration this
+    # deployment never assembled, which is a different claim from a disabled one.
+    monkeypatch.chdir(_repo_root())
+    config_path = _write_config(tmp_path, None)
+
+    exit_code = cli.main([
+        "--dataset",
+        _dataset_dir("manual"),
+        "--config-file",
+        str(config_path),
+        "--dry-run",
+    ])
+
+    assert exit_code == 1
+    error = capsys.readouterr().err
+    assert "no tool_call_review configuration" in error
+
+
+def test_explicit_provider_and_model_need_no_config_file(cli: ModuleType) -> None:
+    # Measuring an arbitrary candidate judge is deliberate and stays available:
+    # the deployment-replay restriction is about what --config-file claims.
+    args = cli._parse_args([
+        "--dataset",
+        _dataset_dir("manual"),
+        "--provider",
+        "openai",
+        "--model",
+        "gpt-5.6-terra",
+    ])
+
+    judge = cli._resolve_judge_config(args)
+
+    assert judge.provider == "openai"
+    assert judge.model == "gpt-5.6-terra"
+    assert judge.retry_config is None
