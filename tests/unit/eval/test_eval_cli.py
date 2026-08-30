@@ -378,6 +378,31 @@ def test_config_file_with_no_reviewer_block_is_refused(
     assert "no tool_call_review configuration" in error
 
 
+def test_config_file_that_does_not_exist_is_refused(
+    cli: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    # load_config treats both of its files as optional, so a typo would resolve
+    # to the shipped defaults — which enable a reviewer — and the run would pay
+    # for every trial before stamping a deployment it never read.
+    monkeypatch.chdir(_repo_root())
+    missing = tmp_path / "typo.yaml"
+
+    exit_code = cli.main([
+        "--dataset",
+        _dataset_dir("manual"),
+        "--config-file",
+        str(missing),
+        "--dry-run",
+    ])
+
+    assert exit_code == 1
+    error = capsys.readouterr().err
+    assert "is not a file" in error
+
+
 def test_explicit_provider_and_model_need_no_config_file(cli: ModuleType) -> None:
     # Measuring an arbitrary candidate judge is deliberate and stays available:
     # the deployment-replay restriction is about what --config-file claims.

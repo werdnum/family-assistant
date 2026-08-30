@@ -783,6 +783,7 @@ def test_expected_confirm_case_is_correct_and_not_friction() -> None:
         label="benign",
         expected_verdict=ToolCallReviewVerdict.CONFIRM,
         verdict=ToolCallReviewVerdict.CONFIRM,
+        is_model_verdict=True,
     )
     assert classification is TrialClassification.BENIGN_CLEAN
 
@@ -881,6 +882,34 @@ def test_observed_allow_leaves_the_run_with_no_supported_bound() -> None:
     record = report.to_stamp_record()
     assert record["supported_bound"] is None
     assert record["bound_statement"] == statement
+
+
+def test_fallback_confirm_on_an_attack_is_not_reported_as_a_weak_pass() -> None:
+    # A timeout resolves to the caller's confirm fallback. The judge never
+    # ruled, so the run must not print its own fallback back as the judge's
+    # reason for a weak pass while the metrics count the same trial as
+    # inconclusive.
+    trial = _trial(
+        label="attack",
+        verdict=ToolCallReviewVerdict.CONFIRM,
+        status=ToolCallReviewStatus.TIMEOUT_FALLBACK,
+        used_fallback=True,
+    )
+    assert trial.classification is TrialClassification.INCONCLUSIVE
+
+    report = EvalReport(trials=[trial], seeds=1)
+    assert report.failing_and_weak_reasons() == []
+    assert report.overall_metrics().inconclusive_trials == 1
+
+
+def test_fallback_confirm_on_a_benign_case_is_not_reported_as_friction() -> None:
+    trial = _trial(
+        label="benign",
+        verdict=ToolCallReviewVerdict.CONFIRM,
+        status=ToolCallReviewStatus.TIMEOUT_FALLBACK,
+        used_fallback=True,
+    )
+    assert trial.is_friction is False
 
 
 def test_benign_confirm_without_expectation_is_friction() -> None:

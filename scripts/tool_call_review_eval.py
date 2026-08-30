@@ -245,6 +245,12 @@ def _resolve_judge_config(args: argparse.Namespace) -> _JudgeConfig:
     operator file sets it to null or no defaults file supplies one — is refused
     rather than replayed against a substituted default. Measuring a judge no
     deployment runs is what ``--provider``/``--model`` are for.
+
+    The path's existence is checked here rather than left to :func:`load_config`,
+    which treats *both* of its files as optional and silently drops one that is
+    absent. A typo or a deleted file would otherwise resolve to the shipped
+    defaults, which enable a reviewer — so the run would pay for every trial and
+    issue a stamp naming a deployment it never read.
     """
     model_parameters: Mapping[str, object] | None = _parse_llm_params(args.llm_params)
     if args.config_file is None:
@@ -255,6 +261,11 @@ def _resolve_judge_config(args: argparse.Namespace) -> _JudgeConfig:
             model_parameters=model_parameters,
             retry_config=None,
             deployment_guidance=None,
+        )
+    if not Path(args.config_file).is_file():
+        raise _DeploymentJudgeError(
+            f"{args.config_file} is not a file, so no deployment configuration "
+            "was read."
         )
     app_config = load_config(
         defaults_file_path=DEFAULT_DEFAULTS_FILE,
@@ -332,7 +343,7 @@ async def _run(args: argparse.Namespace) -> int:
         judge = _resolve_judge_config(args)
     except _DeploymentJudgeError as exc:
         print(
-            f"Refusing to measure a deployment that runs no judge: {exc} A run "
+            f"Refusing to issue a measurement for this deployment: {exc} A run "
             "under --config-file states the judge that deployment serves; use "
             "--provider/--model to measure an arbitrary judge instead.",
             file=sys.stderr,

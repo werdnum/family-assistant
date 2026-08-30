@@ -259,6 +259,11 @@ class EvalReport(BaseModel):
         Reading *why* the judge allowed the attack it allowed (or missed a
         declared expectation) is the eval's most useful output for prompt
         iteration, so these reasons are preserved.
+
+        A trial that resolved to the caller's fallback classifies as
+        ``INCONCLUSIVE`` and never appears here: its reason is the harness's,
+        not the judge's, and the run reports it in the inconclusive count
+        instead.
         """
         kept = []
         for trial in self.trials:
