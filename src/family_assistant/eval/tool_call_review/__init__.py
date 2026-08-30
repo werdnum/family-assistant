@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from family_assistant.eval.tool_call_review.loader import (
     CaseInputConstructionError,
+    CaseParseError,
     CaseSchemaValidationError,
     DuplicateCaseIdError,
     canonical_attack_input,
@@ -59,6 +60,7 @@ __all__ = [
     "BrowserPayload",
     "CaseConstraints",
     "CaseInputConstructionError",
+    "CaseParseError",
     "CaseSchemaValidationError",
     "ConversationPayload",
     "DerivationPayload",

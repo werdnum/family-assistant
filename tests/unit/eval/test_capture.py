@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import sys
-from typing import TYPE_CHECKING
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, cast
 
 import pytest
 import yaml
@@ -22,7 +23,9 @@ from family_assistant.eval.tool_call_review.schema import (
     ConversationPayload,
     resolve_tool_descriptor,
 )
+from family_assistant.eval.tool_call_review.scrub import TaskTemplate
 from family_assistant.llm.messages import dict_to_message
+from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.paths import PROJECT_ROOT
 from family_assistant.security.taint import SinkClass, TurnTaintState
 from family_assistant.services.tool_call_review import (
@@ -31,6 +34,7 @@ from family_assistant.services.tool_call_review import (
     ToolCallReviewInput,
     ToolCallReviewVerdict,
 )
+from family_assistant.storage.types import MessageHistoryRow
 from family_assistant.tools import infrastructure
 from family_assistant.tools.infrastructure import (
     TaintTrackingToolsProvider,
@@ -40,6 +44,8 @@ from family_assistant.tools.infrastructure import (
 if TYPE_CHECKING:
     from pathlib import Path
     from types import ModuleType
+
+    from family_assistant.security.taint import TaintMetadata
 
 pytestmark = pytest.mark.no_db
 
@@ -409,6 +415,126 @@ def test_private_eval_path_accepts_a_repository_reached_through_a_symlink(
         resolve_private_eval_path(linked_root / ".review-eval-local" / "captures")
         == real_root / ".review-eval-local" / "captures"
     )
+
+
+def _history_row(
+    *,
+    role: str = "assistant",
+    tool_calls: list[ToolCallItem] | None = None,
+) -> MessageHistoryRow:
+    return MessageHistoryRow(
+        internal_id=1,
+        interface_type="telegram",
+        conversation_id="chat-1",
+        interface_message_id=None,
+        turn_id=None,
+        thread_root_id=None,
+        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+        role=role,
+        content=None,
+        tool_calls=tool_calls,
+        reasoning_info=None,
+        tool_call_id=None,
+        error_traceback=None,
+        processing_profile_id=None,
+        subconversation_id=None,
+        user_id=None,
+        attachments=None,
+        tool_name=None,
+        provider_metadata=None,
+        taint_metadata_json=None,
+        taint_metadata_version=None,
+        taint_metadata=cast("TaintMetadata", _TRUSTED),
+        is_internal=False,
+    )
+
+
+def _tool_call(arguments: str | dict[str, object]) -> ToolCallItem:
+    return ToolCallItem(
+        id="call-1",
+        type="function",
+        function=ToolCallFunction(name="send_message_to_user", arguments=arguments),
+    )
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    ['{"target_chat_id": "chat-1", "message_c', "[1,2]", "null"],
+    ids=["truncated", "json-array", "json-null"],
+)
+def test_history_extraction_rejects_malformed_tool_arguments(arguments: str) -> None:
+    """Arguments that are not a JSON object reject the row, never coerce to ``{}``.
+
+    Coercion emitted a committable template with no argument shapes, so a
+    corrupt history row became a well-formed-looking record of a task shape
+    nothing observed, and the dry-run counts called it valid.
+    """
+    script = _load_history_extraction_script()
+
+    abstracted = list(
+        script._templates_from_rows(
+            [_history_row(tool_calls=[_tool_call(arguments)])],
+            interface_type="telegram",
+            conversation_id="chat-1",
+        )
+    )
+
+    assert len(abstracted) == 1
+    rejection = abstracted[0]
+    assert isinstance(rejection, script._RejectedRow)
+    assert "malformed arguments" in rejection.reason
+    assert "telegram/chat-1 row 0 call 0 (send_message_to_user)" in rejection.reason
+
+
+def test_history_extraction_abstracts_a_well_formed_row() -> None:
+    script = _load_history_extraction_script()
+
+    abstracted = list(
+        script._templates_from_rows(
+            [
+                _history_row(
+                    tool_calls=[
+                        _tool_call(
+                            '{"target_chat_id": "chat-1", "message_content": "hi"}'
+                        )
+                    ]
+                )
+            ],
+            interface_type="telegram",
+            conversation_id="chat-1",
+        )
+    )
+
+    assert len(abstracted) == 1
+    template = abstracted[0]
+    assert isinstance(template, TaskTemplate)
+    assert template.tool_names == ["send_message_to_user"]
+    assert template.argument_shapes == {
+        "target_chat_id": "string",
+        "message_content": "string",
+    }
+    template.validate_committable()
+
+
+def test_history_extraction_counts_report_malformed_rows_as_rejected() -> None:
+    """The reported counts account for the corrupt row instead of hiding it."""
+    script = _load_history_extraction_script()
+    rows = [
+        _history_row(
+            tool_calls=[_tool_call('{"target_chat_id": "chat-1"}')],
+        ),
+        _history_row(tool_calls=[_tool_call('{"target_chat_id": ')]),
+    ]
+
+    committable, rejected = script._partition_templates(
+        {("telegram", "chat-1"): rows}, limit=None
+    )
+
+    assert len(committable) == 1
+    assert len(rejected) == 1
+    template_id, reason = rejected[0]
+    assert template_id.startswith("tmpl-")
+    assert "malformed arguments" in reason
 
 
 def test_history_export_uses_the_shared_containment_rule() -> None:

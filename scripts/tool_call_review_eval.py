@@ -25,6 +25,13 @@ Two modes, and nothing else:
 
 Either mode exits nonzero when the judge allowed an attack.
 
+A ``--dataset`` directory holds cases and nothing else. The private
+``.review-eval-local/`` tree is not one directory but several, one per artifact
+kind with its own consumer — ``captures/`` and ``public/<corpus>/`` hold cases
+and are what this command scans, while ``templates/`` (history-derived task
+templates) and ``runs/`` (this harness's own output) are read by other steps and
+scanning them aborts the load.
+
 Usage:
 
     # Load and validate cases only, no network:
@@ -35,7 +42,7 @@ Usage:
     # Iterate against a judge:
     python scripts/tool_call_review_eval.py \
         --dataset src/family_assistant/eval/tool_call_review/datasets/manual \
-        --dataset .review-eval-local \
+        --dataset .review-eval-local/captures \
         --provider google --model gemini-3.7-flash --seeds 5
 
     # Record what the deployed judge scored today:
@@ -84,7 +91,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="append",
         required=True,
         metavar="PATH",
-        help="Dataset file or directory (repeatable).",
+        help=(
+            "Case file, or a directory holding case files and nothing else "
+            "(repeatable). In the private tree that is a specific artifact "
+            f"directory — {PRIVATE_EVAL_DIR_NAME}/captures — not the tree root, "
+            "which also holds templates and run records."
+        ),
     )
     parser.add_argument(
         "--mode",

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import jsonschema
 import yaml
+from pydantic import ValidationError
 
 from family_assistant.eval.tool_call_review.schema import (
     ConversationPayload,
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CaseInputConstructionError",
+    "CaseParseError",
     "CaseSchemaValidationError",
     "DuplicateCaseIdError",
     "canonical_attack_input",
@@ -36,12 +38,9 @@ __all__ = [
 
 _CASE_SUFFIXES = (".jsonl", ".yaml", ".yml", ".json")
 
-# Run reports are harness *outputs*, and a report written under a scanned
-# dataset directory would otherwise be parsed as a case on the next load.
-# Excluding a well-known directory name is deterministic; sniffing file
-# contents to guess what is a case would instead make a malformed case
-# disappear silently.
-_EXCLUDED_DIR_NAMES = frozenset({"runs"})
+
+class CaseParseError(Exception):
+    """A file in a scanned dataset directory does not hold evaluation cases."""
 
 
 class CaseSchemaValidationError(Exception):
@@ -160,6 +159,13 @@ def load_cases(
     those. Cases are returned in deterministic order sorted by id; a duplicate
     id raises rather than silently overwriting.
 
+    A scanned directory holds cases and nothing else: every candidate file in it
+    is parsed as one, and a file that is not a case aborts the load naming
+    itself. The harness's other artifact kinds — run records, history-derived
+    templates, provenance notes — are separate directories, never mixed into a
+    case directory, because the alternative is guessing from a file's contents
+    which is which and thereby letting a genuinely malformed case disappear.
+
     Every executable case is fully reconstructed here, not merely parsed, so an
     unusable dataset is rejected at load rather than mid-run. A case this
     environment cannot execute at all (see :func:`case_skip_reason`) is loaded
@@ -235,11 +241,7 @@ def _collect_files(paths: str | Path | Iterable[str | Path]) -> list[Path]:
             matched = sorted(
                 path
                 for path in candidate.rglob("*")
-                if path.is_file()
-                and path.suffix.lower() in _CASE_SUFFIXES
-                and not _EXCLUDED_DIR_NAMES.intersection(
-                    path.relative_to(candidate).parts[:-1]
-                )
+                if path.is_file() and path.suffix.lower() in _CASE_SUFFIXES
             )
         else:
             matched = [candidate]
@@ -264,4 +266,11 @@ def _parse_file(file_path: Path) -> list[EvalCase]:
         records = loaded if isinstance(loaded, list) else [loaded]
     else:
         raise ValueError(f"Unsupported dataset file extension: {file_path}")
-    return [EvalCase.model_validate(record) for record in records if record is not None]
+    try:
+        return [
+            EvalCase.model_validate(record) for record in records if record is not None
+        ]
+    except ValidationError as exc:
+        raise CaseParseError(
+            f"{file_path} is not an evaluation case file: {exc}"
+        ) from exc

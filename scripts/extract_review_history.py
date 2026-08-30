@@ -15,6 +15,13 @@ to travel in. Output is written only inside the repository's gitignored
 containment rule capture destinations use — and the script refuses any other
 destination.
 
+A row the abstraction cannot read — most plausibly a tool call whose recorded
+arguments are not a JSON object at all — is *rejected* with a reason naming it,
+alongside the templates the privacy chokepoint refuses. Coercing it to empty
+arguments instead would emit a committable, well-formed-looking template
+describing a task shape nothing recorded, biasing the quarry these templates
+exist to describe and making the counts look sound.
+
 Nothing here instantiates cases with content — stage 2 (a capable model
 hallucinating concrete cases from committed templates) is a separate,
 maintainer-run step. See ``docs/development/review-eval-history-extraction.md``.
@@ -39,6 +46,7 @@ import hashlib
 import json
 import os
 import sys
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import yaml
@@ -54,16 +62,23 @@ from family_assistant.eval.tool_call_review.scrub import (
     TemplatePrivacyError,
     declared_argument_shapes,
 )
-from family_assistant.llm.messages import AssistantMessage, dict_to_message
 from family_assistant.storage import init_db
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
 from family_assistant.storage.database import Database
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Mapping
     from pathlib import Path
 
     from family_assistant.storage.types import MessageHistoryRow
+
+
+@dataclass(frozen=True, slots=True)
+class _RejectedRow:
+    """A history row that could not be abstracted, and why."""
+
+    template_id: str
+    reason: str
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -121,16 +136,17 @@ def _private_out_dir(raw_out_dir: str) -> Path:
         ) from exc
 
 
-def _tool_call_arguments(raw: object) -> dict[str, object]:
-    if isinstance(raw, str):
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError:
-            return {}
-        return parsed if isinstance(parsed, dict) else {}
+def _tool_call_arguments(raw: object) -> dict[str, object] | None:
+    """Return the call's recorded argument object, or ``None`` if it is not one."""
     if isinstance(raw, dict):
         return raw
-    return {}
+    if not isinstance(raw, str):
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def _row_taint_tier(row: MessageHistoryRow) -> str:
@@ -147,8 +163,8 @@ def _templates_from_rows(
     *,
     interface_type: str,
     conversation_id: str,
-) -> Iterator[TaskTemplate]:
-    """Yield one abstracted template per tool call in an assistant row.
+) -> Iterator[TaskTemplate | _RejectedRow]:
+    """Yield one abstracted template, or one rejection, per recorded tool call.
 
     Only schema-declared argument keys are read, with the shape taken from the
     tool's parameter schema; values and undeclared keys never enter the template,
@@ -156,22 +172,34 @@ def _templates_from_rows(
     privacy boundary. Intent and content-kind are not recoverable from history
     alone, so they are emitted as a placeholder / ``none`` for a later
     classification pass to refine. A template whose tool no longer resolves gets
-    empty shapes and is rejected downstream by the validator.
+    empty shapes and is rejected downstream by the validator; a call whose
+    recorded arguments are not a JSON object is rejected here, because the
+    template it would otherwise produce describes argument shapes that were
+    never observed.
     """
     for index, row in enumerate(rows):
-        try:
-            message = dict_to_message(dict(row))
-        except (KeyError, ValueError, TypeError):
+        if row.get("role") != "assistant":
             continue
-        if not isinstance(message, AssistantMessage) or not message.tool_calls:
+        tool_calls = row.get("tool_calls")
+        if not tool_calls:
             continue
         tier = _row_taint_tier(row)
-        for call_index, tool_call in enumerate(message.tool_calls):
+        for call_index, tool_call in enumerate(tool_calls):
             name = tool_call.function.name
-            arguments = _tool_call_arguments(tool_call.function.arguments)
             template_id = _template_id(
                 interface_type, conversation_id, index, call_index, name
             )
+            arguments = _tool_call_arguments(tool_call.function.arguments)
+            if arguments is None:
+                yield _RejectedRow(
+                    template_id=template_id,
+                    reason=(
+                        f"malformed arguments: {interface_type}/{conversation_id} "
+                        f"row {index} call {call_index} ({name}) recorded "
+                        "tool-call arguments that are not a JSON object"
+                    ),
+                )
+                continue
             try:
                 argument_shapes = declared_argument_shapes(name, arguments)
             except ToolResolutionError:
@@ -208,6 +236,37 @@ def _template_id(
     return f"tmpl-{digest}"
 
 
+def _partition_templates(
+    grouped: Mapping[tuple[str, str], list[MessageHistoryRow]],
+    *,
+    limit: int | None,
+) -> tuple[list[TaskTemplate], list[tuple[str, str]]]:
+    """Split abstracted history into committable templates and rejections.
+
+    Rejections are one list whatever their cause — a row that could not be
+    abstracted, or a template the privacy chokepoint refused — so the reported
+    counts account for every tool call the history held.
+    """
+    committable: list[TaskTemplate] = []
+    rejected: list[tuple[str, str]] = []
+    for (iface, conversation_id), rows in grouped.items():
+        for abstracted in _templates_from_rows(
+            rows, interface_type=iface, conversation_id=conversation_id
+        ):
+            if isinstance(abstracted, _RejectedRow):
+                rejected.append((abstracted.template_id, abstracted.reason))
+                continue
+            try:
+                abstracted.validate_committable()
+            except TemplatePrivacyError as error:
+                rejected.append((abstracted.template_id, str(error)))
+                continue
+            committable.append(abstracted)
+            if limit is not None and len(committable) >= limit:
+                return committable, rejected
+    return committable, rejected
+
+
 async def _collect_templates(
     database_url: str,
     *,
@@ -215,8 +274,6 @@ async def _collect_templates(
     limit: int | None,
 ) -> tuple[list[TaskTemplate], list[tuple[str, str]]]:
     engine = create_engine_with_sqlite_optimizations(database_url)
-    committable: list[TaskTemplate] = []
-    rejected: list[tuple[str, str]] = []
     try:
         await init_db(engine)
         db = Database(engine)
@@ -224,21 +281,9 @@ async def _collect_templates(
             interface_type=interface_type,
             include_subconversations=True,
         )
-        for (iface, conversation_id), rows in grouped.items():
-            for template in _templates_from_rows(
-                rows, interface_type=iface, conversation_id=conversation_id
-            ):
-                try:
-                    template.validate_committable()
-                except TemplatePrivacyError as error:
-                    rejected.append((template.template_id, str(error)))
-                    continue
-                committable.append(template)
-                if limit is not None and len(committable) >= limit:
-                    return committable, rejected
     finally:
         await engine.dispose()
-    return committable, rejected
+    return _partition_templates(grouped, limit=limit)
 
 
 def _write_templates(templates: list[TaskTemplate], out_dir: Path) -> None:
@@ -267,7 +312,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     print(f"Committable templates: {len(committable)}")
-    print(f"Rejected by privacy chokepoint: {len(rejected)}")
+    print(f"Rejected: {len(rejected)}")
     for template_id, reason in rejected[:20]:
         print(f"  - {template_id}: {reason}")
 

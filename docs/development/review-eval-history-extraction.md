@@ -13,6 +13,22 @@ Everything on these paths lives under `.review-eval-local/`, which the repositor
 Nothing under it is ever committed. The committed datasets are only the public-corpus, synthetic,
 and manual cases; the friction pool and the history quarry are per-deployment and unshared.
 
+The tree is one directory per artifact kind, each with its own consumer, and they are not
+interchangeable:
+
+| Directory          | Holds                                      | Consumer                                        |
+| ------------------ | ------------------------------------------ | ----------------------------------------------- |
+| `captures/`        | replayable `EvalCase` records (path 1)     | `--dataset` of the eval harness                 |
+| `public/<corpus>/` | adapted public-corpus cases                | `--dataset` of the eval harness                 |
+| `templates/`       | enumerated `TaskTemplate` records (path 2) | the maintainer skim, then stage-2 instantiation |
+| `runs/`            | run and stamp records the harness writes   | read by a human; diffed against a later run     |
+
+`--dataset` scans a directory of **cases**, so point it at `captures/` (or a `public/<corpus>/`
+directory), never at the tree root: a scanned directory holds cases and nothing else, and a template
+or a run record found in one aborts the load naming the file. That is deliberate — the alternative
+is guessing from a file's contents which files are cases, which would let a genuinely malformed case
+disappear silently.
+
 ## Path 1 — Live capture (friction set)
 
 ### What it does
@@ -109,7 +125,10 @@ poe review-eval-extract-history -- \
 ```
 
 The dry run is the default posture for inspection: it reports how many templates are committable and
-how many the chokepoint rejected (with reasons), without touching disk. It runs cleanly against an
+how many were rejected (with reasons) — by the privacy chokepoint, or because the row itself could
+not be abstracted, as when its recorded tool-call arguments are not a JSON object. A rejected row is
+reported and dropped, never abstracted into an argument-less template that would look well formed
+and quietly thin the task-shape quarry. The dry run touches no disk. It runs cleanly against an
 empty or fresh dev database (it initializes the schema and finds zero turns).
 
 ### Human-review step before anything leaves the private tree
