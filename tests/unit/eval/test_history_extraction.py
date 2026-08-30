@@ -386,6 +386,65 @@ def test_read_only_url_rewrites_only_file_backed_sqlite(
     assert script._read_only_url(url) == expected
 
 
+def test_a_nonempty_output_directory_is_refused(tmp_path: Path) -> None:
+    """Leftovers from an earlier extraction must not be written beside new ones.
+
+    One file per template into a shared directory means a re-run after changing
+    --interface-type or --limit leaves the previous set in place, while the
+    command reports only the count it just wrote. Both consumers — the
+    maintainer skim and stage 2 — read the whole directory.
+    """
+    script = _load_history_extraction_script()
+    out_dir = tmp_path / "templates"
+    out_dir.mkdir()
+    (out_dir / "tmpl-from-an-earlier-run.yaml").write_text("{}", encoding="utf-8")
+
+    with pytest.raises(SystemExit, match="non-empty"):
+        script._require_empty_out_dir(out_dir)
+
+
+def test_an_empty_or_absent_output_directory_is_accepted(tmp_path: Path) -> None:
+    script = _load_history_extraction_script()
+
+    script._require_empty_out_dir(tmp_path / "does-not-exist")
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    script._require_empty_out_dir(empty)
+
+
+def test_a_dry_run_does_not_care_about_the_output_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--dry-run writes nothing, so leftovers are not its problem.
+
+    A gate that blocked the inspection path would be turned off, and then it
+    would protect nothing.
+    """
+    script = _load_history_extraction_script()
+    out_dir = PROJECT_ROOT / ".review-eval-local" / "templates"
+    monkeypatch.setattr(script, "_require_empty_out_dir", _fail_if_called, raising=True)
+
+    async def _no_templates(
+        _url: str, *, interface_type: str | None, limit: int | None
+    ) -> tuple[list[TaskTemplate], list[tuple[str, str]]]:
+        return [], []
+
+    monkeypatch.setattr(script, "_collect_templates", _no_templates, raising=True)
+    exit_code = script.main([
+        "--database-url",
+        "sqlite+aiosqlite:///unused.db",
+        "--out-dir",
+        str(out_dir.relative_to(PROJECT_ROOT)),
+        "--dry-run",
+    ])
+
+    assert exit_code == 0
+
+
+def _fail_if_called(_out_dir: Path) -> None:
+    raise AssertionError("--dry-run must not check the output directory")
+
+
 def _load_history_extraction_script() -> ModuleType:
     """Load the export script by path; ``scripts/`` is not an importable package."""
     script_path = PROJECT_ROOT / "scripts" / "extract_review_history.py"

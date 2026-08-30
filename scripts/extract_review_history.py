@@ -158,6 +158,40 @@ def _private_out_dir(raw_out_dir: str) -> Path:
         ) from exc
 
 
+def _require_empty_out_dir(out_dir: Path) -> None:
+    """Refuse to write templates beside the leftovers of an earlier extraction.
+
+    The set this writes is the whole answer to one set of parameters, but it is
+    written as one file per template into a shared directory, so a re-run after
+    changing ``--interface-type`` or ``--limit`` leaves the previous run's
+    templates sitting next to the new ones. The command then reports the count
+    it just wrote while the directory holds more, and the two consumers — the
+    maintainer skim, and the stage-2 pass that instantiates cases — read the
+    whole directory, so both would work from task shapes this extraction did not
+    produce.
+
+    Refusing rather than clearing the directory: the skim is a human step, so
+    the files here may be part-reviewed work, and deleting someone's working
+    directory to save them one ``rm`` is the worse surprise. Checked before the
+    database is read, so the refusal costs nothing.
+    """
+    if not out_dir.exists():
+        return
+    existing = sorted(entry.name for entry in out_dir.iterdir())
+    if not existing:
+        return
+    shown = ", ".join(existing[:5])
+    more = f" (and {len(existing) - 5} more)" if len(existing) > 5 else ""
+    raise SystemExit(
+        f"Refusing to write into a non-empty {out_dir}: it already holds "
+        f"{len(existing)} entr{'y' if len(existing) == 1 else 'ies'} — {shown}"
+        f"{more}. A template set describes one extraction, and files left from "
+        "an earlier one would be read by the maintainer skim and by stage 2 as "
+        "though this run had produced them. Remove the directory or name a "
+        "different --out-dir."
+    )
+
+
 def _tool_call_arguments(raw: object) -> dict[str, object] | None:
     """Return the call's recorded argument object, or ``None`` if it is not one."""
     if isinstance(raw, dict):
@@ -346,6 +380,7 @@ async def _collect_templates(
 
 
 def _write_templates(templates: list[TaskTemplate], out_dir: Path) -> None:
+    """Write one file per template into a directory :func:`main` proved empty."""
     out_dir.mkdir(parents=True, exist_ok=True)
     for template in templates:
         # Revalidate at the write boundary: nothing reaches disk without passing
@@ -361,6 +396,10 @@ def _write_templates(templates: list[TaskTemplate], out_dir: Path) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     out_dir = _private_out_dir(args.out_dir)
+    if not args.dry_run:
+        # Before the read, not after: a refusal that arrives once the database
+        # has been walked has cost the maintainer the whole extraction.
+        _require_empty_out_dir(out_dir)
 
     committable, rejected = asyncio.run(
         _collect_templates(

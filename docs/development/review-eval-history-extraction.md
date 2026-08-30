@@ -98,6 +98,14 @@ not be abstracted, as when its recorded tool-call arguments are not a JSON objec
 reported and dropped, never abstracted into an argument-less template that would look well formed
 and quietly thin the task-shape quarry.
 
+**The output directory must be empty.** A template set is the whole answer to one set of parameters,
+but it is written as one file per template, so a re-run after changing `--interface-type` or
+`--limit` would leave the previous run's templates beside the new ones while the command reported
+only the count it just wrote — and both the skim below and the stage-2 pass read the whole
+directory. The command therefore refuses a non-empty `--out-dir`, before it reads the database,
+rather than clearing it for you: the files there may be part-reviewed work. Remove the directory or
+name a different one.
+
 The dry run writes nothing — not to disk, and not to the database. It needs one already at a
 compatible schema revision: the extractor never initializes or migrates the database
 `--database-url` names, and connects with a plain engine rather than the application's, so it cannot
