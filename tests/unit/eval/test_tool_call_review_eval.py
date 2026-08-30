@@ -40,8 +40,12 @@ from family_assistant.eval.tool_call_review import (
     run_eval,
     seed_flips,
 )
+from family_assistant.eval.tool_call_review.adapters.casebuild import (
+    untrusted_source_metadata,
+)
 from family_assistant.eval.tool_call_review.scrub import TaskTemplate
 from family_assistant.llm.retrying_client import RetryingLLMClient
+from family_assistant.security.taint import TaintSourceType
 from family_assistant.services.tool_call_review import (
     BrowserActionReviewInput,
     ToolCallReviewer,
@@ -57,6 +61,8 @@ from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from family_assistant.llm import LLMInterface
 
 pytestmark = pytest.mark.no_db
@@ -413,22 +419,21 @@ def _key(case: EvalCase) -> str:
     return attack_input_key(*case.to_review_input())
 
 
-_UNTRUSTED_EMAIL = {
-    "version": "runtime_v1",
-    "max_tier": "unknown_external",
-    "history_high_taint_present": False,
-    "fresh_high_taint_seen_at_sequence": None,
-    "approved_sinks": [],
-    "sources": [
-        {
-            "source_type": "email",
-            "source_id": "row-0",
-            "tier": "unknown_external",
-            "labels": [],
-            "reason": "Sender-controlled email body.",
-        }
-    ],
-}
+def _untrusted_email_taint(source_id: str) -> dict[str, object]:
+    """Taint metadata for one sender-controlled email row.
+
+    Built through the runtime serializer rather than hand-written, the way the
+    corpus adapters build theirs: a hand-written dict has to predict values the
+    engine derives (the sequence at which fresh high taint was first seen, say)
+    and gets rejected by ``ConversationPayload`` when it predicts them wrong.
+    """
+    return dict(
+        untrusted_source_metadata(
+            source_type=TaintSourceType.EMAIL,
+            source_id=source_id,
+            reason="Sender-controlled email body.",
+        )
+    )
 
 
 def _injected_case(
@@ -441,10 +446,7 @@ def _injected_case(
     source: str = "public:corpus_a",
 ) -> EvalCase:
     """An email-intake attack, parameterized on parts the prompt does and does not carry."""
-    taint = {
-        **_UNTRUSTED_EMAIL,
-        "sources": [{**_UNTRUSTED_EMAIL["sources"][0], "source_id": source_id}],
-    }
+    taint = _untrusted_email_taint(source_id)
     return EvalCase(
         id=case_id,
         boundary="conversation",
@@ -882,6 +884,55 @@ def test_observed_allow_leaves_the_run_with_no_supported_bound() -> None:
     record = report.to_stamp_record()
     assert record["supported_bound"] is None
     assert record["bound_statement"] == statement
+
+
+@pytest.mark.parametrize(
+    ("mutate", "case_id"),
+    [
+        pytest.param(
+            lambda state: {
+                **{k: v for k, v in state.items() if k != "max_tier"},
+                "max_teir": "unknown_external",
+            },
+            "misspelled-key",
+            id="misspelled-key",
+        ),
+        pytest.param(
+            lambda state: {**state, "max_tier": "nonsense"},
+            "unreadable-tier",
+            id="unreadable-tier",
+        ),
+        pytest.param(
+            lambda state: {**state, "bogus": 1},
+            "unknown-key",
+            id="unknown-key",
+        ),
+    ],
+)
+def test_taint_state_the_decoder_would_repair_is_rejected(
+    mutate: Callable[[dict[str, object]], dict[str, object]], case_id: str
+) -> None:
+    # from_metadata answers malformed history with the unknown-external
+    # sentinel rather than an error, which is right for history and wrong for a
+    # fixture: the case would replay under provenance it never declared, and it
+    # would pass --dry-run while doing it.
+    with pytest.raises(ValidationError, match="taint_state"):
+        ConversationPayload(
+            messages=[],
+            tool_name="send_message_to_user",
+            sink_class="none",
+            taint_state=mutate(dict(_TRUSTED)),
+        )
+
+
+def test_canonical_taint_state_is_accepted() -> None:
+    payload = ConversationPayload(
+        messages=[],
+        tool_name="send_message_to_user",
+        sink_class="none",
+        taint_state=dict(_TRUSTED),
+    )
+    assert payload.taint_state == _TRUSTED
 
 
 def test_fallback_confirm_on_an_attack_is_not_reported_as_a_weak_pass() -> None:

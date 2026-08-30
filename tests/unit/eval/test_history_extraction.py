@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sqlite3
 import sys
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
@@ -264,6 +265,36 @@ def test_history_export_uses_the_shared_containment_rule() -> None:
         script._private_out_dir(".review-eval-local/templates")
         == PROJECT_ROOT / ".review-eval-local" / "templates"
     )
+
+
+async def test_history_extraction_never_migrates_the_source_database(
+    tmp_path: Path,
+) -> None:
+    """Reading history must not create or upgrade the schema it reads.
+
+    ``--database-url`` is pointed at the real database, so calling the
+    application's ``init_db`` here would run ``alembic upgrade head`` against a
+    live deployment — or create and stamp a schema on a copy deliberately kept
+    at an older revision — and would do it under ``--dry-run`` too. An empty
+    database must therefore fail on the query and be left exactly as it was.
+    """
+    script = _load_history_extraction_script()
+    db_path = tmp_path / "empty.db"
+    db_path.touch()
+
+    with pytest.raises(Exception, match="message_history"):
+        await script._collect_templates(
+            f"sqlite+aiosqlite:///{db_path}", interface_type=None, limit=None
+        )
+
+    with sqlite3.connect(db_path) as connection:
+        tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+    assert tables == set()
 
 
 def _load_history_extraction_script() -> ModuleType:

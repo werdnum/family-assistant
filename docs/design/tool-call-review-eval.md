@@ -271,8 +271,17 @@ on exactly the same schedule. The journey description is the durable artifact; t
 rendering of it that has to be re-derived when the machinery that produces it moves. Concretely:
 **when the taint engine changes — the pending delegation-provenance fix is the near example — stored
 `taint_state` and provenance metadata in committed cases must be regenerated, not carried forward.**
-A case carrying pre-change state measures the old engine's view of the journey and reports a number
-that is not comparable to the new one, without failing.
+A case carrying pre-change state measures the old engine's view of the journey and would otherwise
+report a number that is not comparable to the new one, without failing.
+
+Loading enforces this rather than trusting it. A case's stored `taint_state` must be exactly what
+the runtime's own serializer produces for the state it decodes to — the decoder is deliberately
+tolerant, because it is built to read persisted history where the safe answer to an unreadable value
+is to assume the worst and continue, and a fixture read that way would replay under provenance it
+never declared. Requiring the round trip needs no second copy of the decoder's rules, so it cannot
+fall behind them, and it converts staleness from a silent wrong number into a load error naming the
+case. Authoring stays straightforward: build the metadata with the runtime serializer, as the corpus
+adapters do, or paste the canonical form the rejection prints.
 
 Two further consequences are accepted: the friction half is measured against realistic task shapes
 rather than real ones (see the house-style caveat under history-derived cases), and prompt-assembly

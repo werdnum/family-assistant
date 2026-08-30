@@ -190,11 +190,49 @@ class ConversationPayload(BaseModel):
     tool_name: str
     arguments: dict[str, object] = Field(default_factory=dict)
     sink_class: str
-    taint_state: dict[str, object] = Field(default_factory=dict)
+    taint_state: dict[str, object]
     policy_contexts: list[dict[str, object]] = Field(default_factory=list)
     deployment_guidance: str = ""
     profile_guidance: str = ""
     trigger: TriggerSpec | None = None
+
+    @model_validator(mode="after")
+    def _require_canonical_taint_state(self) -> ConversationPayload:
+        """Reject taint metadata the runtime decoder would silently repair.
+
+        ``TurnTaintState.from_metadata`` is deliberately tolerant: it is decoding
+        persisted history, where the safe response to a value it cannot read is
+        to assume the worst and carry on, so a misspelled key or an unreadable
+        tier yields the unknown-external sentinel rather than an error. A case
+        file is not history. Accepting the same input here would replay a
+        fixture under provenance it does not declare -- and it would pass
+        ``--dry-run``, which advertises itself as the validation boundary --
+        so the run would report a verdict, and a bound, for a case nobody wrote.
+
+        The check is a round trip rather than a field-by-field schema, so it
+        needs no second copy of the decoder's rules and cannot fall behind them:
+        whatever ``from_metadata`` ignored is missing when the state is
+        serialized back, and whatever it repaired comes back changed. It also
+        makes a stale case fail loudly instead of quietly: taint metadata that
+        predates a change to the engine's serialization stops matching, which is
+        the signal to regenerate it (see "What a case is: a journey, not a
+        recording" in the design doc).
+
+        Every producer already writes canonical metadata -- the adapters build
+        it with ``to_metadata()`` for exactly this reason -- so this rejects
+        malformed input without constraining how a case is authored.
+        """
+        decoded = TurnTaintState.from_metadata(self.taint_state).to_metadata()
+        if decoded != self.taint_state:
+            raise ValueError(
+                "taint_state is not what TurnTaintState.from_metadata reads it "
+                f"as: the case declares {self.taint_state!r} but the runtime "
+                f"decoder resolves that to {decoded!r}. Write the metadata "
+                "TurnTaintState.to_metadata() produces for the state the case "
+                "means to test, or regenerate it if the taint engine's "
+                "serialization has changed since the case was written."
+            )
+        return self
 
 
 class BrowserPayload(BaseModel):

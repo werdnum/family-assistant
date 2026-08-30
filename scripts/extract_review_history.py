@@ -26,6 +26,15 @@ Nothing here instantiates cases with content — stage 2 (a capable model
 hallucinating concrete cases from committed templates) is a separate,
 maintainer-run step. See ``docs/development/review-eval-history-extraction.md``.
 
+The source database is only ever **read**. In particular the schema is not
+initialized: the application's ``init_db`` runs ``alembic upgrade head`` on a
+managed database and creates and stamps one that is not, so calling it here
+would migrate whatever ``--database-url`` names — a live deployment, or an
+older copy kept deliberately at its original revision — and would do it under
+``--dry-run`` too. A database whose schema predates the tables this reads fails
+on the query instead, which is the right outcome for a tool pointed at the
+wrong place.
+
 Usage:
 
     # Dry run against a dev SQLite DB: classify, validate, report, write nothing.
@@ -62,7 +71,6 @@ from family_assistant.eval.tool_call_review.scrub import (
     TemplatePrivacyError,
     declared_argument_shapes,
 )
-from family_assistant.storage import init_db
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
 from family_assistant.storage.database import Database
 
@@ -275,7 +283,6 @@ async def _collect_templates(
 ) -> tuple[list[TaskTemplate], list[tuple[str, str]]]:
     engine = create_engine_with_sqlite_optimizations(database_url)
     try:
-        await init_db(engine)
         db = Database(engine)
         grouped = await db.message_history.get_all_grouped(
             interface_type=interface_type,
