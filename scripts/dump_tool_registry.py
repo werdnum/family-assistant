@@ -141,11 +141,23 @@ def _configured_servers(config_file: str | None) -> dict[str, MCPServerConfig]:
     this script exists to prevent, arriving through the config file instead of
     through a dead server.
     """
-    config = load_config(
-        config_file_path=config_file
-        if config_file is not None
-        else os.getenv("CONFIG_FILE", DEFAULT_CONFIG_FILE)
-    )
+    if config_file is not None:
+        # `load_config` treats every overlay as optional and silently omits one
+        # that does not exist, so a mistyped path would produce a plausible
+        # snapshot of the shipped defaults instead of an error -- this script's
+        # own failure again, arriving through a typo. A path named explicitly is
+        # required to exist; the env/default path keeps the optional behaviour,
+        # because a deployment with no overlay at all is ordinary.
+        if not Path(config_file).exists():
+            raise SystemExit(
+                f"Refusing to read the registry: --config-file {config_file} "
+                "does not exist. An overlay that is not there would be skipped "
+                "silently and the snapshot would describe the shipped defaults."
+            )
+        resolved = config_file
+    else:
+        resolved = os.getenv("CONFIG_FILE", DEFAULT_CONFIG_FILE)
+    config = load_config(config_file_path=resolved)
     return {
         server_id: cast("MCPServerConfig", server_config.model_dump())
         for server_id, server_config in config.mcp_config.mcpServers.items()

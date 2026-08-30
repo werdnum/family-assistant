@@ -331,3 +331,16 @@ def test_a_run_records_which_registry_it_measured_under() -> None:
     assert registry_digest(one) != registry_digest(other)
     assert registry_digest(one) == registry_digest(dict(one))
     assert registry_digest(None) is None
+
+
+def test_a_named_overlay_that_is_not_there_aborts_the_dump(tmp_path: Path) -> None:
+    """A typo'd --config-file must not silently become the shipped defaults.
+
+    `load_config` treats every overlay as optional, so a path that is not there
+    is skipped and the dump writes a plausible snapshot of a server set no
+    deployment runs.
+    """
+    script = _load_dump_registry_script()
+
+    with pytest.raises(SystemExit, match="does not exist"):
+        script._configured_servers(str(tmp_path / "typo.yaml"))

@@ -88,9 +88,11 @@ registry that quietly loses entries is indistinguishable from a dataset that has
 shape. And it is **deployment data, not source** — MCP parameter schemas can enumerate a household's
 own vocabulary, so a snapshot resolves into the private eval tree with the templates.
 
-Resolving MCP tools does not widen what may cross the privacy boundary. The schema is what the
-argument-key filter needs in order to *apply*; before the snapshot those templates carried no
-argument shapes at all, because there was no schema to select keys against.
+Resolving MCP tools does not widen what argument *values* or model-invented keys may cross the
+privacy boundary — the schema is what the argument-key filter needs in order to *apply*, and before
+the snapshot those templates carried no argument shapes at all because there was no schema to select
+keys against. It does widen one thing, recorded under "Deliberate simplifications" below: the names
+themselves now come from a deployment rather than from the source tree.
 
 ### Runner and reporting
 
@@ -535,6 +537,24 @@ apart from clean trials.
   `--tool-registry` (see **Registry snapshots** above), which was the cheap path this section
   predicted. The named-sink case needs the descriptor to exist somewhere first, which is a change to
   the chokepoint, not to the eval.
+
+- **A committable template's tool and argument-key names come from the deployment, not the source
+  tree.** A local tool's name and parameter schema are source-code constants, so a template naming
+  one carries nothing a reader of this repository cannot already see. An MCP tool's are whatever its
+  server advertises, and `_templates_from_rows` copies both into the template verbatim; before
+  registry snapshots those templates were rejected as unresolvable, so this is a real widening, not
+  a pre-existing one. A server that named tools or schema properties after household vocabulary —
+  `set_alice_bedroom` — would put that vocabulary in a committable artifact, and resolution against
+  the snapshot is not evidence to the contrary: the snapshot is private precisely because its
+  schemas may enumerate such vocabulary.
+
+  Accepted rather than closed, because the alternatives are worse than the exposure. Refusing
+  non-local tool names re-rejects every MCP template, which is the loss snapshots exist to fix; an
+  allowlist adds an artifact to maintain for a risk that is a property of a deployment's server set
+  rather than of the design. What holds the line instead is what already held it for the maintainer
+  skim: templates are written only into the gitignored private tree, and a human reads them before
+  any of it is committed. Deployments whose servers *do* generate names from household data should
+  treat that skim as load-bearing for names, not only for shapes.
 
 - **The private dataset is per-deployment and unshared.** Third-party deployments of this public
   codebase get the harness and committed sets; their friction numbers come from their own extracts.
