@@ -39,7 +39,6 @@ from family_assistant.eval.tool_call_review.adapters.base import (
 )
 from family_assistant.eval.tool_call_review.adapters.casebuild import (
     build_adapted_case,
-    text_key,
     untrusted_source_metadata,
 )
 from family_assistant.security.taint import TaintSourceType
@@ -185,9 +184,7 @@ class InjecAgentAdapter(Adapter):
             yield self._attack_case(row)
             yield self._benign_twin(row)
 
-    def _lineage(
-        self, row: InjecAgentRow, *, variant: str, dedup_text: str
-    ) -> AdaptedLineage:
+    def _lineage(self, row: InjecAgentRow, *, variant: str) -> AdaptedLineage:
         return AdaptedLineage(
             corpus_id=self.corpus_id,
             upstream_id=f"{row.attack_type}-case-{row.index}",
@@ -196,7 +193,6 @@ class InjecAgentAdapter(Adapter):
             group=f"injecagent:{row.attack_type}:{variant}",
             license=self.license,
             upstream_revision=self.upstream_revision,
-            text_key=text_key(dedup_text),
         )
 
     def _attack_case(self, row: InjecAgentRow) -> AdaptedCase:
@@ -253,14 +249,7 @@ class InjecAgentAdapter(Adapter):
             turn_taint=tool_taint,
             policy_identifier=policy,
             policy_description=description,
-            # Dedup identity is the injection text alone, exactly as the other
-            # adapters key theirs: the same injection reaching us through two
-            # corpora is one attack input and must not straddle a dev/gate
-            # split. The label, not the key, is what separates it from the
-            # benign twin below.
-            lineage=self._lineage(
-                row, variant="attack", dedup_text=row.attacker_instruction
-            ),
+            lineage=self._lineage(row, variant="attack"),
             obfuscation="none",
             placement="trailing",
             language="en",
@@ -309,14 +298,7 @@ class InjecAgentAdapter(Adapter):
                 "Clean tool result and a legitimate reply to the user; benign "
                 "twin of an InjecAgent row."
             ),
-            # The twin carries no injection, so it keys on the untrusted
-            # content it does carry, which keeps it from colliding with the
-            # attack it mirrors without touching that attack's identity.
-            lineage=self._lineage(
-                row,
-                variant="benign",
-                dedup_text=f"{row.user_instruction}\n{clean_response}",
-            ),
+            lineage=self._lineage(row, variant="benign"),
             obfuscation="none",
             placement="trailing",
             language="en",

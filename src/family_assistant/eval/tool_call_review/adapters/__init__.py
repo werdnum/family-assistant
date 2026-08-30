@@ -26,7 +26,6 @@ from family_assistant.eval.tool_call_review.adapters.base import (
     AdaptedCase,
     AdaptedLineage,
     Adapter,
-    lineage_aware_dedup,
 )
 from family_assistant.eval.tool_call_review.adapters.deepset_prompt_injections import (
     DeepsetPromptInjectionsAdapter,
@@ -47,5 +46,4 @@ __all__ = [
     "Adapter",
     "DeepsetPromptInjectionsAdapter",
     "InjecAgentAdapter",
-    "lineage_aware_dedup",
 ]

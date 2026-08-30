@@ -31,10 +31,10 @@ from typing import TYPE_CHECKING, ClassVar, Final
 from family_assistant.eval.tool_call_review.adapters.base import (
     AdaptedLineage,
     Adapter,
+    normalized_text_key,
 )
 from family_assistant.eval.tool_call_review.adapters.casebuild import (
     build_adapted_case,
-    text_key,
     untrusted_source_metadata,
 )
 from family_assistant.security.taint import TaintSourceType
@@ -143,10 +143,9 @@ class DeepsetPromptInjectionsAdapter(Adapter):
             upstream_id=upstream_id,
             # This corpus carries no author/challenge grouping, so the template
             # family is the normalized text itself.
-            group=f"deepset:{text_key(row.text)[:16]}",
+            group=f"deepset:{normalized_text_key(row.text)[:16]}",
             license=self.license,
             upstream_revision=self.upstream_revision,
-            text_key=text_key(row.text),
         )
         email_taint = untrusted_source_metadata(
             source_type=TaintSourceType.EMAIL,

@@ -11,6 +11,11 @@ materializes cases from a corpus they hold locally.
 Provenance is recorded, not verified: pass ``--upstream-revision`` so the record
 says which revision the cases came from. Nothing re-checks it at run time.
 
+The script does not deduplicate. Whether two rows are the same attack input is
+settled at load time, over whatever corpus a run actually evaluates, by
+:func:`~family_assistant.eval.tool_call_review.loader.attack_input_key`; an
+answer given here could only ever cover one invocation's corpus.
+
 Usage:
 
     # Adapt a locally-fetched corpus:
@@ -19,12 +24,12 @@ Usage:
         --input ~/corpora/deepset-prompt-injections/train.csv \\
         --out-dir .review-eval-local/public/deepset
 
-    # Record the revision the cases came from, and deduplicate:
+    # Record the revision the cases came from:
     python scripts/build_public_corpus_cases.py \\
         --corpus injecagent \\
         --input ~/corpora/InjecAgent/data \\
         --out-dir .review-eval-local/public/injecagent \\
-        --upstream-revision <commit-sha> --dedup
+        --upstream-revision <commit-sha>
 
     # Smoke-check the mapping with the committed synthetic sample:
     python scripts/build_public_corpus_cases.py \\
@@ -40,10 +45,7 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from family_assistant.eval.tool_call_review.adapters import (
-    ADAPTERS,
-    lineage_aware_dedup,
-)
+from family_assistant.eval.tool_call_review.adapters import ADAPTERS
 from family_assistant.eval.tool_call_review.loader import load_cases
 
 if TYPE_CHECKING:
@@ -84,11 +86,6 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Revision to record in the provenance output and each lineage record.",
     )
-    parser.add_argument(
-        "--dedup",
-        action="store_true",
-        help="Apply lineage-aware dedup before writing.",
-    )
     return parser.parse_args(argv)
 
 
@@ -107,10 +104,6 @@ def _build(args: argparse.Namespace) -> int:
         )
 
     adapted: list[AdaptedCase] = list(adapter.iter_adapted())
-    if args.dedup:
-        before = len(adapted)
-        adapted = lineage_aware_dedup(adapted)
-        print(f"Lineage-aware dedup: {before} -> {len(adapted)} case(s).")
     if not adapted:
         print("Adapter produced no cases.", file=sys.stderr)
         return 1

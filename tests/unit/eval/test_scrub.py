@@ -346,11 +346,3 @@ def test_colliding_key_pseudonyms_fail_closed() -> None:
     pseudonymizer = Pseudonymizer(literals={"Bob": "<person>", "Rob": "<person>"})
     with pytest.raises(PseudonymizationError, match="collide"):
         pseudonymizer.pseudonymize_case(case)
-
-
-def test_non_string_mapping_key_fails_closed() -> None:
-    # A key that is not text cannot go through the substitution path, and may
-    # itself be household data (a chat id), so the walk refuses it rather than
-    # passing it through into a "pseudonymized" document.
-    with pytest.raises(PseudonymizationError, match="not a string"):
-        Pseudonymizer()._walk({1234: "chat"})

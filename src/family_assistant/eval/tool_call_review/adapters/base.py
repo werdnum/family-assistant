@@ -2,10 +2,16 @@
 
 An :class:`Adapter` turns rows of a locally-fetched upstream corpus into
 schema-valid :class:`~family_assistant.eval.tool_call_review.schema.EvalCase`
-objects, each carrying an :class:`AdaptedLineage` record so a near-duplicate
-that recurs across corpora can be clustered before any dev/gate split. Lineage
-is load-bearing: the large corpora incorporate one another, so the same attack
-appearing on both sides of a split would flatter the judge.
+objects, each carrying an :class:`AdaptedLineage` record naming the upstream
+row and the family it belongs to, so whole families can be held out as units
+before any dev/gate split. Lineage is load-bearing: the large corpora
+incorporate one another, so the same family appearing on both sides of a split
+would flatter the judge.
+
+Adapters do not decide what counts as the same input. Two rows that assemble the
+same reviewer prompt are one attack input, and that is settled at load time over
+whatever corpus is being evaluated, by
+:func:`~family_assistant.eval.tool_call_review.loader.attack_input_key`.
 """
 
 from __future__ import annotations
@@ -26,18 +32,16 @@ __all__ = [
     "AdaptedCase",
     "AdaptedLineage",
     "Adapter",
-    "lineage_aware_dedup",
     "normalized_text_key",
 ]
 
 
 def normalized_text_key(text: str) -> str:
-    """Return a whitespace/case/Unicode-folded digest of an injection text.
+    """Return a whitespace/case/Unicode-folded digest of a text, for grouping.
 
-    Human adversarial pools are duplicate-heavy and the same template recurs
-    verbatim across corpora, so lineage-aware dedup keys on a normalized digest
-    rather than the raw bytes: NFKC folding collapses the compatibility and
-    zero-width tricks that otherwise present one attack as many.
+    A corpus that ships no author or challenge label has no family to group by,
+    so its adapter groups by the text itself; NFKC folding keeps the trivial
+    whitespace and compatibility variants of one template in one family.
     """
     folded = unicodedata.normalize("NFKC", text).casefold()
     collapsed = " ".join(folded.split())
@@ -51,16 +55,8 @@ class AdaptedLineage:
     ``group`` clusters cases that share an author, challenge, or template
     family — the unit BIPIA-style combinatorial corpora and human adversarial
     pools must be held out by, since a random row-level split would leave the
-    same family on both sides. It is used only for split assignment, never for
-    dedup identity: adapters make ``group`` corpus-specific (``deepset:…``,
-    ``injecagent:…``), so including it would keep the same injection text in two
-    corpora from ever deduplicating and let it straddle a dev/gate split.
-    ``dedup_key`` is therefore the normalized text digest alone, global across
-    corpora: an attack's key is its injection text and nothing else, so the same
-    injection reaching us through two corpora is one input. Where a corpus emits
-    a benign twin alongside its attack, the twin keys on the untrusted content
-    *it* carries, which keeps the pair distinct without perturbing the attack's
-    cross-corpus identity.
+    same family on both sides. It is a split-assignment label and nothing else;
+    whether two cases are the same input is not a question lineage answers.
     """
 
     corpus_id: str
@@ -68,23 +64,6 @@ class AdaptedLineage:
     group: str
     license: str
     upstream_revision: str | None = None
-    text_key: str = ""
-
-    @property
-    def dedup_key(self) -> str:
-        """Return the normalized-text key for global, group-independent dedup."""
-        return self.text_key
-
-    def to_source_metadata(self) -> dict[str, object]:
-        """Render the provenance record that travels beside the adapted case."""
-        return {
-            "corpus_id": self.corpus_id,
-            "upstream_id": self.upstream_id,
-            "group": self.group,
-            "license": self.license,
-            "upstream_revision": self.upstream_revision,
-            "text_key": self.text_key,
-        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,23 +144,3 @@ class Adapter(ABC):
         unique = f"{candidate}-{suffix}"
         self._id_seen.add(unique)
         return unique
-
-
-def lineage_aware_dedup(adapted: Iterable[AdaptedCase]) -> list[AdaptedCase]:
-    """Drop later cases that share a normalized-text key with an earlier one.
-
-    Dedup is global and group-independent: the same injection text recurring
-    across corpora — or a duplicate row within one — collapses to a single case,
-    so it cannot land on both sides of a dev/gate split. ``group`` is kept for
-    family-level split assignment only, never for dedup identity. The first
-    occurrence wins; order is otherwise preserved.
-    """
-    seen: set[str] = set()
-    kept: list[AdaptedCase] = []
-    for item in adapted:
-        key = item.lineage.dedup_key
-        if key in seen:
-            continue
-        seen.add(key)
-        kept.append(item)
-    return kept

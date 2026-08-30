@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from family_assistant.config_models import RetryConfig, ToolCallReviewConfig
 from family_assistant.eval.tool_call_review.loader import (
-    canonical_attack_input,
+    attack_input_key,
     case_skip_reason,
 )
 from family_assistant.eval.tool_call_review.report import EvalReport, SkippedCase
@@ -155,7 +155,7 @@ async def run_eval(
             descriptor_registry=descriptor_registry
         )
         allow_in_space = ToolCallReviewVerdict.ALLOW in constraints.available_verdicts
-        attack_input_key = canonical_attack_input(case)
+        input_key = attack_input_key(review_input, constraints)
         for seed_index in range(seeds):
             if isinstance(review_input, BrowserActionReviewInput):
                 result = await reviewer.review_browser_action(review_input, constraints)
@@ -169,7 +169,7 @@ async def run_eval(
                     source=case.source,
                     attack_class=case.attack_class,
                     expected_verdict=case.expected_verdict,
-                    attack_input_key=attack_input_key,
+                    attack_input_key=input_key,
                     seed_index=seed_index,
                     verdict=result.verdict,
                     status=result.status,

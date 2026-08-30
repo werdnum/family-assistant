@@ -17,10 +17,20 @@ from family_assistant.eval.tool_call_review.schema import (
     ToolResolutionError,
     resolve_tool_descriptor,
 )
+from family_assistant.llm.messages import message_to_json_dict
+from family_assistant.services.tool_call_review import (
+    BrowserActionReviewInput,
+    assemble_browser_action_review_messages,
+    assemble_tool_call_review_messages,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
 
+    from family_assistant.services.tool_call_review import (
+        ToolCallReviewConstraints,
+        ToolCallReviewInput,
+    )
     from family_assistant.tools.metadata import ToolDescriptor
 
 __all__ = [
@@ -28,7 +38,7 @@ __all__ = [
     "CaseParseError",
     "CaseSchemaValidationError",
     "DuplicateCaseIdError",
-    "canonical_attack_input",
+    "attack_input_key",
     "case_skip_reason",
     "content_hash",
     "load_cases",
@@ -203,28 +213,46 @@ def content_hash(cases: Sequence[EvalCase]) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def canonical_attack_input(case: EvalCase) -> str:
-    """Return the canonical ``(payload, constraints)`` serialization of a case.
+def attack_input_key(
+    review_input: ToolCallReviewInput | BrowserActionReviewInput,
+    constraints: ToolCallReviewConstraints,
+) -> str:
+    """Return the identity of one review input: a digest of what the judge saw.
 
-    This identifies one attack *input*: the payload the reviewer rules on and
-    the verdict space it is judged under, with envelope metadata (id, source,
-    axis labels) stripped. The clean-case count keys on this string so that N
-    copies of one attack payload under different ids collapse to a single
-    independent sample instead of each satisfying a ceiling on their own.
+    Identity is the assembled reviewer messages plus the verdict space they are
+    ruled under, because that is the whole of what the judge is given: two cases
+    the harness cannot tell apart here are two trials of one input, and the
+    clean-case count behind the ``3/N`` bound keys on this so that N copies of
+    one attack collapse to a single independent sample.
+
+    Deriving it from the assembly the run actually executes is what keeps the
+    answer from being restated anywhere else. Envelope metadata (id, source,
+    axis labels), and payload fields the prompt never renders — a non-trusted
+    tier's ``source_id``, a tool row's ``tool_call_id`` — cannot split one input
+    into two, and the same attack reaching the harness through two corpora is
+    one input whenever it lands in the same position. Conversely, anything that
+    changes the prompt changes the identity, including a change to assembly
+    itself: a run measures the judge as it is assembled today.
+
+    Derivation cases have no reviewer input and therefore no key; they are never
+    executed, so they are never trial evidence to deduplicate.
     """
-    return json.dumps(
+    if isinstance(review_input, BrowserActionReviewInput):
+        messages = assemble_browser_action_review_messages(review_input, constraints)
+    else:
+        messages = assemble_tool_call_review_messages(review_input, constraints)
+    encoded = json.dumps(
         {
-            "payload": case.payload.model_dump(mode="json"),
-            "constraints": {
-                "available_verdicts": sorted(
-                    verdict.value for verdict in case.constraints.available_verdicts
-                ),
-                "fallback_verdict": case.constraints.fallback_verdict.value,
-            },
+            "messages": [message_to_json_dict(message) for message in messages],
+            "available_verdicts": sorted(
+                verdict.value for verdict in constraints.available_verdicts
+            ),
+            "fallback_verdict": constraints.fallback_verdict.value,
         },
         sort_keys=True,
         ensure_ascii=False,
     )
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def _collect_files(paths: str | Path | Iterable[str | Path]) -> list[Path]:

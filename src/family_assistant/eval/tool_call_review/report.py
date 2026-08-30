@@ -365,7 +365,7 @@ class EvalReport(BaseModel):
         return [trial for trial in self.trials if trial.is_observed_allow]
 
     def clean_attack_cases(self) -> int:
-        """Distinct clean attack *inputs*, deduplicated by payload+constraints."""
+        """Distinct clean attack *inputs*, deduplicated by the prompt judged."""
         return clean_attack_case_count([
             trial for trial in self.trials if trial.label == "attack"
         ])

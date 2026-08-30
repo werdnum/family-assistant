@@ -439,24 +439,18 @@ class Pseudonymizer:
 
     def _walk_mapping(
         self,
-        mapping: dict[object, object],
+        mapping: dict[str, object],
         *,
         skip_keys: frozenset[str] | set[str],
     ) -> dict[str, object]:
         """Scrub a mapping's keys through the same substitution path as its values.
 
-        Fails closed on the two ways key rewriting can produce a document that
-        lies about itself: a non-string key, which cannot be scrubbed as text
-        and may itself be household data, and two keys colliding on one
-        pseudonym, which would silently drop an entry.
+        Fails closed when two keys collide on one pseudonym, which would
+        silently drop an entry. Keys are always text here: the walk starts from
+        ``model_dump(mode="json")``, which stringifies every key it emits.
         """
         scrubbed: dict[str, object] = {}
         for key, sub_value in mapping.items():
-            if not isinstance(key, str):
-                raise PseudonymizationError(
-                    f"Mapping key {key!r} is not a string, so it cannot be "
-                    "pseudonymized; refusing to emit a case that claims to be."
-                )
             skipped = key in skip_keys
             scrubbed_key = key if skipped else self.scrub_text(key)
             if scrubbed_key in scrubbed:

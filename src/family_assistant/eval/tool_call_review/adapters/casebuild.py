@@ -15,7 +15,6 @@ from typing import TYPE_CHECKING
 from family_assistant.eval.tool_call_review.adapters.base import (
     AdaptedCase,
     AdaptedLineage,
-    normalized_text_key,
 )
 from family_assistant.eval.tool_call_review.schema import EvalCase
 from family_assistant.security.taint import (
@@ -121,8 +120,3 @@ def build_adapted_case(
         },
     })
     return AdaptedCase(case=case, lineage=lineage)
-
-
-def text_key(text: str) -> str:
-    """Re-export the normalized dedup key for adapter convenience."""
-    return normalized_text_key(text)
