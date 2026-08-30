@@ -395,3 +395,21 @@ def test_explicit_provider_and_model_need_no_config_file(cli: ModuleType) -> Non
     assert judge.provider == "openai"
     assert judge.model == "gpt-5.6-terra"
     assert judge.retry_config is None
+
+
+@pytest.mark.parametrize("ceiling", ["0", "-0.1", "1.5", "nan"])
+def test_out_of_range_ceiling_is_refused_before_any_trial(
+    cli: ModuleType, ceiling: str
+) -> None:
+    # required_clean_cases would reject the value while rendering the report,
+    # after every trial had been paid for. A typo must not cost a whole run.
+    exit_code = cli.main([
+        "--dataset",
+        _dataset_dir("manual"),
+        "--seeds",
+        "1",
+        "--ceiling",
+        ceiling,
+    ])
+
+    assert exit_code == 1

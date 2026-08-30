@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 
 import jsonschema
 import yaml
+from jsonschema import Draft202012Validator, validators
 from pydantic import ValidationError
 
 from family_assistant.eval.tool_call_review.schema import (
@@ -47,6 +48,20 @@ __all__ = [
 ]
 
 _CASE_SUFFIXES = (".jsonl", ".yaml", ".yml", ".json")
+
+
+# Tool descriptors use a project-specific ``type: attachment`` for parameters
+# that carry an attachment id (see ``tools/attachment_utils.py``). Plain
+# jsonschema rejects it while checking the *schema*, so a case naming any such
+# tool would abort the whole dataset even with the argument absent. Teaching the
+# validator that an attachment is its id keeps the check meaningful instead of
+# skipping those tools.
+_TOOL_ARGUMENT_VALIDATOR = validators.extend(
+    Draft202012Validator,
+    type_checker=Draft202012Validator.TYPE_CHECKER.redefine(
+        "attachment", lambda _checker, instance: isinstance(instance, str)
+    ),
+)
 
 
 class CaseParseError(Exception):
@@ -124,7 +139,7 @@ def validate_against_tool_schema(
             f"Tool {payload.tool_name!r} declares no parameter schema."
         )
     try:
-        jsonschema.validate(instance=payload.arguments, schema=parameters)
+        _TOOL_ARGUMENT_VALIDATOR(parameters).validate(payload.arguments)
     except jsonschema.ValidationError as exc:
         raise CaseSchemaValidationError(
             f"Case {case.id!r} arguments violate the schema of tool "
@@ -150,7 +165,14 @@ def validate_review_input_constructible(
     if case_skip_reason(case, descriptor_registry=descriptor_registry) is not None:
         return
     try:
-        case.to_review_input(descriptor_registry=descriptor_registry)
+        review_input, constraints = case.to_review_input(
+            descriptor_registry=descriptor_registry
+        )
+        # Assemble and hash the prompt too: constructing the dataclass leaves
+        # prompt assembly untried, so a payload value that survives pydantic but
+        # is not JSON-serializable (an unquoted YAML date, say) would pass
+        # --dry-run and raise mid-run instead.
+        attack_input_key(review_input, constraints)
     except Exception as exc:
         raise CaseInputConstructionError(
             f"Case {case.id!r} cannot be rebuilt into a reviewer input: {exc}"

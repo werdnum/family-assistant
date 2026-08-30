@@ -308,6 +308,15 @@ async def _run(args: argparse.Namespace) -> int:
     if args.mode == "stamp" and args.out is None:
         print("--mode stamp requires --out to write the stamp record.", file=sys.stderr)
         return 1
+    # Checked before the judge is built: required_clean_cases would otherwise
+    # reject the value while rendering the report, after every trial has been
+    # paid for.
+    if not 0.0 < args.ceiling <= 1.0:
+        print(
+            f"--ceiling must be a rate in (0, 1]; got {args.ceiling}.",
+            file=sys.stderr,
+        )
+        return 1
     try:
         out_path = _resolve_out_path(args)
     except PrivateEvalPathError as exc:
