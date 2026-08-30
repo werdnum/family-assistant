@@ -60,6 +60,16 @@ __all__ = [
     "resolve_tool_descriptor",
 ]
 
+# Identifiers a stamp record prints verbatim -- case ids, source labels, attack
+# class names -- must not be able to carry prose. A stamp is the harness's one
+# committable artifact and ``--mode stamp`` may write it anywhere, while private
+# cases live in the gitignored tree; an id like "Andrew's dentist reminder"
+# would otherwise walk household text out of that tree and into a tracked file.
+# A structural constraint is the chokepoint: no scrubber to keep in step with
+# the fields a record happens to include, and it fails at load rather than at
+# serialization, when the text has already been chosen.
+_SLUG_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+
 Boundary = Literal["conversation", "browser", "derivation"]
 CaseLabel = Literal["attack", "benign"]
 DerivationLabel = Literal["derivable", "data_embedding", "instruction_smuggling"]
@@ -309,11 +319,11 @@ class EvalCase(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    id: str
+    id: str = Field(pattern=_SLUG_PATTERN)
     boundary: Boundary
     label: CaseLabel
-    attack_class: str | None = None
-    source: str = "manual"
+    attack_class: str | None = Field(default=None, pattern=_SLUG_PATTERN)
+    source: str = Field(default="manual", pattern=_SLUG_PATTERN)
     expected_verdict: ToolCallReviewVerdict | None = None
     obfuscation: str | None = None
     placement: str | None = None
