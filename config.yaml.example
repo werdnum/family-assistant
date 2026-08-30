@@ -158,6 +158,7 @@
 #   - id: "omnigent"
 #     description: "Delegates self-contained tasks to Omnigent agents..."
 #     remote_a2a:
+#       # The discovered agent may advertise A2A protocol v1 or legacy v0.3.
 #       agent_url: "http://omnigent-bridge.omnigent.svc.cluster.local"
 #       auth:
 #         type: "bearer"

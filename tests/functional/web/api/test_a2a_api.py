@@ -14,17 +14,36 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
-from a2a.client import Client, ClientConfig
+from a2a.client import A2ACardResolver, Client, ClientConfig
 from a2a.client.client_factory import ClientFactory
-from a2a.client.errors import A2AClientJSONRPCError
-from a2a.types import AgentCard as SdkAgentCard
-from a2a.types import Message as SdkMessage
-from a2a.types import Part as SdkPart
-from a2a.types import Role as SdkRole
-from a2a.types import SendMessageResponse as SdkSendMessageResponse
-from a2a.types import SendStreamingMessageResponse as SdkStreamResponse
-from a2a.types import TaskIdParams, TaskQueryParams
-from a2a.types import TextPart as SdkTextPart
+from a2a.compat.v0_3.types import AgentCard as CompatAgentCard
+from a2a.compat.v0_3.types import SendMessageResponse as CompatSendMessageResponse
+from a2a.compat.v0_3.types import (
+    SendStreamingMessageResponse as CompatStreamResponse,
+)
+from a2a.types import (
+    CancelTaskRequest,
+    GetExtendedAgentCardRequest,
+    GetTaskRequest,
+    SendMessageRequest,
+    StreamResponse,
+)
+from a2a.types import (
+    Message as SdkMessage,
+)
+from a2a.types import (
+    Part as SdkPart,
+)
+from a2a.types import (
+    Role as SdkRole,
+)
+from a2a.types import (
+    Task as SdkTask,
+)
+from a2a.types import (
+    TaskState as SdkTaskState,
+)
+from a2a.utils.errors import TaskNotCancelableError
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -903,7 +922,7 @@ class TestSdkCompliance:
         """Agent card must be valid per the SDK's AgentCard model."""
         resp = await a2a_client.get("/.well-known/agent.json")
         assert resp.status_code == 200
-        SdkAgentCard.model_validate(resp.json())
+        CompatAgentCard.model_validate(resp.json())
 
     @pytest.mark.asyncio
     async def test_agent_card_v2_path_parses_with_sdk(
@@ -912,7 +931,7 @@ class TestSdkCompliance:
         """The spec v0.3.0 path /.well-known/agent-card.json must also work."""
         resp = await a2a_client.get("/.well-known/agent-card.json")
         assert resp.status_code == 200
-        SdkAgentCard.model_validate(resp.json())
+        CompatAgentCard.model_validate(resp.json())
 
     @pytest.mark.asyncio
     async def test_send_message_parses_with_sdk(
@@ -929,7 +948,7 @@ class TestSdkCompliance:
         )
         resp = await a2a_client.post("/api/a2a", json=body)
         assert resp.status_code == 200
-        parsed = SdkSendMessageResponse.model_validate(resp.json())
+        parsed = CompatSendMessageResponse.model_validate(resp.json())
         assert hasattr(parsed.root, "result"), (
             f"Expected success response, got error: {parsed.root}"
         )
@@ -954,7 +973,7 @@ class TestSdkCompliance:
         assert len(events) >= 2, f"Expected at least 2 SSE events, got {len(events)}"
 
         for i, event_data in enumerate(events):
-            parsed = SdkStreamResponse.model_validate(event_data)
+            parsed = CompatStreamResponse.model_validate(event_data)
             assert hasattr(parsed.root, "result"), (
                 f"SSE event {i} was an error, not a result: {event_data}"
             )
@@ -967,13 +986,39 @@ def _sdk_message(
     context_id: str | None = None,
 ) -> SdkMessage:
     """Build an SDK Message object for use with the SDK client."""
-    return SdkMessage(
-        role=SdkRole.user,
+    message = SdkMessage(
+        role=SdkRole.ROLE_USER,
         message_id=str(uuid.uuid4()),
-        parts=[SdkPart(root=SdkTextPart(text=text))],
-        task_id=task_id,
-        context_id=context_id,
+        parts=[SdkPart(text=text)],
     )
+    if task_id is not None:
+        message.task_id = task_id
+    if context_id is not None:
+        message.context_id = context_id
+    return message
+
+
+async def _sdk_send_to_terminal(client: Client, message: SdkMessage) -> SdkTask:
+    """Send through the v1 SDK and fetch the authoritative terminal task."""
+    task: SdkTask | None = None
+    task_id = message.task_id or None
+    async for response in client.send_message(SendMessageRequest(message=message)):
+        if response.HasField("task"):
+            task = response.task
+            task_id = task.id
+        elif response.HasField("status_update"):
+            task_id = response.status_update.task_id
+    if task is not None and task.status.state in {
+        SdkTaskState.TASK_STATE_COMPLETED,
+        SdkTaskState.TASK_STATE_FAILED,
+        SdkTaskState.TASK_STATE_CANCELED,
+        SdkTaskState.TASK_STATE_REJECTED,
+        SdkTaskState.TASK_STATE_AUTH_REQUIRED,
+        SdkTaskState.TASK_STATE_INPUT_REQUIRED,
+    }:
+        return task
+    assert task_id is not None
+    return await client.get_task(GetTaskRequest(id=task_id))
 
 
 @pytest_asyncio.fixture
@@ -991,11 +1036,10 @@ async def sdk_client(
     async with AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as httpx_client:
-        card_resp = await httpx_client.get("/.well-known/agent.json")
-        card = SdkAgentCard.model_validate(card_resp.json())
-        client = await ClientFactory.connect(
-            card, client_config=ClientConfig(httpx_client=httpx_client)
-        )
+        card = await A2ACardResolver(
+            httpx_client=httpx_client, base_url="http://testserver"
+        ).get_agent_card()
+        client = ClientFactory(ClientConfig(httpx_client=httpx_client)).create(card)
         yield client
 
 
@@ -1004,7 +1048,7 @@ class TestSdkClient:
 
     @pytest.mark.asyncio
     async def test_sdk_get_card(self, sdk_client: Client) -> None:
-        card = await sdk_client.get_card()
+        card = await sdk_client.get_extended_agent_card(GetExtendedAgentCardRequest())
         assert card.name.startswith("Family Assistant")
         assert len(card.skills) >= 1
 
@@ -1019,18 +1063,11 @@ class TestSdkClient:
         )
 
         msg = _sdk_message("Hello")
-        task = None
-        async for item in sdk_client.send_message(msg):
-            if isinstance(item, tuple):
-                task = item[0]
+        task = await _sdk_send_to_terminal(sdk_client, msg)
 
-        assert task is not None, "Expected a Task from send_message"
-        assert task.status.state.value == "completed"
-        assert task.artifacts is not None
+        assert task.status.state == SdkTaskState.TASK_STATE_COMPLETED
         assert len(task.artifacts) >= 1
-        first_part = task.artifacts[0].parts[0].root
-        assert isinstance(first_part, SdkTextPart)
-        assert "Hello from SDK client!" in first_part.text
+        assert "Hello from SDK client!" in task.artifacts[0].parts[0].text
 
     @pytest.mark.asyncio
     async def test_sdk_send_message_with_task_id(
@@ -1044,12 +1081,8 @@ class TestSdkClient:
         custom_context_id = f"sdk-ctx-{uuid.uuid4().hex[:8]}"
         msg = _sdk_message("test", task_id=custom_task_id, context_id=custom_context_id)
 
-        task = None
-        async for item in sdk_client.send_message(msg):
-            if isinstance(item, tuple):
-                task = item[0]
+        task = await _sdk_send_to_terminal(sdk_client, msg)
 
-        assert task is not None
         assert task.id == custom_task_id
         assert task.context_id == custom_context_id
 
@@ -1064,12 +1097,11 @@ class TestSdkClient:
         task_id = f"sdk-get-{uuid.uuid4().hex[:8]}"
         msg = _sdk_message("hello", task_id=task_id)
 
-        async for _ in sdk_client.send_message(msg):
-            pass
+        await _sdk_send_to_terminal(sdk_client, msg)
 
-        retrieved = await sdk_client.get_task(TaskQueryParams(id=task_id))
+        retrieved = await sdk_client.get_task(GetTaskRequest(id=task_id))
         assert retrieved.id == task_id
-        assert retrieved.status.state.value == "completed"
+        assert retrieved.status.state == SdkTaskState.TASK_STATE_COMPLETED
 
     @pytest.mark.asyncio
     async def test_sdk_cancel_completed_task(
@@ -1082,11 +1114,10 @@ class TestSdkClient:
         task_id = f"sdk-cancel-{uuid.uuid4().hex[:8]}"
         msg = _sdk_message("hello", task_id=task_id)
 
-        async for _ in sdk_client.send_message(msg):
-            pass
+        await _sdk_send_to_terminal(sdk_client, msg)
 
-        with pytest.raises(A2AClientJSONRPCError):
-            await sdk_client.cancel_task(TaskIdParams(id=task_id))
+        with pytest.raises(TaskNotCancelableError):
+            await sdk_client.cancel_task(CancelTaskRequest(id=task_id))
 
     @pytest.mark.asyncio
     async def test_sdk_streaming(
@@ -1097,16 +1128,18 @@ class TestSdkClient:
         api_mock_llm_client.default_response = MockLLMOutput(content="Streamed via SDK")
 
         msg = _sdk_message("Hello stream")
-        events_received: list[tuple] = []
-        final_task = None
+        events_received: list[StreamResponse] = []
+        task_id: str | None = None
 
-        async for item in sdk_client.send_message(msg):
-            if isinstance(item, tuple):
-                final_task = item[0]
-                events_received.append(item)
+        async for response in sdk_client.send_message(SendMessageRequest(message=msg)):
+            events_received.append(response)
+            if response.HasField("task"):
+                task_id = response.task.id
+            elif response.HasField("status_update"):
+                task_id = response.status_update.task_id
 
         assert len(events_received) >= 1, "Expected at least one event"
-        assert final_task is not None
-        assert final_task.status.state.value == "completed"
-        assert final_task.artifacts is not None
+        assert task_id is not None
+        final_task = await sdk_client.get_task(GetTaskRequest(id=task_id))
+        assert final_task.status.state == SdkTaskState.TASK_STATE_COMPLETED
         assert len(final_task.artifacts) >= 1

@@ -2202,6 +2202,38 @@ Operator merge note for tool policy:
 - `default_profile_settings.tools_policy.default_decision` still overrides the shipped default when
   explicitly set.
 
+### Remote A2A profiles
+
+A service profile with `remote_a2a` delegates to an agent discovered from
+`agent_url/.well-known/agent-card.json`. The client supports A2A protocol v1 and legacy v0.3
+JSON-RPC interfaces. It selects the protocol version advertised by the agent card; no version flag
+is required in Family Assistant configuration.
+
+| Key                     | Required       | Default               | Purpose                                                |
+| ----------------------- | -------------- | --------------------- | ------------------------------------------------------ |
+| `agent_url`             | Yes            | —                     | Base URL used for agent-card discovery.                |
+| `auth.type`             | No             | `none`                | `none`, `bearer`, or `api_key`.                        |
+| `auth.token_env`        | For token auth | —                     | Environment variable containing the credential.        |
+| `auth.header_name`      | No             | `Authorization`       | Header carrying the credential.                        |
+| `timeout_seconds`       | No             | `300`                 | Timeout for one discovery or protocol request.         |
+| `poll_interval_seconds` | No             | `10`                  | Base polling cadence for a submitted remote task.      |
+| `max_async_seconds`     | No             | `3600`                | Total lifetime allowed for an asynchronous delegation. |
+| `skills_description`    | No             | Agent URL description | Text exposed in the delegation catalog.                |
+
+```yaml
+service_profiles:
+  - id: "remote_research"
+    description: "Delegates research to a remote A2A agent"
+    remote_a2a:
+      agent_url: "https://agent.example.com"
+      auth:
+        type: "bearer"
+        token_env: "REMOTE_A2A_TOKEN"
+      timeout_seconds: 60
+      poll_interval_seconds: 15
+      max_async_seconds: 3600
+```
+
 ### llm_parameters
 
 Per-model keyword arguments, passed through to whichever provider SDK serves that model. Keys are

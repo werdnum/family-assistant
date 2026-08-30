@@ -269,7 +269,7 @@ class TestA2AClientIntegration:
         """Client discovers the agent card from the A2A server."""
         card = await a2a_client_wrapper.discover()
         assert card.name.startswith("Family Assistant")
-        assert card.url == "http://testserver/api/a2a"
+        assert card.supported_interfaces[0].url == "http://testserver/api/a2a"
 
     @pytest.mark.asyncio
     async def test_send_message_round_trip(
