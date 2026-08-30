@@ -18,7 +18,11 @@ private corpora:
   case. Evaluation always runs on the raw corpus; the pseudonymized copy is
   generated per case only when a capture needs to be quoted or shared. It is
   deterministic so the same identifier maps to the same pseudonym every time,
-  keeping a quoted excerpt internally consistent.
+  keeping a quoted excerpt internally consistent. Mapping keys go through the
+  same substitution as values — a schema-permitted additional property can put
+  an address or an account id in the key position — and anything that cannot be
+  rewritten into a still-valid case raises :class:`PseudonymizationError`
+  instead of yielding a document that claims to be pseudonymized.
 """
 
 from __future__ import annotations
@@ -27,7 +31,7 @@ import hashlib
 import re
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from family_assistant.eval.tool_call_review.schema import (
     ConversationPayload,
@@ -46,6 +50,7 @@ __all__ = [
     "CONTENT_KINDS",
     "INTENT_CATEGORIES",
     "JSON_TYPE_NAMES",
+    "PseudonymizationError",
     "Pseudonymizer",
     "TaskTemplate",
     "TemplatePrivacyError",
@@ -114,6 +119,15 @@ _ARG_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # Template ids are author-supplied slugs; constrained so an id cannot become a
 # free-text field of its own.
 _TEMPLATE_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,127}$")
+
+
+class PseudonymizationError(Exception):
+    """A case could not be pseudonymized into a document that is still valid.
+
+    Raised rather than returning a partially scrubbed case: the pseudonymizer's
+    output is quoted and shared on the strength of its name, so a document that
+    cannot be fully rewritten must not be produced at all.
+    """
 
 
 class TemplatePrivacyError(Exception):
@@ -376,13 +390,26 @@ class Pseudonymizer:
     def pseudonymize_case(self, case: EvalCase) -> EvalCase:
         """Return a copy of ``case`` with identifiers pseudonymized throughout.
 
-        The whole serialized case is walked, so identifiers in messages,
-        arguments, guidance, and policy contexts are all covered. The case id is
-        left intact so a quoted copy still points back at the raw case.
+        The whole serialized case is walked — mapping *keys* as well as values,
+        since captured tool arguments may carry schema-permitted additional
+        properties whose keys are themselves an email address, an account id or
+        a name — so identifiers in messages, arguments, guidance, and policy
+        contexts are all covered. The case id is left intact so a quoted copy
+        still points back at the raw case.
+
+        The result is revalidated as an :class:`EvalCase`: a rewrite that
+        renamed a structural key would otherwise hand back a document that is
+        neither a valid case nor honestly pseudonymized.
         """
         raw = case.model_dump(mode="json")
         scrubbed = self._walk(raw, skip_keys={"id"})
-        return EvalCase.model_validate(scrubbed)
+        try:
+            return EvalCase.model_validate(scrubbed)
+        except ValidationError as exc:
+            raise PseudonymizationError(
+                f"Pseudonymizing case {case.id!r} produced a document that is no "
+                f"longer a valid case: {exc}"
+            ) from exc
 
     def _walk(
         self, value: object, *, skip_keys: frozenset[str] | set[str] = frozenset()
@@ -390,13 +417,40 @@ class Pseudonymizer:
         if isinstance(value, str):
             return self.scrub_text(value)
         if isinstance(value, dict):
-            return {
-                key: (sub_value if key in skip_keys else self._walk(sub_value))
-                for key, sub_value in value.items()
-            }
+            return self._walk_mapping(value, skip_keys=skip_keys)
         if isinstance(value, list):
             return [self._walk(item) for item in value]
         return value
+
+    def _walk_mapping(
+        self,
+        mapping: dict[object, object],
+        *,
+        skip_keys: frozenset[str] | set[str],
+    ) -> dict[str, object]:
+        """Scrub a mapping's keys through the same substitution path as its values.
+
+        Fails closed on the two ways key rewriting can produce a document that
+        lies about itself: a non-string key, which cannot be scrubbed as text
+        and may itself be household data, and two keys colliding on one
+        pseudonym, which would silently drop an entry.
+        """
+        scrubbed: dict[str, object] = {}
+        for key, sub_value in mapping.items():
+            if not isinstance(key, str):
+                raise PseudonymizationError(
+                    f"Mapping key {key!r} is not a string, so it cannot be "
+                    "pseudonymized; refusing to emit a case that claims to be."
+                )
+            skipped = key in skip_keys
+            scrubbed_key = key if skipped else self.scrub_text(key)
+            if scrubbed_key in scrubbed:
+                raise PseudonymizationError(
+                    f"Mapping keys collide on pseudonym {scrubbed_key!r}; "
+                    "refusing to emit a case with an entry silently dropped."
+                )
+            scrubbed[scrubbed_key] = sub_value if skipped else self._walk(sub_value)
+        return scrubbed
 
     def _email(self, match: re.Match[str]) -> str:
         token = _stable_hex(self._seed, "email", match.group(0), length=8)

@@ -10,6 +10,7 @@ from family_assistant.eval.tool_call_review.schema import (
     EvalCase,
 )
 from family_assistant.eval.tool_call_review.scrub import (
+    PseudonymizationError,
     Pseudonymizer,
     TaskTemplate,
     TemplatePrivacyError,
@@ -238,3 +239,73 @@ def test_pseudonymize_case_replaces_explicit_literals() -> None:
     # And case-level pseudonymization still round-trips to a valid case.
     result = pseudonymizer.pseudonymize_case(case)
     assert result.id == "case-lit"
+
+
+def _case_with_argument_keys(keys: dict[str, object]) -> EvalCase:
+    """A capture whose tool arguments carry extra keys, as schemas may permit."""
+    case = _conversation_case("case-keys")
+    payload = case.payload
+    assert isinstance(payload, ConversationPayload)
+    return case.model_copy(
+        update={
+            "payload": payload.model_copy(
+                update={"arguments": {**payload.arguments, **keys}}
+            )
+        }
+    )
+
+
+def test_pseudonymize_case_scrubs_mapping_keys() -> None:
+    # An additional-property key is as private as a value: an address or an
+    # account id sitting in the key position would otherwise survive verbatim
+    # into a document described as pseudonymized.
+    case = _case_with_argument_keys({
+        "alice@example.com": "owes for the excursion",
+        "Alice Smith": "next door",
+    })
+    result = Pseudonymizer(literals={"Alice Smith": "<person>"}).pseudonymize_case(case)
+
+    payload = result.payload
+    assert isinstance(payload, ConversationPayload)
+    assert "alice@example.com" not in payload.arguments
+    assert "Alice Smith" not in payload.arguments
+    assert any(key.endswith("@example.invalid") for key in payload.arguments)
+    assert "<person>" in payload.arguments
+    assert "alice@example.com" not in str(result.model_dump(mode="json"))
+
+
+def test_pseudonymized_case_round_trips_as_a_valid_case() -> None:
+    case = _case_with_argument_keys({"alice@example.com": "owes for the excursion"})
+    result = pseudonymize_case(case)
+    dumped = result.model_dump(mode="json")
+    assert EvalCase.model_validate(dumped) == result
+
+
+def test_key_pseudonyms_are_deterministic_and_match_value_pseudonyms() -> None:
+    case = _case_with_argument_keys({"alice@example.com": "mail alice@example.com"})
+    once = pseudonymize_case(case)
+    twice = pseudonymize_case(case)
+    assert once.model_dump(mode="json") == twice.model_dump(mode="json")
+
+    payload = once.payload
+    assert isinstance(payload, ConversationPayload)
+    key = next(key for key in payload.arguments if key.endswith("@example.invalid"))
+    # One identifier, one pseudonym, whichever position it appeared in.
+    assert key in str(payload.arguments[key])
+
+
+def test_colliding_key_pseudonyms_fail_closed() -> None:
+    # Emitting a case with one of two entries silently dropped would be a
+    # document that lies about what the capture contained.
+    case = _case_with_argument_keys({"Bob": "cousin", "Rob": "neighbour"})
+    pseudonymizer = Pseudonymizer(literals={"Bob": "<person>", "Rob": "<person>"})
+    with pytest.raises(PseudonymizationError, match="collide"):
+        pseudonymizer.pseudonymize_case(case)
+
+
+def test_non_string_mapping_key_fails_closed() -> None:
+    # A key that is not text cannot go through the substitution path, and may
+    # itself be household data (a chat id), so the walk refuses it rather than
+    # passing it through into a "pseudonymized" document.
+    with pytest.raises(PseudonymizationError, match="not a string"):
+        Pseudonymizer()._walk({1234: "chat"})

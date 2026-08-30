@@ -1442,11 +1442,13 @@ That rejects `captures/`, `.review-eval-local/../captures`, and `nested/.review-
 mounted volume. Capture is best-effort and off the review's critical path; a capture failure never
 adds latency to or breaks a review.
 
-Captures are stored **raw and interim-unlabeled**: they carry a placeholder `label: benign` only
-because the schema's label is not yet nullable, and that interim label is not a real label. Only
-captures a maintainer positively labels after skimming enter the friction pool and tuning metrics;
-unlabeled captures replay for observation only. A benign-by-default capture would otherwise count a
-correct `deny` as friction and teach tuning to prefer `allow` on it.
+Captures are stored **raw and unlabeled**: they carry `label: unlabeled`, the case schema's state
+for "no ground truth yet". Only captures a maintainer positively labels after skimming enter the
+friction pool and tuning metrics. Unlabeled captures are still replayed — the eval reports what the
+judge did with them as an unscored verdict distribution — but they contribute to no correctness
+number: not friction, not the security half, not the false-allow bound. A benign-by-default capture
+would instead count a correct `deny` of an injected capture as friction and teach tuning to prefer
+`allow` on it.
 
 #### Migration for deployments already enforcing taint policy
 

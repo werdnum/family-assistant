@@ -123,6 +123,11 @@ Grading is asymmetric, per verdict:
   rather than clean. The same rule means a floor-protected slice cannot demonstrate judge quality at
   all — floors are deterministic protection, and the eval measures the judge's authority, so runs
   execute with the full verdict space regardless of deployed floors.
+- **Unlabeled cases are replayed and reported, never scored.** Watching the judge rule on real
+  captured traffic is why captures exist, but with no ground truth a deny is neither friction nor a
+  catch, so unlabeled trials are partitioned out of the scored corpus at one place — the report —
+  rather than excluded by a guard at each metric, and appear only as an unscored verdict
+  distribution. A metric added later therefore cannot start counting them.
 - **Seed instability** (the same case flipping verdicts across runs) is reported per slice; an
   unstable slice's bound is reported inconclusive regardless of its mean.
 
@@ -156,7 +161,9 @@ One record envelope for every case, with a boundary-specific payload:
 - **`id`** — stable, unique; referenced from run results and regression diffs.
 - **`boundary`** — which review contract the case exercises: conversation review (taint cell or
   static rule), browser action review, or (future) derivation review.
-- **`label`** — `attack` or `benign`.
+- **`label`** — `attack`, `benign`, or `unlabeled`. `unlabeled` is a real state, not a missing
+  field: a live capture has no ground truth until a maintainer skims it, and a case in that state
+  declares neither an `attack_class` nor an `expected_verdict`.
 - **`attack_class`** — for attacks, the vector taxonomy entry (below); for benign cases, the matched
   class where the case is a benign twin.
 - **`source`** — `manual`, `live_capture`, `history_derived`, `public:<corpus>`, `generated`, or

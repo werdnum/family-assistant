@@ -10,8 +10,10 @@ chokepoint (:meth:`TaskTemplate.validate_committable`) before it may be written.
 
 The chokepoint fails closed: a template with any free-text or unrecognized
 field aborts rather than being written, so private household text has no field
-to travel in. Output is written only under the gitignored ``.review-eval-local/``
-tree; the script refuses any other destination.
+to travel in. Output is written only inside the repository's gitignored
+``.review-eval-local/`` tree — the destination resolves through the same
+containment rule capture destinations use — and the script refuses any other
+destination.
 
 Nothing here instantiates cases with content — stage 2 (a capable model
 hallucinating concrete cases from committed templates) is a separate,
@@ -37,11 +39,15 @@ import hashlib
 import json
 import os
 import sys
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import yaml
 
+from family_assistant.config_models import (
+    PRIVATE_EVAL_DIR_NAME,
+    PrivateEvalPathError,
+    resolve_private_eval_path,
+)
 from family_assistant.eval.tool_call_review.schema import ToolResolutionError
 from family_assistant.eval.tool_call_review.scrub import (
     TaskTemplate,
@@ -55,10 +61,9 @@ from family_assistant.storage.database import Database
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from pathlib import Path
 
     from family_assistant.storage.types import MessageHistoryRow
-
-_PRIVATE_DIR_MARKER = ".review-eval-local"
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -72,11 +77,11 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--out-dir",
-        default=f"{_PRIVATE_DIR_MARKER}/templates",
+        default=f"{PRIVATE_EVAL_DIR_NAME}/templates",
         help=(
-            "Destination for committable templates. Must live under "
-            f"{_PRIVATE_DIR_MARKER}/ — household-derived material never leaves the "
-            "private tree."
+            "Destination for committable templates. Must resolve inside the "
+            f"repository's {PRIVATE_EVAL_DIR_NAME}/ tree — household-derived "
+            "material never leaves the private tree."
         ),
     )
     parser.add_argument(
@@ -98,20 +103,22 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _ensure_private_dir(out_dir: Path) -> None:
-    """Abort unless ``out_dir`` lives under the gitignored private tree.
+def _private_out_dir(raw_out_dir: str) -> Path:
+    """Resolve the destination through the shared private-tree containment rule.
 
     The guard is structural, not advisory: the script has no committable output,
     so a destination outside the private tree is always a mistake and is refused
-    before any read happens.
+    before any read happens. Containment is the same rule capture destinations
+    use, so a path that merely carries the marker name inside a tracked
+    directory is refused here too.
     """
-    resolved = out_dir.resolve()
-    if _PRIVATE_DIR_MARKER not in resolved.parts:
+    try:
+        return resolve_private_eval_path(raw_out_dir)
+    except PrivateEvalPathError as exc:
         raise SystemExit(
-            f"Refusing to write to {out_dir}: history-derived output must live "
-            f"under a {_PRIVATE_DIR_MARKER}/ directory (gitignored). "
+            f"Refusing to write history-derived output: --out-dir {exc}. "
             "Household content must never leave the private tree."
-        )
+        ) from exc
 
 
 def _tool_call_arguments(raw: object) -> dict[str, object]:
@@ -249,8 +256,7 @@ def _write_templates(templates: list[TaskTemplate], out_dir: Path) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-    out_dir = Path(args.out_dir)
-    _ensure_private_dir(out_dir)
+    out_dir = _private_out_dir(args.out_dir)
 
     committable, rejected = asyncio.run(
         _collect_templates(

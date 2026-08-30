@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.util
+import sys
 from typing import TYPE_CHECKING
 
 import pytest
@@ -10,8 +12,10 @@ import yaml
 
 from family_assistant import config_models
 from family_assistant.config_models import (
+    PrivateEvalPathError,
     ToolCallReviewCaptureConfig,
     ToolCallReviewConfig,
+    resolve_private_eval_path,
 )
 from family_assistant.eval.tool_call_review.loader import load_cases
 from family_assistant.eval.tool_call_review.schema import (
@@ -35,6 +39,7 @@ from family_assistant.tools.infrastructure import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from types import ModuleType
 
 pytestmark = pytest.mark.no_db
 
@@ -132,7 +137,7 @@ def test_build_capture_case_serializes_a_loadable_case(tmp_path: Path) -> None:
     )
     assert case.id == "live-capture-evt-abc"
     assert case.source == "live_capture"
-    assert case.label == "benign"
+    assert case.label == "unlabeled"
 
     path = tmp_path / "capture.yaml"
     path.write_text(
@@ -145,6 +150,28 @@ def test_build_capture_case_serializes_a_loadable_case(tmp_path: Path) -> None:
     payload = loaded[0].payload
     assert isinstance(payload, ConversationPayload)
     assert payload.tool_name == "send_message_to_user"
+
+
+def test_capture_case_is_unlabeled_so_it_scores_nothing(tmp_path: Path) -> None:
+    """A capture has no ground truth, and the label says so rather than guessing.
+
+    Written as ``unlabeled``, the replayed capture lands in the report's
+    observational slice; written as ``benign`` it would report a correct deny
+    of an injected capture as friction.
+    """
+    case = build_review_capture_case(
+        _make_review_input(), _full_constraints(), audit_event_id="evt-unlabeled"
+    )
+    assert case.label == "unlabeled"
+    assert case.attack_class is None
+    assert case.expected_verdict is None
+
+    path = tmp_path / "capture.yaml"
+    path.write_text(
+        yaml.safe_dump(case.model_dump(mode="json"), sort_keys=False),
+        encoding="utf-8",
+    )
+    assert [loaded.label for loaded in load_cases(path)] == ["unlabeled"]
 
 
 async def test_serialize_and_write_produces_loadable_file(tmp_path: Path) -> None:
@@ -306,3 +333,58 @@ def test_capture_directory_override_allows_external_path(directory: str) -> None
         allow_external_directory=True,
     )
     assert config.directory == directory
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param("templates", id="no-marker"),
+        pytest.param(".review-eval-local/../templates", id="traversal"),
+        # `.gitignore` ignores only the repository-root `.review-eval-local/`,
+        # so a nested one is a *tracked* directory wearing the marker name.
+        pytest.param("nested/.review-eval-local/templates", id="nested-marker"),
+    ],
+)
+def test_private_eval_path_rejects_anything_outside_the_ignored_tree(
+    path: str,
+) -> None:
+    with pytest.raises(PrivateEvalPathError, match=".review-eval-local"):
+        resolve_private_eval_path(path)
+
+
+def test_private_eval_path_accepts_a_root_anchored_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Anchoring is at the repository root, whatever the process's cwd is."""
+    monkeypatch.chdir(tmp_path)
+    resolved = resolve_private_eval_path(".review-eval-local/templates")
+    assert resolved == PROJECT_ROOT / ".review-eval-local" / "templates"
+
+
+def test_history_export_uses_the_shared_containment_rule() -> None:
+    """The template export refuses the same paths a capture directory refuses.
+
+    The finding this covers is that a marker-name check accepted
+    ``nested/.review-eval-local/templates``, which `.gitignore` tracks; both
+    writers now resolve through one rule, so neither can drift from it.
+    """
+    script = _load_history_extraction_script()
+    with pytest.raises(SystemExit, match=".review-eval-local"):
+        script._private_out_dir("nested/.review-eval-local/templates")
+    assert (
+        script._private_out_dir(".review-eval-local/templates")
+        == PROJECT_ROOT / ".review-eval-local" / "templates"
+    )
+
+
+def _load_history_extraction_script() -> ModuleType:
+    """Load the export script by path; ``scripts/`` is not an importable package."""
+    script_path = PROJECT_ROOT / "scripts" / "extract_review_history.py"
+    spec = importlib.util.spec_from_file_location(
+        "extract_review_history_script", script_path
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module

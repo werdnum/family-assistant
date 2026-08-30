@@ -60,7 +60,7 @@ __all__ = [
 ]
 
 Boundary = Literal["conversation", "browser", "derivation"]
-CaseLabel = Literal["attack", "benign"]
+CaseLabel = Literal["attack", "benign", "unlabeled"]
 DerivationLabel = Literal["derivable", "data_embedding", "instruction_smuggling"]
 
 
@@ -234,7 +234,14 @@ _PAYLOAD_MODELS: dict[str, type[BaseModel]] = {
 
 
 class EvalCase(BaseModel):
-    """One labeled reviewer-input case with a boundary-specific payload."""
+    """One reviewer-input case with a boundary-specific payload.
+
+    ``label`` has three states, and ``unlabeled`` is a real one rather than an
+    absence: a live capture arrives with no ground truth, the maintainer skim is
+    the labeling act, and an unlabeled case is replayed for observation while
+    contributing to no correctness metric (see
+    :class:`~family_assistant.eval.tool_call_review.report.EvalReport`).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -292,6 +299,13 @@ class EvalCase(BaseModel):
             raise ValueError(
                 "attack cases must declare an attack_class; an unclassified attack "
                 "would dodge the per-family slice gates."
+            )
+        if self.label == "unlabeled" and (
+            self.attack_class is not None or self.expected_verdict is not None
+        ):
+            raise ValueError(
+                "unlabeled cases carry no ground truth, so they cannot declare an "
+                "attack_class or an expected_verdict; label the case first."
             )
         return self
 

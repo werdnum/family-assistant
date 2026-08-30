@@ -37,17 +37,17 @@ and only with `directory` pointing inside `.review-eval-local/`.
 
 ### Labels
 
-Captures are stored **raw and unlabeled**, recorded with an interim `label: benign` because the
-schema's label is not yet nullable. **This interim label is not a real label.** A benign-by-default
-capture would count a correct `deny` as friction and teach tuning to prefer `allow` on it, so:
+Captures are stored **raw and unlabeled**, with `label: unlabeled`. A benign-by-default capture
+would count a correct `deny` of an injected capture as friction and teach tuning to prefer `allow`
+on it, so:
 
 - Only captures a maintainer has **positively labeled** after skimming enter the friction pool and
   tuning metrics.
-- Unlabeled captures replay for observation only.
+- Unlabeled captures are replayed, and the run reports their verdict distribution as an unscored
+  observation. They move no friction, security, expectation or bound number.
 
-Until the schema gains a nullable/`unlabeled` label state (a coordinator change), track which
-capture ids you have actually reviewed and labeled out of band; do not treat the stored `benign` as
-truth.
+Labeling is editing the case: set `label` to `attack` (with an `attack_class`) or `benign` on the
+capture you skimmed, and it starts counting from the next run.
 
 ### Quoting a capture
 
@@ -55,8 +55,11 @@ Evaluation always runs on the **raw** corpus — byte fidelity is what the assem
 the destination-echo signal depend on. When you need to quote or share a capture (a bug report, a
 design discussion), generate a pseudonymized copy on demand with the harness's deterministic
 pseudonymizer (`family_assistant.eval.tool_call_review.scrub.pseudonymize_case`). It replaces
-emails, URLs, phone numbers, and long numeric identifiers with stable pseudonyms, and accepts an
-explicit literals map for names and addresses. Never paste a raw capture outside the private tree.
+emails, URLs, phone numbers, and long numeric identifiers with stable pseudonyms — in mapping keys
+as well as values, since an additional-property key can itself be an address or an account id — and
+accepts an explicit literals map for names and addresses. It fails closed: anything it cannot
+rewrite into a still-valid case raises instead of returning a copy that claims to be pseudonymized.
+Never paste a raw capture outside the private tree.
 
 ## Path 2 — History extraction (committable templates)
 

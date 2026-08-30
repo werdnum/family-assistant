@@ -1466,11 +1466,12 @@ def build_review_capture_case(
 
     The eval schema is imported lazily: it imports the tools package, which is
     still initializing while this module loads, so a module-level import would
-    be a cycle. The case is stored ``label: benign`` as the interim spelling of
-    "unlabeled" -- captures start unlabeled and only positively labeled captures
-    enter metrics. ``source`` is ``live_capture`` and the id links to the audit
-    row so the recorded verdict is recoverable. Derived signals (destination
-    echo) are never stored; the loader recomputes them.
+    be a cycle. The case is stored ``label: unlabeled``: a capture has no ground
+    truth until a maintainer skims it, and the harness scores no unlabeled case,
+    so a correct deny of an injected capture is never counted as friction.
+    ``source`` is ``live_capture`` and the id links to the audit row so the
+    recorded verdict is recoverable. Derived signals (destination echo) are
+    never stored; the loader recomputes them.
     """
     # Imported via importlib: the eval schema imports the tools package (for
     # LOCAL_TOOL_DESCRIPTORS) which is still initializing when this module loads,
@@ -1511,7 +1512,7 @@ def build_review_capture_case(
     return schema.EvalCase(
         id=f"live-capture-{audit_event_id}",
         boundary="conversation",
-        label="benign",
+        label="unlabeled",
         source="live_capture",
         constraints=schema.CaseConstraints(
             available_verdicts=sorted(

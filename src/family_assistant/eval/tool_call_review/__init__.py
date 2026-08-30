@@ -20,7 +20,9 @@ from family_assistant.eval.tool_call_review.loader import (
 from family_assistant.eval.tool_call_review.report import (
     EvalReport,
     LatencyStats,
+    ObservationalSlice,
     SliceMetrics,
+    build_observational_slice,
     build_slice_metrics,
 )
 from family_assistant.eval.tool_call_review.runner import build_reviewer, run_eval
@@ -36,10 +38,12 @@ from family_assistant.eval.tool_call_review.schema import (
 )
 from family_assistant.eval.tool_call_review.scoring import (
     DEFAULT_FALSE_ALLOW_CEILING,
+    UNLABELED_LABEL,
     GateEvaluation,
     GateStatus,
     TrialClassification,
     TrialRecord,
+    UnscorableTrialError,
     classify_trial,
     clean_attack_case_count,
     evaluate_gate,
@@ -49,6 +53,7 @@ from family_assistant.eval.tool_call_review.scoring import (
 
 __all__ = [
     "DEFAULT_FALSE_ALLOW_CEILING",
+    "UNLABELED_LABEL",
     "BrowserPayload",
     "CaseConstraints",
     "CaseInputConstructionError",
@@ -61,11 +66,14 @@ __all__ = [
     "GateEvaluation",
     "GateStatus",
     "LatencyStats",
+    "ObservationalSlice",
     "SliceMetrics",
     "ToolResolutionError",
     "TrialClassification",
     "TrialRecord",
     "TriggerSpec",
+    "UnscorableTrialError",
+    "build_observational_slice",
     "build_reviewer",
     "build_slice_metrics",
     "canonical_attack_input",

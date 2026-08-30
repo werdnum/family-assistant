@@ -125,6 +125,10 @@ async def run_eval(
     """Run every case ``seeds`` times against ``reviewer`` and score the results.
 
     Derivation cases are skipped with a note: no shipped judge consumes them.
+    Unlabeled cases *are* replayed — watching the judge rule on real captured
+    traffic is why they are captured — and the report partitions their trials
+    out of every scored metric.
+
     Cases are processed in deterministic id order. ``descriptor_registry``
     overrides the local tool registry for deployments replaying captures that
     involve MCP or named-sink tools. ``model_parameters`` and ``retry_config``

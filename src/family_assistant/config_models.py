@@ -70,8 +70,52 @@ class ToolCallReviewEscalationConfig(BaseModel):
     total_denials_per_turn: int = Field(default=20, ge=1)
 
 
-_PRIVATE_CAPTURE_DIR_NAME = ".review-eval-local"
+PRIVATE_EVAL_DIR_NAME = ".review-eval-local"
 """The one directory ``.gitignore`` ignores, as a repository-root-anchored path."""
+
+
+class PrivateEvalPathError(ValueError):
+    """A path for household-derived eval material lands outside the private tree."""
+
+
+def anchor_private_eval_path(path: str | Path) -> Path:
+    """Return ``path`` as an absolute, lexically normalized repository-anchored path.
+
+    Relative paths anchor at the repository root, never at the process working
+    directory: an installed service or a script started from elsewhere would
+    otherwise pass a containment check and then write household-derived content
+    somewhere the check never looked. Normalization is lexical rather than
+    ``resolve()``: the directory need not exist yet, and a ``..`` segment must
+    be collapsed before containment is checked or it would walk straight out of
+    the private tree.
+    """
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        candidate = PROJECT_ROOT / candidate
+    return Path(os.path.normpath(candidate))
+
+
+def resolve_private_eval_path(path: str | Path) -> Path:
+    """Anchor ``path`` and require it to land inside the private eval tree.
+
+    Every writer of household-derived eval material — captures, history-derived
+    templates, anything added later — resolves its destination through here, so
+    the containment rule has one definition instead of one per writer. What is
+    checked is containment in ``<repo root>/.review-eval-local/``, not the
+    presence of the marker name: ``.gitignore`` ignores only the root-anchored
+    path, so ``nested/.review-eval-local/templates`` carries the name yet sits
+    in a tracked directory, and ``.review-eval-local/../out`` names it while
+    resolving outside. Both raise.
+    """
+    resolved = anchor_private_eval_path(path)
+    private_root = anchor_private_eval_path(PRIVATE_EVAL_DIR_NAME)
+    if not resolved.is_relative_to(private_root):
+        raise PrivateEvalPathError(
+            f"must resolve to a location inside {private_root} (the gitignored "
+            f"tree that holds raw household content); got {str(path)!r}, which "
+            f"resolves to {resolved}"
+        )
+    return resolved
 
 
 class ToolCallReviewCaptureConfig(BaseModel):
@@ -96,11 +140,10 @@ class ToolCallReviewCaptureConfig(BaseModel):
     ``.gitignore`` ignores the root-anchored path, so ``nested/.review-eval-local/
     captures`` carries the marker name yet lands in a tracked directory, and
     ``.review-eval-local/../captures`` names the marker while resolving outside
-    it. Both are rejected. Relative paths are anchored at the repository root,
-    never at the process working directory: an installed service started from
-    elsewhere would otherwise pass validation and then write raw household
-    content outside the ignored tree. :attr:`resolved_directory` is the one
-    place that anchoring happens, and the writer uses it.
+    it. Both are rejected. Anchoring and containment come from
+    :func:`anchor_private_eval_path` and :func:`resolve_private_eval_path`, the
+    shared rule every writer of household-derived eval material uses;
+    :attr:`resolved_directory` is what the capture writer writes to.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -116,28 +159,20 @@ class ToolCallReviewCaptureConfig(BaseModel):
         A relative path is anchored at the repository root, so validation and
         writing cannot disagree about where a capture lands.
         """
-        candidate = Path(self.directory)
-        if not candidate.is_absolute():
-            candidate = PROJECT_ROOT / candidate
-        # Normalize lexically rather than resolving: the directory need not
-        # exist yet, and a ``..`` segment must be collapsed before the
-        # containment check or it would walk straight out of the private tree.
-        return Path(os.path.normpath(candidate))
+        return anchor_private_eval_path(self.directory)
 
     @model_validator(mode="after")
     def _validate_directory_is_private(self) -> ToolCallReviewCaptureConfig:
         if self.allow_external_directory:
             return self
-        normalized = self.resolved_directory
-        private_root = Path(os.path.normpath(PROJECT_ROOT / _PRIVATE_CAPTURE_DIR_NAME))
-        if not normalized.is_relative_to(private_root):
+        try:
+            resolve_private_eval_path(self.directory)
+        except PrivateEvalPathError as exc:
             raise ValueError(
-                "tool_call_review.capture.directory must resolve to a location "
-                f"inside {private_root} (the gitignored tree that holds raw "
-                f"household content); got {self.directory!r}, which resolves to "
-                f"{normalized}. Set allow_external_directory: true to capture to "
-                "an explicitly private location elsewhere."
-            )
+                f"tool_call_review.capture.directory {exc}. Set "
+                "allow_external_directory: true to capture to an explicitly "
+                "private location elsewhere."
+            ) from exc
         return self
 
 
