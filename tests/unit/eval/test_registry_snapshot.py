@@ -10,10 +10,12 @@ from typing import TYPE_CHECKING
 import pytest
 
 from family_assistant.eval.tool_call_review.registry_snapshot import (
+    DESCRIPTOR_FIELDS,
     SNAPSHOT_VERSION,
     RegistrySnapshotError,
     descriptors_to_snapshot,
     load_registry_snapshot,
+    registry_digest,
     snapshot_to_registry,
 )
 from family_assistant.eval.tool_call_review.scrub import (
@@ -164,9 +166,18 @@ def test_duplicate_tool_names_are_refused() -> None:
             id="unknown-origin",
         ),
         pytest.param(
-            lambda payload: payload["tools"]["plan_trip"].pop("definition"),
+            lambda payload: payload["tools"]["plan_trip"].__setitem__(
+                "definition", "not-an-object"
+            ),
             "no tool definition object",
-            id="no-definition",
+            id="definition-not-an-object",
+        ),
+        pytest.param(
+            lambda payload: payload["tools"]["plan_trip"].__setitem__(
+                "mcp_server_id", None
+            ),
+            "origin 'mcp' but no mcp_server_id",
+            id="mcp-without-a-server",
         ),
     ],
 )
@@ -186,23 +197,36 @@ def test_a_malformed_snapshot_raises_rather_than_resolving_what_it_can(
         snapshot_to_registry(payload)
 
 
-@pytest.mark.parametrize(
-    "omitted",
-    ["destination_argument_paths", "deferred_confirmation_eligible", "tags"],
-)
-def test_an_omitted_descriptor_field_is_malformed_not_a_default(omitted: str) -> None:
-    """Absent is not empty, for fields whose empty value is also their default.
+@pytest.mark.parametrize("omitted", DESCRIPTOR_FIELDS)
+def test_every_omitted_descriptor_field_is_malformed_not_a_default(
+    omitted: str,
+) -> None:
+    """Absent is never empty, for any field -- stated as a rule, not a list.
 
-    ``destination_argument_paths`` is the one that bites: defaulting it to ``()``
-    loads the snapshot happily and then drops the trusted-destination echo from
-    every case using that tool, changing the reviewer input rather than failing
-    to read the file.
+    Several of these have an empty value that is also their default, which is
+    exactly when a missing key loads quietly and changes the reviewer input:
+    ``destination_argument_paths`` drops the trusted-destination echo and
+    ``mcp_server_id`` renders a null server into the tool context. Parametrizing
+    over the declared field tuple rather than a hand-written subset is the
+    point: a field added to the serializer is covered here without anyone
+    remembering to add it.
     """
     payload = descriptors_to_snapshot([_mcp_descriptor()])
     del payload["tools"]["plan_trip"][omitted]  # type: ignore[index]
 
-    with pytest.raises(RegistrySnapshotError, match=f"missing '{omitted}'|no tag list"):
+    with pytest.raises(RegistrySnapshotError, match=f"is missing {omitted}"):
         snapshot_to_registry(payload)
+
+
+def test_the_serializer_and_the_reader_agree_on_the_field_set() -> None:
+    """The writer refuses to emit an entry the reader would reject.
+
+    Both sides read ``DESCRIPTOR_FIELDS``; this pins that they cannot drift
+    apart silently if someone edits one of them.
+    """
+    entry = descriptors_to_snapshot([_mcp_descriptor()])["tools"]["plan_trip"]  # type: ignore[index]
+
+    assert set(entry) == set(DESCRIPTOR_FIELDS)
 
 
 def test_a_snapshot_that_is_not_json_names_the_file(tmp_path: Path) -> None:
@@ -267,3 +291,43 @@ def _load_dump_registry_script() -> ModuleType:
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def test_the_dump_reads_the_overlay_the_deployment_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A snapshot from a different config describes a registry nobody has.
+
+    ``family_assistant.__main__`` resolves the overlay as ``$CONFIG_FILE`` with
+    ``config.yaml`` as the fallback; reading a different file would connect to
+    servers the deployment disabled, or omit the ones it added.
+    """
+    script = _load_dump_registry_script()
+    overlay = tmp_path / "deployment.yaml"
+    overlay.write_text(
+        "mcp_config:\n  mcpServers:\n    transport:\n      command: 'x'\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("CONFIG_FILE", str(overlay))
+    assert "transport" in script._configured_servers(None)
+
+    monkeypatch.delenv("CONFIG_FILE")
+    assert "transport" in script._configured_servers(str(overlay))
+
+
+def test_a_run_records_which_registry_it_measured_under() -> None:
+    """Two snapshots over one dataset are two measurements, not one.
+
+    Tags, destination paths and the MCP server id all render into the reviewer's
+    tool context, so a run that recorded only the dataset hash would stamp
+    identically to one measured against different tool definitions.
+    """
+    one = snapshot_to_registry(descriptors_to_snapshot([_mcp_descriptor()]))
+    other = snapshot_to_registry(
+        descriptors_to_snapshot([_mcp_descriptor(server_id="other-server")])
+    )
+
+    assert registry_digest(one) != registry_digest(other)
+    assert registry_digest(one) == registry_digest(dict(one))
+    assert registry_digest(None) is None

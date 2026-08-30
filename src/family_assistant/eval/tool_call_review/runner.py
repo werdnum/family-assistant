@@ -10,6 +10,9 @@ from family_assistant.eval.tool_call_review.loader import (
     attack_input_key,
     case_skip,
 )
+from family_assistant.eval.tool_call_review.registry_snapshot import (
+    registry_digest,
+)
 from family_assistant.eval.tool_call_review.report import EvalReport, SkippedCase
 from family_assistant.eval.tool_call_review.scoring import TrialRecord
 from family_assistant.llm.factory import LLMClientFactory
@@ -151,7 +154,10 @@ async def run_eval(
 
     Cases are processed in deterministic id order. ``descriptor_registry``
     overrides the local tool registry for deployments replaying cases that
-    involve MCP or named-sink tools. ``model_parameters``, ``retry_config`` and
+    involve MCP or named-sink tools, and is digested into the report here
+    rather than by the caller: it is an input to every reviewer prompt, so a
+    run that does not record which registry it used cannot be told apart from
+    one measured under a different one. ``model_parameters``, ``retry_config`` and
     ``timeout_seconds`` are recorded, not applied: the reviewer's client already
     carries them, and the report states the effective judge configuration the
     numbers were measured under.
@@ -234,4 +240,5 @@ async def run_eval(
         timeout_seconds=timeout_seconds,
         deployment_guidance=deployment_guidance,
         dataset_hash=dataset_hash,
+        registry_hash=registry_digest(descriptor_registry),
     )

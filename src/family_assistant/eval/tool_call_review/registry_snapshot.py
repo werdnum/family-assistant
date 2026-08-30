@@ -28,6 +28,7 @@ the templates, not in the repository.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import TYPE_CHECKING, Any, cast
 
@@ -42,6 +43,24 @@ if TYPE_CHECKING:
 SNAPSHOT_VERSION = 1
 
 _ORIGINS = frozenset({"local", "mcp"})
+
+# Every serialized descriptor carries every one of these. The writer builds
+# entries from this tuple and the reader requires all of them, so a field added
+# to ``ToolDescriptor`` cannot reach a snapshot on one side only -- and, more to
+# the point, no reader gets to decide per field whether absent means empty.
+# Several of these have an empty value that is also their default, which is
+# exactly when a missing key loads quietly and changes the reviewer input:
+# ``destination_argument_paths`` drops the trusted-destination echo, and
+# ``mcp_server_id`` renders a null server into the reviewer's tool context.
+DESCRIPTOR_FIELDS = (
+    "definition",
+    "tags",
+    "origin",
+    "mcp_server_id",
+    "summary",
+    "destination_argument_paths",
+    "deferred_confirmation_eligible",
+)
 
 
 class RegistrySnapshotError(Exception):
@@ -65,7 +84,7 @@ def descriptors_to_snapshot(
                 f"Duplicate tool name {descriptor.name!r} in the registry being "
                 "snapshotted; a deployment cannot advertise two tools of one name."
             )
-        tools[descriptor.name] = {
+        serialized: dict[str, object] = {
             "definition": descriptor.definition,
             "tags": sorted(tag.value for tag in descriptor.tags),
             "origin": descriptor.origin,
@@ -76,6 +95,13 @@ def descriptors_to_snapshot(
                 descriptor.deferred_confirmation_eligible
             ),
         }
+        if set(serialized) != set(DESCRIPTOR_FIELDS):
+            raise RegistrySnapshotError(
+                f"Serializer writes {sorted(serialized)} but DESCRIPTOR_FIELDS "
+                f"declares {sorted(DESCRIPTOR_FIELDS)}; the reader requires the "
+                "declared set, so the two must agree."
+            )
+        tools[descriptor.name] = serialized
     return {"snapshot_version": SNAPSHOT_VERSION, "tools": tools}
 
 
@@ -98,6 +124,24 @@ def snapshot_to_registry(payload: object) -> dict[str, ToolDescriptor]:
     }
 
 
+def registry_digest(registry: Mapping[str, ToolDescriptor] | None) -> str | None:
+    """Short digest identifying which tool definitions a run resolved against.
+
+    ``None`` is preserved rather than hashed, matching the rule the report's
+    other configuration digests follow: "not supplied" and "supplied" are
+    different facts about a run, and not supplying one means the build's own
+    local list, which the source revision already identifies.
+    """
+    if registry is None:
+        return None
+    serialized = json.dumps(
+        descriptors_to_snapshot(registry[name] for name in sorted(registry)),
+        sort_keys=True,
+        ensure_ascii=False,
+    )
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()[:16]
+
+
 def load_registry_snapshot(path: Path) -> dict[str, ToolDescriptor]:
     """Read a snapshot file and return the registry it describes."""
     try:
@@ -117,14 +161,20 @@ def _descriptor_from_entry(name: str, entry: object) -> ToolDescriptor:
     if not isinstance(entry, dict):
         raise RegistrySnapshotError(f"Snapshot entry for {name!r} is not an object.")
     fields = cast("dict[str, object]", entry)
+    absent = [key for key in DESCRIPTOR_FIELDS if key not in fields]
+    if absent:
+        raise RegistrySnapshotError(
+            f"Snapshot entry for {name!r} is missing {', '.join(absent)}; it was "
+            "not written by scripts/dump_tool_registry.py."
+        )
 
-    definition = fields.get("definition")
+    definition = fields["definition"]
     if not isinstance(definition, dict):
         raise RegistrySnapshotError(
             f"Snapshot entry for {name!r} has no tool definition object."
         )
 
-    origin = fields.get("origin")
+    origin = fields["origin"]
     if origin not in _ORIGINS:
         raise RegistrySnapshotError(
             f"Snapshot entry for {name!r} has origin {origin!r}, "
@@ -134,15 +184,15 @@ def _descriptor_from_entry(name: str, entry: object) -> ToolDescriptor:
     return ToolDescriptor(
         name=name,
         definition=cast("ToolDefinition", cast("dict[str, Any]", definition)),
-        tags=_tags_from_entry(name, fields.get("tags")),
+        tags=_tags_from_entry(name, fields["tags"]),
         origin=cast("Any", origin),
-        mcp_server_id=_optional_str(name, "mcp_server_id", fields.get("mcp_server_id")),
-        summary=_optional_str(name, "summary", fields.get("summary")),
+        mcp_server_id=_server_id_from_entry(name, origin, fields["mcp_server_id"]),
+        summary=_optional_str(name, "summary", fields["summary"]),
         destination_argument_paths=_paths_from_entry(
-            name, _required(name, fields, "destination_argument_paths")
+            name, fields["destination_argument_paths"]
         ),
         deferred_confirmation_eligible=_bool_from_entry(
-            name, _required(name, fields, "deferred_confirmation_eligible")
+            name, fields["deferred_confirmation_eligible"]
         ),
     )
 
@@ -166,22 +216,20 @@ def _tags_from_entry(name: str, raw: object) -> frozenset[ToolTag]:
     return frozenset(tags)
 
 
-def _required(name: str, fields: Mapping[str, object], key: str) -> object:
-    """Return a field that every serialized descriptor carries, or raise.
+def _server_id_from_entry(name: str, origin: object, raw: object) -> str | None:
+    """Return the MCP server id, requiring one for an MCP-origin descriptor.
 
-    Absent is not empty. ``descriptors_to_snapshot`` writes every key, so a
-    missing one means a snapshot this build did not produce, and defaulting it
-    would answer a question the file never asked -- an omitted
-    ``destination_argument_paths`` would silently drop the trusted-destination
-    echo from every case using that tool, changing the reviewer input rather
-    than failing to read the file.
+    Present-but-null is meaningful for a local tool and meaningless for an MCP
+    one: the reviewer renders the server id into its tool context, so a null
+    there describes a tool no server serves.
     """
-    if key not in fields:
+    server_id = _optional_str(name, "mcp_server_id", raw)
+    if origin == "mcp" and server_id is None:
         raise RegistrySnapshotError(
-            f"Snapshot entry for {name!r} is missing {key!r}; it was not "
-            "written by scripts/dump_tool_registry.py."
+            f"Snapshot entry for {name!r} has origin 'mcp' but no "
+            "mcp_server_id; an MCP tool comes from a named server."
         )
-    return fields[key]
+    return server_id
 
 
 def _paths_from_entry(name: str, raw: object) -> tuple[str, ...]:

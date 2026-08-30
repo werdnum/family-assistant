@@ -44,11 +44,12 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from family_assistant.config_loader import load_config
+from family_assistant.config_loader import DEFAULT_CONFIG_FILE, load_config
 from family_assistant.eval.private_paths import (
     PrivateEvalPathError,
     resolve_private_eval_path,
@@ -90,6 +91,16 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--config-file",
+        default=None,
+        help=(
+            "Operator config overlay to read servers from. Defaults to "
+            "$CONFIG_FILE, then config.yaml -- the same resolution the "
+            "application entry point uses, so the snapshot describes the "
+            "deployment this runs inside."
+        ),
+    )
+    parser.add_argument(
         "--timeout",
         type=int,
         default=60,
@@ -120,9 +131,21 @@ def _resolve_out_path(raw_out: str, *, allow_external: bool) -> Path:
         ) from exc
 
 
-def _configured_servers() -> dict[str, MCPServerConfig]:
-    """Read mcp_config.mcpServers from the shipped and operator configuration."""
-    config = load_config()
+def _configured_servers(config_file: str | None) -> dict[str, MCPServerConfig]:
+    """Read mcp_config.mcpServers from the shipped and operator configuration.
+
+    The overlay is resolved exactly as ``family_assistant.__main__`` resolves it,
+    because a snapshot taken from a different configuration than the deployment
+    runs describes a registry that deployment does not have -- connecting to
+    servers it disabled, or omitting the ones it added. Which is the failure
+    this script exists to prevent, arriving through the config file instead of
+    through a dead server.
+    """
+    config = load_config(
+        config_file_path=config_file
+        if config_file is not None
+        else os.getenv("CONFIG_FILE", DEFAULT_CONFIG_FILE)
+    )
     return {
         server_id: cast("MCPServerConfig", server_config.model_dump())
         for server_id, server_config in config.mcp_config.mcpServers.items()
@@ -203,7 +226,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.local_only:
         print(f"Local-only snapshot: {local_count} tool(s), no MCP servers contacted.")
     else:
-        server_configs = _configured_servers()
+        server_configs = _configured_servers(args.config_file)
         print(
             f"Connecting to {len(server_configs)} configured MCP server(s): "
             f"{', '.join(sorted(server_configs)) or '(none)'}"
