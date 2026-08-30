@@ -363,6 +363,10 @@ cmd = "python scripts/tool_call_review_eval.py"
 help = "Abstract message history into committable task templates (private dir only)"
 cmd = "python scripts/extract_review_history.py"
 
+[tool.poe.tasks.review-eval-dump-registry]
+help = "Snapshot this deployment's tool registry (local + MCP) for the review eval"
+cmd = "python scripts/dump_tool_registry.py"
+
 
 [tool.ruff.lint.isort]
 known-first-party = ["family_assistant"]

@@ -79,9 +79,27 @@ from family_assistant.eval.tool_call_review import (
     load_cases,
     run_eval,
 )
+from family_assistant.eval.tool_call_review.registry_snapshot import (
+    RegistrySnapshotError,
+    load_registry_snapshot,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+    from family_assistant.tools.metadata import ToolDescriptor
+
+
+def _load_registry(raw_path: str | None) -> dict[str, ToolDescriptor] | None:
+    """Load a registry snapshot, or return ``None`` to use the local list."""
+    if raw_path is None:
+        return None
+    try:
+        registry = load_registry_snapshot(Path(raw_path))
+    except RegistrySnapshotError as exc:
+        raise SystemExit(f"Cannot use --tool-registry {raw_path}: {exc}") from exc
+    print(f"Loaded {len(registry)} tool descriptor(s) from {raw_path}")
+    return registry
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -192,6 +210,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             f"outside {PRIVATE_EVAL_DIR_NAME}/ (a mounted private volume). The "
             "stamp record carries slice numbers rather than reviewed content and "
             "is writable anywhere without this."
+        ),
+    )
+    parser.add_argument(
+        "--tool-registry",
+        default=None,
+        help=(
+            "Path to a registry snapshot from scripts/dump_tool_registry.py. "
+            "Without one, only tools compiled into this source tree resolve, "
+            "so cases naming an MCP tool are skipped as unresolvable."
         ),
     )
     parser.add_argument(
@@ -350,6 +377,7 @@ async def _run(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    descriptor_registry = _load_registry(args.tool_registry)
     cases = load_cases(args.dataset)
     if not cases:
         print("No cases found in the supplied datasets.", file=sys.stderr)
@@ -359,7 +387,7 @@ async def _run(args: argparse.Namespace) -> int:
 
     if args.dry_run:
         for case in cases:
-            skip = case_skip(case)
+            skip = case_skip(case, descriptor_registry=descriptor_registry)
             suffix = f" SKIPPED: {skip.reason}" if skip is not None else ""
             print(
                 f"  {case.id} [{case.boundary}/{case.label}] "
@@ -386,6 +414,7 @@ async def _run(args: argparse.Namespace) -> int:
             timeout_seconds=judge.timeout_seconds,
             deployment_guidance=judge.deployment_guidance,
             dataset_hash=dataset_digest,
+            descriptor_registry=descriptor_registry,
         )
     except TrialExecutionError as exc:
         print(f"Run aborted: {exc}", file=sys.stderr)

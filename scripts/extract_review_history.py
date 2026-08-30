@@ -48,11 +48,24 @@ production database or an archival copy and leave ``-wal``/``-shm`` sidecars.
 Without ``mode=ro`` a mistyped path would also have SQLite create the empty
 database it was pointed at.
 
+Tool names resolve against the tools compiled into this source tree unless
+``--tool-registry`` names a snapshot from ``scripts/dump_tool_registry.py``. A
+deployment's MCP tools exist only in a process that has connected to its
+configured servers, so without a snapshot every call to one is abstracted into a
+template the chokepoint then refuses for an unresolvable tool name -- reported
+as a smaller corpus rather than as a missing input.
+
 Usage:
 
     # Dry run against a dev SQLite DB: classify, validate, report, write nothing.
     python scripts/extract_review_history.py \
         --database-url "sqlite+aiosqlite:///family_assistant.db" --dry-run
+
+    # Against a deployment's own registry, so its MCP tool calls resolve.
+    python scripts/extract_review_history.py \
+        --database-url "$DATABASE_URL" --since 2026-06-01 \
+        --tool-registry .review-eval-local/registry/deployment.json \
+        --out-dir .review-eval-local/templates
 
     # Write committable templates into the private dir.
     python scripts/extract_review_history.py \
@@ -70,6 +83,7 @@ import os
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import yaml
@@ -79,6 +93,10 @@ from family_assistant.eval.private_paths import (
     PRIVATE_EVAL_DIR_NAME,
     PrivateEvalPathError,
     resolve_private_eval_path,
+)
+from family_assistant.eval.tool_call_review.registry_snapshot import (
+    RegistrySnapshotError,
+    load_registry_snapshot,
 )
 from family_assistant.eval.tool_call_review.schema import ToolResolutionError
 from family_assistant.eval.tool_call_review.scrub import (
@@ -91,9 +109,9 @@ from family_assistant.storage.database import Database
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
-    from pathlib import Path
 
     from family_assistant.storage.types import MessageHistoryRow
+    from family_assistant.tools.metadata import ToolDescriptor
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +183,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=None,
         help="Stop after abstracting this many committable templates.",
+    )
+    parser.add_argument(
+        "--tool-registry",
+        default=None,
+        help=(
+            "Path to a registry snapshot from scripts/dump_tool_registry.py. "
+            "Without one, only tools compiled into this source tree resolve, "
+            "so every MCP tool call is rejected as an unknown tool."
+        ),
     )
     parser.add_argument(
         "--dry-run",
@@ -253,6 +280,7 @@ def _templates_from_rows(
     *,
     interface_type: str,
     conversation_id: str,
+    descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
 ) -> Iterator[TaskTemplate | _RejectedRow]:
     """Yield one abstracted template, or one rejection, per recorded tool call.
 
@@ -291,7 +319,9 @@ def _templates_from_rows(
                 )
                 continue
             try:
-                argument_shapes = declared_argument_shapes(name, arguments)
+                argument_shapes = declared_argument_shapes(
+                    name, arguments, descriptor_registry=descriptor_registry
+                )
             except ToolResolutionError:
                 # An unresolved tool has no schema to derive shapes from; leave
                 # them empty and let the validator reject the tool name.
@@ -330,6 +360,7 @@ def _partition_templates(
     grouped: Mapping[tuple[str, str], list[MessageHistoryRow]],
     *,
     limit: int | None,
+    descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
 ) -> tuple[list[TaskTemplate], list[tuple[str, str]]]:
     """Split abstracted history into committable templates and rejections.
 
@@ -341,13 +372,16 @@ def _partition_templates(
     rejected: list[tuple[str, str]] = []
     for (iface, conversation_id), rows in grouped.items():
         for abstracted in _templates_from_rows(
-            rows, interface_type=iface, conversation_id=conversation_id
+            rows,
+            interface_type=iface,
+            conversation_id=conversation_id,
+            descriptor_registry=descriptor_registry,
         ):
             if isinstance(abstracted, _RejectedRow):
                 rejected.append((abstracted.template_id, abstracted.reason))
                 continue
             try:
-                abstracted.validate_committable()
+                abstracted.validate_committable(descriptor_registry=descriptor_registry)
             except TemplatePrivacyError as error:
                 rejected.append((abstracted.template_id, str(error)))
                 continue
@@ -399,6 +433,7 @@ async def _collect_templates(
     interface_type: str | None,
     limit: int | None,
     since: datetime | None = None,
+    descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
 ) -> tuple[list[TaskTemplate], list[tuple[str, str]]]:
     engine = create_engine_with_sqlite_optimizations(
         _read_only_url(database_url), apply_sqlite_pragmas=False
@@ -412,21 +447,42 @@ async def _collect_templates(
         )
     finally:
         await engine.dispose()
-    return _partition_templates(grouped, limit=limit)
+    return _partition_templates(
+        grouped, limit=limit, descriptor_registry=descriptor_registry
+    )
 
 
-def _write_templates(templates: list[TaskTemplate], out_dir: Path) -> None:
+def _write_templates(
+    templates: list[TaskTemplate],
+    out_dir: Path,
+    *,
+    descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
+) -> None:
     """Write one file per template into a directory :func:`main` proved empty."""
     out_dir.mkdir(parents=True, exist_ok=True)
     for template in templates:
         # Revalidate at the write boundary: nothing reaches disk without passing
-        # the fail-closed chokepoint immediately before it is written.
-        template.validate_committable()
+        # the fail-closed chokepoint immediately before it is written. Against
+        # the same registry the partition used, or every template naming an MCP
+        # tool would pass selection and then fail here.
+        template.validate_committable(descriptor_registry=descriptor_registry)
         path = out_dir / f"{template.template_id}.yaml"
         path.write_text(
             yaml.safe_dump(template.model_dump(mode="json"), sort_keys=False),
             encoding="utf-8",
         )
+
+
+def _load_registry(raw_path: str | None) -> dict[str, ToolDescriptor] | None:
+    """Load a registry snapshot, or return ``None`` to use the local list."""
+    if raw_path is None:
+        return None
+    try:
+        registry = load_registry_snapshot(Path(raw_path))
+    except RegistrySnapshotError as exc:
+        raise SystemExit(f"Cannot use --tool-registry {raw_path}: {exc}") from exc
+    print(f"Loaded {len(registry)} tool descriptor(s) from {raw_path}")
+    return registry
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -437,12 +493,15 @@ def main(argv: list[str] | None = None) -> int:
         # has been walked has cost the maintainer the whole extraction.
         _require_empty_out_dir(out_dir)
 
+    descriptor_registry = _load_registry(args.tool_registry)
+
     committable, rejected = asyncio.run(
         _collect_templates(
             args.database_url,
             interface_type=args.interface_type,
             limit=args.limit,
             since=args.since,
+            descriptor_registry=descriptor_registry,
         )
     )
 
@@ -455,7 +514,7 @@ def main(argv: list[str] | None = None) -> int:
         print("Dry run: no files written.")
         return 0
 
-    _write_templates(committable, out_dir)
+    _write_templates(committable, out_dir, descriptor_registry=descriptor_registry)
     print(f"Wrote {len(committable)} templates to {out_dir}")
     return 0
 
