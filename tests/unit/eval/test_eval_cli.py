@@ -7,7 +7,6 @@ covers the argument surface and the exit codes rather than the library alone.
 
 from __future__ import annotations
 
-# pylint: disable=no-name-in-module
 import importlib.util
 import json
 import sys
@@ -23,7 +22,12 @@ from family_assistant.services.tool_call_review import (
     ToolCallReviewResponse,
     ToolCallReviewVerdict,
 )
-from tests.mocks.mock_llm import RuleBasedMockLLMClient
+
+# pylint cannot resolve the tests namespace package, so it reports a
+# false no-name-in-module here only.
+from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
+    RuleBasedMockLLMClient,
+)
 
 if TYPE_CHECKING:
     from types import ModuleType
