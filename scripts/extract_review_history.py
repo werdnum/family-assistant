@@ -72,6 +72,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import yaml
+from sqlalchemy.engine import make_url
 
 from family_assistant.eval.private_paths import (
     PRIVATE_EVAL_DIR_NAME,
@@ -288,32 +289,40 @@ def _partition_templates(
     return committable, rejected
 
 
-_SQLITE_PREFIXES = ("sqlite:///", "sqlite+aiosqlite:///")
-
-
 def _read_only_url(database_url: str) -> str:
     """Rewrite a file-backed SQLite URL to open read-only.
 
     Turning the tuning pragmas off stopped this rewriting the file it reads, but
     not opening it for writing: SQLite *creates* a database that is not there,
     so a typo in ``--database-url`` left a new empty file behind before the
-    query failed, under ``--dry-run`` too. Read-only mode is the rule the two
-    previous fixes were each an instance of -- the driver now refuses any write
-    this tool could ever attempt, including one added later by someone who did
-    not read this comment.
+    query failed, under ``--dry-run`` too. Read-only mode is the rule the
+    earlier no-init and no-pragmas fixes were each an instance of -- the driver
+    refuses any write this tool could attempt, including one added later by
+    someone who did not read this docstring.
+
+    The URL is parsed and rebuilt rather than concatenated. Appending
+    ``?mode=ro&uri=true`` to a URL that already carries parameters produces a
+    second ``?``, which SQLAlchemy folds into the preceding value
+    (``timeout=5?mode=ro``) and then sees no ``mode`` at all -- the protection
+    silently absent exactly where a URL was most deliberately written.
 
     Only file-backed SQLite is rewritten. ``:memory:`` has nothing to protect,
-    a URL already in URI form is left as the caller wrote it, and PostgreSQL
-    grants read-only access through its own role system rather than the URL.
+    a URL already in URI form is left as the caller wrote it (see the known
+    limitation in the extraction runbook), and PostgreSQL grants read-only
+    access through its own role system rather than the URL.
     """
-    for prefix in _SQLITE_PREFIXES:
-        if not database_url.startswith(prefix):
-            continue
-        path = database_url[len(prefix) :]
-        if not path or path.startswith("file:") or ":memory:" in path:
-            return database_url
-        return f"{prefix}file:{path}?mode=ro&uri=true"
-    return database_url
+    url = make_url(database_url)
+    if not url.drivername.startswith("sqlite"):
+        return database_url
+    database = url.database
+    if not database or database.startswith("file:") or database == ":memory:":
+        return database_url
+    return str(
+        url.set(database=f"file:{database}").update_query_dict({
+            "mode": "ro",
+            "uri": "true",
+        })
+    )
 
 
 async def _collect_templates(

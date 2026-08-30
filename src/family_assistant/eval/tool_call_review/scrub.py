@@ -110,10 +110,17 @@ _TAINT_TIER_VALUES: frozenset[str] = frozenset(
 )
 _BOUNDARY_VALUES: frozenset[str] = frozenset({"conversation", "browser", "derivation"})
 
-# A field may hold an enumerated value or an explicit placeholder token such as
-# ``<unknown>`` — never free text. Placeholders let an abstraction pass leave a
-# field it could not classify empty of content without smuggling text into it.
-_PLACEHOLDER_RE = re.compile(r"^<[a-z0-9_]+>$")
+# A field may hold an enumerated value or one of these placeholder tokens —
+# never free text. Placeholders let an abstraction pass leave a field it could
+# not classify empty of content without smuggling text into it.
+#
+# A closed set, not a pattern. Anything shaped like ``<word>`` used to qualify,
+# which meant the classification pass could emit
+# ``<remind_alice_about_the_dentist_at_3pm>`` and the fail-closed check would
+# approve it as a placeholder: the one structural barrier between household text
+# and a committed template, defeated by wrapping the text in angle brackets. A
+# vocabulary cannot be widened by whatever a model happens to write.
+PLACEHOLDERS: frozenset[str] = frozenset({"<unknown>", "<unclassified>"})
 # Argument keys are schema-declared identifiers, not household text.
 _ARG_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # Template ids are author-supplied slugs; constrained so an id cannot become a
@@ -140,7 +147,7 @@ class TemplatePrivacyError(Exception):
 
 
 def _is_placeholder(value: str) -> bool:
-    return bool(_PLACEHOLDER_RE.match(value))
+    return value in PLACEHOLDERS
 
 
 class TaskTemplate(BaseModel):

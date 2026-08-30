@@ -354,6 +354,15 @@ async def test_history_extraction_does_not_create_a_mistyped_database(
             id="file-backed",
         ),
         pytest.param(
+            # Concatenating produced a second "?", which SQLAlchemy folded into
+            # the preceding value (timeout=5?mode=ro) leaving no mode at all —
+            # the protection silently absent exactly where a URL was most
+            # deliberately written.
+            "sqlite+aiosqlite:///family.db?timeout=5",
+            "sqlite+aiosqlite:///file:family.db?mode=ro&timeout=5&uri=true",
+            id="existing-query-parameters-preserved",
+        ),
+        pytest.param(
             "sqlite+aiosqlite:///:memory:",
             "sqlite+aiosqlite:///:memory:",
             id="memory-untouched",

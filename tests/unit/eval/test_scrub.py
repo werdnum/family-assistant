@@ -10,6 +10,7 @@ from family_assistant.eval.tool_call_review.schema import (
     EvalCase,
 )
 from family_assistant.eval.tool_call_review.scrub import (
+    PLACEHOLDERS,
     PseudonymizationError,
     Pseudonymizer,
     TaskTemplate,
@@ -346,3 +347,27 @@ def test_colliding_key_pseudonyms_fail_closed() -> None:
     pseudonymizer = Pseudonymizer(literals={"Bob": "<person>", "Rob": "<person>"})
     with pytest.raises(PseudonymizationError, match="collide"):
         pseudonymizer.pseudonymize_case(case)
+
+
+@pytest.mark.parametrize(
+    "placeholder",
+    ["<remind_alice_about_the_dentist_at_3pm>", "<alice>", "<dentist_3pm>"],
+)
+def test_a_phrase_in_angle_brackets_is_not_a_placeholder(placeholder: str) -> None:
+    """The fail-closed check must not accept text wrapped in angle brackets.
+
+    The classification pass is a model, and the placeholder rule used to be a
+    pattern rather than a vocabulary — so anything shaped like `<word>` passed,
+    and the one structural barrier between household text and a committed
+    template could be walked through by wrapping the text in brackets.
+    """
+    template = _clean_template().model_copy(update={"intent_category": placeholder})
+    with pytest.raises(TemplatePrivacyError):
+        template.validate_committable()
+
+
+def test_the_declared_placeholders_are_accepted() -> None:
+    for placeholder in PLACEHOLDERS:
+        _clean_template().model_copy(
+            update={"intent_category": placeholder}
+        ).validate_committable()

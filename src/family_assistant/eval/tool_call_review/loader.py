@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -304,7 +305,9 @@ def content_hash(cases: Sequence[EvalCase]) -> str:
     serialized = [
         case.model_dump(mode="json") for case in sorted(cases, key=lambda case: case.id)
     ]
-    encoded = json.dumps(serialized, sort_keys=True, ensure_ascii=False)
+    encoded = json.dumps(
+        serialized, sort_keys=True, ensure_ascii=False, allow_nan=False
+    )
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
@@ -346,6 +349,7 @@ def attack_input_key(
         },
         sort_keys=True,
         ensure_ascii=False,
+        allow_nan=False,
     )
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
@@ -376,6 +380,32 @@ def _collect_files(paths: str | Path | Iterable[str | Path]) -> list[Path]:
     return files
 
 
+def _reject_non_finite(record: object, file_path: Path, path: str = "") -> None:
+    """Reject NaN and infinities anywhere in a parsed case.
+
+    Checked on the parsed record rather than at the hashing boundary, because by
+    then the value is no longer a float: the reviewer renders arguments into the
+    prompt with its own serializer, which writes NaN as the bare text ``NaN``,
+    so a case carrying ``.nan`` would assemble, hash and score like any other.
+    Python's JSON and YAML readers both accept these; strict JSON does not, and
+    neither does any reviewer input production can serialize -- a case
+    containing one describes a call the system cannot make.
+    """
+    if isinstance(record, float) and not math.isfinite(record):
+        raise CaseParseError(
+            f"{file_path} has a non-finite number ({record}) at {
+                path or 'the top level'
+            }. No reviewer input production can serialize contains "
+            "one, so a case carrying it describes a call the system cannot make."
+        )
+    if isinstance(record, dict):
+        for key, value in record.items():
+            _reject_non_finite(value, file_path, f"{path}.{key}" if path else str(key))
+    elif isinstance(record, list):
+        for index, value in enumerate(record):
+            _reject_non_finite(value, file_path, f"{path}[{index}]")
+
+
 def _parse_file(file_path: Path) -> list[EvalCase]:
     text = file_path.read_text(encoding="utf-8")
     suffix = file_path.suffix.lower()
@@ -383,6 +413,8 @@ def _parse_file(file_path: Path) -> list[EvalCase]:
         records = _decode_records(text, suffix, file_path)
     except _DuplicateKeyError as exc:
         raise CaseParseError(f"{file_path} has a {exc}.") from exc
+    for record in records:
+        _reject_non_finite(record, file_path)
     # A ``None`` record — an empty YAML document, or a null entry in a list — is
     # validated rather than filtered out. Dropping it would let a truncated case
     # vanish from a directory whose whole contract is that it holds cases and
