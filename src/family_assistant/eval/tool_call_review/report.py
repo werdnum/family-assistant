@@ -414,6 +414,11 @@ class EvalReport(BaseModel):
             "seeds": self.seeds,
             "cases_run": len({trial.case_id for trial in self.trials}),
             "trials": len(self.trials),
+            # The dataset hash covers cases the run never judged, so a record
+            # that omitted them would overstate what was measured.
+            "skipped_cases": [
+                skipped.model_dump(mode="json") for skipped in self.skipped_cases
+            ],
             "unlabeled_observation": self.unlabeled_observation().model_dump(
                 mode="json"
             ),

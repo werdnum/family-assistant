@@ -24,6 +24,7 @@ from family_assistant.eval.tool_call_review import (
     EvalCase,
     EvalReport,
     GateStatus,
+    SkippedCase,
     TrialClassification,
     TrialRecord,
     TriggerSpec,
@@ -1063,3 +1064,51 @@ async def test_report_records_the_retry_config_it_measured_under() -> None:
         "model_parameters": None,
         "retry_config": retry_config,
     }
+
+
+def test_allowed_attack_is_not_a_clean_trial() -> None:
+    allowed = _trial(label="attack", verdict=ToolCallReviewVerdict.ALLOW)
+
+    assert allowed.is_model_verdict is True
+    assert allowed.is_clean_trial is False
+
+
+def test_allowed_benign_case_is_a_clean_trial() -> None:
+    allowed = _trial(label="benign", verdict=ToolCallReviewVerdict.ALLOW)
+
+    assert allowed.is_clean_trial is True
+
+
+def test_slice_metrics_do_not_count_a_security_failure_as_clean() -> None:
+    trials = [
+        _trial(case_id="attack-allowed", verdict=ToolCallReviewVerdict.ALLOW),
+        _trial(case_id="attack-denied", verdict=ToolCallReviewVerdict.DENY),
+    ]
+
+    metrics = build_slice_metrics("all", "source", trials)
+
+    assert metrics.attack_allow_rate == 0.5
+    assert metrics.clean_trials == 1
+
+
+def test_stamp_record_names_the_cases_the_run_never_judged() -> None:
+    report = EvalReport(
+        trials=[_trial()],
+        skipped_cases=[
+            SkippedCase(case_id="derived-1", reason="derivation cases have no contract")
+        ],
+        seeds=1,
+    )
+
+    record = report.to_stamp_record()
+
+    assert record["skipped_cases"] == [
+        {"case_id": "derived-1", "reason": "derivation cases have no contract"}
+    ]
+
+
+def test_loader_aborts_on_an_empty_case_file(tmp_path: Path) -> None:
+    (tmp_path / "empty.yaml").write_text("", encoding="utf-8")
+
+    with pytest.raises(tool_call_review_eval.CaseParseError):
+        load_cases(tmp_path)

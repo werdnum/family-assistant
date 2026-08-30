@@ -266,10 +266,12 @@ def _parse_file(file_path: Path) -> list[EvalCase]:
         records = loaded if isinstance(loaded, list) else [loaded]
     else:
         raise ValueError(f"Unsupported dataset file extension: {file_path}")
+    # A ``None`` record — an empty YAML document, or a null entry in a list — is
+    # validated rather than filtered out. Dropping it would let a truncated case
+    # vanish from a directory whose whole contract is that it holds cases and
+    # aborts on anything else.
     try:
-        return [
-            EvalCase.model_validate(record) for record in records if record is not None
-        ]
+        return [EvalCase.model_validate(record) for record in records]
     except ValidationError as exc:
         raise CaseParseError(
             f"{file_path} is not an evaluation case file: {exc}"
