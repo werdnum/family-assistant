@@ -324,6 +324,59 @@ async def test_history_extraction_leaves_the_sqlite_journal_mode_alone(
     assert mode == "delete"
 
 
+async def test_history_extraction_does_not_create_a_mistyped_database(
+    tmp_path: Path,
+) -> None:
+    """A typo in --database-url must not leave a new database behind.
+
+    SQLite creates a file-backed database that is not there, so an ordinary
+    read/write URL turned a mistyped path into an empty file before the query
+    failed — under --dry-run as well. Read-only mode is the rule that the
+    earlier no-init and no-pragmas fixes were each one instance of.
+    """
+    script = _load_history_extraction_script()
+    missing = tmp_path / "typo.db"
+
+    with pytest.raises(Exception, match="unable to open database file"):
+        await script._collect_templates(
+            f"sqlite+aiosqlite:///{missing}", interface_type=None, limit=None
+        )
+
+    assert not missing.exists()
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        pytest.param(
+            "sqlite+aiosqlite:///family.db",
+            "sqlite+aiosqlite:///file:family.db?mode=ro&uri=true",
+            id="file-backed",
+        ),
+        pytest.param(
+            "sqlite+aiosqlite:///:memory:",
+            "sqlite+aiosqlite:///:memory:",
+            id="memory-untouched",
+        ),
+        pytest.param(
+            "postgresql+asyncpg://host/db",
+            "postgresql+asyncpg://host/db",
+            id="postgres-untouched",
+        ),
+        pytest.param(
+            "sqlite+aiosqlite:///file:x.db?mode=rw&uri=true",
+            "sqlite+aiosqlite:///file:x.db?mode=rw&uri=true",
+            id="already-uri-left-as-written",
+        ),
+    ],
+)
+def test_read_only_url_rewrites_only_file_backed_sqlite(
+    url: str, expected: str
+) -> None:
+    script = _load_history_extraction_script()
+    assert script._read_only_url(url) == expected
+
+
 def _load_history_extraction_script() -> ModuleType:
     """Load the export script by path; ``scripts/`` is not an importable package."""
     script_path = PROJECT_ROOT / "scripts" / "extract_review_history.py"

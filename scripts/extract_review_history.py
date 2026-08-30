@@ -38,12 +38,15 @@ fails on the query instead, which is the right outcome for a tool pointed at the
 wrong place; this therefore needs a database already at a compatible revision,
 not a fresh one.
 
-The SQLite tuning pragmas are off. The engine factory's connect hook issues
-``PRAGMA journal_mode=WAL``, which is a persistent property of the file: opening
-a production SQLite database or an archival copy with it converts the file's
-journal mode and leaves ``-wal`` and ``-shm`` sidecars behind. A tool that only
-reads a database it does not own has no business doing either, so it asks for
-``apply_sqlite_pragmas=False``.
+The connection is read-only, and that is the rule the rest of this is an
+instance of. A file-backed SQLite URL is rewritten to ``mode=ro``, so the driver
+refuses every write this tool could attempt -- including one added later by
+someone who did not read this docstring. On top of that the engine factory's
+tuning pragmas are off, because its connect hook issues ``PRAGMA
+journal_mode=WAL``, a persistent property of the file that would convert a
+production database or an archival copy and leave ``-wal``/``-shm`` sidecars.
+Without ``mode=ro`` a mistyped path would also have SQLite create the empty
+database it was pointed at.
 
 Usage:
 
@@ -285,6 +288,34 @@ def _partition_templates(
     return committable, rejected
 
 
+_SQLITE_PREFIXES = ("sqlite:///", "sqlite+aiosqlite:///")
+
+
+def _read_only_url(database_url: str) -> str:
+    """Rewrite a file-backed SQLite URL to open read-only.
+
+    Turning the tuning pragmas off stopped this rewriting the file it reads, but
+    not opening it for writing: SQLite *creates* a database that is not there,
+    so a typo in ``--database-url`` left a new empty file behind before the
+    query failed, under ``--dry-run`` too. Read-only mode is the rule the two
+    previous fixes were each an instance of -- the driver now refuses any write
+    this tool could ever attempt, including one added later by someone who did
+    not read this comment.
+
+    Only file-backed SQLite is rewritten. ``:memory:`` has nothing to protect,
+    a URL already in URI form is left as the caller wrote it, and PostgreSQL
+    grants read-only access through its own role system rather than the URL.
+    """
+    for prefix in _SQLITE_PREFIXES:
+        if not database_url.startswith(prefix):
+            continue
+        path = database_url[len(prefix) :]
+        if not path or path.startswith("file:") or ":memory:" in path:
+            return database_url
+        return f"{prefix}file:{path}?mode=ro&uri=true"
+    return database_url
+
+
 async def _collect_templates(
     database_url: str,
     *,
@@ -292,7 +323,7 @@ async def _collect_templates(
     limit: int | None,
 ) -> tuple[list[TaskTemplate], list[tuple[str, str]]]:
     engine = create_engine_with_sqlite_optimizations(
-        database_url, apply_sqlite_pragmas=False
+        _read_only_url(database_url), apply_sqlite_pragmas=False
     )
     try:
         db = Database(engine)
