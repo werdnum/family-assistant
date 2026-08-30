@@ -134,12 +134,10 @@ async def run_eval(
     A case this environment cannot execute is skipped with its reason rather
     than failing the run: no shipped judge consumes a derivation case, and a
     case naming a tool the registry cannot resolve is one this deployment
-    cannot replay. Unlabeled cases *are* replayed — watching the judge rule on
-    real captured traffic is why they are captured — and the report partitions
-    their trials out of every scored metric.
+    cannot replay.
 
     Cases are processed in deterministic id order. ``descriptor_registry``
-    overrides the local tool registry for deployments replaying captures that
+    overrides the local tool registry for deployments replaying cases that
     involve MCP or named-sink tools. ``model_parameters``, ``retry_config`` and
     ``timeout_seconds`` are recorded, not applied: the reviewer's client already
     carries them, and the report states the effective judge configuration the

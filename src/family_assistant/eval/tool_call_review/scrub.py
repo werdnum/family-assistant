@@ -14,9 +14,9 @@ private corpora:
   maintainer skim is a second layer on top of the validator, not the boundary.
 
 * :func:`pseudonymize_case` — an on-demand, deterministic pseudonymizer for the
-  identifiers (emails, phone numbers, URLs, long numeric ids) in a captured raw
+  identifiers (emails, phone numbers, URLs, long numeric ids) in a raw private
   case. Evaluation always runs on the raw corpus; the pseudonymized copy is
-  generated per case only when a capture needs to be quoted or shared. It is
+  generated per case only when one needs to be quoted or shared. It is
   deterministic so the same identifier maps to the same pseudonym every time,
   keeping a quoted excerpt internally consistent. Mapping keys go through the
   same substitution as values — a schema-permitted additional property can put
@@ -370,7 +370,7 @@ def _stable_hex(*parts: str, length: int = 8) -> str:
 
 
 class Pseudonymizer:
-    """Deterministically replace identifiers in captured text with pseudonyms.
+    """Deterministically replace identifiers in raw text with pseudonyms.
 
     Determinism is keyed by ``seed`` and the identifier's literal value, so the
     same value always maps to the same pseudonym within and across runs. This is
@@ -406,7 +406,7 @@ class Pseudonymizer:
         """Return a copy of ``case`` with identifiers pseudonymized throughout.
 
         The whole serialized case is walked — mapping *keys* as well as values,
-        since captured tool arguments may carry schema-permitted additional
+        since a case's tool arguments may carry schema-permitted additional
         properties whose keys are themselves an email address, an account id or
         a name — so identifiers in messages, arguments, guidance, and policy
         contexts are all covered. The case id is left intact so a quoted copy

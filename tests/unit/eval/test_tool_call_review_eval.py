@@ -265,7 +265,7 @@ def _unresolvable_tool_case(case_id: str = "missing-tool") -> EvalCase:
 
 
 def test_loader_keeps_a_case_this_environment_cannot_resolve(tmp_path: Path) -> None:
-    # A capture naming an MCP or named-sink tool the local registry lacks is not
+    # A case naming an MCP or named-sink tool the local registry lacks is not
     # malformed data — it is a case this environment cannot execute — so it must
     # not take the rest of the dataset down with it at load.
     path = tmp_path / "mixed.yaml"
@@ -606,15 +606,15 @@ def test_loader_scans_a_case_directory_beside_other_artifact_kinds(
 ) -> None:
     """The private tree's kinds are sibling directories, and only cases are scanned.
 
-    Templates and run records live beside the capture directory, not inside it,
-    so the documented eval command over ``captures/`` loads the cases and never
-    meets them.
+    Templates and run records live beside the case directories, not inside them,
+    so the documented eval command over ``public/<corpus>/`` loads the cases and
+    never meets them.
     """
     private_root = tmp_path / ".review-eval-local"
-    captures = private_root / "captures"
-    captures.mkdir(parents=True)
-    (captures / "case.yaml").write_text(
-        yaml.safe_dump(_browser_case("captured").model_dump(mode="json")),
+    corpus = private_root / "public" / "deepset"
+    corpus.mkdir(parents=True)
+    (corpus / "case.yaml").write_text(
+        yaml.safe_dump(_browser_case("adapted").model_dump(mode="json")),
         encoding="utf-8",
     )
     templates = private_root / "templates"
@@ -628,7 +628,7 @@ def test_loader_scans_a_case_directory_beside_other_artifact_kinds(
         json.dumps(EvalReport(trials=[], seeds=1).to_json_dict()), encoding="utf-8"
     )
 
-    assert [case.id for case in load_cases(captures)] == ["captured"]
+    assert [case.id for case in load_cases(corpus)] == ["adapted"]
 
 
 def test_loader_aborts_naming_a_file_that_is_not_a_case(tmp_path: Path) -> None:
@@ -881,136 +881,6 @@ def test_observed_allow_leaves_the_run_with_no_supported_bound() -> None:
     record = report.to_stamp_record()
     assert record["supported_bound"] is None
     assert record["bound_statement"] == statement
-
-
-def _unlabeled_case(case_id: str = "capture-1") -> EvalCase:
-    """A live capture as the runtime writes it: replayable, with no ground truth."""
-    case = _conversation_case(case_id)
-    return case.model_copy(update={"label": "unlabeled", "source": "live_capture"})
-
-
-def test_unlabeled_case_cannot_declare_ground_truth() -> None:
-    with pytest.raises(ValidationError, match="no ground truth"):
-        EvalCase(
-            id="bad-unlabeled",
-            boundary="browser",
-            label="unlabeled",
-            attack_class="argument_lobbying",
-            constraints=_FULL_CONSTRAINTS,
-            payload=_browser_case().payload,
-        )
-
-
-def test_classifying_an_unlabeled_trial_is_a_loud_failure() -> None:
-    # Scoring an unlabeled case any way at all invents ground truth, so the
-    # scorer refuses instead of picking a default that biases a metric.
-    with pytest.raises(tool_call_review_eval.UnscorableTrialError):
-        classify_trial(
-            label="unlabeled",
-            expected_verdict=None,
-            verdict=ToolCallReviewVerdict.DENY,
-        )
-
-
-def test_unlabeled_trials_are_partitioned_out_of_the_scored_corpus() -> None:
-    # The partition, not a guard at each metric site, is what keeps unlabeled
-    # cases out of the numbers: a metric added later never sees them.
-    scored = _trial(case_id="attack-1")
-    unlabeled = _trial(case_id="capture-1", label="unlabeled", source="live_capture")
-    report = EvalReport(trials=[scored, unlabeled], seeds=1)
-
-    assert [trial.case_id for trial in report.trials] == ["attack-1"]
-    assert [trial.case_id for trial in report.unlabeled_trials] == ["capture-1"]
-
-    reloaded = EvalReport.model_validate(json.loads(json.dumps(report.to_json_dict())))
-    assert [trial.case_id for trial in reloaded.trials] == ["attack-1"]
-    assert [trial.case_id for trial in reloaded.unlabeled_trials] == ["capture-1"]
-
-
-def test_unlabeled_deny_is_not_friction_and_bounds_nothing() -> None:
-    # A correct deny of a genuinely injected capture must not be reported as
-    # benign friction, which is what steers prompt tuning toward allowing it.
-    denied_capture = _trial(
-        case_id="capture-1",
-        label="unlabeled",
-        source="live_capture",
-        verdict=ToolCallReviewVerdict.DENY,
-    )
-    report = EvalReport(trials=[denied_capture], seeds=1)
-
-    overall = report.overall_metrics()
-    assert overall.total_trials == 0
-    assert overall.benign_trials == 0
-    assert overall.attack_trials == 0
-    assert overall.benign_deny_or_confirm_rate == 0.0
-    assert overall.expectation_missed_trials == 0
-    assert report.source_slices() == []
-    assert report.clean_attack_cases() == 0
-    assert report.slice_bounds(0.5)["overall"].clean_cases == 0
-
-
-def test_unlabeled_observation_reports_a_verdict_distribution() -> None:
-    trials = [
-        _trial(
-            case_id="capture-1",
-            label="unlabeled",
-            source="live_capture",
-            seed_index=index,
-            verdict=verdict,
-        )
-        for index, verdict in enumerate([
-            ToolCallReviewVerdict.DENY,
-            ToolCallReviewVerdict.ALLOW,
-        ])
-    ]
-    trials.append(
-        _trial(
-            case_id="capture-2",
-            label="unlabeled",
-            source="live_capture",
-            verdict=ToolCallReviewVerdict.CONFIRM,
-            status=ToolCallReviewStatus.TIMEOUT_FALLBACK,
-            used_fallback=True,
-        )
-    )
-    report = EvalReport(trials=trials, seeds=2)
-
-    observation = report.unlabeled_observation()
-    assert observation.scored is False
-    assert observation.cases == 2
-    assert observation.total_trials == 3
-    assert observation.model_verdict_trials == 2
-    assert observation.fallback_trials == 1
-    assert observation.verdict_counts == {"allow": 1, "confirm": 1, "deny": 1}
-    assert observation.seed_flip_case_ids == ["capture-1"]
-
-    summary = report.to_text_summary()
-    assert "NOT scored" in summary
-    assert "allow=1 confirm=1 deny=1" in summary
-    # An allowed unlabeled trial is not an observed attack allow: nothing says
-    # that capture was an attack.
-    assert report.observed_allows() == []
-    assert "No observed attack allows." in summary
-    assert report.to_stamp_record()["unlabeled_observation"] == observation.model_dump(
-        mode="json"
-    )
-
-
-async def test_unlabeled_case_is_replayed_but_moves_no_scored_counter() -> None:
-    benign = _conversation_case("benign-1")
-    capture = _unlabeled_case("capture-1")
-    report = await run_eval([benign, capture], _denying_reviewer(), seeds=2)
-
-    assert report.skipped_cases == []
-    assert {trial.case_id for trial in report.unlabeled_trials} == {"capture-1"}
-    assert {trial.case_id for trial in report.trials} == {"benign-1"}
-
-    overall = report.overall_metrics()
-    assert overall.total_trials == 2
-    assert overall.benign_trials == 2
-    # Both cases were denied on both seeds; only the labeled one is friction.
-    assert overall.benign_deny_or_confirm_rate == 1.0
-    assert report.unlabeled_observation().verdict_counts == {"deny": 2}
 
 
 def test_benign_confirm_without_expectation_is_friction() -> None:
@@ -1365,29 +1235,6 @@ def test_slice_metrics_do_not_count_a_security_failure_as_clean() -> None:
     assert metrics.clean_trials == 1
 
 
-def test_stamp_record_counts_every_case_that_ran() -> None:
-    # A replayed capture is a case the run executed. One undifferentiated case
-    # total would report a single case while the same record's unlabeled section
-    # reported a second one, so the record states the summary's two counts.
-    report = EvalReport(
-        trials=[
-            _trial(case_id="labeled-1"),
-            _trial(case_id="capture-1", label="unlabeled", source="live_capture"),
-        ],
-        seeds=1,
-    )
-
-    record = report.to_stamp_record()
-    summary = report.to_text_summary()
-
-    assert record["scored_cases"] == 1
-    assert record["scored_trials"] == 1
-    assert record["unlabeled_cases"] == 1
-    assert record["unlabeled_trials"] == 1
-    assert "scored_cases=1" in summary
-    assert "unlabeled_cases=1" in summary
-
-
 def test_stamp_record_names_the_cases_the_run_never_judged() -> None:
     report = EvalReport(
         trials=[_trial()],
@@ -1454,7 +1301,7 @@ def test_loader_validates_arguments_for_an_attachment_typed_tool() -> None:
 
     Plain jsonschema rejects it while checking the *schema*, so a case naming any
     of them — ``read_text_attachment`` is globally granted and so is likely in a
-    real capture — would abort the whole dataset load even with the argument
+    real case — would abort the whole dataset load even with the argument
     absent.
     """
     case = EvalCase(

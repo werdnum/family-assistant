@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import importlib
 import inspect
 import json
 import logging
@@ -28,8 +27,6 @@ from typing import (
     get_type_hints,
     runtime_checkable,
 )
-
-import yaml
 
 from family_assistant.security.taint import (
     SensitiveReadScope,
@@ -91,11 +88,9 @@ from family_assistant.tools.types import (
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from pathlib import Path
 
     from family_assistant.config_models import ToolCallReviewConfig
     from family_assistant.embeddings import EmbeddingGenerator
-    from family_assistant.eval.tool_call_review.schema import EvalCase
     from family_assistant.storage.types import (
         TaintAuditArgumentsSummary,
         TaintAuditReviewContext,
@@ -1456,111 +1451,6 @@ def _is_escalatable_review_denial(
     )
 
 
-def build_review_capture_case(
-    review_input: ToolCallReviewInput,
-    constraints: ToolCallReviewConstraints,
-    *,
-    audit_event_id: str,
-) -> EvalCase:
-    """Serialize a reviewed conversation input into a raw ``EvalCase``.
-
-    The eval schema is imported lazily: it imports the tools package, which is
-    still initializing while this module loads, so a module-level import would
-    be a cycle. The case is stored ``label: unlabeled``: a capture has no ground
-    truth until a maintainer skims it, and the harness scores no unlabeled case,
-    so a correct deny of an injected capture is never counted as friction.
-    ``source`` is ``live_capture`` and the id links to the audit row so the
-    recorded verdict is recoverable. Derived signals (destination echo) are
-    never stored; the loader recomputes them.
-    """
-    # Imported via importlib: the eval schema imports the tools package (for
-    # LOCAL_TOOL_DESCRIPTORS) which is still initializing when this module loads,
-    # and the llm.messages module imports tool types, so a module-level import of
-    # either would be an import cycle.
-    schema = importlib.import_module("family_assistant.eval.tool_call_review.schema")
-    messages_module = importlib.import_module("family_assistant.llm.messages")
-
-    trigger = review_input.trigger
-    trigger_spec = None
-    if trigger is not None:
-        definition_metadata = trigger.definition_taint_metadata
-        trigger_spec = schema.TriggerSpec(
-            trigger_type=trigger.trigger_type,
-            active_request_role=trigger.active_request_role,
-            definition=trigger.definition,
-            definition_taint_metadata=(
-                dict(definition_metadata) if definition_metadata is not None else None
-            ),
-            payload_present=trigger.payload_present,
-        )
-    payload = schema.ConversationPayload(
-        messages=[
-            messages_module.message_to_json_dict(message, include_taint_metadata=True)
-            for message in review_input.messages
-        ],
-        tool_name=review_input.descriptor.name,
-        arguments=dict(review_input.arguments),
-        sink_class=review_input.sink_class.value,
-        taint_state=dict(review_input.taint_state.to_metadata()),
-        policy_contexts=[
-            context.model_dump(mode="json") for context in review_input.policy_contexts
-        ],
-        deployment_guidance=review_input.deployment_guidance,
-        profile_guidance=review_input.profile_guidance,
-        trigger=trigger_spec,
-    )
-    return schema.EvalCase(
-        id=f"live-capture-{audit_event_id}",
-        boundary="conversation",
-        label="unlabeled",
-        source="live_capture",
-        constraints=schema.CaseConstraints(
-            available_verdicts=sorted(
-                constraints.available_verdicts, key=lambda verdict: verdict.value
-            ),
-            fallback_verdict=constraints.fallback_verdict,
-        ),
-        payload=payload,
-    )
-
-
-async def _serialize_and_write_review_capture(
-    review_input: ToolCallReviewInput,
-    constraints: ToolCallReviewConstraints,
-    *,
-    audit_event_id: str,
-    directory: Path,
-) -> None:
-    """Build and write one capture off the event loop, swallowing all failures.
-
-    ``directory`` is the config's already-anchored absolute path, not the raw
-    configured string: resolving that string here would anchor it at the
-    process working directory instead of the repository root the containment
-    check used, so a service started from elsewhere would write raw household
-    content outside the ignored tree.
-    """
-
-    def _write() -> None:
-        case = build_review_capture_case(
-            review_input, constraints, audit_event_id=audit_event_id
-        )
-        directory.mkdir(parents=True, exist_ok=True)
-        path = directory / f"{case.id}.yaml"
-        path.write_text(
-            yaml.safe_dump(
-                case.model_dump(mode="json"),
-                sort_keys=False,
-                allow_unicode=True,
-            ),
-            encoding="utf-8",
-        )
-
-    try:
-        await asyncio.to_thread(_write)
-    except Exception:
-        logger.exception("Tool-call review capture write failed")
-
-
 def _argument_at_path(arguments: Mapping[str, object], path: str) -> object:
     value: object = arguments
     for segment in path.split("."):
@@ -2573,7 +2463,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 constraints,
                 budget_exhausted=budget_exhausted,
             )
-        audit_event_id = await self._record_tool_call_review_audit(
+        await self._record_tool_call_review_audit(
             descriptor=descriptor,
             arguments=arguments,
             context=context,
@@ -2587,11 +2477,6 @@ class TaintTrackingToolsProvider(ToolsProvider):
             ),
             result=result,
             mode=taint_evaluation.mode if taint_evaluation is not None else None,
-        )
-        self._start_review_capture(
-            review_input=review_input,
-            constraints=constraints,
-            audit_event_id=audit_event_id,
         )
         if update_denial_counters:
             if _is_escalatable_review_denial(result, constraints):
@@ -2653,52 +2538,6 @@ class TaintTrackingToolsProvider(ToolsProvider):
         except Exception:
             logger.exception("Detached tool-call shadow review failed")
 
-    def _start_review_capture(
-        self,
-        *,
-        review_input: ToolCallReviewInput,
-        constraints: ToolCallReviewConstraints,
-        audit_event_id: str,
-    ) -> None:
-        """Best-effort serialize the reviewed input into the private dataset.
-
-        Capture is off the review's critical path: the verdict has already been
-        decided and audited by the time this runs, and the serialize-and-write
-        happens in a detached task so it never adds latency to the caller. Every
-        failure mode -- disabled config, serialization error, disk error -- is
-        swallowed here or in the detached task, so capture can never break a
-        review. Only runs when ``tool_call_review.capture.enabled`` is set, and
-        writes only under the configured (gitignored) directory.
-        """
-        config = self._review_config
-        if config is None or not config.capture.enabled:
-            return
-        directory = config.capture.resolved_directory
-        try:
-            task = spawn_detached(
-                _serialize_and_write_review_capture(
-                    review_input,
-                    constraints,
-                    audit_event_id=audit_event_id,
-                    directory=directory,
-                ),
-                name="tool-call-review-capture",
-            )
-        except Exception:
-            logger.exception("Could not start tool-call review capture")
-            return
-        self._review_tasks.add(task)
-        task.add_done_callback(self._finish_review_capture)
-
-    def _finish_review_capture(self, task: asyncio.Task[object]) -> None:
-        self._review_tasks.discard(task)
-        if task.cancelled():
-            return
-        try:
-            task.result()
-        except Exception:
-            logger.exception("Tool-call review capture failed")
-
     async def _record_tool_call_review_audit(
         self,
         *,
@@ -2713,7 +2552,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
         destination_echo: bool | None,
         result: ToolCallReviewResult,
         mode: TaintPolicyMode | None,
-    ) -> str:
+    ) -> None:
         review_context: TaintAuditReviewContext = {
             "delegating_contexts": [
                 f"{item.kind}:{item.identifier}" for item in policy_contexts
@@ -2751,7 +2590,6 @@ class TaintTrackingToolsProvider(ToolsProvider):
             review_latency_ms=result.latency_ms,
             review_context=review_context,
         )
-        return event_id
 
     async def _record_confined_exemption_audit(
         self,

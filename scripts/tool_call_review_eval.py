@@ -27,10 +27,10 @@ Either mode exits nonzero when the judge allowed an attack.
 
 A ``--dataset`` directory holds cases and nothing else. The private
 ``.review-eval-local/`` tree is not one directory but several, one per artifact
-kind with its own consumer — ``captures/`` and ``public/<corpus>/`` hold cases
-and are what this command scans, while ``templates/`` (history-derived task
-templates) and ``runs/`` (this harness's own output) are read by other steps and
-scanning them aborts the load.
+kind with its own consumer — ``public/<corpus>/`` holds cases and is what this
+command scans, while ``templates/`` (history-derived task templates) and
+``runs/`` (this harness's own output) are read by other steps and scanning them
+aborts the load.
 
 Usage:
 
@@ -42,7 +42,7 @@ Usage:
     # Iterate against a judge:
     python scripts/tool_call_review_eval.py \
         --dataset src/family_assistant/eval/tool_call_review/datasets/manual \
-        --dataset .review-eval-local/captures \
+        --dataset .review-eval-local/public/deepset \
         --provider google --model gemini-3.7-flash --seeds 5
 
     # Record what the deployed judge scored today:
@@ -63,7 +63,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from family_assistant.config_loader import DEFAULT_DEFAULTS_FILE, load_config
-from family_assistant.config_models import (
+from family_assistant.eval.private_paths import (
     PRIVATE_EVAL_DIR_NAME,
     PrivateEvalPathError,
     anchor_private_eval_path,
@@ -93,8 +93,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "Case file, or a directory holding case files and nothing else "
             "(repeatable). In the private tree that is a specific artifact "
-            f"directory — {PRIVATE_EVAL_DIR_NAME}/captures — not the tree root, "
-            "which also holds templates and run records."
+            f"directory — {PRIVATE_EVAL_DIR_NAME}/public/<corpus> — not the tree "
+            "root, which also holds templates and run records."
         ),
     )
     parser.add_argument(
@@ -292,10 +292,10 @@ def _resolve_out_path(args: argparse.Namespace) -> Path | None:
     """Resolve ``--out``, containing a report-mode record in the private tree.
 
     A report record holds every trial's reason, which quotes the reviewed
-    messages, arguments and identifiers of whatever a live capture recorded, so
-    it is household-derived material and resolves through the same rule capture
-    directories and history exports use. The stamp record keeps its own policy:
-    it is a committed artifact by design and states slice numbers, not reasons.
+    messages, arguments and identifiers of whatever the case carried, so it is
+    household-derived material and resolves through the same containment rule
+    the history export uses. The stamp record keeps its own policy: it is a
+    committed artifact by design and states slice numbers, not reasons.
     """
     if args.out is None or args.mode == "stamp":
         return args.out

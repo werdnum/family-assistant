@@ -2,14 +2,6 @@
 
 Per-source and per-attack-class breakouts are mandatory: a judge that scores
 well only on one corpus's house style must be visible rather than averaged away.
-
-Scoring has one entry point into the trial corpus: :attr:`EvalReport.trials`.
-Unlabeled trials never appear there — :class:`EvalReport` partitions them into
-:attr:`EvalReport.unlabeled_trials` on construction — so a metric added later
-cannot start counting cases that have no ground truth, whether or not its
-author remembered the distinction. What unlabeled captures produced is reported
-by :meth:`EvalReport.unlabeled_observation`, a verdict distribution that is
-explicitly not a score.
 """
 
 from __future__ import annotations
@@ -18,13 +10,12 @@ import hashlib
 import json
 import statistics
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from family_assistant.eval.tool_call_review.scoring import (
     DEFAULT_FALSE_ALLOW_CEILING,
-    UNLABELED_LABEL,
     GateEvaluation,
     TrialClassification,
     TrialRecord,
@@ -39,10 +30,8 @@ if TYPE_CHECKING:
 __all__ = [
     "EvalReport",
     "LatencyStats",
-    "ObservationalSlice",
     "SkippedCase",
     "SliceMetrics",
-    "build_observational_slice",
     "build_slice_metrics",
 ]
 
@@ -216,58 +205,12 @@ def build_slice_metrics(
     )
 
 
-class ObservationalSlice(BaseModel):
-    """What unlabeled cases did, reported without being scored.
-
-    Unlabeled captures are replayed because seeing the judge rule on real
-    traffic is the point of capturing it, but nothing here is a correctness
-    number: with no ground truth, a deny is neither friction nor a catch. The
-    verdict distribution is the observation, and reading it is what turns a
-    capture into a labeled case.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    scored: Literal[False] = False
-    cases: int
-    total_trials: int
-    model_verdict_trials: int
-    fallback_trials: int
-    verdict_counts: dict[str, int] = Field(default_factory=dict)
-    seed_flip_case_ids: list[str] = Field(default_factory=list)
-    latency: LatencyStats
-
-
-def build_observational_slice(trials: list[TrialRecord]) -> ObservationalSlice:
-    """Summarize unlabeled trials as a verdict distribution, never as a score."""
-    counts: dict[str, int] = {}
-    for trial in trials:
-        counts[trial.verdict.value] = counts.get(trial.verdict.value, 0) + 1
-    return ObservationalSlice(
-        cases=len({trial.case_id for trial in trials}),
-        total_trials=len(trials),
-        model_verdict_trials=sum(1 for trial in trials if trial.is_model_verdict),
-        fallback_trials=sum(1 for trial in trials if not trial.is_model_verdict),
-        verdict_counts=dict(sorted(counts.items())),
-        seed_flip_case_ids=sorted(seed_flips(trials)),
-        latency=LatencyStats.from_latencies([trial.latency_ms for trial in trials]),
-    )
-
-
 class EvalReport(BaseModel):
-    """Full record of one eval run: every trial plus run metadata.
-
-    ``trials`` is the scored corpus and holds labeled trials only. Trials from
-    unlabeled cases are moved into ``unlabeled_trials`` by
-    :meth:`_partition_unlabeled_trials` however they were supplied, which is
-    what makes "an unlabeled case contributes to no metric" a property of the
-    data rather than a rule each metric has to remember.
-    """
+    """Full record of one eval run: every trial plus run metadata."""
 
     model_config = ConfigDict(extra="forbid")
 
     trials: list[TrialRecord] = Field(default_factory=list)
-    unlabeled_trials: list[TrialRecord] = Field(default_factory=list)
     skipped_cases: list[SkippedCase] = Field(default_factory=list)
     seeds: int
     provider: str | None = None
@@ -278,25 +221,6 @@ class EvalReport(BaseModel):
     deployment_guidance: str | None = None
     dataset_hash: str | None = None
     generated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
-
-    @model_validator(mode="after")
-    def _partition_unlabeled_trials(self) -> EvalReport:
-        """Route every unlabeled trial out of the scored corpus.
-
-        The runner hands over one mixed list and a deserialized report hands
-        over two; both end up partitioned here, so ``trials`` is the scored
-        corpus by construction and no caller can widen it by forgetting.
-        """
-        supplied = [*self.trials, *self.unlabeled_trials]
-        self.trials = [trial for trial in supplied if trial.label != UNLABELED_LABEL]
-        self.unlabeled_trials = [
-            trial for trial in supplied if trial.label == UNLABELED_LABEL
-        ]
-        return self
-
-    def unlabeled_observation(self) -> ObservationalSlice:
-        """The unscored verdict distribution over unlabeled cases."""
-        return build_observational_slice(self.unlabeled_trials)
 
     def scored_case_count(self) -> int:
         """Distinct case ids in the scored corpus."""
@@ -442,14 +366,10 @@ class EvalReport(BaseModel):
         evidence supports — so a later reader can tell whether the claim still
         applies. It is a record, not a permission: nothing consults it.
 
-        Case counts use the terminal summary's vocabulary — scored, unlabeled,
-        skipped — so a reader of either output means the same thing by the same
-        word. A run of one labeled case and one replayed capture ran two cases,
-        and one undifferentiated case total would contradict the record's own
-        unlabeled section.
+        Case counts use the terminal summary's vocabulary — scored and skipped —
+        so a reader of either output means the same thing by the same word.
         """
         generated = datetime.now(UTC)
-        observation = self.unlabeled_observation()
         return {
             "generated_at": generated.isoformat(),
             "date": generated.date().isoformat(),
@@ -470,14 +390,11 @@ class EvalReport(BaseModel):
             "seeds": self.seeds,
             "scored_cases": self.scored_case_count(),
             "scored_trials": len(self.trials),
-            "unlabeled_cases": observation.cases,
-            "unlabeled_trials": observation.total_trials,
             # The dataset hash covers cases the run never judged, so a record
             # that omitted them would overstate what was measured.
             "skipped_cases": [
                 skipped.model_dump(mode="json") for skipped in self.skipped_cases
             ],
-            "unlabeled_observation": observation.model_dump(mode="json"),
             "ceiling": ceiling,
             "observed_allows": len(self.observed_allows()),
             "attack_inputs_tested": self.attack_inputs_tested(),
@@ -515,11 +432,9 @@ class EvalReport(BaseModel):
             f"  provider={self.provider or '-'} model={self.model or '-'} "
             f"seeds={self.seeds}"
         )
-        observation = self.unlabeled_observation()
         lines.append(
             f"  scored_cases={self.scored_case_count()} "
             f"scored_trials={len(self.trials)} "
-            f"unlabeled_cases={observation.cases} "
             f"skipped={len(self.skipped_cases)}"
         )
         for skipped in self.skipped_cases:
@@ -550,8 +465,6 @@ class EvalReport(BaseModel):
             lines.append("  (no attack_class-labeled cases)")
         for metrics in attack_class_slices:
             lines.extend(_format_slice(metrics))
-
-        lines.extend(_format_observational_slice(observation))
 
         reasons = self.failing_and_weak_reasons()
         if reasons:
@@ -584,25 +497,6 @@ class EvalReport(BaseModel):
         else:
             lines.append("No observed attack allows.")
         return "\n".join(lines)
-
-
-def _format_observational_slice(observation: ObservationalSlice) -> list[str]:
-    """Render the unlabeled section, stating plainly that it is not scored."""
-    if not observation.total_trials:
-        return []
-    distribution = " ".join(
-        f"{verdict}={count}" for verdict, count in observation.verdict_counts.items()
-    )
-    return [
-        "",
-        "Unlabeled cases (observational, NOT scored — no ground truth, so no "
-        "friction, security or expectation number counts them):",
-        f"  cases={observation.cases} trials={observation.total_trials} "
-        f"model_verdicts={observation.model_verdict_trials} "
-        f"fallbacks={observation.fallback_trials} "
-        f"seed_flips={len(observation.seed_flip_case_ids)}",
-        f"  verdicts: {distribution or '(none)'}",
-    ]
 
 
 def _format_slice(metrics: SliceMetrics) -> list[str]:

@@ -60,7 +60,7 @@ __all__ = [
 ]
 
 Boundary = Literal["conversation", "browser", "derivation"]
-CaseLabel = Literal["attack", "benign", "unlabeled"]
+CaseLabel = Literal["attack", "benign"]
 DerivationLabel = Literal["derivable", "data_embedding", "instruction_smuggling"]
 
 
@@ -87,7 +87,7 @@ def resolve_tool_descriptor(
     ``registry`` defaults to the local tool registry. The runtime reviewer also
     sees dynamically discovered MCP tools and direct named-sink descriptors from
     its wrapped provider, which the static local list cannot supply — a
-    deployment replaying captures that involve those tools must pass the same
+    deployment replaying cases that involve those tools must pass the same
     provider registry it evaluates with, so those cases resolve instead of
     silently dropping out of the harness.
     """
@@ -106,9 +106,8 @@ class CaseConstraints(BaseModel):
 
     Both fields are required: the constraints render into the prompt and gate
     out-of-space verdicts, so a case that omitted them would replay under
-    invented semantics instead of failing validation. Live captures record the
-    runtime call's actual constraints; manual and adapted cases must state
-    theirs explicitly.
+    invented semantics instead of failing validation; manual and adapted cases
+    must state theirs explicitly.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -234,14 +233,7 @@ _PAYLOAD_MODELS: dict[str, type[BaseModel]] = {
 
 
 class EvalCase(BaseModel):
-    """One reviewer-input case with a boundary-specific payload.
-
-    ``label`` has three states, and ``unlabeled`` is a real one rather than an
-    absence: a live capture arrives with no ground truth, the maintainer skim is
-    the labeling act, and an unlabeled case is replayed for observation while
-    contributing to no correctness metric (see
-    :class:`~family_assistant.eval.tool_call_review.report.EvalReport`).
-    """
+    """One reviewer-input case with a boundary-specific payload."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -300,13 +292,6 @@ class EvalCase(BaseModel):
                 "attack cases must declare an attack_class; an unclassified attack "
                 "would dodge the per-family slice gates."
             )
-        if self.label == "unlabeled" and (
-            self.attack_class is not None or self.expected_verdict is not None
-        ):
-            raise ValueError(
-                "unlabeled cases carry no ground truth, so they cannot declare an "
-                "attack_class or an expected_verdict; label the case first."
-            )
         return self
 
     def to_review_input(
@@ -322,7 +307,7 @@ class EvalCase(BaseModel):
         tool whose schema changed or a destination that no longer echoes is
         reflected in the replay rather than frozen into the stored case.
         ``descriptor_registry`` overrides the local tool registry; pass the
-        evaluated deployment's provider registry when replaying captures that
+        evaluated deployment's provider registry when replaying cases that
         involve MCP or named-sink tools.
         """
         constraints = self.constraints.to_constraints()

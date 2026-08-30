@@ -1400,58 +1400,6 @@ also recorded with review status `escalation_confirmation_requested` or
 `escalation_turn_terminated`. Detached observe-only reviews do not update denial counters, so these
 trip counts intentionally describe blocking static/enforce paths rather than shadow traffic.
 
-#### Capture (live-capture friction set)
-
-The `tool_call_review.capture` block controls on-source capture of reviewed inputs into a private,
-per-deployment dataset for the tool-call review evaluation harness. It is the friction half of that
-harness: production traffic contains no real attacks, so every captured review is a real, benign
-task shape that the eval replays to measure false denials. See
-[../design/tool-call-review-eval.md](../design/tool-call-review-eval.md) and the maintainer runbook
-[../development/review-eval-history-extraction.md](../development/review-eval-history-extraction.md).
-
-```yaml
-tool_call_review:
-  capture:
-    enabled: false
-    directory: ".review-eval-local/captures"
-    allow_external_directory: false
-```
-
-| Property                   | Default                       | Meaning                                                                                   |
-| -------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------- |
-| `enabled`                  | `false`                       | Ships **off**. When true, each reviewed conversation input is serialized as it is judged. |
-| `directory`                | `.review-eval-local/captures` | Where captures are written. Must resolve inside `<repo root>/.review-eval-local/`.        |
-| `allow_external_directory` | `false`                       | Escape hatch to write outside the private tree (e.g. a mounted private volume).           |
-
-Privacy is structural. Captures hold **raw** household content — the exact `ToolCallReviewInput` the
-judge saw, including the message window, guidance, policy contexts, and taint state that the audit
-table deliberately does not persist. Byte-level fidelity is required (the assembly-parity check and
-the destination-echo signal both match literal values), so no pseudonymization happens on write; a
-pseudonymized copy is generated on demand only when a capture must be quoted or shared.
-
-Because the content is raw, `directory` must stay under the gitignored `.review-eval-local/` tree —
-this is a public repository, and a typo like `captures/` would write household content to a
-commit-visible path. `.gitignore` ignores the repository-root path `/.review-eval-local/`, so the
-configuration model checks **containment, not the name**: at load it resolves `directory` (relative
-paths against the repository root, never against the process working directory) and rejects anything
-that does not land inside `<repo root>/.review-eval-local/`. Captures are written to that same
-resolved path, so a service started from another directory still writes inside the private tree.
-That rejects `captures/`, `.review-eval-local/../captures`, and `nested/.review-eval-local/captures`
-— the last of which carries the marker name but sits in a *tracked* directory. Containment is
-checked after resolving the components that exist, so a `.review-eval-local/captures` that is a
-symlink into a tracked directory is rejected rather than followed, while a repository checked out
-under a symlinked parent still accepts its own private tree. Set `allow_external_directory: true` to
-opt into an explicitly private location elsewhere, such as a mounted volume. Capture is best-effort
-and off the review's critical path; a capture failure never adds latency to or breaks a review.
-
-Captures are stored **raw and unlabeled**: they carry `label: unlabeled`, the case schema's state
-for "no ground truth yet". Only captures a maintainer positively labels after skimming enter the
-friction pool and tuning metrics. Unlabeled captures are still replayed — the eval reports what the
-judge did with them as an unscored verdict distribution — but they contribute to no correctness
-number: not friction, not the security half, not the false-allow bound. A benign-by-default capture
-would instead count a correct `deny` of an injected capture as friction and teach tuning to prefer
-`allow` on it.
-
 #### Migration for deployments already enforcing taint policy
 
 The shipped default matrix now replaces the old egress and sandbox gates with `adjudicate`, and

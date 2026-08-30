@@ -200,7 +200,7 @@ def _conversation_case(case_id: str = "c1") -> EvalCase:
         id=case_id,
         boundary="conversation",
         label="benign",
-        source="live_capture",
+        source="history_derived",
         constraints=CaseConstraints(
             available_verdicts=list(ToolCallReviewVerdict),
             fallback_verdict=ToolCallReviewVerdict.CONFIRM,
@@ -287,7 +287,7 @@ def test_pseudonymize_case_replaces_explicit_literals() -> None:
 
 
 def _case_with_argument_keys(keys: dict[str, object]) -> EvalCase:
-    """A capture whose tool arguments carry extra keys, as schemas may permit."""
+    """A case whose tool arguments carry extra keys, as schemas may permit."""
     case = _conversation_case("case-keys")
     payload = case.payload
     assert isinstance(payload, ConversationPayload)
@@ -341,7 +341,7 @@ def test_key_pseudonyms_are_deterministic_and_match_value_pseudonyms() -> None:
 
 def test_colliding_key_pseudonyms_fail_closed() -> None:
     # Emitting a case with one of two entries silently dropped would be a
-    # document that lies about what the capture contained.
+    # document that lies about what the case contained.
     case = _case_with_argument_keys({"Bob": "cousin", "Rob": "neighbour"})
     pseudonymizer = Pseudonymizer(literals={"Bob": "<person>", "Rob": "<person>"})
     with pytest.raises(PseudonymizationError, match="collide"):

@@ -11,9 +11,9 @@ chokepoint (:meth:`TaskTemplate.validate_committable`) before it may be written.
 The chokepoint fails closed: a template with any free-text or unrecognized
 field aborts rather than being written, so private household text has no field
 to travel in. Output is written only inside the repository's gitignored
-``.review-eval-local/`` tree — the destination resolves through the same
-containment rule capture destinations use — and the script refuses any other
-destination.
+``.review-eval-local/`` tree — the destination resolves through the shared
+containment rule for household-derived eval material — and the script refuses
+any other destination.
 
 A row the abstraction cannot read — most plausibly a tool call whose recorded
 arguments are not a JSON object at all — is *rejected* with a reason naming it,
@@ -51,7 +51,7 @@ from typing import TYPE_CHECKING
 
 import yaml
 
-from family_assistant.config_models import (
+from family_assistant.eval.private_paths import (
     PRIVATE_EVAL_DIR_NAME,
     PrivateEvalPathError,
     resolve_private_eval_path,
@@ -123,9 +123,9 @@ def _private_out_dir(raw_out_dir: str) -> Path:
 
     The guard is structural, not advisory: the script has no committable output,
     so a destination outside the private tree is always a mistake and is refused
-    before any read happens. Containment is the same rule capture destinations
-    use, so a path that merely carries the marker name inside a tracked
-    directory is refused here too.
+    before any read happens. Containment, not a name match, is what is checked,
+    so a path that merely carries the marker name inside a tracked directory is
+    refused here too.
     """
     try:
         return resolve_private_eval_path(raw_out_dir)

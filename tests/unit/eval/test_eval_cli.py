@@ -17,7 +17,7 @@ import pytest
 import yaml
 
 import family_assistant.eval.tool_call_review as tool_call_review_eval
-from family_assistant import config_models
+from family_assistant.eval import private_paths
 from family_assistant.services.tool_call_review import (
     ToolCallReviewResponse,
     ToolCallReviewVerdict,
@@ -221,7 +221,7 @@ def test_report_mode_out_outside_the_private_tree_is_refused(
 def test_report_mode_out_inside_the_private_tree_is_written(
     cli: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(config_models, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(private_paths, "PROJECT_ROOT", tmp_path)
     _install_fake_judge(monkeypatch, ToolCallReviewVerdict.DENY)
     out_path = tmp_path / ".review-eval-local" / "runs" / "report.json"
     exit_code = cli.main([
@@ -241,8 +241,8 @@ def test_report_mode_out_inside_the_private_tree_is_written(
 def test_report_mode_out_override_allows_an_external_private_location(
     cli: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    # The same deliberate escape hatch capture directories have, for a mounted
-    # private store the containment rule cannot know about.
+    # The deliberate escape hatch, for a mounted private store the containment
+    # rule cannot know about.
     _install_fake_judge(monkeypatch, ToolCallReviewVerdict.DENY)
     out_path = tmp_path / "mounted" / "report.json"
     exit_code = cli.main([
