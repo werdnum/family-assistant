@@ -1437,10 +1437,12 @@ paths against the repository root, never against the process working directory) 
 that does not land inside `<repo root>/.review-eval-local/`. Captures are written to that same
 resolved path, so a service started from another directory still writes inside the private tree.
 That rejects `captures/`, `.review-eval-local/../captures`, and `nested/.review-eval-local/captures`
-— the last of which carries the marker name but sits in a *tracked* directory. Set
-`allow_external_directory: true` to opt into an explicitly private location elsewhere, such as a
-mounted volume. Capture is best-effort and off the review's critical path; a capture failure never
-adds latency to or breaks a review.
+— the last of which carries the marker name but sits in a *tracked* directory. Containment is
+checked after resolving the components that exist, so a `.review-eval-local/captures` that is a
+symlink into a tracked directory is rejected rather than followed, while a repository checked out
+under a symlinked parent still accepts its own private tree. Set `allow_external_directory: true` to
+opt into an explicitly private location elsewhere, such as a mounted volume. Capture is best-effort
+and off the review's critical path; a capture failure never adds latency to or breaks a review.
 
 Captures are stored **raw and unlabeled**: they carry `label: unlabeled`, the case schema's state
 for "no ground truth yet". Only captures a maintainer positively labels after skimming enter the

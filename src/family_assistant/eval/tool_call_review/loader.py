@@ -13,6 +13,7 @@ import yaml
 from family_assistant.eval.tool_call_review.schema import (
     ConversationPayload,
     EvalCase,
+    ToolResolutionError,
     resolve_tool_descriptor,
 )
 
@@ -26,6 +27,7 @@ __all__ = [
     "CaseSchemaValidationError",
     "DuplicateCaseIdError",
     "canonical_attack_input",
+    "case_skip_reason",
     "content_hash",
     "load_cases",
     "validate_against_tool_schema",
@@ -54,6 +56,30 @@ class CaseInputConstructionError(Exception):
     """A case cannot be rebuilt into the typed input the reviewer replays."""
 
 
+def case_skip_reason(
+    case: EvalCase,
+    *,
+    descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
+) -> str | None:
+    """Return why this environment cannot execute ``case``, or ``None`` if it can.
+
+    "Cannot run here" is not "malformed". A case naming a tool this deployment's
+    registry does not contain — an MCP tool, a direct named-sink descriptor — is
+    well-formed data the harness simply cannot replay, so it is named and
+    skipped the way derivation cases are, and the rest of a mixed dataset still
+    runs. Malformed data keeps failing loudly at load.
+    """
+    if case.boundary == "derivation":
+        return "derivation cases have no shipped review contract"
+    payload = case.payload
+    if isinstance(payload, ConversationPayload):
+        try:
+            resolve_tool_descriptor(payload.tool_name, registry=descriptor_registry)
+        except ToolResolutionError as exc:
+            return str(exc)
+    return None
+
+
 def validate_against_tool_schema(
     case: EvalCase,
     *,
@@ -63,13 +89,16 @@ def validate_against_tool_schema(
 
     Name resolution alone would let a tool that kept its name but changed its
     schema replay stale, now-impossible calls that still count as clean trials,
-    so a missing tool (via :func:`resolve_tool_descriptor`) or schema-invalid
-    arguments must fail loudly here rather than passing silently. Pass the
+    so schema-invalid arguments must fail loudly here rather than passing
+    silently. A case whose tool this environment cannot resolve at all has no
+    schema to check against and is left to :func:`case_skip_reason`. Pass the
     evaluated deployment's ``descriptor_registry`` when cases involve MCP or
     named-sink tools the local registry cannot supply.
     """
     payload = case.payload
     if not isinstance(payload, ConversationPayload):
+        return
+    if case_skip_reason(case, descriptor_registry=descriptor_registry) is not None:
         return
     descriptor = resolve_tool_descriptor(
         payload.tool_name, registry=descriptor_registry
@@ -106,10 +135,10 @@ def validate_review_input_constructible(
     only when the runner converts the case, which is after judge setup and
     possibly after live calls have been paid for. ``--dry-run`` advertises
     itself as the validation boundary, so every executable input is constructed
-    here instead. Derivation cases have no shipped review contract and the
-    runner skips them, so they are not reconstructed.
+    here instead. A case the runner will skip — a derivation case, or one naming
+    a tool this environment cannot resolve — is not reconstructed.
     """
-    if case.boundary == "derivation":
+    if case_skip_reason(case, descriptor_registry=descriptor_registry) is not None:
         return
     try:
         case.to_review_input(descriptor_registry=descriptor_registry)
@@ -132,7 +161,10 @@ def load_cases(
     id raises rather than silently overwriting.
 
     Every executable case is fully reconstructed here, not merely parsed, so an
-    unusable dataset is rejected at load rather than mid-run.
+    unusable dataset is rejected at load rather than mid-run. A case this
+    environment cannot execute at all (see :func:`case_skip_reason`) is loaded
+    unvalidated and skipped by the runner with its reason, so one unresolvable
+    tool does not take the whole dataset down with it.
     """
     files = _collect_files(paths)
     by_id: dict[str, EvalCase] = {}

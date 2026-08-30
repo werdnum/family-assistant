@@ -361,6 +361,56 @@ def test_private_eval_path_accepts_a_root_anchored_path(
     assert resolved == PROJECT_ROOT / ".review-eval-local" / "templates"
 
 
+def test_private_eval_path_rejects_a_symlink_out_of_the_private_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A lexical check calls this contained; the write would follow the link out."""
+    monkeypatch.setattr(config_models, "PROJECT_ROOT", tmp_path)
+    tracked = tmp_path / "src" / "datasets"
+    tracked.mkdir(parents=True)
+    private_root = tmp_path / ".review-eval-local"
+    private_root.mkdir()
+    (private_root / "captures").symlink_to(tracked)
+
+    with pytest.raises(PrivateEvalPathError, match=".review-eval-local"):
+        resolve_private_eval_path(".review-eval-local/captures")
+
+
+def test_private_eval_path_accepts_a_real_path_under_the_private_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(config_models, "PROJECT_ROOT", tmp_path)
+    (tmp_path / ".review-eval-local" / "captures").mkdir(parents=True)
+
+    resolved = resolve_private_eval_path(".review-eval-local/captures/today.jsonl")
+
+    assert resolved == tmp_path / ".review-eval-local" / "captures" / "today.jsonl"
+
+
+def test_private_eval_path_accepts_a_repository_reached_through_a_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Resolving only the candidate would reject every path in such a checkout.
+
+    A guard that refuses ordinary use gets turned off, so the private root is
+    resolved the same way the candidate is.
+    """
+    real_root = tmp_path / "real-checkout"
+    (real_root / ".review-eval-local").mkdir(parents=True)
+    linked_root = tmp_path / "linked-checkout"
+    linked_root.symlink_to(real_root)
+    monkeypatch.setattr(config_models, "PROJECT_ROOT", linked_root)
+
+    assert (
+        resolve_private_eval_path(".review-eval-local/captures")
+        == real_root / ".review-eval-local" / "captures"
+    )
+    assert (
+        resolve_private_eval_path(linked_root / ".review-eval-local" / "captures")
+        == real_root / ".review-eval-local" / "captures"
+    )
+
+
 def test_history_export_uses_the_shared_containment_rule() -> None:
     """The template export refuses the same paths a capture directory refuses.
 

@@ -23,12 +23,12 @@ from family_assistant.eval.tool_call_review import (
     EvalCase,
     EvalReport,
     GateStatus,
-    ToolResolutionError,
     TrialClassification,
     TrialRecord,
     TriggerSpec,
     build_reviewer,
     build_slice_metrics,
+    case_skip_reason,
     classify_trial,
     content_hash,
     evaluate_gate,
@@ -235,15 +235,71 @@ def test_loader_rejects_arguments_violating_tool_schema(tmp_path: Path) -> None:
         load_cases(path)
 
 
-def test_loader_rejects_missing_tool(tmp_path: Path) -> None:
-    case = _conversation_case("missing-tool")
+def _unresolvable_tool_case(case_id: str = "missing-tool") -> EvalCase:
+    case = _conversation_case(case_id)
     payload = cast("ConversationPayload", case.payload)
-    broken = case.model_copy(
+    return case.model_copy(
         update={"payload": payload.model_copy(update={"tool_name": "no_such_tool_xyz"})}
     )
-    path = tmp_path / "missing.yaml"
+
+
+def test_loader_keeps_a_case_this_environment_cannot_resolve(tmp_path: Path) -> None:
+    # A capture naming an MCP or named-sink tool the local registry lacks is not
+    # malformed data — it is a case this environment cannot execute — so it must
+    # not take the rest of the dataset down with it at load.
+    path = tmp_path / "mixed.yaml"
+    path.write_text(
+        yaml.safe_dump([
+            _unresolvable_tool_case().model_dump(mode="json"),
+            _conversation_case("runnable").model_dump(mode="json"),
+        ]),
+        encoding="utf-8",
+    )
+    assert [case.id for case in load_cases(path)] == ["missing-tool", "runnable"]
+    assert case_skip_reason(_conversation_case("runnable")) is None
+    reason = case_skip_reason(_unresolvable_tool_case())
+    assert reason is not None
+    assert "no_such_tool_xyz" in reason
+
+
+async def test_runner_skips_an_unresolvable_case_and_runs_the_rest() -> None:
+    report = await run_eval(
+        [_unresolvable_tool_case(), _conversation_case("runnable")],
+        _denying_reviewer(),
+        seeds=1,
+    )
+
+    assert [skipped.case_id for skipped in report.skipped_cases] == ["missing-tool"]
+    assert "no_such_tool_xyz" in report.skipped_cases[0].reason
+    assert {trial.case_id for trial in report.trials} == {"runnable"}
+    assert "skipped missing-tool: " in report.to_text_summary()
+
+
+async def test_runner_names_the_reason_a_derivation_case_is_skipped() -> None:
+    report = await run_eval(
+        [_derivation_case(), _conversation_case("runnable")],
+        _denying_reviewer(),
+        seeds=1,
+    )
+
+    assert [(skipped.case_id, skipped.reason) for skipped in report.skipped_cases] == [
+        ("deriv-1", "derivation cases have no shipped review contract")
+    ]
+
+
+def test_loader_still_rejects_schema_invalid_arguments_for_a_resolvable_tool(
+    tmp_path: Path,
+) -> None:
+    # "Cannot run here" is not "malformed": only tool resolution is exempted
+    # from the loud load-time failure.
+    case = _conversation_case("bad-args")
+    payload = cast("ConversationPayload", case.payload)
+    broken = case.model_copy(
+        update={"payload": payload.model_copy(update={"arguments": {}})}
+    )
+    path = tmp_path / "bad-args.yaml"
     path.write_text(yaml.safe_dump(broken.model_dump(mode="json")), encoding="utf-8")
-    with pytest.raises(ToolResolutionError):
+    with pytest.raises(CaseSchemaValidationError):
         load_cases(path)
 
 
@@ -751,7 +807,7 @@ async def test_unlabeled_case_is_replayed_but_moves_no_scored_counter() -> None:
     capture = _unlabeled_case("capture-1")
     report = await run_eval([benign, capture], _denying_reviewer(), seeds=2)
 
-    assert report.skipped_case_ids == []
+    assert report.skipped_cases == []
     assert {trial.case_id for trial in report.unlabeled_trials} == {"capture-1"}
     assert {trial.case_id for trial in report.trials} == {"benign-1"}
 
@@ -814,7 +870,7 @@ async def test_runner_end_to_end_with_scripted_mock() -> None:
     )
 
     assert len(report.trials) == 6
-    assert report.skipped_case_ids == []
+    assert report.skipped_cases == []
     verdicts_by_case: dict[str, set[ToolCallReviewVerdict]] = {}
     for trial in report.trials:
         assert trial.status is ToolCallReviewStatus.MODEL_VERDICT

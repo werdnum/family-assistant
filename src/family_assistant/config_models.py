@@ -79,20 +79,25 @@ class PrivateEvalPathError(ValueError):
 
 
 def anchor_private_eval_path(path: str | Path) -> Path:
-    """Return ``path`` as an absolute, lexically normalized repository-anchored path.
+    """Return ``path`` as an absolute, symlink-resolved repository-anchored path.
 
     Relative paths anchor at the repository root, never at the process working
     directory: an installed service or a script started from elsewhere would
     otherwise pass a containment check and then write household-derived content
-    somewhere the check never looked. Normalization is lexical rather than
-    ``resolve()``: the directory need not exist yet, and a ``..`` segment must
-    be collapsed before containment is checked or it would walk straight out of
-    the private tree.
+    somewhere the check never looked.
+
+    Both steps are load-bearing. ``..`` is collapsed lexically *first*, so a
+    traversal cannot walk out of the private tree by way of a symlinked parent's
+    target. The result is then resolved, because a lexical check alone treats
+    ``.review-eval-local/captures`` as contained even when it is a symlink into
+    a tracked directory and the write follows the link. Resolution is
+    non-strict: what exists is resolved and the rest stays lexical, so the
+    destination still need not exist yet.
     """
     candidate = Path(path)
     if not candidate.is_absolute():
         candidate = PROJECT_ROOT / candidate
-    return Path(os.path.normpath(candidate))
+    return Path(os.path.normpath(candidate)).resolve()
 
 
 def resolve_private_eval_path(path: str | Path) -> Path:
@@ -105,7 +110,10 @@ def resolve_private_eval_path(path: str | Path) -> Path:
     presence of the marker name: ``.gitignore`` ignores only the root-anchored
     path, so ``nested/.review-eval-local/templates`` carries the name yet sits
     in a tracked directory, and ``.review-eval-local/../out`` names it while
-    resolving outside. Both raise.
+    resolving outside. Both raise, as does a path whose existing components
+    symlink out of the tree. The private root is resolved the same way as the
+    candidate, so a repository checked out under a symlinked parent still
+    accepts its own private tree.
     """
     resolved = anchor_private_eval_path(path)
     private_root = anchor_private_eval_path(PRIVATE_EVAL_DIR_NAME)

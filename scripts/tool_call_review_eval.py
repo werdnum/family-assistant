@@ -13,6 +13,9 @@ Two modes, and nothing else:
     benign friction, expectation misses, seed flips, fallback counts, latency,
     and the judge's reason for every failing and weak-pass trial. This is the
     iteration loop — run it, read the reasons, change the prompt, run it again.
+    ``--out`` writes the whole run, reasons included, so it resolves inside the
+    private ``.review-eval-local/`` tree unless ``--allow-external-out`` names
+    a deliberately private location elsewhere.
 
 ``stamp``
     The same run, plus one JSON record of what was measured and under what
@@ -53,11 +56,18 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from family_assistant.config_loader import DEFAULT_DEFAULTS_FILE, load_config
-from family_assistant.config_models import ToolCallReviewConfig
+from family_assistant.config_models import (
+    PRIVATE_EVAL_DIR_NAME,
+    PrivateEvalPathError,
+    ToolCallReviewConfig,
+    anchor_private_eval_path,
+    resolve_private_eval_path,
+)
 from family_assistant.eval.tool_call_review import (
     DEFAULT_FALSE_ALLOW_CEILING,
     EvalReport,
     build_reviewer,
+    case_skip_reason,
     content_hash,
     load_cases,
     run_eval,
@@ -153,7 +163,21 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help=(
             "Where to write JSON: the full run record in report mode, the stamp "
-            "record in stamp mode (required there)."
+            "record in stamp mode (required there). A report-mode record holds "
+            "the judge's reason for every trial, which quotes the reviewed "
+            f"content, so it must land inside the {PRIVATE_EVAL_DIR_NAME}/ tree "
+            "unless --allow-external-out says otherwise. A relative path anchors "
+            "at the repository root, not the working directory."
+        ),
+    )
+    parser.add_argument(
+        "--allow-external-out",
+        action="store_true",
+        help=(
+            "Write the report-mode run record to an explicitly private location "
+            f"outside {PRIVATE_EVAL_DIR_NAME}/ (a mounted private volume). The "
+            "stamp record carries slice numbers rather than reviewed content and "
+            "is writable anywhere without this."
         ),
     )
     parser.add_argument(
@@ -223,9 +247,35 @@ def _resolve_judge_config(args: argparse.Namespace) -> _JudgeConfig:
     )
 
 
+def _resolve_out_path(args: argparse.Namespace) -> Path | None:
+    """Resolve ``--out``, containing a report-mode record in the private tree.
+
+    A report record holds every trial's reason, which quotes the reviewed
+    messages, arguments and identifiers of whatever a live capture recorded, so
+    it is household-derived material and resolves through the same rule capture
+    directories and history exports use. The stamp record keeps its own policy:
+    it is a committed artifact by design and states slice numbers, not reasons.
+    """
+    if args.out is None or args.mode == "stamp":
+        return args.out
+    if args.allow_external_out:
+        return anchor_private_eval_path(args.out)
+    return resolve_private_eval_path(args.out)
+
+
 async def _run(args: argparse.Namespace) -> int:
     if args.mode == "stamp" and args.out is None:
         print("--mode stamp requires --out to write the stamp record.", file=sys.stderr)
+        return 1
+    try:
+        out_path = _resolve_out_path(args)
+    except PrivateEvalPathError as exc:
+        print(
+            f"Refusing to write the full run record: --out {exc}. Set "
+            "--allow-external-out to write it to an explicitly private location "
+            "elsewhere.",
+            file=sys.stderr,
+        )
         return 1
 
     judge = _resolve_judge_config(args)
@@ -238,7 +288,12 @@ async def _run(args: argparse.Namespace) -> int:
 
     if args.dry_run:
         for case in cases:
-            print(f"  {case.id} [{case.boundary}/{case.label}] source={case.source}")
+            skip_reason = case_skip_reason(case)
+            suffix = f" SKIPPED: {skip_reason}" if skip_reason is not None else ""
+            print(
+                f"  {case.id} [{case.boundary}/{case.label}] "
+                f"source={case.source}{suffix}"
+            )
         return 0
 
     reviewer = build_reviewer(
@@ -264,24 +319,26 @@ async def _run(args: argparse.Namespace) -> int:
 
     print()
     print(report.to_text_summary(ceiling=args.ceiling))
-    _write_output(report, args)
+    _write_output(report, args, out_path)
     return 1 if report.observed_allows() else 0
 
 
-def _write_output(report: EvalReport, args: argparse.Namespace) -> None:
-    if args.out is None:
+def _write_output(
+    report: EvalReport, args: argparse.Namespace, out_path: Path | None
+) -> None:
+    if out_path is None:
         return
     payload = (
         report.to_stamp_record(ceiling=args.ceiling)
         if args.mode == "stamp"
         else report.to_json_dict()
     )
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
         json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8"
     )
     label = "stamp record" if args.mode == "stamp" else "run record"
-    print(f"\nWrote {label} to {args.out}")
+    print(f"\nWrote {label} to {out_path}")
 
 
 def main(argv: list[str] | None = None) -> int:

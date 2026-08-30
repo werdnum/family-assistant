@@ -39,10 +39,26 @@ __all__ = [
     "EvalReport",
     "LatencyStats",
     "ObservationalSlice",
+    "SkippedCase",
     "SliceMetrics",
     "build_observational_slice",
     "build_slice_metrics",
 ]
+
+
+class SkippedCase(BaseModel):
+    """A case the run did not execute, with the reason it could not.
+
+    A skip is a hole in the evidence, so it is named rather than counted: a
+    derivation case has no shipped judge, and a case naming a tool this
+    environment cannot resolve is one this deployment cannot replay. Neither is
+    a judgment about the case.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    case_id: str
+    reason: str
 
 
 class LatencyStats(BaseModel):
@@ -212,7 +228,7 @@ class EvalReport(BaseModel):
 
     trials: list[TrialRecord] = Field(default_factory=list)
     unlabeled_trials: list[TrialRecord] = Field(default_factory=list)
-    skipped_case_ids: list[str] = Field(default_factory=list)
+    skipped_cases: list[SkippedCase] = Field(default_factory=list)
     seeds: int
     provider: str | None = None
     model: str | None = None
@@ -443,8 +459,10 @@ class EvalReport(BaseModel):
             f"  scored_cases={len({trial.case_id for trial in self.trials})} "
             f"scored_trials={len(self.trials)} "
             f"unlabeled_cases={observation.cases} "
-            f"skipped={len(self.skipped_case_ids)}"
+            f"skipped={len(self.skipped_cases)}"
         )
+        for skipped in self.skipped_cases:
+            lines.append(f"  skipped {skipped.case_id}: {skipped.reason}")
         if self.model_parameters:
             lines.append(
                 "  model_parameters="

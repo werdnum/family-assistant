@@ -5,8 +5,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from family_assistant.config_models import RetryConfig, ToolCallReviewConfig
-from family_assistant.eval.tool_call_review.loader import canonical_attack_input
-from family_assistant.eval.tool_call_review.report import EvalReport
+from family_assistant.eval.tool_call_review.loader import (
+    canonical_attack_input,
+    case_skip_reason,
+)
+from family_assistant.eval.tool_call_review.report import EvalReport, SkippedCase
 from family_assistant.eval.tool_call_review.scoring import TrialRecord
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.services.tool_call_review import (
@@ -124,10 +127,12 @@ async def run_eval(
 ) -> EvalReport:
     """Run every case ``seeds`` times against ``reviewer`` and score the results.
 
-    Derivation cases are skipped with a note: no shipped judge consumes them.
-    Unlabeled cases *are* replayed — watching the judge rule on real captured
-    traffic is why they are captured — and the report partitions their trials
-    out of every scored metric.
+    A case this environment cannot execute is skipped with its reason rather
+    than failing the run: no shipped judge consumes a derivation case, and a
+    case naming a tool the registry cannot resolve is one this deployment
+    cannot replay. Unlabeled cases *are* replayed — watching the judge rule on
+    real captured traffic is why they are captured — and the report partitions
+    their trials out of every scored metric.
 
     Cases are processed in deterministic id order. ``descriptor_registry``
     overrides the local tool registry for deployments replaying captures that
@@ -140,10 +145,11 @@ async def run_eval(
         raise ValueError("seeds must be at least 1.")
 
     trials: list[TrialRecord] = []
-    skipped: list[str] = []
+    skipped: list[SkippedCase] = []
     for case in sorted(cases, key=lambda case: case.id):
-        if case.boundary == "derivation":
-            skipped.append(case.id)
+        skip_reason = case_skip_reason(case, descriptor_registry=descriptor_registry)
+        if skip_reason is not None:
+            skipped.append(SkippedCase(case_id=case.id, reason=skip_reason))
             continue
         review_input, constraints = case.to_review_input(
             descriptor_registry=descriptor_registry
@@ -176,7 +182,7 @@ async def run_eval(
 
     return EvalReport(
         trials=trials,
-        skipped_case_ids=skipped,
+        skipped_cases=skipped,
         seeds=seeds,
         provider=provider,
         model=model,

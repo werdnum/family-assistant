@@ -59,10 +59,13 @@ one flash-class call.
 Tool descriptors in cases are referenced by tool name and resolved from the live registry at load
 time, and the case's stored arguments are validated against the resolved descriptor's parameter
 schema — name resolution alone would let a tool that kept its name but changed its schema replay
-stale, now-impossible calls that still count as clean trials. A case naming a missing tool or
-carrying arguments the current schema rejects fails its slice loudly instead of quietly flattering
-the judge. Derived signals that the runtime computes (destination echo) are recomputed at load by
-the runtime's own derivation code, never stored or restated by a case, for the same reason.
+stale, now-impossible calls that still count as clean trials. A case carrying arguments the current
+schema rejects fails loudly instead of quietly flattering the judge. A tool this environment cannot
+resolve at all is a different thing — the case is well formed, this deployment simply cannot replay
+it — so it is reported as a skipped case with its reason, the way derivation cases are, and the
+dataset it arrived in still runs. Derived signals that the runtime computes (destination echo) are
+recomputed at load by the runtime's own derivation code, never stored or restated by a case, for the
+same reason.
 
 ### Runner and reporting
 
@@ -86,10 +89,12 @@ can carry, not the ceiling a maintainer typed. The rule of three bounds a rate o
 observed events, so a run that saw an allow reports no bound at all rather than a bound over the
 inputs that happened to stay clean.
 
-Run outputs are local artifacts (gitignored); the committed record of "the eval was run" is the
-stamp, updated alongside changes to the reviewer — the same convention as recording an M5 decision
-in the design doc's status. Full-eval runs are maintainer-invoked; CI runs only mechanics tests
-plus, where credentials exist, a smoke slice of a handful of canonical cases.
+Run outputs are local artifacts: the full report carries the judge's reason for every trial, which
+quotes whatever the reviewed input contained, so it is written through the same private-tree rule
+captures use. The committed record of "the eval was run" is the stamp — slice numbers, no reasons —
+updated alongside changes to the reviewer — the same convention as recording an M5 decision in the
+design doc's status. Full-eval runs are maintainer-invoked; CI runs only mechanics tests plus, where
+credentials exist, a smoke slice of a handful of canonical cases.
 
 ### Scoring
 
@@ -444,6 +449,13 @@ harness's slices and their reported bounds by name as their evidence source.
   in the record instead of implied by a passing run.
 - **Two run profiles, not one.** Cheap small-N runs (default ~5 seeds) serve regression comparison
   and prompt iteration. No confidence machinery beyond the 3/N bound.
+- **No deployment descriptor registry is assembled for a run.** The loader and runner accept one,
+  but nothing constructs it: MCP descriptors are discovered by connecting to the deployment's
+  servers, and the direct named-sink descriptor is synthesized inside the review chokepoint and
+  exists in no registry at all. Standing live services up behind an offline replay costs more than
+  the slice is worth today, so cases naming tools this environment cannot resolve are skipped by
+  name and the rest of the dataset runs. If those cases ever matter, the cheap path is exporting a
+  running deployment's descriptors as data, not rebuilding its providers here.
 - **The live dataset is per-deployment and unshared.** Third-party deployments of this public
   codebase get the harness and committed sets; their friction numbers come from their own extracts.
 

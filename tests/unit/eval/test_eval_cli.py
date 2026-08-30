@@ -18,6 +18,7 @@ import pytest
 import yaml
 
 import family_assistant.eval.tool_call_review as tool_call_review_eval
+from family_assistant import config_models
 from family_assistant.services.tool_call_review import (
     ToolCallReviewResponse,
     ToolCallReviewVerdict,
@@ -179,6 +180,91 @@ def test_stamp_mode_writes_one_record(
     )
     assert record["by_attack_class"]
     assert "overall" in record["slice_bounds"]
+
+
+def test_report_mode_out_outside_the_private_tree_is_refused(
+    cli: ModuleType, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    # A report record holds the judge's reason for every trial, which quotes the
+    # reviewed content, so a mistyped --out must not be able to drop household
+    # -derived text into a tracked location.
+    exit_code = cli.main([
+        "--dataset",
+        _dataset_dir("manual"),
+        "--seeds",
+        "1",
+        "--out",
+        str(tmp_path / "report.json"),
+    ])
+    assert exit_code == 1
+    assert ".review-eval-local" in capsys.readouterr().err
+    assert not (tmp_path / "report.json").exists()
+
+
+def test_report_mode_out_inside_the_private_tree_is_written(
+    cli: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(config_models, "PROJECT_ROOT", tmp_path)
+    _install_fake_judge(monkeypatch, ToolCallReviewVerdict.DENY)
+    out_path = tmp_path / ".review-eval-local" / "runs" / "report.json"
+    exit_code = cli.main([
+        "--dataset",
+        _dataset_dir("manual"),
+        "--seeds",
+        "1",
+        "--out",
+        str(out_path),
+    ])
+    assert exit_code == 0
+    record = json.loads(out_path.read_text(encoding="utf-8"))
+    assert record["trials"]
+    assert record["trials"][0]["reason"] == "scripted verdict"
+
+
+def test_report_mode_out_override_allows_an_external_private_location(
+    cli: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The same deliberate escape hatch capture directories have, for a mounted
+    # private store the containment rule cannot know about.
+    _install_fake_judge(monkeypatch, ToolCallReviewVerdict.DENY)
+    out_path = tmp_path / "mounted" / "report.json"
+    exit_code = cli.main([
+        "--dataset",
+        _dataset_dir("manual"),
+        "--seeds",
+        "1",
+        "--out",
+        str(out_path),
+        "--allow-external-out",
+    ])
+    assert exit_code == 0
+    assert json.loads(out_path.read_text(encoding="utf-8"))["trials"]
+
+
+def test_stamp_mode_out_is_writable_anywhere(
+    cli: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # The stamp is a committed artifact by design and carries slice numbers, not
+    # per-trial reasons, so the private-tree rule does not apply to it.
+    _install_fake_judge(monkeypatch, ToolCallReviewVerdict.DENY)
+    out_path = tmp_path / "stamp.json"
+    exit_code = cli.main([
+        "--dataset",
+        _dataset_dir("manual"),
+        "--mode",
+        "stamp",
+        "--seeds",
+        "1",
+        "--out",
+        str(out_path),
+    ])
+    assert exit_code == 0
+    record = json.loads(out_path.read_text(encoding="utf-8"))
+    assert "trials" in record
+    assert record["overall"]
+    # No judge reason reaches the stamp: the only "reason" fields it carries are
+    # the harness's own statistical notes on each slice's bound.
+    assert "scripted verdict" not in json.dumps(record)
 
 
 def test_stamp_mode_without_out_is_refused(
