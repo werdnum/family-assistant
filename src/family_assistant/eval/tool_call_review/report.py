@@ -21,6 +21,7 @@ from family_assistant.eval.tool_call_review.scoring import (
     TrialRecord,
     clean_attack_case_count,
     evaluate_gate,
+    seed_flip_case_ids,
     seed_flips,
 )
 
@@ -200,7 +201,7 @@ def build_slice_metrics(
         benign_deny_or_confirm_rate=_rate(benign_friction, len(benign_model)),
         expectation_missed_trials=expectation_missed,
         expectation_miss_rate=_rate(expectation_missed, len(expected_model)),
-        seed_flip_case_ids=sorted(seed_flips(trials)),
+        seed_flip_case_ids=seed_flip_case_ids(seed_flips(trials)),
         latency=LatencyStats.from_latencies([trial.latency_ms for trial in trials]),
     )
 

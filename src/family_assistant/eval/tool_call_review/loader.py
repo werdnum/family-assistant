@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import jsonschema
 import yaml
@@ -26,7 +26,7 @@ from family_assistant.services.tool_call_review import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping, Sequence
+    from collections.abc import Hashable, Iterable, Mapping, Sequence
 
     from family_assistant.services.tool_call_review import (
         ToolCallReviewConstraints,
@@ -48,6 +48,45 @@ __all__ = [
 ]
 
 _CASE_SUFFIXES = (".jsonl", ".yaml", ".yml", ".json")
+
+
+class _DuplicateKeyError(Exception):
+    """A case file repeats a mapping key."""
+
+
+class _StrictSafeLoader(yaml.SafeLoader):
+    """A YAML loader that refuses a repeated mapping key.
+
+    Both YAML and JSON resolve a repeated key by keeping the last value, which
+    at this boundary means a file can declare one case and be scored as
+    another: a case carrying ``label: attack`` twice over, the second time as
+    ``benign``, loads as benign and moves an attack into the evidence the bound
+    is computed from. There is no reading under which a repeated key is what
+    the author meant, so it fails here with the key named.
+    """
+
+    def construct_mapping(
+        self, node: yaml.MappingNode, deep: bool = False
+    ) -> dict[Hashable, Any]:
+        seen: set[object] = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if key in seen:
+                raise _DuplicateKeyError(f"duplicate key {key!r}")
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
+
+
+def _no_duplicate_json_keys(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    """``object_pairs_hook`` that rejects a repeated key. See _StrictSafeLoader."""
+    seen: set[str] = set()
+    for key, _ in pairs:
+        if key in seen:
+            raise _DuplicateKeyError(f"duplicate key {key!r}")
+        seen.add(key)
+    return dict(pairs)
 
 
 # Tool descriptors use a project-specific ``type: attachment`` for parameters
@@ -306,16 +345,10 @@ def _collect_files(paths: str | Path | Iterable[str | Path]) -> list[Path]:
 def _parse_file(file_path: Path) -> list[EvalCase]:
     text = file_path.read_text(encoding="utf-8")
     suffix = file_path.suffix.lower()
-    if suffix == ".jsonl":
-        records = [json.loads(line) for line in text.splitlines() if line.strip()]
-    elif suffix in {".yaml", ".yml"}:
-        loaded = yaml.safe_load(text)
-        records = loaded if isinstance(loaded, list) else [loaded]
-    elif suffix == ".json":
-        loaded = json.loads(text)
-        records = loaded if isinstance(loaded, list) else [loaded]
-    else:
-        raise ValueError(f"Unsupported dataset file extension: {file_path}")
+    try:
+        records = _decode_records(text, suffix, file_path)
+    except _DuplicateKeyError as exc:
+        raise CaseParseError(f"{file_path} has a {exc}.") from exc
     # A ``None`` record — an empty YAML document, or a null entry in a list — is
     # validated rather than filtered out. Dropping it would let a truncated case
     # vanish from a directory whose whole contract is that it holds cases and
@@ -326,3 +359,19 @@ def _parse_file(file_path: Path) -> list[EvalCase]:
         raise CaseParseError(
             f"{file_path} is not an evaluation case file: {exc}"
         ) from exc
+
+
+def _decode_records(text: str, suffix: str, file_path: Path) -> list[object]:
+    if suffix == ".jsonl":
+        return [
+            json.loads(line, object_pairs_hook=_no_duplicate_json_keys)
+            for line in text.splitlines()
+            if line.strip()
+        ]
+    if suffix in {".yaml", ".yml"}:
+        loaded = yaml.load(text, Loader=_StrictSafeLoader)
+        return loaded if isinstance(loaded, list) else [loaded]
+    if suffix == ".json":
+        loaded = json.loads(text, object_pairs_hook=_no_duplicate_json_keys)
+        return loaded if isinstance(loaded, list) else [loaded]
+    raise ValueError(f"Unsupported dataset file extension: {file_path}")

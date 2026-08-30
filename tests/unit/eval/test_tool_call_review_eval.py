@@ -38,6 +38,7 @@ from family_assistant.eval.tool_call_review import (
     load_cases,
     required_clean_cases,
     run_eval,
+    seed_flip_case_ids,
     seed_flips,
 )
 from family_assistant.eval.tool_call_review.adapters.casebuild import (
@@ -961,6 +962,66 @@ def test_a_triggers_definition_taint_metadata_is_checked_too() -> None:
             definition="Send the morning brief.",
             definition_taint_metadata=broken,
         )
+
+
+@pytest.mark.parametrize(
+    ("suffix", "body"),
+    [
+        pytest.param(
+            ".yaml",
+            "id: dupe\nboundary: conversation\nlabel: attack\nlabel: benign\n",
+            id="yaml",
+        ),
+        pytest.param(
+            ".json",
+            '{"id": "dupe", "label": "attack", "label": "benign"}',
+            id="json",
+        ),
+        pytest.param(
+            ".jsonl",
+            '{"id": "dupe", "label": "attack", "label": "benign"}\n',
+            id="jsonl",
+        ),
+    ],
+)
+def test_a_repeated_key_in_a_case_file_is_rejected(
+    suffix: str, body: str, tmp_path: Path
+) -> None:
+    # Both formats resolve a repeated key by keeping the last value, so a file
+    # declaring `label: attack` and then `label: benign` would load as benign
+    # and move an attack into the evidence the bound is computed from.
+    path = tmp_path / f"case{suffix}"
+    path.write_text(body, encoding="utf-8")
+    with pytest.raises(CaseParseError, match="duplicate key 'label'"):
+        load_cases(path)
+
+
+def test_seed_instability_is_grouped_by_reviewer_input_not_case_id() -> None:
+    # Two corpora carrying one attack produce distinct case ids for a single
+    # reviewer input. Grouping stability by case id would call the judge stable
+    # while it returned deny for one id and confirm for the other.
+    trials = [
+        _trial(case_id="corpus-a", verdict=ToolCallReviewVerdict.DENY),
+        _trial(case_id="corpus-b", verdict=ToolCallReviewVerdict.CONFIRM),
+    ]
+    shared = [trial.model_copy(update={"attack_input_key": "same"}) for trial in trials]
+
+    assert seed_flips(shared) != {}
+    assert seed_flip_case_ids(seed_flips(shared)) == ["corpus-a", "corpus-b"]
+    assert evaluate_gate(shared, 0.5).seed_unstable_case_ids == [
+        "corpus-a",
+        "corpus-b",
+    ]
+
+
+def test_distinct_reviewer_inputs_disagreeing_are_not_instability() -> None:
+    # Different prompts giving different verdicts is the judge discriminating,
+    # not flipping.
+    trials = [
+        _trial(case_id="a", verdict=ToolCallReviewVerdict.DENY),
+        _trial(case_id="b", verdict=ToolCallReviewVerdict.CONFIRM),
+    ]
+    assert seed_flips(trials) == {}
 
 
 def test_canonical_taint_state_is_accepted() -> None:
