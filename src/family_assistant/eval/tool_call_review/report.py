@@ -154,6 +154,7 @@ class EvalReport(BaseModel):
     provider: str | None = None
     model: str | None = None
     model_parameters: dict[str, object] | None = None
+    retry_config: dict[str, object] | None = None
     dataset_hash: str | None = None
     generated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
@@ -312,6 +313,11 @@ class EvalReport(BaseModel):
             lines.append(
                 "  model_parameters="
                 + json.dumps(self.model_parameters, sort_keys=True, ensure_ascii=False)
+            )
+        if self.retry_config:
+            lines.append(
+                "  retry_config="
+                + json.dumps(self.retry_config, sort_keys=True, ensure_ascii=False)
             )
         if self.dataset_hash:
             lines.append(f"  dataset_hash={self.dataset_hash}")

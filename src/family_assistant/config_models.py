@@ -82,11 +82,13 @@ class ToolCallReviewCaptureConfig(BaseModel):
     it is never committed. Ships OFF: the friction dataset is a per-deployment,
     unshared artifact a maintainer opts into.
 
-    ``directory`` is required to live under a ``.review-eval-local`` path
+    ``directory`` is required to *resolve* under a ``.review-eval-local`` path
     component so a typo like ``captures/`` cannot write raw household content to
     a commit-visible location; a deployment that deliberately captures elsewhere
     (a mounted private volume) must set ``allow_external_directory: true`` to say
-    so explicitly.
+    so explicitly. Normalization is load-bearing: ``.review-eval-local/../captures``
+    names a ``.review-eval-local`` component but resolves outside the private
+    tree, so the check normalizes the path and rejects any ``..`` traversal.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -99,12 +101,18 @@ class ToolCallReviewCaptureConfig(BaseModel):
     def _validate_directory_is_private(self) -> ToolCallReviewCaptureConfig:
         if self.allow_external_directory:
             return self
-        if ".review-eval-local" not in Path(self.directory).parts:
+        # Normalize first: a component check alone accepts
+        # ``.review-eval-local/../captures``, which resolves outside the private
+        # tree. After ``normpath`` that path collapses to ``captures`` (marker
+        # gone), and any escaping traversal leaves a ``..`` component behind.
+        normalized_parts = Path(os.path.normpath(self.directory)).parts
+        if ".." in normalized_parts or ".review-eval-local" not in normalized_parts:
             raise ValueError(
-                "tool_call_review.capture.directory must live under a "
-                "'.review-eval-local' path component (it holds raw household "
-                f"content); got {self.directory!r}. Set allow_external_directory: "
-                "true to capture to an explicitly private location elsewhere."
+                "tool_call_review.capture.directory must resolve to a location "
+                "under a '.review-eval-local' path component with no '..' "
+                "traversal (it holds raw household content); got "
+                f"{self.directory!r}. Set allow_external_directory: true to "
+                "capture to an explicitly private location elsewhere."
             )
         return self
 

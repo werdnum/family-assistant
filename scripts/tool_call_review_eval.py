@@ -29,8 +29,12 @@ import argparse
 import asyncio
 import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
+import yaml
+
+from family_assistant.config_models import ToolCallReviewConfig
 from family_assistant.eval.tool_call_review import (
     DEFAULT_GENERATION_LEDGER_DIR,
     EvalReport,
@@ -61,12 +65,29 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--provider",
         default="google",
-        help="Judge provider (default: google).",
+        help="Judge provider (default: google). Ignored when --config-file is given.",
     )
     parser.add_argument(
         "--model",
         default="gemini-3.7-flash",
-        help="Judge model (default: gemini-3.7-flash).",
+        help=(
+            "Judge model (default: gemini-3.7-flash). Ignored when --config-file "
+            "is given."
+        ),
+    )
+    parser.add_argument(
+        "--config-file",
+        type=Path,
+        default=None,
+        metavar="YAML",
+        help=(
+            "A config/defaults YAML to read the judge's 'tool_call_review' section "
+            "from (provider, model, timeout, and retry_config), plus top-level "
+            "'llm_parameters'. Use this to replay the deployed judge faithfully, "
+            "including a primary/fallback retry client that a single --provider/"
+            "--model cannot express. Overrides --provider/--model/--timeout-seconds "
+            "and, unless --llm-params is given, --llm-params."
+        ),
     )
     parser.add_argument(
         "--llm-params",
@@ -142,8 +163,57 @@ def _parse_llm_params(raw: str | None) -> dict[str, object] | None:
     return parsed
 
 
-async def _run(args: argparse.Namespace) -> int:
+@dataclass(frozen=True, slots=True)
+class _JudgeConfig:
+    """The effective judge configuration a run measures under."""
+
+    provider: str | None
+    model: str
+    timeout_seconds: float
+    model_parameters: dict[str, object] | None
+    retry_config: dict[str, object] | None
+
+
+def _resolve_judge_config(args: argparse.Namespace) -> _JudgeConfig:
+    """Resolve the judge from CLI flags, or a config file when supplied.
+
+    A ``--config-file`` faithfully replays the deployed judge — including a
+    primary/fallback retry client — by reading the same ``tool_call_review``
+    section the runtime loads, so the harness gates on the judge production runs.
+    """
     model_parameters = _parse_llm_params(args.llm_params)
+    if args.config_file is None:
+        return _JudgeConfig(
+            provider=args.provider,
+            model=args.model,
+            timeout_seconds=args.timeout_seconds,
+            model_parameters=model_parameters,
+            retry_config=None,
+        )
+    loaded = yaml.safe_load(args.config_file.read_text(encoding="utf-8")) or {}
+    review_section = loaded.get("tool_call_review") or {}
+    review_cfg = ToolCallReviewConfig.model_validate(review_section)
+    retry_config = (
+        review_cfg.retry_config.model_dump(exclude_none=True)
+        if review_cfg.retry_config is not None
+        else None
+    )
+    if model_parameters is None:
+        top_params = loaded.get("llm_parameters")
+        if isinstance(top_params, dict):
+            model_parameters = top_params
+    return _JudgeConfig(
+        provider=review_cfg.provider,
+        model=review_cfg.model,
+        timeout_seconds=review_cfg.timeout_seconds,
+        model_parameters=model_parameters,
+        retry_config=retry_config,
+    )
+
+
+async def _run(args: argparse.Namespace) -> int:
+    judge = _resolve_judge_config(args)
+    model_parameters = judge.model_parameters
     cases = load_cases(args.dataset)
     if not cases:
         print("No cases found in the supplied datasets.", file=sys.stderr)
@@ -180,19 +250,21 @@ async def _run(args: argparse.Namespace) -> int:
             return 1
 
     reviewer = build_reviewer(
-        args.provider,
-        args.model,
-        timeout_seconds=args.timeout_seconds,
+        judge.provider,
+        judge.model,
+        timeout_seconds=judge.timeout_seconds,
         model_parameters=model_parameters,
+        retry_config=judge.retry_config,
     )
     try:
         report = await run_eval(
             cases,
             reviewer,
             seeds=args.seeds,
-            provider=args.provider,
-            model=args.model,
+            provider=judge.provider,
+            model=judge.model,
             model_parameters=model_parameters,
+            retry_config=judge.retry_config,
             dataset_hash=dataset_digest,
         )
     finally:

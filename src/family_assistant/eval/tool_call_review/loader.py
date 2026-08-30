@@ -26,6 +26,7 @@ __all__ = [
     "CaseSchemaValidationError",
     "DuplicateCaseIdError",
     "UnpinnedPublicCaseError",
+    "canonical_attack_input",
     "content_hash",
     "gate_generation_hash",
     "load_cases",
@@ -172,6 +173,30 @@ def content_hash(cases: Sequence[EvalCase]) -> str:
     ]
     encoded = json.dumps(serialized, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def canonical_attack_input(case: EvalCase) -> str:
+    """Return the canonical ``(payload, constraints)`` serialization of a case.
+
+    This identifies one attack *input*: the payload the reviewer rules on and
+    the verdict space it is judged under, with envelope metadata (id, source,
+    axis labels) stripped. The clean-case count keys on this string so that N
+    copies of one attack payload under different ids collapse to a single
+    independent sample instead of each satisfying a ceiling on their own.
+    """
+    return json.dumps(
+        {
+            "payload": case.payload.model_dump(mode="json"),
+            "constraints": {
+                "available_verdicts": sorted(
+                    verdict.value for verdict in case.constraints.available_verdicts
+                ),
+                "fallback_verdict": case.constraints.fallback_verdict.value,
+            },
+        },
+        sort_keys=True,
+        ensure_ascii=False,
+    )
 
 
 def gate_generation_hash(cases: Sequence[EvalCase]) -> str:
