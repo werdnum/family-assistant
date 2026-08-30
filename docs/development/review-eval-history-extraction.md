@@ -93,7 +93,8 @@ A `TaskTemplate` is a structured record of enumerated fields only:
 - `argument_shapes` — argument keys mapped to JSON **type names**, never values. Only keys the tool
   declares in its parameter schema are recorded, with the type taken from the schema; an unexpected
   key (where household text could otherwise ride across the boundary) is dropped and fails closed at
-  validation.
+  validation. A schema is the only thing that can vouch for a key, so a template that declares
+  argument shapes and resolves no tool is rejected outright rather than passed.
 - `sink_class`, `taint_tier` — enumerated from the taint model.
 - `content_kind` — a fixed content-kind tag.
 

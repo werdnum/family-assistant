@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import csv
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, Final
 
 from family_assistant.eval.tool_call_review.adapters.base import (
     AdaptedLineage,
@@ -40,7 +40,7 @@ from family_assistant.eval.tool_call_review.adapters.casebuild import (
 from family_assistant.security.taint import TaintSourceType
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Mapping
     from pathlib import Path
 
     from family_assistant.eval.tool_call_review.adapters.base import AdaptedCase
@@ -54,13 +54,31 @@ _ATTACKER_CHAT_ID = "700700700"
 _KNOWN_CHAT_ID = "1001"
 
 
+# The corpus declares exactly two labels. A value outside them is malformed
+# input, not a benign row: coercing it to 0 would file a real injection in the
+# friction pool and thin the attack corpus the false-allow bound rests on.
+_LABEL_VOCABULARY: Final[Mapping[str, int]] = {"0": 0, "1": 1}
+
+
 @dataclass(frozen=True, slots=True)
 class DeepsetRow:
-    """One row of the flat corpus."""
+    """One row of the flat corpus.
+
+    The label is validated on construction, so no row carrying anything but a
+    declared 0 or 1 exists to be adapted — a directly-constructed row is held to
+    the same vocabulary as a parsed one.
+    """
 
     index: int
     text: str
     label: int
+
+    def __post_init__(self) -> None:
+        if self.label not in _LABEL_VOCABULARY.values():
+            raise ValueError(
+                f"deepset row {self.index}: label {self.label!r} is outside the "
+                "declared 0/1 vocabulary."
+            )
 
 
 class DeepsetPromptInjectionsAdapter(Adapter):
@@ -78,17 +96,25 @@ class DeepsetPromptInjectionsAdapter(Adapter):
         rows: list[object] = []
         with path.open(encoding="utf-8", newline="") as handle:
             reader = csv.DictReader(handle)
-            if reader.fieldnames is None or "text" not in reader.fieldnames:
+            fieldnames = reader.fieldnames or ()
+            missing = [
+                column for column in ("text", "label") if column not in fieldnames
+            ]
+            if missing:
                 raise ValueError(
-                    f"{path} is not a deepset/prompt-injections CSV: expected a "
-                    "'text' column."
+                    f"{path} is not a deepset/prompt-injections CSV: missing "
+                    f"column(s) {missing}."
                 )
             for index, raw in enumerate(reader):
                 text = (raw.get("text") or "").strip()
                 if not text:
                     continue
                 rows.append(
-                    DeepsetRow(index=index, text=text, label=int(raw.get("label") or 0))
+                    DeepsetRow(
+                        index=index,
+                        text=text,
+                        label=_parse_label(raw.get("label"), path=path, index=index),
+                    )
                 )
         return rows
 
@@ -166,3 +192,14 @@ class DeepsetPromptInjectionsAdapter(Adapter):
             placement="lead",
             language="en",
         )
+
+
+def _parse_label(raw_label: str | None, *, path: Path, index: int) -> int:
+    """Return a row's declared label, rejecting anything outside the vocabulary."""
+    value = (raw_label or "").strip()
+    if value not in _LABEL_VOCABULARY:
+        raise ValueError(
+            f"{path} row {index}: label {raw_label!r} is outside the declared 0/1 "
+            "vocabulary; a row with no usable label cannot be adapted."
+        )
+    return _LABEL_VOCABULARY[value]

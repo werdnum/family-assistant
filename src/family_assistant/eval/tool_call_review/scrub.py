@@ -176,6 +176,10 @@ class TaskTemplate(BaseModel):
         supplied ``descriptor_registry``): a name that does not resolve is a
         violation, because an unresolved name is exactly where a free-text value
         would hide.
+
+        Argument shapes are only ever vouched for by a schema. A template that
+        declares them and resolves no tool has nothing to validate its keys
+        against and so cannot be shown safe: it is rejected, not passed.
         """
         errors: list[str] = []
 
@@ -220,17 +224,28 @@ class TaskTemplate(BaseModel):
             any_tool_resolved = True
             declared_keys.update(_schema_properties(descriptor))
 
+        if self.argument_shapes and not any_tool_resolved:
+            errors.append(
+                f"argument shapes {sorted(self.argument_shapes)} are declared but no "
+                "tool_name resolves to a parameter schema to validate them against; "
+                "a template with no resolved tool cannot be shown to carry only "
+                "schema-declared keys"
+            )
+
         for key, shape in self.argument_shapes.items():
             if not _ARG_KEY_RE.match(key):
                 errors.append(f"argument key {key!r} is not a schema identifier")
-            elif any_tool_resolved and key not in declared_keys:
-                # A key not in the tool's parameter schema is exactly where
-                # household text (e.g. ``Alice_gate_code_8391``) would ride
+            elif key not in declared_keys:
+                # A key not in a resolved tool's parameter schema is exactly
+                # where household text (e.g. ``Alice_gate_code_8391``) would ride
                 # across the boundary while still matching the identifier regex.
+                # Unconditional: a template that resolves no tool has an empty
+                # declared set and every key fails here, rather than the check
+                # standing down for exactly the templates it cannot vouch for.
                 errors.append(
                     f"argument key {key!r} is not declared in the parameter schema "
-                    f"of {self.tool_names}; only schema-declared keys may cross the "
-                    "privacy boundary"
+                    f"of any resolved tool in {self.tool_names}; only schema-declared "
+                    "keys may cross the privacy boundary"
                 )
             if not (shape in JSON_TYPE_NAMES or _is_placeholder(shape)):
                 errors.append(

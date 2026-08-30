@@ -107,6 +107,51 @@ def test_validator_rejects_argument_key_absent_from_tool_schema() -> None:
         template.validate_committable()
 
 
+def test_validator_rejects_argument_shapes_when_no_tool_resolves() -> None:
+    # The declared-key check must hold for every template, not only ones that
+    # happen to resolve a tool: with no tool_names at all there is no parameter
+    # schema to vouch for the keys, so household text in a key position would
+    # otherwise cross the boundary on the strength of matching an identifier
+    # regex.
+    template = _clean_template().model_copy(
+        update={
+            "tool_names": [],
+            "argument_shapes": {"Alice_gate_code_8391": "string"},
+        }
+    )
+    with pytest.raises(TemplatePrivacyError) as excinfo:
+        template.validate_committable()
+    message = str(excinfo.value)
+    assert "no tool_name resolves" in message
+    assert "not declared in the parameter schema" in message
+
+
+def test_validator_rejects_argument_shapes_when_every_tool_name_is_unknown() -> None:
+    # Same boundary, reached the other way: names are present but none resolves,
+    # so the template still has no schema that could show its keys are safe.
+    template = _clean_template().model_copy(
+        update={
+            "tool_names": ["definitely_not_a_registered_tool"],
+            "argument_shapes": {"Alice_gate_code_8391": "string"},
+        }
+    )
+    with pytest.raises(TemplatePrivacyError) as excinfo:
+        template.validate_committable()
+    message = str(excinfo.value)
+    assert "does not resolve" in message
+    assert "no tool_name resolves" in message
+
+
+def test_validator_accepts_a_template_with_no_tools_and_no_argument_shapes() -> None:
+    # Nothing to vouch for: with no argument keys there is no field for private
+    # text to travel in, so the rejection is scoped to templates that declare
+    # shapes rather than becoming a blanket ban.
+    template = _clean_template().model_copy(
+        update={"tool_names": [], "argument_shapes": {}}
+    )
+    template.validate_committable()
+
+
 def test_task_template_from_case_drops_keys_not_in_tool_schema() -> None:
     # Even when a case carries an unexpected argument key, abstraction records
     # only schema-declared keys — the shape comes from the schema, never the

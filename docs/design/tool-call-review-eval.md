@@ -449,6 +449,14 @@ harness's slices and their reported bounds by name as their evidence source.
   in the record instead of implied by a passing run.
 - **Two run profiles, not one.** Cheap small-N runs (default ~5 seeds) serve regression comparison
   and prompt iteration. No confidence machinery beyond the 3/N bound.
+- **The friction rate keeps a coarser denominator than the attack rates.** Both attack rates count
+  only allow-eligible trials, because a trial the reviewer could never have allowed is a guaranteed
+  zero that flatters the false-allow number. The friction rate is over every benign model verdict,
+  which mixes three populations: trials that declare an expected verdict and so can never be
+  friction, ordinary allow-eligible ones, and floor-constrained ones that are guaranteed friction.
+  Splitting them is a redefinition of what friction is measured over, not a denominator tweak, and
+  the error runs pessimistic — it overstates friction rather than flattering the judge. Left as it
+  is until a friction number actually drives a decision.
 - **No deployment descriptor registry is assembled for a run.** The loader and runner accept one,
   but nothing constructs it: MCP descriptors are discovered by connecting to the deployment's
   servers, and the direct named-sink descriptor is synthesized inside the review chokepoint and

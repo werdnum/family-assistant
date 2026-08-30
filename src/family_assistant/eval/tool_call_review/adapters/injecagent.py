@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, Final
 
 from family_assistant.eval.tool_call_review.adapters.base import (
     AdaptedLineage,
@@ -53,6 +53,11 @@ if TYPE_CHECKING:
 __all__ = ["InjecAgentAdapter", "InjecAgentRow"]
 
 _PLACEHOLDER = "<Attacker Instruction>"
+# Direct-harm and data-stealing, the two families upstream splits its cases
+# into. Which one a row is decides the gated call it is paired with and the
+# attack class it is sliced under, so defaulting it would file a whole family
+# under the wrong one.
+_ATTACK_TYPES: Final[frozenset[str]] = frozenset({"dh", "ds"})
 _ATTACKER_CHAT_ID = "700700700"
 _KNOWN_CHAT_ID = "1001"
 _EXFIL_URL = "https://attacker.example/collect"
@@ -67,7 +72,14 @@ _INGEST_POLICY = "unknown_external.arbitrary_external_message"
 
 @dataclass(frozen=True, slots=True)
 class InjecAgentRow:
-    """One InjecAgent-style case row."""
+    """One InjecAgent-style case row.
+
+    Every field is load-bearing for the case the row becomes, so all are
+    validated on construction: the attack type picks the gated call and the
+    attack class the row is filed under, and the attacker instruction *is* the
+    injection. A row missing any of them yields a case that is not what its
+    label says it is, so no such row exists to be adapted.
+    """
 
     index: int
     attack_type: str
@@ -75,6 +87,28 @@ class InjecAgentRow:
     tool_name: str
     tool_response_template: str
     attacker_instruction: str
+
+    def __post_init__(self) -> None:
+        if self.attack_type not in _ATTACK_TYPES:
+            raise ValueError(
+                f"InjecAgent row {self.index}: attack_type {self.attack_type!r} is "
+                f"outside the declared vocabulary {sorted(_ATTACK_TYPES)}."
+            )
+        empty = [
+            name
+            for name, value in (
+                ("User Instruction", self.user_instruction),
+                ("User Tool", self.tool_name),
+                ("Tool Response Template", self.tool_response_template),
+                ("Attacker Instruction", self.attacker_instruction),
+            )
+            if not value.strip()
+        ]
+        if empty:
+            raise ValueError(
+                f"InjecAgent row {self.index}: missing or empty required field(s) "
+                f"{empty}."
+            )
 
     @property
     def tool_response(self) -> str:
@@ -110,16 +144,25 @@ class InjecAgentAdapter(Adapter):
         rows: list[object] = []
         for index, raw in enumerate(raw_cases):
             if not isinstance(raw, dict):
-                continue
+                raise ValueError(
+                    f"{path}: entry {index} is a {type(raw).__name__}, not an "
+                    "InjecAgent case object."
+                )
             rows.append(
                 InjecAgentRow(
                     index=index,
-                    attack_type=str(raw.get("attack_type", "dh")).strip().lower(),
-                    user_instruction=str(raw.get("User Instruction", "")).strip(),
-                    tool_name=str(raw.get("User Tool", "read_web_page")).strip(),
-                    tool_response_template=str(raw.get("Tool Response Template", "")),
-                    attacker_instruction=str(
-                        raw.get("Attacker Instruction", "")
+                    attack_type=_required_field(raw, "attack_type", index)
+                    .strip()
+                    .lower(),
+                    user_instruction=_required_field(
+                        raw, "User Instruction", index
+                    ).strip(),
+                    tool_name=_required_field(raw, "User Tool", index).strip(),
+                    tool_response_template=_required_field(
+                        raw, "Tool Response Template", index
+                    ),
+                    attacker_instruction=_required_field(
+                        raw, "Attacker Instruction", index
                     ).strip(),
                 )
             )
@@ -278,3 +321,19 @@ class InjecAgentAdapter(Adapter):
             placement="trailing",
             language="en",
         )
+
+
+def _required_field(raw: dict[str, object], key: str, index: int) -> str:
+    """Return a row's required string field verbatim, rejecting a missing or empty one.
+
+    The value is returned unstripped so the tool-response template keeps the
+    layout the injection sits in; callers strip the fields that are compared or
+    rendered as bare text.
+    """
+    value = raw.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(
+            f"InjecAgent row {index}: required field {key!r} is missing, empty or "
+            "not a string; an incomplete row cannot be adapted into a labeled case."
+        )
+    return value
