@@ -97,7 +97,10 @@ class ToolCallReviewCaptureConfig(BaseModel):
     captures`` carries the marker name yet lands in a tracked directory, and
     ``.review-eval-local/../captures`` names the marker while resolving outside
     it. Both are rejected. Relative paths are anchored at the repository root,
-    which is also the working directory the deployment runs from.
+    never at the process working directory: an installed service started from
+    elsewhere would otherwise pass validation and then write raw household
+    content outside the ignored tree. :attr:`resolved_directory` is the one
+    place that anchoring happens, and the writer uses it.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -106,17 +109,26 @@ class ToolCallReviewCaptureConfig(BaseModel):
     directory: str = ".review-eval-local/captures"
     allow_external_directory: bool = False
 
-    @model_validator(mode="after")
-    def _validate_directory_is_private(self) -> ToolCallReviewCaptureConfig:
-        if self.allow_external_directory:
-            return self
+    @property
+    def resolved_directory(self) -> Path:
+        """The absolute directory captures are written to.
+
+        A relative path is anchored at the repository root, so validation and
+        writing cannot disagree about where a capture lands.
+        """
         candidate = Path(self.directory)
         if not candidate.is_absolute():
             candidate = PROJECT_ROOT / candidate
         # Normalize lexically rather than resolving: the directory need not
         # exist yet, and a ``..`` segment must be collapsed before the
         # containment check or it would walk straight out of the private tree.
-        normalized = Path(os.path.normpath(candidate))
+        return Path(os.path.normpath(candidate))
+
+    @model_validator(mode="after")
+    def _validate_directory_is_private(self) -> ToolCallReviewCaptureConfig:
+        if self.allow_external_directory:
+            return self
+        normalized = self.resolved_directory
         private_root = Path(os.path.normpath(PROJECT_ROOT / _PRIVATE_CAPTURE_DIR_NAME))
         if not normalized.is_relative_to(private_root):
             raise ValueError(

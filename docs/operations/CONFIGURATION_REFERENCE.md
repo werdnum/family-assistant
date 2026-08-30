@@ -1433,12 +1433,14 @@ Because the content is raw, `directory` must stay under the gitignored `.review-
 this is a public repository, and a typo like `captures/` would write household content to a
 commit-visible path. `.gitignore` ignores the repository-root path `/.review-eval-local/`, so the
 configuration model checks **containment, not the name**: at load it resolves `directory` (relative
-paths against the repository root, which is also the deployment's working directory) and rejects
-anything that does not land inside `<repo root>/.review-eval-local/`. That rejects `captures/`,
-`.review-eval-local/../captures`, and `nested/.review-eval-local/captures` — the last of which
-carries the marker name but sits in a *tracked* directory. Set `allow_external_directory: true` to
-opt into an explicitly private location elsewhere, such as a mounted volume. Capture is best-effort
-and off the review's critical path; a capture failure never adds latency to or breaks a review.
+paths against the repository root, never against the process working directory) and rejects anything
+that does not land inside `<repo root>/.review-eval-local/`. Captures are written to that same
+resolved path, so a service started from another directory still writes inside the private tree.
+That rejects `captures/`, `.review-eval-local/../captures`, and `nested/.review-eval-local/captures`
+— the last of which carries the marker name but sits in a *tracked* directory. Set
+`allow_external_directory: true` to opt into an explicitly private location elsewhere, such as a
+mounted volume. Capture is best-effort and off the review's critical path; a capture failure never
+adds latency to or breaks a review.
 
 Captures are stored **raw and interim-unlabeled**: they carry a placeholder `label: benign` only
 because the schema's label is not yet nullable, and that interim label is not a real label. Only

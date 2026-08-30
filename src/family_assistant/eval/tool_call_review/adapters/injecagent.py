@@ -95,14 +95,20 @@ class InjecAgentAdapter(Adapter):
 
     @classmethod
     def parse_rows(cls, path: Path) -> list[object]:
-        """Parse the upstream JSON (a list of case objects) into rows."""
-        loaded = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(loaded, list):
-            raise ValueError(
-                f"{path} is not an InjecAgent case file: expected a JSON list."
-            )
+        """Parse the upstream JSON (a list of case objects) into rows.
+
+        Upstream ships its cases as several JSON files in one ``data``
+        directory, which is what the build workflow points at, so a directory
+        is read as the concatenation of its ``*.json`` files in sorted order.
+        Row indices run continuously across the files, which is what keeps the
+        generated case ids unique.
+        """
+        files = sorted(path.glob("*.json")) if path.is_dir() else [path]
+        raw_cases: list[object] = []
+        for file_path in files:
+            raw_cases.extend(cls._load_case_list(file_path))
         rows: list[object] = []
-        for index, raw in enumerate(loaded):
+        for index, raw in enumerate(raw_cases):
             if not isinstance(raw, dict):
                 continue
             rows.append(
@@ -119,6 +125,15 @@ class InjecAgentAdapter(Adapter):
             )
         return rows
 
+    @classmethod
+    def _load_case_list(cls, path: Path) -> list[object]:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(loaded, list):
+            raise ValueError(
+                f"{path} is not an InjecAgent case file: expected a JSON list."
+            )
+        return loaded
+
     def iter_adapted(self) -> Iterator[AdaptedCase]:
         """Yield the attack case and its benign twin for each row."""
         for row in self.rows:
@@ -127,17 +142,18 @@ class InjecAgentAdapter(Adapter):
             yield self._attack_case(row)
             yield self._benign_twin(row)
 
-    def _lineage(self, row: InjecAgentRow, *, variant: str) -> AdaptedLineage:
+    def _lineage(
+        self, row: InjecAgentRow, *, variant: str, dedup_text: str
+    ) -> AdaptedLineage:
         return AdaptedLineage(
             corpus_id=self.corpus_id,
             upstream_id=f"{row.attack_type}-case-{row.index}",
             # Group by attack type so whole families are held out as units, as
-            # the design requires for combinatorial corpora; the variant keeps
-            # a twin from deduplicating against its own attack.
+            # the design requires for combinatorial corpora.
             group=f"injecagent:{row.attack_type}:{variant}",
             license=self.license,
             upstream_revision=self.upstream_revision,
-            text_key=text_key(f"{variant}:{row.attacker_instruction or row.index}"),
+            text_key=text_key(dedup_text),
         )
 
     def _attack_case(self, row: InjecAgentRow) -> AdaptedCase:
@@ -194,7 +210,14 @@ class InjecAgentAdapter(Adapter):
             turn_taint=tool_taint,
             policy_identifier=policy,
             policy_description=description,
-            lineage=self._lineage(row, variant="attack"),
+            # Dedup identity is the injection text alone, exactly as the other
+            # adapters key theirs: the same injection reaching us through two
+            # corpora is one attack input and must not straddle a dev/gate
+            # split. The label, not the key, is what separates it from the
+            # benign twin below.
+            lineage=self._lineage(
+                row, variant="attack", dedup_text=row.attacker_instruction
+            ),
             obfuscation="none",
             placement="trailing",
             language="en",
@@ -243,7 +266,14 @@ class InjecAgentAdapter(Adapter):
                 "Clean tool result and a legitimate reply to the user; benign "
                 "twin of an InjecAgent row."
             ),
-            lineage=self._lineage(row, variant="benign"),
+            # The twin carries no injection, so it keys on the untrusted
+            # content it does carry, which keeps it from colliding with the
+            # attack it mirrors without touching that attack's identity.
+            lineage=self._lineage(
+                row,
+                variant="benign",
+                dedup_text=f"{row.user_instruction}\n{clean_response}",
+            ),
             obfuscation="none",
             placement="trailing",
             language="en",

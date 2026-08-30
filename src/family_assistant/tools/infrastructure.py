@@ -17,7 +17,6 @@ import unicodedata
 import uuid
 from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping
 from dataclasses import dataclass
-from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -92,6 +91,7 @@ from family_assistant.tools.types import (
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from pathlib import Path
 
     from family_assistant.config_models import ToolCallReviewConfig
     from family_assistant.embeddings import EmbeddingGenerator
@@ -1528,17 +1528,23 @@ async def _serialize_and_write_review_capture(
     constraints: ToolCallReviewConstraints,
     *,
     audit_event_id: str,
-    directory: str,
+    directory: Path,
 ) -> None:
-    """Build and write one capture off the event loop, swallowing all failures."""
+    """Build and write one capture off the event loop, swallowing all failures.
+
+    ``directory`` is the config's already-anchored absolute path, not the raw
+    configured string: resolving that string here would anchor it at the
+    process working directory instead of the repository root the containment
+    check used, so a service started from elsewhere would write raw household
+    content outside the ignored tree.
+    """
 
     def _write() -> None:
         case = build_review_capture_case(
             review_input, constraints, audit_event_id=audit_event_id
         )
-        target_dir = Path(directory)
-        target_dir.mkdir(parents=True, exist_ok=True)
-        path = target_dir / f"{case.id}.yaml"
+        directory.mkdir(parents=True, exist_ok=True)
+        path = directory / f"{case.id}.yaml"
         path.write_text(
             yaml.safe_dump(
                 case.model_dump(mode="json"),
@@ -2666,7 +2672,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
         config = self._review_config
         if config is None or not config.capture.enabled:
             return
-        directory = config.capture.directory
+        directory = config.capture.resolved_directory
         try:
             task = spawn_detached(
                 _serialize_and_write_review_capture(

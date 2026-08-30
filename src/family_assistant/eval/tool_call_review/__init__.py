@@ -8,12 +8,14 @@ today's prompt assembly and the eval measures the current system.
 from __future__ import annotations
 
 from family_assistant.eval.tool_call_review.loader import (
+    CaseInputConstructionError,
     CaseSchemaValidationError,
     DuplicateCaseIdError,
     canonical_attack_input,
     content_hash,
     load_cases,
     validate_against_tool_schema,
+    validate_review_input_constructible,
 )
 from family_assistant.eval.tool_call_review.report import (
     EvalReport,
@@ -49,6 +51,7 @@ __all__ = [
     "DEFAULT_FALSE_ALLOW_CEILING",
     "BrowserPayload",
     "CaseConstraints",
+    "CaseInputConstructionError",
     "CaseSchemaValidationError",
     "ConversationPayload",
     "DerivationPayload",
@@ -76,4 +79,5 @@ __all__ = [
     "run_eval",
     "seed_flips",
     "validate_against_tool_schema",
+    "validate_review_input_constructible",
 ]

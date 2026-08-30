@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 import yaml
 
+from family_assistant import config_models
 from family_assistant.config_models import (
     ToolCallReviewCaptureConfig,
     ToolCallReviewConfig,
@@ -18,6 +19,7 @@ from family_assistant.eval.tool_call_review.schema import (
     resolve_tool_descriptor,
 )
 from family_assistant.llm.messages import dict_to_message
+from family_assistant.paths import PROJECT_ROOT
 from family_assistant.security.taint import SinkClass, TurnTaintState
 from family_assistant.services.tool_call_review import (
     DelegatingPolicyContext,
@@ -151,7 +153,7 @@ async def test_serialize_and_write_produces_loadable_file(tmp_path: Path) -> Non
         _make_review_input(),
         _full_constraints(),
         audit_event_id="evt-1",
-        directory=str(directory),
+        directory=directory,
     )
     loaded = load_cases(directory)
     assert [case.id for case in loaded] == ["live-capture-evt-1"]
@@ -236,6 +238,49 @@ def test_shipped_default_capture_is_disabled() -> None:
 def test_capture_directory_outside_private_tree_is_rejected(directory: str) -> None:
     with pytest.raises(ValueError, match=".review-eval-local"):
         ToolCallReviewCaptureConfig(enabled=True, directory=directory)
+
+
+def test_capture_directory_resolves_against_the_repository_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A relative directory anchors at the repository root, not the cwd.
+
+    Containment is validated against ``<repo root>/.review-eval-local/``, so a
+    writer that resolved the raw string itself would send raw household content
+    somewhere validation never looked whenever the process runs from elsewhere.
+    """
+    monkeypatch.chdir(tmp_path)
+    config = ToolCallReviewCaptureConfig(enabled=True)
+    assert config.resolved_directory == PROJECT_ROOT / ".review-eval-local" / "captures"
+    assert not config.resolved_directory.is_relative_to(tmp_path)
+
+
+async def test_relative_capture_directory_writes_under_the_repository_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An installed service started from another cwd still captures privately."""
+    fake_root = tmp_path / "repo"
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.setattr(config_models, "PROJECT_ROOT", fake_root)
+    monkeypatch.chdir(elsewhere)
+
+    config = ToolCallReviewConfig(
+        capture=ToolCallReviewCaptureConfig(
+            enabled=True, directory=".review-eval-local/captures"
+        )
+    )
+    harness = _CaptureHarness(config)
+    harness._start_review_capture(
+        review_input=_make_review_input(),
+        constraints=_full_constraints(),
+        audit_event_id="evt-cwd",
+    )
+    await _drain(harness)
+
+    private_dir = fake_root / ".review-eval-local" / "captures"
+    assert [case.id for case in load_cases(private_dir)] == ["live-capture-evt-cwd"]
+    assert not (elsewhere / ".review-eval-local").exists()
 
 
 def test_capture_directory_inside_repository_private_tree_is_accepted() -> None:

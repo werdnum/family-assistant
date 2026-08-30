@@ -56,9 +56,11 @@ class AdaptedLineage:
     ``injecagent:…``), so including it would keep the same injection text in two
     corpora from ever deduplicating and let it straddle a dev/gate split.
     ``dedup_key`` is therefore the normalized text digest alone, global across
-    corpora. Where a corpus needs a benign twin to survive alongside its own
-    attack, the distinguishing identity (the gated call it argues for) is folded
-    into ``text_key`` rather than smuggled back in through ``group``.
+    corpora: an attack's key is its injection text and nothing else, so the same
+    injection reaching us through two corpora is one input. Where a corpus emits
+    a benign twin alongside its attack, the twin keys on the untrusted content
+    *it* carries, which keeps the pair distinct without perturbing the attack's
+    cross-corpus identity.
     """
 
     corpus_id: str

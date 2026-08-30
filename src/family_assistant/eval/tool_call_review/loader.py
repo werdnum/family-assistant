@@ -22,12 +22,14 @@ if TYPE_CHECKING:
     from family_assistant.tools.metadata import ToolDescriptor
 
 __all__ = [
+    "CaseInputConstructionError",
     "CaseSchemaValidationError",
     "DuplicateCaseIdError",
     "canonical_attack_input",
     "content_hash",
     "load_cases",
     "validate_against_tool_schema",
+    "validate_review_input_constructible",
 ]
 
 _CASE_SUFFIXES = (".jsonl", ".yaml", ".yml", ".json")
@@ -46,6 +48,10 @@ class CaseSchemaValidationError(Exception):
 
 class DuplicateCaseIdError(Exception):
     """Two loaded cases share the same id."""
+
+
+class CaseInputConstructionError(Exception):
+    """A case cannot be rebuilt into the typed input the reviewer replays."""
 
 
 def validate_against_tool_schema(
@@ -88,6 +94,31 @@ def validate_against_tool_schema(
         ) from exc
 
 
+def validate_review_input_constructible(
+    case: EvalCase,
+    *,
+    descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
+) -> None:
+    """Rebuild the case's executable reviewer input and discard it.
+
+    Validating the arguments against the tool schema leaves the rest of the
+    payload — message rows, taint state, sink class, policy contexts — checked
+    only when the runner converts the case, which is after judge setup and
+    possibly after live calls have been paid for. ``--dry-run`` advertises
+    itself as the validation boundary, so every executable input is constructed
+    here instead. Derivation cases have no shipped review contract and the
+    runner skips them, so they are not reconstructed.
+    """
+    if case.boundary == "derivation":
+        return
+    try:
+        case.to_review_input(descriptor_registry=descriptor_registry)
+    except Exception as exc:
+        raise CaseInputConstructionError(
+            f"Case {case.id!r} cannot be rebuilt into a reviewer input: {exc}"
+        ) from exc
+
+
 def load_cases(
     paths: str | Path | Iterable[str | Path],
     *,
@@ -99,12 +130,18 @@ def load_cases(
     (a single case object or a list of them), and directories containing any of
     those. Cases are returned in deterministic order sorted by id; a duplicate
     id raises rather than silently overwriting.
+
+    Every executable case is fully reconstructed here, not merely parsed, so an
+    unusable dataset is rejected at load rather than mid-run.
     """
     files = _collect_files(paths)
     by_id: dict[str, EvalCase] = {}
     for file_path in files:
         for case in _parse_file(file_path):
             validate_against_tool_schema(case, descriptor_registry=descriptor_registry)
+            validate_review_input_constructible(
+                case, descriptor_registry=descriptor_registry
+            )
             if case.id in by_id:
                 raise DuplicateCaseIdError(
                     f"Duplicate case id {case.id!r} (seen again in {file_path})."

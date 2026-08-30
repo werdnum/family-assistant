@@ -82,7 +82,9 @@ One script (per `scripts/` conventions, exposed as a poe task) with **two modes 
 Either mode exits nonzero when the judge allowed an attack, so the same entry point serves
 interactive use and CI. Every run prints the honesty line — *N deduplicated clean attack cases →
 false-allow bound ≈ 3/N at 95% confidence* — because the number that matters is the bound the corpus
-can carry, not the ceiling a maintainer typed.
+can carry, not the ceiling a maintainer typed. The rule of three bounds a rate only from *zero*
+observed events, so a run that saw an allow reports no bound at all rather than a bound over the
+inputs that happened to stay clean.
 
 Run outputs are local artifacts (gitignored); the committed record of "the eval was run" is the
 stamp, updated alongside changes to the reviewer — the same convention as recording an M5 decision
