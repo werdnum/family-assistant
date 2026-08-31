@@ -80,11 +80,10 @@ API until a real call confirms them, rather than as equivalent to a documented c
 into `.review-eval-local/upstream/`, then records revisions and SHA-256 checksums. It defaults to
 the verified manifest commits, so a bare invocation is reproducible; optional
 `--deepset-revision <sha>` and `--injecagent-revision <sha>` flags override the pins for an
-intentional acquisition.
-The script never resolves a moving branch such as `main`. It requires Git, Git LFS, and `shasum`; it
-refuses an existing output tree and publishes a fully staged fetch atomically. If a fetch fails, fix
-the reported prerequisite or network/repository error and rerun it with no pre-created `upstream/`
-directory.
+intentional acquisition. The script never resolves a moving branch such as `main`. It requires Git,
+Git LFS, and `shasum`; it refuses an existing output tree and publishes a fully staged fetch
+atomically. If a fetch fails, fix the reported prerequisite or network/repository error and rerun it
+with no pre-created `upstream/` directory.
 
 `build_public_corpus_cases.py` turns one fetched source into schema-validated browser-ablation cases
 under a fresh `.review-eval-local/public/<corpus>/` directory. `--out-dir` is resolved through the
@@ -100,3 +99,15 @@ Development and deployment scripts go in `scripts/`; container build/run tooling
 `.devcontainer/`; test utilities go in `tests/`. Name shell scripts in lowercase with hyphens
 (`build-and-push-container.sh`, not `build.sh`). Document the new script in this file and consider
 adding a poe task for it in `pyproject.toml`.
+
+### Batch review-eval runner
+
+`tool_call_review_batch.py` is the staged private runner for OpenRouter's asynchronous batch
+endpoint. `prepare` validates normal case inputs and writes deterministic request JSONL plus a
+private manifest; `submit` is the only network-spending phase and requires both
+`--approved-spend-usd USD` and `--approve-spend`; `status` polls once, `poll` repeats it, and
+`harvest` requires exact result reconciliation before writing a private `EvalReport`. Batch result
+latency is explicitly unavailable, rather than inferred from polling time. See
+`docs/development/tool-call-review-batch.md` for the operator runbook. Do not reuse an existing run
+directory or resubmit a chunk whose POST outcome is unknown. The approved amount is recorded for
+operator audit; it is not an enforceable provider-side spend cap.

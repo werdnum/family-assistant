@@ -12,7 +12,7 @@ import statistics
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from family_assistant.eval.tool_call_review.loader import SkipKind
 from family_assistant.eval.tool_call_review.scoring import (
@@ -76,20 +76,45 @@ class LatencyStats(BaseModel):
     median_ms: float
     p95_ms: float
     max_ms: float
+    available_count: int = 0
+    unavailable_count: int = 0
+
+    @model_validator(mode="before")
+    @classmethod
+    def _infer_legacy_counts(cls, data: object) -> object:
+        """Treat old records without availability fields as measured latency."""
+        if isinstance(data, dict) and (
+            data.get("count")
+            and "available_count" not in data
+            and "unavailable_count" not in data
+        ):
+            return {**data, "available_count": data["count"]}
+        return data
 
     @classmethod
-    def from_latencies(cls, latencies: list[float]) -> LatencyStats:
-        """Summarize a list of latencies; zeros when empty."""
-        if not latencies:
-            return cls(count=0, min_ms=0.0, median_ms=0.0, p95_ms=0.0, max_ms=0.0)
-        ordered = sorted(latencies)
+    def from_latencies(cls, latencies: list[float | None]) -> LatencyStats:
+        """Summarize measured latencies and count unavailable measurements."""
+        measured = [latency for latency in latencies if latency is not None]
+        if not measured:
+            return cls(
+                count=len(latencies),
+                min_ms=0.0,
+                median_ms=0.0,
+                p95_ms=0.0,
+                max_ms=0.0,
+                available_count=0,
+                unavailable_count=len(latencies),
+            )
+        ordered = sorted(measured)
         index = _quantile_index(len(ordered), 0.95)
         return cls(
-            count=len(ordered),
+            count=len(latencies),
             min_ms=ordered[0],
             median_ms=statistics.median(ordered),
             p95_ms=ordered[index],
             max_ms=ordered[-1],
+            available_count=len(measured),
+            unavailable_count=len(latencies) - len(measured),
         )
 
 
@@ -282,6 +307,7 @@ class EvalReport(BaseModel):
     deployment_guidance: str | None = None
     dataset_hash: str | None = None
     registry_hash: str | None = None
+    latency_source: str | None = None
     generated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     def scored_case_count(self) -> int:
@@ -606,6 +632,7 @@ class EvalReport(BaseModel):
             # into the tool context, so two runs over one dataset under two
             # snapshots measure different inputs and must not stamp alike.
             "registry_hash": self.registry_hash,
+            "latency_source": self.latency_source,
             "seeds": self.seeds,
             "scored_cases": self.scored_case_count(),
             "scored_trials": len(self.trials),
@@ -790,6 +817,12 @@ class EvalReport(BaseModel):
 
 
 def _format_slice(metrics: SliceMetrics) -> list[str]:
+    latency = (
+        f"latency p50={metrics.latency.median_ms:.0f}ms "
+        f"p95={metrics.latency.p95_ms:.0f}ms"
+        if metrics.latency.available_count
+        else "latency unavailable"
+    )
     return [
         f"  {metrics.name} (trials={metrics.total_trials}, "
         f"attack={metrics.attack_trials}, benign={metrics.benign_trials})",
@@ -804,7 +837,5 @@ def _format_slice(metrics: SliceMetrics) -> list[str]:
         f"    clean={metrics.clean_trials} "
         f"allowed={metrics.observed_allow_trials} "
         f"inconclusive={metrics.inconclusive_trials} "
-        f"seed_flips={len(metrics.seed_flip_case_ids)}; "
-        f"latency p50={metrics.latency.median_ms:.0f}ms "
-        f"p95={metrics.latency.p95_ms:.0f}ms",
+        f"seed_flips={len(metrics.seed_flip_case_ids)}; {latency}",
     ]

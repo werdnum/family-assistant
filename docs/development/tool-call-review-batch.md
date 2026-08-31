@@ -1,0 +1,42 @@
+# Tool-call review batch runbook
+
+The staged batch runner uses OpenRouter's asynchronous batch endpoint while keeping every request,
+result, reason, and manifest private. Preparation is local and refuses to reuse a run directory:
+
+```bash
+python scripts/tool_call_review_batch.py prepare \
+    --dataset .review-eval-local/public/deepset-browser-ablation-gate \
+    --dataset .review-eval-local/public/injecagent-browser-ablation-both-gate \
+    --tool-registry .review-eval-local/registry/deployment.json \
+    --model google/gemini-3.7-flash \
+    --seeds 1 --batch-size 500 --max-tokens 512 \
+    --run-dir .review-eval-local/runs/batch-gate-2026-08-31
+```
+
+Use `prepare --dry-run` to validate inputs without writing artifacts. Submission is the only
+network-spending phase and requires a positive operator-approved amount:
+
+```bash
+python scripts/tool_call_review_batch.py submit \
+    --run-dir .review-eval-local/runs/batch-gate-2026-08-31 \
+    --approved-spend-usd 10 --approve-spend
+python scripts/tool_call_review_batch.py poll \
+    --run-dir .review-eval-local/runs/batch-gate-2026-08-31
+python scripts/tool_call_review_batch.py harvest \
+    --run-dir .review-eval-local/runs/batch-gate-2026-08-31
+```
+
+`--max-tokens` bounds each response (default 512); truncation is unavailable evidence and fails
+harvest rather than becoming a verdict. `--approved-spend-usd` records the operator's approval; it
+is not an enforceable provider-side spend cap. OpenRouter usage/cost fields are optional remote
+metadata and may be absent. The manifest records dataset/model/provider, request IDs, request
+SHA-256, remote batch IDs, statuses, optional usage, and approval metadata; it does not record raw
+event streams. `status` is a single poll and `poll` repeats it. Polling exits unsuccessfully for
+failed, expired, cancelled, or unknown terminal states.
+
+Harvest refuses incomplete batches, item errors, missing IDs, duplicate IDs, extra IDs, malformed
+structured output, verdicts outside a case's allowed space, or a changed request artifact. An
+ambiguous submission outcome is recorded as `submission_unknown` and is never automatically
+resubmitted, because server-side acceptance could otherwise create a duplicate billable batch. The
+final report remains compatible with the normal evaluator; batch trials mark latency as unavailable
+rather than using polling time as a per-request measurement.

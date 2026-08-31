@@ -360,6 +360,10 @@ shell = "for mod in $(monkeytype list-modules | grep '^family_assistant\\.'); do
 help = "Replay the tool-call reviewer over labeled cases and report per-slice scores"
 cmd = "python scripts/tool_call_review_eval.py"
 
+[tool.poe.tasks.review-eval-batch]
+help = "Prepare, submit, poll, and harvest a private OpenRouter batch review eval"
+cmd = "python scripts/tool_call_review_batch.py"
+
 [tool.poe.tasks.review-eval-extract-history]
 help = "Abstract message history into committable task templates (private dir only)"
 cmd = "python scripts/extract_review_history.py"

@@ -1,0 +1,257 @@
+"""Tests for the private staged batch evaluator."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from typing import TYPE_CHECKING, cast
+
+import httpx
+import pytest
+
+from family_assistant.eval import private_paths
+from family_assistant.eval.tool_call_review.batch import (
+    BatchClient,
+    BatchError,
+    harvest_batch,
+    prepare_batch,
+    submit_batch,
+    update_batch_status,
+)
+from family_assistant.eval.tool_call_review.report import LatencyStats
+
+pytestmark = pytest.mark.no_db
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+class _FakeBatchClient(BatchClient):
+    def __init__(self) -> None:
+        self.submitted: list[dict[str, object]] = []
+
+    async def close(self) -> None:
+        pass
+
+    async def request(
+        self, method: str, path: str, payload: dict[str, object] | None = None
+    ) -> dict[str, object]:
+        if method == "POST":
+            assert payload is not None
+            self.submitted.append(payload)
+            return {"id": f"batch-{len(self.submitted)}", "status": "validating"}
+        assert method == "GET"
+        request_ids = self.submitted[int(path.rsplit("-", 1)[1]) - 1]["requests"]
+        assert isinstance(request_ids, list)
+        return {
+            "id": path.rsplit("/", 1)[1],
+            "status": "completed",
+            "usage": {"cost": 0.01},
+            "results": [
+                {
+                    "custom_id": request["custom_id"],
+                    "response": {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": json.dumps({
+                                        "verdict": "deny",
+                                        "reason": "fake result",
+                                        "safer_alternative": None,
+                                    })
+                                }
+                            }
+                        ]
+                    },
+                }
+                for request in request_ids
+            ],
+        }
+
+
+@pytest.fixture
+def private_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / ".review-eval-local").mkdir()
+    monkeypatch.setattr(private_paths, "PROJECT_ROOT", root)
+    return root / ".review-eval-local"
+
+
+def test_prepare_chunks_and_private_artifacts(private_root: Path) -> None:
+    manifest = prepare_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"],
+        private_root / "runs" / "pilot",
+        seeds=1,
+        batch_size=7,
+    )
+
+    assert manifest.request_count == 19
+    assert manifest.provider == "openrouter"
+    assert manifest.api_base_url == "https://openrouter.ai/api"
+    assert [len(chunk.request_ids) for chunk in manifest.chunks] == [7, 7, 5]
+    assert (private_root / "runs/pilot/manifest.json").is_file()
+    assert (private_root / "runs/pilot/requests.jsonl").is_file()
+
+
+def test_prepare_refuses_zero_runnable_cases_before_artifacts(
+    private_root: Path,
+) -> None:
+    empty_dataset = private_root / "empty-dataset"
+    empty_dataset.mkdir()
+    run_dir = private_root / "runs" / "empty"
+
+    with pytest.raises(BatchError, match="No runnable cases"):
+        prepare_batch([empty_dataset], run_dir)
+
+    assert not run_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_submit_status_harvest_is_resumable(private_root: Path) -> None:
+    run_dir = private_root / "runs" / "pilot"
+    prepare_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"],
+        run_dir,
+        batch_size=50,
+    )
+    fake = _FakeBatchClient()
+    manifest = await submit_batch(
+        run_dir,
+        approved_spend_usd=1.0,
+        approve_spend=True,
+        api_key="test-only",
+        client=fake,
+    )
+    assert all(chunk.batch_id for chunk in manifest.chunks)
+    assert list(fake.submitted[0]) == ["endpoint", "model", "requests"]
+    first_request = cast("list[dict[str, object]]", fake.submitted[0]["requests"])[0]
+    first_body = cast("dict[str, object]", first_request["body"])
+    assert first_body["provider"] == {"require_parameters": True}
+    assert first_body["max_tokens"] == 512
+    response_format = cast("dict[str, object]", first_body["response_format"])
+    schema = cast("dict[str, object]", response_format["json_schema"])
+    assert schema["strict"] is True
+    await update_batch_status(run_dir, api_key="test-only", client=fake)
+    report = harvest_batch(run_dir)
+
+    assert len(report.trials) == 19
+    assert all(trial.latency_ms is None for trial in report.trials)
+    assert report.latency_source == "batch_api_unavailable"
+    assert report.model_parameters == {
+        "batch_mode": True,
+        "max_tokens": 512,
+        "provider_require_parameters": True,
+        "response_format": "tool_call_review_response",
+    }
+    assert report.to_stamp_record()["latency_source"] == "batch_api_unavailable"
+    assert "latency unavailable" in report.to_text_summary()
+
+
+def test_submit_requires_explicit_spend_approval(private_root: Path) -> None:
+    run_dir = private_root / "runs" / "pilot"
+    prepare_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
+    )
+
+    with pytest.raises(BatchError, match="approve-spend"):
+        asyncio.run(
+            submit_batch(
+                run_dir,
+                approved_spend_usd=1.0,
+                approve_spend=False,
+                api_key="test-only",
+                client=_FakeBatchClient(),
+            )
+        )
+
+
+class _UnknownOutcomeClient(_FakeBatchClient):
+    async def request(
+        self, method: str, path: str, payload: dict[str, object] | None = None
+    ) -> dict[str, object]:
+        self.submitted.append(payload or {})
+        raise httpx.ReadTimeout("test timeout")
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_submission_is_recorded_and_not_retried(
+    private_root: Path,
+) -> None:
+    run_dir = private_root / "runs" / "pilot"
+    prepare_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
+    )
+    fake = _UnknownOutcomeClient()
+
+    with pytest.raises(BatchError, match="outcome is unknown"):
+        await submit_batch(
+            run_dir,
+            approved_spend_usd=1.0,
+            approve_spend=True,
+            api_key="test-only",
+            client=fake,
+        )
+
+    assert len(fake.submitted) == 1
+    manifest_json = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest_json["chunks"][0]["status"] == "submission_unknown"
+
+
+@pytest.mark.asyncio
+async def test_harvest_rejects_missing_result(private_root: Path) -> None:
+    run_dir = private_root / "runs" / "pilot"
+    prepare_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
+    )
+    fake = _FakeBatchClient()
+    await submit_batch(
+        run_dir,
+        approved_spend_usd=1.0,
+        approve_spend=True,
+        api_key="test-only",
+        client=fake,
+    )
+    await update_batch_status(run_dir, api_key="test-only", client=fake)
+    result_path = run_dir / "batch-result-0.json"
+    payload = json.loads(result_path.read_text(encoding="utf-8"))
+    payload["results"].pop()
+    result_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(BatchError, match="exactly match"):
+        harvest_batch(run_dir)
+
+
+@pytest.mark.asyncio
+async def test_request_artifact_tampering_fails_before_submit(
+    private_root: Path,
+) -> None:
+    run_dir = private_root / "runs" / "pilot"
+    prepare_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
+    )
+    request_path = run_dir / "requests.jsonl"
+    request_path.write_text(
+        request_path.read_text(encoding="utf-8") + "\n", encoding="utf-8"
+    )
+
+    with pytest.raises(BatchError, match="digest"):
+        await submit_batch(
+            run_dir,
+            approved_spend_usd=1.0,
+            approve_spend=True,
+            api_key="test-only",
+            client=_FakeBatchClient(),
+        )
+
+
+def test_legacy_latency_stats_infer_available_count() -> None:
+    stats = LatencyStats.model_validate({
+        "count": 3,
+        "min_ms": 1,
+        "median_ms": 2,
+        "p95_ms": 3,
+        "max_ms": 3,
+    })
+    assert stats.available_count == 3
+    assert stats.unavailable_count == 0

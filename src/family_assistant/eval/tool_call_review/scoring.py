@@ -150,7 +150,7 @@ class TrialRecord(BaseModel):
         return data
 
     verdict: ToolCallReviewVerdict
-    latency_ms: float = Field(ge=0)
+    latency_ms: float | None = Field(default=None, ge=0)
     reason: str
     allow_in_space: bool
     """Whether the delegating context's verdict space contained allow.

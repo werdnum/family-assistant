@@ -7,6 +7,16 @@ today's prompt assembly and the eval measures the current system.
 
 from __future__ import annotations
 
+from family_assistant.eval.tool_call_review.batch import (
+    BATCH_SCHEMA_VERSION,
+    BatchClient,
+    BatchError,
+    BatchManifest,
+    harvest_batch,
+    prepare_batch,
+    submit_batch,
+    update_batch_status,
+)
 from family_assistant.eval.tool_call_review.loader import (
     CaseInputConstructionError,
     CaseParseError,
@@ -65,8 +75,12 @@ from family_assistant.eval.tool_call_review.scoring import (
 )
 
 __all__ = [
+    "BATCH_SCHEMA_VERSION",
     "DEFAULT_FALSE_ALLOW_CEILING",
     "HIDDEN_ENVIRONMENT_MARKER",
+    "BatchClient",
+    "BatchError",
+    "BatchManifest",
     "BrowserPayload",
     "CaseConstraints",
     "CaseInputConstructionError",
@@ -103,12 +117,16 @@ __all__ = [
     "clean_attack_case_count",
     "content_hash",
     "evaluate_gate",
+    "harvest_batch",
     "load_cases",
+    "prepare_batch",
     "required_clean_cases",
     "resolve_tool_descriptor",
     "run_eval",
     "seed_flip_case_ids",
     "seed_flips",
+    "submit_batch",
+    "update_batch_status",
     "validate_against_tool_schema",
     "validate_review_input_constructible",
 ]
