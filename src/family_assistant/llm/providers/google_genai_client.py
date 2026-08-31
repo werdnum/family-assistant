@@ -9,7 +9,7 @@ import mimetypes
 import os
 import re
 import uuid
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
 from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
@@ -656,54 +656,7 @@ class GoogleGenAIClient(BaseLLMClient):
         elif attachment.file_path:
             # Try to read file content for supported types
             try:
-                file_path = Path(attachment.file_path)
-                if file_path.exists() and file_path.is_file():
-                    # Check file size before reading (20MB limit, aligned with Gemini API)
-                    MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
-                    file_size = file_path.stat().st_size
-
-                    if file_size > MAX_FILE_SIZE:
-                        size_mb = file_size / (1024 * 1024)
-                        parts.append({
-                            "text": f"[File: {file_path.name} ({size_mb:.1f}MB) - Too large to process "
-                            f"(exceeds {MAX_FILE_SIZE // (1024 * 1024)}MB limit). "
-                            f"{attachment.description or 'No description'}]"
-                        })
-                    else:
-                        # Read file content
-                        file_content = file_path.read_bytes()
-
-                        # Infer MIME type from file extension if not provided
-                        effective_mime_type = attachment.mime_type
-                        if not effective_mime_type:
-                            guessed_mime_type, _ = mimetypes.guess_type(str(file_path))
-                            if guessed_mime_type:
-                                effective_mime_type = guessed_mime_type
-
-                        # Handle supported file types with content
-                        # Gemini supports images, videos, audio, and PDFs
-                        if effective_mime_type and (
-                            effective_mime_type.startswith("image/")
-                            or effective_mime_type.startswith("video/")
-                            or effective_mime_type.startswith("audio/")
-                            or effective_mime_type == "application/pdf"
-                        ):
-                            media_part = types.Part.from_bytes(
-                                data=file_content, mime_type=effective_mime_type
-                            )
-                            parts.append(media_part)
-                        else:
-                            # Unsupported type - describe the file
-                            size_mb = len(file_content) / (1024 * 1024)
-                            parts.append({
-                                "text": f"[File: {file_path.name} ({effective_mime_type or 'unknown type'}, "
-                                f"{size_mb:.1f}MB) - {attachment.description or 'No description'}. "
-                                f"Binary content not accessible to model]"
-                            })
-                else:
-                    parts.append({
-                        "text": f"[File: {attachment.file_path} - File not found or inaccessible]"
-                    })
+                self._append_file_path_attachment(parts, attachment)
             except Exception as e:
                 # Error reading file - fall back to description
                 parts.append({
@@ -719,6 +672,55 @@ class GoogleGenAIClient(BaseLLMClient):
             content=describe_attachment_for_fallback(attachment),
             parts=parts,
         )
+
+    @staticmethod
+    def _append_file_path_attachment(
+        parts: list[dict[str, object] | types.Part], attachment: "ToolAttachment"
+    ) -> None:
+        """Append a file-backed attachment or its readable description."""
+        assert attachment.file_path is not None
+        file_path = Path(attachment.file_path)
+        if not file_path.exists() or not file_path.is_file():
+            parts.append({
+                "text": f"[File: {attachment.file_path} - File not found or inaccessible]"
+            })
+            return
+
+        max_file_size = 20 * 1024 * 1024
+        file_size = file_path.stat().st_size
+        if file_size > max_file_size:
+            size_mb = file_size / (1024 * 1024)
+            parts.append({
+                "text": f"[File: {file_path.name} ({size_mb:.1f}MB) - Too large to process "
+                f"(exceeds {max_file_size // (1024 * 1024)}MB limit). "
+                f"{attachment.description or 'No description'}]"
+            })
+            return
+
+        file_content = file_path.read_bytes()
+        effective_mime_type = attachment.mime_type
+        if not effective_mime_type:
+            guessed_mime_type, _ = mimetypes.guess_type(str(file_path))
+            if guessed_mime_type:
+                effective_mime_type = guessed_mime_type
+
+        if effective_mime_type and (
+            effective_mime_type.startswith("image/")
+            or effective_mime_type.startswith("video/")
+            or effective_mime_type.startswith("audio/")
+            or effective_mime_type == "application/pdf"
+        ):
+            parts.append(
+                types.Part.from_bytes(data=file_content, mime_type=effective_mime_type)
+            )
+            return
+
+        size_mb = len(file_content) / (1024 * 1024)
+        parts.append({
+            "text": f"[File: {file_path.name} ({effective_mime_type or 'unknown type'}, "
+            f"{size_mb:.1f}MB) - {attachment.description or 'No description'}. "
+            f"Binary content not accessible to model]"
+        })
 
     def _convert_messages_to_genai_format(
         self,
@@ -1095,7 +1097,7 @@ class GoogleGenAIClient(BaseLLMClient):
                 streaming=False,
             )
 
-            try:
+            async def request_success() -> LLMOutput:
                 # Keep messages as typed objects for processing
                 typed_messages = list(messages)
 
@@ -1354,6 +1356,8 @@ class GoogleGenAIClient(BaseLLMClient):
 
                 return llm_output
 
+            try:
+                return await request_success()
             except Exception as e:
                 telemetry.finish_error(e)
                 raise self._map_error_to_typed_exception(e) from e
@@ -1855,7 +1859,11 @@ class GoogleGenAIClient(BaseLLMClient):
         )
 
         content_yielded = False
-        try:
+        interaction_id: str | None = None
+        last_event_id: str | None = None
+
+        async def stream_events() -> AsyncGenerator[LLMStreamEvent]:
+            nonlocal content_yielded, interaction_id, last_event_id
             create_kwargs = self._build_agent_create_kwargs(messages)
             environment = await self._build_agent_environment()
             if environment is not None:
@@ -1867,8 +1875,6 @@ class GoogleGenAIClient(BaseLLMClient):
                 await self.client.aio.interactions.create(**create_kwargs),
             )
 
-            interaction_id = None
-            last_event_id: str | None = None
             thought_summaries: list[str] = []
 
             # 3. Process stream
@@ -1974,6 +1980,10 @@ class GoogleGenAIClient(BaseLLMClient):
 
             yield LLMStreamEvent(type="done", metadata=done_metadata)
 
+        events = stream_events()
+        try:
+            async for stream_event in events:
+                yield stream_event
         except Exception as e:
             telemetry.finish_error(e)
 
@@ -2013,7 +2023,10 @@ class GoogleGenAIClient(BaseLLMClient):
                 error_done_metadata["last_event_id"] = last_event_id
             yield LLMStreamEvent(type="done", metadata=error_done_metadata)
         finally:
-            span.end()
+            try:
+                await events.aclose()
+            finally:
+                span.end()
 
     async def _generate_response_stream(
         self,
@@ -2035,7 +2048,9 @@ class GoogleGenAIClient(BaseLLMClient):
         )
 
         content_yielded = False
-        try:
+
+        async def stream_events() -> AsyncGenerator[LLMStreamEvent]:
+            nonlocal content_yielded
             # Keep messages as typed objects for processing
             typed_messages = list(messages)
 
@@ -2295,6 +2310,10 @@ class GoogleGenAIClient(BaseLLMClient):
 
             yield LLMStreamEvent(type="done", metadata=done_metadata)
 
+        events = stream_events()
+        try:
+            async for stream_event in events:
+                yield stream_event
         except Exception as e:
             telemetry.finish_error(e)
 
@@ -2320,4 +2339,7 @@ class GoogleGenAIClient(BaseLLMClient):
                 },
             )
         finally:
-            span.end()
+            try:
+                await events.aclose()
+            finally:
+                span.end()

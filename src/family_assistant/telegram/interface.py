@@ -35,7 +35,10 @@ if TYPE_CHECKING:
     from telegram.ext import Application
 
     from family_assistant.security.taint import TaintMetadata
-    from family_assistant.services.attachment_registry import AttachmentRegistry
+    from family_assistant.services.attachment_registry import (
+        AttachmentMetadata,
+        AttachmentRegistry,
+    )
 
 
 logger = logging.getLogger(__name__)
@@ -153,7 +156,7 @@ class TelegramChatInterface(ChatInterface):
                 f"There was no text to send to {conversation_id}.", transient=False
             )
 
-        try:
+        async def send_chunks() -> str | None:
             if attachment_ids:
                 await self._send_attachments(
                     chat_id_int,
@@ -182,6 +185,11 @@ class TelegramChatInterface(ChatInterface):
                     first_message_id = message_id
                 if index < len(chunks) - 1:
                     await asyncio.sleep(CHUNK_SEND_DELAY_SECONDS)
+
+            return first_message_id
+
+        try:
+            first_message_id = await send_chunks()
         except TelegramError as telegram_error:
             raise ChatDeliveryError(
                 f"Telegram refused a message to {conversation_id}: {telegram_error}",
@@ -315,7 +323,7 @@ class TelegramChatInterface(ChatInterface):
             f"resizing to fit {TELEGRAM_PHOTO_SIZE_LIMIT / (1024 * 1024):.0f}MB limit"
         )
 
-        try:
+        def resize_image() -> tuple[bytes, str | None]:
             TARGET_MEGAPIXELS = 20
 
             with Image.open(io.BytesIO(content)) as img:
@@ -361,6 +369,8 @@ class TelegramChatInterface(ChatInterface):
                 size_note = f"[Full resolution: /attachment {attachment_id}]"
                 return resized_content, size_note
 
+        try:
+            return resize_image()
         except Exception as e:
             logger.exception(f"Failed to resize image {attachment_id}: {e}")
             return content, None
@@ -389,38 +399,47 @@ class TelegramChatInterface(ChatInterface):
         """
         message_ids = []
 
-        if not self.attachment_registry:
+        attachment_registry = self.attachment_registry
+        if not attachment_registry:
             logger.warning(
                 f"TelegramChatInterface: Cannot send {len(attachment_ids)} attachments - "
                 "AttachmentRegistry not available."
             )
             return message_ids
 
-        try:
-            db_context = Database(self.attachment_registry.db_engine)
+        async def send_all_attachments() -> None:
+            db_context = Database(attachment_registry.db_engine)
             attachments_data = []
+
+            async def fetch_attachment(
+                attachment_id: str,
+            ) -> tuple[AttachmentMetadata, bytes] | None:
+                metadata = await attachment_registry.get_attachment(
+                    db_context,
+                    attachment_id,
+                    acting_user_id=on_behalf_of_user_id,
+                )
+                if not metadata:
+                    logger.warning(f"Attachment {attachment_id} not found")
+                    return None
+
+                content = await attachment_registry.get_attachment_content(
+                    db_context,
+                    attachment_id,
+                    acting_user_id=on_behalf_of_user_id,
+                )
+                if not content:
+                    logger.warning(f"Content for attachment {attachment_id} not found")
+                    return None
+
+                return metadata, content
+
             for attachment_id in attachment_ids:
                 try:
-                    metadata = await self.attachment_registry.get_attachment(
-                        db_context,
-                        attachment_id,
-                        acting_user_id=on_behalf_of_user_id,
-                    )
-                    if not metadata:
-                        logger.warning(f"Attachment {attachment_id} not found")
+                    fetched = await fetch_attachment(attachment_id)
+                    if fetched is None:
                         continue
-
-                    content = await self.attachment_registry.get_attachment_content(
-                        db_context,
-                        attachment_id,
-                        acting_user_id=on_behalf_of_user_id,
-                    )
-                    if not content:
-                        logger.warning(
-                            f"Content for attachment {attachment_id} not found"
-                        )
-                        continue
-
+                    metadata, content = fetched
                     attachments_data.append({
                         "id": attachment_id,
                         "metadata": metadata,
@@ -612,6 +631,8 @@ class TelegramChatInterface(ChatInterface):
                     )
                     i += 1
 
+        try:
+            await send_all_attachments()
         except Exception as e:
             logger.exception(f"Error in _send_attachments: {e}")
 

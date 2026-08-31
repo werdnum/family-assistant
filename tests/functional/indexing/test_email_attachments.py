@@ -13,6 +13,9 @@ import tempfile  # Added for http_client fixture
 import uuid
 from collections.abc import (
     AsyncGenerator,  # Add missing typing imports & AsyncGenerator
+    AsyncIterator,
+    Awaitable,
+    Callable,
 )
 from datetime import UTC, datetime
 from pathlib import Path
@@ -78,6 +81,21 @@ from tests.mocks.mock_llm import (  # Added
 logger = logging.getLogger(__name__)
 
 
+@contextlib.asynccontextmanager
+async def _cleanup_after_test(
+    cleanup: Callable[[bool], Awaitable[None]],
+) -> AsyncIterator[None]:
+    test_failed = False
+    try:
+        yield
+    except Exception as e:
+        test_failed = True
+        logger.exception(f"Test failed: {e}")
+        raise
+    finally:
+        await cleanup(test_failed)
+
+
 def _create_mock_processing_service() -> MagicMock:
     """Create a mock ProcessingService with required attributes.
 
@@ -128,50 +146,44 @@ TEST_QUERY_TEXT = "meeting about Project Alpha"  # Text relevant to the subject/
 
 
 # --- Debugging Helper ---
+async def _dump_table_contents(db: Database) -> None:
+    tasks_query = select(tasks_table)
+    all_tasks = await db.fetch_all(tasks_query)
+    logger.info("--- Tasks Table ---")
+    if all_tasks:
+        for task in all_tasks:
+            logger.info(f"  Task: {dict(task)}")
+    else:
+        logger.info("  (empty)")
+
+    docs_query = select(DocumentRecord)
+    all_docs = await db.fetch_all(docs_query)
+    logger.info("--- Documents Table ---")
+    if all_docs:
+        for doc in all_docs:
+            logger.info(f"  Document: {dict(doc)}")
+    else:
+        logger.info("  (empty)")
+
+    embeds_query = select(DocumentEmbeddingRecord)
+    all_embeds = await db.fetch_all(embeds_query)
+    logger.info("--- Document Embeddings Table ---")
+    if all_embeds:
+        for embed in all_embeds:
+            embed_dict = dict(embed)
+            if "embedding" in embed_dict and embed_dict["embedding"] is not None:
+                embed_dict["embedding"] = f"Vector[{len(embed_dict['embedding'])}]"
+            logger.info(f"  Embedding: {embed_dict}")
+    else:
+        logger.info("  (empty)")
+
+
 async def dump_tables_on_failure(engine: AsyncEngine) -> None:
     """Logs the content of relevant tables for debugging."""
     logger.info("--- Dumping table contents on failure ---")
     db = Database(engine=engine)
     try:
-        # Dump tasks table
-        tasks_query = select(tasks_table)
-        all_tasks = await db.fetch_all(tasks_query)
-        logger.info("--- Tasks Table ---")
-        if all_tasks:
-            for task in all_tasks:
-                logger.info(f"  Task: {dict(task)}")
-        else:
-            logger.info("  (empty)")
-
-        # Dump documents table
-        docs_query = select(DocumentRecord)
-        all_docs = await db.fetch_all(docs_query)
-        logger.info("--- Documents Table ---")
-        if all_docs:
-            for doc in all_docs:
-                # Access columns directly if it's a RowMapping, or adapt if it returns ORM objects
-                logger.info(
-                    f"  Document: {dict(doc)}"
-                )  # Assuming RowMapping for simplicity
-        else:
-            logger.info("  (empty)")
-
-        # Dump document_embeddings table
-        embeds_query = select(DocumentEmbeddingRecord)
-        all_embeds = await db.fetch_all(embeds_query)
-        logger.info("--- Document Embeddings Table ---")
-        if all_embeds:
-            for embed in all_embeds:
-                # Log relevant fields, potentially truncating the vector
-                embed_dict = dict(embed)
-                if "embedding" in embed_dict and embed_dict["embedding"] is not None:
-                    embed_dict["embedding"] = (
-                        f"Vector[{len(embed_dict['embedding'])}]"  # Avoid logging huge vectors
-                    )
-                logger.info(f"  Embedding: {embed_dict}")
-        else:
-            logger.info("  (empty)")
-
+        await _dump_table_contents(db)
     except Exception as dump_exc:
         logger.exception(f"Failed to dump tables on failure: {dump_exc}")
     logger.info("--- End table dump ---")
@@ -504,9 +516,26 @@ async def test_email_with_pdf_attachment_indexing_e2e(
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
     logger.info(f"Started background task worker {worker_id} for PDF test...")
     await asyncio.sleep(0.1)
-    test_failed = False
 
-    try:
+    async def cleanup(test_failed: bool) -> None:
+        logger.info(f"Stopping background task worker {worker_id} for PDF test...")
+        test_shutdown_event.set()
+        try:
+            await asyncio.wait_for(worker_task, timeout=5.0)
+            logger.info(f"Background task worker {worker_id} stopped for PDF test.")
+            if test_failed:
+                await dump_tables_on_failure(pg_vector_db_engine)
+        except TimeoutError:
+            logger.warning(
+                f"Timeout stopping worker task {worker_id} for PDF test. Cancelling."
+            )
+            worker_task.cancel()
+        except Exception as e:
+            logger.exception(
+                f"Error stopping worker task {worker_id} for PDF test: {e}"
+            )
+
+    async with _cleanup_after_test(cleanup):
         # --- Arrange: Prepare Form Data and File for Upload ---
         email_form_data_with_pdf = TEST_EMAIL_FORM_DATA.copy()
         email_form_data_with_pdf.update({
@@ -614,28 +643,6 @@ async def test_email_with_pdf_attachment_indexing_e2e(
         assert_that(found_pdf_result.get("source_type")).is_equal_to("email")
 
         logger.info("--- Email with PDF Attachment Indexing E2E Test Passed ---")
-
-    except Exception as e:
-        test_failed = True
-        logger.exception(f"Test failed: {e}")
-        raise
-    finally:
-        logger.info(f"Stopping background task worker {worker_id} for PDF test...")
-        test_shutdown_event.set()
-        try:
-            await asyncio.wait_for(worker_task, timeout=5.0)
-            logger.info(f"Background task worker {worker_id} stopped for PDF test.")
-            if test_failed:
-                await dump_tables_on_failure(pg_vector_db_engine)
-        except TimeoutError:
-            logger.warning(
-                f"Timeout stopping worker task {worker_id} for PDF test. Cancelling."
-            )
-            worker_task.cancel()
-        except Exception as e:
-            logger.exception(
-                f"Error stopping worker task {worker_id} for PDF test: {e}"
-            )
 
 
 @pytest.mark.asyncio
@@ -800,8 +807,35 @@ async def test_email_indexing_with_llm_summary_e2e(
     await asyncio.sleep(0.1)
 
     email_db_id = None
-    test_failed = False
-    try:
+
+    async def cleanup(test_failed: bool) -> None:
+        if test_failed and email_db_id:
+            logger.info("Dumping tables due to test failure...")
+            await dump_tables_on_failure(pg_vector_db_engine)
+        if hasattr(fastapi_app.state, "llm_client"):
+            if original_llm_client:
+                fastapi_app.state.llm_client = original_llm_client
+            else:
+                del fastapi_app.state.llm_client
+
+        test_shutdown_event.set()
+        try:
+            await asyncio.wait_for(worker_task, timeout=5.0)
+        except TimeoutError:
+            worker_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker_task
+
+        if email_db_id:
+            try:
+                _db_cleanup = Database(engine=pg_vector_db_engine)
+                logger.warning(
+                    f"Partial cleanup for email_db_id {email_db_id}. Corresponding document in 'documents' table (if any) was not deleted. Manual check advised."
+                )
+            except Exception as e:
+                logger.warning(f"Cleanup error for email {email_db_id}: {e}")
+
+    async with _cleanup_after_test(cleanup):
         # --- Act: Ingest Email via API ---
         email_msg_id_summary = f"<email_summary_test_{uuid.uuid4()}@example.com>"
         form_data_email_summary = TEST_EMAIL_FORM_DATA.copy()
@@ -865,48 +899,6 @@ async def test_email_indexing_with_llm_summary_e2e(
         # implies the LLM was called correctly with the mock setup.
 
         logger.info("--- Email Indexing with LLM Summary E2E Test Passed ---")
-
-    except Exception as e:
-        test_failed = True
-        logger.exception(f"Test failed: {e}")
-        # No need to dump here, will be handled in finally if test_failed is True
-        raise
-    finally:
-        # Cleanup
-        if (
-            test_failed and email_db_id
-        ):  # Conditionally dump if test failed and email was ingested
-            logger.info("Dumping tables due to test failure...")
-            await dump_tables_on_failure(pg_vector_db_engine)
-        if hasattr(fastapi_app.state, "llm_client"):  # Restore original LLM client
-            if original_llm_client:
-                fastapi_app.state.llm_client = original_llm_client
-            else:
-                del fastapi_app.state.llm_client
-
-        test_shutdown_event.set()
-        try:
-            await asyncio.wait_for(worker_task, timeout=5.0)
-        except TimeoutError:
-            worker_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await worker_task
-
-        # Email cleanup is handled by the _ingest_and_index_email helper if it fails,
-        # but successful runs might leave data. For test isolation, explicit cleanup is good.
-        # However, the current structure doesn't easily return the task_id for email cleanup here.
-        # The email_db_id is available.
-        if email_db_id:
-            try:
-                _db_cleanup = Database(engine=pg_vector_db_engine)
-                # The previous cleanup logic for email_db_id was incorrect and has been removed.
-                # Email documents are linked via source_id (Message-ID) to the documents table.
-                # A more robust cleanup would involve finding the document by source_id and deleting it.
-                logger.warning(
-                    f"Partial cleanup for email_db_id {email_db_id}. Corresponding document in 'documents' table (if any) was not deleted. Manual check advised."
-                )
-            except Exception as e:
-                logger.warning(f"Cleanup error for email {email_db_id}: {e}")
 
 
 @pytest.mark.asyncio
@@ -1086,9 +1078,40 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
 
     email_db_id_link = None
     email_db_id_no_link = None
-    test_failed = False
 
-    try:
+    async def cleanup(test_failed: bool) -> None:
+        if test_failed:
+            logger.info("Dumping tables due to test failure...")
+            await dump_tables_on_failure(pg_vector_db_engine)
+
+        if hasattr(fastapi_app.state, "llm_client"):
+            if original_llm_client:
+                fastapi_app.state.llm_client = original_llm_client
+            else:
+                del fastapi_app.state.llm_client
+
+        if hasattr(fastapi_app.state, "scraper"):
+            del fastapi_app.state.scraper
+
+        test_shutdown_event.set()
+        try:
+            await asyncio.wait_for(worker_task, timeout=5.0)
+        except TimeoutError:
+            worker_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await worker_task
+
+        for db_id_to_clean in [email_db_id_link, email_db_id_no_link]:
+            if db_id_to_clean:
+                try:
+                    _db_cleanup = Database(engine=pg_vector_db_engine)
+                    logger.warning(
+                        f"Partial cleanup for email_db_id {db_id_to_clean}. Manual check advised."
+                    )
+                except Exception as e:
+                    logger.warning(f"Cleanup error for email {db_id_to_clean}: {e}")
+
+    async with _cleanup_after_test(cleanup):
         # --- Act: Ingest Email with Primary Link ---
         email_msg_id_link = f"<email_link_test_pos_{uuid.uuid4()}@example.com>"
         form_data_link = TEST_EMAIL_FORM_DATA.copy()
@@ -1156,42 +1179,3 @@ async def test_email_indexing_with_primary_link_extraction_e2e(
         logger.info(
             "--- Email Indexing with Primary Link Extraction E2E Test Passed ---"
         )
-
-    except Exception as e:
-        test_failed = True
-        logger.exception(f"Test failed: {e}")
-        raise
-    finally:
-        if test_failed:
-            logger.info("Dumping tables due to test failure...")
-            await dump_tables_on_failure(pg_vector_db_engine)
-
-        if hasattr(fastapi_app.state, "llm_client"):
-            if original_llm_client:
-                fastapi_app.state.llm_client = original_llm_client
-            else:
-                del fastapi_app.state.llm_client
-
-        if hasattr(fastapi_app.state, "scraper"):  # Restore scraper
-            del fastapi_app.state.scraper
-
-        test_shutdown_event.set()
-        try:
-            await asyncio.wait_for(worker_task, timeout=5.0)
-        except TimeoutError:
-            worker_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await worker_task
-
-        # Basic cleanup attempt for created email records
-        # A more robust cleanup would delete associated document and embedding records too.
-        for db_id_to_clean in [email_db_id_link, email_db_id_no_link]:
-            if db_id_to_clean:
-                try:
-                    _db_cleanup = Database(engine=pg_vector_db_engine)
-                    # Simplified cleanup, real cleanup would be more involved
-                    logger.warning(
-                        f"Partial cleanup for email_db_id {db_id_to_clean}. Manual check advised."
-                    )
-                except Exception as e:
-                    logger.warning(f"Cleanup error for email {db_id_to_clean}: {e}")

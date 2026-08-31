@@ -275,6 +275,21 @@ def _is_transient_db_error(exc: BaseException) -> bool:
     return isinstance(exc, (TimeoutError, ConnectionError))
 
 
+async def _initialize_db_once(engine: AsyncEngine) -> None:
+    alembic_cfg = _get_alembic_config(engine)
+    has_version_table = await _is_alembic_managed(engine)
+    if has_version_table:
+        await _log_current_revision(engine)
+        await _run_alembic_command(engine, alembic_cfg, "upgrade", "head")
+        return
+
+    logger.info("New DB: creating schema, stamping with Alembic head...")
+    await _create_initial_schema(engine)
+    await _run_alembic_command(engine, alembic_cfg, "ensure_version")
+    await _run_alembic_command(engine, alembic_cfg, "stamp", "head")
+    await _initialize_vector_storage(engine)
+
+
 async def init_db(engine: AsyncEngine) -> None:
     """
     Initializes the database with robust retry logic.
@@ -294,19 +309,7 @@ async def init_db(engine: AsyncEngine) -> None:
             logger.info(
                 f"Checking database state (attempt {attempt + 1}/{max_retries})..."
             )
-            alembic_cfg = _get_alembic_config(engine)
-            has_version_table = await _is_alembic_managed(engine)
-
-            if has_version_table:
-                await _log_current_revision(engine)
-                await _run_alembic_command(engine, alembic_cfg, "upgrade", "head")
-            else:
-                logger.info("New DB: creating schema, stamping with Alembic head...")
-                await _create_initial_schema(engine)
-                await _run_alembic_command(engine, alembic_cfg, "ensure_version")
-                await _run_alembic_command(engine, alembic_cfg, "stamp", "head")
-                await _initialize_vector_storage(engine)
-
+            await _initialize_db_once(engine)
             logger.info("Database initialization successful.")
             return
 

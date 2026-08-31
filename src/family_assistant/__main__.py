@@ -115,8 +115,8 @@ def main() -> int:
             ),
         )
 
+    logger.info("Starting application via Assistant class...")
     try:
-        logger.info("Starting application via Assistant class...")
         loop.run_until_complete(assistant_app.setup_dependencies())
         loop.run_until_complete(assistant_app.start_services())
 

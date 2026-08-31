@@ -72,29 +72,25 @@ class EventConditionEvaluator:
             ScriptSyntaxError: If the script has invalid syntax
             ScriptExecutionError: If the script fails during execution
         """
-        try:
-            # For event conditions, wrap simple expressions in return statement
-            # or use the script as-is if it already contains return
-
-            # If script doesn't contain 'return', treat it as an expression
-            if "return" not in script:
-                wrapped_script = f"""
+        # For event conditions, wrap simple expressions in return statement
+        # or use the script as-is if it already contains return.
+        if "return" not in script:
+            wrapped_script = f"""
 def _evaluate():
     return {script}
 
 _evaluate()
 """
-            else:
-                # Script already has return statements, just wrap in function
-                # Use textwrap.indent to safely indent multi-line scripts
-                indented_script = textwrap.indent(script, "    ")
-                wrapped_script = f"""
+        else:
+            indented_script = textwrap.indent(script, "    ")
+            wrapped_script = f"""
 def _evaluate():
 {indented_script}
 
 _evaluate()
 """
 
+        try:
             result = await self.engine.evaluate_async(
                 wrapped_script,
                 globals_dict={"event": event_data},

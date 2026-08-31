@@ -1005,7 +1005,8 @@ async def _await_or_handoff_delegation(
 ) -> ToolResult:
     """Race-safely return a fast result or hand its delivery to the worker."""
     delegation_id = queued.delegation_id
-    try:
+
+    async def await_inline_result() -> ToolResult | str:
         run = await _wait_for_delegation_run(
             exec_context,
             delegation_id=delegation_id,
@@ -1032,7 +1033,13 @@ async def _await_or_handoff_delegation(
             )
             if inline_result is not None:
                 return inline_result
-        run_status = run["status"] if run is not None else "queued"
+        return run["status"] if run is not None else "queued"
+
+    try:
+        inline_outcome = await await_inline_result()
+        if isinstance(inline_outcome, ToolResult):
+            return inline_outcome
+        run_status = inline_outcome
     except Exception:
         logger.exception(
             "Error awaiting inline result for delegation %s; returning async "

@@ -171,7 +171,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.camera.protocol import CameraBackend
-    from family_assistant.config_models import ServiceProfile
+    from family_assistant.config_models import AIWorkerConfig, ServiceProfile
     from family_assistant.context_providers import ContextProvider
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.llm import LLMInterface
@@ -501,74 +501,75 @@ class Assistant:
     async def _ensure_playwright_browsers_installed(self) -> None:
         """Ensure Playwright browsers are installed, install if missing."""
         try:
-            # Check if browsers are installed by trying to get the path
-            dry_run_process = await asyncio.create_subprocess_exec(
+            await self._check_or_install_playwright_browsers()
+        except Exception as e:
+            logger.warning(f"Could not check/install Playwright browsers: {e}")
+
+    async def _check_or_install_playwright_browsers(self) -> None:
+        dry_run_process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-m",
+            "playwright",
+            "install",
+            "--dry-run",
+            stdout=asyncio_subprocess.PIPE,
+            stderr=asyncio_subprocess.PIPE,
+        )
+
+        try:
+            dry_run_stdout, dry_run_stderr = await asyncio.wait_for(
+                dry_run_process.communicate(), timeout=10
+            )
+        except TimeoutError:
+            dry_run_process.kill()
+            await dry_run_process.communicate()
+            logger.warning("Playwright browser check timed out")
+            return
+
+        dry_run_output = (dry_run_stdout or b"").decode()
+        needs_install = "chromium" in dry_run_output.lower()
+
+        if dry_run_process.returncode != 0:
+            needs_install = True
+            dry_run_error_output = (dry_run_stderr or b"").decode().strip()
+            if dry_run_error_output:
+                logger.debug(
+                    "Playwright dry-run returned non-zero exit code: %s",
+                    dry_run_error_output,
+                )
+
+        if needs_install:
+            logger.info("Playwright browsers not found, installing chromium...")
+            install_process = await asyncio.create_subprocess_exec(
                 sys.executable,
                 "-m",
                 "playwright",
                 "install",
-                "--dry-run",
+                "chromium",
                 stdout=asyncio_subprocess.PIPE,
                 stderr=asyncio_subprocess.PIPE,
             )
 
             try:
-                dry_run_stdout, dry_run_stderr = await asyncio.wait_for(
-                    dry_run_process.communicate(), timeout=10
+                _, install_stderr = await asyncio.wait_for(
+                    install_process.communicate(), timeout=300
                 )
             except TimeoutError:
-                dry_run_process.kill()
-                await dry_run_process.communicate()
-                logger.warning("Playwright browser check timed out")
+                install_process.kill()
+                await install_process.communicate()
+                logger.warning("Playwright browser installation timed out")
                 return
 
-            dry_run_output = (dry_run_stdout or b"").decode()
-            needs_install = "chromium" in dry_run_output.lower()
-
-            if dry_run_process.returncode != 0:
-                needs_install = True
-                dry_run_error_output = (dry_run_stderr or b"").decode().strip()
-                if dry_run_error_output:
-                    logger.debug(
-                        "Playwright dry-run returned non-zero exit code: %s",
-                        dry_run_error_output,
-                    )
-
-            # If dry-run suggests installation is needed, install chromium
-            if needs_install:
-                logger.info("Playwright browsers not found, installing chromium...")
-                install_process = await asyncio.create_subprocess_exec(
-                    sys.executable,
-                    "-m",
-                    "playwright",
-                    "install",
-                    "chromium",
-                    stdout=asyncio_subprocess.PIPE,
-                    stderr=asyncio_subprocess.PIPE,
-                )
-
-                try:
-                    _, install_stderr = await asyncio.wait_for(
-                        install_process.communicate(), timeout=300
-                    )
-                except TimeoutError:
-                    install_process.kill()
-                    await install_process.communicate()
-                    logger.warning("Playwright browser installation timed out")
-                    return
-
-                if install_process.returncode == 0:
-                    logger.info("Playwright chromium browser installed successfully")
-                else:
-                    install_error_output = (install_stderr or b"").decode().strip()
-                    logger.warning(
-                        "Failed to install Playwright browsers: %s",
-                        install_error_output,
-                    )
+            if install_process.returncode == 0:
+                logger.info("Playwright chromium browser installed successfully")
             else:
-                logger.debug("Playwright browsers already installed")
-        except Exception as e:
-            logger.warning(f"Could not check/install Playwright browsers: {e}")
+                install_error_output = (install_stderr or b"").decode().strip()
+                logger.warning(
+                    "Failed to install Playwright browsers: %s",
+                    install_error_output,
+                )
+        else:
+            logger.debug("Playwright browsers already installed")
 
     def _setup_notifications(self) -> None:
         """Initialize Web Push and iOS APNs services and the fan-out dispatcher."""
@@ -2024,25 +2025,32 @@ class Assistant:
             return
 
         try:
-            assert self.database_engine is not None
-            db_ctx = Database(self.database_engine)
-            backend = get_worker_backend(
-                worker_config.backend_type,
-                workspace_root=worker_config.workspace_mount_path,
-                docker_config=worker_config.docker,
-                kubernetes_config=worker_config.kubernetes,
-            )
-            reconciled = await reconcile_stale_tasks(db_ctx, backend)
-            if reconciled:
-                logger.info(f"Reconciled {reconciled} stale worker tasks on startup")
+            await self._reconcile_stale_worker_tasks(worker_config)
         except Exception:
             logger.warning(
                 "Worker task reconciliation failed on startup", exc_info=True
             )
 
+    async def _reconcile_stale_worker_tasks(
+        self, worker_config: AIWorkerConfig
+    ) -> None:
+        """Reconcile stale tasks with the configured worker backend."""
+        assert self.database_engine is not None
+        db_ctx = Database(self.database_engine)
+        backend = get_worker_backend(
+            worker_config.backend_type,
+            workspace_root=worker_config.workspace_mount_path,
+            docker_config=worker_config.docker,
+            kubernetes_config=worker_config.kubernetes,
+        )
+        reconciled = await reconcile_stale_tasks(db_ctx, backend)
+        if reconciled:
+            logger.info(f"Reconciled {reconciled} stale worker tasks on startup")
+
     async def _setup_system_tasks(self) -> None:
         """Upsert system tasks on startup."""
-        try:
+
+        async def setup_tasks() -> None:
             assert self.database_engine is not None, (
                 "Database engine must be initialized before setting up system tasks"
             )
@@ -2180,6 +2188,9 @@ class Assistant:
                 logger.info("Message history backfill task scheduled")
             except Exception as e:
                 logger.warning(f"Message history backfill task setup: {e}")
+
+        try:
+            await setup_tasks()
         except RuntimeError as e:
             if "different loop" in str(e):
                 logger.warning(

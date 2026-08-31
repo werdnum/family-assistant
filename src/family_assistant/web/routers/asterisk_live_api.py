@@ -188,6 +188,7 @@ class AsteriskLiveHandler:
         self.audio_buffer = bytearray()
         self.gemini_session: AsyncSession | None = None
         self.receive_task: asyncio.Task[None] | None = None
+        self._greeting_task: asyncio.Task[None] | None = None
         self.format: str | None = None
         self.media_send_allowed: asyncio.Event = asyncio.Event()
         self.debug_enabled = _env_flag(_DEBUG_ENV, default=False)
@@ -407,7 +408,7 @@ class AsteriskLiveHandler:
             event="websocket_accept",
         )
 
-        try:
+        async def run_session() -> None:
             # Wait for initial configuration (MEDIA_START) from Asterisk
             # This ensures we know the sample rate before establishing the Gemini session
             while not self.format:
@@ -544,7 +545,7 @@ class AsteriskLiveHandler:
 
             # Start pre-canned greeting playback as a background task.
             # Store reference to prevent garbage collection of the task.
-            self._greeting_task: asyncio.Task[None] | None = None
+            self._greeting_task = None
             if self.gemini_live_config.greeting.enabled:
                 self._greeting_task = asyncio.create_task(
                     self._send_precanned_greeting()
@@ -588,7 +589,7 @@ class AsteriskLiveHandler:
                 # Start task to receive from Gemini and send to Asterisk
                 self.receive_task = asyncio.create_task(self._receive_from_gemini())
 
-                try:
+                async def relay_asterisk_messages() -> None:
                     while True:
                         # Receive message from Asterisk
                         message = await self.websocket.receive()
@@ -620,6 +621,8 @@ class AsteriskLiveHandler:
                                 payload=self._safe_serialize(message),
                             )
 
+                try:
+                    await relay_asterisk_messages()
                 except WebSocketDisconnect:
                     logger.info("WebSocket disconnected")
                     await self._trace_event(
@@ -641,6 +644,8 @@ class AsteriskLiveHandler:
                             await self.receive_task
                     await self._save_call_transcript()
 
+        try:
+            await run_session()
         except Exception as e:
             logger.exception(f"Error in AsteriskLiveHandler: {e}")
             await self._trace_event(
@@ -834,7 +839,7 @@ class AsteriskLiveHandler:
             logger.warning(f"Greeting file not found: {greeting_path}")
             return
 
-        try:
+        async def send_greeting() -> None:
             with wave.open(str(greeting_path), "rb") as wf:
                 wav_rate = wf.getframerate()
                 wav_channels = wf.getnchannels()
@@ -882,6 +887,8 @@ class AsteriskLiveHandler:
                 total_bytes=len(pcm_data),
             )
 
+        try:
+            await send_greeting()
         except Exception:
             logger.exception("Error sending pre-canned greeting")
 
@@ -972,7 +979,7 @@ class AsteriskLiveHandler:
         if not self.gemini_session:
             return
 
-        try:
+        async def receive_messages() -> None:
             async for response in self._iter_gemini_messages():
                 if response.tool_call:
                     await self._handle_tool_call(response.tool_call)
@@ -1180,6 +1187,8 @@ class AsteriskLiveHandler:
                                 )
                                 await self.websocket.send_bytes(bytes(chunk))
 
+        try:
+            await receive_messages()
         except asyncio.CancelledError:
             pass
         except Exception as e:
@@ -1274,14 +1283,21 @@ class AsteriskLiveHandler:
                 args=self._safe_serialize(args),
             )
 
-            try:
+            async def execute_call(
+                current_call_id: str | None,
+                current_name: str,
+                current_args: dict[str, JsonValue],
+            ) -> None:
+                assert self.database_engine is not None
+                assert self.processing_service is not None
+                assert self.processing_service.tools_provider is not None
                 db_context = Database(self.database_engine)
                 exec_context = ToolExecutionContext(
                     interface_type="telephone",
                     conversation_id=self.conversation_id,
                     user_name=self.extension or "Caller",
                     user_id=None,
-                    turn_id=call_id,
+                    turn_id=current_call_id,
                     db_context=db_context,
                     chat_interface=None,
                     chat_interfaces=self.chat_interfaces,
@@ -1328,7 +1344,7 @@ class AsteriskLiveHandler:
                 )
 
                 result = await self.processing_service.tools_provider.execute_tool(
-                    name, args, exec_context, call_id
+                    current_name, current_args, exec_context, current_call_id
                 )
 
                 if isinstance(result, ToolResult):
@@ -1345,11 +1361,14 @@ class AsteriskLiveHandler:
 
                 function_responses.append(
                     FunctionResponse(
-                        id=call_id,
-                        name=name,
+                        id=current_call_id,
+                        name=current_name,
                         response=response_payload,
                     )
                 )
+
+            try:
+                await execute_call(call_id, name, args)
             except Exception as e:
                 logger.exception(f"Tool execution failed for '{name}': {e}")
                 function_responses.append(
@@ -1395,7 +1414,8 @@ class AsteriskLiveHandler:
         if not self._transcript_segments or self.database_engine is None:
             return
 
-        try:
+        async def save_transcript() -> None:
+            assert self.database_engine is not None
             tz = (
                 self.processing_service.service_config.timezone
                 if self.processing_service
@@ -1449,6 +1469,9 @@ class AsteriskLiveHandler:
                 f"Saved call transcript: {title} "
                 f"({len(self._transcript_segments)} segments)"
             )
+
+        try:
+            await save_transcript()
         except Exception:
             logger.exception("Failed to save call transcript")
 
@@ -1537,8 +1560,10 @@ async def asterisk_live_endpoint(
     profile_id = profile or "telephone"
     system_instruction = None
     tools: ToolListUnion | None = None
+    telephone_service: ProcessingService | None = None
 
-    try:
+    async def load_profile_configuration() -> bool:
+        nonlocal gemini_live_config, system_instruction, telephone_service, tools
         processing_services = getattr(websocket.app.state, "processing_services", {})
         telephone_service = processing_services.get(profile_id)
 
@@ -1550,7 +1575,7 @@ async def asterisk_live_endpoint(
                 code=1008,
                 reason=f"Profile '{profile_id}' is a remote delegation-only profile",
             )
-            return
+            return False
 
         if telephone_service:
             # Get system prompt
@@ -1630,11 +1655,16 @@ async def asterisk_live_endpoint(
                 await websocket.close(
                     code=1008, reason=f"Profile '{profile_id}' not found"
                 )
-                return
+                return False
             logger.warning(
                 "Default 'telephone' profile not found, using unconfigured defaults"
             )
 
+        return True
+
+    try:
+        if not await load_profile_configuration():
+            return
     except Exception as e:
         logger.exception(f"Error loading profile '{profile_id}' configuration: {e}")
 

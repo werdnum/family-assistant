@@ -3,7 +3,8 @@
 import base64
 import os
 import tempfile
-from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, Self, cast
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from anthropic.types import TextBlockParam
@@ -17,6 +18,64 @@ from family_assistant.llm.messages import (
 )
 from family_assistant.llm.providers.anthropic_client import AnthropicClient
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
+    from family_assistant.llm import LLMStreamEvent
+
+
+@pytest.mark.no_db
+async def test_closing_stream_immediately_exits_provider_context() -> None:
+    class TrackingStream:
+        def __init__(self) -> None:
+            self.closed = False
+            self._yielded = False
+
+        async def __aenter__(self) -> Self:
+            return self
+
+        async def __aexit__(
+            self,
+            exc_type: object,
+            exc: object,
+            traceback: object,
+        ) -> None:
+            self.closed = True
+
+        def __aiter__(self) -> Self:
+            return self
+
+        async def __anext__(self) -> Mock:
+            if self._yielded:
+                raise StopAsyncIteration
+            self._yielded = True
+            return Mock(
+                type="content_block_delta",
+                delta=Mock(type="text_delta", text="partial"),
+            )
+
+    provider_stream = TrackingStream()
+    client = AnthropicClient(api_key="test", model="claude-sonnet-4-6")
+    client.client = cast(
+        "Any",
+        Mock(messages=Mock(stream=lambda **_kwargs: provider_stream)),
+    )
+
+    with patch.object(
+        client,
+        "_maybe_parse_vcr_stream",
+        new=AsyncMock(return_value=None),
+    ):
+        stream = cast(
+            "AsyncGenerator[LLMStreamEvent]",
+            client.generate_response_stream([UserMessage(content="hello")]),
+        )
+        event = await anext(stream)
+        assert event.content == "partial"
+        await stream.aclose()
+
+    assert provider_stream.closed
 
 
 @pytest.mark.no_db
@@ -266,8 +325,8 @@ class TestAnthropicCacheUsageReporting:
     """Anthropic reports cache tokens as buckets disjoint from input_tokens."""
 
     @staticmethod
-    def _usage(**kwargs: int | None) -> SimpleNamespace:
-        return SimpleNamespace(
+    def _usage(**kwargs: int | None) -> Mock:
+        return Mock(
             input_tokens=kwargs.get("input_tokens", 0),
             output_tokens=kwargs.get("output_tokens", 0),
             cache_read_input_tokens=kwargs.get("cache_read_input_tokens"),

@@ -61,7 +61,8 @@ async def _check_for_duplicate_events(
     Returns:
         Warning message string if duplicates found, None otherwise
     """
-    try:
+
+    async def check_for_duplicates() -> str | None:
         # Parse the event time to determine search window
         local_tz = exec_context.timezone
         if all_day:
@@ -140,13 +141,14 @@ async def _check_for_duplicate_events(
             ) as client:
                 all_events = []
                 for cal_url in calendar_urls_list:  # type: ignore
-                    try:
-                        calendar_obj = client.calendar(url=cal_url)
+
+                    def search_calendar(calendar_url: str) -> None:
+                        calendar_obj = client.calendar(url=calendar_url)
                         if not calendar_obj:
                             logger.warning(
-                                f"Could not get calendar object for {cal_url}"
+                                f"Could not get calendar object for {calendar_url}"
                             )
-                            continue
+                            return
 
                         # WORKAROUND FOR CALDAV SERVERS WITH TIMEZONE ISSUES:
                         # Some CalDAV servers (e.g., Radicale) don't handle timezone-aware
@@ -176,8 +178,11 @@ async def _check_for_duplicate_events(
                             )
 
                         for event in events:
-                            try:
-                                vevent = event.icalendar_component
+
+                            def process_event(
+                                calendar_event: caldav.objects.Event,
+                            ) -> None:
+                                vevent = calendar_event.icalendar_component
                                 event_summary = str(vevent.get("summary", ""))
                                 uid = str(vevent.get("uid", ""))
                                 dtstart = vevent.get("dtstart")
@@ -203,10 +208,15 @@ async def _check_for_duplicate_events(
                                     "uid": uid,
                                     "start": start_str,
                                 })
+
+                            try:
+                                process_event(event)
                             except Exception as e:
                                 logger.warning(f"Error processing event: {e}")
                                 continue
 
+                    try:
+                        search_calendar(cal_url)
                     except Exception as e:
                         logger.error(f"Error searching calendar {cal_url}: {e}")
                         continue
@@ -271,6 +281,8 @@ async def _check_for_duplicate_events(
 
         return "\n".join(error_lines)
 
+    try:
+        return await check_for_duplicates()
     except Exception as e:
         logger.warning(f"Error checking for duplicate events: {e}", exc_info=True)
         return None
@@ -491,7 +503,7 @@ async def add_calendar_event_tool(
         f"Targeting CalDAV server '{client_url_to_use}' and calendar collection '{target_calendar_url}'"
     )
 
-    try:
+    async def add_event() -> str:
         # Parse start and end times
         if all_day:
             # For all-day events, parse as date objects
@@ -574,7 +586,7 @@ async def add_calendar_event_tool(
                 )
                 return f"OK. Event '{summary}' added to the calendar."
 
-        try:
+        async def save_event() -> str:
             # Check for duplicate events BEFORE creation (if duplicate detection is enabled and not bypassed)
             dup_detection = calendar_config.get("duplicate_detection", {})
             if dup_detection.get("enabled", True) and not bypass_duplicate_check:
@@ -606,6 +618,9 @@ async def add_calendar_event_tool(
                 result = f"{result} (duplicate check bypassed)"
 
             return result
+
+        try:
+            return await save_event()
         except (DAVError, ConnectionError, Exception) as sync_err:
             logger.exception(
                 f"Error during synchronous CalDAV save operation: {sync_err}"
@@ -620,6 +635,8 @@ async def add_calendar_event_tool(
             else:
                 return f"Error: Failed to add event to CalDAV calendar. {sync_err}"
 
+    try:
+        return await add_event()
     except ValueError as ve:
         logger.error(f"Invalid arguments for adding calendar event: {ve}")
         return f"Error: Invalid arguments provided. {ve}"
@@ -681,7 +698,7 @@ async def search_calendar_events_tool(
     if not client_url_to_use:
         return "Error: CalDAV client URL could not be determined."
 
-    try:
+    async def search_events() -> str:
         # Parse search dates
         local_tz = exec_context.timezone
         now = datetime.now(local_tz)
@@ -723,11 +740,14 @@ async def search_calendar_events_tool(
             ) as client:
                 all_events = []
                 for cal_url in calendar_urls_list:  # type: ignore
-                    try:
-                        calendar_obj = client.calendar(url=cal_url)
+
+                    def search_calendar(calendar_url: str) -> None:
+                        calendar_obj = client.calendar(url=calendar_url)
                         if not calendar_obj:
-                            logger.warning(f"Could not access calendar at {cal_url}")
-                            continue
+                            logger.warning(
+                                f"Could not access calendar at {calendar_url}"
+                            )
+                            return
 
                         # Search for events in the date range
                         events = calendar_obj.search(
@@ -738,8 +758,11 @@ async def search_calendar_events_tool(
                         )
 
                         for event in events:
-                            try:
-                                vevent = event.icalendar_component
+
+                            def process_event(
+                                calendar_event: caldav.objects.Event,
+                            ) -> None:
+                                vevent = calendar_event.icalendar_component
                                 summary = str(vevent.get("summary", ""))
 
                                 # Don't filter by text here - we'll do similarity-based filtering after
@@ -783,19 +806,24 @@ async def search_calendar_events_tool(
                                     "uid": uid,
                                     "start": start_str,
                                     "end": end_str,
-                                    "calendar_url": cal_url,
+                                    "calendar_url": calendar_url,
                                 })
+
+                            try:
+                                process_event(event)
                             except Exception as e:
                                 logger.warning(f"Error processing event: {e}")
                                 continue
 
+                    try:
+                        search_calendar(cal_url)
                     except Exception as e:
                         logger.error(f"Error searching calendar {cal_url}: {e}")
                         continue
 
                 return all_events
 
-        try:
+        async def run_search() -> str:
             loop = asyncio.get_running_loop()
             all_events = await loop.run_in_executor(None, search_events_sync)
 
@@ -862,10 +890,15 @@ async def search_calendar_events_tool(
                 result_lines.append(f"   Calendar: {event['calendar_url']}")
 
             return "\n".join(result_lines)
+
+        try:
+            return await run_search()
         except Exception as sync_err:
             logger.exception(f"Error during calendar search: {sync_err}")
             return f"Error: Failed to search calendar events. {sync_err}"
 
+    try:
+        return await search_events()
     except ValueError as ve:
         logger.error(f"Invalid search parameters: {ve}")
         return f"Error: Invalid search parameters. {ve}"
@@ -925,7 +958,7 @@ async def modify_calendar_event_tool(
     if not client_url_to_use:
         return "Error: CalDAV client URL could not be determined."
 
-    try:
+    async def modify_event() -> str:
         # Modify event (synchronous, run in executor)
         def modify_event_sync() -> str:
             logger.debug(f"Connecting to CalDAV server: {client_url_to_use}")
@@ -945,7 +978,7 @@ async def modify_calendar_event_tool(
                 # Search for the event by UID
                 # Note: calendar.search(uid=uid) doesn't work reliably with all CalDAV servers
                 # So we fetch all events and search manually
-                try:
+                def update_event() -> str:
                     all_events = calendar_obj.events()
                     event = None
 
@@ -963,12 +996,13 @@ async def modify_calendar_event_tool(
                                 if hasattr(evt_vevent, "uid")
                                 else ""
                             )
-                            if evt_uid == uid:
-                                event = evt
-                                break
                         except Exception as e:
                             logger.warning(f"Error checking event UID: {e}")
                             continue
+
+                        if evt_uid == uid:
+                            event = evt
+                            break
 
                     if not event:
                         return f"Error: Event with UID '{uid}' not found in calendar."
@@ -1090,6 +1124,8 @@ async def modify_calendar_event_tool(
                             f"OK. Event '{original_summary}' checked (no changes made)."
                         )
 
+                try:
+                    return update_event()
                 except NotFoundError:
                     return f"Error: Event with UID '{uid}' not found in calendar."
                 except Exception as e:
@@ -1104,6 +1140,8 @@ async def modify_calendar_event_tool(
             logger.exception(f"Error during calendar modification: {sync_err}")
             return f"Error: Failed to modify calendar event. {sync_err}"
 
+    try:
+        return await modify_event()
     except ValueError as ve:
         logger.error(f"Invalid modification parameters: {ve}")
         return f"Error: Invalid modification parameters. {ve}"
@@ -1157,7 +1195,7 @@ async def delete_calendar_event_tool(
     if not client_url_to_use:
         return "Error: CalDAV client URL could not be determined."
 
-    try:
+    async def delete_event() -> str:
         # Delete event (synchronous, run in executor)
         def delete_event_sync() -> str:
             logger.debug(f"Connecting to CalDAV server: {client_url_to_use}")
@@ -1177,7 +1215,7 @@ async def delete_calendar_event_tool(
                 # Search for the event by UID
                 # Note: calendar.search(uid=uid) doesn't work reliably with all CalDAV servers
                 # So we fetch all events and search manually
-                try:
+                def remove_event() -> str:
                     all_events = calendar_obj.events()
                     event = None
 
@@ -1195,12 +1233,13 @@ async def delete_calendar_event_tool(
                                 if hasattr(evt_vevent, "uid")
                                 else ""
                             )
-                            if evt_uid == uid:
-                                event = evt
-                                break
                         except Exception as e:
                             logger.warning(f"Error checking event UID: {e}")
                             continue
+
+                        if evt_uid == uid:
+                            event = evt
+                            break
 
                     if not event:
                         return f"Error: Event with UID '{uid}' not found in calendar."
@@ -1212,6 +1251,8 @@ async def delete_calendar_event_tool(
                     logger.info(f"Event '{summary}' deleted successfully")
                     return f"OK. Event '{summary}' deleted from calendar."
 
+                try:
+                    return remove_event()
                 except NotFoundError:
                     return f"Error: Event with UID '{uid}' not found in calendar."
                 except Exception as e:
@@ -1226,6 +1267,8 @@ async def delete_calendar_event_tool(
             logger.exception(f"Error during calendar deletion: {sync_err}")
             return f"Error: Failed to delete calendar event. {sync_err}"
 
+    try:
+        return await delete_event()
     except Exception as e:
         logger.exception(f"Unexpected error deleting calendar event: {e}")
         return f"Error: An unexpected error occurred while deleting the event. {e}"

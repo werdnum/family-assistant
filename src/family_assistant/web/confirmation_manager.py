@@ -65,32 +65,32 @@ class WebConfirmationManager:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._cleanup_task
 
+    def _expire_pending_confirmations(self) -> None:
+        now = datetime.now(UTC)
+        expired_ids = [
+            request_id
+            for request_id, confirmation in self.pending_confirmations.items()
+            if (now - confirmation.created_at).total_seconds()
+            > confirmation.timeout_seconds
+        ]
+
+        for request_id in expired_ids:
+            confirmation = self.pending_confirmations.pop(request_id)
+            if not confirmation.decision_future.done():
+                confirmation.decision_future.set_result(
+                    ConfirmationOutcome(kind="timed_out")
+                )
+                logger.info(
+                    f"Confirmation request {request_id} for tool '{confirmation.tool_name}' "
+                    f"timed out after {confirmation.timeout_seconds}s"
+                )
+
     async def _cleanup_expired(self) -> None:
         """Periodically clean up expired confirmation requests."""
         while True:
             try:
                 await asyncio.sleep(10)  # Check every 10 seconds
-
-                now = datetime.now(UTC)
-                expired_ids = []
-
-                for request_id, confirmation in self.pending_confirmations.items():
-                    if (
-                        now - confirmation.created_at
-                    ).total_seconds() > confirmation.timeout_seconds:
-                        expired_ids.append(request_id)
-
-                for request_id in expired_ids:
-                    confirmation = self.pending_confirmations.pop(request_id)
-                    if not confirmation.decision_future.done():
-                        confirmation.decision_future.set_result(
-                            ConfirmationOutcome(kind="timed_out")
-                        )
-                        logger.info(
-                            f"Confirmation request {request_id} for tool '{confirmation.tool_name}' "
-                            f"timed out after {confirmation.timeout_seconds}s"
-                        )
-
+                self._expire_pending_confirmations()
             except asyncio.CancelledError:
                 break
 

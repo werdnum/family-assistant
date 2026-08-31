@@ -276,49 +276,55 @@ class ReolinkBackend:
                     stream="main",
                     split_time=VOD_SPLIT_TIME,
                 )
-
-                for vod_file in vod_files:
-                    # Get triggers from the VOD file (VOD_trigger is an IntFlag)
-                    trigger_flags = vod_file.triggers
-                    if not trigger_flags or trigger_flags == VOD_trigger.NONE:
-                        continue
-
-                    # Iterate over each flag that is set in the IntFlag
-                    for trigger_flag in VOD_trigger:
-                        if trigger_flag == VOD_trigger.NONE:
-                            continue
-                        if trigger_flag not in trigger_flags:
-                            continue
-
-                        # Map trigger flag to event type
-                        trigger_name = trigger_flag.name or str(trigger_flag)
-                        event_type = VOD_TRIGGER_TO_EVENT_TYPE.get(
-                            trigger_name, trigger_name.lower()
-                        )
-
-                        # Filter by event type if specified
-                        if event_types and event_type not in event_types:
-                            continue
-
-                        events.append(
-                            CameraEvent(
-                                camera_id=camera_id,
-                                start_time=vod_file.start_time,
-                                end_time=getattr(vod_file, "end_time", None),
-                                event_type=event_type,
-                                confidence=None,  # Reolink doesn't provide confidence
-                                metadata={
-                                    "filename": vod_file.file_name,
-                                    "raw_trigger": trigger_name,
-                                },
-                            )
-                        )
+                events = self._events_from_vod_files(camera_id, event_types, vod_files)
 
             except Exception:
                 logger.exception("Error searching events for camera %s", camera_id)
                 raise
 
             return events
+
+    @staticmethod
+    def _events_from_vod_files(
+        camera_id: str,
+        event_types: list[str] | None,
+        vod_files: list[VOD_file],
+    ) -> list[CameraEvent]:
+        """Convert triggered VOD files into camera events."""
+        events: list[CameraEvent] = []
+        for vod_file in vod_files:
+            trigger_flags = vod_file.triggers
+            if not trigger_flags or trigger_flags == VOD_trigger.NONE:
+                continue
+
+            for trigger_flag in VOD_trigger:
+                if (
+                    trigger_flag == VOD_trigger.NONE
+                    or trigger_flag not in trigger_flags
+                ):
+                    continue
+
+                trigger_name = trigger_flag.name or str(trigger_flag)
+                event_type = VOD_TRIGGER_TO_EVENT_TYPE.get(
+                    trigger_name, trigger_name.lower()
+                )
+                if event_types and event_type not in event_types:
+                    continue
+
+                events.append(
+                    CameraEvent(
+                        camera_id=camera_id,
+                        start_time=vod_file.start_time,
+                        end_time=getattr(vod_file, "end_time", None),
+                        event_type=event_type,
+                        confidence=None,
+                        metadata={
+                            "filename": vod_file.file_name,
+                            "raw_trigger": trigger_name,
+                        },
+                    )
+                )
+        return events
 
     async def get_recordings(
         self,
@@ -353,34 +359,40 @@ class ReolinkBackend:
                     stream="main",
                     split_time=VOD_SPLIT_TIME,
                 )
-
-                for vod_file in vod_files:
-                    # Get recording end time
-                    file_end_time = getattr(vod_file, "end_time", None)
-                    if file_end_time is None:
-                        # Estimate end time from duration if available
-                        duration = getattr(vod_file, "duration", None)
-                        if duration:
-                            file_end_time = vod_file.start_time + duration
-                        else:
-                            # Default to start time + split time
-                            file_end_time = vod_file.start_time + VOD_SPLIT_TIME
-
-                    recordings.append(
-                        Recording(
-                            camera_id=camera_id,
-                            start_time=vod_file.start_time,
-                            end_time=file_end_time,
-                            filename=vod_file.file_name,
-                            size_bytes=getattr(vod_file, "size", None),
-                        )
-                    )
+                recordings = self._recordings_from_vod_files(camera_id, vod_files)
 
             except Exception:
                 logger.exception("Error getting recordings for camera %s", camera_id)
                 raise
 
             return recordings
+
+    @staticmethod
+    def _recordings_from_vod_files(
+        camera_id: str, vod_files: list[VOD_file]
+    ) -> list[Recording]:
+        """Convert VOD file metadata into recordings."""
+        recordings: list[Recording] = []
+        for vod_file in vod_files:
+            file_end_time = getattr(vod_file, "end_time", None)
+            if file_end_time is None:
+                duration = getattr(vod_file, "duration", None)
+                file_end_time = (
+                    vod_file.start_time + duration
+                    if duration
+                    else vod_file.start_time + VOD_SPLIT_TIME
+                )
+
+            recordings.append(
+                Recording(
+                    camera_id=camera_id,
+                    start_time=vod_file.start_time,
+                    end_time=file_end_time,
+                    filename=vod_file.file_name,
+                    size_bytes=getattr(vod_file, "size", None),
+                )
+            )
+        return recordings
 
     async def _invalidate_host(self, camera_id: str) -> None:
         """Invalidate cached host connection for camera.
@@ -695,129 +707,13 @@ class ReolinkBackend:
 
         for attempt in range(3):
             try:
-                logger.info(
-                    "Attempt %d/3: Getting token for %s", attempt + 1, camera_id
+                return await self._extract_frame_download_attempt(
+                    camera_id=camera_id,
+                    file_name=file_name,
+                    offset_seconds=offset_seconds,
+                    config=config,
+                    attempt=attempt,
                 )
-
-                # Get authentication token via Login API
-                host = await self._get_or_create_host(camera_id)
-                token = host._token
-
-                if not token:
-                    raise RuntimeError("Failed to get authentication token")
-
-                # Build download URL
-                protocol = "https" if config.use_https else "http"
-                logger.debug(
-                    "Config: use_https=%s, port=%s, effective_port=%s",
-                    config.use_https,
-                    config.port,
-                    config.effective_port,
-                )
-                download_url = (
-                    f"{protocol}://{config.host}:{config.effective_port}/cgi-bin/api.cgi"
-                    f"?cmd=Download&source={file_name}&token={token}"
-                )
-
-                # Log the download URL (without token for security)
-                safe_download_url = (
-                    download_url.split("&token=", maxsplit=1)[0] + "&token=REDACTED"
-                )
-                logger.info(
-                    "Attempt %d/3: Downloading VOD via CGI: %s",
-                    attempt + 1,
-                    safe_download_url,
-                )
-
-                # Download using subprocess curl (more reliable for camera's TLS)
-                def _download_with_curl(url: str = download_url) -> bytes:
-                    result = subprocess.run(
-                        [
-                            "curl",
-                            "-sk",  # Silent, insecure (skip cert verify)
-                            "--max-time",
-                            "60",  # 60 second timeout (some cameras are slow)
-                            url,
-                        ],
-                        capture_output=True,
-                        timeout=90,
-                        check=False,
-                    )
-                    if result.returncode != 0:
-                        stderr = result.stderr.decode("utf-8", errors="replace")
-                        raise RuntimeError(f"curl failed: {stderr[:500]}")
-                    return result.stdout
-
-                video_data = await asyncio.to_thread(_download_with_curl)
-                logger.info("Downloaded video: %d bytes", len(video_data))
-                # Debug: Check if we got actual video data or an error response
-                if len(video_data) < 1000:
-                    logger.warning(
-                        "Downloaded data seems too small, first 200 bytes: %s",
-                        video_data[:200],
-                    )
-
-                # Extract frame with FFmpeg from downloaded video
-                def _extract_frame(data: bytes = video_data) -> bytes:
-                    with tempfile.NamedTemporaryFile(
-                        suffix=".mp4", delete=False
-                    ) as video_tmp:
-                        video_path = video_tmp.name
-                        video_tmp.write(data)
-
-                    with tempfile.NamedTemporaryFile(
-                        suffix=".jpg", delete=False
-                    ) as frame_tmp:
-                        frame_path = frame_tmp.name
-
-                    try:
-                        ffmpeg_cmd = [
-                            "ffmpeg",
-                            "-y",
-                            "-ss",
-                            str(offset_seconds),
-                            "-i",
-                            video_path,
-                            "-vframes",
-                            "1",
-                            "-q:v",
-                            "2",
-                            "-f",
-                            "image2",
-                            frame_path,
-                        ]
-                        ffmpeg_result = subprocess.run(
-                            ffmpeg_cmd,
-                            capture_output=True,
-                            timeout=60,
-                            check=False,
-                        )
-                        if ffmpeg_result.returncode != 0:
-                            stderr = ffmpeg_result.stderr.decode(
-                                "utf-8", errors="replace"
-                            )
-                            msg = f"FFmpeg failed: {stderr[-500:]}"
-                            raise RuntimeError(msg)
-
-                        # Read extracted frame
-                        if (
-                            not os.path.exists(frame_path)
-                            or os.path.getsize(frame_path) == 0
-                        ):
-                            msg = "FFmpeg produced no output"
-                            raise RuntimeError(msg)
-
-                        with open(frame_path, "rb") as f:
-                            return f.read()
-                    finally:
-                        if os.path.exists(video_path):
-                            os.unlink(video_path)
-                        if os.path.exists(frame_path):
-                            os.unlink(frame_path)
-
-                frame_data = await asyncio.to_thread(_extract_frame)
-                logger.info("Successfully extracted frame: %d bytes", len(frame_data))
-                return frame_data
 
             except (
                 aiohttp.ServerDisconnectedError,
@@ -837,6 +733,119 @@ class ReolinkBackend:
 
         msg = f"Frame extraction failed after 3 download attempts: {last_error}"
         raise RuntimeError(msg) from last_error
+
+    async def _extract_frame_download_attempt(
+        self,
+        *,
+        camera_id: str,
+        file_name: str,
+        offset_seconds: float,
+        config: ReolinkCameraConfig,
+        attempt: int,
+    ) -> bytes:
+        """Download a recording and extract one frame for a single retry attempt."""
+        logger.info("Attempt %d/3: Getting token for %s", attempt + 1, camera_id)
+        host = await self._get_or_create_host(camera_id)
+        token = host._token
+        if not token:
+            raise RuntimeError("Failed to get authentication token")
+
+        protocol = "https" if config.use_https else "http"
+        logger.debug(
+            "Config: use_https=%s, port=%s, effective_port=%s",
+            config.use_https,
+            config.port,
+            config.effective_port,
+        )
+        download_url = (
+            f"{protocol}://{config.host}:{config.effective_port}/cgi-bin/api.cgi"
+            f"?cmd=Download&source={file_name}&token={token}"
+        )
+        safe_download_url = (
+            download_url.split("&token=", maxsplit=1)[0] + "&token=REDACTED"
+        )
+        logger.info(
+            "Attempt %d/3: Downloading VOD via CGI: %s",
+            attempt + 1,
+            safe_download_url,
+        )
+
+        def _download_with_curl(url: str = download_url) -> bytes:
+            result = subprocess.run(
+                [
+                    "curl",
+                    "-sk",
+                    "--max-time",
+                    "60",
+                    url,
+                ],
+                capture_output=True,
+                timeout=90,
+                check=False,
+            )
+            if result.returncode != 0:
+                stderr = result.stderr.decode("utf-8", errors="replace")
+                raise RuntimeError(f"curl failed: {stderr[:500]}")
+            return result.stdout
+
+        video_data = await asyncio.to_thread(_download_with_curl)
+        logger.info("Downloaded video: %d bytes", len(video_data))
+        if len(video_data) < 1000:
+            logger.warning(
+                "Downloaded data seems too small, first 200 bytes: %s",
+                video_data[:200],
+            )
+
+        def _extract_frame(data: bytes = video_data) -> bytes:
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as video_tmp:
+                video_path = video_tmp.name
+                video_tmp.write(data)
+
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as frame_tmp:
+                frame_path = frame_tmp.name
+
+            try:
+                ffmpeg_cmd = [
+                    "ffmpeg",
+                    "-y",
+                    "-ss",
+                    str(offset_seconds),
+                    "-i",
+                    video_path,
+                    "-vframes",
+                    "1",
+                    "-q:v",
+                    "2",
+                    "-f",
+                    "image2",
+                    frame_path,
+                ]
+                ffmpeg_result = subprocess.run(
+                    ffmpeg_cmd,
+                    capture_output=True,
+                    timeout=60,
+                    check=False,
+                )
+                if ffmpeg_result.returncode != 0:
+                    stderr = ffmpeg_result.stderr.decode("utf-8", errors="replace")
+                    msg = f"FFmpeg failed: {stderr[-500:]}"
+                    raise RuntimeError(msg)
+
+                if not os.path.exists(frame_path) or os.path.getsize(frame_path) == 0:
+                    msg = "FFmpeg produced no output"
+                    raise RuntimeError(msg)
+
+                with open(frame_path, "rb") as frame_file:
+                    return frame_file.read()
+            finally:
+                if os.path.exists(video_path):
+                    os.unlink(video_path)
+                if os.path.exists(frame_path):
+                    os.unlink(frame_path)
+
+        frame_data = await asyncio.to_thread(_extract_frame)
+        logger.info("Successfully extracted frame: %d bytes", len(frame_data))
+        return frame_data
 
     async def get_frames_batch(
         self,

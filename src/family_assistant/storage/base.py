@@ -166,12 +166,15 @@ def create_engine_with_sqlite_optimizations(
                 cursor.fetchone()
 
                 # If we get here, it's SQLite
-                cursor.execute("PRAGMA journal_mode=WAL")  # Enable WAL mode
-                cursor.execute("PRAGMA busy_timeout=30000")  # 30 second timeout
-                cursor.execute("PRAGMA synchronous=NORMAL")  # Better performance
-                cursor.execute("PRAGMA cache_size=-64000")  # 64MB cache
-                cursor.execute("PRAGMA temp_store=MEMORY")  # Use memory for temp tables
-                cursor.execute("PRAGMA mmap_size=536870912")  # 512MB memory-mapped I/O
+                for pragma in (
+                    "PRAGMA journal_mode=WAL",
+                    "PRAGMA busy_timeout=30000",
+                    "PRAGMA synchronous=NORMAL",
+                    "PRAGMA cache_size=-64000",
+                    "PRAGMA temp_store=MEMORY",
+                    "PRAGMA mmap_size=536870912",
+                ):
+                    cursor.execute(pragma)
 
                 logger.debug("Applied SQLite optimizations")
             except Exception:

@@ -34,6 +34,22 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _generate_schema_html(schema_json_str: str) -> str:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        infile_path = os.path.join(temp_dir, "schema.json")
+        outfile_path = os.path.join(temp_dir, "schema.html")
+        with open(infile_path, "w", encoding="utf-8") as infile:
+            infile.write(schema_json_str)
+        with open(outfile_path, "w", encoding="utf-8"):
+            pass
+
+        assert generate_from_filename is not None
+        assert _SCHEMA_GEN_CONFIG is not None
+        generate_from_filename(infile_path, outfile_path, config=_SCHEMA_GEN_CONFIG)
+        with open(outfile_path, encoding="utf-8") as outfile:
+            return outfile.read()
+
+
 # Removed @lru_cache decorator
 def render_schema_as_html(schema_json_str: str | None) -> str:
     """
@@ -62,29 +78,7 @@ def render_schema_as_html(schema_json_str: str | None) -> str:
 
     # Use temporary files
     try:
-        with (
-            tempfile.NamedTemporaryFile(
-                mode="w", suffix=".json", delete=False, encoding="utf-8"
-            ) as infile,
-            tempfile.NamedTemporaryFile(
-                mode="r", suffix=".html", delete=False, encoding="utf-8"
-            ) as outfile,
-        ):
-            infile.write(schema_json_str)  # Write the original JSON string
-            infile_path = infile.name
-            outfile_path = outfile.name
-
-        # Ensure files are closed before passing paths to the generate function
-        generate_from_filename(infile_path, outfile_path, config=_SCHEMA_GEN_CONFIG)
-        with open(outfile_path, encoding="utf-8") as f:
-            result_html = f.read()
-        return result_html
+        return _generate_schema_html(schema_json_str)
     except Exception as e:
         logger.exception(f"Failed to generate HTML schema: {e}")
         return f"<pre>Error generating schema HTML: {html.escape(str(e))}</pre>"
-    finally:
-        # Clean up temporary files
-        if "infile_path" in locals() and os.path.exists(infile_path):
-            os.remove(infile_path)
-        if "outfile_path" in locals() and os.path.exists(outfile_path):
-            os.remove(outfile_path)

@@ -151,89 +151,88 @@ async def query_recent_events_tool(
     hours = min(max(hours, 1), 48)  # Clamp between 1 and 48
     limit = min(max(limit, 1), 20)  # Clamp between 1 and 20
 
-    try:
-        cutoff_time = datetime.now(UTC) - timedelta(hours=hours)
+    cutoff_time = datetime.now(UTC) - timedelta(hours=hours)
 
-        # Use the database context from the execution context
-        db_ctx = exec_context.db_context
+    # Use the database context from the execution context
+    db_ctx = exec_context.db_context
 
-        # Build query
-        if source_id:
-            query = text("""
+    # Build query
+    if source_id:
+        query = text("""
                 SELECT event_id, source_id, event_data, triggered_listener_ids, timestamp
                 FROM recent_events
                 WHERE source_id = :source_id AND timestamp >= :cutoff_time
                 ORDER BY timestamp DESC
                 LIMIT :limit
             """)
-            params = {
-                "source_id": source_id,
-                "cutoff_time": cutoff_time,
-                "limit": limit,
-            }
-        else:
-            query = text("""
+        params = {
+            "source_id": source_id,
+            "cutoff_time": cutoff_time,
+            "limit": limit,
+        }
+    else:
+        query = text("""
                 SELECT event_id, source_id, event_data, triggered_listener_ids, timestamp
                 FROM recent_events
                 WHERE timestamp >= :cutoff_time
                 ORDER BY timestamp DESC
                 LIMIT :limit
             """)
-            params = {"cutoff_time": cutoff_time, "limit": limit}
+        params = {"cutoff_time": cutoff_time, "limit": limit}
 
+    try:
         result = await db_ctx.fetch_all(query, params)
-
-        if not result:
-            return json.dumps({
-                "events": [],
-                "message": f"No events found in the last {hours} hours",
-            })
-
-        # Collect raw events
-        events = []
-        for row in result:
-            # Parse event data - handle both string and dict (some DB drivers auto-parse JSON)
-            event_data = row["event_data"]
-            if isinstance(event_data, str):
-                try:
-                    event_data = json.loads(event_data)
-                except json.JSONDecodeError:
-                    event_data = {"error": "Invalid JSON", "raw": event_data}
-
-            # Parse triggered listeners - handle both string and list
-            triggered_listeners = row["triggered_listener_ids"]
-            if triggered_listeners is None:
-                triggered_listeners = []
-            elif isinstance(triggered_listeners, str):
-                try:
-                    triggered_listeners = json.loads(triggered_listeners)
-                except json.JSONDecodeError:
-                    triggered_listeners = []
-
-            events.append({
-                "event_id": row["event_id"],
-                "source_id": row["source_id"],
-                "timestamp": _format_event_timestamp(
-                    row["timestamp"], exec_context.timezone
-                ),
-                "event_data": event_data,
-                "triggered_listeners": triggered_listeners,
-            })
-
-        # Return raw JSON events
-        return json.dumps(
-            {
-                "events": events,
-                "count": len(events),
-                "hours_queried": hours,
-                "source_filter": source_id,
-            },
-            indent=2,
-        )
-
     except Exception as e:
         logger.exception(f"Error querying recent events: {e}")
         return f"Error: Failed to query recent events. {e!s}"
+
+    if not result:
+        return json.dumps({
+            "events": [],
+            "message": f"No events found in the last {hours} hours",
+        })
+
+    # Collect raw events
+    events = []
+    for row in result:
+        # Parse event data - handle both string and dict (some DB drivers auto-parse JSON)
+        event_data = row["event_data"]
+        if isinstance(event_data, str):
+            try:
+                event_data = json.loads(event_data)
+            except json.JSONDecodeError:
+                event_data = {"error": "Invalid JSON", "raw": event_data}
+
+        # Parse triggered listeners - handle both string and list
+        triggered_listeners = row["triggered_listener_ids"]
+        if triggered_listeners is None:
+            triggered_listeners = []
+        elif isinstance(triggered_listeners, str):
+            try:
+                triggered_listeners = json.loads(triggered_listeners)
+            except json.JSONDecodeError:
+                triggered_listeners = []
+
+        events.append({
+            "event_id": row["event_id"],
+            "source_id": row["source_id"],
+            "timestamp": _format_event_timestamp(
+                row["timestamp"], exec_context.timezone
+            ),
+            "event_data": event_data,
+            "triggered_listeners": triggered_listeners,
+        })
+
+    # Return raw JSON events
+    return json.dumps(
+        {
+            "events": events,
+            "count": len(events),
+            "hours_queried": hours,
+            "source_filter": source_id,
+        },
+        indent=2,
+    )
 
 
 async def test_event_listener_tool(
@@ -300,112 +299,112 @@ async def test_event_listener_tool(
             indent=2,
         )
 
-    try:
-        cutoff_time = datetime.now(UTC) - timedelta(hours=hours)
+    cutoff_time = datetime.now(UTC) - timedelta(hours=hours)
 
-        # Use the database context from the execution context instead of creating a new one
-        db_ctx = exec_context.db_context
+    # Use the database context from the execution context instead of creating a new one
+    db_ctx = exec_context.db_context
 
-        # Query all events for the source within the time range
-        query = text("""
+    # Query all events for the source within the time range
+    query = text("""
             SELECT event_id, source_id, event_data, timestamp
             FROM recent_events
             WHERE source_id = :source_id AND timestamp >= :cutoff_time
             ORDER BY timestamp DESC
         """)
-        params = {
-            "source_id": source,
-            "cutoff_time": cutoff_time,
-        }
+    params = {
+        "source_id": source,
+        "cutoff_time": cutoff_time,
+    }
 
+    try:
         result = await db_ctx.fetch_all(query, params)
-
-        if not result:
-            return json.dumps({
-                "matched_events": [],
-                "total_tested": 0,
-                "message": f"No events found for source '{source}' in the last {hours} hours",
-                "match_conditions": match_conditions,
-            })
-
-        # Test each event against the match conditions
-        matched_events = []
-        total_tested = 0
-
-        for row in result:
-            total_tested += 1
-
-            # Parse event data - handle both string and dict (some DB drivers auto-parse JSON)
-            event_data = row["event_data"]
-            if isinstance(event_data, str):
-                try:
-                    event_data = json.loads(event_data)
-                except json.JSONDecodeError:
-                    continue
-            elif not isinstance(event_data, dict):
-                continue
-
-            # Check if event matches conditions
-            if _check_match_conditions(event_data, match_conditions):
-                matched_events.append({
-                    "event_id": row["event_id"],
-                    "timestamp": _format_event_timestamp(
-                        row["timestamp"], exec_context.timezone
-                    ),
-                    "event_data": event_data,
-                })
-
-                # Limit matched events
-                if len(matched_events) >= limit:
-                    break
-
-        # Analyze why events might not have matched
-        if total_tested > 0 and len(matched_events) == 0:
-            # Get a sample event to show what fields are available
-            try:
-                # Handle both string and dict (some DB drivers auto-parse JSON)
-                sample_data = result[0]["event_data"]
-                if isinstance(sample_data, str):
-                    sample_data = json.loads(sample_data)
-                elif not isinstance(sample_data, dict):
-                    sample_data = None
-
-                if sample_data:
-                    analysis.append("No events matched your conditions.")
-                    analysis.append(
-                        f"Sample event structure: {_get_event_structure(sample_data)}"
-                    )
-
-                    # Check if any condition keys exist in the data
-                    for key, expected_value in match_conditions.items():
-                        actual_value = _get_nested_value(sample_data, key)
-                        if actual_value is None:
-                            analysis.append(f"Field '{key}' not found in events")
-                        elif actual_value != expected_value:
-                            analysis.append(
-                                f"Field '{key}' exists but has value: {actual_value!r}"
-                            )
-            except Exception:
-                pass
-
-        return json.dumps(
-            {
-                "matched_events": matched_events,
-                "total_tested": total_tested,
-                "matched_count": len(matched_events),
-                "match_conditions": match_conditions,
-                "hours_queried": hours,
-                "analysis": analysis if analysis else None,
-            },
-            indent=2,
-        )
-
     except Exception as e:
         logger.exception(f"Error testing event listener: {e}")
         return json.dumps({
             "error": f"Failed to test event listener: {e!s}",
             "match_conditions": match_conditions,
         })
+
+    if not result:
+        return json.dumps({
+            "matched_events": [],
+            "total_tested": 0,
+            "message": f"No events found for source '{source}' in the last {hours} hours",
+            "match_conditions": match_conditions,
+        })
+
+    # Test each event against the match conditions
+    matched_events = []
+    total_tested = 0
+
+    for row in result:
+        total_tested += 1
+
+        # Parse event data - handle both string and dict (some DB drivers auto-parse JSON)
+        event_data = row["event_data"]
+        if isinstance(event_data, str):
+            try:
+                event_data = json.loads(event_data)
+            except json.JSONDecodeError:
+                continue
+        elif not isinstance(event_data, dict):
+            continue
+
+        # Check if event matches conditions
+        if _check_match_conditions(event_data, match_conditions):
+            matched_events.append({
+                "event_id": row["event_id"],
+                "timestamp": _format_event_timestamp(
+                    row["timestamp"], exec_context.timezone
+                ),
+                "event_data": event_data,
+            })
+
+            # Limit matched events
+            if len(matched_events) >= limit:
+                break
+
+    # Analyze why events might not have matched
+    if total_tested > 0 and len(matched_events) == 0:
+        # Get a sample event to show what fields are available
+        sample_data = None
+        try:
+            # Handle both string and dict (some DB drivers auto-parse JSON)
+            sample_data = result[0]["event_data"]
+            if isinstance(sample_data, str):
+                sample_data = json.loads(sample_data)
+            elif not isinstance(sample_data, dict):
+                sample_data = None
+        except Exception:
+            pass
+
+        if isinstance(sample_data, dict) and sample_data:
+            analysis.append("No events matched your conditions.")
+            analysis.append(
+                f"Sample event structure: {_get_event_structure(sample_data)}"
+            )
+
+            # Check if any condition keys exist in the data
+            for key, expected_value in match_conditions.items():
+                actual_value = _get_nested_value(sample_data, key)
+                if actual_value is None:
+                    analysis.append(f"Field '{key}' not found in events")
+                elif actual_value != expected_value:
+                    analysis.append(
+                        f"Field '{key}' exists but has value: {actual_value!r}"
+                    )
+
+    return json.dumps(
+        {
+            "matched_events": matched_events,
+            "total_tested": total_tested,
+            "matched_count": len(matched_events),
+            "match_conditions": match_conditions,
+            "hours_queried": hours,
+            "analysis": analysis if analysis else None,
+        },
+        indent=2,
+    )
 
 
 def _check_match_conditions(event_data: dict, match_conditions: dict | None) -> bool:

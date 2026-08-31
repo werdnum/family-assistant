@@ -741,19 +741,19 @@ async def _schedule_reminder_follow_up(
 
     try:
         amount = int(interval_parts[0])
-        unit = interval_parts[1].rstrip("s")  # Remove plural 's'
-
-        if unit == "minute":
-            delta = timedelta(minutes=amount)
-        elif unit == "hour":
-            delta = timedelta(hours=amount)
-        elif unit == "day":
-            delta = timedelta(days=amount)
-        else:
-            logger.error(f"Unknown time unit in follow-up interval: {unit}")
-            return
     except ValueError:
         logger.error(f"Invalid follow-up interval: {follow_up_interval}")
+        return
+
+    unit = interval_parts[1].rstrip("s")  # Remove plural 's'
+    if unit == "minute":
+        delta = timedelta(minutes=amount)
+    elif unit == "hour":
+        delta = timedelta(hours=amount)
+    elif unit == "day":
+        delta = timedelta(days=amount)
+    else:
+        logger.error(f"Unknown time unit in follow-up interval: {unit}")
         return
 
     clock = exec_context.clock or SystemClock()
@@ -1140,7 +1140,7 @@ async def handle_llm_callback(
         clock.now().astimezone(exec_context.timezone).strftime("%Y-%m-%d %H:%M:%S %Z")
     )  # Use timezone from context
 
-    try:
+    async def process_callback() -> None:
         # Construct the trigger message content for the LLM
         if is_reminder:
             if current_attempt == 1:
@@ -1350,6 +1350,8 @@ async def handle_llm_callback(
             )
             raise RuntimeError("LLM failed to generate response content for callback.")
 
+    try:
+        await process_callback()
     except Exception as e:
         # Catch errors during the generate_llm_response_for_chat call or sending/saving messages
         # Need interface_type and conversation_id here
@@ -3325,7 +3327,8 @@ class TaskWorker:
         logger.info(
             f"RECURRENCE PROCESSING: Task {task_id} has recurrence rule: {recurrence_rule_str}. Scheduling next instance."
         )
-        try:
+
+        async def schedule_next() -> None:
             # Use the *scheduled_at* time of the completed task as the base for the next occurrence
             last_scheduled_at = task.get("scheduled_at")
             if not last_scheduled_at:
@@ -3403,6 +3406,8 @@ class TaskWorker:
                     f"RECURRENCE END: No further occurrences found for recurring task {original_task_id} based on rule '{recurrence_rule_str}'."
                 )
 
+        try:
+            await schedule_next()
         except Exception as recur_err:
             logger.exception(
                 f"RECURRENCE ERROR: Failed to calculate or enqueue next instance for recurring task {task_id} (Original: {original_task_id}): {recur_err}"
@@ -3650,7 +3655,8 @@ class TaskWorker:
                 "task.id": str(task["task_id"]),
             },
         ) as span:
-            try:
+
+            async def process_task() -> ScheduleAutomationAdvanceRequest | None:
                 # --- Create Execution Context ---
                 # Extract interface identifiers from payload
                 # Need to define these *before* using them in logging etc.
@@ -3832,6 +3838,8 @@ class TaskWorker:
                 )
                 return advance_request
 
+            try:
+                return await process_task()
             except Exception as handler_exc:
                 span.set_status(StatusCode.ERROR, str(handler_exc))
                 span.record_exception(handler_exc)
@@ -4168,7 +4176,8 @@ class TaskWorker:
             return
 
         while not self.shutdown_event.is_set():  # Use self.shutdown_event
-            try:
+
+            async def run_iteration() -> None:
                 task = None  # Initialize task variable for the outer scope
                 # Clear the wake event BEFORE attempting a dequeue. Any
                 # notification that arrives after this point (including while the
@@ -4178,21 +4187,22 @@ class TaskWorker:
                 # Database context per iteration (starts a transaction)
                 if not self.engine:
                     raise RuntimeError("Database engine not initialized")
+                engine = self.engine
                 # Split task processing into separate transactions for better isolation
                 outbox_context = Database(
-                    engine=self.engine,
+                    engine=engine,
                 )
                 drained_count = await self._drain_schedule_automation_advance_outbox(
                     outbox_context
                 )
                 if drained_count > 0:
                     self._update_last_activity()
-                    continue
+                    return
 
                 # Transaction 1: Dequeue task (commits immediately)
                 task = None
                 dequeue_context = Database(
-                    engine=self.engine,
+                    engine=engine,
                 )
                 logger.debug(
                     "Polling for tasks on DB context: %s",
@@ -4219,25 +4229,26 @@ class TaskWorker:
                     # remaining work instead of waiting out the poll interval.
                     notify_other_workers(wake_up_event)
                     self._update_last_activity()  # Update activity when starting task processing
-                    try:  # Inner try for task processing
+
+                    async def process_dequeued_task() -> None:
                         # Transaction 2: Process task and update status (commits immediately)
                         process_context = Database(
-                            engine=self.engine,
+                            engine=engine,
                         )
                         advance_request = await self._process_task(
                             process_context, task, wake_up_event
                         )
                         if advance_request is not None:
                             advance_context = Database(
-                                engine=self.engine,
+                                engine=engine,
                             )
                             await self._flush_schedule_automation_advance_outbox(
                                 advance_context, advance_request.source_task_id
                             )
                         self._update_last_activity()  # Update after successful task processing
-                        # After successful task processing, immediately continue to check for more tasks
-                        # This eliminates unnecessary delays between tasks
-                        continue
+
+                    try:  # Inner try for task processing
+                        await process_dequeued_task()
                     except Exception as e:
                         logger.exception(
                             f"Error during task processing for worker {self.worker_id}: {e}"
@@ -4250,6 +4261,8 @@ class TaskWorker:
                     await self._wait_for_next_poll(wake_up_event)
                     self._update_last_activity()  # Update after polling cycle
 
+            try:
+                await run_iteration()
             # --- Exception handling for the outer try block (whole loop iteration) ---
             except asyncio.CancelledError:
                 logger.info(
@@ -4355,7 +4368,8 @@ async def handle_worker_task_cleanup(
     dirs_deleted = 0
     stale_marked = 0
 
-    try:
+    async def clean_up_worker_tasks() -> None:
+        nonlocal db_deleted, dirs_deleted, stale_marked
         # Step 0: Mark stale tasks as failed before cleanup
         stale_marked = await exec_context.db_context.worker_tasks.mark_stale_tasks()
         if stale_marked:
@@ -4397,6 +4411,9 @@ async def handle_worker_task_cleanup(
             f"deleted {db_deleted} database records, {dirs_deleted} task directories "
             f"older than {retention_hours} hours."
         )
+
+    try:
+        await clean_up_worker_tasks()
     except Exception as e:
         logger.exception(f"Error during worker task cleanup: {e}")
         raise
@@ -4528,11 +4545,12 @@ async def _process_script_wake_llm(
             trigger_attachments = []
 
             for attachment_id in all_attachment_ids:
-                try:
+
+                async def add_attachment(current_attachment_id: str) -> None:
                     # Get attachment metadata
                     attachment_metadata = await attachment_registry.get_attachment(
                         db_context=exec_context.db_context,
-                        attachment_id=attachment_id,
+                        attachment_id=current_attachment_id,
                         acting_user_id=exec_context.user_id,
                     )
 
@@ -4571,12 +4589,15 @@ async def _process_script_wake_llm(
                             )
                         )
                         logger.debug(
-                            f"Added attachment {attachment_id} to wake_llm context"
+                            f"Added attachment {current_attachment_id} to wake_llm context"
                         )
                     else:
                         logger.warning(
-                            f"Attachment {attachment_id} not found for script wake_llm"
+                            f"Attachment {current_attachment_id} not found for script wake_llm"
                         )
+
+                try:
+                    await add_attachment(attachment_id)
                 except Exception as e:
                     logger.error(
                         f"Error fetching attachment {attachment_id} for script wake_llm: {e}"
@@ -4921,7 +4942,7 @@ async def handle_script_execution(
         )
 
     # Execute the script
-    try:
+    async def execute_script() -> None:
         logger.debug(
             f"Executing script for listener {listener_id} with event data: {event_data}"
         )
@@ -4957,6 +4978,8 @@ async def handle_script_execution(
                     listener_id=listener_id,
                 )
 
+    try:
+        await execute_script()
     except ScriptTimeoutError as e:
         logger.error(
             f"Script timeout for listener {listener_id} after {e.timeout_seconds} seconds: {e}"
@@ -5392,7 +5415,7 @@ async def _notify_confirmation_execution_result(
 
     chat_interface, delivery_conversation_id, reply_to_interface_id = delivery
 
-    try:
+    async def send_notification() -> None:
         result_text = _tool_result_text(result)
         attachment_ids = await _register_confirmation_result_attachments(
             context,
@@ -5423,6 +5446,9 @@ async def _notify_confirmation_execution_result(
             on_behalf_of_user_id=context.user_id,
             taint_metadata=result_taint_metadata,
         )
+
+    try:
+        await send_notification()
     except ChatDeliveryError as delivery_error:
         raise ConfirmationNotificationError(
             f"Confirmation {request['id']} result notification was not delivered: "
@@ -5511,7 +5537,8 @@ async def handle_confirmation_tool_execution(
                     notification_exc,
                 )
 
-    try:
+    async def execute_confirmation() -> str | ToolResult:
+        nonlocal execution_context
         processing_service = _resolve_confirmation_processing_service(
             exec_context,
             source_row,
@@ -5545,6 +5572,11 @@ async def handle_confirmation_tool_execution(
             execution_context,
             call_id,
         )
+
+        return result
+
+    try:
+        result = await execute_confirmation()
     except asyncio.CancelledError:
         current_task = asyncio.current_task()
         if current_task is not None:

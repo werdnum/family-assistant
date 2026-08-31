@@ -543,8 +543,10 @@ class NotesRepository(BaseRepository):
             )
 
             if txn.dialect_name == "postgresql":
-                # Use PostgreSQL's ON CONFLICT DO UPDATE for atomic upsert
-                try:
+
+                def _build_postgres_upsert() -> tuple[
+                    Any, sa.ColumnElement[bool] | None
+                ]:
                     stmt = pg_insert(notes_table).values(
                         title=title,
                         content=note_content,
@@ -558,7 +560,6 @@ class NotesRepository(BaseRepository):
                         created_at=now,
                         updated_at=now,
                     )
-                    # Define columns to update on conflict
                     update_dict = {
                         "content": stmt.excluded.content,
                         "include_in_prompt": stmt.excluded.include_in_prompt,
@@ -570,38 +571,44 @@ class NotesRepository(BaseRepository):
                         "provenance_metadata_json": stmt.excluded.provenance_metadata_json,
                         "updated_at": stmt.excluded.updated_at,
                     }
-                    # The policy checks above are only a preflight: a same-title row
-                    # inserted by another transaction after the preflight would
-                    # otherwise be overwritten unconditionally. Re-assert the policy
-                    # as the conflict-update WHERE so it holds atomically with the
-                    # write; a rowcount of 0 means the conflicting row is outside
-                    # the policy (or was raced), so refuse instead of overwriting.
                     writable = self._writable_under_policy_condition(write_policy)
-                    stmt = stmt.on_conflict_do_update(
-                        index_elements=["title"],  # The unique constraint column
-                        set_=update_dict,
-                        where=writable,
+                    return (
+                        stmt.on_conflict_do_update(
+                            index_elements=["title"],
+                            set_=update_dict,
+                            where=writable,
+                        ),
+                        writable,
                     )
-                    # Use execute_with_retry as commit is handled by context manager
-                    result = await txn.execute(stmt)
-                    if writable is not None and result.rowcount == 0:
+
+                def _ensure_write_allowed(
+                    writable: sa.ColumnElement[bool] | None, rowcount: int
+                ) -> None:
+                    if writable is not None and rowcount == 0:
                         raise NoteWritePolicyError(
                             f"Cannot modify note '{title}' - a concurrently written "
                             "note with this title is outside the active profile's "
                             "write policy."
                         )
+
+                # Use PostgreSQL's ON CONFLICT DO UPDATE for atomic upsert
+                try:
+                    stmt, writable = _build_postgres_upsert()
+                    # Use execute_with_retry as commit is handled by context manager
+                    result = await txn.execute(stmt)
+                    _ensure_write_allowed(writable, result.rowcount)
                     self._logger.info(
                         f"Successfully added/updated note: {title} (using ON CONFLICT)"
                     )
 
                     # Enqueue indexing task
                     await self._enqueue_indexing_task(txn, title)
-                    return "Success"
                 except SQLAlchemyError as e:
                     self._logger.exception(
                         f"PostgreSQL error in add_or_update({title}): {e}"
                     )
                     raise
+                return "Success"
 
             else:
                 # Fallback for SQLite and other dialects: Try INSERT, then UPDATE on IntegrityError.
@@ -687,20 +694,18 @@ class NotesRepository(BaseRepository):
 
     async def delete(self, title: str) -> bool:
         """Deletes a note by title."""
+        stmt = delete(notes_table).where(notes_table.c.title == title)
         try:
-            stmt = delete(notes_table).where(notes_table.c.title == title)
-            # Use execute_with_retry as commit is handled by context manager
             result = await self._db.execute(stmt)
             deleted_count = result.rowcount
-            if deleted_count > 0:
-                self._logger.info(f"Deleted note: {title}")
-                return True
-            else:
-                self._logger.warning(f"Note not found for deletion: {title}")
-                return False
         except SQLAlchemyError as e:
             self._logger.exception(f"Database error in delete({title}): {e}")
             raise
+        if deleted_count > 0:
+            self._logger.info(f"Deleted note: {title}")
+            return True
+        self._logger.warning(f"Note not found for deletion: {title}")
+        return False
 
     async def rename_and_update(
         self,
@@ -739,101 +744,16 @@ class NotesRepository(BaseRepository):
             SQLAlchemyError: If database error occurs
         """
         try:
-            # First verify the original note exists
-            existing_note = await self.get_by_title(
-                original_title, visibility_grants=None
+            return await self._rename_and_update(
+                original_title,
+                new_title,
+                content,
+                include_in_prompt,
+                attachment_ids,
+                visibility_labels,
+                write_policy,
+                provenance_metadata,
             )
-            if not existing_note:
-                raise NoteNotFoundError(
-                    f"Cannot rename because note '{original_title}' was not found"
-                )
-
-            # See-before-overwrite: a restricted profile may not rename a note it
-            # cannot see. Skipped when the policy carries no grants (admin bypass).
-            if write_policy.visibility_grants is not None:
-                visible_existing = await self.get_by_title(
-                    original_title, visibility_grants=write_policy.visibility_grants
-                )
-                if visible_existing is None:
-                    raise NoteWritePolicyError(
-                        f"Cannot modify note '{original_title}' - insufficient "
-                        "visibility permissions."
-                    )
-
-            # Check if new title conflicts with existing note (unless it's the same note)
-            if new_title != original_title:
-                conflicting_note = await self.get_by_title(
-                    new_title, visibility_grants=None
-                )
-                if conflicting_note:
-                    raise DuplicateNoteError(
-                        f"A note with title '{new_title}' already exists"
-                    )
-
-            # Determine attachment_ids to use
-            if attachment_ids is None:
-                attachment_ids_to_use = existing_note.attachment_ids
-            else:
-                attachment_ids_to_use = attachment_ids
-
-            visibility_labels_to_use = write_policy.resolve_labels(
-                is_new_note=False,
-                requested_labels=visibility_labels,
-                existing_labels=existing_note.visibility_labels,
-            )
-
-            if provenance_metadata is None:
-                provenance_metadata_to_use = existing_note.provenance_metadata
-            else:
-                provenance_metadata_to_use = provenance_metadata
-
-            # Serialize to JSON strings
-            attachment_ids_json = json.dumps(attachment_ids_to_use)
-            visibility_labels_json = json.dumps(visibility_labels_to_use)
-
-            # Detect skill metadata from frontmatter at write time
-            is_skill, skill_name, skill_description = _detect_skill_metadata(content)
-
-            async def _rename(txn: DatabaseTransaction) -> str:
-                """Update the note and enqueue its indexing task as one unit.
-
-                A note renamed without its indexing task enqueued would never
-                become searchable under the new title.
-                """
-                # Update the note in place, preserving the primary key
-                stmt = (
-                    update(notes_table)
-                    .where(notes_table.c.title == original_title)
-                    .values(
-                        title=new_title,
-                        content=content,
-                        include_in_prompt=include_in_prompt,
-                        attachment_ids=attachment_ids_json,
-                        visibility_labels=visibility_labels_json,
-                        is_skill=is_skill,
-                        skill_name=skill_name,
-                        skill_description=skill_description,
-                        provenance_metadata_json=provenance_metadata_to_use,
-                        updated_at=func.now(),
-                    )
-                )
-
-                result = await txn.execute(stmt)
-                if result.rowcount == 0:
-                    raise NoteNotFoundError(
-                        f"Note '{original_title}' not found (may have been deleted)"
-                    )
-
-                self._logger.info(
-                    f"Renamed note from '{original_title}' to '{new_title}'"
-                )
-
-                # Enqueue indexing task for the updated note
-                await self._enqueue_indexing_task(txn, new_title)
-                return "Success"
-
-            return await self._db.atomic(_rename)
-
         except (NoteNotFoundError, DuplicateNoteError, NoteWritePolicyError):
             raise
         except SQLAlchemyError as e:
@@ -841,6 +761,88 @@ class NotesRepository(BaseRepository):
                 f"Database error in rename_and_update({original_title} -> {new_title}): {e}"
             )
             raise
+
+    async def _rename_and_update(
+        self,
+        original_title: str,
+        new_title: str,
+        content: str,
+        include_in_prompt: bool,
+        attachment_ids: list[str] | None,
+        visibility_labels: list[str] | None,
+        write_policy: NoteWritePolicy,
+        provenance_metadata: Mapping[str, object] | None,
+    ) -> str:
+        existing_note = await self.get_by_title(original_title, visibility_grants=None)
+        if not existing_note:
+            raise NoteNotFoundError(
+                f"Cannot rename because note '{original_title}' was not found"
+            )
+
+        if write_policy.visibility_grants is not None:
+            visible_existing = await self.get_by_title(
+                original_title, visibility_grants=write_policy.visibility_grants
+            )
+            if visible_existing is None:
+                raise NoteWritePolicyError(
+                    f"Cannot modify note '{original_title}' - insufficient "
+                    "visibility permissions."
+                )
+
+        if new_title != original_title:
+            conflicting_note = await self.get_by_title(
+                new_title, visibility_grants=None
+            )
+            if conflicting_note:
+                raise DuplicateNoteError(
+                    f"A note with title '{new_title}' already exists"
+                )
+
+        attachment_ids_to_use = (
+            existing_note.attachment_ids if attachment_ids is None else attachment_ids
+        )
+        visibility_labels_to_use = write_policy.resolve_labels(
+            is_new_note=False,
+            requested_labels=visibility_labels,
+            existing_labels=existing_note.visibility_labels,
+        )
+        provenance_metadata_to_use = (
+            existing_note.provenance_metadata
+            if provenance_metadata is None
+            else provenance_metadata
+        )
+        attachment_ids_json = json.dumps(attachment_ids_to_use)
+        visibility_labels_json = json.dumps(visibility_labels_to_use)
+        is_skill, skill_name, skill_description = _detect_skill_metadata(content)
+
+        async def _rename(txn: DatabaseTransaction) -> str:
+            """Update the note and enqueue its indexing task as one unit."""
+            stmt = (
+                update(notes_table)
+                .where(notes_table.c.title == original_title)
+                .values(
+                    title=new_title,
+                    content=content,
+                    include_in_prompt=include_in_prompt,
+                    attachment_ids=attachment_ids_json,
+                    visibility_labels=visibility_labels_json,
+                    is_skill=is_skill,
+                    skill_name=skill_name,
+                    skill_description=skill_description,
+                    provenance_metadata_json=provenance_metadata_to_use,
+                    updated_at=func.now(),
+                )
+            )
+            result = await txn.execute(stmt)
+            if result.rowcount == 0:
+                raise NoteNotFoundError(
+                    f"Note '{original_title}' not found (may have been deleted)"
+                )
+            self._logger.info(f"Renamed note from '{original_title}' to '{new_title}'")
+            await self._enqueue_indexing_task(txn, new_title)
+            return "Success"
+
+        return await self._db.atomic(_rename)
 
     async def _enqueue_indexing_task(self, db: DatabaseExecutor, title: str) -> None:
         """

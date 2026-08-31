@@ -156,7 +156,10 @@ async def execute_script_tool(
         ToolResult with text and any attachments returned by the script
     """
     output_buffer = ScriptOutputBuffer()
-    try:
+
+    async def _execute() -> ToolResult:
+        nonlocal globals, script
+
         # Reject ambiguous calls with both script and name
         if name and script:
             error_msg = "Provide either 'script' (inline) or 'name' (stored), not both"
@@ -433,6 +436,8 @@ async def execute_script_tool(
             data=result_data,
         )
 
+    try:
+        return await _execute()
     except ScriptSyntaxError as e:
         error_msg = "Syntax error in script"
         if e.line:
