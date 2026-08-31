@@ -17,6 +17,7 @@ from family_assistant.eval.tool_call_review.batch import (
     prepare_batch,
     submit_batch,
     update_batch_status,
+    validate_prepare_inputs,
 )
 from family_assistant.eval.tool_call_review.loader import (
     CaseInputConstructionError,
@@ -130,5 +131,6 @@ __all__ = [
     "submit_batch",
     "update_batch_status",
     "validate_against_tool_schema",
+    "validate_prepare_inputs",
     "validate_review_input_constructible",
 ]

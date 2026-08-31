@@ -132,6 +132,77 @@ def test_prepare_refuses_zero_runnable_cases_before_artifacts(
     assert not run_dir.exists()
 
 
+@pytest.mark.parametrize(
+    ("option", "value"),
+    [("--seeds", "0"), ("--batch-size", "0"), ("--max-tokens", "0")],
+)
+def test_prepare_dry_run_reuses_positive_parameter_validation(
+    private_root: Path, option: str, value: str
+) -> None:
+    run_dir = private_root / "runs" / "dry-run"
+
+    assert (
+        batch_cli.main([
+            "prepare",
+            "--dataset",
+            "src/family_assistant/eval/tool_call_review/datasets/manual",
+            "--run-dir",
+            str(run_dir),
+            option,
+            value,
+            "--dry-run",
+        ])
+        == 1
+    )
+    assert not run_dir.exists()
+
+
+def test_prepare_dry_run_reuses_zero_runnable_validation(
+    private_root: Path,
+) -> None:
+    empty_dataset = private_root / "empty-dataset"
+    empty_dataset.mkdir()
+    run_dir = private_root / "runs" / "dry-run"
+
+    assert (
+        batch_cli.main([
+            "prepare",
+            "--dataset",
+            str(empty_dataset),
+            "--run-dir",
+            str(run_dir),
+            "--dry-run",
+        ])
+        == 1
+    )
+    assert not run_dir.exists()
+
+
+def test_prepare_dry_run_validates_without_writing_artifacts(
+    private_root: Path,
+) -> None:
+    run_dir = private_root / "runs" / "dry-run"
+
+    assert (
+        batch_cli.main([
+            "prepare",
+            "--dataset",
+            "src/family_assistant/eval/tool_call_review/datasets/manual",
+            "--run-dir",
+            str(run_dir),
+            "--seeds",
+            "2",
+            "--batch-size",
+            "7",
+            "--max-tokens",
+            "256",
+            "--dry-run",
+        ])
+        == 0
+    )
+    assert not run_dir.exists()
+
+
 @pytest.mark.asyncio
 async def test_status_rejects_unsubmitted_pending_chunks_without_network_call(
     private_root: Path,
@@ -454,6 +525,23 @@ class _MalformedStatusClient(_FakeBatchClient):
         return {"id": path.rsplit("/", 1)[1], "status": self.status}
 
 
+class _MismatchedBatchIdClient(_FakeBatchClient):
+    def __init__(self, response_id: object) -> None:
+        super().__init__()
+        self.response_id = response_id
+
+    async def request(
+        self, method: str, path: str, payload: dict[str, object] | None = None
+    ) -> dict[str, object]:
+        result = await super().request(method, path, payload)
+        if method == "GET":
+            if self.response_id is None:
+                result.pop("id", None)
+            else:
+                result["id"] = self.response_id
+        return result
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "status", [None, "submitted", "not-a-status", {"state": "done"}]
@@ -534,6 +622,38 @@ async def test_status_poll_accepts_cancelling_lifecycle_status(
     )
 
     assert manifest.chunks[0].status == "cancelling"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("response_id", [None, "batch-other"])
+async def test_status_poll_rejects_a_mismatched_batch_id_without_manifest_mutation(
+    private_root: Path, response_id: object
+) -> None:
+    run_dir = private_root / "runs" / "pilot"
+    prepare_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
+    )
+    submit_client = _FakeBatchClient()
+    await submit_batch(
+        run_dir,
+        approved_spend_usd=1.0,
+        approve_spend=True,
+        api_key="test-only",
+        client=submit_client,
+    )
+    mismatched_client = _MismatchedBatchIdClient(response_id)
+    mismatched_client.submitted = submit_client.submitted
+
+    with pytest.raises(BatchError, match="id does not match"):
+        await update_batch_status(
+            run_dir, api_key="test-only", client=mismatched_client
+        )
+
+    persisted = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert persisted["chunks"][0]["status"] == "validating"
+    assert persisted["chunks"][0]["usage"] is None
+    assert persisted["chunks"][0]["result_file"] is None
+    assert not (run_dir / "batch-result-0.json").exists()
 
 
 @pytest.mark.parametrize(

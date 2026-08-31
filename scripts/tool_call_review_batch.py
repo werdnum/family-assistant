@@ -23,8 +23,8 @@ from family_assistant.eval.tool_call_review import (
     prepare_batch,
     submit_batch,
     update_batch_status,
+    validate_prepare_inputs,
 )
-from family_assistant.eval.tool_call_review.loader import case_skip, load_cases
 from family_assistant.eval.tool_call_review.registry_snapshot import (
     RegistrySnapshotError,
     load_registry_snapshot,
@@ -99,12 +99,16 @@ def _registry(path: Path | None) -> dict | None:
 
 def _prepare_dry_run(args: argparse.Namespace) -> int:
     registry = _registry(args.tool_registry)
-    cases = load_cases(args.dataset, descriptor_registry=registry)
-    runnable = sum(
-        case_skip(case, descriptor_registry=registry) is None for case in cases
+    case_count, runnable = validate_prepare_inputs(
+        args.dataset,
+        model=args.model,
+        seeds=args.seeds,
+        batch_size=args.batch_size,
+        max_tokens=args.max_tokens,
+        descriptor_registry=registry,
     )
     print(
-        f"Validated {len(cases)} case(s); {runnable} runnable case(s); no network call."
+        f"Validated {case_count} case(s); {runnable} runnable case(s); no network call."
     )
     return 0
 

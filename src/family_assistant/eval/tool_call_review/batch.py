@@ -49,6 +49,7 @@ __all__ = [
     "prepare_batch",
     "submit_batch",
     "update_batch_status",
+    "validate_prepare_inputs",
 ]
 
 BATCH_SCHEMA_VERSION = "review_eval_batch_v1"
@@ -289,11 +290,64 @@ def prepare_batch(
     descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
 ) -> BatchManifest:
     """Prepare deterministic private requests without contacting a provider."""
-    if seeds < 1 or batch_size < 1 or max_tokens < 1:
-        raise BatchError("seeds, batch_size, and max_tokens must be positive.")
+    _validate_prepare_parameters(seeds, batch_size, max_tokens)
     directory = resolve_private_eval_path(run_dir)
     if directory.exists():
         raise BatchError(f"Refusing to reuse an existing batch directory: {directory}")
+    cases, requests, skipped = _collect_prepared_requests(
+        datasets,
+        model=model,
+        seeds=seeds,
+        max_tokens=max_tokens,
+        descriptor_registry=descriptor_registry,
+    )
+    chunks = [
+        BatchChunk(
+            index=index,
+            request_ids=[
+                request.custom_id for request in requests[start : start + batch_size]
+            ],
+        )
+        for index, start in enumerate(range(0, len(requests), batch_size))
+    ]
+    directory.mkdir(parents=True)
+    request_path = directory / "requests.jsonl"
+    _write_jsonl(request_path, requests)
+    request_sha256 = hashlib.sha256(request_path.read_bytes()).hexdigest()
+    manifest = BatchManifest(
+        run_id=directory.name,
+        provider="openrouter",
+        model=model,
+        api_base_url=DEFAULT_API_BASE_URL,
+        dataset_hash=content_hash(cases),
+        registry_hash=registry_digest(descriptor_registry),
+        seeds=seeds,
+        batch_size=batch_size,
+        max_tokens=max_tokens,
+        request_count=len(requests),
+        request_file="requests.jsonl",
+        request_sha256=request_sha256,
+        skipped_cases=skipped,
+        chunks=chunks,
+        created_at=datetime.now(UTC).isoformat(),
+    )
+    _write_json(directory / "manifest.json", manifest.model_dump(mode="json"))
+    return manifest
+
+
+def _validate_prepare_parameters(seeds: int, batch_size: int, max_tokens: int) -> None:
+    if seeds < 1 or batch_size < 1 or max_tokens < 1:
+        raise BatchError("seeds, batch_size, and max_tokens must be positive.")
+
+
+def _collect_prepared_requests(
+    datasets: Sequence[str | Path],
+    *,
+    model: str,
+    seeds: int,
+    max_tokens: int,
+    descriptor_registry: Mapping[str, ToolDescriptor] | None,
+) -> tuple[list[EvalCase], list[_PreparedRequest], list[SkippedCase]]:
     cases = load_cases(datasets, descriptor_registry=descriptor_registry)
     requests: list[_PreparedRequest] = []
     skipped: list[SkippedCase] = []
@@ -327,38 +381,28 @@ def prepare_batch(
         raise BatchError(
             "No runnable cases were found; no batch artifacts were created."
         )
-    chunks = [
-        BatchChunk(
-            index=index,
-            request_ids=[
-                request.custom_id for request in requests[start : start + batch_size]
-            ],
-        )
-        for index, start in enumerate(range(0, len(requests), batch_size))
-    ]
-    directory.mkdir(parents=True)
-    request_path = directory / "requests.jsonl"
-    _write_jsonl(request_path, requests)
-    request_sha256 = hashlib.sha256(request_path.read_bytes()).hexdigest()
-    manifest = BatchManifest(
-        run_id=directory.name,
-        provider="openrouter",
+    return cases, requests, skipped
+
+
+def validate_prepare_inputs(
+    datasets: Sequence[str | Path],
+    *,
+    model: str = "google/gemini-3.7-flash",
+    seeds: int = 1,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+    descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
+) -> tuple[int, int]:
+    """Validate preparation inputs without touching the output directory."""
+    _validate_prepare_parameters(seeds, batch_size, max_tokens)
+    cases, requests, _ = _collect_prepared_requests(
+        datasets,
         model=model,
-        api_base_url=DEFAULT_API_BASE_URL,
-        dataset_hash=content_hash(cases),
-        registry_hash=registry_digest(descriptor_registry),
         seeds=seeds,
-        batch_size=batch_size,
         max_tokens=max_tokens,
-        request_count=len(requests),
-        request_file="requests.jsonl",
-        request_sha256=request_sha256,
-        skipped_cases=skipped,
-        chunks=chunks,
-        created_at=datetime.now(UTC).isoformat(),
+        descriptor_registry=descriptor_registry,
     )
-    _write_json(directory / "manifest.json", manifest.model_dump(mode="json"))
-    return manifest
+    return len(cases), len(requests) // seeds
 
 
 class BatchClient:
@@ -526,6 +570,10 @@ async def update_batch_status(
             ):
                 continue
             result = await active.request("GET", f"/beta/batches/{chunk.batch_id}")
+            if result.get("id") != chunk.batch_id:
+                raise BatchError(
+                    "Batch status response id does not match the requested batch."
+                )
             chunk.status = _validated_status(result.get("status"))
             usage = result.get("usage")
             chunk.usage = usage if isinstance(usage, dict) else None
