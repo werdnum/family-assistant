@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import importlib
 import json
+import math
 import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -390,7 +391,11 @@ async def submit_batch(
     client: BatchClient | None = None,
 ) -> BatchManifest:
     """Submit pending chunks after explicit operator spend approval."""
-    if approved_spend_usd <= 0 or not approve_spend:
+    if (
+        not math.isfinite(approved_spend_usd)
+        or approved_spend_usd <= 0
+        or not approve_spend
+    ):
         raise BatchError(
             "submit requires a positive --approved-spend-usd and --approve-spend."
         )
@@ -452,6 +457,9 @@ async def submit_batch(
                     directory / "manifest.json", manifest.model_dump(mode="json")
                 )
                 raise
+            if chunk.status == "completed" and isinstance(result.get("results"), list):
+                chunk.result_file = f"batch-result-{chunk.index}.json"
+                _write_json(directory / chunk.result_file, result)
             _write_json(directory / "manifest.json", manifest.model_dump(mode="json"))
         return manifest
     finally:
@@ -473,9 +481,10 @@ async def update_batch_status(
     active = client or BatchClient(manifest.api_base_url, key)
     try:
         for index, chunk in enumerate(manifest.chunks):
-            if chunk.batch_id is None or chunk.status in _TERMINAL | {
-                "submission_unknown"
-            }:
+            if chunk.batch_id is None or (
+                chunk.status in _TERMINAL | {"submission_unknown"}
+                and not (chunk.status == "completed" and chunk.result_file is None)
+            ):
                 continue
             result = await active.request("GET", f"/beta/batches/{chunk.batch_id}")
             chunk.status = _validated_status(result.get("status"))

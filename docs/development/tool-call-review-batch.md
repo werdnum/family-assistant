@@ -27,14 +27,18 @@ python scripts/tool_call_review_batch.py harvest \
 ```
 
 `--max-tokens` bounds each response (default 512); truncation is unavailable evidence and fails
-harvest rather than becoming a verdict. `--approved-spend-usd` records the operator's approval; it
-is not an enforceable provider-side spend cap. OpenRouter usage/cost fields are optional remote
-metadata and may be absent. The manifest records dataset/model/provider, request IDs, request
-SHA-256, remote batch IDs, statuses, optional usage, and approval metadata; it does not record raw
-event streams. `status` is a single poll and `poll` repeats it. Polling exits unsuccessfully for
-failed, expired, cancelled, or unknown terminal states. Remote status responses must contain one of
-OpenRouter's documented lifecycle statuses (`validating`, `in_progress`, `finalizing`, `cancelling`,
-`completed`, `failed`, `expired`, or `cancelled`); missing or unknown statuses fail closed.
+harvest rather than becoming a verdict. `--approved-spend-usd` requires a finite, positive amount
+and records the operator's approval; it is not an enforceable provider-side spend cap. OpenRouter
+usage/cost fields are optional remote metadata and may be absent. The manifest records
+dataset/model/provider, request IDs, request SHA-256, remote batch IDs, statuses, optional usage,
+and approval metadata; it does not record raw event streams. `status` is a single poll and `poll`
+repeats it. Polling exits unsuccessfully for failed, expired, cancelled, or unknown terminal states.
+Remote status responses must contain one of OpenRouter's documented lifecycle statuses
+(`validating`, `in_progress`, `finalizing`, `cancelling`, `completed`, `failed`, `expired`, or
+`cancelled`); missing or unknown statuses fail closed.
+If submission already reports `completed` without an inline `results` list, the manifest leaves the
+result artifact unset so the next `status` poll fetches and persists the completed result before
+harvest.
 
 Harvest refuses incomplete batches, item errors, missing IDs, duplicate IDs, extra IDs, malformed
 structured output, verdicts outside a case's allowed space, or a changed request artifact. An

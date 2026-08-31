@@ -66,7 +66,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     submit.add_argument("--run-dir", required=True, type=Path)
     submit.add_argument(
-        "--approved-spend-usd", required=True, type=float, metavar="USD"
+        "--approved-spend-usd", required=True, type=_finite_positive, metavar="USD"
     )
     submit.add_argument("--approve-spend", action="store_true")
 

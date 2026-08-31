@@ -70,6 +70,17 @@ class _FakeBatchClient(BatchClient):
         }
 
 
+class _CompletedOnSubmitClient(_FakeBatchClient):
+    async def request(
+        self, method: str, path: str, payload: dict[str, object] | None = None
+    ) -> dict[str, object]:
+        if method == "POST":
+            assert payload is not None
+            self.submitted.append(payload)
+            return {"id": "batch-1", "status": "completed"}
+        return await super().request(method, path, payload)
+
+
 @pytest.fixture
 def private_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "repo"
@@ -149,6 +160,33 @@ async def test_submit_status_harvest_is_resumable(private_root: Path) -> None:
     assert "latency unavailable" in report.to_text_summary()
 
 
+@pytest.mark.asyncio
+async def test_completed_submit_without_results_is_fetched_by_status(
+    private_root: Path,
+) -> None:
+    run_dir = private_root / "runs" / "pilot"
+    prepare_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
+    )
+    fake = _CompletedOnSubmitClient()
+
+    submitted = await submit_batch(
+        run_dir,
+        approved_spend_usd=1.0,
+        approve_spend=True,
+        api_key="test-only",
+        client=fake,
+    )
+    assert submitted.chunks[0].status == "completed"
+    assert submitted.chunks[0].result_file is None
+
+    updated = await update_batch_status(run_dir, api_key="test-only", client=fake)
+
+    assert updated.chunks[0].result_file == "batch-result-0.json"
+    report = harvest_batch(run_dir)
+    assert len(report.trials) == 19
+
+
 def test_submit_requires_explicit_spend_approval(private_root: Path) -> None:
     run_dir = private_root / "runs" / "pilot"
     prepare_batch(
@@ -165,6 +203,46 @@ def test_submit_requires_explicit_spend_approval(private_root: Path) -> None:
                 client=_FakeBatchClient(),
             )
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "amount", [0.0, -1.0, float("nan"), float("inf"), -float("inf")]
+)
+async def test_submit_rejects_nonfinite_or_nonpositive_spend_before_mutation(
+    private_root: Path, amount: float
+) -> None:
+    run_dir = private_root / "runs" / "pilot"
+    prepare_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
+    )
+    fake = _FakeBatchClient()
+
+    with pytest.raises(BatchError, match="positive --approved-spend-usd"):
+        await submit_batch(
+            run_dir,
+            approved_spend_usd=amount,
+            approve_spend=True,
+            api_key="test-only",
+            client=fake,
+        )
+
+    assert fake.submitted == []
+    manifest_json = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest_json["spend_approved"] is False
+    assert manifest_json["approved_spend_usd"] is None
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "nan", "inf", "-inf"])
+def test_cli_rejects_invalid_approved_spend(value: str) -> None:
+    with pytest.raises(SystemExit):
+        batch_cli._parser().parse_args([
+            "submit",
+            "--run-dir",
+            "run",
+            "--approved-spend-usd",
+            value,
+        ])
 
 
 class _UnknownOutcomeClient(_FakeBatchClient):

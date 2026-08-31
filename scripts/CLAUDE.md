@@ -106,7 +106,7 @@ adding a poe task for it in `pyproject.toml`.
 
 `tool_call_review_batch.py` is the staged private runner for OpenRouter's asynchronous batch
 endpoint. `prepare` validates normal case inputs and writes deterministic request JSONL plus a
-private manifest; `submit` is the only network-spending phase and requires both
+private manifest; `submit` is the only network-spending phase and requires both a finite positive
 `--approved-spend-usd USD` and `--approve-spend`; `status` polls once, `poll` repeats it, and
 `harvest` requires exact result reconciliation before writing a private `EvalReport`. Batch result
 latency is explicitly unavailable, rather than inferred from polling time. See
