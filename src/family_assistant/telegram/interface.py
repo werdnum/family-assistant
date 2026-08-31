@@ -30,6 +30,10 @@ from family_assistant.telegram.chunking import (
 from family_assistant.telegram.markdown_utils import (
     convert_to_telegram_markdown_within_limit,
 )
+from family_assistant.telegram.rich_messages import (
+    send_rich_message,
+    should_attempt_rich_message,
+)
 
 if TYPE_CHECKING:
     from telegram.ext import Application
@@ -162,6 +166,31 @@ class TelegramChatInterface(ChatInterface):
                     on_behalf_of_user_id=on_behalf_of_user_id,
                 )
 
+            if should_attempt_rich_message(text, parse_mode):
+                try:
+                    sent_msg = await self._send_rich_message_honouring_flood_control(
+                        chat_id=chat_id_int,
+                        text=text,
+                        reply_to_message_id=reply_to_msg_id_int,
+                        reply_markup=ForceReply(selective=False),
+                    )
+                    logger.info(
+                        "Delivered message to %s as Telegram rich message.",
+                        conversation_id,
+                    )
+                    return str(sent_msg.message_id)
+                except (
+                    BadRequest,
+                    TelegramError,
+                    AttributeError,
+                    NotImplementedError,
+                ) as rich_err:
+                    logger.info(
+                        "sendRichMessage to %s failed (%s); falling back to standard sendMessage.",
+                        conversation_id,
+                        rich_err,
+                    )
+
             if len(chunks) > 1:
                 logger.info(
                     f"Message to {conversation_id} exceeds Telegram's length cap. "
@@ -246,6 +275,38 @@ class TelegramChatInterface(ChatInterface):
                 reply_markup=reply_markup,
             )
         return str(sent_msg.message_id)
+
+    async def _send_rich_message_honouring_flood_control(
+        self,
+        *,
+        chat_id: int,
+        text: str,
+        reply_to_message_id: int | None,
+        reply_markup: ForceReply | None,
+    ) -> Message:
+        """Send a rich message, waiting out flood control when Telegram asks."""
+        attempts = 0
+        while True:
+            try:
+                return await send_rich_message(
+                    bot=self.application.bot,
+                    chat_id=chat_id,
+                    text=text,
+                    reply_to_message_id=reply_to_message_id,
+                    reply_markup=reply_markup,
+                )
+            except RetryAfter as flood_control:
+                attempts += 1
+                if attempts > FLOOD_CONTROL_RETRIES:
+                    raise
+                delay = _flood_control_delay_seconds(flood_control)
+                logger.warning(
+                    "Telegram flood control for chat %s (rich message): waiting %.1fs before retry %d.",
+                    chat_id,
+                    delay,
+                    attempts,
+                )
+                await asyncio.sleep(delay)
 
     async def _send_honouring_flood_control(
         self,
