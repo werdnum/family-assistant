@@ -77,10 +77,14 @@ API until a real call confirms them, rather than as equivalent to a documented c
 ### Review-eval public corpus scripts
 
 `fetch_review_eval_corpora.sh` fetches pinned Deepset Prompt Injections and InjecAgent source files
-into `.review-eval-local/upstream/`, then records revisions and SHA-256 checksums. It requires Git,
-Git LFS, and `shasum`; it refuses an existing output tree and publishes a fully staged fetch
-atomically. If a fetch fails, fix the reported prerequisite or network/repository error and rerun it
-with no pre-created `upstream/` directory.
+into `.review-eval-local/upstream/`, then records revisions and SHA-256 checksums. It defaults to
+the verified manifest commits, so a bare invocation is reproducible; optional
+`--deepset-revision <sha>` and `--injecagent-revision <sha>` flags override the pins for an
+intentional acquisition.
+The script never resolves a moving branch such as `main`. It requires Git, Git LFS, and `shasum`; it
+refuses an existing output tree and publishes a fully staged fetch atomically. If a fetch fails, fix
+the reported prerequisite or network/repository error and rerun it with no pre-created `upstream/`
+directory.
 
 `build_public_corpus_cases.py` turns one fetched source into schema-validated browser-ablation cases
 under a fresh `.review-eval-local/public/<corpus>/` directory. `--out-dir` is resolved through the
