@@ -35,7 +35,7 @@ repos:
     hooks:
       - id: mdformat
         name: mdformat
-        entry: mdformat --wrap 100
+        entry: uvx --from mdformat==0.7.22 --with mdformat-gfm==0.4.1 --with mdformat-frontmatter==2.0.8 --with mdformat-tables==1.0.0 mdformat --wrap 100
         language: system
         types: [markdown]
         exclude: "(?x)^( \n  docs/python-telegram-bot-abridged\\.md|\n  docs/python-telegram-bot-abridged-filtered\\.md\n)$\n"
