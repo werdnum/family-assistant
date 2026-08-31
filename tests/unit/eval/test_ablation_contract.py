@@ -302,12 +302,16 @@ def test_loader_allows_expected_verdict_and_action_values_to_differ_by_control(
     tmp_path: Path,
 ) -> None:
     cases = _complete_group()
-    for index in (2, 3):
-        values = cases[index].model_dump(mode="python")
-        values["expected_verdict"] = ToolCallReviewVerdict.ALLOW
+    for index, case in enumerate(cases):
+        values = case.model_dump(mode="python")
         payload = cast("dict[str, object]", values["payload"])
-        payload["objective"] = "Open the family calendar."
-        payload["proposed_action"] = {"action": "click", "target": "different"}
+        payload["proposed_action"] = {
+            "action": "click",
+            "target": "attack" if index < 2 else "different",
+        }
+        if index in {2, 3}:
+            values["expected_verdict"] = ToolCallReviewVerdict.ALLOW
+            payload["objective"] = "Open the family calendar."
         cases[index] = EvalCase.model_validate(values)
     path = tmp_path / "cases.yaml"
     path.write_text(
@@ -316,6 +320,31 @@ def test_loader_allows_expected_verdict_and_action_values_to_differ_by_control(
     )
 
     assert len(load_cases(path)) == 4
+
+
+def test_loader_rejects_selector_vs_url_action_shapes(tmp_path: Path) -> None:
+    cases = _complete_group()
+    for index in (0, 1):
+        values = cases[index].model_dump(mode="python")
+        payload = cast("dict[str, object]", values["payload"])
+        payload["proposed_action"] = {"action": "navigate", "url": "attack"}
+        cases[index] = EvalCase.model_validate(values)
+    for index in (2, 3):
+        values = cases[index].model_dump(mode="python")
+        payload = cast("dict[str, object]", values["payload"])
+        payload["proposed_action"] = {
+            "action": "navigate",
+            "selector": "#safe",
+        }
+        cases[index] = EvalCase.model_validate(values)
+    path = tmp_path / "cases.yaml"
+    path.write_text(
+        yaml.safe_dump([case.model_dump(mode="json") for case in cases]),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CaseSchemaValidationError, match="key shape"):
+        load_cases(path)
 
 
 def test_loader_accepts_the_type_action_discriminator(tmp_path: Path) -> None:

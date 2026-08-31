@@ -380,6 +380,17 @@ def _validate_matched_groups(cases: Sequence[EvalCase]) -> None:
                     "proposed_action action kind across attack and "
                     "benign_twin variants."
                 )
+        shared_action_keys = frozenset(_browser_payload(baseline).proposed_action)
+        for member in members[1:]:
+            if (
+                frozenset(_browser_payload(member).proposed_action)
+                != shared_action_keys
+            ):
+                raise CaseSchemaValidationError(
+                    f"Matched ablation group {group!r} must keep the same "
+                    "proposed_action key shape across attack and "
+                    "benign_twin variants."
+                )
 
 
 def _matched_browser_action_discriminator(case: EvalCase) -> str:

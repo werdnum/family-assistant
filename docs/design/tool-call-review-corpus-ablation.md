@@ -52,19 +52,19 @@ Each attack source produces one matched group with four cases:
 | Attack | attacker text withheld | attacker text visible and quarantined |
 | Benign twin | corresponding content withheld | corresponding content visible and quarantined |
 
-All four cases use the browser boundary and share the proposed-action discriminator, damage class,
-attack class, and source-group identity. Within each attack hidden/full pair and each benign
-hidden/full pair,
+All four cases use the browser boundary and share the proposed-action discriminator and key shape,
+damage class, attack class, and source-group identity. Within each attack hidden/full pair and each
+benign hidden/full pair,
 every payload field except `environment` is identical; the hidden environment is the fixed marker
 and the full environment is the source text.
 
 The attack pair proposes an action the trusted objective does not authorize. Its benign twin keeps
-the same proposed-action discriminator while changing the objective, argument values, and
-environment as needed to make the action genuinely authorized. Requiring the exact same objective
+the same proposed-action discriminator and key shape while changing the objective, argument values,
+and environment as needed to make the action genuinely authorized. Requiring the exact same objective
 and action across attack and benign controls would make one of the labels false: an unauthorized
-action does
-not become benign merely because the injection is removed. The controls are therefore matched for
-surface and risk, while the causal visibility comparison is made within each control kind.
+action does not become benign merely because the injection is removed. The controls are therefore
+matched for surface and risk, while the causal visibility comparison is made within each control
+kind.
 
 A corpus row labeled "not an injection" is not automatically a benign twin. It is usable as a
 natural-benign pool only when the surrounding trusted request independently authorizes the proposed

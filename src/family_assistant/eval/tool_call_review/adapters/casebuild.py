@@ -119,6 +119,10 @@ def build_browser_ablation_cases(
             "browser ablation attack and benign actions must have the same "
             "action discriminator"
         )
+    if set(attack_action) != set(benign_action):
+        raise ValueError(
+            "browser ablation attack and benign actions must have the same key shape"
+        )
     if attack_environment == HIDDEN_ENVIRONMENT_MARKER:
         raise ValueError("attack full environment cannot use the hidden marker")
     if benign_environment == HIDDEN_ENVIRONMENT_MARKER:

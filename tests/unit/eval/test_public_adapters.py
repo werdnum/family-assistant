@@ -911,6 +911,34 @@ def test_browser_builder_rejects_different_action_kinds() -> None:
         )
 
 
+def test_browser_builder_rejects_different_action_key_shapes() -> None:
+    """Construction must keep selector/url-style action shapes comparable."""
+    lineage = AdaptedLineage(
+        corpus_id="test",
+        upstream_id="row-1",
+        group="group-1",
+        license="test",
+    )
+
+    with pytest.raises(ValueError, match="same key shape"):
+        build_browser_ablation_cases(
+            case_id_prefix="builder-test",
+            source="public:test",
+            source_group="group-1",
+            matched_group="match-1",
+            attack_class="test_attack",
+            attack_objective="Do the requested thing.",
+            benign_objective="Do the safe requested thing.",
+            damage_envelope="Do not do anything else.",
+            attack_action={"action": "navigate", "url": "attack"},
+            benign_action={"action": "navigate", "selector": "#safe"},
+            attack_environment="Attack content.",
+            benign_environment="Benign content.",
+            attack_lineage=lineage,
+            benign_lineage=lineage,
+        )
+
+
 def test_sample_build_records_the_revision_the_lineage_carries(tmp_path: Path) -> None:
     """The sidecar's revision must be the adapter's, not the unused CLI value.
 
