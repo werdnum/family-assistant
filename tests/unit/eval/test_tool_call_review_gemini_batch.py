@@ -127,6 +127,43 @@ def _response_line(key: str) -> bytes:
     )
 
 
+def _prepare_fake_batch(
+    private_root: Path,
+) -> tuple[Path, batch_module.GeminiBatchManifest, _FakeClient]:
+    run_dir = private_root / "runs" / "native"
+    manifest = prepare_gemini_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"],
+        run_dir,
+    )
+    client = _FakeClient()
+    client.aio.files.output = b"".join(
+        _response_line(key) for key in manifest.chunks[0].request_ids
+    )
+    return run_dir, manifest, client
+
+
+async def _submit_fake_batch(
+    private_root: Path,
+) -> tuple[Path, batch_module.GeminiBatchManifest, _FakeClient]:
+    run_dir, manifest, client = _prepare_fake_batch(private_root)
+    await submit_gemini_batch(
+        run_dir,
+        approved_spend_usd=1.0,
+        approve_spend=True,
+        client=client,
+    )
+    return run_dir, manifest, client
+
+
+async def _complete_fake_batch(
+    private_root: Path,
+) -> tuple[Path, batch_module.GeminiBatchManifest, _FakeClient]:
+    run_dir, manifest, client = await _submit_fake_batch(private_root)
+    client.aio.batches.state = "JOB_STATE_SUCCEEDED"
+    await update_gemini_batch_status(run_dir, client=client)
+    return run_dir, manifest, client
+
+
 def test_prepare_writes_native_wire_contract(private_root: Path) -> None:
     manifest = prepare_gemini_batch(
         ["src/family_assistant/eval/tool_call_review/datasets/manual"],
@@ -181,28 +218,33 @@ def test_documented_batch_and_sdk_state_vocabularies_are_accepted(
 
 
 @pytest.mark.asyncio
-async def test_fake_submit_poll_and_harvest_records_usage(private_root: Path) -> None:
-    run_dir = private_root / "runs" / "native"
-    manifest = prepare_gemini_batch(
-        ["src/family_assistant/eval/tool_call_review/datasets/manual"],
-        run_dir,
-    )
-    client = _FakeClient()
-    client.aio.files.output = b"".join(
-        _response_line(key) for key in manifest.chunks[0].request_ids
-    )
+async def test_fake_submit_records_running_batch(private_root: Path) -> None:
+    run_dir, _, client = _prepare_fake_batch(private_root)
+
     submitted = await submit_gemini_batch(
-        run_dir,
-        approved_spend_usd=1.0,
-        approve_spend=True,
-        client=client,
+        run_dir, approved_spend_usd=1.0, approve_spend=True, client=client
     )
+
     assert submitted.chunks[0].status == "running"
     assert client.aio.batches.create_calls[0]["src"] == "files/input-0"
+
+
+@pytest.mark.asyncio
+async def test_fake_poll_records_succeeded_batch(private_root: Path) -> None:
+    run_dir, _, client = await _submit_fake_batch(private_root)
+
     client.aio.batches.state = "JOB_STATE_SUCCEEDED"
     completed = await update_gemini_batch_status(run_dir, client=client)
+
     assert completed.chunks[0].status == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_fake_harvest_records_usage(private_root: Path) -> None:
+    run_dir, manifest, client = await _complete_fake_batch(private_root)
+
     report = await harvest_gemini_batch(run_dir, client=client)
+
     assert report.provider == "google_gemini_native"
     assert report.trials[0].latency_ms is None
     assert report.model_parameters is not None
