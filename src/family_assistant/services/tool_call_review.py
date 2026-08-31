@@ -701,13 +701,15 @@ def resolve_originating_request(
     body as a user row, so role alone would propagate the attacker's text as
     trusted intent.
 
-    Callers pass rows only for a turn a human actually spoke in. A
-    subconversation's own trigger row is a *goal* its parent's model composed,
-    and a clean parent stamps it ``trusted_user``; reading it here would launder
-    model-authored text into the field that claims to be the human request, and
-    into the destination echo that reads that field. A delegated turn therefore
-    contributes no rows, and passes on the request it inherited unchanged, so a
-    chain answers to the same human message or to none.
+    Callers pass rows only for a turn a human actually started -- see
+    ``build_delegation_review_trigger``, which is the only thing that decides
+    that. Every unattended turn puts machine-composed text in the user role (a
+    delegated goal, a completion wake's result data, an event payload), and a
+    clean one is stamped ``trusted_user`` like any other untainted row, so
+    reading those rows would launder generated text into the field that claims
+    to be the human request and into the destination echo that reads it. Such a
+    turn passes on the request it inherited unchanged instead, so a chain
+    answers to the same human message or to none.
     """
     messages_module = importlib.import_module("family_assistant.llm.messages")
 
@@ -745,7 +747,7 @@ async def build_delegation_review_trigger(
     definition_taint_metadata: TaintMetadata | None,
     payload_present: bool,
     source_turn_id: str | None,
-    source_is_subconversation: bool,
+    source_started_by_human: bool,
     source_messages: Sequence[LLMMessage] | None = None,
     inherited: TriggerReviewInput | None = None,
 ) -> TriggerReviewInput:
@@ -758,20 +760,28 @@ async def build_delegation_review_trigger(
     than snapshotted at hand-off, so the propagated request carries the
     provenance the message actually has now.
 
-    A delegating turn that is *itself* a subconversation contributes no rows: it
-    holds no human message, only a goal its own parent composed. Such a chain
-    carries the request forward only through ``inherited``, which the live
-    trigger supplies where there is one and a worker-claimed run has not got --
-    so a nested worker-run delegation propagates nothing, per the design doc's
+    Only a turn a *human started* contributes rows. Every other kind of turn
+    holds machine-composed text in the user role -- a subconversation's goal, a
+    completion wake's result data, an event payload -- and a clean one of those
+    is stamped ``trusted_user`` like any other untainted row, so reading it
+    would launder generated text into the field that claims to be the human
+    request. Such a turn carries the request forward only through ``inherited``,
+    which the live trigger supplies and a worker-claimed run has not got -- so a
+    nested worker-run delegation propagates nothing, per the design doc's
     accepted residual.
+
+    History reads ask for visible rows only, so an internal row pinned into a
+    turn (a wake's result data) is never mistaken for something a person sent.
     """
     messages: Sequence[LLMMessage] = ()
-    if not source_is_subconversation:
+    if source_started_by_human:
         messages = (
             source_messages
             if source_messages is not None
             else (
-                await db.message_history.get_by_turn_id(source_turn_id)
+                await db.message_history.get_by_turn_id(
+                    source_turn_id, visible_only=True
+                )
                 if source_turn_id is not None
                 else []
             )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, TypedDict, cast
@@ -4110,6 +4111,57 @@ async def test_nested_worker_run_delegation_propagates_no_composed_goal(
     assert trigger is not None
     assert trigger.originating_request is None
     assert "MODEL COMPOSED GOAL" not in _review_prompt_for(trigger)
+
+
+@pytest.mark.asyncio
+async def test_delegating_from_a_completion_wake_propagates_no_wake_data(
+    db_engine: AsyncEngine,
+) -> None:
+    """A wake turn's pinned result data is machine-generated, not a request.
+
+    A clean delegated result stamps that row ``trusted_user``, so resolving it
+    would hand the reviewer generated wake text as the human request.
+    """
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(
+        target_service, async_delegation_enabled=False
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+
+    db_context = Database(engine=db_engine)
+    await db_context.message_history.add_message(
+        UserMessage(
+            content="WAKE RESULT DATA naming friend@example.test",
+            taint_metadata=TurnTaintState.empty().to_metadata(),
+        ),
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=TEST_CONVERSATION_ID,
+        timestamp=SystemClock().now(),
+        turn_id="turn_async_delegation",
+        user_id="async-delegation-user",
+        is_internal=True,
+    )
+
+    wake_context = replace(
+        _tool_context(db_context, processing_service, chat_interface),
+        tool_call_review_trigger=TriggerReviewInput(
+            trigger_type="delegation_completion",
+            active_request_role="system",
+            definition="do the thing",
+            payload_present=True,
+        ),
+    )
+    await delegate_to_service_tool(
+        exec_context=wake_context,
+        target_service_id="target_profile",
+        user_request="follow up on the delegated result",
+    )
+
+    assert len(target_service.calls) == 1
+    trigger = target_service.calls[0]["tool_call_review_trigger"]
+    assert trigger is not None
+    assert trigger.originating_request is None
+    assert "WAKE RESULT DATA" not in _review_prompt_for(trigger)
 
 
 def _review_prompt_for(trigger: TriggerReviewInput) -> str:

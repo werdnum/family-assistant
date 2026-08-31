@@ -1195,12 +1195,13 @@ def test_inherited_originating_request_must_itself_be_trusted() -> None:
 async def test_a_delegated_turns_own_goal_row_is_never_the_originating_request() -> (
     None
 ):
-    """A clean parent stamps its subconversation's trigger row trusted_user.
+    """A clean unattended turn stamps its composed user row trusted_user.
 
-    That row holds a goal the parent's model composed. Resolving it as the
-    originating request would launder model-authored text -- including any
-    recipient the model added -- into the field that claims to be the human
-    request and into the destination echo that reads it.
+    A subconversation's goal row and a completion wake's result row are both
+    machine-composed text in the user role. Resolving either as the originating
+    request would launder generated text -- including any recipient the model
+    added -- into the field that claims to be the human request and into the
+    destination echo that reads it.
     """
     trusted = TurnTaintState.empty().to_metadata()
     delegated_rows = [
@@ -1216,7 +1217,7 @@ async def test_a_delegated_turns_own_goal_row_is_never_the_originating_request()
         definition_taint_metadata=trusted,
         payload_present=False,
         source_turn_id="parent_turn",
-        source_is_subconversation=True,
+        source_started_by_human=False,
     )
 
     assert from_subconversation.originating_request is None
@@ -1230,11 +1231,14 @@ async def test_a_delegated_turns_own_goal_row_is_never_the_originating_request()
         definition_taint_metadata=trusted,
         payload_present=False,
         source_turn_id="parent_turn",
-        source_is_subconversation=False,
+        source_started_by_human=True,
     )
 
     assert from_main_conversation.originating_request == "MODEL COMPOSED GOAL"
     assert db.turn_ids_read == ["parent_turn"]
+    # A wake pins its generated result data into the turn as an internal row;
+    # asking for visible rows only is what keeps that out of the human request.
+    assert db.visible_only_reads == [True]
 
 
 @pytest.mark.no_db
@@ -1253,7 +1257,7 @@ async def test_a_delegated_chain_carries_the_inherited_request_forward() -> None
         definition_taint_metadata=trusted,
         payload_present=False,
         source_turn_id="parent_turn",
-        source_is_subconversation=True,
+        source_started_by_human=False,
         inherited=TriggerReviewInput(
             trigger_type="delegation_request",
             active_request_role="user",
@@ -1267,12 +1271,21 @@ async def test_a_delegated_chain_carries_the_inherited_request_forward() -> None
 
 
 class _FakeMessageHistory:
-    def __init__(self, rows: Sequence[LLMMessage], read_log: list[str]) -> None:
+    def __init__(
+        self,
+        rows: Sequence[LLMMessage],
+        read_log: list[str],
+        visible_only_log: list[bool],
+    ) -> None:
         self._rows = rows
         self._read_log = read_log
+        self._visible_only_log = visible_only_log
 
-    async def get_by_turn_id(self, turn_id: str) -> Sequence[LLMMessage]:
+    async def get_by_turn_id(
+        self, turn_id: str, *, visible_only: bool = False
+    ) -> Sequence[LLMMessage]:
         self._read_log.append(turn_id)
+        self._visible_only_log.append(visible_only)
         return self._rows
 
 
@@ -1281,4 +1294,7 @@ class _FakeMessageHistoryDatabase:
 
     def __init__(self, rows: Sequence[LLMMessage]) -> None:
         self.turn_ids_read: list[str] = []
-        self.message_history = _FakeMessageHistory(rows, self.turn_ids_read)
+        self.visible_only_reads: list[bool] = []
+        self.message_history = _FakeMessageHistory(
+            rows, self.turn_ids_read, self.visible_only_reads
+        )

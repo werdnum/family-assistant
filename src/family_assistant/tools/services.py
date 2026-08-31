@@ -154,9 +154,9 @@ async def _delegation_review_trigger(
     and renders as trusted intent only when nothing untrusted entered. The
     human request behind it is propagated separately and judged on its own
     provenance, which is what keeps a delegation off a tainted turn reviewable
-    rather than blind. Delegating from within a subconversation carries forward
-    only what this turn itself inherited: its own rows hold a goal its parent
-    composed, never a human request.
+    rather than blind. Delegating from an unattended turn carries forward only
+    what this turn itself inherited: its own rows hold composed text -- a goal,
+    a wake's result data, an event payload -- never a human request.
     """
     return await build_delegation_review_trigger(
         exec_context.db_context,
@@ -166,7 +166,11 @@ async def _delegation_review_trigger(
         definition_taint_metadata=_current_taint_metadata(exec_context),
         payload_present=False,
         source_turn_id=exec_context.turn_id,
-        source_is_subconversation=exec_context.subconversation_id is not None,
+        # An unattended turn -- a delegated run, a delegation-completion wake, an
+        # event, a schedule, a script -- is exactly one carrying a review
+        # trigger. An interactive turn carries none, and only it holds a human
+        # message.
+        source_started_by_human=exec_context.tool_call_review_trigger is None,
         source_messages=exec_context.tool_call_review_messages,
         inherited=exec_context.tool_call_review_trigger,
     )
