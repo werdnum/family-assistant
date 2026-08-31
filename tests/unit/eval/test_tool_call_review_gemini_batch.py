@@ -182,6 +182,25 @@ async def _prepare_pending_upload_failure(
     return run_dir, client
 
 
+async def _prepare_pending_creation_rejection(
+    private_root: Path,
+    code: int,
+) -> tuple[Path, _FakeClient]:
+    run_dir = private_root / "runs" / "native"
+    prepare_gemini_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
+    )
+    client = _FakeClient()
+    client.aio.batches.create_error = genai_errors.ClientError(code, {})
+
+    with pytest.raises(GeminiBatchError, match="creation was rejected"):
+        await submit_gemini_batch(
+            run_dir, approved_spend_usd=1.0, approve_spend=True, client=client
+        )
+
+    return run_dir, client
+
+
 def test_prepare_writes_native_wire_contract(private_root: Path) -> None:
     manifest = prepare_gemini_batch(
         ["src/family_assistant/eval/tool_call_review/datasets/manual"],
@@ -344,26 +363,22 @@ async def test_batch_creation_failure_is_submission_unknown(private_root: Path) 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("code", [400, 401, 429])
-async def test_definitive_creation_rejection_is_pending_and_retryable(
+async def test_definitive_creation_rejection_is_pending(
     private_root: Path, code: int
 ) -> None:
-    run_dir = private_root / "runs" / "native"
-    prepare_gemini_batch(
-        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
-    )
-    client = _FakeClient()
-    client.aio.batches.create_error = genai_errors.ClientError(code, {})
-
-    with pytest.raises(GeminiBatchError, match="creation was rejected"):
-        await submit_gemini_batch(
-            run_dir, approved_spend_usd=1.0, approve_spend=True, client=client
-        )
-
+    run_dir, client = await _prepare_pending_creation_rejection(private_root, code)
     payload = json.loads((run_dir / "manifest.json").read_text())
     assert payload["chunks"][0]["status"] == "pending"
     assert payload["chunks"][0]["error_code"] == "creation_rejected"
     assert payload["chunks"][0]["input_file_name"] == "files/input-0"
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", [400, 401, 429])
+async def test_pending_creation_rejection_is_retryable(
+    private_root: Path, code: int
+) -> None:
+    run_dir, client = await _prepare_pending_creation_rejection(private_root, code)
     client.aio.batches.create_error = None
     submitted = await submit_gemini_batch(
         run_dir, approved_spend_usd=1.0, approve_spend=True, client=client
