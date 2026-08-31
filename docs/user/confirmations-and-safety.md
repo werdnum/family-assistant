@@ -64,6 +64,11 @@ choose, run networked code, send a message — the action may be audited, requir
 blocked, depending on your operator's policy. This is why you'll sometimes be asked to approve
 something that reads as harmless on its own.
 
+When the assistant hands part of a job to another mode — a browser run, a longer background task —
+that mode's actions are judged against your original request, not just against the instruction it
+was handed. An action the handed-off mode proposes that your request does not account for is the
+kind that gets queried or blocked.
+
 ## Restricted modes
 
 Some situations run the assistant with deliberately reduced powers:

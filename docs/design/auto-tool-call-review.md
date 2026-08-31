@@ -176,6 +176,26 @@ The reviewer's context is a typed structure assembled deterministically:
   no definition can until stored provenance proves it. The trigger *payload* — the event data,
   deliberately untrusted — is always represented as a provenance stub, never rendered.
 
+- **The originating request, for delegated runs.** A delegated subconversation is unattended in the
+  same mechanical sense — no trusted user row of its own — but unlike an event or a schedule, a
+  human did ask for something; they asked it in the conversation that delegated. The delegating
+  turn's active user row travels with the run as the trigger's *originating request*, and renders
+  under the same taint-metadata rule as everything else: its own stored provenance decides, so an
+  email-intake turn (whose sender-controlled body is represented as a user row) propagates nothing.
+  A chain of delegations passes on what it inherited rather than re-deriving it, so nesting answers
+  to the same human message. The delegation *goal* is a separate field and stays what it always was
+  — model-composed text carrying the delegating turn's taint — so a turn that read untrusted content
+  before delegating stubs its goal while its human request still renders. That distinction is the
+  point: it is what lets the reviewer tell a faithful delegation from a smuggled one on exactly the
+  turns where smuggling is possible, where previously both rendered as stubs and `confirm` and
+  `deny` collapsed into `deny`.
+
+  Propagation is built at one chokepoint (`build_delegation_review_trigger`), which every delegation
+  boundary — synchronous, worker-run, and the completion wake — routes through, so a new boundary
+  gets the behaviour by construction rather than by remembering to. The rows are read at
+  trigger-build time rather than snapshotted at hand-off, so the propagated request carries the
+  provenance the message actually has.
+
   Missing authoring provenance also affects the runtime taint state, not just what the reviewer can
   render. At present **every unattended callback** enters as `unknown_external`, including event
   listeners, script wakes and failures, schedule automations, `schedule_future_callback`, and
@@ -603,6 +623,14 @@ When this design is working:
   exemption.** The disclosed call cannot causally contain a result that has not returned. Once the
   read returns, its recorded scope disables the exemption for later disclosures. This avoids a
   turn-wide pending-read reservation mechanism solely for an impossible data dependency.
+- **A nested worker-run delegation propagates no originating request.** The inheritance a chain
+  needs travels on the delegating turn's live trigger, which a run claimed later by a worker does
+  not have; it reads the delegating turn's stored rows instead, and a subconversation's rows are all
+  tainted. So a second-level *asynchronous* delegation reviews as it did before propagation existed
+  — stubs, with ambiguity taking the deferral path — while first-level and synchronous chains carry
+  the request. Closing it means either persisting the request with the run or resolving the parent
+  chain at claim time, and neither is worth the storage or the recursion for a rare shape whose
+  fallback is the previous, safe behaviour.
 - **Shadow-then-enforce means a window where verdicts are recorded but nothing blocks.** Identical
   to today's posture; the window ends at M5.
 

@@ -175,8 +175,10 @@ def require_canonical_taint_metadata(metadata: object, *, field: str) -> None:
     Every field a case carries taint metadata in resolves through here, because
     the reviewer decodes all of them: the turn state, each message row's
     ``taint_metadata`` (which decides whether a row renders as content or as a
-    provenance stub), and a trigger's ``definition_taint_metadata`` (which
-    decides the same for the trigger definition, and feeds the trusted
+    provenance stub), and a trigger's
+    ``definition_taint_metadata`` and ``originating_request_taint_metadata``
+    (which decide the same for the trigger definition and for the originating
+    request propagated across a delegation boundary, and feed the trusted
     destination echo). Validating only the turn state would leave the fields
     that decide what the judge actually reads unchecked.
 
@@ -213,11 +215,17 @@ class TriggerSpec(BaseModel):
     definition: str | None = None
     definition_taint_metadata: dict[str, object] | None = None
     payload_present: StrictBool = True
+    originating_request: str | None = None
+    originating_request_taint_metadata: dict[str, object] | None = None
 
     @model_validator(mode="after")
-    def _require_canonical_definition_taint(self) -> TriggerSpec:
+    def _require_canonical_trigger_taint(self) -> TriggerSpec:
         require_canonical_taint_metadata(
             self.definition_taint_metadata, field="trigger.definition_taint_metadata"
+        )
+        require_canonical_taint_metadata(
+            self.originating_request_taint_metadata,
+            field="trigger.originating_request_taint_metadata",
         )
         return self
 
@@ -231,6 +239,10 @@ class TriggerSpec(BaseModel):
                 "TaintMetadata | None", self.definition_taint_metadata
             ),
             payload_present=self.payload_present,
+            originating_request=self.originating_request,
+            originating_request_taint_metadata=cast(
+                "TaintMetadata | None", self.originating_request_taint_metadata
+            ),
         )
 
 
