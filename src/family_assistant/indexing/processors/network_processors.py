@@ -6,7 +6,7 @@ import logging
 import os
 import tempfile
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from urllib.parse import urlparse
 
 from family_assistant.indexing.pipeline import IndexableContent
@@ -69,204 +69,219 @@ class WebFetcherProcessor:
         items_to_pass_through: list[IndexableContent] = []
 
         for item in current_items:
-            if (
-                item.embedding_type in self.config.process_embedding_types
-                and isinstance(item.content, str)
-                and (
-                    item.content.startswith("http://")
-                    or item.content.startswith("https://")
-                )
-            ):
-                url_to_fetch = item.content
-                logger.info(
-                    f"{self.name}: Attempting to fetch URL '{url_to_fetch}' (original item type: {item.embedding_type})."
-                )
-                try:
-                    scrape_result: ScrapeResult = await self.scraper.scrape(
-                        url_to_fetch
-                    )
-
-                    # Start with metadata from the original document
-                    base_metadata_from_doc = {}
-                    # Safely access original_document.metadata using getattr
-                    doc_meta = getattr(original_document, "metadata", None)
-                    if original_document and doc_meta:
-                        if "original_url" in doc_meta:
-                            base_metadata_from_doc["original_url"] = doc_meta[
-                                "original_url"
-                            ]
-                        if "original_filename" in doc_meta:
-                            base_metadata_from_doc["original_filename"] = doc_meta[
-                                "original_filename"
-                            ]
-
-                    common_metadata = {
-                        **base_metadata_from_doc,  # Inherit original_url/filename from original_document
-                        "fetched_url": (
-                            url_to_fetch
-                        ),  # URL specifically fetched by this processor
-                        "final_url": scrape_result.final_url,
-                        "source_scraper_description": scrape_result.source_description,
-                        "original_item_metadata": (
-                            item.metadata or {}
-                        ),  # Metadata from the input item (e.g., the 'extracted_link' item)
-                        "fetched_title": (
-                            scrape_result.title
-                        ),  # Add title from scrape result
-                        "mime_type": (
-                            scrape_result.mime_type
-                        ),  # Add mime_type from scrape result
-                    }
-
-                    # If original_url was not in original_document.metadata (and thus not in base_metadata_from_doc),
-                    # set it to url_to_fetch as a fallback for the primary 'original_url' key.
-                    if "original_url" not in common_metadata:
-                        common_metadata["original_url"] = url_to_fetch
-
-                    processed_successfully = False
-
-                    # Safely get content attributes from ScrapeResult
-                    actual_content_str = getattr(scrape_result, "content", None)
-                    actual_content_bytes = getattr(scrape_result, "content_bytes", None)
-                    # ScrapeResult uses 'message' for errors
-                    error_message = getattr(scrape_result, "message", "Unknown error")
-
-                    if scrape_result.type == "error":
-                        logger.error(
-                            f"{self.name}: Failed to scrape URL '{url_to_fetch}'. Error: {error_message}"
-                        )
-                        items_to_pass_through.append(item)
-                        processed_successfully = (
-                            True  # Error is a final state for this item
-                        )
-
-                    # Case 1: Markdown content
-                    elif (
-                        scrape_result.type == "markdown"
-                        or (
-                            scrape_result.type == "success"
-                            and scrape_result.mime_type == "text/markdown"
-                        )
-                    ) and actual_content_str:  # Use actual_content_str
-                        output_items.append(
-                            IndexableContent(
-                                content=actual_content_str,  # Use actual_content_str
-                                embedding_type="fetched_content_markdown",
-                                mime_type="text/markdown",
-                                source_processor=self.name,
-                                metadata=common_metadata,
-                            )
-                        )
-                        processed_successfully = True
-                    # Case 2: Text content
-                    elif (
-                        scrape_result.type == "text"
-                        or (
-                            scrape_result.type == "success"
-                            and scrape_result.mime_type
-                            and scrape_result.mime_type.startswith("text/")
-                        )
-                    ) and actual_content_str:  # Use actual_content_str
-                        output_items.append(
-                            IndexableContent(
-                                content=actual_content_str,  # Use actual_content_str
-                                embedding_type="fetched_content_text",
-                                mime_type=scrape_result.mime_type or "text/plain",
-                                source_processor=self.name,
-                                metadata=common_metadata,
-                            )
-                        )
-                        processed_successfully = True
-                    # Case 3: Image/Binary content
-                    elif (
-                        scrape_result.type == "image"
-                        or (
-                            scrape_result.type == "success"
-                            and scrape_result.mime_type
-                            and (
-                                scrape_result.mime_type.startswith("image/")
-                                or scrape_result.mime_type == "application/octet-stream"
-                            )
-                        )
-                    ) and actual_content_bytes:  # Use actual_content_bytes
-                        suffix = ""
-                        if scrape_result.mime_type:
-                            if "jpeg" in scrape_result.mime_type:
-                                suffix = ".jpg"
-                            elif "png" in scrape_result.mime_type:
-                                suffix = ".png"
-                            elif "gif" in scrape_result.mime_type:
-                                suffix = ".gif"
-                            elif "webp" in scrape_result.mime_type:
-                                suffix = ".webp"
-                        if not suffix:
-                            _root, ext = os.path.splitext(
-                                urlparse(scrape_result.final_url).path
-                            )
-                            if ext:
-                                suffix = ext
-
-                        with tempfile.NamedTemporaryFile(
-                            delete=False, suffix=suffix or ".tmp"
-                        ) as tmp_file:
-                            tmp_file.write(
-                                actual_content_bytes
-                            )  # Use actual_content_bytes
-                            temp_file_path = tmp_file.name
-                        self._temp_files.append(temp_file_path)
-                        logger.debug(
-                            f"{self.name}: Stored binary content from {scrape_result.final_url} to temp file: {temp_file_path}"
-                        )
-
-                        derived_filename_for_binary = (
-                            os.path.basename(urlparse(scrape_result.final_url).path)
-                            or f"download{suffix}"
-                        )
-                        binary_metadata = {**common_metadata}
-                        # Add derived_filename, ensure original_filename (if from doc) is preserved
-                        binary_metadata["derived_filename"] = (
-                            derived_filename_for_binary
-                        )
-
-                        # If original_filename was not in original_document.metadata (and thus not in common_metadata),
-                        # set it to the derived_filename_for_binary as a fallback for the primary 'original_filename' key.
-                        if "original_filename" not in binary_metadata:
-                            binary_metadata["original_filename"] = (
-                                derived_filename_for_binary
-                            )
-
-                        output_items.append(
-                            IndexableContent(
-                                content=None,
-                                ref=temp_file_path,
-                                embedding_type="fetched_content_binary",
-                                mime_type=scrape_result.mime_type
-                                or "application/octet-stream",
-                                source_processor=self.name,
-                                metadata=binary_metadata,
-                            )
-                        )
-                        processed_successfully = True
-
-                    # Case 4: Unhandled or unexpected result (if not error and not processed by cases above)
-                    if not processed_successfully:  # This implies it wasn't an error type and didn't match content types
-                        logger.warning(
-                            f"{self.name}: Unhandled scrape result for URL '{url_to_fetch}'. "
-                            f"Type: '{scrape_result.type}', Mime: '{scrape_result.mime_type}', "
-                            f"ScrapeResult.content (str): {bool(actual_content_str)}, ScrapeResult.content_bytes (bytes): {bool(actual_content_bytes)}. "
-                            "Passing original item."
-                        )
-                        items_to_pass_through.append(item)
-
-                except Exception as e:
-                    logger.exception(
-                        f"{self.name}: Exception during scraping URL '{url_to_fetch}': {e}"
-                    )
-                    items_to_pass_through.append(item)
-            else:
+            if not self._is_fetchable_url(item):
                 items_to_pass_through.append(item)
+                continue
+
+            url_to_fetch = cast("str", item.content)
+            logger.info(
+                f"{self.name}: Attempting to fetch URL '{url_to_fetch}' (original item type: {item.embedding_type})."
+            )
+            try:
+                scrape_result = await self.scraper.scrape(url_to_fetch)
+                fetched_item = self._create_fetched_item(
+                    item, original_document, url_to_fetch, scrape_result
+                )
+            except Exception as error:
+                logger.exception(
+                    f"{self.name}: Exception during scraping URL '{url_to_fetch}': {error}"
+                )
+                items_to_pass_through.append(item)
+                continue
+
+            if fetched_item is None:
+                items_to_pass_through.append(item)
+            else:
+                output_items.append(fetched_item)
 
         return output_items + items_to_pass_through
+
+    def _is_fetchable_url(self, item: IndexableContent) -> bool:
+        if item.embedding_type not in self.config.process_embedding_types:
+            return False
+        if not isinstance(item.content, str):
+            return False
+        return item.content.startswith(("http://", "https://"))
+
+    def _create_fetched_item(
+        self,
+        item: IndexableContent,
+        original_document: "Document",
+        url_to_fetch: str,
+        scrape_result: ScrapeResult,
+    ) -> IndexableContent | None:
+        common_metadata = self._build_common_metadata(
+            item, original_document, url_to_fetch, scrape_result
+        )
+        actual_content_str = getattr(scrape_result, "content", None)
+        actual_content_bytes = getattr(scrape_result, "content_bytes", None)
+        error_message = getattr(scrape_result, "message", "Unknown error")
+
+        if scrape_result.type == "error":
+            logger.error(
+                f"{self.name}: Failed to scrape URL '{url_to_fetch}'. Error: {error_message}"
+            )
+            return None
+        if self._is_markdown_result(scrape_result, actual_content_str):
+            return self._create_markdown_item(
+                cast("str", actual_content_str), common_metadata
+            )
+        if self._is_text_result(scrape_result, actual_content_str):
+            return self._create_text_item(
+                cast("str", actual_content_str), scrape_result, common_metadata
+            )
+        if self._is_binary_result(scrape_result, actual_content_bytes):
+            return self._create_binary_item(
+                cast("bytes", actual_content_bytes), scrape_result, common_metadata
+            )
+
+        logger.warning(
+            f"{self.name}: Unhandled scrape result for URL '{url_to_fetch}'. "
+            f"Type: '{scrape_result.type}', Mime: '{scrape_result.mime_type}', "
+            f"ScrapeResult.content (str): {bool(actual_content_str)}, ScrapeResult.content_bytes (bytes): {bool(actual_content_bytes)}. "
+            "Passing original item."
+        )
+        return None
+
+    @staticmethod
+    def _build_common_metadata(
+        item: IndexableContent,
+        original_document: "Document",
+        url_to_fetch: str,
+        scrape_result: ScrapeResult,
+    ) -> dict[str, object]:
+        metadata: dict[str, object] = {}
+        doc_meta = getattr(original_document, "metadata", None)
+        if original_document and doc_meta:
+            for key in ("original_url", "original_filename"):
+                if key in doc_meta:
+                    metadata[key] = doc_meta[key]
+
+        metadata.update({
+            "fetched_url": url_to_fetch,
+            "final_url": scrape_result.final_url,
+            "source_scraper_description": scrape_result.source_description,
+            "original_item_metadata": item.metadata or {},
+            "fetched_title": scrape_result.title,
+            "mime_type": scrape_result.mime_type,
+        })
+        metadata.setdefault("original_url", url_to_fetch)
+        return metadata
+
+    @staticmethod
+    def _is_markdown_result(scrape_result: ScrapeResult, content: str | None) -> bool:
+        if not content:
+            return False
+        return scrape_result.type == "markdown" or (
+            scrape_result.type == "success"
+            and scrape_result.mime_type == "text/markdown"
+        )
+
+    @staticmethod
+    def _is_text_result(scrape_result: ScrapeResult, content: str | None) -> bool:
+        if not content:
+            return False
+        if scrape_result.type == "text":
+            return True
+        return bool(
+            scrape_result.type == "success"
+            and scrape_result.mime_type
+            and scrape_result.mime_type.startswith("text/")
+        )
+
+    @staticmethod
+    def _is_binary_result(scrape_result: ScrapeResult, content: bytes | None) -> bool:
+        if not content:
+            return False
+        if scrape_result.type == "image":
+            return True
+        if scrape_result.type != "success" or not scrape_result.mime_type:
+            return False
+        return scrape_result.mime_type.startswith("image/") or (
+            scrape_result.mime_type == "application/octet-stream"
+        )
+
+    def _create_markdown_item(
+        self, content: str, metadata: dict[str, object]
+    ) -> IndexableContent:
+        return IndexableContent(
+            content=content,
+            embedding_type="fetched_content_markdown",
+            mime_type="text/markdown",
+            source_processor=self.name,
+            metadata=metadata,
+        )
+
+    def _create_text_item(
+        self,
+        content: str,
+        scrape_result: ScrapeResult,
+        metadata: dict[str, object],
+    ) -> IndexableContent:
+        return IndexableContent(
+            content=content,
+            embedding_type="fetched_content_text",
+            mime_type=scrape_result.mime_type or "text/plain",
+            source_processor=self.name,
+            metadata=metadata,
+        )
+
+    def _create_binary_item(
+        self,
+        content: bytes,
+        scrape_result: ScrapeResult,
+        common_metadata: dict[str, object],
+    ) -> IndexableContent:
+        suffix = self._binary_suffix(scrape_result)
+        temp_file_path = self._store_binary_content(content, scrape_result, suffix)
+        derived_filename = (
+            os.path.basename(urlparse(scrape_result.final_url).path)
+            or f"download{suffix}"
+        )
+        binary_metadata = {
+            **common_metadata,
+            "derived_filename": derived_filename,
+        }
+        binary_metadata.setdefault("original_filename", derived_filename)
+
+        return IndexableContent(
+            content=None,
+            ref=temp_file_path,
+            embedding_type="fetched_content_binary",
+            mime_type=scrape_result.mime_type or "application/octet-stream",
+            source_processor=self.name,
+            metadata=binary_metadata,
+        )
+
+    @staticmethod
+    def _binary_suffix(scrape_result: ScrapeResult) -> str:
+        mime_suffixes = {
+            "jpeg": ".jpg",
+            "png": ".png",
+            "gif": ".gif",
+            "webp": ".webp",
+        }
+        if scrape_result.mime_type:
+            for mime_fragment, suffix in mime_suffixes.items():
+                if mime_fragment in scrape_result.mime_type:
+                    return suffix
+
+        _root, extension = os.path.splitext(urlparse(scrape_result.final_url).path)
+        return extension
+
+    def _store_binary_content(
+        self, content: bytes, scrape_result: ScrapeResult, suffix: str
+    ) -> str:
+        with tempfile.NamedTemporaryFile(
+            delete=False, suffix=suffix or ".tmp"
+        ) as tmp_file:
+            tmp_file.write(content)
+            temp_file_path = tmp_file.name
+        self._temp_files.append(temp_file_path)
+        logger.debug(
+            f"{self.name}: Stored binary content from {scrape_result.final_url} to temp file: {temp_file_path}"
+        )
+        return temp_file_path
 
     def cleanup_temp_files(self) -> None:
         """

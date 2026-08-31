@@ -170,11 +170,15 @@ if TYPE_CHECKING:
     from fastapi import FastAPI
     from sqlalchemy.ext.asyncio import AsyncEngine
 
+    from family_assistant.camera.protocol import CameraBackend
     from family_assistant.config_models import ServiceProfile
+    from family_assistant.context_providers import ContextProvider
+    from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.llm import LLMInterface
+    from family_assistant.security.taint import SinkClass
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.types import EventConditionEvaluatorConfig
-    from family_assistant.tools import ToolRegistration
+    from family_assistant.tools import ToolDefinition, ToolRegistration
     from family_assistant.tools.types import CalendarConfig as CalendarConfigDict
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -642,6 +646,21 @@ class Assistant:
 
     async def setup_dependencies(self) -> None:
         """Initializes and wires up all core application components."""
+        await self._setup_application()
+        self._setup_embedding_generator()
+        await self._setup_database()
+        self._setup_confirmation_interfaces()
+        self._setup_attachment_registry()
+        self._setup_error_logging()
+        await self._setup_root_tools_provider()
+        await self._setup_processing_services()
+        self._select_default_processing_service()
+        self._setup_indexers()
+        self._setup_telegram_service()
+        self._setup_event_system()
+
+    async def _setup_application(self) -> None:
+        """Create shared application state and validate model credentials."""
         # Ensure Playwright browsers are installed as a failsafe
         await self._ensure_playwright_browsers_installed()
 
@@ -692,36 +711,14 @@ class Assistant:
                 f"No specific API key validation for model: {selected_model}."
             )
 
+    def _setup_embedding_generator(self) -> None:
+        """Build and publish the configured embedding generator."""
+        assert self.fastapi_app is not None
         embedding_model_name = self.config.embedding_model
         embedding_dimensions = self.config.embedding_dimensions
         embedding_provider = self.config.embedding_provider
         if embedding_provider == "openai":
-            api_key = (
-                self.config.embedding_api_key
-                or self.config.openai_api_key
-                or os.getenv("OPENAI_API_KEY")
-            )
-            if not api_key and not self.config.embedding_base_url:
-                raise ValueError(
-                    "embedding_provider='openai' requires an API key "
-                    "(embedding_api_key / openai_api_key / OPENAI_API_KEY) "
-                    "or a custom embedding_base_url."
-                )
-            # Only forward the optional `dimensions` request parameter when the
-            # operator explicitly configured it. Models such as
-            # text-embedding-ada-002 (and some OpenAI-compatible servers) reject
-            # the field, and the default value would otherwise always be sent.
-            explicit_dimensions = (
-                embedding_dimensions
-                if "embedding_dimensions" in self.config.model_fields_set
-                else None
-            )
-            self.embedding_generator = OpenAIEmbeddingGenerator(
-                model=embedding_model_name,
-                api_key=api_key,
-                base_url=self.config.embedding_base_url,
-                dimensions=explicit_dimensions,
-            )
+            self.embedding_generator = self._create_openai_embedding_generator()
         elif embedding_model_name == "mock-deterministic-embedder":
             self.embedding_generator = embeddings.MockEmbeddingGenerator(
                 model_name=embedding_model_name,
@@ -732,28 +729,12 @@ class Assistant:
             "all-MiniLM-L6-v2",
             "other-local-model-name",
         }:
-            try:
-                if "SentenceTransformerEmbeddingGenerator" not in dir(embeddings):
-                    raise ImportError("sentence-transformers library not installed.")
-                self.embedding_generator = (
-                    embeddings.SentenceTransformerEmbeddingGenerator(
-                        model_name_or_path=embedding_model_name
-                    )
-                )
-            except Exception as e:
-                logger.critical(
-                    f"Failed to initialize local embedding model '{embedding_model_name}': {e}"
-                )
-                raise SystemExit(f"Local embedding model init failed: {e}") from e
+            self.embedding_generator = self._create_local_embedding_generator(
+                embedding_model_name
+            )
         elif embedding_model_name.startswith(("gemini/", "gemini-")):
-            canonical_name = embedding_model_name
-            if not canonical_name.startswith("gemini/"):
-                canonical_name = f"gemini/{canonical_name}"
-            if canonical_name == "gemini/":
-                raise ValueError("Embedding model name cannot be just 'gemini/'.")
-            self.embedding_generator = GoogleEmbeddingGenerator(
-                model=canonical_name,
-                dimensions=embedding_dimensions,
+            self.embedding_generator = self._create_google_embedding_generator(
+                embedding_model_name, embedding_dimensions
             )
         else:
             raise ValueError(
@@ -768,6 +749,65 @@ class Assistant:
         )
         self.fastapi_app.state.embedding_generator = self.embedding_generator
 
+    def _create_openai_embedding_generator(self) -> OpenAIEmbeddingGenerator:
+        api_key = (
+            self.config.embedding_api_key
+            or self.config.openai_api_key
+            or os.getenv("OPENAI_API_KEY")
+        )
+        if not api_key and not self.config.embedding_base_url:
+            raise ValueError(
+                "embedding_provider='openai' requires an API key "
+                "(embedding_api_key / openai_api_key / OPENAI_API_KEY) "
+                "or a custom embedding_base_url."
+            )
+        explicit_dimensions = (
+            self.config.embedding_dimensions
+            if "embedding_dimensions" in self.config.model_fields_set
+            else None
+        )
+        return OpenAIEmbeddingGenerator(
+            model=self.config.embedding_model,
+            api_key=api_key,
+            base_url=self.config.embedding_base_url,
+            dimensions=explicit_dimensions,
+        )
+
+    @staticmethod
+    def _create_local_embedding_generator(
+        embedding_model_name: str,
+    ) -> EmbeddingGenerator:
+        try:
+            if "SentenceTransformerEmbeddingGenerator" not in dir(embeddings):
+                raise ImportError("sentence-transformers library not installed.")
+            return embeddings.SentenceTransformerEmbeddingGenerator(
+                model_name_or_path=embedding_model_name
+            )
+        except Exception as exc:
+            logger.critical(
+                "Failed to initialize local embedding model '%s': %s",
+                embedding_model_name,
+                exc,
+            )
+            raise SystemExit(f"Local embedding model init failed: {exc}") from exc
+
+    @staticmethod
+    def _create_google_embedding_generator(
+        embedding_model_name: str, embedding_dimensions: int
+    ) -> GoogleEmbeddingGenerator:
+        canonical_name = embedding_model_name
+        if not canonical_name.startswith("gemini/"):
+            canonical_name = f"gemini/{canonical_name}"
+        if canonical_name == "gemini/":
+            raise ValueError("Embedding model name cannot be just 'gemini/'.")
+        return GoogleEmbeddingGenerator(
+            model=canonical_name,
+            dimensions=embedding_dimensions,
+        )
+
+    async def _setup_database(self) -> None:
+        """Initialize and publish the application database engine."""
+        assert self.fastapi_app is not None
         # Create database engine
         # Use injected engine if provided, otherwise create from config
         if self._injected_database_engine:
@@ -794,6 +834,10 @@ class Assistant:
         # Store engine in FastAPI app state for web dependencies
         self.fastapi_app.state.database_engine = self.database_engine
 
+    def _setup_confirmation_interfaces(self) -> None:
+        """Initialize confirmation and email delivery services."""
+        assert self.fastapi_app is not None
+        user_identity_resolver = self.fastapi_app.state.user_identity_resolver
         # Initialize notification channels (Web Push + iOS APNs) and the dispatcher that fans
         # out to all configured channels. Built before the confirmation service so it can be
         # injected as a dependency.
@@ -847,6 +891,10 @@ class Assistant:
         configure_app_auth(self.fastapi_app, self.database_engine)
         logger.info("Authentication configured with database engine")
 
+    def _setup_attachment_registry(self) -> None:
+        """Initialize attachment storage and publish its registry."""
+        assert self.fastapi_app is not None
+        assert self.database_engine is not None
         # Initialize AttachmentRegistry (consolidates file storage and database metadata)
         # Must come after database engine initialization
         # Prefer chat_attachment_storage_path, fall back to attachment_config.storage_path
@@ -887,6 +935,9 @@ class Assistant:
             f"AttachmentRegistry initialized with path: {attachment_storage_path}"
         )
 
+    def _setup_error_logging(self) -> None:
+        """Enable database-backed error logging when configured."""
+        assert self.database_engine is not None
         # Setup error logging to database if enabled
         error_logging_enabled = self.config.logging.database_errors.enabled
         # Also check environment variable to disable for testing
@@ -896,9 +947,53 @@ class Assistant:
             self.error_logging_handler = setup_error_logging(self.database_engine)
             logger.info("Database error logging handler initialized")
 
-        resolved_profiles = self.config.service_profiles
-        default_service_profile_id = self.config.default_service_profile_id
+    async def _setup_root_tools_provider(self) -> None:
+        """Build the shared local and MCP tool-provider root."""
+        assert self.fastapi_app is not None
+        assert self.shared_httpx_client is not None
+        base_local_tools_definition = self._build_local_tool_definitions()
+        google_integration_state = self._setup_google_integration()
 
+        logger.info("Creating root ToolsProvider with all available tools")
+        root_local_registrations = build_local_tool_registrations(
+            definitions=base_local_tools_definition,
+            implementations=local_tool_implementations,
+            metadata_by_name=local_tool_metadata_by_name,
+        )
+        root_local_registrations = filter_oauth_tool_registrations(
+            root_local_registrations, google_integration_state
+        )
+        self._root_local_registrations = root_local_registrations
+        root_local_provider = LocalToolsProvider(
+            registrations=root_local_registrations,
+            embedding_generator=self.embedding_generator,
+            calendar_config=_calendar_config_to_dict(self.config.calendar_config),
+        )
+
+        all_mcp_servers_config: dict[str, MCPServerConfig] = {
+            server_id: cast("MCPServerConfig", server_config.model_dump())
+            for server_id, server_config in self.config.mcp_config.mcpServers.items()
+        }
+        root_mcp_provider = MCPToolsProvider(
+            mcp_server_configs=all_mcp_servers_config,
+            initialization_timeout_seconds=60,
+        )
+        self._root_mcp_provider = root_mcp_provider
+        self.root_tools_provider = CompositeToolsProvider(
+            providers=[root_local_provider, root_mcp_provider]
+        )
+        self.fastapi_app.state.tools_provider = self.root_tools_provider
+        self.fastapi_app.state.tool_definitions = (
+            await self.root_tools_provider.get_tool_definitions()
+        )
+        await self._reject_duplicate_tool_names()
+        logger.info(
+            "Root ToolsProvider initialized with %s tools",
+            len(self.fastapi_app.state.tool_definitions),
+        )
+
+    def _build_local_tool_definitions(self) -> list[ToolDefinition]:
+        """Customize local tool definitions using deployment configuration."""
         available_doc_files = _scan_user_docs()
         formatted_doc_list_for_tool_desc = ", ".join(available_doc_files) or "None"
         base_local_tools_definition = copy.deepcopy(local_tools_definition)
@@ -939,12 +1034,12 @@ class Assistant:
                         f"Updated spawn_worker agent enum to {available_agents}"
                     )
                 break
+        return base_local_tools_definition
 
-        # Resolve Google (Gmail/Drive) integration enablement ONCE. The state is
-        # the single source of truth consumed by the tool-gating below, the status
-        # endpoint, and the connect-flow 409s. Disabled Google tools are dropped
-        # from the shared root definitions so no profile (nor UI/API) can advertise
-        # a tool whose credentials cannot serve it.
+    def _setup_google_integration(self) -> OAuthIntegrationState:
+        """Resolve and publish the Google integration state."""
+        assert self.fastapi_app is not None
+        assert self.shared_httpx_client is not None
         google_integration_state = evaluate_oauth_integration_state(
             GOOGLE_PROVIDER,
             self.config,
@@ -967,51 +1062,12 @@ class Assistant:
                 self.notification_dispatcher,
             )
             self.api_backend = HttpApiBackend(self.shared_httpx_client)
+        return google_integration_state
 
-        # Create root providers with ALL tools for UI/API access
-        logger.info("Creating root ToolsProvider with all available tools")
-
-        # Create root local provider with ALL tools, then drop Google tools the
-        # integration cannot serve so no profile (nor UI/API) advertises them.
-        root_local_registrations = build_local_tool_registrations(
-            definitions=base_local_tools_definition,
-            implementations=local_tool_implementations,
-            metadata_by_name=local_tool_metadata_by_name,
-        )
-        root_local_registrations = filter_oauth_tool_registrations(
-            root_local_registrations, google_integration_state
-        )
-        # Kept so a profile with its own calendar_config can be given a local
-        # provider built against that calendar; see the profile loop below.
-        self._root_local_registrations = root_local_registrations
-        root_local_provider = LocalToolsProvider(
-            registrations=root_local_registrations,
-            embedding_generator=self.embedding_generator,
-            calendar_config=_calendar_config_to_dict(self.config.calendar_config),
-        )
-
-        # Create root MCP provider with ALL configured servers
-        # ast-grep-ignore: no-dict-any - Configuration model dump returns dynamic dict
-        all_mcp_servers_config: dict[str, MCPServerConfig] = {
-            server_id: cast("MCPServerConfig", server_config.model_dump())
-            for server_id, server_config in self.config.mcp_config.mcpServers.items()
-        }
-        root_mcp_provider = MCPToolsProvider(
-            mcp_server_configs=all_mcp_servers_config,
-            initialization_timeout_seconds=60,
-        )
-        self._root_mcp_provider = root_mcp_provider
-
-        # Create composite root provider
-        self.root_tools_provider = CompositeToolsProvider(
-            providers=[root_local_provider, root_mcp_provider]
-        )
-
-        # Initialize and store for UI/API access
-        self.fastapi_app.state.tools_provider = self.root_tools_provider
-        self.fastapi_app.state.tool_definitions = (
-            await self.root_tools_provider.get_tool_definitions()
-        )
+    async def _reject_duplicate_tool_names(self) -> None:
+        """Close the root provider and fail startup on duplicate tool names."""
+        assert self.fastapi_app is not None
+        assert self.root_tools_provider is not None
         name_counts = Counter(
             d.get("function", {}).get("name", "")
             for d in self.fastapi_app.state.tool_definitions
@@ -1031,10 +1087,35 @@ class Assistant:
             logger.error(message)
             await self.root_tools_provider.close()
             raise RuntimeError(message)
-        logger.info(
-            f"Root ToolsProvider initialized with {len(self.fastapi_app.state.tool_definitions)} tools"
-        )
 
+    async def _setup_processing_services(self) -> None:
+        """Build every configured local or remote processing service."""
+        assert self.fastapi_app is not None
+        assert self.root_tools_provider is not None
+        assert self._root_mcp_provider is not None
+        resolved_profiles = self.config.service_profiles
+        note_registry = self._load_note_registry()
+        delegation_sink_classes = {
+            candidate.id: candidate.processing_config.taint_sink_class
+            for candidate in resolved_profiles
+            if candidate.processing_config.taint_sink_class is not None
+        }
+        tool_call_reviewer = self._create_tool_call_reviewer()
+        self._tool_call_reviewer = tool_call_reviewer
+        for profile_conf in resolved_profiles:
+            await self._setup_processing_profile(
+                profile_conf,
+                note_registry,
+                delegation_sink_classes,
+                tool_call_reviewer,
+            )
+
+        if not self.processing_services_registry:
+            logger.critical("No processing service profiles initialized.")
+            raise SystemExit("No processing service profiles initialized.")
+
+    def _load_note_registry(self) -> NoteRegistry | None:
+        """Load builtin and user skills into the note registry."""
         # Load file-based skills and create NoteRegistry
         # Builtin skills load first; user skills override builtins with the same name.
         all_skills = []
@@ -1049,16 +1130,10 @@ class Assistant:
         user_dir = Path(skills_config.user_dir) if skills_config.user_dir else None
         if user_dir:
             all_skills.extend(load_skills_from_directory(user_dir))
-        note_registry = NoteRegistry(all_skills) if all_skills else None
-        # Built before the loop because it spans profiles: a delegation is
-        # classified by what its *target* profile does, so every profile's
-        # declared sink has to be known when any profile's tool provider is
-        # constructed.
-        delegation_sink_classes = {
-            candidate.id: candidate.processing_config.taint_sink_class
-            for candidate in resolved_profiles
-            if candidate.processing_config.taint_sink_class is not None
-        }
+        return NoteRegistry(all_skills) if all_skills else None
+
+    def _create_tool_call_reviewer(self) -> ToolCallReviewer | None:
+        """Build the optional shared tool-call reviewer."""
         review_config = self.config.tool_call_review
         tool_call_reviewer: ToolCallReviewer | None = None
         if review_config is not None and review_config.enabled:
@@ -1107,432 +1182,476 @@ class Assistant:
                 )
             else:
                 tool_call_reviewer = ToolCallReviewer(review_llm_client, review_config)
-        self._tool_call_reviewer = tool_call_reviewer
-        for profile_conf in resolved_profiles:
-            profile_id = profile_conf.id
+        return tool_call_reviewer
 
-            if profile_conf.remote_a2a:
-                self._setup_remote_a2a_profile(profile_conf)
-                continue
+    async def _setup_processing_profile(
+        self,
+        profile_conf: ServiceProfile,
+        note_registry: NoteRegistry | None,
+        delegation_sink_classes: dict[str, SinkClass],
+        tool_call_reviewer: ToolCallReviewer | None,
+    ) -> None:
+        """Build and register one configured processing service."""
+        profile_id = profile_conf.id
 
-            logger.info(
-                f"Initializing ProcessingService for profile ID: '{profile_id}'"
+        if profile_conf.remote_a2a:
+            self._setup_remote_a2a_profile(profile_conf)
+            return
+
+        logger.info(f"Initializing ProcessingService for profile ID: '{profile_id}'")
+        profile_proc_conf = profile_conf.processing_config
+        profile_tools_conf = profile_conf.tools_config
+
+        profile_llm_model = profile_proc_conf.llm_model or self.config.model
+
+        llm_client_for_profile = self._create_profile_llm_client(
+            profile_conf, profile_llm_model
+        )
+
+        (
+            profile_tools_provider,
+            profile_on_demand_view,
+        ) = await self._build_profile_tools_provider(
+            profile_conf, delegation_sink_classes, tool_call_reviewer
+        )
+
+        profile_grants = (
+            set(profile_conf.visibility_grants)
+            if profile_conf.visibility_grants
+            else None
+        )
+        context_providers = self._build_profile_context_providers(
+            profile_conf, note_registry, profile_grants
+        )
+
+        service_config = ProcessingServiceConfig(
+            taint_sink_class=profile_proc_conf.taint_sink_class,
+            prompts=profile_proc_conf.prompts,
+            timezone=ZoneInfo(profile_proc_conf.timezone),
+            max_history_messages=profile_proc_conf.max_history_messages,
+            history_max_age_hours=profile_proc_conf.history_max_age_hours,
+            web_max_history_messages=profile_proc_conf.web_max_history_messages,
+            web_history_max_age_hours=profile_proc_conf.web_history_max_age_hours,
+            max_iterations=profile_proc_conf.max_iterations,
+            context_pruning_min_turns=profile_proc_conf.context_pruning_min_turns,
+            tools_config=profile_tools_conf,
+            delegation_security_level=profile_proc_conf.delegation_security_level,
+            allowed_delegation_sources=(profile_proc_conf.allowed_delegation_sources),
+            id=profile_id,
+            description=profile_conf.description or f"Processing profile: {profile_id}",
+            visibility_grants=profile_grants,
+            default_note_visibility_labels=(
+                profile_proc_conf.default_note_visibility_labels
+                if profile_proc_conf.default_note_visibility_labels is not None
+                else self.config.notes_config.default_visibility_labels or None
+            ),
+            required_note_visibility_labels=(
+                profile_proc_conf.required_note_visibility_labels
+            ),
+            allowed_note_visibility_labels=(
+                profile_proc_conf.allowed_note_visibility_labels
+            ),
+            allow_wake_llm=profile_proc_conf.allow_wake_llm,
+            include_aggregated_context=(profile_proc_conf.include_aggregated_context),
+            note_registry=note_registry,
+            greeting_wav_path=profile_proc_conf.greeting_wav_path,
+            poll_interval_seconds=profile_proc_conf.poll_interval_seconds,
+            max_async_seconds=profile_proc_conf.max_async_seconds,
+        )
+
+        home_assistant_client_for_profile = self.home_assistant_clients.get(profile_id)
+        camera_backend_for_profile = self._create_camera_backend(profile_conf)
+
+        # Interactions API agent profiles (Deep Research, Antigravity)
+        # get the pollable subclass so a delegated run submits/polls
+        # instead of holding a worker for the whole (potentially very
+        # long) run. Direct chat use is unaffected —
+        # handle_chat_interaction is inherited unchanged.
+        processing_service_class = (
+            InteractionsAgentProcessingService
+            if is_interactions_agent_model(profile_llm_model)
+            else ProcessingService
+        )
+        merged_taint_policy = merge_taint_policy_config(
+            base=self.config.taint_policy, profile=profile_conf.taint_policy
+        )
+        processing_service_instance = processing_service_class(
+            llm_client=llm_client_for_profile,
+            tools_provider=profile_tools_provider,
+            service_config=service_config,
+            context_providers=context_providers,
+            server_url=self.config.server_url,
+            app_config=self.config,
+            attachment_registry=self.attachment_registry,
+            event_sources=self.event_processor.sources
+            if self.event_processor
+            else None,
+            processing_services_registry=self.processing_services_registry,
+            home_assistant_client=home_assistant_client_for_profile,
+            camera_backend=camera_backend_for_profile,
+            on_demand_view=profile_on_demand_view,
+            credential_resolvers=self.credential_resolvers,
+            api_backend=self.api_backend,
+            taint_policy=merged_taint_policy,
+        )
+
+        # Render once now so a template referencing a placeholder that no
+        # longer exists -- {current_time} and {aggregated_other_context} moved
+        # into the turn-context block -- is a startup failure rather than an
+        # error the first time somebody talks to this profile.
+        try:
+            processing_service_instance.validate_system_prompt_renders()
+        except (ValueError, TypeError) as exc:
+            raise SystemExit(
+                f"Profile '{profile_id}' has an invalid system_prompt: {exc}"
+            ) from exc
+
+        self.processing_services_registry[profile_id] = processing_service_instance
+
+    @staticmethod
+    def _create_camera_backend(
+        profile_conf: ServiceProfile,
+    ) -> CameraBackend | None:
+        """Create the optional camera backend for one profile."""
+        camera_config = profile_conf.processing_config.camera_config
+        if camera_config is None or camera_config.backend != "reolink":
+            return None
+        try:
+            from family_assistant.camera.reolink import (  # noqa: PLC0415
+                create_reolink_backend,
             )
-            profile_proc_conf = profile_conf.processing_config
-            profile_tools_conf = profile_conf.tools_config
-            profile_tools_policy = profile_conf.tools_policy
-            profile_operator_tools_policy = profile_conf.operator_tools_policy
-            profile_chat_id_map = profile_conf.chat_id_to_name_map
 
-            profile_llm_model = profile_proc_conf.llm_model or self.config.model
-
-            if profile_id in self.llm_client_overrides:
-                llm_client_for_profile = self.llm_client_overrides[profile_id]
+            camera_backend = create_reolink_backend(
+                camera_config.cameras_config or None
+            )
+            if camera_backend is not None:
                 logger.info(
-                    f"Profile '{profile_id}' using overridden LLM client: {type(llm_client_for_profile).__name__}"
+                    "Camera backend initialized for profile '%s'", profile_conf.id
                 )
-            else:
-                if profile_proc_conf.enable_computer_use:
-                    # Computer use rides on the Google client's request/response
-                    # conversion, so a retrying client (whose fallback may be a
-                    # different provider) and non-Google providers cannot carry it.
-                    if profile_proc_conf.retry_config is not None:
-                        raise ValueError(
-                            f"Profile '{profile_id}' has enable_computer_use=True "
-                            "with retry_config, which is unsupported (computer use "
-                            "requires the single Google GenAI client)"
-                        )
-                    resolved_provider = profile_proc_conf.provider or (
-                        "google" if profile_llm_model.startswith("gemini-") else None
-                    )
-                    if resolved_provider != "google":
-                        raise ValueError(
-                            f"Profile '{profile_id}' has enable_computer_use=True "
-                            f"but provider is '{resolved_provider}' (must be 'google')"
-                        )
-
-                validate_antigravity_agent_config(
-                    profile_id, profile_proc_conf, profile_llm_model
-                )
-
-                # Check if using retry_config format
-                if profile_proc_conf.retry_config is not None:
-                    # Direct retry_config format - convert to dict for LLMClientFactory
-                    retry_config_dict = profile_proc_conf.retry_config.model_dump(
-                        exclude_none=True
-                    )
-                    # Add shared llm_parameters as model_parameters to both primary and fallback
-                    # if not already specified. model_parameters is used for pattern-based
-                    # parameter matching (e.g., "openrouter/google/gemini-" -> {params})
-                    llm_params = self.config.llm_parameters
-                    if (
-                        "primary" in retry_config_dict
-                        and "model_parameters" not in retry_config_dict["primary"]
-                    ):
-                        retry_config_dict["primary"]["model_parameters"] = llm_params
-                    if (
-                        "fallback" in retry_config_dict
-                        and retry_config_dict["fallback"]
-                        and "model_parameters" not in retry_config_dict["fallback"]
-                    ):
-                        retry_config_dict["fallback"]["model_parameters"] = llm_params
-
-                    # Wrap in a config dict with retry_config key
-                    # ast-grep-ignore: no-dict-any - Temporary dict passed to RetryingLLMClient
-                    client_config: dict[str, Any] = {"retry_config": retry_config_dict}
-
-                    primary_model = retry_config_dict.get("primary", {}).get("model")
-                    fallback_model = (
-                        retry_config_dict.get("fallback", {}).get("model")
-                        if retry_config_dict.get("fallback")
-                        else None
-                    )
-                    logger.info(
-                        f"Creating RetryingLLMClient for profile '{profile_id}' with primary='{primary_model}', "
-                        f"fallback='{fallback_model}'"
-                    )
-                else:
-                    # Simple configuration without retry
-                    # ast-grep-ignore: no-dict-any - Temporary dict passed to LLMClientFactory
-                    client_config = {
-                        "model": profile_llm_model,
-                        "model_parameters": self.config.llm_parameters,
-                    }
-                    if profile_proc_conf.provider:
-                        client_config["provider"] = profile_proc_conf.provider
-                    if profile_proc_conf.enable_computer_use:
-                        client_config["enable_computer_use"] = True
-                    if profile_proc_conf.computer_use_excluded_functions:
-                        client_config["computer_use_excluded_functions"] = (
-                            profile_proc_conf.computer_use_excluded_functions
-                        )
-                    if profile_proc_conf.antigravity_config:
-                        client_config["antigravity_model"] = (
-                            profile_proc_conf.antigravity_config.model
-                        )
-                        client_config["antigravity_max_total_tokens"] = (
-                            profile_proc_conf.antigravity_config.max_total_tokens
-                        )
-                        client_config["antigravity_environment"] = (
-                            profile_proc_conf.antigravity_config.environment
-                        )
-
-                    logger.info(
-                        "Creating LLM client for profile '%s' with model='%s'%s",
-                        profile_id,
-                        profile_llm_model,
-                        f", provider='{profile_proc_conf.provider}'"
-                        if profile_proc_conf.provider
-                        else "",
-                    )
-
-                llm_client_for_profile = LLMClientFactory.create_client(
-                    config=client_config
-                )
-                logger.info(
-                    f"Profile '{profile_id}' using client: {type(llm_client_for_profile).__name__}"
-                )
-
-            policy_engine = _build_profile_policy_engine(
-                profile_id,
-                profile_tools_policy,
-                profile_operator_tools_policy,
-                self.config.global_tools_policy,
-                profile_conf.excluded_global_tools,
+                return camera_backend
+            logger.warning(
+                "Camera backend not created for profile '%s' "
+                "(no config or reolink-aio unavailable)",
+                profile_conf.id,
             )
-            # Get confirmation timeout from config, default to 3600 seconds (1 hour)
-            confirmation_timeout = profile_tools_conf.confirmation_timeout_seconds
+        except ImportError:
+            logger.warning("Reolink backend requested but reolink-aio not installed")
+        except Exception:
+            logger.exception(
+                "Failed to create camera backend for profile '%s'", profile_conf.id
+            )
+        return None
 
-            profile_root_provider = _root_provider_for_profile(
-                shared_root=self.root_tools_provider,
-                profile_calendar_config=profile_proc_conf.calendar_config,
-                local_registrations=self._root_local_registrations,
-                mcp_provider=self._root_mcp_provider,
-                embedding_generator=self.embedding_generator,
-            )
-
-            # Build provider chain: Policy → root. The provider chain is
-            # shared by all consumers (LLM loop, scripts, web UI listings),
-            # so it must reflect the full set of tools the profile is allowed
-            # to use. On-demand gating is an LLM-loop concern only and lives
-            # in a sibling ``OnDemandToolsView`` below.
-            policy_provider = PolicyEnforcingToolsProvider(
-                wrapped_provider=profile_root_provider,
-                policy_engine=policy_engine,
-                confirmation_timeout=confirmation_timeout,
-            )
-            merged_taint_policy = merge_taint_policy_config(
-                base=self.config.taint_policy,
-                profile=profile_conf.taint_policy,
-            )
-            profile_tools_provider = TaintTrackingToolsProvider(
-                policy_provider,
-                taint_policy=merged_taint_policy,
-                confirmation_timeout=confirmation_timeout,
-                delegation_sink_classes=delegation_sink_classes,
-                tool_call_reviewer=tool_call_reviewer,
-                review_config=review_config,
-                deployment_review_guidance=(
-                    review_config.guidance if review_config is not None else ""
-                ),
-                profile_review_guidance=profile_proc_conf.review_guidance,
-                include_aggregated_context=(
-                    profile_proc_conf.include_aggregated_context
-                ),
-            )
-            on_demand_tool_names = profile_tools_conf.get_on_demand_tool_names()
-            on_demand_mcp_ids = set(profile_tools_conf.get_on_demand_mcp_server_ids())
-            profile_on_demand_view: OnDemandToolsView | None = None
-            if on_demand_tool_names or on_demand_mcp_ids:
-                profile_on_demand_view = OnDemandToolsView(
-                    wrapped_provider=profile_tools_provider,
-                    on_demand_tool_names=on_demand_tool_names,
-                    on_demand_mcp_server_ids=on_demand_mcp_ids,
-                )
-            await profile_tools_provider.get_tool_definitions()
-
-            profile_grants = (
-                set(profile_conf.visibility_grants)
-                if profile_conf.visibility_grants
-                else None
-            )
-            notes_provider = NotesContextProvider(
+    def _build_profile_context_providers(
+        self,
+        profile_conf: ServiceProfile,
+        note_registry: NoteRegistry | None,
+        profile_grants: set[str] | None,
+    ) -> list[ContextProvider]:
+        """Build and filter the aggregated-context sources for one profile."""
+        assert self.attachment_registry is not None
+        profile_config = profile_conf.processing_config
+        providers: list[ContextProvider] = [
+            NotesContextProvider(
                 get_db_context_func=self._database,
-                prompts=profile_proc_conf.prompts,
+                prompts=profile_config.prompts,
                 attachment_registry=self.attachment_registry,
                 visibility_grants=profile_grants,
                 note_registry=note_registry,
-            )
-            # A profile's own calendar_config wins over the application-wide one.
-            # Without this the field resolves onto the profile and is then read by
-            # nothing, so configuring it looks effective and changes no behaviour.
-            calendar_provider = CalendarContextProvider(
+            ),
+            CalendarContextProvider(
                 calendar_config=_calendar_config_to_dict(
-                    profile_proc_conf.calendar_config or self.config.calendar_config
+                    profile_config.calendar_config or self.config.calendar_config
                 ),
-                timezone=ZoneInfo(profile_proc_conf.timezone),
-                prompts=profile_proc_conf.prompts,
-            )
-            known_users_provider = KnownUsersContextProvider(
-                chat_id_to_name_map=profile_chat_id_map,
-                prompts=profile_proc_conf.prompts,
-            )
-            context_providers = [
-                notes_provider,
-                calendar_provider,
-                known_users_provider,
-            ]
+                timezone=ZoneInfo(profile_config.timezone),
+                prompts=profile_config.prompts,
+            ),
+            KnownUsersContextProvider(
+                chat_id_to_name_map=profile_conf.chat_id_to_name_map,
+                prompts=profile_config.prompts,
+            ),
+        ]
+        weather_provider = self._create_weather_context_provider(profile_conf)
+        if weather_provider is not None:
+            providers.append(weather_provider)
+        home_assistant_provider = self._create_home_assistant_context_provider(
+            profile_conf
+        )
+        if home_assistant_provider is not None:
+            providers.append(home_assistant_provider)
 
-            willyweather_api_key = self.config.willyweather_api_key
-            willyweather_location_id = self.config.willyweather_location_id
+        excluded = set(profile_config.excluded_context_providers)
+        if not excluded:
+            return providers
+        return [provider for provider in providers if provider.name not in excluded]
+
+    def _create_weather_context_provider(
+        self, profile_conf: ServiceProfile
+    ) -> WeatherContextProvider | None:
+        api_key = self.config.willyweather_api_key
+        location_id = self.config.willyweather_location_id
+        if not api_key or not location_id or self.shared_httpx_client is None:
+            return None
+        profile_config = profile_conf.processing_config
+        return WeatherContextProvider(
+            location_id=location_id,
+            api_key=api_key,
+            prompts=profile_config.prompts,
+            timezone=ZoneInfo(profile_config.timezone),
+            httpx_client=self.shared_httpx_client,
+        )
+
+    def _create_home_assistant_context_provider(
+        self, profile_conf: ServiceProfile
+    ) -> HomeAssistantContextProvider | None:
+        profile_config = profile_conf.processing_config
+        api_url = profile_config.home_assistant_api_url
+        token = profile_config.home_assistant_token
+        template = profile_config.home_assistant_context_template
+        if not api_url or not token:
+            return None
+
+        client = self._get_home_assistant_client(profile_conf, api_url, token)
+        if not client or not template:
+            logger.warning(
+                "Home Assistant context provider for profile '%s' is partially "
+                "configured but missing essential settings (URL, token, or "
+                "template). Skipping.",
+                profile_conf.id,
+            )
+            return None
+        try:
             if (
-                willyweather_api_key
-                and willyweather_location_id
-                and self.shared_httpx_client
+                HomeAssistantContextProvider.__module__
+                != "family_assistant.context_providers"
             ):
-                weather_provider = WeatherContextProvider(
-                    location_id=willyweather_location_id,
-                    api_key=willyweather_api_key,
-                    prompts=profile_proc_conf.prompts,
-                    timezone=ZoneInfo(profile_proc_conf.timezone),
-                    httpx_client=self.shared_httpx_client,
-                )
-                context_providers.append(weather_provider)
+                return None
+            provider = HomeAssistantContextProvider(
+                api_url=api_url,
+                token=token,
+                context_template=template,
+                prompts=profile_config.prompts,
+                verify_ssl=profile_config.home_assistant_verify_ssl,
+                client=client,
+            )
+        except ImportError:
+            logger.warning(
+                "homeassistant_api library is not installed, but Home Assistant "
+                "context provider is configured. Skipping."
+            )
+            return None
+        except Exception as exc:
+            logger.exception(
+                "Failed to initialize HomeAssistantContextProvider for profile "
+                "'%s': %s",
+                profile_conf.id,
+                exc,
+            )
+            return None
+        logger.info(
+            "HomeAssistantContextProvider added for profile '%s'.", profile_conf.id
+        )
+        return provider
 
-            # --- Home Assistant Context Provider ---
-            ha_api_url = profile_proc_conf.home_assistant_api_url
-            ha_token = profile_proc_conf.home_assistant_token
-            ha_template = profile_proc_conf.home_assistant_context_template
-            ha_verify_ssl = profile_proc_conf.home_assistant_verify_ssl
+    def _get_home_assistant_client(
+        self, profile_conf: ServiceProfile, api_url: str, token: str
+    ) -> HomeAssistantClientWrapper | None:
+        client_key = f"{api_url}:{token[:8]}..."
+        cached_client = self.home_assistant_clients.get(client_key)
+        if cached_client is not None:
+            self.home_assistant_clients[profile_conf.id] = cached_client
+            return cast("HomeAssistantClientWrapper", cached_client)
 
-            if ha_api_url and ha_token:
-                # Create or reuse Home Assistant client
-                ha_client_key = f"{ha_api_url}:{ha_token[:8]}..."  # Key for caching
-                if ha_client_key not in self.home_assistant_clients:
-                    ha_client = create_home_assistant_client(
-                        api_url=ha_api_url,
-                        token=ha_token,
-                        verify_ssl=ha_verify_ssl,
-                    )
-                    if ha_client:
-                        self.home_assistant_clients[ha_client_key] = ha_client
-                        self.home_assistant_clients[profile_id] = (
-                            ha_client  # Also store by profile
-                        )
-                else:
-                    ha_client = self.home_assistant_clients[ha_client_key]
-                    self.home_assistant_clients[profile_id] = (
-                        ha_client  # Also store by profile
-                    )
+        client = create_home_assistant_client(
+            api_url=api_url,
+            token=token,
+            verify_ssl=profile_conf.processing_config.home_assistant_verify_ssl,
+        )
+        if client is not None:
+            self.home_assistant_clients[client_key] = client
+            self.home_assistant_clients[profile_conf.id] = client
+        return client
 
-                if ha_client and ha_template:
-                    try:
-                        # Local import to ensure homeassistant_api is only required if configured
-                        # The main import is already guarded in context_providers.py
-                        if (
-                            HomeAssistantContextProvider.__module__
-                            == "family_assistant.context_providers"
-                        ):  # Check it's our class
-                            home_assistant_provider = HomeAssistantContextProvider(
-                                api_url=ha_api_url,
-                                token=ha_token,
-                                context_template=ha_template,
-                                prompts=profile_proc_conf.prompts,
-                                verify_ssl=ha_verify_ssl,
-                                client=ha_client,
-                            )
-                            context_providers.append(home_assistant_provider)
-                            logger.info(
-                                f"HomeAssistantContextProvider added for profile '{profile_id}'."
-                            )
-                    except ImportError:  # This case should ideally be handled by the check in context_providers.py
-                        logger.warning(
-                            "homeassistant_api library is not installed, but Home Assistant context provider is configured. Skipping."
-                        )
-                    except Exception as e:
-                        logger.exception(
-                            f"Failed to initialize HomeAssistantContextProvider for profile '{profile_id}': {e}"
-                        )
-                elif ha_api_url or ha_token or ha_template:
-                    logger.warning(
-                        f"Home Assistant context provider for profile '{profile_id}' is partially configured "
-                        "but missing essential settings (URL, token, or template). Skipping."
-                    )
-            # --- End Home Assistant Context Provider ---
+    async def _build_profile_tools_provider(
+        self,
+        profile_conf: ServiceProfile,
+        delegation_sink_classes: dict[str, SinkClass],
+        tool_call_reviewer: ToolCallReviewer | None,
+    ) -> tuple[TaintTrackingToolsProvider, OnDemandToolsView | None]:
+        """Apply policy, taint tracking, and on-demand visibility for a profile."""
+        assert self.root_tools_provider is not None
+        profile_proc_conf = profile_conf.processing_config
+        profile_tools_conf = profile_conf.tools_config
+        policy_engine = _build_profile_policy_engine(
+            profile_conf.id,
+            profile_conf.tools_policy,
+            profile_conf.operator_tools_policy,
+            self.config.global_tools_policy,
+            profile_conf.excluded_global_tools,
+        )
+        confirmation_timeout = profile_tools_conf.confirmation_timeout_seconds
+        profile_root_provider = _root_provider_for_profile(
+            shared_root=self.root_tools_provider,
+            profile_calendar_config=profile_proc_conf.calendar_config,
+            local_registrations=self._root_local_registrations,
+            mcp_provider=self._root_mcp_provider,
+            embedding_generator=self.embedding_generator,
+        )
+        policy_provider = PolicyEnforcingToolsProvider(
+            wrapped_provider=profile_root_provider,
+            policy_engine=policy_engine,
+            confirmation_timeout=confirmation_timeout,
+        )
+        merged_taint_policy = merge_taint_policy_config(
+            base=self.config.taint_policy, profile=profile_conf.taint_policy
+        )
+        review_config = self.config.tool_call_review
+        profile_tools_provider = TaintTrackingToolsProvider(
+            policy_provider,
+            taint_policy=merged_taint_policy,
+            confirmation_timeout=confirmation_timeout,
+            delegation_sink_classes=delegation_sink_classes,
+            tool_call_reviewer=tool_call_reviewer,
+            review_config=review_config,
+            deployment_review_guidance=(
+                review_config.guidance if review_config is not None else ""
+            ),
+            profile_review_guidance=profile_proc_conf.review_guidance,
+            include_aggregated_context=profile_proc_conf.include_aggregated_context,
+        )
+        on_demand_tool_names = profile_tools_conf.get_on_demand_tool_names()
+        on_demand_mcp_ids = set(profile_tools_conf.get_on_demand_mcp_server_ids())
+        profile_on_demand_view = None
+        if on_demand_tool_names or on_demand_mcp_ids:
+            profile_on_demand_view = OnDemandToolsView(
+                wrapped_provider=profile_tools_provider,
+                on_demand_tool_names=on_demand_tool_names,
+                on_demand_mcp_server_ids=on_demand_mcp_ids,
+            )
+        await profile_tools_provider.get_tool_definitions()
+        return profile_tools_provider, profile_on_demand_view
 
-            excluded_providers = set(profile_proc_conf.excluded_context_providers)
-            if excluded_providers:
-                context_providers = [
-                    provider
-                    for provider in context_providers
-                    if provider.name not in excluded_providers
-                ]
+    def _create_profile_llm_client(
+        self, profile_conf: ServiceProfile, profile_llm_model: str
+    ) -> LLMInterface:
+        """Use an override or create the configured client for one profile."""
+        profile_id = profile_conf.id
+        profile_proc_conf = profile_conf.processing_config
+        if profile_id in self.llm_client_overrides:
+            llm_client = self.llm_client_overrides[profile_id]
+            logger.info(
+                "Profile '%s' using overridden LLM client: %s",
+                profile_id,
+                type(llm_client).__name__,
+            )
+            return llm_client
 
-            service_config = ProcessingServiceConfig(
-                taint_sink_class=profile_proc_conf.taint_sink_class,
-                prompts=profile_proc_conf.prompts,
-                timezone=ZoneInfo(profile_proc_conf.timezone),
-                max_history_messages=profile_proc_conf.max_history_messages,
-                history_max_age_hours=profile_proc_conf.history_max_age_hours,
-                web_max_history_messages=profile_proc_conf.web_max_history_messages,
-                web_history_max_age_hours=profile_proc_conf.web_history_max_age_hours,
-                max_iterations=profile_proc_conf.max_iterations,
-                context_pruning_min_turns=profile_proc_conf.context_pruning_min_turns,
-                tools_config=profile_tools_conf,
-                delegation_security_level=profile_proc_conf.delegation_security_level,
-                allowed_delegation_sources=(
-                    profile_proc_conf.allowed_delegation_sources
-                ),
-                id=profile_id,
-                description=profile_conf.description
-                or f"Processing profile: {profile_id}",
-                visibility_grants=profile_grants,
-                default_note_visibility_labels=(
-                    profile_proc_conf.default_note_visibility_labels
-                    if profile_proc_conf.default_note_visibility_labels is not None
-                    else self.config.notes_config.default_visibility_labels or None
-                ),
-                required_note_visibility_labels=(
-                    profile_proc_conf.required_note_visibility_labels
-                ),
-                allowed_note_visibility_labels=(
-                    profile_proc_conf.allowed_note_visibility_labels
-                ),
-                allow_wake_llm=profile_proc_conf.allow_wake_llm,
-                include_aggregated_context=(
-                    profile_proc_conf.include_aggregated_context
-                ),
-                note_registry=note_registry,
-                greeting_wav_path=profile_proc_conf.greeting_wav_path,
-                poll_interval_seconds=profile_proc_conf.poll_interval_seconds,
-                max_async_seconds=profile_proc_conf.max_async_seconds,
+        self._validate_computer_use_config(profile_conf, profile_llm_model)
+        validate_antigravity_agent_config(
+            profile_id, profile_proc_conf, profile_llm_model
+        )
+        client_config = self._build_profile_llm_client_config(
+            profile_conf, profile_llm_model
+        )
+        llm_client = LLMClientFactory.create_client(config=client_config)
+        logger.info(
+            "Profile '%s' using client: %s", profile_id, type(llm_client).__name__
+        )
+        return llm_client
+
+    @staticmethod
+    def _validate_computer_use_config(
+        profile_conf: ServiceProfile, profile_llm_model: str
+    ) -> None:
+        profile_proc_conf = profile_conf.processing_config
+        if not profile_proc_conf.enable_computer_use:
+            return
+        if profile_proc_conf.retry_config is not None:
+            raise ValueError(
+                f"Profile '{profile_conf.id}' has enable_computer_use=True "
+                "with retry_config, which is unsupported (computer use "
+                "requires the single Google GenAI client)"
+            )
+        resolved_provider = profile_proc_conf.provider or (
+            "google" if profile_llm_model.startswith("gemini-") else None
+        )
+        if resolved_provider != "google":
+            raise ValueError(
+                f"Profile '{profile_conf.id}' has enable_computer_use=True "
+                f"but provider is '{resolved_provider}' (must be 'google')"
             )
 
-            home_assistant_client_for_profile = self.home_assistant_clients.get(
-                profile_id
+    def _build_profile_llm_client_config(
+        self,
+        profile_conf: ServiceProfile,
+        profile_llm_model: str,
+        # ast-grep-ignore: no-dict-any - Factory config has varying provider keys.
+    ) -> dict[str, Any]:
+        profile_proc_conf = profile_conf.processing_config
+        if profile_proc_conf.retry_config is not None:
+            return self._build_retry_client_config(profile_conf)
+
+        # ast-grep-ignore: no-dict-any - Factory config has varying provider keys.
+        client_config: dict[str, Any] = {
+            "model": profile_llm_model,
+            "model_parameters": self.config.llm_parameters,
+        }
+        if profile_proc_conf.provider:
+            client_config["provider"] = profile_proc_conf.provider
+        if profile_proc_conf.enable_computer_use:
+            client_config["enable_computer_use"] = True
+        if profile_proc_conf.computer_use_excluded_functions:
+            client_config["computer_use_excluded_functions"] = (
+                profile_proc_conf.computer_use_excluded_functions
             )
-            camera_backend_for_profile = None
+        if profile_proc_conf.antigravity_config:
+            client_config.update({
+                "antigravity_model": profile_proc_conf.antigravity_config.model,
+                "antigravity_max_total_tokens": (
+                    profile_proc_conf.antigravity_config.max_total_tokens
+                ),
+                "antigravity_environment": (
+                    profile_proc_conf.antigravity_config.environment
+                ),
+            })
+        logger.info(
+            "Creating LLM client for profile '%s' with model='%s'%s",
+            profile_conf.id,
+            profile_llm_model,
+            f", provider='{profile_proc_conf.provider}'"
+            if profile_proc_conf.provider
+            else "",
+        )
+        return client_config
 
-            # Set camera backend if configured for this profile
-            camera_config = profile_proc_conf.camera_config
-            if camera_config:
-                backend_type = camera_config.backend
-                if backend_type == "reolink":
-                    try:
-                        from family_assistant.camera.reolink import (  # noqa: PLC0415
-                            create_reolink_backend,
-                        )
+    def _build_retry_client_config(
+        self,
+        profile_conf: ServiceProfile,
+        # ast-grep-ignore: no-dict-any - Factory config has varying retry keys.
+    ) -> dict[str, Any]:
+        retry_config = profile_conf.processing_config.retry_config
+        assert retry_config is not None
+        retry_config_dict = retry_config.model_dump(exclude_none=True)
+        llm_params = self.config.llm_parameters
+        primary = retry_config_dict.get("primary")
+        if primary is not None and "model_parameters" not in primary:
+            primary["model_parameters"] = llm_params
+        fallback = retry_config_dict.get("fallback")
+        if fallback and "model_parameters" not in fallback:
+            fallback["model_parameters"] = llm_params
+        logger.info(
+            "Creating RetryingLLMClient for profile '%s' with primary='%s', "
+            "fallback='%s'",
+            profile_conf.id,
+            primary.get("model") if primary else None,
+            fallback.get("model") if fallback else None,
+        )
+        return {"retry_config": retry_config_dict}
 
-                        # Pass typed config directly
-                        camera_backend = create_reolink_backend(
-                            camera_config.cameras_config or None
-                        )
-                        if camera_backend:
-                            camera_backend_for_profile = camera_backend
-                            logger.info(
-                                f"Camera backend initialized for profile '{profile_id}'"
-                            )
-                        else:
-                            logger.warning(
-                                f"Camera backend not created for profile '{profile_id}' "
-                                "(no config or reolink-aio unavailable)"
-                            )
-                    except ImportError:
-                        logger.warning(
-                            "Reolink backend requested but reolink-aio not installed"
-                        )
-                    except Exception:
-                        logger.exception(
-                            f"Failed to create camera backend for profile '{profile_id}'"
-                        )
-
-            # Interactions API agent profiles (Deep Research, Antigravity)
-            # get the pollable subclass so a delegated run submits/polls
-            # instead of holding a worker for the whole (potentially very
-            # long) run. Direct chat use is unaffected —
-            # handle_chat_interaction is inherited unchanged.
-            processing_service_class = (
-                InteractionsAgentProcessingService
-                if is_interactions_agent_model(profile_llm_model)
-                else ProcessingService
-            )
-            processing_service_instance = processing_service_class(
-                llm_client=llm_client_for_profile,
-                tools_provider=profile_tools_provider,
-                service_config=service_config,
-                context_providers=context_providers,
-                server_url=self.config.server_url,
-                app_config=self.config,
-                attachment_registry=self.attachment_registry,
-                event_sources=self.event_processor.sources
-                if self.event_processor
-                else None,
-                processing_services_registry=self.processing_services_registry,
-                home_assistant_client=home_assistant_client_for_profile,
-                camera_backend=camera_backend_for_profile,
-                on_demand_view=profile_on_demand_view,
-                credential_resolvers=self.credential_resolvers,
-                api_backend=self.api_backend,
-                taint_policy=merged_taint_policy,
-            )
-
-            # Render once now so a template referencing a placeholder that no
-            # longer exists -- {current_time} and {aggregated_other_context} moved
-            # into the turn-context block -- is a startup failure rather than an
-            # error the first time somebody talks to this profile.
-            try:
-                processing_service_instance.validate_system_prompt_renders()
-            except (ValueError, TypeError) as exc:
-                raise SystemExit(
-                    f"Profile '{profile_id}' has an invalid system_prompt: {exc}"
-                ) from exc
-
-            self.processing_services_registry[profile_id] = processing_service_instance
-
-        if not self.processing_services_registry:
-            logger.critical("No processing service profiles initialized.")
-            raise SystemExit("No processing service profiles initialized.")
-
+    def _select_default_processing_service(self) -> None:
+        """Select and publish the default local processing service."""
+        assert self.fastapi_app is not None
+        default_service_profile_id = self.config.default_service_profile_id
         self.fastapi_app.state.processing_services = self.processing_services_registry
         self.fastapi_app.state.a2a_cancel_events = self.a2a_cancel_events
         self.fastapi_app.state.a2a_background_tasks = self.a2a_background_tasks
@@ -1565,6 +1684,12 @@ class Assistant:
             f"Default processing service set to profile ID: '{default_service_profile_id}'."
         )
 
+    def _setup_indexers(self) -> None:
+        """Initialize document, email, and notes indexing."""
+        assert self.fastapi_app is not None
+        assert self.default_processing_service is not None
+        assert self.embedding_generator is not None
+        assert self.attachment_registry is not None
         self.scraper_instance = PlaywrightScraper()
         self.fastapi_app.state.scraper = self.scraper_instance
 
@@ -1586,6 +1711,12 @@ class Assistant:
         self.notes_indexer = NotesIndexer(pipeline=self.document_indexer.pipeline)
         logger.info("DocumentIndexer, EmailIndexer, and NotesIndexer initialized.")
 
+    def _setup_telegram_service(self) -> None:
+        """Initialize Telegram delivery when enabled."""
+        assert self.fastapi_app is not None
+        assert self.attachment_registry is not None
+        assert self.confirmation_service is not None
+        assert self.confirmation_result_waiters is not None
         # Instantiate TelegramService in setup_dependencies but don't start polling yet
         if not self.default_processing_service:  # Should be set by now
             raise RuntimeError(
@@ -1627,6 +1758,9 @@ class Assistant:
             self.fastapi_app.state.telegram_service = None
             logger.info("Telegram service disabled (telegram_enabled=False)")
 
+    def _setup_event_system(self) -> None:
+        """Initialize configured event sources and their processor."""
+        assert self.fastapi_app is not None
         # Initialize event system if enabled
         event_config = self.config.event_system
         if event_config.enabled:
