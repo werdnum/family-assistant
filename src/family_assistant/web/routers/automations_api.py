@@ -165,6 +165,106 @@ def _format_automation_response(automation: Automation) -> AutomationResponse:
     )
 
 
+async def _update_automation_record(
+    automation_type: str,
+    automation_id: int,
+    request: UpdateEventAutomationRequest | UpdateScheduleAutomationRequest,
+    existing: Automation,
+    db: Database,
+    processing_service: ProcessingService,
+    current_user: dict,
+) -> None:
+    if automation_type == "event":
+        if not isinstance(request, UpdateEventAutomationRequest):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid request body for event automation update",
+            )
+
+        success = await db.events.update_event_listener(
+            listener_id=automation_id,
+            conversation_id=existing.conversation_id,
+            name=cast(
+                "str",
+                request.name if request.name is not _UNSET else existing.name,
+            ),
+            description=cast(
+                "str | None",
+                request.description
+                if request.description is not _UNSET
+                else existing.description,
+            ),
+            match_conditions=cast(
+                "dict[str, Any]",
+                request.match_conditions
+                if request.match_conditions is not _UNSET
+                else existing.match_conditions,
+            ),
+            action_config=cast(
+                "ActionConfig | None",
+                request.action_config
+                if request.action_config is not _UNSET
+                else existing.action_config,
+            ),
+            one_time=cast(
+                "bool",
+                request.one_time
+                if request.one_time is not _UNSET
+                else existing.one_time,
+            ),
+            enabled=cast(
+                "bool",
+                request.enabled if request.enabled is not _UNSET else existing.enabled,
+            ),
+            condition_script=cast(
+                "str | None",
+                request.condition_script
+                if request.condition_script is not _UNSET
+                else existing.condition_script,
+            ),
+            processing_profile_id=(
+                processing_service.service_config.id
+                if request.action_config is not _UNSET
+                else None
+            ),
+            created_by_user_id=(
+                str(current_user["user_identifier"])
+                if request.action_config is not _UNSET
+                else None
+            ),
+        )
+    else:
+        if not isinstance(request, UpdateScheduleAutomationRequest):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid request body for schedule automation update",
+            )
+
+        success = await db.schedule_automations.update(
+            automation_id=automation_id,
+            conversation_id=existing.conversation_id,
+            name=request.name,
+            description=request.description,
+            recurrence_rule=request.recurrence_rule,
+            action_config=request.action_config,
+            enabled=request.enabled,
+            timezone=processing_service.service_config.timezone,
+            processing_profile_id=(
+                processing_service.service_config.id
+                if request.action_config is not _UNSET
+                else _UNSET
+            ),
+            created_by_user_id=(
+                str(current_user["user_identifier"])
+                if request.action_config is not _UNSET
+                else _UNSET
+            ),
+        )
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to update automation")
+
+
 @automations_api_router.get("")
 async def list_automations(
     db: Annotated[Database, Depends(get_db)],
@@ -494,104 +594,15 @@ async def update_automation(
             raise HTTPException(status_code=400, detail=error_msg)
 
     try:
-        if automation_type == "event":
-            # Update event automation
-            if not isinstance(request, UpdateEventAutomationRequest):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Invalid request body for event automation update",
-                )
-
-            success = await db.events.update_event_listener(
-                listener_id=automation_id,
-                conversation_id=existing.conversation_id,
-                name=cast(
-                    "str",
-                    request.name if request.name is not _UNSET else existing.name,
-                ),
-                description=cast(
-                    "str | None",
-                    request.description
-                    if request.description is not _UNSET
-                    else existing.description,
-                ),
-                match_conditions=cast(
-                    "dict[str, Any]",
-                    request.match_conditions
-                    if request.match_conditions is not _UNSET
-                    else existing.match_conditions,
-                ),
-                action_config=cast(
-                    "ActionConfig | None",
-                    request.action_config
-                    if request.action_config is not _UNSET
-                    else existing.action_config,
-                ),
-                one_time=cast(
-                    "bool",
-                    request.one_time
-                    if request.one_time is not _UNSET
-                    else existing.one_time,
-                ),
-                enabled=cast(
-                    "bool",
-                    request.enabled
-                    if request.enabled is not _UNSET
-                    else existing.enabled,
-                ),
-                condition_script=cast(
-                    "str | None",
-                    request.condition_script
-                    if request.condition_script is not _UNSET
-                    else existing.condition_script,
-                ),
-                # Re-stamp creator provenance when the script/action changes so
-                # the updated script executes under the updater's profile.
-                processing_profile_id=(
-                    processing_service.service_config.id
-                    if request.action_config is not _UNSET
-                    else None
-                ),
-                created_by_user_id=(
-                    str(current_user["user_identifier"])
-                    if request.action_config is not _UNSET
-                    else None
-                ),
-            )
-        else:  # schedule
-            # Update schedule automation
-            if not isinstance(request, UpdateScheduleAutomationRequest):
-                raise HTTPException(
-                    status_code=400,
-                    detail="Invalid request body for schedule automation update",
-                )
-
-            success = await db.schedule_automations.update(
-                automation_id=automation_id,
-                conversation_id=existing.conversation_id,
-                name=request.name,  # Pass _UNSET through for proper sentinel handling
-                description=request.description,
-                recurrence_rule=request.recurrence_rule,
-                action_config=request.action_config,
-                enabled=request.enabled,
-                timezone=processing_service.service_config.timezone,
-                # Re-stamp creator provenance when the script/action changes so
-                # the updated script executes under the updater's profile.
-                processing_profile_id=(
-                    processing_service.service_config.id
-                    if request.action_config is not _UNSET
-                    else _UNSET
-                ),
-                created_by_user_id=(
-                    str(current_user["user_identifier"])
-                    if request.action_config is not _UNSET
-                    else _UNSET
-                ),
-            )
-
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to update automation")
-
+        await _update_automation_record(
+            automation_type,
+            automation_id,
+            request,
+            existing,
+            db,
+            processing_service,
+            current_user,
+        )
     except HTTPException:
         raise
     except Exception as e:

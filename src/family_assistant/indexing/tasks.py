@@ -18,6 +18,8 @@ from family_assistant.storage.vector import (
 )
 
 if TYPE_CHECKING:
+    from family_assistant.embeddings import EmbeddingGenerator
+    from family_assistant.events.indexing_source import IndexingSource
     from family_assistant.storage.database import Database
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -167,28 +169,19 @@ async def handle_embed_and_store_batch(
             embedding_model_used = "text_only_too_long"
             storage_only_items += 1
         else:
-            # Try to generate embedding
-            try:
-                result = await embedding_generator_instance.generate_embeddings([
-                    text_content
-                ])
-                if result.embeddings and len(result.embeddings) > 0:
-                    embedding_vector = result.embeddings[0]
-                    embedding_model_used = result.model_name
-                    successful_embeds += 1
-                else:
-                    logger.warning(
-                        f"Empty embedding result for type '{meta['embedding_type']}' "
-                        f"in document {document_id}. Storing without vector."
-                    )
-                    embedding_model_used = "text_only_empty_result"
-                    storage_only_items += 1
-            except Exception as e:
-                logger.warning(
-                    f"Embedding generation failed for type '{meta['embedding_type']}' "
-                    f"in document {document_id}: {e}. Storing without vector."
-                )
-                embedding_model_used = "text_only_error"
+            (
+                embedding_vector,
+                embedding_model_used,
+                generated,
+            ) = await _generate_embedding_safely(
+                embedding_generator_instance,
+                text_content,
+                meta["embedding_type"],
+                document_id,
+            )
+            if generated:
+                successful_embeds += 1
+            else:
                 storage_only_items += 1
 
         # Store with or without embedding
@@ -226,41 +219,9 @@ async def handle_embed_and_store_batch(
 
             # Get document information for the event
             try:
-                doc_info = await get_document_by_id(db_context, document_id)
-
-                # Count embeddings for metadata
-                embeddings_result = await db_context.fetch_one(
-                    select(
-                        func.count().label("total_embeddings"),  # pylint: disable=not-callable
-                        func.count(  # pylint: disable=not-callable
-                            func.distinct(DocumentEmbeddingRecord.embedding_type)
-                        ).label("embedding_types"),
-                    ).where(DocumentEmbeddingRecord.document_id == document_id)
+                await _emit_document_ready_event(
+                    db_context, indexing_source, document_id
                 )
-                embeddings_data = embeddings_result
-
-                # Emit the document ready event
-                if doc_info:
-                    await indexing_source.emit_event({
-                        "event_type": IndexingEventType.DOCUMENT_READY.value,
-                        "document_id": document_id,
-                        "document_type": doc_info.source_type,
-                        "document_title": doc_info.title,
-                        "document_metadata": doc_info.doc_metadata,
-                        "metadata": {
-                            "total_embeddings": embeddings_data["total_embeddings"]
-                            if embeddings_data
-                            else 0,
-                            "embedding_types": embeddings_data["embedding_types"]
-                            if embeddings_data
-                            else 0,
-                            "source_id": doc_info.source_id,
-                        },
-                    })
-                else:
-                    logger.warning(
-                        f"Document {document_id} not found when emitting DOCUMENT_READY event"
-                    )
             except Exception as e:
                 logger.exception(
                     f"Failed to emit DOCUMENT_READY event for document {document_id}: {e}"
@@ -269,3 +230,74 @@ async def handle_embed_and_store_batch(
             logger.debug(
                 f"Document {document_id} still has {pending_count} pending tasks."
             )
+
+
+async def _generate_embedding_safely(
+    embedding_generator: "EmbeddingGenerator",
+    text_content: str,
+    embedding_type: str,
+    document_id: int,
+) -> tuple[list[float] | None, str, bool]:
+    try:
+        return await _generate_embedding(
+            embedding_generator, text_content, embedding_type, document_id
+        )
+    except Exception as e:
+        logger.warning(
+            f"Embedding generation failed for type '{embedding_type}' "
+            f"in document {document_id}: {e}. Storing without vector."
+        )
+        return None, "text_only_error", False
+
+
+async def _generate_embedding(
+    embedding_generator: "EmbeddingGenerator",
+    text_content: str,
+    embedding_type: str,
+    document_id: int,
+) -> tuple[list[float] | None, str, bool]:
+    result = await embedding_generator.generate_embeddings([text_content])
+    if result.embeddings:
+        return result.embeddings[0], result.model_name, True
+    logger.warning(
+        f"Empty embedding result for type '{embedding_type}' "
+        f"in document {document_id}. Storing without vector."
+    )
+    return None, "text_only_empty_result", False
+
+
+async def _emit_document_ready_event(
+    db_context: "Database",
+    indexing_source: "IndexingSource",
+    document_id: int,
+) -> None:
+    doc_info = await get_document_by_id(db_context, document_id)
+    embeddings_data = await db_context.fetch_one(
+        select(
+            func.count().label("total_embeddings"),  # pylint: disable=not-callable
+            func.count(  # pylint: disable=not-callable
+                func.distinct(DocumentEmbeddingRecord.embedding_type)
+            ).label("embedding_types"),
+        ).where(DocumentEmbeddingRecord.document_id == document_id)
+    )
+    if doc_info:
+        await indexing_source.emit_event({
+            "event_type": IndexingEventType.DOCUMENT_READY.value,
+            "document_id": document_id,
+            "document_type": doc_info.source_type,
+            "document_title": doc_info.title,
+            "document_metadata": doc_info.doc_metadata,
+            "metadata": {
+                "total_embeddings": embeddings_data["total_embeddings"]
+                if embeddings_data
+                else 0,
+                "embedding_types": embeddings_data["embedding_types"]
+                if embeddings_data
+                else 0,
+                "source_id": doc_info.source_id,
+            },
+        })
+    else:
+        logger.warning(
+            f"Document {document_id} not found when emitting DOCUMENT_READY event"
+        )

@@ -609,7 +609,8 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
         original_text_plain = query.message.text or original_text_markdown
         status_text = ""
         plain_status_text = ""
-        try:
+
+        async def resolve_action() -> tuple[str, str]:
             if action == "yes":
                 logger.debug(f"Approving confirmation result for {confirm_uuid}")
                 await self._approve_confirmation(
@@ -617,8 +618,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                     query.from_user.id if query.from_user else None,
                     pending_confirmation,
                 )
-                status_text = "\n\n*Confirmed* ✅"
-                plain_status_text = "\n\nConfirmed ✅"
+                return "\n\n*Confirmed* ✅", "\n\nConfirmed ✅"
             elif action == "no":
                 logger.debug(f"Rejecting confirmation result for {confirm_uuid}")
                 await self._reject_confirmation(
@@ -626,14 +626,11 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                     query.from_user.id if query.from_user else None,
                     pending_confirmation,
                 )
-                status_text = "\n\n*Cancelled* ❌"
-                plain_status_text = "\n\nCancelled ❌"
+                return "\n\n*Cancelled* ❌", "\n\nCancelled ❌"
             else:
                 logger.warning(
                     f"Unknown action '{action}' in confirmation callback {confirm_uuid}"
                 )
-                status_text = "\n\n*Error: Unknown action*"
-                plain_status_text = "\n\nError: Unknown action"
                 if (
                     pending_confirmation
                     and not pending_confirmation.decision_future.done()
@@ -641,6 +638,10 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                     pending_confirmation.decision_future.set_result(
                         ConfirmationOutcome(kind="failed", result="Unknown action")
                     )
+                return "\n\n*Error: Unknown action*", "\n\nError: Unknown action"
+
+        try:
+            status_text, plain_status_text = await resolve_action()
         except ConfirmationAuthorizationError as exc:
             logger.warning("Could not resolve Telegram confirmation: %s", exc)
             return

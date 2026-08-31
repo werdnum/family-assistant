@@ -187,18 +187,19 @@ class ScriptsRepository(BaseRepository):
         Raises:
             SQLAlchemyError: If database operation fails
         """
+        stmt = delete(scripts_table).where(scripts_table.c.name == name)
         try:
-            stmt = delete(scripts_table).where(scripts_table.c.name == name)
             result = await self._db.execute(stmt)
-            deleted = result.rowcount > 0  # type: ignore[union-attr] # rowcount is available on CursorResult
-            if deleted:
-                self._logger.info(f"Deleted script: {name}")
-            else:
-                self._logger.warning(f"Script not found for deletion: {name}")
-            return deleted
         except SQLAlchemyError as e:
             self._logger.exception(f"Database error in delete({name}): {e}")
             raise
+
+        deleted = result.rowcount > 0  # type: ignore[union-attr] # rowcount is available on CursorResult
+        if deleted:
+            self._logger.info(f"Deleted script: {name}")
+        else:
+            self._logger.warning(f"Script not found for deletion: {name}")
+        return deleted
 
 
 # ast-grep-ignore: no-dict-any - JSON Schema can have any valid structure

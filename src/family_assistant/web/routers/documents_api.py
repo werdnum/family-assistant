@@ -2,6 +2,7 @@ import json
 import logging
 import pathlib
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from typing import TYPE_CHECKING, Annotated, Any
 
@@ -55,6 +56,79 @@ class DocumentModel(BaseModel):
 class DocumentListResponse(BaseModel):
     documents: list[DocumentModel]
     total: int
+
+
+@dataclass(frozen=True)
+class _ParsedDocumentUpload:
+    content_parts: dict[str, str] | None
+    doc_metadata: dict[str, object]
+    created_at: datetime | None
+    file_content: bytes | None
+    filename: str | None
+    content_type: str | None
+
+
+async def _parse_document_upload(
+    content_parts_json: str | None,
+    metadata_json: str | None,
+    created_at_str: str | None,
+    uploaded_file: UploadFile | None,
+    url: str | None,
+) -> _ParsedDocumentUpload:
+    content_parts: dict[str, str] | None = None
+    # ast-grep-ignore: no-dict-any - User-provided document metadata has arbitrary values
+    doc_metadata: dict[str, Any] = {}
+    created_at_dt: datetime | None = None
+    uploaded_file_content_bytes: bytes | None = None
+    original_filename: str | None = None
+    client_content_type: str | None = None
+
+    if content_parts_json:
+        content_parts = json.loads(content_parts_json)
+        if not isinstance(content_parts, dict):
+            raise ValueError("'content_parts' must be a valid JSON object string.")
+        for key, value in content_parts.items():
+            if not isinstance(value, str):
+                raise ValueError(f"Value for content part '{key}' must be a string.")
+    elif not uploaded_file and not url:
+        raise ValueError("'content_parts' must be provided if no file or URL.")
+
+    if metadata_json:
+        doc_metadata = json.loads(metadata_json)
+        if not isinstance(doc_metadata, dict):
+            raise ValueError("'metadata' must be a valid JSON object string.")
+
+    if created_at_str:
+        try:
+            created_at_dt = datetime.fromisoformat(
+                created_at_str.replace("Z", "+00:00")
+            )
+            if created_at_dt.tzinfo is None:
+                created_at_dt = created_at_dt.replace(tzinfo=UTC)
+        except ValueError:
+            try:
+                created_date = date.fromisoformat(created_at_str)
+                created_at_dt = datetime.combine(
+                    created_date, datetime.min.time(), tzinfo=UTC
+                )
+            except ValueError:
+                raise ValueError(
+                    "Invalid 'created_at' format. Use ISO 8601 datetime or date."
+                ) from None
+
+    if uploaded_file:
+        original_filename = uploaded_file.filename
+        client_content_type = uploaded_file.content_type
+        uploaded_file_content_bytes = await uploaded_file.read()
+
+    return _ParsedDocumentUpload(
+        content_parts=content_parts,
+        doc_metadata=doc_metadata,
+        created_at=created_at_dt,
+        file_content=uploaded_file_content_bytes,
+        filename=original_filename,
+        content_type=client_content_type,
+    )
 
 
 @documents_api_router.get("/")
@@ -311,55 +385,14 @@ async def upload_document(
         )
 
     # --- 2. Parse and Prepare Inputs for Service Function ---
-    content_parts: dict[str, str] | None = None
-    # ast-grep-ignore: no-dict-any - User-provided document metadata with arbitrary key/value pairs
-    doc_metadata: dict[str, Any] = {}
-    created_at_dt: datetime | None = None
-    uploaded_file_content_bytes: bytes | None = None
-    original_filename: str | None = None
-    client_content_type: str | None = None
-
     try:
-        if content_parts_json:
-            content_parts = json.loads(content_parts_json)
-            if not isinstance(content_parts, dict):
-                raise ValueError("'content_parts' must be a valid JSON object string.")
-            for key, value in content_parts.items():
-                if not isinstance(value, str):
-                    raise ValueError(
-                        f"Value for content part '{key}' must be a string."
-                    )
-        elif not uploaded_file and not url:
-            raise ValueError("'content_parts' must be provided if no file or URL.")
-
-        if metadata_json:
-            doc_metadata = json.loads(metadata_json)
-            if not isinstance(doc_metadata, dict):
-                raise ValueError("'metadata' must be a valid JSON object string.")
-
-        if created_at_str:
-            try:
-                created_at_dt = datetime.fromisoformat(
-                    created_at_str.replace("Z", "+00:00")
-                )
-                if created_at_dt.tzinfo is None:
-                    created_at_dt = created_at_dt.replace(tzinfo=UTC)
-            except ValueError:
-                try:
-                    created_date = date.fromisoformat(created_at_str)
-                    created_at_dt = datetime.combine(
-                        created_date, datetime.min.time(), tzinfo=UTC
-                    )
-                except ValueError:
-                    raise ValueError(
-                        "Invalid 'created_at' format. Use ISO 8601 datetime or date."
-                    ) from None
-
-        if uploaded_file:
-            original_filename = uploaded_file.filename
-            client_content_type = uploaded_file.content_type
-            uploaded_file_content_bytes = await uploaded_file.read()
-
+        parsed_upload = await _parse_document_upload(
+            content_parts_json,
+            metadata_json,
+            created_at_str,
+            uploaded_file,
+            url,
+        )
     except json.JSONDecodeError as json_err:
         logger.error(f"JSON parsing error for upload {source_id}: {json_err}")
         raise HTTPException(
@@ -388,13 +421,13 @@ async def upload_document(
         source_id=source_id,
         source_uri=source_uri,
         title=title,
-        content_parts=content_parts,
-        uploaded_file_content=uploaded_file_content_bytes,
-        uploaded_file_filename=original_filename,
-        uploaded_file_content_type=client_content_type,
+        content_parts=parsed_upload.content_parts,
+        uploaded_file_content=parsed_upload.file_content,
+        uploaded_file_filename=parsed_upload.filename,
+        uploaded_file_content_type=parsed_upload.content_type,
         url_to_scrape=url,
-        created_at_dt=created_at_dt,
-        doc_metadata=doc_metadata,
+        created_at_dt=parsed_upload.created_at,
+        doc_metadata=parsed_upload.doc_metadata,
     )
 
     # --- 4. Handle Result and Return Response ---

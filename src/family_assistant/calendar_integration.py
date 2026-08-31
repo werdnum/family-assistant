@@ -109,71 +109,8 @@ def parse_event(
     Parses VCALENDAR data into a dictionary, including the UID.
     If timezone is provided, naive datetimes will be localized to that timezone.
     """
-    local_tz: ZoneInfo | None = timezone
-
     try:
-        components = vobject.readComponents(event_data)
-        ical_component = next(components)
-
-        if getattr(ical_component, "name", "").upper() == "VEVENT":
-            vevent = ical_component
-        else:
-            vevent = ical_component.vevent
-        summary = vevent.summary.value if hasattr(vevent, "summary") else "No Title"  # type: ignore[union-attr]
-        dtstart = vevent.dtstart.value if hasattr(vevent, "dtstart") else None  # type: ignore[union-attr]
-        dtend = vevent.dtend.value if hasattr(vevent, "dtend") else None  # type: ignore[union-attr]
-        uid = vevent.uid.value if hasattr(vevent, "uid") else None  # Extract UID # type: ignore[union-attr]
-
-        # Basic check for valid event data (UID is mandatory in iCal standard)
-        if not summary or not dtstart or not uid:  # `uid` can be str or None here
-            logger.warning(
-                f"Parsed event missing essential fields (summary, dtstart, or uid). Summary='{summary}', Start='{dtstart}', UID='{uid}'"
-            )
-            return None
-
-        is_all_day = not isinstance(dtstart, datetime)
-
-        # Ensure start/end datetimes are in the correct local timezone if provided
-        if local_tz:
-            if isinstance(dtstart, datetime):
-                if dtstart.tzinfo is None:
-                    # Naive datetime: Assume it's in the target local timezone
-                    dtstart = dtstart.replace(tzinfo=local_tz)
-                    logger.debug(f"Applied local timezone {timezone} to naive dtstart")
-                else:
-                    # Aware datetime: Convert it to the target local timezone
-                    dtstart = dtstart.astimezone(local_tz)
-                    logger.debug(
-                        f"Converted aware dtstart to target timezone {timezone}"
-                    )
-            # Repeat for dtend, checking if it exists first
-            if isinstance(dtend, datetime):
-                if dtend.tzinfo is None:
-                    dtend = dtend.replace(tzinfo=local_tz)
-                    logger.debug(f"Applied local timezone {timezone} to naive dtend")
-                else:
-                    dtend = dtend.astimezone(local_tz)
-                    logger.debug(f"Converted aware dtend to target timezone {timezone}")
-
-        # If dtend is missing, calculate it *after* ensuring dtstart is localized/converted
-        if dtend is None and dtstart is not None:  # Check dtstart is not None
-            if is_all_day:
-                dtend = dtstart + timedelta(days=1)
-            else:
-                dtend = dtstart + timedelta(hours=1)  # Default duration assumption
-
-        return cast(
-            "CalendarEvent",
-            {
-                "uid": uid,
-                "summary": summary,
-                "start": dtstart,
-                "end": dtend,
-                "all_day": is_all_day,
-                "calendar_url": None,
-                "similarity": None,
-            },
-        )
+        return _parse_event(event_data, timezone)
     except StopIteration:
         logger.error(
             f"Failed to find VEVENT component in VCALENDAR data: {event_data[:200]}..."
@@ -184,6 +121,62 @@ def parse_event(
             f"Failed to parse VCALENDAR data: {e}\nData: {event_data[:200]}..."
         )
         return None
+
+
+def _parse_event(
+    event_data: str,
+    timezone: ZoneInfo | None,
+) -> "CalendarEvent | None":
+    components = vobject.readComponents(event_data)
+    ical_component = next(components)
+    vevent = (
+        ical_component
+        if getattr(ical_component, "name", "").upper() == "VEVENT"
+        else ical_component.vevent
+    )
+    summary = vevent.summary.value if hasattr(vevent, "summary") else "No Title"  # type: ignore[union-attr]
+    dtstart = vevent.dtstart.value if hasattr(vevent, "dtstart") else None  # type: ignore[union-attr]
+    dtend = vevent.dtend.value if hasattr(vevent, "dtend") else None  # type: ignore[union-attr]
+    uid = vevent.uid.value if hasattr(vevent, "uid") else None  # type: ignore[union-attr]
+    if not summary or not dtstart or not uid:
+        logger.warning(
+            f"Parsed event missing essential fields (summary, dtstart, or uid). Summary='{summary}', Start='{dtstart}', UID='{uid}'"
+        )
+        return None
+
+    is_all_day = not isinstance(dtstart, datetime)
+    if timezone:
+        if isinstance(dtstart, datetime):
+            if dtstart.tzinfo is None:
+                dtstart = dtstart.replace(tzinfo=timezone)
+                logger.debug(f"Applied local timezone {timezone} to naive dtstart")
+            else:
+                dtstart = dtstart.astimezone(timezone)
+                logger.debug(f"Converted aware dtstart to target timezone {timezone}")
+        if isinstance(dtend, datetime):
+            if dtend.tzinfo is None:
+                dtend = dtend.replace(tzinfo=timezone)
+                logger.debug(f"Applied local timezone {timezone} to naive dtend")
+            else:
+                dtend = dtend.astimezone(timezone)
+                logger.debug(f"Converted aware dtend to target timezone {timezone}")
+    if dtend is None:
+        dtend = dtstart + timedelta(
+            days=1 if is_all_day else 0,
+            hours=0 if is_all_day else 1,
+        )
+    return cast(
+        "CalendarEvent",
+        {
+            "uid": uid,
+            "summary": summary,
+            "start": dtstart,
+            "end": dtend,
+            "all_day": is_all_day,
+            "calendar_url": None,
+            "similarity": None,
+        },
+    )
 
 
 def _parse_icalendar_event_component(
@@ -277,37 +270,9 @@ async def _fetch_ical_events_async(
                     )
                     continue
                 try:
-                    ical_data = result.text
-                    logger.debug(
-                        f"Parsing iCal data from {url} (first 500 chars):\n{ical_data[:500]}..."
+                    all_events.extend(
+                        _parse_ical_response(result.text, url, timezone, clock)
                     )
-                    calendar = ICalendar.from_ical(ical_data)
-                    start_date = clock.now().astimezone(timezone)
-                    end_date = start_date + timedelta(days=16)
-                    expanded_events = recurring_ical_events.of(calendar).between(
-                        start_date,
-                        end_date,
-                    )
-                    count = 0
-                    for event_component in expanded_events:
-                        try:
-                            parsed = _parse_icalendar_event_component(
-                                event_component,
-                                timezone=timezone,
-                            )
-                        except Exception as event_parse_error:
-                            logger.exception(
-                                "Failed to parse individual event in iCal URL %s: %s",
-                                url,
-                                event_parse_error,
-                            )
-                            continue
-
-                        if parsed:
-                            all_events.append(parsed)
-                            count += 1
-
-                    logger.info(f"Parsed {count} events from iCal URL: {url}")
                 except Exception as e:
                     logger.exception(f"Error parsing iCal data from {url}: {e}")
             elif isinstance(result, Exception):
@@ -325,6 +290,41 @@ async def _fetch_ical_events_async(
         f"Fetched and parsed {len(all_events)} total events from {len(ical_urls)} iCal URL(s)."
     )
     return all_events
+
+
+def _parse_ical_response(
+    ical_data: str,
+    url: str,
+    timezone: ZoneInfo,
+    clock: Clock,
+) -> list["CalendarEvent"]:
+    logger.debug(
+        f"Parsing iCal data from {url} (first 500 chars):\n{ical_data[:500]}..."
+    )
+    calendar = ICalendar.from_ical(ical_data)
+    start_date = clock.now().astimezone(timezone)
+    expanded_events = recurring_ical_events.of(calendar).between(
+        start_date,
+        start_date + timedelta(days=16),
+    )
+    parsed_events: list[CalendarEvent] = []
+    for event_component in expanded_events:
+        try:
+            parsed = _parse_icalendar_event_component(
+                event_component,
+                timezone=timezone,
+            )
+        except Exception as event_parse_error:
+            logger.exception(
+                "Failed to parse individual event in iCal URL %s: %s",
+                url,
+                event_parse_error,
+            )
+            continue
+        if parsed:
+            parsed_events.append(parsed)
+    logger.info(f"Parsed {len(parsed_events)} events from iCal URL: {url}")
+    return parsed_events
 
 
 def _fetch_caldav_events_sync(
@@ -402,43 +402,14 @@ def _fetch_caldav_events_sync(
             f"Attempting to fetch from calendar collection: {calendar_url_item}"
         )
         try:
-            # Get the Calendar object using the client and the specific calendar_url_item
-            target_calendar = client.calendar(url=calendar_url_item)  # type: ignore[no-untyped-call]
-
-            logger.info(
-                f"Searching for events between {start_date} and {end_date} in calendar {target_calendar.url}"
+            _fetch_caldav_calendar(
+                client,
+                calendar_url_item,
+                start_date,
+                end_date,
+                timezone,
+                all_events,
             )
-
-            caldav_results = target_calendar.search(
-                start=start_date,
-                end=end_date,
-                event=True,
-                expand=True,  # Fetches full data
-            )
-            logger.debug(
-                f"Found {len(caldav_results)} potential events in calendar {target_calendar.url}"
-            )
-
-            # Process fetched events
-            for (
-                event_resource
-            ) in caldav_results:  # event_resource is CalendarObjectResource
-                try:
-                    event_url_attr = getattr(event_resource, "url", "N/A")
-                    event_data_str: str = (
-                        event_resource.data
-                    )  # Access data synchronously, it's a string
-                    parsed = parse_event(event_data_str, timezone=timezone)
-                    if parsed:
-                        all_events.append(parsed)
-                    else:
-                        logger.warning(
-                            f"Failed to parse event data for event {event_url_attr} in {calendar_url_item}. Skipping."
-                        )
-                except (DAVError, NotFoundError, Exception) as event_err:
-                    logger.exception(
-                        f"Error processing individual event {getattr(event_resource, 'url', 'N/A')} in {calendar_url_item}: {event_err}"
-                    )
         except NotFoundError:
             logger.error(
                 f"Calendar collection not found at URL {calendar_url_item}. Skipping."
@@ -486,6 +457,54 @@ def _fetch_caldav_events_sync(
 
     logger.info(f"Synchronously fetched and parsed {len(all_events)} events.")
     return all_events
+
+
+def _fetch_caldav_calendar(
+    client: caldav.DAVClient,
+    calendar_url: str,
+    start_date: date,
+    end_date: date,
+    timezone: ZoneInfo,
+    all_events: list["CalendarEvent"],
+) -> None:
+    target_calendar = client.calendar(url=calendar_url)  # type: ignore[no-untyped-call]
+    logger.info(
+        f"Searching for events between {start_date} and {end_date} in calendar {target_calendar.url}"
+    )
+    caldav_results = target_calendar.search(
+        start=start_date,
+        end=end_date,
+        event=True,
+        expand=True,
+    )
+    logger.debug(
+        f"Found {len(caldav_results)} potential events in calendar {target_calendar.url}"
+    )
+    for event_resource in caldav_results:
+        try:
+            _append_caldav_event(event_resource, calendar_url, timezone, all_events)
+        except (DAVError, NotFoundError, Exception) as event_error:
+            logger.exception(
+                f"Error processing individual event {getattr(event_resource, 'url', 'N/A')} in {calendar_url}: {event_error}"
+            )
+
+
+def _append_caldav_event(
+    event_resource: object,
+    calendar_url: str,
+    timezone: ZoneInfo,
+    all_events: list["CalendarEvent"],
+) -> None:
+    raw_resource = cast("Any", event_resource)
+    event_url = getattr(raw_resource, "url", "N/A")
+    event_data: str = raw_resource.data
+    parsed = parse_event(event_data, timezone=timezone)
+    if parsed:
+        all_events.append(parsed)
+    else:
+        logger.warning(
+            f"Failed to parse event data for event {event_url} in {calendar_url}. Skipping."
+        )
 
 
 # --- Main Orchestration Function ---
@@ -795,41 +814,37 @@ async def fetch_event_details_for_confirmation(
         )
         return None
 
+    def fetch_sync_unchecked() -> "CalendarEvent | None":
+        with caldav.DAVClient(
+            url=client_url_to_use,
+            username=username,
+            password=password,
+            timeout=30,
+        ) as client:
+            target_calendar_obj: caldav.objects.Calendar = client.calendar(
+                url=calendar_url
+            )
+            if not target_calendar_obj:
+                logger.error(f"Could not get calendar object for {calendar_url}")
+                return None
+            logger.debug(
+                f"Fetching event with UID {uid} from {target_calendar_obj.url}"
+            )
+            event_resource: caldav.objects.Event = target_calendar_obj.event_by_uid(uid)  # type: ignore
+            event_data_str: str = event_resource.data  # type: ignore
+            parsed_event = parse_event(event_data_str, timezone=timezone)
+            if parsed_event:
+                logger.info(
+                    f"Successfully fetched event details for UID {uid}: {parsed_event.get('summary', 'No Title')}"
+                )
+                return parsed_event
+            logger.warning(f"Failed to parse event data for UID {uid}")
+            return None
+
     # Synchronous fetch function
     def fetch_sync() -> "CalendarEvent | None":
         try:
-            with caldav.DAVClient(
-                url=client_url_to_use,
-                username=username,
-                password=password,
-                timeout=30,
-            ) as client:
-                target_calendar_obj: caldav.objects.Calendar = client.calendar(
-                    url=calendar_url
-                )
-                if not target_calendar_obj:
-                    logger.error(f"Could not get calendar object for {calendar_url}")
-                    return None
-
-                logger.debug(
-                    f"Fetching event with UID {uid} from {target_calendar_obj.url}"
-                )
-                event_resource: caldav.objects.Event = target_calendar_obj.event_by_uid(
-                    uid
-                )  # type: ignore
-
-                event_data_str: str = event_resource.data  # type: ignore
-                parsed_event = parse_event(event_data_str, timezone=timezone)
-
-                if parsed_event:
-                    logger.info(
-                        f"Successfully fetched event details for UID {uid}: {parsed_event.get('summary', 'No Title')}"
-                    )
-                    return parsed_event
-                else:
-                    logger.warning(f"Failed to parse event data for UID {uid}")
-                    return None
-
+            return fetch_sync_unchecked()
         except NotFoundError:
             logger.warning(f"Event with UID {uid} not found in calendar {calendar_url}")
             return None

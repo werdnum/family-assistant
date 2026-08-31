@@ -64,6 +64,67 @@ class WebChatInterface(ChatInterface):
         self.stream_hub = stream_hub
         self.identity_resolver = identity_resolver
 
+    async def _save_message_and_notify(
+        self,
+        conversation_id: str,
+        text: str,
+        attachment_ids: list[str] | None,
+        taint_metadata: TaintMetadata | None,
+    ) -> tuple[int | None, set[str]]:
+        clock = SystemClock()
+        db_context = Database(engine=self.database_engine)
+        owner_ids: set[str] = set()
+        if self.stream_hub is not None:
+            owner_ids = await db_context.message_history.get_conversation_owner_ids(
+                conversation_id
+            )
+
+        attachments: list[MessageAttachmentMetadata] | None = None
+        if attachment_ids:
+            attachments = [
+                MessageAttachmentMetadata(
+                    type="attachment_reference",
+                    attachment_id=attachment_id,
+                )
+                for attachment_id in attachment_ids
+            ]
+
+        saved_message = await db_context.message_history.add_message(
+            AssistantMessage(
+                content=text,
+                taint_metadata=(
+                    taint_metadata
+                    if taint_metadata is not None
+                    else TurnTaintState.empty().to_metadata()
+                ),
+            ),
+            interface_type="web",
+            conversation_id=conversation_id,
+            timestamp=clock.now(),
+            attachments=attachments,
+        )
+
+        if saved_message is not None and self.notifier is not None:
+            try:
+                await notify_conversation(
+                    self.notifier,
+                    db_context,
+                    interface_type="web",
+                    conversation_id=conversation_id,
+                    title="New message",
+                    body=text[:100],
+                    metadata=NotificationMetadata(
+                        category=MESSAGE_CATEGORY,
+                        conversation_id=conversation_id,
+                    ),
+                )
+            except Exception as exc:
+                logger.warning(
+                    f"Failed to send push notification: {exc}", exc_info=True
+                )
+
+        return saved_message, owner_ids
+
     async def send_message(
         self,
         conversation_id: str,
@@ -121,71 +182,21 @@ class WebChatInterface(ChatInterface):
         # delivered as undelivered, and the caller resends. Ownership comes from the
         # conversation's existing user messages, so it does not depend on the
         # row about to be written.
-        owner_ids: set[str] = set()
         try:
-            clock = SystemClock()
-
-            # Save message to database - SSE notification happens automatically
-            db_context = Database(engine=self.database_engine)
-
-            if self.stream_hub is not None:
-                owner_ids = await db_context.message_history.get_conversation_owner_ids(
-                    conversation_id
-                )
-
-            # Prepare attachment metadata if provided
-            attachments: list[MessageAttachmentMetadata] | None = None
-            if attachment_ids:
-                attachments = [
-                    MessageAttachmentMetadata(
-                        type="attachment_reference",
-                        attachment_id=attachment_id,
-                    )
-                    for attachment_id in attachment_ids
-                ]
-
-            saved_message = await db_context.message_history.add_message(
-                AssistantMessage(
-                    content=text,
-                    taint_metadata=(
-                        taint_metadata
-                        if taint_metadata is not None
-                        else TurnTaintState.empty().to_metadata()
-                    ),
-                ),
-                interface_type="web",
-                conversation_id=conversation_id,
-                timestamp=clock.now(),
-                attachments=attachments,
+            saved_message, owner_ids = await self._save_message_and_notify(
+                conversation_id,
+                text,
+                attachment_ids,
+                taint_metadata,
             )
-
-            # Notify the conversation owner about the new assistant reply.
-            if saved_message is not None and self.notifier is not None:
-                try:
-                    await notify_conversation(
-                        self.notifier,
-                        db_context,
-                        interface_type="web",
-                        conversation_id=conversation_id,
-                        title="New message",
-                        body=text[:100],  # Truncate long messages
-                        metadata=NotificationMetadata(
-                            category=MESSAGE_CATEGORY,
-                            conversation_id=conversation_id,
-                        ),
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to send push notification: {e}", exc_info=True
-                    )
-        except Exception as e:
+        except Exception as exc:
             # The write or the notification failed. Both are conditions of the
             # moment -- the same row would save on a later attempt -- so this is
             # transient; a conversation that does not exist surfaces below as a
             # save that returned nothing, which will not start existing later.
             raise ChatDeliveryError(
-                f"Error sending message to {conversation_id}: {e}", transient=True
-            ) from e
+                f"Error sending message to {conversation_id}: {exc}", transient=True
+            ) from exc
 
         if saved_message is None:
             raise ChatDeliveryError(

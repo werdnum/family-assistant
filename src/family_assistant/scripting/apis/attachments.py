@@ -113,6 +113,29 @@ class ScriptAttachment:
         metadata_dict = self._metadata.to_dict()
         return metadata_dict.get("metadata", {}).get("original_filename")
 
+    async def _fetch_content(self) -> bytes | None:
+        # The handle owns no open connection and is used directly across calls.
+        db_context = self._db_context_getter()
+        return await self._registry.get_attachment_content(
+            db_context,
+            self._metadata.attachment_id,
+            acting_user_id=self._acting_user_id,
+        )
+
+    def _fetch_content_sync(self) -> bytes | None:
+        try:
+            loop = asyncio.get_running_loop()
+            logger.debug(
+                f"Running in async context, using run_coroutine_threadsafe for attachment {self._metadata.attachment_id}"
+            )
+            future = asyncio.run_coroutine_threadsafe(self._fetch_content(), loop)
+            return future.result(timeout=30)
+        except RuntimeError:
+            logger.debug(
+                f"No running loop, using asyncio.run for attachment {self._metadata.attachment_id}"
+            )
+            return asyncio.run(self._fetch_content())
+
     def get_content(self) -> bytes:
         """
         Get the attachment content as bytes.
@@ -127,40 +150,12 @@ class ScriptAttachment:
         """
         if self._content_cache is None:
             try:
-                # We need to run async code from sync context
-                # This will work in the script execution environment
-                async def _get_content() -> bytes:
-                    # The handle is used directly, not entered: Database is not
-                    # a context manager, and it owns no connection to hold open.
-                    db_context = self._db_context_getter()
-                    content = await self._registry.get_attachment_content(
-                        db_context,
-                        self._metadata.attachment_id,
-                        acting_user_id=self._acting_user_id,
+                content = self._fetch_content_sync()
+                if content is None:
+                    raise RuntimeError(
+                        f"Could not retrieve content for attachment {self._metadata.attachment_id}"
                     )
-                    if content is None:
-                        raise RuntimeError(
-                            f"Could not retrieve content for attachment {self._metadata.attachment_id}"
-                        )
-                    return content
-
-                # Try to get running loop, fall back to new loop if none
-                try:
-                    loop = asyncio.get_running_loop()
-                    # We're in an async context, but sync method called
-                    # This should not happen in normal script execution
-                    logger.debug(
-                        f"Running in async context, using run_coroutine_threadsafe for attachment {self._metadata.attachment_id}"
-                    )
-                    future = asyncio.run_coroutine_threadsafe(_get_content(), loop)
-                    self._content_cache = future.result(timeout=30)
-                except RuntimeError:
-                    # No running loop, use asyncio.run
-                    logger.debug(
-                        f"No running loop, using asyncio.run for attachment {self._metadata.attachment_id}"
-                    )
-                    self._content_cache = asyncio.run(_get_content())
-
+                self._content_cache = content
             except Exception as e:
                 raise RuntimeError(f"Failed to get attachment content: {e}") from e
 
@@ -179,17 +174,11 @@ class ScriptAttachment:
             RuntimeError: If the content cannot be retrieved
         """
         if self._content_cache is None:
+            logger.debug(
+                f"Retrieving content for attachment {self._metadata.attachment_id} using registry"
+            )
             try:
-                # Get the database context - it might already be active, so don't use 'async with'
-                db_context = self._db_context_getter()
-                logger.debug(
-                    f"Retrieving content for attachment {self._metadata.attachment_id} using registry"
-                )
-                content = await self._registry.get_attachment_content(
-                    db_context,
-                    self._metadata.attachment_id,
-                    acting_user_id=self._acting_user_id,
-                )
+                content = await self._fetch_content()
                 if content is None:
                     logger.error(
                         f"AttachmentRegistry returned None for attachment {self._metadata.attachment_id}"
@@ -197,12 +186,13 @@ class ScriptAttachment:
                     raise RuntimeError(
                         f"Could not retrieve content for attachment {self._metadata.attachment_id}"
                     )
-                logger.debug(
-                    f"Successfully retrieved {len(content)} bytes for attachment {self._metadata.attachment_id}"
-                )
-                self._content_cache = content
             except Exception as e:
                 raise RuntimeError(f"Failed to get attachment content: {e}") from e
+
+            logger.debug(
+                f"Successfully retrieved {len(content)} bytes for attachment {self._metadata.attachment_id}"
+            )
+            self._content_cache = content
 
         return self._content_cache
 

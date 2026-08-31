@@ -326,108 +326,115 @@ async def search_documents_tool(
     # Use the provided generator's model name
     embedding_model = embedding_generator.model_name
 
+    # 1. Generate query embedding
+    if not query:
+        return "Error: Query text cannot be empty."
     try:
-        # 1. Generate query embedding
-        if not query:
-            return "Error: Query text cannot be empty."
         embedding_result = await embedding_generator.generate_embeddings([query])
-        if not embedding_result.embeddings or len(embedding_result.embeddings) == 0:
-            return "Error: Failed to generate embedding for the query."
-        query_embedding = embedding_result.embeddings[0]
+    except Exception as e:
+        logger.exception(f"Error executing search_documents_tool: {e}")
+        return f"Error: Failed to execute document search. {e}"
+    if not embedding_result.embeddings or len(embedding_result.embeddings) == 0:
+        return "Error: Failed to generate embedding for the query."
+    query_embedding = embedding_result.embeddings[0]
 
-        # 2. Construct the search query object
-        search_query = VectorSearchQuery(
-            search_type="hybrid",
-            semantic_query=query,
-            keywords=query,  # Use same text for keywords in this simplified tool
-            embedding_model=embedding_model,
-            source_types=source_types or [],  # Use empty list if None
-            excluded_source_types=_SEARCH_DOCUMENTS_EXCLUDED_SOURCE_TYPES,
-            embedding_types=embedding_types or [],  # Use empty list if None
-            limit=limit,
-            visibility_grants=exec_context.visibility_grants,
-        )
+    # 2. Construct the search query object
+    search_query = VectorSearchQuery(
+        search_type="hybrid",
+        semantic_query=query,
+        keywords=query,  # Use same text for keywords in this simplified tool
+        embedding_model=embedding_model,
+        source_types=source_types or [],  # Use empty list if None
+        excluded_source_types=_SEARCH_DOCUMENTS_EXCLUDED_SOURCE_TYPES,
+        embedding_types=embedding_types or [],  # Use empty list if None
+        limit=limit,
+        visibility_grants=exec_context.visibility_grants,
+    )
 
-        # 3. Execute the search
+    # 3. Execute the search
+    try:
         results = await query_vector_store(
             db_context=db_context,
             query=search_query,
             query_embedding=query_embedding,
         )
-
-        # 4. Format results for LLM
-        if not results:
-            return "No relevant documents found matching the query and filters."
-
-        surfaced_ids = [
-            str(res["document_id"]) for res in results if res.get("document_id")
-        ]
-        record_sensitive_read(
-            exec_context,
-            kind="documents",
-            qualifier=f"search:{query[:200]}",
-            surfaced_ids=surfaced_ids,
-        )
-        for res in results:
-            metadata = _coerce_doc_metadata(res.get("doc_metadata"))
-            if metadata:
-                doc_id = res.get("document_id")
-                merge_artifact_taint_into_context(
-                    exec_context,
-                    provenance_metadata=metadata,
-                    fallback_source_type=TaintSourceType.DOCUMENT,
-                    fallback_source_id=str(doc_id) if doc_id is not None else None,
-                    fallback_reason="Indexed document search result provenance.",
-                )
-
-        formatted_results = ["Found relevant documents:"]
-        for i, res in enumerate(results):
-            title = res.get("title") or "Untitled Document"
-            source = res.get("source_type", "Unknown Source")
-            doc_id = res.get("document_id", "Unknown")
-            metadata = res.get("doc_metadata", {})
-            file_path = res.get("file_path")
-
-            # Check if original file is available
-            has_file = file_path and await asyncio.to_thread(
-                pathlib.Path(file_path).exists
-            )
-
-            # Truncate snippet for brevity
-            snippet = res.get("embedding_source_content", "")
-            if snippet:
-                snippet = (snippet[:10000] + "...") if len(snippet) > 10000 else snippet
-                snippet_text = f"\n  Snippet: {snippet}"
-            else:
-                snippet_text = ""
-
-            # Format metadata for display
-            metadata_text = ""
-            if metadata:
-                metadata_text = f"\n  Metadata: {metadata}"
-
-            # Indicate file availability
-            file_info = ""
-            if has_file and file_path:
-                try:
-                    file_path_obj = pathlib.Path(file_path)
-                    file_size = (await asyncio.to_thread(file_path_obj.stat)).st_size
-                    original_filename = (
-                        metadata.get("original_filename") or file_path_obj.name
-                    )
-                    file_info = f"\n  📎 Original file available: {original_filename} ({file_size / 1024:.1f}KB)"
-                except Exception:
-                    file_info = "\n  📎 Original file available"
-
-            formatted_results.append(
-                f"{i + 1}. Title: {title} (Source: {source}, Document ID: {doc_id} - for retrieving full content){file_info}{metadata_text}{snippet_text}"
-            )
-
-        return "\n".join(formatted_results)
-
     except Exception as e:
         logger.exception(f"Error executing search_documents_tool: {e}")
         return f"Error: Failed to execute document search. {e}"
+
+    # 4. Format results for LLM
+    if not results:
+        return "No relevant documents found matching the query and filters."
+
+    surfaced_ids = [
+        str(res["document_id"]) for res in results if res.get("document_id")
+    ]
+    record_sensitive_read(
+        exec_context,
+        kind="documents",
+        qualifier=f"search:{query[:200]}",
+        surfaced_ids=surfaced_ids,
+    )
+    for res in results:
+        metadata = _coerce_doc_metadata(res.get("doc_metadata"))
+        if metadata:
+            doc_id = res.get("document_id")
+            merge_artifact_taint_into_context(
+                exec_context,
+                provenance_metadata=metadata,
+                fallback_source_type=TaintSourceType.DOCUMENT,
+                fallback_source_id=str(doc_id) if doc_id is not None else None,
+                fallback_reason="Indexed document search result provenance.",
+            )
+
+    formatted_results = ["Found relevant documents:"]
+    for i, res in enumerate(results):
+        title = res.get("title") or "Untitled Document"
+        source = res.get("source_type", "Unknown Source")
+        doc_id = res.get("document_id", "Unknown")
+        metadata = res.get("doc_metadata", {})
+        file_path = res.get("file_path")
+
+        # Check if original file is available
+        try:
+            has_file = file_path and await asyncio.to_thread(
+                pathlib.Path(file_path).exists
+            )
+        except Exception as e:
+            logger.exception(f"Error executing search_documents_tool: {e}")
+            return f"Error: Failed to execute document search. {e}"
+
+        # Truncate snippet for brevity
+        snippet = res.get("embedding_source_content", "")
+        if snippet:
+            snippet = (snippet[:10000] + "...") if len(snippet) > 10000 else snippet
+            snippet_text = f"\n  Snippet: {snippet}"
+        else:
+            snippet_text = ""
+
+        # Format metadata for display
+        metadata_text = ""
+        if metadata:
+            metadata_text = f"\n  Metadata: {metadata}"
+
+        # Indicate file availability
+        file_info = ""
+        if has_file and file_path:
+            try:
+                file_path_obj = pathlib.Path(file_path)
+                file_size = (await asyncio.to_thread(file_path_obj.stat)).st_size
+                original_filename = (
+                    metadata.get("original_filename") or file_path_obj.name
+                )
+                file_info = f"\n  📎 Original file available: {original_filename} ({file_size / 1024:.1f}KB)"
+            except Exception:
+                file_info = "\n  📎 Original file available"
+
+        formatted_results.append(
+            f"{i + 1}. Title: {title} (Source: {source}, Document ID: {doc_id} - for retrieving full content){file_info}{metadata_text}{snippet_text}"
+        )
+
+    return "\n".join(formatted_results)
 
 
 async def get_full_document_content_tool(
@@ -452,7 +459,7 @@ async def get_full_document_content_tool(
     )
     db_context = exec_context.db_context
 
-    try:
+    async def get_content() -> str | ToolResult:
         # First, get document metadata including file_path and original filename
         doc_query = text(
             """
@@ -501,7 +508,8 @@ async def get_full_document_content_tool(
 
         # Try to return original file if available
         if file_path and await asyncio.to_thread(pathlib.Path(file_path).exists):
-            try:
+
+            async def get_original_file() -> ToolResult | None:
                 file_path_obj = pathlib.Path(file_path)
                 file_size = (await asyncio.to_thread(file_path_obj.stat)).st_size
 
@@ -567,11 +575,19 @@ async def get_full_document_content_tool(
                         text=display_text,
                         attachments=[attachment],
                     )
+
+                return None
+
+            try:
+                original_file_result = await get_original_file()
             except Exception as file_err:
                 logger.exception(
                     f"Error reading file {file_path} for document ID {document_id}: {file_err}"
                 )
                 # Fall through to text content
+            else:
+                if original_file_result is not None:
+                    return original_file_result
 
         # Fall back to text content
         text_content = await _get_text_content_fallback(db_context, document_id)
@@ -597,6 +613,8 @@ async def get_full_document_content_tool(
         assert text_content is not None
         return text_content
 
+    try:
+        return await get_content()
     except Exception as e:
         logger.exception(
             f"Error executing get_full_document_content_tool for ID {document_id}: {e}"
@@ -963,27 +981,26 @@ async def ingest_document_from_url_tool(
             doc_metadata=doc_metadata,
             # No file content or content_parts for this tool, only URL
         )
-
-        if ingestion_result.get("error_detail"):
-            logger.error(
-                f"Ingestion service failed for URL '{url_to_ingest}': {ingestion_result.get('message')} - {ingestion_result.get('error_detail')}"
-            )
-            return f"Error submitting URL for ingestion: {ingestion_result.get('message')}. Details: {ingestion_result.get('error_detail')}"
-
-        doc_id = ingestion_result.get("document_id")
-        task_enqueued = ingestion_result.get("task_enqueued")
-        service_message = ingestion_result.get("message", "Submission processed.")
-
-        logger.info(
-            f"Successfully submitted URL '{url_to_ingest}' via service. Response: {service_message}, Doc ID: {doc_id}, Task Enqueued: {task_enqueued}"
-        )
-        return f"URL submitted. Service response: {service_message}. Document ID: {doc_id}. Task Enqueued: {task_enqueued}."
-
     except Exception as e:
         logger.exception(
             f"Unexpected error calling ingestion service for URL '{url_to_ingest}': {e}"
         )
         return f"Error: An unexpected error occurred while submitting the URL. {e}"
+
+    if ingestion_result.get("error_detail"):
+        logger.error(
+            f"Ingestion service failed for URL '{url_to_ingest}': {ingestion_result.get('message')} - {ingestion_result.get('error_detail')}"
+        )
+        return f"Error submitting URL for ingestion: {ingestion_result.get('message')}. Details: {ingestion_result.get('error_detail')}"
+
+    doc_id = ingestion_result.get("document_id")
+    task_enqueued = ingestion_result.get("task_enqueued")
+    service_message = ingestion_result.get("message", "Submission processed.")
+
+    logger.info(
+        f"Successfully submitted URL '{url_to_ingest}' via service. Response: {service_message}, Doc ID: {doc_id}, Task Enqueued: {task_enqueued}"
+    )
+    return f"URL submitted. Service response: {service_message}. Document ID: {doc_id}. Task Enqueued: {task_enqueued}."
 
 
 async def get_user_documentation_content_tool(

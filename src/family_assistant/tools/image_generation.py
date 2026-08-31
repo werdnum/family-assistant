@@ -145,52 +145,36 @@ def _create_image_backend(
         return MockImageBackend()
 
 
+async def _generate_image(
+    exec_context: "ToolExecutionContext", prompt: str, style: str
+) -> ToolResult:
+    backend = _create_image_backend(exec_context)
+    image_bytes = await backend.generate_image(prompt, style)
+    logger.info(f"Backend returned {len(image_bytes)} bytes")
+
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+        logger.info(
+            f"Tool validated image: format={img.format}, size={img.size}, mode={img.mode}"
+        )
+    except Exception as e:
+        logger.error(f"Tool received invalid image data from backend: {e}")
+
+    attachment = ToolAttachment(
+        content=image_bytes,
+        mime_type="image/png",
+        description=f"Generated image: {prompt[:50]}{'...' if len(prompt) > 50 else ''}",
+    )
+    return ToolResult(text=f"Generated image for: {prompt}", attachments=[attachment])
+
+
 async def generate_image_tool(
     exec_context: "ToolExecutionContext", prompt: str, style: str = "auto"
 ) -> ToolResult:
-    """
-    Generate a new image from text description.
-
-    Args:
-        exec_context: The execution context
-        prompt: Detailed description of the image to generate
-        style: Style of the generated image (auto, photorealistic, artistic)
-
-    Returns:
-        ToolResult with generated image attachment
-    """
+    """Generate a new image from text description."""
     logger.info(f"Generating image with prompt: '{prompt}', style: {style}")
-
     try:
-        # Get the appropriate backend
-        backend = _create_image_backend(exec_context)
-
-        # Generate the image
-        image_bytes = await backend.generate_image(prompt, style)
-
-        # Log what we received from backend
-        logger.info(f"Backend returned {len(image_bytes)} bytes")
-
-        # Validate with PIL
-        try:
-            img = Image.open(io.BytesIO(image_bytes))
-            logger.info(
-                f"Tool validated image: format={img.format}, size={img.size}, mode={img.mode}"
-            )
-        except Exception as e:
-            logger.error(f"Tool received invalid image data from backend: {e}")
-
-        # Create attachment
-        attachment = ToolAttachment(
-            content=image_bytes,
-            mime_type="image/png",
-            description=f"Generated image: {prompt[:50]}{'...' if len(prompt) > 50 else ''}",
-        )
-
-        return ToolResult(
-            text=f"Generated image for: {prompt}", attachments=[attachment]
-        )
-
+        return await _generate_image(exec_context, prompt, style)
     except Exception as e:
         logger.exception(f"Error generating image: {e}")
         return ToolResult(text=f"Error generating image: {e!s}")
@@ -220,50 +204,50 @@ async def transform_image_tool(
         ToolResult with transformed image attachment
     """
     logger.info(f"Transforming image with instruction: '{instruction}'")
-
     try:
-        image_attachments: list[ScriptAttachment] = []
-        if image is not None:
-            image_attachments.append(image)
-        if images:
-            image_attachments.extend(images)
-
-        if not image_attachments:
-            return ToolResult(text="Error: Provide at least one image to transform")
-
-        image_contents: list[ImageReference] = []
-        for image_attachment in image_attachments:
-            content = await image_attachment.get_content_async()
-            if not content:
-                logger.error(
-                    "Could not retrieve content for attachment %s",
-                    image_attachment.get_id(),
-                )
-                return ToolResult(text="Could not access the image content")
-            image_contents.append(
-                ImageReference(
-                    content=content,
-                    mime_type=image_attachment.get_mime_type() or "image/png",
-                )
-            )
-
-        # Get the appropriate backend
-        backend = _create_image_backend(exec_context)
-
-        # Transform the image
-        transformed_bytes = await backend.transform_image(image_contents, instruction)
-
-        # Create attachment
-        attachment = ToolAttachment(
-            content=transformed_bytes,
-            mime_type="image/png",
-            description=f"Transformed: {instruction[:50]}{'...' if len(instruction) > 50 else ''}",
-        )
-
-        return ToolResult(
-            text=f"Transformed image: {instruction}", attachments=[attachment]
-        )
-
+        return await _transform_image(exec_context, instruction, image, images)
     except Exception as e:
         logger.exception(f"Error transforming image: {e}")
         return ToolResult(text=f"Error transforming image: {e!s}")
+
+
+async def _transform_image(
+    exec_context: "ToolExecutionContext",
+    instruction: str,
+    image: "ScriptAttachment | None",
+    images: "list[ScriptAttachment] | None",
+) -> ToolResult:
+    image_attachments: list[ScriptAttachment] = []
+    if image is not None:
+        image_attachments.append(image)
+    if images:
+        image_attachments.extend(images)
+    if not image_attachments:
+        return ToolResult(text="Error: Provide at least one image to transform")
+
+    image_contents: list[ImageReference] = []
+    for image_attachment in image_attachments:
+        content = await image_attachment.get_content_async()
+        if not content:
+            logger.error(
+                "Could not retrieve content for attachment %s",
+                image_attachment.get_id(),
+            )
+            return ToolResult(text="Could not access the image content")
+        image_contents.append(
+            ImageReference(
+                content=content,
+                mime_type=image_attachment.get_mime_type() or "image/png",
+            )
+        )
+
+    backend = _create_image_backend(exec_context)
+    transformed_bytes = await backend.transform_image(image_contents, instruction)
+    attachment = ToolAttachment(
+        content=transformed_bytes,
+        mime_type="image/png",
+        description=f"Transformed: {instruction[:50]}{'...' if len(instruction) > 50 else ''}",
+    )
+    return ToolResult(
+        text=f"Transformed image: {instruction}", attachments=[attachment]
+    )

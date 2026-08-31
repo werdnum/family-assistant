@@ -204,62 +204,18 @@ class BaseLLMClient:
             if content_size <= SIZE_THRESHOLD:
                 # Small file: inject full content inline
                 try:
-                    decoded_content = attachment.content.decode("utf-8")
-                    content = "[System: File from previous tool response]\n"
-                    if attachment.description:
-                        content += f"[Description: {attachment.description}]\n"
-                    if attachment.attachment_id:
-                        content += f"[Attachment ID: {attachment.attachment_id}]\n"
-                    content += f"[Content ({content_size} bytes)]:\n{decoded_content}"
-                    return UserMessage(content=content)
+                    return self._create_small_text_attachment_injection(
+                        attachment, content_size
+                    )
                 except UnicodeDecodeError:
                     # Fall through to default handling
                     pass
             else:
                 # Large file: inject schema for symbolic querying
                 try:
-                    decoded_content = attachment.content.decode("utf-8")
-
-                    # Generate schema for JSON
-                    if attachment.mime_type == "application/json":
-                        try:
-                            json_data = json.loads(decoded_content)
-
-                            # Use genson to generate schema
-                            builder = SchemaBuilder()
-                            builder.add_object(json_data)
-                            schema = builder.to_json(indent=2)
-
-                            content = "[System: Large data attachment from previous tool response]\n"
-                            if attachment.description:
-                                content += f"[Description: {attachment.description}]\n"
-                            content += f"[Size: {content_size} bytes ({content_size / 1024:.1f} KB)]\n"
-                            if attachment.attachment_id:
-                                content += (
-                                    f"[Attachment ID: {attachment.attachment_id}]\n"
-                                )
-                            content += f"\nData structure (JSON Schema):\n{schema}\n"
-                            content += "\nNote: Use the 'jq' tool to query this data symbolically. "
-                            content += f"Reference attachment ID {attachment.attachment_id} in tool calls."
-
-                            return UserMessage(content=content)
-                        except json.JSONDecodeError:
-                            # Not valid JSON, fall through to text handling
-                            pass
-
-                    # For large CSV or other text, provide summary
-                    content = "[System: Large text file from previous tool response]\n"
-                    if attachment.description:
-                        content += f"[Description: {attachment.description}]\n"
-                    content += (
-                        f"[Size: {content_size} bytes ({content_size / 1024:.1f} KB)]\n"
+                    return self._create_large_text_attachment_injection(
+                        attachment, content_size
                     )
-                    if attachment.attachment_id:
-                        content += f"[Attachment ID: {attachment.attachment_id}]\n"
-                    content += f"[MIME type: {attachment.mime_type}]\n"
-                    content += "\nNote: Content too large for inline display. Use tools to access this data."
-
-                    return UserMessage(content=content)
                 except UnicodeDecodeError:
                     # Fall through to default handling
                     pass
@@ -270,6 +226,67 @@ class BaseLLMClient:
         )
         if attachment.attachment_id:
             content += f"\n[Attachment ID: {attachment.attachment_id}]"
+        return UserMessage(content=content)
+
+    @staticmethod
+    def _create_small_text_attachment_injection(
+        attachment: "ToolAttachment", content_size: int
+    ) -> UserMessage:
+        """Render a small textual tool attachment inline."""
+        assert attachment.content is not None
+        decoded_content = attachment.content.decode("utf-8")
+        content = "[System: File from previous tool response]\n"
+        if attachment.description:
+            content += f"[Description: {attachment.description}]\n"
+        if attachment.attachment_id:
+            content += f"[Attachment ID: {attachment.attachment_id}]\n"
+        content += f"[Content ({content_size} bytes)]:\n{decoded_content}"
+        return UserMessage(content=content)
+
+    def _create_large_text_attachment_injection(
+        self, attachment: "ToolAttachment", content_size: int
+    ) -> UserMessage:
+        """Render schema or metadata for a large textual tool attachment."""
+        assert attachment.content is not None
+        decoded_content = attachment.content.decode("utf-8")
+
+        if attachment.mime_type == "application/json":
+            try:
+                return self._create_large_json_attachment_injection(
+                    attachment, content_size, decoded_content
+                )
+            except json.JSONDecodeError:
+                pass
+
+        content = "[System: Large text file from previous tool response]\n"
+        if attachment.description:
+            content += f"[Description: {attachment.description}]\n"
+        content += f"[Size: {content_size} bytes ({content_size / 1024:.1f} KB)]\n"
+        if attachment.attachment_id:
+            content += f"[Attachment ID: {attachment.attachment_id}]\n"
+        content += f"[MIME type: {attachment.mime_type}]\n"
+        content += "\nNote: Content too large for inline display. Use tools to access this data."
+        return UserMessage(content=content)
+
+    @staticmethod
+    def _create_large_json_attachment_injection(
+        attachment: "ToolAttachment", content_size: int, decoded_content: str
+    ) -> UserMessage:
+        """Render a JSON schema for a large JSON tool attachment."""
+        json_data = json.loads(decoded_content)
+        builder = SchemaBuilder()
+        builder.add_object(json_data)
+        schema = builder.to_json(indent=2)
+
+        content = "[System: Large data attachment from previous tool response]\n"
+        if attachment.description:
+            content += f"[Description: {attachment.description}]\n"
+        content += f"[Size: {content_size} bytes ({content_size / 1024:.1f} KB)]\n"
+        if attachment.attachment_id:
+            content += f"[Attachment ID: {attachment.attachment_id}]\n"
+        content += f"\nData structure (JSON Schema):\n{schema}\n"
+        content += "\nNote: Use the 'jq' tool to query this data symbolically. "
+        content += f"Reference attachment ID {attachment.attachment_id} in tool calls."
         return UserMessage(content=content)
 
     def _process_tool_messages(
@@ -514,12 +531,11 @@ class BaseLLMClient:
 
         last_error: Exception | None = None
         raw_response: str | None = None
+        # BaseLLMClient is always mixed into a concrete LLMInterface implementation.
+        llm_client = cast("LLMInterface", self)
 
         for attempt in range(max_retries + 1):
             try:
-                # Generate response - cast self to LLMInterface since BaseLLMClient
-                # is always used as a mixin with classes implementing LLMInterface
-                llm_client = cast("LLMInterface", self)
                 response = await llm_client.generate_response(messages_with_schema)
 
                 if not response.content:
@@ -1228,42 +1244,7 @@ class PlaybackLLMClient:
             f"PlaybackLLMClient initializing. Reading from: {self.recording_path}"
         )
         try:
-            with open(self.recording_path, encoding="utf-8") as f:
-                line_num = 0
-                for raw_line in f:
-                    line_num += 1
-                    line = raw_line.strip()
-                    if not line:
-                        continue
-                    try:
-                        record = json.loads(line)
-                        if "input" not in record or "output" not in record:
-                            logger.warning(
-                                f"Skipping line {line_num} in {self.recording_path}: Missing 'input' or 'output' key."
-                            )
-                            continue
-                        self.recorded_interactions.append(record)
-                    except json.JSONDecodeError:
-                        logger.warning(
-                            f"Skipping invalid JSON on line {line_num} in {self.recording_path}: {line[:100]}..."
-                        )
-                    except Exception as parse_err:
-                        logger.warning(
-                            f"Error parsing record on line {line_num} in {self.recording_path}: {parse_err}"
-                        )
-
-            if not self.recorded_interactions:
-                logger.warning(
-                    f"Recording file {self.recording_path} is empty or contains no valid records."
-                )
-                raise ValueError(
-                    f"No valid interactions loaded from {self.recording_path}"
-                )
-
-            logger.info(
-                f"PlaybackLLMClient initialized. Loaded {len(self.recorded_interactions)} interactions from: {self.recording_path}"
-            )
-
+            self._load_recorded_interactions()
         except FileNotFoundError:
             logger.error(f"Recording file not found: {self.recording_path}")
             raise
@@ -1274,6 +1255,42 @@ class PlaybackLLMClient:
             raise ValueError(
                 f"Failed to load recording file {self.recording_path}: {e}"
             ) from e
+
+    def _load_recorded_interactions(self) -> None:
+        """Load valid interaction records from the configured JSONL file."""
+        with open(self.recording_path, encoding="utf-8") as f:
+            line_num = 0
+            for raw_line in f:
+                line_num += 1
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                    if "input" not in record or "output" not in record:
+                        logger.warning(
+                            f"Skipping line {line_num} in {self.recording_path}: Missing 'input' or 'output' key."
+                        )
+                        continue
+                    self.recorded_interactions.append(record)
+                except json.JSONDecodeError:
+                    logger.warning(
+                        f"Skipping invalid JSON on line {line_num} in {self.recording_path}: {line[:100]}..."
+                    )
+                except Exception as parse_err:
+                    logger.warning(
+                        f"Error parsing record on line {line_num} in {self.recording_path}: {parse_err}"
+                    )
+
+        if not self.recorded_interactions:
+            logger.warning(
+                f"Recording file {self.recording_path} is empty or contains no valid records."
+            )
+            raise ValueError(f"No valid interactions loaded from {self.recording_path}")
+
+        logger.info(
+            f"PlaybackLLMClient initialized. Loaded {len(self.recorded_interactions)} interactions from: {self.recording_path}"
+        )
 
     async def generate_response(
         self,

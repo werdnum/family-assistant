@@ -627,7 +627,8 @@ class LocalToolsProvider:
 
         callable_func = self._implementations[name]
         logger.info(f"Executing local tool '{name}' with args: {arguments}")
-        try:
+
+        async def _execute() -> str | ToolResult:
             # Prepare arguments, potentially injecting context or generator
             call_args = arguments.copy()
             logger.debug(f"Tool '{name}' - Initial arguments from LLM: {arguments}")
@@ -818,6 +819,9 @@ class LocalToolsProvider:
             else:
                 logger.warning(f"Local tool '{name}' reported an error: {result_str}")
             return result_str
+
+        try:
+            return await _execute()
         except Exception as e:
             logger.exception(f"Error executing local tool '{name}': {e}")
             # Re-raise or return formatted error string? Returning error string for now.
@@ -1165,13 +1169,12 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
                     f"{evaluation.reason}; confirmation required but unavailable",
                 )
 
+            typed_callback = context.request_confirmation_callback
+            resolved_call_id = call_id or f"tool_{uuid.uuid4()}"
+            if context.tools_provider is None:
+                context.tools_provider = self
+
             try:
-                typed_callback = context.request_confirmation_callback
-                resolved_call_id = call_id or f"tool_{uuid.uuid4()}"
-
-                if context.tools_provider is None:
-                    context.tools_provider = self
-
                 confirmation_result = await typed_callback(
                     interface_type=context.interface_type,
                     conversation_id=context.conversation_id,

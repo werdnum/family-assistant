@@ -76,6 +76,27 @@ class WebTestFixture(NamedTuple):
     base_url: str
 
 
+async def _server_is_ready(
+    client: httpx.AsyncClient,
+    url: str,
+    health_url: str,
+    elapsed: float,
+) -> bool:
+    response = await client.get(health_url, timeout=5)
+    print(f"[{elapsed:.1f}s] Health check response: {response.status_code}")
+
+    if response.status_code == 200:
+        print(f"[{elapsed:.1f}s] ✓ Health check passed for {health_url}")
+        root_response = await client.get(url, timeout=5)
+        print(f"[{elapsed:.1f}s] Root endpoint response: {root_response.status_code}")
+        return True
+
+    print(
+        f"[{elapsed:.1f}s] Health check returned {response.status_code}: {response.text[:200]}"
+    )
+    return False
+
+
 async def wait_for_server(url: str, timeout: int = 60) -> None:
     """Wait for a server to become available by polling health endpoint."""
     start_time = time.time()
@@ -88,24 +109,8 @@ async def wait_for_server(url: str, timeout: int = 60) -> None:
         while time.time() - start_time < timeout:
             elapsed = time.time() - start_time
             try:
-                # First check if the health endpoint is responding
-                response = await client.get(health_url, timeout=5)
-                print(f"[{elapsed:.1f}s] Health check response: {response.status_code}")
-
-                if response.status_code == 200:
-                    print(f"[{elapsed:.1f}s] ✓ Health check passed for {health_url}")
-                    # Also check the root endpoint
-                    root_response = await client.get(url, timeout=5)
-                    print(
-                        f"[{elapsed:.1f}s] Root endpoint response: {root_response.status_code}"
-                    )
+                if await _server_is_ready(client, url, health_url, elapsed):
                     return
-                else:
-                    # Non-200 response
-                    print(
-                        f"[{elapsed:.1f}s] Health check returned {response.status_code}: {response.text[:200]}"
-                    )
-
             except httpx.ConnectError as e:
                 # Can't connect yet
                 if str(e) != str(last_error):

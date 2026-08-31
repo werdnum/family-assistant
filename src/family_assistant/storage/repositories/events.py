@@ -86,63 +86,58 @@ class EventsRepository(BaseRepository):
             Tuple of (is_allowed, error_message)
         """
         try:
-            now = datetime.now(UTC)
-
-            # Get current listener state
-            listener = await self.get_event_listener_by_id(listener_id)
-            if not listener:
-                return False, "Listener not found"
-
-            # Verify conversation_id matches
-            if listener.get("conversation_id") != conversation_id:
-                return False, "Listener not found"
-
-            # Check if we need to reset daily counter
-            daily_reset_at = listener["daily_reset_at"]
-
-            if not daily_reset_at or now > daily_reset_at:
-                # Reset counter for new day
-                tomorrow = now.replace(
-                    hour=0, minute=0, second=0, microsecond=0
-                ) + timedelta(days=1)
-                stmt = (
-                    update(event_listeners_table)
-                    .where(event_listeners_table.c.id == listener_id)
-                    .values(
-                        daily_executions=1,
-                        daily_reset_at=tomorrow,
-                        last_execution_at=now,
-                    )
-                )
-                await self._db.execute(stmt)
-                return True, None
-
-            # Check if under limit
-            if listener["daily_executions"] >= 5:
-                return (
-                    False,
-                    f"Daily limit exceeded ({listener['daily_executions']} triggers today)",
-                )
-
-            # Increment counter
-            stmt = (
-                update(event_listeners_table)
-                .where(event_listeners_table.c.id == listener_id)
-                .values(
-                    daily_executions=event_listeners_table.c.daily_executions + 1,
-                    last_execution_at=now,
-                )
-            )
-            await self._db.execute(stmt)
-
-            return True, None
-
+            return await self._check_and_update_rate_limit(listener_id, conversation_id)
         except SQLAlchemyError as e:
             self._logger.exception(
                 f"Database error in check_and_update_rate_limit({listener_id}): {e}"
             )
             # On error, allow execution but log it
             return True, None
+
+    async def _check_and_update_rate_limit(
+        self,
+        listener_id: int,
+        conversation_id: str,
+    ) -> tuple[bool, str | None]:
+        now = datetime.now(UTC)
+
+        listener = await self.get_event_listener_by_id(listener_id)
+        if not listener or listener.get("conversation_id") != conversation_id:
+            return False, "Listener not found"
+
+        daily_reset_at = listener["daily_reset_at"]
+        if not daily_reset_at or now > daily_reset_at:
+            tomorrow = now.replace(
+                hour=0, minute=0, second=0, microsecond=0
+            ) + timedelta(days=1)
+            stmt = (
+                update(event_listeners_table)
+                .where(event_listeners_table.c.id == listener_id)
+                .values(
+                    daily_executions=1,
+                    daily_reset_at=tomorrow,
+                    last_execution_at=now,
+                )
+            )
+            await self._db.execute(stmt)
+            return True, None
+
+        if listener["daily_executions"] >= 5:
+            return (
+                False,
+                f"Daily limit exceeded ({listener['daily_executions']} triggers today)",
+            )
+
+        stmt = (
+            update(event_listeners_table)
+            .where(event_listeners_table.c.id == listener_id)
+            .values(
+                daily_executions=event_listeners_table.c.daily_executions + 1,
+                last_execution_at=now,
+            )
+        )
+        await self._db.execute(stmt)
+        return True, None
 
     async def create_event_listener(
         self,
@@ -590,29 +585,26 @@ class EventsRepository(BaseRepository):
             List of event dictionaries
         """
         try:
-            cutoff_time = datetime.now(UTC) - timedelta(hours=hours)
-
-            stmt = select(recent_events_table).where(
-                recent_events_table.c.timestamp >= cutoff_time
-            )
-
-            if source_id is not None:
-                stmt = stmt.where(recent_events_table.c.source_id == source_id)
-
-            # Order by timestamp descending and apply limit
-            stmt = stmt.order_by(recent_events_table.c.timestamp.desc()).limit(limit)
-
-            rows = await self._db.fetch_all(stmt)
-
-            events: list[RecentEventDict] = []
-            for row in rows:
-                events.append(self._normalize_event(row))
-
-            return events
-
+            return await self._query_recent_events(source_id, hours, limit)
         except SQLAlchemyError as e:
             self._logger.exception(f"Database error in query_recent_events: {e}")
             raise
+
+    async def _query_recent_events(
+        self,
+        source_id: str | None,
+        hours: int,
+        limit: int,
+    ) -> list[RecentEventDict]:
+        cutoff_time = datetime.now(UTC) - timedelta(hours=hours)
+        stmt = select(recent_events_table).where(
+            recent_events_table.c.timestamp >= cutoff_time
+        )
+        if source_id is not None:
+            stmt = stmt.where(recent_events_table.c.source_id == source_id)
+        stmt = stmt.order_by(recent_events_table.c.timestamp.desc()).limit(limit)
+        rows = await self._db.fetch_all(stmt)
+        return [self._normalize_event(row) for row in rows]
 
     async def cleanup_old_events(
         self,
@@ -664,29 +656,28 @@ class EventsRepository(BaseRepository):
             Number of deleted listeners
         """
         try:
-            cutoff_time = datetime.now(UTC) - timedelta(hours=retention_hours)
-
-            stmt = delete(event_listeners_table).where(
-                (event_listeners_table.c.one_time.is_(True))
-                & (event_listeners_table.c.enabled.is_(False))
-                & (event_listeners_table.c.last_execution_at < cutoff_time)
-            )
-
-            result = await self._db.execute(stmt)
-            deleted_count = result.rowcount
-
-            if deleted_count > 0:
-                self._logger.info(
-                    f"Cleaned up {deleted_count} completed one-time listeners "
-                    f"older than {retention_hours} hours"
-                )
-            return deleted_count
-
+            return await self._cleanup_completed_one_time_listeners(retention_hours)
         except SQLAlchemyError as e:
             self._logger.exception(
                 f"Database error in cleanup_completed_one_time_listeners: {e}"
             )
             raise
+
+    async def _cleanup_completed_one_time_listeners(self, retention_hours: int) -> int:
+        cutoff_time = datetime.now(UTC) - timedelta(hours=retention_hours)
+        stmt = delete(event_listeners_table).where(
+            (event_listeners_table.c.one_time.is_(True))
+            & (event_listeners_table.c.enabled.is_(False))
+            & (event_listeners_table.c.last_execution_at < cutoff_time)
+        )
+        result = await self._db.execute(stmt)
+        deleted_count = result.rowcount
+        if deleted_count > 0:
+            self._logger.info(
+                f"Cleaned up {deleted_count} completed one-time listeners "
+                f"older than {retention_hours} hours"
+            )
+        return deleted_count
 
     def _process_listener_row(self, row: Mapping[str, Any]) -> EventListenerDict:
         """Process a listener row from the database."""
@@ -740,57 +731,49 @@ class EventsRepository(BaseRepository):
     ) -> tuple[list[dict], int]:
         """Get events with listener information."""
         try:
-            cutoff_time = datetime.now(UTC) - timedelta(hours=hours)
-
-            # Build base query
-            stmt = select(recent_events_table).where(
-                recent_events_table.c.timestamp >= cutoff_time
+            return await self._get_events_with_listeners(
+                source_id, hours, limit, offset, only_triggered
             )
-
-            if source_id:
-                stmt = stmt.where(recent_events_table.c.source_id == source_id)
-
-            if only_triggered:
-                stmt = stmt.where(
-                    recent_events_table.c.triggered_listener_ids.isnot(None)
-                )
-
-            # Get total count
-            count_stmt = select(func.count().label("count")).select_from(
-                stmt.alias("events_subquery")
-            )
-            count_result = await self._db.fetch_one(count_stmt)
-            total_count = count_result["count"] if count_result else 0
-
-            # Apply pagination and ordering
-            stmt = stmt.order_by(recent_events_table.c.timestamp.desc())
-            stmt = stmt.limit(limit).offset(offset)
-
-            rows = await self._db.fetch_all(stmt)
-
-            # Process events and add listener names
-            events = []
-            for row in rows:
-                event = dict(row)
-
-                # Get listener names if any were triggered
-                if event.get("triggered_listener_ids"):
-                    listener_names = []
-                    for lid in event["triggered_listener_ids"]:
-                        listener = await self.get_event_listener_by_id(lid)
-                        if listener:
-                            listener_names.append(listener["name"])
-                    event["triggered_listener_names"] = listener_names
-                else:
-                    event["triggered_listener_names"] = []
-
-                events.append(event)
-
-            return events, total_count
-
         except SQLAlchemyError as e:
             self._logger.exception(f"Database error in get_events_with_listeners: {e}")
             raise
+
+    async def _get_events_with_listeners(
+        self,
+        source_id: str | None,
+        hours: int,
+        limit: int,
+        offset: int,
+        only_triggered: bool,
+    ) -> tuple[list[dict], int]:
+        cutoff_time = datetime.now(UTC) - timedelta(hours=hours)
+        stmt = select(recent_events_table).where(
+            recent_events_table.c.timestamp >= cutoff_time
+        )
+        if source_id:
+            stmt = stmt.where(recent_events_table.c.source_id == source_id)
+        if only_triggered:
+            stmt = stmt.where(recent_events_table.c.triggered_listener_ids.isnot(None))
+
+        count_stmt = select(func.count().label("count")).select_from(
+            stmt.alias("events_subquery")
+        )
+        count_result = await self._db.fetch_one(count_stmt)
+        total_count = count_result["count"] if count_result else 0
+        stmt = stmt.order_by(recent_events_table.c.timestamp.desc()).limit(limit)
+        rows = await self._db.fetch_all(stmt.offset(offset))
+
+        events = []
+        for row in rows:
+            event = dict(row)
+            listener_names = []
+            for listener_id in event.get("triggered_listener_ids") or []:
+                listener = await self.get_event_listener_by_id(listener_id)
+                if listener:
+                    listener_names.append(listener["name"])
+            event["triggered_listener_names"] = listener_names
+            events.append(event)
+        return events, total_count
 
     async def get_listener_execution_stats(
         self,
@@ -799,78 +782,53 @@ class EventsRepository(BaseRepository):
         """Get execution statistics for a listener."""
 
         try:
-            # Get the listener first
-            listener = await self.get_event_listener_by_id(listener_id)
-            if not listener:
-                return None
-
-            # Check if we're using SQLite or PostgreSQL
-            is_sqlite = self._db.dialect_name == "sqlite"
-
-            if is_sqlite:
-                # For SQLite, we need to use LIKE on the JSON string representation
-                # SQLite stores JSON as text, so we can search for the listener ID
-                # We need to search for both "[listener_id]" and "[listener_id," patterns
-                search_pattern = f"%{listener_id}%"
-
-                # Count total executions from recent_events
-                stmt = select(func.count().label("count")).select_from(
-                    recent_events_table
-                )
-                stmt = stmt.where(
-                    cast(recent_events_table.c.triggered_listener_ids, String).like(
-                        search_pattern
-                    )
-                )
-            else:
-                # For PostgreSQL, use the proper JSONB contains operator
-                stmt = select(func.count().label("count")).select_from(
-                    recent_events_table
-                )
-                stmt = stmt.where(
-                    recent_events_table.c.triggered_listener_ids.op("@>")(
-                        cast([listener_id], JSONB)
-                    )
-                )
-
-            result = await self._db.fetch_one(stmt)
-            total_executions = result["count"] if result else 0
-
-            # Get recent events that triggered this listener
-            if is_sqlite:
-                recent_stmt = select(recent_events_table).where(
-                    cast(recent_events_table.c.triggered_listener_ids, String).like(
-                        search_pattern
-                    )
-                )
-            else:
-                recent_stmt = select(recent_events_table).where(
-                    recent_events_table.c.triggered_listener_ids.op("@>")(
-                        cast([listener_id], JSONB)
-                    )
-                )
-
-            recent_stmt = recent_stmt.order_by(
-                recent_events_table.c.timestamp.desc()
-            ).limit(10)
-
-            recent_events = await self._db.fetch_all(recent_stmt)
-
-            return ListenerExecutionStatsDict(
-                total_executions=total_executions,
-                daily_executions=listener.get("daily_executions", 0),
-                daily_limit=5,
-                last_execution_at=listener.get("last_execution_at"),
-                recent_events=[
-                    self._normalize_event(dict(row)) for row in recent_events
-                ],
-            )
-
+            return await self._get_listener_execution_stats(listener_id)
         except SQLAlchemyError as e:
             self._logger.exception(
                 f"Database error in get_listener_execution_stats: {e}"
             )
             raise
+
+    async def _get_listener_execution_stats(
+        self, listener_id: int
+    ) -> ListenerExecutionStatsDict | None:
+        listener = await self.get_event_listener_by_id(listener_id)
+        if not listener:
+            return None
+
+        is_sqlite = self._db.dialect_name == "sqlite"
+        if is_sqlite:
+            search_pattern = f"%{listener_id}%"
+            listener_filter = cast(
+                recent_events_table.c.triggered_listener_ids, String
+            ).like(search_pattern)
+        else:
+            listener_filter = recent_events_table.c.triggered_listener_ids.op("@>")(
+                cast([listener_id], JSONB)
+            )
+
+        stmt = (
+            select(func.count().label("count"))
+            .select_from(recent_events_table)
+            .where(listener_filter)
+        )
+        result = await self._db.fetch_one(stmt)
+        total_executions = result["count"] if result else 0
+        recent_stmt = (
+            select(recent_events_table)
+            .where(listener_filter)
+            .order_by(recent_events_table.c.timestamp.desc())
+            .limit(10)
+        )
+        recent_events = await self._db.fetch_all(recent_stmt)
+
+        return ListenerExecutionStatsDict(
+            total_executions=total_executions,
+            daily_executions=listener.get("daily_executions", 0),
+            daily_limit=5,
+            last_execution_at=listener.get("last_execution_at"),
+            recent_events=[self._normalize_event(dict(row)) for row in recent_events],
+        )
 
     async def get_event_by_id(self, event_id: str) -> RecentEventDict | None:
         """Get a specific event by ID."""
@@ -898,37 +856,45 @@ class EventsRepository(BaseRepository):
     ) -> tuple[list[EventListenerDict], int]:
         """Get all event listeners (admin view) with pagination."""
         try:
-            # Build base query
-            stmt = select(event_listeners_table)
-
-            # Apply filters
-            if source_id:
-                stmt = stmt.where(event_listeners_table.c.source_id == source_id)
-            if action_type:
-                stmt = stmt.where(event_listeners_table.c.action_type == action_type)
-            if conversation_id:
-                stmt = stmt.where(
-                    event_listeners_table.c.conversation_id == conversation_id
-                )
-            if enabled is not None:
-                stmt = stmt.where(event_listeners_table.c.enabled == enabled)
-
-            # Get total count
-            count_stmt = select(func.count().label("count")).select_from(
-                stmt.alias("listeners_subquery")
+            return await self._get_all_event_listeners(
+                source_id,
+                action_type,
+                conversation_id,
+                enabled,
+                limit,
+                offset,
             )
-            count_result = await self._db.fetch_one(count_stmt)
-            total_count = count_result["count"] if count_result else 0
-
-            # Apply pagination and ordering
-            stmt = stmt.order_by(event_listeners_table.c.created_at.desc())
-            stmt = stmt.limit(limit).offset(offset)
-
-            rows = await self._db.fetch_all(stmt)
-
-            listeners = [self._normalize_event_listener(dict(row)) for row in rows]
-            return listeners, total_count
-
         except SQLAlchemyError as e:
             self._logger.exception(f"Database error in get_all_event_listeners: {e}")
             raise
+
+    async def _get_all_event_listeners(
+        self,
+        source_id: str | None,
+        action_type: str | None,
+        conversation_id: str | None,
+        enabled: bool | None,
+        limit: int,
+        offset: int,
+    ) -> tuple[list[EventListenerDict], int]:
+        stmt = select(event_listeners_table)
+        if source_id:
+            stmt = stmt.where(event_listeners_table.c.source_id == source_id)
+        if action_type:
+            stmt = stmt.where(event_listeners_table.c.action_type == action_type)
+        if conversation_id:
+            stmt = stmt.where(
+                event_listeners_table.c.conversation_id == conversation_id
+            )
+        if enabled is not None:
+            stmt = stmt.where(event_listeners_table.c.enabled == enabled)
+
+        count_stmt = select(func.count().label("count")).select_from(
+            stmt.alias("listeners_subquery")
+        )
+        count_result = await self._db.fetch_one(count_stmt)
+        total_count = count_result["count"] if count_result else 0
+        stmt = stmt.order_by(event_listeners_table.c.created_at.desc()).limit(limit)
+        rows = await self._db.fetch_all(stmt.offset(offset))
+        listeners = [self._normalize_event_listener(dict(row)) for row in rows]
+        return listeners, total_count

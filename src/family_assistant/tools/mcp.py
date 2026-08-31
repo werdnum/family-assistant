@@ -312,7 +312,8 @@ class MCPToolsProvider:
     ) -> None:
         """Logs progress during MCP tool initialization."""
         logger.debug("MCP initialization logging task started.")
-        try:
+
+        async def log_until_stopped() -> None:
             while not stop_event.is_set():
                 try:
                     # Wait for 10 seconds or until stop_event is set
@@ -342,6 +343,9 @@ class MCPToolsProvider:
                         )
                 except asyncio.CancelledError:  # If logging_task itself is cancelled
                     raise
+
+        try:
+            await log_until_stopped()
         except asyncio.CancelledError:
             logger.debug("MCP initialization logging task cancelled.")
         except Exception as e:
@@ -364,9 +368,7 @@ class MCPToolsProvider:
         """Connects to a single MCP server, discovers tools, and returns results."""
         self._server_statuses[server_id] = MCP_SERVER_STATUS_CONNECTING
         discovered_tools = []
-        discovered_descriptors = []
         tool_map = {}
-        session = None
         exit_stack = contextlib.AsyncExitStack()
 
         transport_type = server_conf.get("transport", "stdio").lower()
@@ -431,7 +433,13 @@ class MCPToolsProvider:
         logger.info(
             f"Attempting connection and discovery for MCP server '{server_id}' using '{transport_type}' transport..."
         )
-        try:
+
+        async def connect_and_discover() -> tuple[
+            ClientSession | None,
+            list[ToolDefinition],
+            list[ToolDescriptor],
+            dict[str, str],
+        ]:
             # --- Transport and Session Creation ---
             if transport_type == "stdio":
                 if not command:
@@ -552,6 +560,8 @@ class MCPToolsProvider:
 
             return session, discovered_tools, discovered_descriptors, tool_map
 
+        try:
+            return await connect_and_discover()
         except Exception as e:
             logger.exception(
                 f"Failed connection/discovery for MCP server '{server_id}': {e}"
@@ -823,31 +833,38 @@ class MCPToolsProvider:
             f"Starting health check loop with interval {self._health_check_interval_seconds}s"
         )
 
+        async def run_health_check_iteration() -> bool:
+            # Wait for the interval
+            await asyncio.sleep(self._health_check_interval_seconds)
+
+            if not self._health_check_enabled:
+                return False
+
+            # Collect servers needing retry before health checks run,
+            # so servers that fail health check below aren't retried twice
+            servers_to_retry = [
+                server_id
+                for server_id, status in self._server_statuses.items()
+                if status in {MCP_SERVER_STATUS_FAILED, MCP_SERVER_STATUS_CANCELLED}
+            ]
+
+            await self._run_health_checks()
+            await self._retry_disconnected_servers(servers_to_retry)
+            return True
+
         while self._health_check_enabled:
             try:
-                # Wait for the interval
-                await asyncio.sleep(self._health_check_interval_seconds)
-
-                if not self._health_check_enabled:
-                    break
-
-                # Collect servers needing retry before health checks run,
-                # so servers that fail health check below aren't retried twice
-                servers_to_retry = [
-                    server_id
-                    for server_id, status in self._server_statuses.items()
-                    if status in {MCP_SERVER_STATUS_FAILED, MCP_SERVER_STATUS_CANCELLED}
-                ]
-
-                await self._run_health_checks()
-                await self._retry_disconnected_servers(servers_to_retry)
-
+                should_continue = await run_health_check_iteration()
             except asyncio.CancelledError:
                 logger.info("Health check loop cancelled")
                 break
             except Exception as e:
                 logger.exception(f"Unexpected error in health check loop: {e}")
                 # Continue the loop despite errors
+                continue
+
+            if not should_continue:
+                break
 
         logger.info("Health check loop stopped")
 
@@ -1124,7 +1141,7 @@ class MCPToolsProvider:
         await self._teardown_server(server_id)
 
         # Attempt reconnection
-        try:
+        async def reconnect() -> bool:
             # Call the existing connection method
             (
                 session,
@@ -1147,6 +1164,8 @@ class MCPToolsProvider:
                 logger.error(f"Failed to reconnect MCP server '{server_id}'")
                 return False
 
+        try:
+            return await reconnect()
         except Exception as e:
             logger.exception(f"Error reconnecting MCP server '{server_id}': {e}")
             self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
@@ -1182,8 +1201,11 @@ class MCPToolsProvider:
 
         # Try to execute the tool, with one reconnection attempt on failure
         for attempt in range(2):
-            try:
-                mcp_result = await session.call_tool(name=name, arguments=arguments)
+
+            async def call_tool_result(active_session: ClientSession) -> str:
+                mcp_result = await active_session.call_tool(
+                    name=name, arguments=arguments
+                )
 
                 # Process MCP result content
                 response_parts = []
@@ -1210,6 +1232,8 @@ class MCPToolsProvider:
                     )
                     return result_str
 
+            try:
+                return await call_tool_result(session)
             except Exception as e:
                 if attempt == 0:
                     # First attempt failed, try to reconnect

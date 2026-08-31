@@ -22,6 +22,8 @@ from family_assistant.tools.taint_helpers import merge_artifact_taint_into_conte
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
+    from family_assistant.services.attachment_registry import AttachmentRegistry
+    from family_assistant.storage.database import Database
     from family_assistant.tools.types import ToolExecutionContext
 
 logger = logging.getLogger(__name__)
@@ -39,6 +41,37 @@ _TAINT_LABELS_BY_TIER: dict[SourceTrustTier, str] = {
     SourceTrustTier.RECOGNIZED_MACHINE: "source_recognized_machine",
     SourceTrustTier.UNKNOWN_EXTERNAL: "source_unknown_external",
 }
+
+
+async def _load_note_attachment(
+    attachment_registry: AttachmentRegistry,
+    db_context: Database,
+    attachment_id: str,
+    *,
+    user_id: str | None,
+    note_title: str,
+) -> ToolAttachment | None:
+    metadata = await attachment_registry.get_attachment(
+        db_context, attachment_id, acting_user_id=user_id
+    )
+    if metadata is None:
+        logger.warning(
+            f"Attachment {attachment_id} referenced in note '{note_title}' not found"
+        )
+        return None
+
+    content = await attachment_registry.get_attachment_content(
+        db_context, attachment_id, acting_user_id=user_id
+    )
+    if not content:
+        logger.warning(f"Could not fetch content for attachment {attachment_id}")
+        return None
+    return ToolAttachment(
+        mime_type=metadata.mime_type,
+        content=content,
+        description=metadata.description,
+        attachment_id=attachment_id,
+    )
 
 
 def _note_provenance_from_taint(
@@ -370,35 +403,20 @@ async def get_note_tool(
     if attachment_ids and attachment_registry:
         for attachment_id in attachment_ids:
             try:
-                metadata = await attachment_registry.get_attachment(
-                    db_context, attachment_id, acting_user_id=exec_context.user_id
+                attachment = await _load_note_attachment(
+                    attachment_registry,
+                    db_context,
+                    attachment_id,
+                    user_id=exec_context.user_id,
+                    note_title=title,
                 )
-                if metadata:
-                    # Fetch content
-                    content = await attachment_registry.get_attachment_content(
-                        db_context, attachment_id, acting_user_id=exec_context.user_id
-                    )
-                    if content:
-                        attachments.append(
-                            ToolAttachment(
-                                mime_type=metadata.mime_type,
-                                content=content,
-                                description=metadata.description,
-                                attachment_id=attachment_id,
-                            )
-                        )
-                    else:
-                        logger.warning(
-                            f"Could not fetch content for attachment {attachment_id}"
-                        )
-                else:
-                    logger.warning(
-                        f"Attachment {attachment_id} referenced in note '{title}' not found"
-                    )
             except Exception as e:
                 logger.exception(
                     f"Error fetching attachment {attachment_id} for note '{title}': {e}"
                 )
+            else:
+                if attachment is not None:
+                    attachments.append(attachment)
 
     return ToolResult(
         data=result_data, attachments=attachments if attachments else None

@@ -32,6 +32,7 @@ from family_assistant.processing import DelegatableService, ProcessingService
 from family_assistant.processing.types import MidTurnUserInput
 from family_assistant.security.taint import (
     SourceTrustTier,
+    TaintMetadata,
     TaintSource,
     TaintSourceType,
     TurnTaintState,
@@ -288,12 +289,16 @@ async def _process_user_attachments(
                     detail="Attachment content cannot be empty",
                 )
             # Handle attachment content - either URL reference or base64 data
-            try:
+
+            async def process_attachment(
+                current_attachment: ChatAttachmentRequest,
+                current_content_data: str,
+            ) -> None:
                 # New flow: Handle URL references to uploaded attachments
-                if content_data.startswith("/api/attachments/"):
+                if current_content_data.startswith("/api/attachments/"):
                     # Content is a URL reference to an already uploaded attachment
                     # Extract attachment ID from URL like "/api/attachments/12345"
-                    attachment_id = content_data.split("/")[-1]
+                    attachment_id = current_content_data.rsplit("/", maxsplit=1)[-1]
 
                     # First try to atomically claim unlinked attachment for this conversation
                     attachment_record: (
@@ -352,12 +357,12 @@ async def _process_user_attachments(
 
                 else:
                     # Legacy flow: Handle base64 data (for backwards compatibility)
-                    if content_data.startswith("data:"):
+                    if current_content_data.startswith("data:"):
                         # Extract MIME type and base64 data
-                        header, b64_data = content_data.split(",", 1)
+                        header, b64_data = current_content_data.split(",", 1)
                         mime_type = header.split(":")[1].split(";")[0]
                         content_bytes = base64.b64decode(b64_data)
-                        base_filename = attachment.get(
+                        base_filename = current_attachment.get(
                             "filename", f"upload_{uuid.uuid4().hex[:8]}"
                         )
                         # Ensure filename has correct extension based on MIME type
@@ -368,10 +373,10 @@ async def _process_user_attachments(
                             filename = base_filename
                     else:
                         # Assume direct base64 content
-                        content_bytes = base64.b64decode(content_data)
+                        content_bytes = base64.b64decode(current_content_data)
                         # For security, don't trust client-provided filenames for MIME type
                         # Instead, try to detect from content magic bytes or use safe default
-                        base_filename = attachment.get(
+                        base_filename = current_attachment.get(
                             "filename", f"upload_{uuid.uuid4().hex[:8]}"
                         )
 
@@ -411,7 +416,7 @@ async def _process_user_attachments(
                             conversation_id=conversation_id,
                             message_id=None,  # Will be set when message is stored
                             user_id=user_id,
-                            description=attachment.get(
+                            description=current_attachment.get(
                                 "description", f"User uploaded: {filename}"
                             ),
                         )
@@ -443,6 +448,8 @@ async def _process_user_attachments(
                         "size": attachment_record.size,
                     })
 
+            try:
+                await process_attachment(attachment, content_data)
             except (ValueError, binascii.Error) as e:
                 # Invalid base64 or data URL format
                 logger.error(f"Invalid attachment content: {e}")
@@ -1394,7 +1401,9 @@ async def api_chat_create_turn(
     # idempotent on turn_id, so it reuses this row instead of inserting a
     # duplicate. ``payload.prompt`` matches what the producer would store (the
     # first text part of the trigger content).
-    try:
+    async def persist_user_message() -> tuple[
+        "TaintMetadata", "TaintMetadata", "TaintMetadata"
+    ]:
         user_msg_db = Database(request.app.state.database_engine)
         # Read the pre-turn history and context taint BEFORE the prompt is
         # committed. Anything failing after that write strands the prompt: the
@@ -1453,6 +1462,19 @@ async def api_chat_create_turn(
             attachments=trigger_attachments,
             processing_profile_id=selected_processing_service.service_config.id,
         )
+
+        return (
+            initial_history_taint_metadata,
+            initial_context_taint_metadata,
+            initial_live_taint_metadata,
+        )
+
+    try:
+        (
+            initial_history_taint_metadata,
+            initial_context_taint_metadata,
+            initial_live_taint_metadata,
+        ) = await persist_user_message()
     except Exception:
         # The turn is registered in the hub but no producer task exists yet (and
         # thus no done-callback safety net), so without ending it here the
@@ -1624,7 +1646,7 @@ async def api_chat_conversation_stream(
         # recorded on an *explicit* client ack — the ``ack_seq`` query param on
         # (re)subscribe or ``POST /v1/chat/ack`` after the client processes
         # turn_ended — never here on send.
-        try:
+        async def generate_events() -> AsyncGenerator[str]:
             # Flush the response head immediately with an initial heartbeat. An idle
             # ``follow=true`` stream's first real byte is otherwise the 30s heartbeat,
             # and the production front door (Envoy) does not forward the response
@@ -1703,13 +1725,20 @@ async def api_chat_conversation_stream(
                     and not _has_running_turn()
                 ):
                     return
+
+        events = generate_events()
+        try:
+            async for payload_text in events:
+                yield payload_text
         except asyncio.CancelledError:
             raise
         finally:
-            # Synchronous + lock-free so it still runs when the ASGI server
-            # cancels this generator on client disconnect (an await here would
-            # re-raise CancelledError and leak the subscriber queue).
-            hub.unsubscribe(conversation_id, handle.queue)
+            try:
+                await events.aclose()
+            finally:
+                # Synchronous + lock-free so it still runs when the ASGI server
+                # cancels this generator on client disconnect.
+                hub.unsubscribe(conversation_id, handle.queue)
 
     return StreamingResponse(
         event_generator(),
@@ -1753,7 +1782,7 @@ async def api_chat_activity_stream(
     handle = hub.subscribe_activity(raw_user_id)
 
     async def event_generator() -> AsyncGenerator[str]:
-        try:
+        async def generate_events() -> AsyncGenerator[str]:
             # Flush the response head immediately with an initial heartbeat so a
             # buffering front door forwards the headers to the client without waiting
             # for the first real heartbeat (see the follow-stream endpoint for the
@@ -1805,12 +1834,20 @@ async def api_chat_activity_stream(
                     "timestamp": activity.timestamp.isoformat(),
                 })
                 yield f"event: conversation_activity\ndata: {payload}\n\n"
+
+        events = generate_events()
+        try:
+            async for payload_text in events:
+                yield payload_text
         except asyncio.CancelledError:
             raise
         finally:
-            # Synchronous + lock-free so it still runs when the ASGI server
-            # cancels this generator on client disconnect.
-            hub.unsubscribe_activity(handle.queue)
+            try:
+                await events.aclose()
+            finally:
+                # Synchronous + lock-free so it still runs when the ASGI server
+                # cancels this generator on client disconnect.
+                hub.unsubscribe_activity(handle.queue)
 
     return StreamingResponse(
         event_generator(),
@@ -3058,7 +3095,8 @@ async def confirm_tool_execution(
     """
     confirmation_service = _get_confirmation_service(request)
     confirmation_result_waiters = _get_confirmation_result_waiters(request)
-    try:
+
+    async def process_confirmation() -> str:
         if payload.approved:
             if confirmation_result_waiters.is_decision_only(payload.request_id):
                 await confirmation_service.approve_without_enqueueing_execution(
@@ -3083,6 +3121,10 @@ async def confirm_tool_execution(
             web_confirmation_manager.resolve_rejected(payload.request_id)
             confirmation_result_waiters.resolve_rejected(payload.request_id)
             message = "Tool execution rejected"
+        return message
+
+    try:
+        message = await process_confirmation()
         success = True
         logger.info(f"Confirmation {payload.request_id}: {message}")
     except (

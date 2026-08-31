@@ -10,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from family_assistant.embeddings import EmbeddingGenerator
 from family_assistant.indexing.pipeline import (
+    ContentProcessor,
     IndexableContent,
     IndexingPipeline,
 )
@@ -130,42 +131,9 @@ class DocumentIndexer:
                 continue
 
             try:
-                if proc_type == "TitleExtractor":
-                    processors.append(TitleExtractor(**proc_specific_config))
-                elif proc_type == "PDFTextExtractor":
-                    processors.append(PDFTextExtractor(**proc_specific_config))
-                elif proc_type == "WebFetcher":
-                    processors.append(
-                        WebFetcherProcessor(
-                            scraper=self.scraper, **proc_specific_config
-                        )
-                    )
-                elif proc_type == "LLMSummaryGenerator":
-                    processors.append(
-                        LLMSummaryGeneratorProcessor(
-                            llm_client=self.llm_client, **proc_specific_config
-                        )
-                    )
-                elif proc_type == "LLMPrimaryLinkExtractor":  # New processor type
-                    processors.append(
-                        LLMPrimaryLinkExtractorProcessor(
-                            llm_client=self.llm_client, **proc_specific_config
-                        )
-                    )
-                elif proc_type == "TextChunker":
-                    processors.append(TextChunker(**proc_specific_config))
-                elif proc_type == "EmbeddingDispatch":
-                    processors.append(
-                        EmbeddingDispatchProcessor(**proc_specific_config)
-                    )
-                elif proc_type == "DocumentTitleUpdater":
-                    processors.append(
-                        DocumentTitleUpdaterProcessor(**proc_specific_config)
-                    )
-                else:
-                    logger.warning(
-                        f"Unknown processor type '{proc_type}' in pipeline config. Skipping."
-                    )
+                processor = self._build_processor(proc_type, proc_specific_config)
+                if processor is not None:
+                    processors.append(processor)
             except Exception as e:
                 logger.exception(
                     f"Failed to instantiate processor type '{proc_type}' with config {proc_specific_config}: {e}"
@@ -182,6 +150,37 @@ class DocumentIndexer:
         logger.info(
             f"DocumentIndexer initialized with dynamically built pipeline including {len(processors)} processors: {[type(p).__name__ for p in processors]}"
         )
+
+    def _build_processor(
+        self,
+        proc_type: object,
+        proc_specific_config: dict[str, object],
+    ) -> ContentProcessor | None:
+        constructor_args = cast("dict[str, Any]", proc_specific_config)
+        if proc_type == "TitleExtractor":
+            return TitleExtractor(**constructor_args)
+        if proc_type == "PDFTextExtractor":
+            return PDFTextExtractor(**constructor_args)
+        if proc_type == "WebFetcher":
+            return WebFetcherProcessor(scraper=self.scraper, **constructor_args)
+        if proc_type == "LLMSummaryGenerator":
+            return LLMSummaryGeneratorProcessor(
+                llm_client=self.llm_client, **constructor_args
+            )
+        if proc_type == "LLMPrimaryLinkExtractor":
+            return LLMPrimaryLinkExtractorProcessor(
+                llm_client=self.llm_client, **constructor_args
+            )
+        if proc_type == "TextChunker":
+            return TextChunker(**constructor_args)
+        if proc_type == "EmbeddingDispatch":
+            return EmbeddingDispatchProcessor(**constructor_args)
+        if proc_type == "DocumentTitleUpdater":
+            return DocumentTitleUpdaterProcessor(**constructor_args)
+        logger.warning(
+            f"Unknown processor type '{proc_type}' in pipeline config. Skipping."
+        )
+        return None
 
     async def process_document(
         self,
@@ -215,24 +214,21 @@ class DocumentIndexer:
                     db_context,
                     document_id,
                 )
-                if original_document_record:
-                    break  # Success!
-
-                # Document not found - retry with delay if not last attempt
-                if attempt < DOCUMENT_FETCH_MAX_ATTEMPTS - 1:
-                    logger.warning(
-                        f"Document {document_id} not found on attempt {attempt + 1}/{DOCUMENT_FETCH_MAX_ATTEMPTS}. "
-                        "Retrying after delay (may be SQLite WAL visibility delay)..."
-                    )
-                    await asyncio.sleep(DOCUMENT_FETCH_RETRY_DELAY_SECONDS)
-                else:
-                    # Last attempt failed
-                    raise ValueError(
-                        f"Document with ID {document_id} not found after {DOCUMENT_FETCH_MAX_ATTEMPTS} attempts."
-                    )
             except SQLAlchemyError as e:
                 logger.exception(f"Database error fetching document {document_id}: {e}")
                 raise RuntimeError(f"Failed to fetch document {document_id}") from e
+            if original_document_record:
+                break
+            if attempt < DOCUMENT_FETCH_MAX_ATTEMPTS - 1:
+                logger.warning(
+                    f"Document {document_id} not found on attempt {attempt + 1}/{DOCUMENT_FETCH_MAX_ATTEMPTS}. "
+                    "Retrying after delay (may be SQLite WAL visibility delay)..."
+                )
+                await asyncio.sleep(DOCUMENT_FETCH_RETRY_DELAY_SECONDS)
+            else:
+                raise ValueError(
+                    f"Document with ID {document_id} not found after {DOCUMENT_FETCH_MAX_ATTEMPTS} attempts."
+                )
 
         initial_items: list[IndexableContent] = []
 

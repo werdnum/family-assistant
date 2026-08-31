@@ -110,6 +110,31 @@ class NotesContextProvider(ContextProvider):
     def name(self) -> str:
         return "notes"
 
+    async def _format_attachment(
+        self, db_context: Database, attachment_id: str, attachment_format: str
+    ) -> str:
+        registry = self._attachment_registry
+        if registry is None:
+            return ""
+
+        # Note attachments are ownerless, and this provider runs with no
+        # acting-user context, so ``None`` (ownerless-only) is correct:
+        # owner-scoped attachments never surface in note context lines.
+        metadata = await registry.get_attachment(
+            db_context, attachment_id, acting_user_id=None
+        )
+        if not metadata:
+            logger.warning(
+                f"[{self.name}] Attachment {attachment_id} not found in registry"
+            )
+            return ""
+
+        return attachment_format.format(
+            id=attachment_id,
+            filename=metadata.description or "attachment",
+            mime_type=metadata.mime_type,
+        )
+
     async def _format_attachments(
         self, db_context: Database, attachment_ids: list[str]
     ) -> str:
@@ -133,128 +158,116 @@ class NotesContextProvider(ContextProvider):
 
         for attachment_id in attachment_ids:
             try:
-                # Note attachments are ownerless, and this provider runs with no
-                # acting-user context, so ``None`` (ownerless-only) is correct:
-                # owner-scoped attachments never surface in note context lines.
-                metadata = await self._attachment_registry.get_attachment(
-                    db_context, attachment_id, acting_user_id=None
+                attachment_line = await self._format_attachment(
+                    db_context, attachment_id, attachment_format
                 )
-                if metadata:
-                    # Extract filename from description or use a default
-                    filename = metadata.description or "attachment"
-                    attachment_line = attachment_format.format(
-                        id=attachment_id,
-                        filename=filename,
-                        mime_type=metadata.mime_type,
-                    )
-                    attachment_lines.append(attachment_line)
-                else:
-                    logger.warning(
-                        f"[{self.name}] Attachment {attachment_id} not found in registry"
-                    )
             except Exception as e:
                 logger.warning(
                     f"[{self.name}] Failed to fetch attachment metadata for {attachment_id}: {e}"
                 )
+            else:
+                if attachment_line:
+                    attachment_lines.append(attachment_line)
 
         return "\n".join(attachment_lines)
 
-    async def get_context_fragments(self) -> list[str]:
+    async def _build_context_fragments(self) -> list[str]:
         fragments: list[str] = []
+        db_context = self._get_db_context_func()
+        # Use targeted queries - skills are identified at write time via is_skill column
+        prompt_notes = await db_context.notes.get_prompt_notes(
+            visibility_grants=self._visibility_grants
+        )
+        db_skills = await db_context.notes.get_skills(
+            visibility_grants=self._visibility_grants
+        )
+        excluded_titles = await db_context.notes.get_excluded_notes_titles(
+            visibility_grants=self._visibility_grants
+        )
+
+        # 1. Regular notes section
+        if prompt_notes:
+            notes_list_str = ""
+            note_item_format = self._prompts.get(
+                "note_item_format",
+                "- {title}: {content}",  # Default format
+            )
+            for note in prompt_notes:
+                note_text = note_item_format.format(
+                    title=note.title, content=note.content
+                )
+                notes_list_str += note_text + "\n"
+
+                # Add attachment references if present
+                attachment_ids = note.attachment_ids
+                if attachment_ids:
+                    attachment_text = await self._format_attachments(
+                        db_context, attachment_ids
+                    )
+                    if attachment_text:
+                        notes_list_str += attachment_text + "\n"
+
+            notes_context_header_template = self._prompts.get(
+                "notes_context_header", "Relevant notes:\n{notes_list}"
+            )
+            formatted_notes_context = notes_context_header_template.format(
+                notes_list=notes_list_str.strip()
+            ).strip()
+            if formatted_notes_context:
+                fragments.append(formatted_notes_context)
+        else:
+            no_notes_message = self._prompts.get("no_notes")
+            if no_notes_message:
+                fragments.append(no_notes_message)
+
+        # 2. Skill catalog (DB skills + file-based skills)
+        file_skills = (
+            self._note_registry.get_skill_catalog(self._visibility_grants)
+            if self._note_registry
+            else []
+        )
+        if db_skills or file_skills:
+            catalog_lines = [
+                "## Available Skills",
+                "Use the `get_note` tool to load a skill's full instructions.",
+            ]
+            for skill in db_skills:
+                catalog_lines.append(
+                    f"- **{skill.skill_name}**: {skill.skill_description}"
+                )
+            for skill in file_skills:
+                catalog_lines.append(f"- **{skill.name}**: {skill.description}")
+            fragments.append("\n".join(catalog_lines))
+
+        # 3. Excluded regular notes
+        if excluded_titles:
+            excluded_notes_format = self._prompts.get(
+                "excluded_notes_format",
+                "Other available notes (not included above): {excluded_titles}",
+            )
+            excluded_titles_str = ", ".join(f'"{title}"' for title in excluded_titles)
+            formatted_excluded_notes = excluded_notes_format.format(
+                excluded_titles=excluded_titles_str
+            ).strip()
+            if formatted_excluded_notes:
+                fragments.append(formatted_excluded_notes)
+
+        logger.debug(
+            "[%s] Formatted %d notes, %d DB skills, %d file skills into %d fragment(s).",
+            self.name,
+            len(prompt_notes),
+            len(db_skills),
+            len(file_skills),
+            len(fragments),
+        )
+        return fragments
+
+    async def get_context_fragments(self) -> list[str]:
         try:
-            db_context = self._get_db_context_func()
-            # Use targeted queries - skills are identified at write time via is_skill column
-            prompt_notes = await db_context.notes.get_prompt_notes(
-                visibility_grants=self._visibility_grants
-            )
-            db_skills = await db_context.notes.get_skills(
-                visibility_grants=self._visibility_grants
-            )
-            excluded_titles = await db_context.notes.get_excluded_notes_titles(
-                visibility_grants=self._visibility_grants
-            )
-
-            # 1. Regular notes section
-            if prompt_notes:
-                notes_list_str = ""
-                note_item_format = self._prompts.get(
-                    "note_item_format",
-                    "- {title}: {content}",  # Default format
-                )
-                for note in prompt_notes:
-                    note_text = note_item_format.format(
-                        title=note.title, content=note.content
-                    )
-                    notes_list_str += note_text + "\n"
-
-                    # Add attachment references if present
-                    attachment_ids = note.attachment_ids
-                    if attachment_ids:
-                        attachment_text = await self._format_attachments(
-                            db_context, attachment_ids
-                        )
-                        if attachment_text:
-                            notes_list_str += attachment_text + "\n"
-
-                notes_context_header_template = self._prompts.get(
-                    "notes_context_header", "Relevant notes:\n{notes_list}"
-                )
-                formatted_notes_context = notes_context_header_template.format(
-                    notes_list=notes_list_str.strip()
-                ).strip()
-                if formatted_notes_context:
-                    fragments.append(formatted_notes_context)
-            else:
-                no_notes_message = self._prompts.get("no_notes")
-                if no_notes_message:
-                    fragments.append(no_notes_message)
-
-            # 2. Skill catalog (DB skills + file-based skills)
-            file_skills = (
-                self._note_registry.get_skill_catalog(self._visibility_grants)
-                if self._note_registry
-                else []
-            )
-            if db_skills or file_skills:
-                catalog_lines = [
-                    "## Available Skills",
-                    "Use the `get_note` tool to load a skill's full instructions.",
-                ]
-                for skill in db_skills:
-                    catalog_lines.append(
-                        f"- **{skill.skill_name}**: {skill.skill_description}"
-                    )
-                for skill in file_skills:
-                    catalog_lines.append(f"- **{skill.name}**: {skill.description}")
-                fragments.append("\n".join(catalog_lines))
-
-            # 3. Excluded regular notes
-            if excluded_titles:
-                excluded_notes_format = self._prompts.get(
-                    "excluded_notes_format",
-                    "Other available notes (not included above): {excluded_titles}",
-                )
-                excluded_titles_str = ", ".join(
-                    f'"{title}"' for title in excluded_titles
-                )
-                formatted_excluded_notes = excluded_notes_format.format(
-                    excluded_titles=excluded_titles_str
-                ).strip()
-                if formatted_excluded_notes:
-                    fragments.append(formatted_excluded_notes)
-
-            logger.debug(
-                "[%s] Formatted %d notes, %d DB skills, %d file skills into %d fragment(s).",
-                self.name,
-                len(prompt_notes),
-                len(db_skills),
-                len(file_skills),
-                len(fragments),
-            )
+            return await self._build_context_fragments()
         except Exception as e:
             logger.exception(f"[{self.name}] Failed to get notes context: {e}")
             return []
-        return fragments
 
     async def get_context_taint_sources(self) -> tuple[TaintSource, ...]:
         """Return provenance taint for notes auto-included in the per-turn context."""
@@ -345,6 +358,25 @@ class HomeAssistantContextProvider(ContextProvider):
     def name(self) -> str:
         return "home_assistant"
 
+    def _format_rendered_template(self, rendered_template: str | None) -> list[str]:
+        if rendered_template and rendered_template.strip():
+            header = self._prompts.get("home_assistant_context_header", "").strip()
+            full_context = (
+                f"{header}\n{rendered_template.strip()}"
+                if header
+                else rendered_template.strip()
+            )
+            logger.debug(
+                f"[{self.name}] Successfully rendered Home Assistant template."
+            )
+            return [full_context.strip()]
+
+        logger.info(
+            f"[{self.name}] Rendered Home Assistant template was empty or whitespace only."
+        )
+        empty_message = self._prompts.get("home_assistant_template_empty", "").strip()
+        return [empty_message] if empty_message else []
+
     async def get_context_fragments(self) -> list[str]:
         """
         Asynchronously retrieves and formats context by rendering a template
@@ -368,29 +400,7 @@ class HomeAssistantContextProvider(ContextProvider):
             rendered_template = await self._ha_client.async_get_rendered_template(
                 template=self._context_template
             )
-
-            if rendered_template and rendered_template.strip():
-                header = self._prompts.get("home_assistant_context_header", "").strip()
-                # Only add header if it's not empty
-                full_context = (
-                    f"{header}\n{rendered_template.strip()}"
-                    if header
-                    else rendered_template.strip()
-                )
-                fragments.append(full_context.strip())
-                logger.debug(
-                    f"[{self.name}] Successfully rendered Home Assistant template."
-                )
-            else:
-                logger.info(
-                    f"[{self.name}] Rendered Home Assistant template was empty or whitespace only."
-                )
-                empty_message = self._prompts.get(
-                    "home_assistant_template_empty", ""
-                ).strip()
-                if empty_message:
-                    fragments.append(empty_message)
-
+            fragments.extend(self._format_rendered_template(rendered_template))
         except HomeassistantAPIError as ha_api_err:  # Specific error for HA API issues
             logger.exception(f"[{self.name}] Home Assistant API error: {ha_api_err}")
             error_message = self._prompts.get(
@@ -489,29 +499,31 @@ class WeatherContextProvider(ContextProvider):
             response = await self._httpx_client.get(url, params=params)
             response.raise_for_status()
             data = response.json()
-
-            # Basic validation
-            if not isinstance(data, dict) or "location" not in data:
-                logger.error(
-                    f"[{self.name}] Invalid data structure received from WillyWeather API: {data}"
-                )
-                return None
-
-            self._weather_data_cache = data
-            self._cache_expiry_time = now_utc + self._CACHE_DURATION
-            logger.debug(f"[{self.name}] Weather data fetched and cached.")
-            return data
         except httpx.HTTPStatusError as e:
             logger.exception(
                 f"[{self.name}] HTTP error fetching weather data: {e.response.status_code} - {e.response.text}"
             )
+            return None
         except httpx.RequestError as e:
             logger.exception(f"[{self.name}] Request error fetching weather data: {e}")
+            return None
         except Exception as e:
             logger.exception(
                 f"[{self.name}] Unexpected error fetching or parsing weather data: {e}"
             )
-        return None
+            return None
+
+        # Basic validation
+        if not isinstance(data, dict) or "location" not in data:
+            logger.error(
+                f"[{self.name}] Invalid data structure received from WillyWeather API: {data}"
+            )
+            return None
+
+        self._weather_data_cache = data
+        self._cache_expiry_time = now_utc + self._CACHE_DURATION
+        logger.debug(f"[{self.name}] Weather data fetched and cached.")
+        return data
 
     def _parse_api_datetime(
         self, dt_str: str | None, api_tz_str: str
@@ -848,25 +860,22 @@ class WeatherContextProvider(ContextProvider):
         ).format(location_name=location_name)
         fragments.append(header)
 
-        try:
-            # Detailed forecast for today
-            today_details = self._format_todays_detailed_forecast(
+        def format_forecast_fragments() -> list[str]:
+            forecast_fragments = self._format_todays_detailed_forecast(
                 weather_data, today_date_obj, api_tz_str
             )
-            fragments.extend(today_details)
-
-            # Outlook for the rest of the week
             outlook_header = self._prompts.get(
                 "weather_outlook_header", "\nOutlook for the week:"
             )
             if outlook_header:
-                fragments.append(outlook_header)
-
-            weekly_outlook = self._format_weekly_outlook(
-                weather_data, today_date_obj, api_tz_str
+                forecast_fragments.append(outlook_header)
+            forecast_fragments.extend(
+                self._format_weekly_outlook(weather_data, today_date_obj, api_tz_str)
             )
-            fragments.extend(weekly_outlook)
+            return forecast_fragments
 
+        try:
+            forecast_fragments = format_forecast_fragments()
         except Exception as e:
             logger.exception(f"[{self.name}] Error formatting weather data: {e}")
             # Fallback to a simpler message if formatting fails
@@ -878,6 +887,8 @@ class WeatherContextProvider(ContextProvider):
                 fragments = [header, no_data_msg] if header else [no_data_msg]
             else:
                 fragments = [header] if header else []
+        else:
+            fragments.extend(forecast_fragments)
 
         logger.debug(
             f"[{self.name}] Formatted weather data into {len(fragments)} fragment(s)."
@@ -949,18 +960,18 @@ class CalendarContextProvider(ContextProvider):
                 today_tomorrow_events=today_events_str,
                 next_two_weeks_events=future_events_str,
             ).strip()
-
-            if formatted_calendar_context:  # Ensure not adding empty string
-                fragments.append(formatted_calendar_context)
-            logger.debug(
-                f"[{self.name}] Formatted upcoming events into {len(fragments)} fragment(s)."
-            )
         except Exception as e:
             logger.exception(
                 f"[{self.name}] Failed to fetch or format calendar events: {e}"
             )
             # As per protocol, return empty list on error, error is logged.
             return []
+
+        if formatted_calendar_context:  # Ensure not adding empty string
+            fragments.append(formatted_calendar_context)
+        logger.debug(
+            f"[{self.name}] Formatted upcoming events into {len(fragments)} fragment(s)."
+        )
         return fragments
 
 
@@ -989,6 +1000,26 @@ class KnownUsersContextProvider(ContextProvider):
     def name(self) -> str:
         return "known_users"
 
+    def _format_known_users(self) -> list[str]:
+        user_item_format = self._prompts.get(
+            "known_user_item_format", "- {name} (Chat ID: {chat_id})"
+        )
+        user_list_str = "".join(
+            user_item_format.format(name=name, chat_id=chat_id) + "\n"
+            for chat_id, name in self._chat_id_to_name_map.items()
+        )
+        if not user_list_str:
+            return []
+
+        users_header_template = self._prompts.get(
+            "known_users_header",
+            "Known users you can interact with:\n{user_list}",
+        )
+        formatted_users_context = users_header_template.format(
+            user_list=user_list_str.strip()
+        ).strip()
+        return [formatted_users_context] if formatted_users_context else []
+
     async def get_context_fragments(self) -> list[str]:
         fragments: list[str] = []
         if not self._chat_id_to_name_map:
@@ -999,30 +1030,11 @@ class KnownUsersContextProvider(ContextProvider):
             return fragments
 
         try:
-            user_list_str = ""
-            user_item_format = self._prompts.get(
-                "known_user_item_format", "- {name} (Chat ID: {chat_id})"
-            )
-            for chat_id, name in self._chat_id_to_name_map.items():
-                user_list_str += (
-                    user_item_format.format(name=name, chat_id=chat_id) + "\n"
-                )
-
-            if user_list_str:
-                users_header_template = self._prompts.get(
-                    "known_users_header",
-                    "Known users you can interact with:\n{user_list}",
-                )
-                formatted_users_context = users_header_template.format(
-                    user_list=user_list_str.strip()
-                ).strip()
-                if formatted_users_context:
-                    fragments.append(formatted_users_context)
-
-            logger.debug(
-                f"[{self.name}] Formatted {len(self._chat_id_to_name_map)} known users into {len(fragments)} fragment(s)."
-            )
+            fragments = self._format_known_users()
         except Exception as e:
             logger.exception(f"[{self.name}] Failed to get known users context: {e}")
             return []
+        logger.debug(
+            f"[{self.name}] Formatted {len(self._chat_id_to_name_map)} known users into {len(fragments)} fragment(s)."
+        )
         return fragments

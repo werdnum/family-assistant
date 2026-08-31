@@ -244,45 +244,14 @@ async def store_incoming_email(
     # --- Actual Database Insertion and Task Enqueueing ---
     email_db_id: int | None = None
     task_id: str | None = None
+    insert_stmt = (
+        insert(received_emails_table)
+        .values(**email_data_for_db)
+        .returning(received_emails_table.c.id)
+    )
     try:
-        # 1. Insert email and get its ID
-        insert_stmt = (
-            insert(received_emails_table)
-            .values(**email_data_for_db)
-            .returning(received_emails_table.c.id)
-        )
         result = await db_context.execute(insert_stmt)
         email_db_id = result.scalar_one_or_none()
-
-        if not email_db_id:
-            raise RuntimeError(
-                f"Failed to retrieve DB ID after inserting email with Message-ID: {parsed_email.message_id_header}"
-            )
-
-        logger.info(
-            f"Stored email with Message-ID: {parsed_email.message_id_header}, DB ID: {email_db_id}"
-        )
-
-        # 2. Generate a unique task ID
-        task_id = f"index_email_{email_db_id}_{uuid.uuid4()}"
-
-        # 3. Enqueue the indexing task
-        await db_context.tasks.enqueue(
-            task_id=task_id,
-            task_type="index_email",
-            payload={"email_db_id": email_db_id},
-        )
-        logger.info(f"Enqueued indexing task {task_id} for email DB ID {email_db_id}")
-
-        # 4. Update the email record with the task ID
-        update_stmt = (
-            update(received_emails_table)
-            .where(received_emails_table.c.id == email_db_id)
-            .values(indexing_task_id=task_id)
-        )
-        await db_context.execute(update_stmt)
-        logger.info(f"Updated email {email_db_id} with indexing task ID {task_id}")
-
     except SQLAlchemyError as e:
         failed_stage = "inserting email"
         if email_db_id and not task_id:
@@ -294,6 +263,42 @@ async def store_incoming_email(
             f"Database error during {failed_stage} for email Message-ID {parsed_email.message_id_header} (DB ID: {email_db_id}, Task ID: {task_id}): {e}"
         )
         raise
+
+    if not email_db_id:
+        raise RuntimeError(
+            f"Failed to retrieve DB ID after inserting email with Message-ID: {parsed_email.message_id_header}"
+        )
+    logger.info(
+        f"Stored email with Message-ID: {parsed_email.message_id_header}, DB ID: {email_db_id}"
+    )
+
+    task_id = f"index_email_{email_db_id}_{uuid.uuid4()}"
+    try:
+        await db_context.tasks.enqueue(
+            task_id=task_id,
+            task_type="index_email",
+            payload={"email_db_id": email_db_id},
+        )
+    except SQLAlchemyError as e:
+        logger.exception(
+            f"Database error during updating email with task_id for email Message-ID {parsed_email.message_id_header} (DB ID: {email_db_id}, Task ID: {task_id}): {e}"
+        )
+        raise
+    logger.info(f"Enqueued indexing task {task_id} for email DB ID {email_db_id}")
+
+    update_stmt = (
+        update(received_emails_table)
+        .where(received_emails_table.c.id == email_db_id)
+        .values(indexing_task_id=task_id)
+    )
+    try:
+        await db_context.execute(update_stmt)
+    except SQLAlchemyError as e:
+        logger.exception(
+            f"Database error during updating email with task_id for email Message-ID {parsed_email.message_id_header} (DB ID: {email_db_id}, Task ID: {task_id}): {e}"
+        )
+        raise
+    logger.info(f"Updated email {email_db_id} with indexing task ID {task_id}")
 
 
 # Export symbols for use elsewhere

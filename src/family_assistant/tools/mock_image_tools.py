@@ -155,7 +155,7 @@ async def annotate_image_tool(
         f"Mock annotating image {attachment_id} with text '{annotation_text}' at {position}"
     )
 
-    try:
+    async def _annotate() -> ToolResult:
         # Check if it's an image
         if not image_attachment_id.get_mime_type().startswith("image/"):
             logger.warning(
@@ -208,6 +208,8 @@ async def annotate_image_tool(
 
         return ToolResult(text=success_message, attachments=[annotated_attachment])
 
+    try:
+        return await _annotate()
     except Exception as e:
         logger.exception(f"Error mock-annotating image {image_attachment_id}: {e}")
         return ToolResult(

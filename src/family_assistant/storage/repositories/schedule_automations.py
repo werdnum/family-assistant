@@ -131,29 +131,29 @@ class ScheduleAutomationsRepository(BaseRepository):
             Next execution datetime in UTC, or None if no more executions
         """
         try:
-            tz = timezone
-            if after is None:
-                after = datetime.now(tz)
-            else:
-                if after.tzinfo is None:
-                    after = after.replace(tzinfo=UTC)
-                after = after.astimezone(tz)
-
-            # Parse the RRULE — dtstart is in the user's timezone so that
-            # BYHOUR/BYMINUTE are evaluated in local time.
-            rule = rrule.rrulestr(recurrence_rule, dtstart=after)
-
-            # Get the next occurrence (in the user's timezone)
-            next_occurrence = rule.after(after)
-
-            if next_occurrence is None:
-                return None
-
-            # Convert to UTC for storage
-            return next_occurrence.astimezone(UTC)
+            return self._calculate_next_occurrence(recurrence_rule, after, timezone)
         except (ValueError, ParserError) as e:
             self._logger.error(f"Failed to parse RRULE '{recurrence_rule}': {e}")
             return None
+
+    @staticmethod
+    def _calculate_next_occurrence(
+        recurrence_rule: str,
+        after: datetime | None,
+        timezone: ZoneInfo,
+    ) -> datetime | None:
+        if after is None:
+            after = datetime.now(timezone)
+        else:
+            if after.tzinfo is None:
+                after = after.replace(tzinfo=UTC)
+            after = after.astimezone(timezone)
+
+        rule = rrule.rrulestr(recurrence_rule, dtstart=after)
+        next_occurrence = rule.after(after)
+        if next_occurrence is None:
+            return None
+        return next_occurrence.astimezone(UTC)
 
     async def create(
         self,
@@ -185,114 +185,102 @@ class ScheduleAutomationsRepository(BaseRepository):
         Returns:
             ID of the created automation
         """
-        try:
-            # Validate action_type
-            if action_type not in VALID_ACTION_TYPES:
-                raise ValueError(
-                    f"Invalid action_type '{action_type}'. Must be one of: {', '.join(sorted(VALID_ACTION_TYPES))}"
-                )
-
-            # Calculate first execution time
-            next_scheduled_at = self._parse_rrule_and_get_next(
-                recurrence_rule, timezone=timezone
+        if action_type not in VALID_ACTION_TYPES:
+            raise ValueError(
+                f"Invalid action_type '{action_type}'. Must be one of: {', '.join(sorted(VALID_ACTION_TYPES))}"
             )
-            if next_scheduled_at is None:
-                raise ValueError(f"Invalid RRULE: {recurrence_rule}")
+        next_scheduled_at = self._parse_rrule_and_get_next(
+            recurrence_rule, timezone=timezone
+        )
+        if next_scheduled_at is None:
+            raise ValueError(f"Invalid RRULE: {recurrence_rule}")
 
-            async def _create(txn: DatabaseTransaction) -> int:
-                """Insert the automation and enqueue its first task together.
+        async def _create(txn: DatabaseTransaction) -> int:
+            """Insert the automation and enqueue its first task together.
 
-                Split, a failed enqueue leaves an enabled automation with a
-                next_scheduled_at and no pending task -- it never fires until
-                someone toggles or repairs it.
-                """
-                # Create the automation record
-                stmt = (
-                    insert(schedule_automations_table)
-                    .values(
-                        name=name,
-                        description=description,
-                        recurrence_rule=recurrence_rule,
-                        next_scheduled_at=next_scheduled_at,
-                        action_type=action_type,
-                        action_config=action_config,
-                        conversation_id=conversation_id,
-                        interface_type=interface_type,
-                        enabled=enabled,
-                        processing_profile_id=processing_profile_id,
-                        created_by_user_id=created_by_user_id,
-                        created_at=datetime.now(UTC),
-                        execution_count=0,
-                    )
-                    .returning(schedule_automations_table.c.id)
+            Split, a failed enqueue leaves an enabled automation with a
+            next_scheduled_at and no pending task -- it never fires until
+            someone toggles or repairs it.
+            """
+            stmt = (
+                insert(schedule_automations_table)
+                .values(
+                    name=name,
+                    description=description,
+                    recurrence_rule=recurrence_rule,
+                    next_scheduled_at=next_scheduled_at,
+                    action_type=action_type,
+                    action_config=action_config,
+                    conversation_id=conversation_id,
+                    interface_type=interface_type,
+                    enabled=enabled,
+                    processing_profile_id=processing_profile_id,
+                    created_by_user_id=created_by_user_id,
+                    created_at=datetime.now(UTC),
+                    execution_count=0,
                 )
+                .returning(schedule_automations_table.c.id)
+            )
 
-                result = await txn.execute(stmt)
-                automation_id = result.scalar_one()
+            result = await txn.execute(stmt)
+            automation_id = result.scalar_one()
 
-                self._logger.info(
-                    f"Created schedule automation '{name}' (ID: {automation_id}) "
-                    f"for conversation {conversation_id}"
-                )
+            self._logger.info(
+                f"Created schedule automation '{name}' (ID: {automation_id}) "
+                f"for conversation {conversation_id}"
+            )
 
-                # Schedule the first task instance
-                task_type = (
-                    "llm_callback" if action_type == "wake_llm" else "script_execution"
-                )
-                task_id = f"sched_auto_{automation_id}_{uuid.uuid4().hex[:8]}"
+            task_type = (
+                "llm_callback" if action_type == "wake_llm" else "script_execution"
+            )
+            task_id = f"sched_auto_{automation_id}_{uuid.uuid4().hex[:8]}"
 
-                if action_type == "wake_llm":
-                    payload: LlmCallbackPayload | ScriptExecutionPayload = (
-                        LlmCallbackPayload(
-                            conversation_id=conversation_id,
-                            interface_type=interface_type,
-                            automation_id=str(automation_id),
-                            automation_type="schedule",
-                            callback_context=action_config.get("context", ""),
-                            scheduling_timestamp=datetime.now(UTC).isoformat(),
-                            tool_call_review_trigger_type="schedule",
-                            tool_call_review_trigger_definition=action_config.get(
-                                "context", ""
-                            ),
-                            tool_call_review_trigger_payload_present=False,
-                        )
-                    )
-                    if created_by_user_id is not None:
-                        payload["created_by_user_id"] = created_by_user_id
-                    # Scheduled wakes run under their originating profile (a trusted,
-                    # user-set-up trigger), honored by handle_llm_callback.
-                    if processing_profile_id is not None:
-                        payload["processing_profile_id"] = processing_profile_id
-                else:  # script
-                    payload = _build_script_payload(
-                        action_config=action_config,
+            if action_type == "wake_llm":
+                payload: LlmCallbackPayload | ScriptExecutionPayload = (
+                    LlmCallbackPayload(
                         conversation_id=conversation_id,
                         interface_type=interface_type,
                         automation_id=str(automation_id),
-                        task_name=name,
-                        processing_profile_id=processing_profile_id,
-                        created_by_user_id=created_by_user_id,
+                        automation_type="schedule",
+                        callback_context=action_config.get("context", ""),
+                        scheduling_timestamp=datetime.now(UTC).isoformat(),
+                        tool_call_review_trigger_type="schedule",
+                        tool_call_review_trigger_definition=action_config.get(
+                            "context", ""
+                        ),
+                        tool_call_review_trigger_payload_present=False,
                     )
-
-                # Note: We do NOT pass recurrence_rule here because recurrence
-                # is managed manually via after_task_execution callback, not
-                # by the task worker's automatic recurrence system
-                await enqueue_task(
-                    db_context=txn,
-                    task_id=task_id,
-                    task_type=task_type,
-                    payload=payload,
-                    scheduled_at=next_scheduled_at,
+                )
+                if created_by_user_id is not None:
+                    payload["created_by_user_id"] = created_by_user_id
+                if processing_profile_id is not None:
+                    payload["processing_profile_id"] = processing_profile_id
+            else:
+                payload = _build_script_payload(
+                    action_config=action_config,
+                    conversation_id=conversation_id,
+                    interface_type=interface_type,
+                    automation_id=str(automation_id),
+                    task_name=name,
+                    processing_profile_id=processing_profile_id,
+                    created_by_user_id=created_by_user_id,
                 )
 
-                self._logger.info(
-                    f"Scheduled first task for automation {automation_id} at {next_scheduled_at}"
-                )
+            await enqueue_task(
+                db_context=txn,
+                task_id=task_id,
+                task_type=task_type,
+                payload=payload,
+                scheduled_at=next_scheduled_at,
+            )
 
-                return automation_id
+            self._logger.info(
+                f"Scheduled first task for automation {automation_id} at {next_scheduled_at}"
+            )
+            return automation_id
 
+        try:
             return await self._db.atomic(_create)
-
         except IntegrityError as e:
             error_msg = str(e).lower()
             if "uq_sched_name_conversation" in error_msg or (
@@ -834,34 +822,32 @@ class ScheduleAutomationsRepository(BaseRepository):
             await self._mark_persisted_advance_outboxes_stats_only(
                 automation_id, executor
             )
-
-            # Find pending tasks with this automation_id in payload
-            stmt = (
-                update(tasks_table)
-                .where(tasks_table.c.status == "pending")
-                .where(
-                    tasks_table.c.payload["automation_id"].as_string()
-                    == str(automation_id)
-                )
-                .where(tasks_table.c.task_type != SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE)
-                .values(status="cancelled")
-            )
-
-            result = await executor.execute(stmt)
-            cancelled_count = result.rowcount
-
-            if cancelled_count > 0:
-                self._logger.info(
-                    f"Cancelled {cancelled_count} pending tasks for automation {automation_id}"
-                )
-
-            return cancelled_count
-
+            return await self._cancel_non_advance_tasks(automation_id, executor)
         except SQLAlchemyError as e:
             self._logger.exception(
                 f"Error cancelling tasks for automation {automation_id}: {e}"
             )
             return 0
+
+    async def _cancel_non_advance_tasks(
+        self, automation_id: int, executor: DatabaseExecutor
+    ) -> int:
+        stmt = (
+            update(tasks_table)
+            .where(tasks_table.c.status == "pending")
+            .where(
+                tasks_table.c.payload["automation_id"].as_string() == str(automation_id)
+            )
+            .where(tasks_table.c.task_type != SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE)
+            .values(status="cancelled")
+        )
+        result = await executor.execute(stmt)
+        cancelled_count = result.rowcount
+        if cancelled_count > 0:
+            self._logger.info(
+                f"Cancelled {cancelled_count} pending tasks for automation {automation_id}"
+            )
+        return cancelled_count
 
     async def _mark_pending_advance_tasks_stats_only(
         self, automation_id: int, db: DatabaseExecutor | None = None
@@ -1219,29 +1205,32 @@ class ScheduleAutomationsRepository(BaseRepository):
             Dictionary with execution statistics, or None if not found
         """
         try:
-            automation = await self.get_by_id(automation_id)
-            if not automation:
-                return None
-
-            # Query tasks table for execution history
-            stmt = select(tasks_table).where(
-                tasks_table.c.payload["automation_id"].as_string() == str(automation_id)
-            )
-
-            stmt = stmt.where(tasks_table.c.status.in_(["completed", "failed"]))
-            stmt = stmt.order_by(tasks_table.c.created_at.desc()).limit(10)
-
-            recent_executions = await self._db.fetch_all(stmt)
-
-            return ScheduleExecutionStatsDict(
-                total_executions=automation["execution_count"],
-                last_execution_at=automation["last_execution_at"],
-                next_scheduled_at=automation["next_scheduled_at"],
-                recent_executions=recent_executions,
-            )
-
+            return await self._get_execution_stats(automation_id)
         except SQLAlchemyError as e:
             self._logger.exception(
                 f"Database error in get_execution_stats for automation {automation_id}: {e}"
             )
             raise
+
+    async def _get_execution_stats(
+        self, automation_id: int
+    ) -> ScheduleExecutionStatsDict | None:
+        automation = await self.get_by_id(automation_id)
+        if not automation:
+            return None
+        stmt = (
+            select(tasks_table)
+            .where(
+                tasks_table.c.payload["automation_id"].as_string() == str(automation_id)
+            )
+            .where(tasks_table.c.status.in_(["completed", "failed"]))
+            .order_by(tasks_table.c.created_at.desc())
+            .limit(10)
+        )
+        recent_executions = await self._db.fetch_all(stmt)
+        return ScheduleExecutionStatsDict(
+            total_executions=automation["execution_count"],
+            last_execution_at=automation["last_execution_at"],
+            next_scheduled_at=automation["next_scheduled_at"],
+            recent_executions=recent_executions,
+        )

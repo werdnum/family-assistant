@@ -25,6 +25,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.postgresql.dml import Insert as PostgreSQLInsert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError  # Use broader exception
 
 # Use absolute package path
@@ -228,8 +229,8 @@ async def add_or_update_note(
     now = datetime.now(UTC)
 
     if db_context.dialect_name == "postgresql":
-        # Use PostgreSQL's ON CONFLICT DO UPDATE for atomic upsert
-        try:
+
+        def _build_upsert_statement() -> PostgreSQLInsert:
             stmt = pg_insert(notes_table).values(
                 title=title,
                 content=content,
@@ -237,21 +238,20 @@ async def add_or_update_note(
                 created_at=now,
                 updated_at=now,
             )
-            # Define columns to update on conflict
-            update_dict = {
-                "content": stmt.excluded.content,
-                "include_in_prompt": stmt.excluded.include_in_prompt,
-                "updated_at": stmt.excluded.updated_at,
-            }
-            stmt = stmt.on_conflict_do_update(
-                index_elements=["title"],  # The unique constraint column
-                set_=update_dict,
+            return stmt.on_conflict_do_update(
+                index_elements=["title"],
+                set_={
+                    "content": stmt.excluded.content,
+                    "include_in_prompt": stmt.excluded.include_in_prompt,
+                    "updated_at": stmt.excluded.updated_at,
+                },
             )
-            # Use execute_with_retry as commit is handled by context manager
+
+        # Use PostgreSQL's ON CONFLICT DO UPDATE for atomic upsert
+        try:
+            stmt = _build_upsert_statement()
             await db_context.execute(stmt)
             logger.info(f"Successfully added/updated note: {title} (using ON CONFLICT)")
-
-            # Enqueue indexing task
             await _enqueue_note_indexing_task(db_context, title)
             return "Success"
         except SQLAlchemyError as e:
@@ -318,20 +318,18 @@ async def add_or_update_note(
 
 async def delete_note(db_context: DatabaseExecutor, title: str) -> bool:
     """Deletes a note by title."""
+    stmt = delete(notes_table).where(notes_table.c.title == title)
     try:
-        stmt = delete(notes_table).where(notes_table.c.title == title)
-        # Use execute_with_retry as commit is handled by context manager
         result = await db_context.execute(stmt)
         deleted_count = result.rowcount
-        if deleted_count > 0:
-            logger.info(f"Deleted note: {title}")
-            return True
-        else:
-            logger.warning(f"Note not found for deletion: {title}")
-            return False
     except SQLAlchemyError as e:
         logger.exception(f"Database error in delete_note({title}): {e}")
         raise
+    if deleted_count > 0:
+        logger.info(f"Deleted note: {title}")
+        return True
+    logger.warning(f"Note not found for deletion: {title}")
+    return False
 
 
 async def _enqueue_note_indexing_task(db_context: DatabaseExecutor, title: str) -> None:

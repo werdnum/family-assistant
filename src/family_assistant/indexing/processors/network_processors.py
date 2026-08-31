@@ -59,7 +59,7 @@ class WebFetcherProcessor:
         self,
         current_items: list["IndexableContent"],
         original_document: "Document",  # Passed for context, not directly used yet
-        initial_content_ref: "IndexableContent",  # Passed for context
+        initial_content_ref: "IndexableContent | None",  # Passed for context
         context: "ToolExecutionContext",  # Passed for context
     ) -> list["IndexableContent"]:
         """
@@ -298,23 +298,31 @@ class WebFetcherProcessor:
         cleaned_count = 0
         for f_path in self._temp_files:
             try:
-                if os.path.exists(f_path):
-                    os.remove(f_path)
-                    logger.debug(f"{self.name}: Removed temporary file: {f_path}")
-                    cleaned_count += 1
-                else:
-                    logger.warning(
-                        f"{self.name}: Temporary file not found for cleanup: {f_path}"
-                    )
+                removed = self._remove_temp_file(f_path)
             except OSError as e:
                 logger.error(
                     f"{self.name}: Error removing temporary file {f_path}: {e}"
+                )
+                continue
+            if removed:
+                logger.debug(f"{self.name}: Removed temporary file: {f_path}")
+                cleaned_count += 1
+            else:
+                logger.warning(
+                    f"{self.name}: Temporary file not found for cleanup: {f_path}"
                 )
 
         logger.info(
             f"{self.name}: Cleaned up {cleaned_count}/{len(self._temp_files)} temporary files."
         )
         self._temp_files.clear()
+
+    @staticmethod
+    def _remove_temp_file(file_path: str) -> bool:
+        if not os.path.exists(file_path):
+            return False
+        os.remove(file_path)
+        return True
 
     def __del__(self) -> None:
         """

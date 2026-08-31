@@ -643,39 +643,33 @@ async def send_message_to_user_tool(
         if exec_context.attachment_registry:
             attachment_registry = exec_context.attachment_registry
 
+            async def validate_attachment(
+                attachment_id: ScriptAttachment | str,
+            ) -> str | None:
+                actual_attachment_id = (
+                    attachment_id.get_id()
+                    if isinstance(attachment_id, ScriptAttachment)
+                    else attachment_id
+                )
+                attachment = await attachment_registry.get_attachment(
+                    exec_context.db_context,
+                    actual_attachment_id,
+                    acting_user_id=exec_context.user_id,
+                )
+                if not attachment:
+                    logger.warning(f"Attachment {actual_attachment_id} not found")
+                    return None
+                logger.debug(f"Validated attachment {actual_attachment_id} for sending")
+                return actual_attachment_id
+
             for attachment_id in attachment_ids:
                 try:
-                    # Handle both string IDs and ScriptAttachment objects
-                    if hasattr(attachment_id, "get_id"):
-                        # It's a ScriptAttachment object, extract the ID
-                        actual_attachment_id = (
-                            attachment_id.get_id()
-                            if isinstance(attachment_id, ScriptAttachment)
-                            else str(attachment_id)
-                        )
-                    else:
-                        # It's a string ID
-                        actual_attachment_id = attachment_id
-
-                    attachment = await attachment_registry.get_attachment(
-                        exec_context.db_context,
-                        actual_attachment_id,
-                        acting_user_id=exec_context.user_id,
-                    )
-
-                    if not attachment:
-                        logger.warning(f"Attachment {actual_attachment_id} not found")
-                        continue
-
-                    # Always append the string ID to the validated list
-                    validated_attachment_ids.append(actual_attachment_id)
-                    logger.debug(
-                        f"Validated attachment {actual_attachment_id} for sending"
-                    )
-
+                    actual_attachment_id = await validate_attachment(attachment_id)
                 except Exception as e:
                     logger.error(f"Error validating attachment {attachment_id}: {e}")
                     continue
+                if actual_attachment_id is not None:
+                    validated_attachment_ids.append(actual_attachment_id)
         else:
             logger.warning(
                 "AttachmentRegistry not available - cannot validate attachment IDs"
@@ -693,10 +687,7 @@ async def send_message_to_user_tool(
         else TurnTaintState.empty().to_metadata()
     )
 
-    try:
-        # Use the ChatInterface to send the message.
-        # Assuming the target_chat_id is for the same interface type as the current context.
-        # The TelegramChatInterface will handle converting target_chat_id to int.
+    async def send_and_record() -> str:
         try:
             sent_message_id_str = await chat_interface.send_message(
                 conversation_id=str(target_chat_id),  # Pass as string
@@ -759,6 +750,8 @@ async def send_message_to_user_tool(
 
         return f"Message sent successfully to user with Chat ID {target_chat_id}{attachment_msg}."
 
+    try:
+        return await send_and_record()
     except Exception as e:
         logger.exception(f"Failed to send message to chat_id {target_chat_id}: {e}")
         return (

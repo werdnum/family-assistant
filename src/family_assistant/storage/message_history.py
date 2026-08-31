@@ -266,113 +266,112 @@ async def get_recent_history(
     would otherwise be outside the limit/max_age.
     """
     try:
-        cutoff_time = datetime.now(UTC) - max_age
-        # Define the columns to select for consistency
-        selected_columns = [
-            message_history_table.c.internal_id,
-            message_history_table.c.interface_type,
-            message_history_table.c.conversation_id,
-            message_history_table.c.interface_message_id,
-            message_history_table.c.turn_id,
-            message_history_table.c.thread_root_id,
-            message_history_table.c.timestamp,
-            message_history_table.c.role,
-            message_history_table.c.content,
-            message_history_table.c.tool_calls,
-            message_history_table.c.reasoning_info,
-            message_history_table.c.error_traceback,
-            message_history_table.c.tool_call_id,
-            message_history_table.c.processing_profile_id,  # Added profile ID
-            message_history_table.c.taint_metadata_json,
-            message_history_table.c.taint_metadata_version,
-        ]
-
-        # Step 1: Initial fetch of candidate messages based on limit and max_age
-        stmt_candidates = (
-            select(*selected_columns)
-            .where(message_history_table.c.interface_type == interface_type)
-            .where(message_history_table.c.conversation_id == conversation_id)
-            .where(message_history_table.c.timestamp >= cutoff_time)
+        return await _get_recent_history(
+            db_context,
+            interface_type,
+            conversation_id,
+            limit,
+            max_age,
+            processing_profile_id,
+            subconversation_id,
         )
-        if processing_profile_id:
-            stmt_candidates = stmt_candidates.where(
-                message_history_table.c.processing_profile_id == processing_profile_id
-            )
-        # Filter by subconversation_id: None means main conversation only (IS NULL)
-        if subconversation_id is None:
-            stmt_candidates = stmt_candidates.where(
-                message_history_table.c.subconversation_id.is_(None)
-            )
-        else:
-            stmt_candidates = stmt_candidates.where(
-                message_history_table.c.subconversation_id == subconversation_id
-            )
-        stmt_candidates = stmt_candidates.order_by(
-            message_history_table.c.timestamp.desc(),
-            message_history_table.c.internal_id.desc(),  # Add this secondary sort
-        ).limit(limit)
-        candidate_rows_result = await db_context.fetch_all(
-            cast("Select[Any]", stmt_candidates)
-        )
-        all_messages_dict: dict[int, MessageHistoryRow] = {
-            row_mapping["internal_id"]: cast("MessageHistoryRow", dict(row_mapping))
-            for row_mapping in candidate_rows_result
-        }
-
-        # Step 2: Collect unique turn_ids from candidate messages
-        turn_ids_to_expand = {
-            msg["turn_id"] for msg in all_messages_dict.values() if msg.get("turn_id")
-        }
-
-        # Step 3: Fetch full turns for these turn_ids
-        if turn_ids_to_expand:
-            logger.debug(f"Expanding history for turn_ids: {turn_ids_to_expand}")
-            stmt_expand_turns = (
-                select(*selected_columns)
-                .where(message_history_table.c.interface_type == interface_type)
-                .where(message_history_table.c.conversation_id == conversation_id)
-                .where(message_history_table.c.turn_id.in_(turn_ids_to_expand))
-            )
-            # Also filter expanded turns by profile ID if provided
-            if processing_profile_id:
-                stmt_expand_turns = stmt_expand_turns.where(
-                    message_history_table.c.processing_profile_id
-                    == processing_profile_id
-                )
-            # Also filter by subconversation_id to maintain isolation
-            if subconversation_id is None:
-                stmt_expand_turns = stmt_expand_turns.where(
-                    message_history_table.c.subconversation_id.is_(None)
-                )
-            else:
-                stmt_expand_turns = stmt_expand_turns.where(
-                    message_history_table.c.subconversation_id == subconversation_id
-                )
-            # We fetch all messages for these turns, even if some parts of the turn
-            # are older than cutoff_time, as one part of the turn met the criteria.
-            expanded_turn_rows_result = await db_context.fetch_all(
-                cast("Select[Any]", stmt_expand_turns)
-            )
-
-            for row_mapping in expanded_turn_rows_result:
-                msg_dict = cast("MessageHistoryRow", dict(row_mapping))
-                # Add or update in all_messages_dict. This handles duplicates if a message
-                # was in both candidate set and expanded set.
-                all_messages_dict[msg_dict["internal_id"]] = msg_dict
-
-        # Step 4: Combine and Finalize
-        # Convert dict values to list
-        final_message_list = list(all_messages_dict.values())
-
-        # Sort chronologically (oldest first for the final list)
-        final_message_list.sort(key=lambda x: (x["timestamp"], x["internal_id"]))
-
-        return final_message_list
     except SQLAlchemyError as e:
         logger.exception(
             f"Database error in get_recent_history({interface_type}, {conversation_id}): {e}"
         )
         raise
+
+
+async def _get_recent_history(
+    db_context: DatabaseExecutor,
+    interface_type: str,
+    conversation_id: str,
+    limit: int,
+    max_age: timedelta,
+    processing_profile_id: str | None,
+    subconversation_id: str | None,
+) -> list[MessageHistoryRow]:
+    cutoff_time = datetime.now(UTC) - max_age
+    selected_columns = [
+        message_history_table.c.internal_id,
+        message_history_table.c.interface_type,
+        message_history_table.c.conversation_id,
+        message_history_table.c.interface_message_id,
+        message_history_table.c.turn_id,
+        message_history_table.c.thread_root_id,
+        message_history_table.c.timestamp,
+        message_history_table.c.role,
+        message_history_table.c.content,
+        message_history_table.c.tool_calls,
+        message_history_table.c.reasoning_info,
+        message_history_table.c.error_traceback,
+        message_history_table.c.tool_call_id,
+        message_history_table.c.processing_profile_id,
+        message_history_table.c.taint_metadata_json,
+        message_history_table.c.taint_metadata_version,
+    ]
+    stmt_candidates = (
+        select(*selected_columns)
+        .where(message_history_table.c.interface_type == interface_type)
+        .where(message_history_table.c.conversation_id == conversation_id)
+        .where(message_history_table.c.timestamp >= cutoff_time)
+    )
+    if processing_profile_id:
+        stmt_candidates = stmt_candidates.where(
+            message_history_table.c.processing_profile_id == processing_profile_id
+        )
+    if subconversation_id is None:
+        stmt_candidates = stmt_candidates.where(
+            message_history_table.c.subconversation_id.is_(None)
+        )
+    else:
+        stmt_candidates = stmt_candidates.where(
+            message_history_table.c.subconversation_id == subconversation_id
+        )
+    stmt_candidates = stmt_candidates.order_by(
+        message_history_table.c.timestamp.desc(),
+        message_history_table.c.internal_id.desc(),
+    ).limit(limit)
+    candidate_rows_result = await db_context.fetch_all(
+        cast("Select[Any]", stmt_candidates)
+    )
+    all_messages_dict: dict[int, MessageHistoryRow] = {
+        row_mapping["internal_id"]: cast("MessageHistoryRow", dict(row_mapping))
+        for row_mapping in candidate_rows_result
+    }
+    turn_ids_to_expand = {
+        msg["turn_id"] for msg in all_messages_dict.values() if msg.get("turn_id")
+    }
+    if turn_ids_to_expand:
+        logger.debug(f"Expanding history for turn_ids: {turn_ids_to_expand}")
+        stmt_expand_turns = (
+            select(*selected_columns)
+            .where(message_history_table.c.interface_type == interface_type)
+            .where(message_history_table.c.conversation_id == conversation_id)
+            .where(message_history_table.c.turn_id.in_(turn_ids_to_expand))
+        )
+        if processing_profile_id:
+            stmt_expand_turns = stmt_expand_turns.where(
+                message_history_table.c.processing_profile_id == processing_profile_id
+            )
+        if subconversation_id is None:
+            stmt_expand_turns = stmt_expand_turns.where(
+                message_history_table.c.subconversation_id.is_(None)
+            )
+        else:
+            stmt_expand_turns = stmt_expand_turns.where(
+                message_history_table.c.subconversation_id == subconversation_id
+            )
+        expanded_turn_rows_result = await db_context.fetch_all(
+            cast("Select[Any]", stmt_expand_turns)
+        )
+        for row_mapping in expanded_turn_rows_result:
+            msg_dict = cast("MessageHistoryRow", dict(row_mapping))
+            all_messages_dict[msg_dict["internal_id"]] = msg_dict
+
+    final_message_list = list(all_messages_dict.values())
+    final_message_list.sort(key=lambda x: (x["timestamp"], x["internal_id"]))
+    return final_message_list
 
 
 # --- New Functions ---
@@ -444,33 +443,12 @@ async def get_messages_by_thread_id(
     # Messages in the thread either have `thread_root_id` pointing to that first message,
     # or *are* the first message (where `internal_id == thread_root_id` would be true,
     try:
-        # although the first message itself has `thread_root_id` as NULL).
-        # Corrected query to include the root message itself
-        selected_columns = [col for col in message_history_table.c]
-        stmt = select(
-            *selected_columns
-        ).where(  # Filter by thread root ID or the root message itself
-            (message_history_table.c.thread_root_id == thread_root_id)
-            | (message_history_table.c.internal_id == thread_root_id)
+        return await _get_messages_by_thread_id(
+            db_context,
+            thread_root_id,
+            processing_profile_id,
+            subconversation_id,
         )
-        if processing_profile_id:
-            stmt = stmt.where(
-                message_history_table.c.processing_profile_id == processing_profile_id
-            )
-        # Filter by subconversation_id to maintain isolation
-        if subconversation_id is None:
-            stmt = stmt.where(message_history_table.c.subconversation_id.is_(None))
-        else:
-            stmt = stmt.where(
-                message_history_table.c.subconversation_id == subconversation_id
-            )
-        stmt = stmt.order_by(
-            message_history_table.c.internal_id
-        )  # Order by insertion sequence first
-        rows = await db_context.fetch_all(
-            cast("Select[Any]", stmt)
-        )  # Cast for type checker
-        return [cast("MessageHistoryRow", dict(row)) for row in rows]
     except SQLAlchemyError as e:
         logger.exception(
             f"Database error in get_messages_by_thread_id(thread_root_id={thread_root_id}): {e}"
@@ -478,31 +456,59 @@ async def get_messages_by_thread_id(
         raise
 
 
+async def _get_messages_by_thread_id(
+    db_context: DatabaseExecutor,
+    thread_root_id: int,
+    processing_profile_id: str | None,
+    subconversation_id: str | None,
+) -> list[MessageHistoryRow]:
+    selected_columns = [col for col in message_history_table.c]
+    stmt = select(*selected_columns).where(
+        (message_history_table.c.thread_root_id == thread_root_id)
+        | (message_history_table.c.internal_id == thread_root_id)
+    )
+    if processing_profile_id:
+        stmt = stmt.where(
+            message_history_table.c.processing_profile_id == processing_profile_id
+        )
+    if subconversation_id is None:
+        stmt = stmt.where(message_history_table.c.subconversation_id.is_(None))
+    else:
+        stmt = stmt.where(
+            message_history_table.c.subconversation_id == subconversation_id
+        )
+    stmt = stmt.order_by(message_history_table.c.internal_id)
+    rows = await db_context.fetch_all(cast("Select[Any]", stmt))
+    return [cast("MessageHistoryRow", dict(row)) for row in rows]
+
+
 async def get_grouped_message_history(
     db_context: DatabaseExecutor,
 ) -> dict[tuple[str, str], list[MessageHistoryRow]]:
     """Retrieves all message history, grouped by (interface_type, conversation_id) and ordered by timestamp."""
     try:
-        selected_columns = [col for col in message_history_table.c]
-        stmt = select(*selected_columns).order_by(  # Select all columns
-            message_history_table.c.interface_type,
-            # Group by (interface_type, conversation_id) tuple
-            message_history_table.c.conversation_id,
-            message_history_table.c.timestamp,  # Order chronologically within group
-            message_history_table.c.internal_id,  # Add for stable chronological order
-        )
-        rows = await db_context.fetch_all(
-            cast("Select[Any]", stmt)
-        )  # Cast for type checker
-        # Convert RowMapping to dicts for easier handling
-        dict_rows = [cast("MessageHistoryRow", dict(row)) for row in rows]
-        grouped_history: dict[tuple[str, str], list[MessageHistoryRow]] = {}
-        for row_dict in dict_rows:
-            group_key = (row_dict["interface_type"], row_dict["conversation_id"])
-            if group_key not in grouped_history:
-                grouped_history[group_key] = []
-            grouped_history[group_key].append(row_dict)
-        return grouped_history
+        return await _get_grouped_message_history(db_context)
     except SQLAlchemyError as e:
         logger.exception(f"Database error in get_grouped_message_history: {e}")
         raise
+
+
+async def _get_grouped_message_history(
+    db_context: DatabaseExecutor,
+) -> dict[tuple[str, str], list[MessageHistoryRow]]:
+    selected_columns = [col for col in message_history_table.c]
+    stmt = select(*selected_columns).order_by(
+        message_history_table.c.interface_type,
+        message_history_table.c.conversation_id,
+        message_history_table.c.timestamp,
+        message_history_table.c.internal_id,
+    )
+    rows = await db_context.fetch_all(cast("Select[Any]", stmt))
+    dict_rows = [cast("MessageHistoryRow", dict(row)) for row in rows]
+    grouped_history: dict[tuple[str, str], list[MessageHistoryRow]] = {}
+    for row_dict in dict_rows:
+        group_key = (row_dict["interface_type"], row_dict["conversation_id"])
+        if group_key not in grouped_history:
+            grouped_history[group_key] = []
+        grouped_history[group_key].append(row_dict)
+    return grouped_history

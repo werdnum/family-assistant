@@ -201,35 +201,39 @@ class A2AClientWrapper:
 
         try:
             a2a_client = self._create_client(card, streaming=True, polling=False)
-            latest_task: CoreTask | None = None
-            latest_task_id: str | None = None
-            request = SendMessageRequest(message=to_core_message(message))
-            async for response in a2a_client.send_message(request):
-                if response.HasField("message"):
-                    return self._message_to_completed_task(
-                        to_compat_message(response.message), context_id
-                    )
-                if response.HasField("task"):
-                    latest_task = response.task
-                    latest_task_id = latest_task.id
-                    if self._is_core_terminal(latest_task):
-                        return to_compat_task(latest_task)
-                elif response.HasField("status_update"):
-                    latest_task_id = response.status_update.task_id
-                    if response.status_update.status.state in CORE_TERMINAL_TASK_STATES:
-                        task = await a2a_client.get_task(
-                            GetTaskRequest(id=latest_task_id)
-                        )
-                        return to_compat_task(task)
-            if latest_task is None:
-                if latest_task_id is None:
-                    raise A2AClientError("A2A agent returned no message or task")
-                latest_task = await a2a_client.get_task(
-                    GetTaskRequest(id=latest_task_id)
-                )
-            return await self._poll_until_terminal(a2a_client, latest_task)
+            return await self._consume_message_events(a2a_client, message, context_id)
         except (SdkProtocolError, ValueError) as exc:
             self._raise_sdk_error(exc, self._card_url(card))
+
+    async def _consume_message_events(
+        self,
+        a2a_client: Client,
+        message: Message,
+        context_id: str | None,
+    ) -> Task:
+        latest_task: CoreTask | None = None
+        latest_task_id: str | None = None
+        request = SendMessageRequest(message=to_core_message(message))
+        async for response in a2a_client.send_message(request):
+            if response.HasField("message"):
+                return self._message_to_completed_task(
+                    to_compat_message(response.message), context_id
+                )
+            if response.HasField("task"):
+                latest_task = response.task
+                latest_task_id = latest_task.id
+                if self._is_core_terminal(latest_task):
+                    return to_compat_task(latest_task)
+            elif response.HasField("status_update"):
+                latest_task_id = response.status_update.task_id
+                if response.status_update.status.state in CORE_TERMINAL_TASK_STATES:
+                    task = await a2a_client.get_task(GetTaskRequest(id=latest_task_id))
+                    return to_compat_task(task)
+        if latest_task is None:
+            if latest_task_id is None:
+                raise A2AClientError("A2A agent returned no message or task")
+            latest_task = await a2a_client.get_task(GetTaskRequest(id=latest_task_id))
+        return await self._poll_until_terminal(a2a_client, latest_task)
 
     async def _poll_until_terminal(self, a2a_client: Client, task: CoreTask) -> Task:
         """Poll tasks/get for agents that return a non-terminal message/send Task."""

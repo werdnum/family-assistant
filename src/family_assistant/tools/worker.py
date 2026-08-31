@@ -384,7 +384,7 @@ async def spawn_worker_tool(
     prompt_path = task_dir / "prompt.md"
     output_dir = task_dir / "output"
 
-    try:
+    async def spawn_worker() -> ToolResult:
         # Create task directory
         await aiofiles.os.makedirs(task_dir, exist_ok=True)
         await aiofiles.os.makedirs(output_dir, exist_ok=True)
@@ -400,17 +400,19 @@ async def spawn_worker_tool(
             for path in context_paths:
                 try:
                     validated = validate_workspace_path(path, workspace_root)
-                    if await aiofiles.os.path.exists(validated):
-                        validated_context_paths.append(path)
-                    else:
-                        skipped_context_paths.append({
-                            "path": path,
-                            "reason": "does not exist",
-                        })
-                        logger.warning(f"Context path does not exist: {path}")
                 except ValueError as e:
                     skipped_context_paths.append({"path": path, "reason": str(e)})
                     logger.warning(f"Invalid context path {path}: {e}")
+                    continue
+
+                if await aiofiles.os.path.exists(validated):
+                    validated_context_paths.append(path)
+                else:
+                    skipped_context_paths.append({
+                        "path": path,
+                        "reason": "does not exist",
+                    })
+                    logger.warning(f"Context path does not exist: {path}")
 
         # Build webhook URL (use configured URL or fall back to server_url)
         # Include event_type as query param so the worker doesn't need to know our event schema
@@ -523,6 +525,8 @@ async def spawn_worker_tool(
 
         return ToolResult(data=result_data)
 
+    try:
+        return await spawn_worker()
     except Exception as e:
         logger.exception(f"Failed to spawn worker task: {e}")
         return ToolResult(data={"error": f"Failed to spawn worker: {e!s}"})
@@ -611,14 +615,18 @@ async def read_task_result_tool(
                     file_path = str(file_info)
 
                 if file_path:
-                    try:
-                        full_path = validate_workspace_path(file_path, workspace_root)
+
+                    async def read_output_file(
+                        output_path: str,
+                    ) -> str | dict[str, str]:
+                        full_path = validate_workspace_path(output_path, workspace_root)
                         if await aiofiles.os.path.exists(full_path):
                             async with aiofiles.open(full_path) as f:
-                                content = await f.read()
-                            file_contents[file_path] = content
-                        else:
-                            file_contents[file_path] = {"error": "File not found"}
+                                return await f.read()
+                        return {"error": "File not found"}
+
+                    try:
+                        file_contents[file_path] = await read_output_file(file_path)
                     except (ValueError, OSError) as e:
                         file_contents[file_path] = {"error": str(e)}
 

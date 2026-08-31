@@ -25,6 +25,7 @@ import caldav
 import pytest
 import pytest_asyncio  # Import the correct decorator
 import vcr
+from caldav.collection import Calendar
 
 # Try to import pgserver, but it's optional if TEST_DATABASE_URL is provided
 try:
@@ -983,6 +984,23 @@ backtrace_on_debug = True
         logger.info(f"Cleaned up Radicale temp directory: {temp_dir}")
 
 
+async def _validate_new_calendar(calendar: Calendar, calendar_name: str) -> str:
+    assert calendar.url is not None, "Created calendar has no URL."
+    calendar_url = str(calendar.url)
+    logger.info(
+        f"Successfully created unique calendar '{calendar_name}' with URL: {calendar_url}"
+    )
+
+    events = await asyncio.to_thread(calendar.events)
+    assert len(events) == 0, (
+        f"Newly created calendar '{calendar_name}' should have 0 events, found {len(events)}."
+    )
+    logger.info(
+        f"Verified newly created calendar '{calendar_name}' exists and has 0 events."
+    )
+    return calendar_url
+
+
 @pytest_asyncio.fixture(scope="function")
 async def radicale_server(
     radicale_server_session: tuple[str, str, str],  # Now yields 3 items
@@ -1025,20 +1043,8 @@ async def radicale_server(
         assert new_calendar_obj is not None, (
             "make_calendar did not return a calendar object."
         )
-        assert new_calendar_obj.url is not None, "Created calendar has no URL."
-        unique_calendar_url = str(new_calendar_obj.url)  # Ensure it's a string
-        logger.info(
-            f"Successfully created unique calendar '{unique_calendar_name}' with URL: {unique_calendar_url}"
-        )
-
-        # Verification: Check if the calendar is listable or has events (should be 0)
-        # This also implicitly checks if the calendar exists on the server.
-        events = await asyncio.to_thread(new_calendar_obj.events)
-        assert len(events) == 0, (
-            f"Newly created calendar '{unique_calendar_name}' should have 0 events, found {len(events)}."
-        )
-        logger.info(
-            f"Verified newly created calendar '{unique_calendar_name}' exists and has 0 events."
+        unique_calendar_url = await _validate_new_calendar(
+            new_calendar_obj, unique_calendar_name
         )
 
         yield base_url, username, password, unique_calendar_url

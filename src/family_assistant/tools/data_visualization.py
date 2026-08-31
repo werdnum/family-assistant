@@ -97,7 +97,7 @@ async def create_vega_chart_tool(
     """
     logger.info(f"Creating Vega chart: {title}")
 
-    try:
+    async def _create_chart() -> ToolResult:
         # Parse the spec
         try:
             spec_dict = json.loads(spec)
@@ -228,6 +228,8 @@ async def create_vega_chart_tool(
             text=f"Created visualization: {title}", attachments=[attachment]
         )
 
+    try:
+        return await _create_chart()
     except Exception as e:
         logger.exception(f"Error creating Vega chart: {e}")
         return ToolResult(text=f"Error creating chart: {e!s}")

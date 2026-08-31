@@ -40,6 +40,33 @@ class ToolExecutionRequest(BaseModel):
     profile_id: str | None = None
 
 
+def _serialize_tool_result(result: object) -> object:
+    if isinstance(result, ToolResult):
+        final_result: dict[str, object] = {}
+        if result.text is not None:
+            final_result["text"] = result.text
+        if result.data is not None:
+            final_result["data"] = result.data
+        if result.attachments:
+            final_result["attachments"] = [
+                {
+                    "mime_type": attachment.mime_type,
+                    "description": attachment.description,
+                    "has_content": attachment.content is not None,
+                    "content_length": len(attachment.content)
+                    if attachment.content
+                    else 0,
+                }
+                for attachment in result.attachments
+            ]
+        return final_result
+
+    if isinstance(result, str):
+        with contextlib.suppress(json.JSONDecodeError):
+            return json.loads(result)
+    return result
+
+
 @tools_api_router.post("/execute/{tool_name}", response_class=JSONResponse)
 async def execute_tool_api(
     tool_name: str,
@@ -187,33 +214,7 @@ async def execute_tool_api(
             name=tool_name, arguments=payload.arguments, context=execution_context
         )
         logger.info(f"Tool '{tool_name}' executed successfully.")
-
-        # Convert ToolResult to serializable format
-        final_result: Any
-        if isinstance(result, ToolResult):
-            final_result = {}
-            if result.text is not None:
-                final_result["text"] = result.text
-            if result.data is not None:
-                final_result["data"] = result.data
-            if result.attachments:
-                # Include attachment metadata but not binary content
-                final_result["attachments"] = [
-                    {
-                        "mime_type": att.mime_type,
-                        "description": att.description,
-                        "has_content": att.content is not None,
-                        "content_length": len(att.content) if att.content else 0,
-                    }
-                    for att in result.attachments
-                ]
-        elif isinstance(result, str):
-            # Attempt to parse result if it's a JSON string
-            final_result = result
-            with contextlib.suppress(json.JSONDecodeError):
-                final_result = json.loads(result)
-        else:
-            final_result = result
+        final_result = _serialize_tool_result(result)
 
         return JSONResponse(
             content={

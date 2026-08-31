@@ -24,6 +24,7 @@ OLD_DATE_THRESHOLD = timedelta(days=30)
 if TYPE_CHECKING:
     from zoneinfo import ZoneInfo
 
+    from family_assistant.camera.protocol import CameraBackend
     from family_assistant.llm import LLMInterface
     from family_assistant.llm.content_parts import (
         ImageUrlContentPartDict,
@@ -704,45 +705,8 @@ async def _analyze_single_frame(
         FrameAnalysisResult with the analysis
     """
     try:
-        # Encode image as base64 data URL
-        b64_image = base64.b64encode(jpeg_bytes).decode("utf-8")
-        image_url = f"data:image/jpeg;base64,{b64_image}"
-
-        # Import messages here to avoid circular import
-        from family_assistant.llm.messages import (  # noqa: PLC0415
-            SystemMessage,
-            UserMessage,
-        )
-
-        # Create content parts using TypedDicts
-        image_part: ImageUrlContentPartDict = {
-            "type": "image_url",
-            "image_url": {"url": image_url},
-        }
-        text_part: TextContentPartDict = {
-            "type": "text",
-            "text": f"Query: {query}\n\nAnalyze this frame.",
-        }
-
-        # Create messages for the LLM
-        messages = [
-            SystemMessage(content=_FRAME_ANALYSIS_SYSTEM_PROMPT),
-            UserMessage(content=[image_part, text_part]),  # type: ignore[list-item]
-        ]
-
-        # Use structured output to get validated response
-        parsed = await llm_client.generate_structured(
-            messages=messages,
-            response_model=FrameAnalysisLLMResponse,
-        )
-
-        return FrameAnalysisResult(
-            timestamp=timestamp,
-            matches_query=parsed.matches_query,
-            description=parsed.description,
-            confidence=parsed.confidence,
-            detected_objects=parsed.detected_objects,
-            jpeg_bytes=jpeg_bytes,
+        return await _analyze_single_frame_impl(
+            llm_client, jpeg_bytes, timestamp, query
         )
 
     except StructuredOutputError as e:
@@ -768,6 +732,186 @@ async def _analyze_single_frame(
             jpeg_bytes=jpeg_bytes,
             error=str(e),
         )
+
+
+async def _analyze_single_frame_impl(
+    llm_client: LLMInterface,
+    jpeg_bytes: bytes,
+    timestamp: datetime,
+    query: str,
+) -> FrameAnalysisResult:
+    """Build and execute one frame-analysis request."""
+    b64_image = base64.b64encode(jpeg_bytes).decode("utf-8")
+    image_url = f"data:image/jpeg;base64,{b64_image}"
+
+    from family_assistant.llm.messages import (  # noqa: PLC0415
+        SystemMessage,
+        UserMessage,
+    )
+
+    image_part: ImageUrlContentPartDict = {
+        "type": "image_url",
+        "image_url": {"url": image_url},
+    }
+    text_part: TextContentPartDict = {
+        "type": "text",
+        "text": f"Query: {query}\n\nAnalyze this frame.",
+    }
+    messages = [
+        SystemMessage(content=_FRAME_ANALYSIS_SYSTEM_PROMPT),
+        UserMessage(content=[image_part, text_part]),  # type: ignore[list-item]
+    ]
+    parsed = await llm_client.generate_structured(
+        messages=messages,
+        response_model=FrameAnalysisLLMResponse,
+    )
+    return FrameAnalysisResult(
+        timestamp=timestamp,
+        matches_query=parsed.matches_query,
+        description=parsed.description,
+        confidence=parsed.confidence,
+        detected_objects=parsed.detected_objects,
+        jpeg_bytes=jpeg_bytes,
+    )
+
+
+async def _scan_camera_frames_impl(
+    *,
+    camera_backend: CameraBackend,
+    llm_client: LLMInterface,
+    timezone: ZoneInfo,
+    camera_id: str,
+    start_time: str,
+    end_time: str,
+    start_dt: datetime,
+    end_dt: datetime,
+    query: str,
+    interval_seconds: float,
+    max_frames: int,
+    filter_matching: bool,
+) -> ToolResult:
+    """Fetch, analyze, and format one camera frame scan."""
+    logger.info(
+        f"Scanning {camera_id} from {start_time} to {end_time} "
+        f"(interval={interval_seconds}s, max_frames={max_frames})"
+    )
+    frames = await camera_backend.get_frames_batch(
+        camera_id=camera_id,
+        start_time=start_dt,
+        end_time=end_dt,
+        interval_seconds=int(interval_seconds),
+        max_frames=max_frames,
+    )
+    if not frames:
+        return ToolResult(
+            data={
+                "camera_id": camera_id,
+                "query": query,
+                "frames_scanned": 0,
+                "matches_found": 0,
+                "message": "No frames found in the specified time range.",
+            }
+        )
+
+    logger.info(f"Got {len(frames)} frames, starting parallel analysis")
+    analysis_tasks = [
+        _analyze_single_frame(
+            llm_client=llm_client,
+            jpeg_bytes=frame.jpeg_bytes,
+            timestamp=frame.timestamp,
+            query=query,
+        )
+        for frame in frames
+    ]
+    results = await asyncio.gather(*analysis_tasks)
+    successful_results = [result for result in results if result.error is None]
+    error_count = len(results) - len(successful_results)
+    matching_results = (
+        [result for result in successful_results if result.matches_query]
+        if filter_matching
+        else successful_results
+    )
+    matching_results.sort(key=lambda result: result.timestamp)
+
+    analysis_summaries: list[AnalysisSummaryDict] = []
+    attachments: list[ToolAttachment] = []
+    for result in matching_results:
+        ts_str = _to_local_isoformat(result.timestamp, timezone)
+        summary: AnalysisSummaryDict = {
+            "timestamp": ts_str,
+            "matches_query": result.matches_query,
+            "description": result.description,
+            "confidence": result.confidence,
+            "detected_objects": result.detected_objects,
+        }
+        analysis_summaries.append(summary)
+
+        if filter_matching and result.matches_query:
+            attachments.append(
+                ToolAttachment(
+                    mime_type="image/jpeg",
+                    content=result.jpeg_bytes,
+                    description=f"[{ts_str}] {result.description}",
+                )
+            )
+        elif not filter_matching:
+            match_label = "MATCH" if result.matches_query else "no match"
+            attachments.append(
+                ToolAttachment(
+                    mime_type="image/jpeg",
+                    content=result.jpeg_bytes,
+                    description=f"[{ts_str}] ({match_label}) {result.description}",
+                )
+            )
+
+    match_count = len([result for result in successful_results if result.matches_query])
+    time_range: TimeRangeDict = {
+        "start": start_time,
+        "end": end_time,
+        "interval_seconds": interval_seconds,
+    }
+    result_data: ScanResultDict = {
+        "camera_id": camera_id,
+        "query": query,
+        "time_range": time_range,
+        "frames_scanned": len(frames),
+        "frames_analyzed": len(successful_results),
+        "matches_found": match_count,
+        "analysis_results": analysis_summaries,
+    }
+    if error_count > 0:
+        result_data["analysis_errors"] = error_count
+        result_data["warning"] = f"{error_count} frame(s) could not be analyzed"
+
+    if match_count == 0:
+        text_summary = (
+            f"Scanned {len(frames)} frames from {camera_id} "
+            f"({start_time} to {end_time}). "
+            f"No frames matched the query: '{query}'"
+        )
+    else:
+        match_times = [
+            (
+                result.timestamp
+                if result.timestamp.tzinfo
+                else result.timestamp.replace(tzinfo=UTC)
+            )
+            .astimezone(timezone)
+            .strftime("%H:%M:%S")
+            for result in matching_results
+            if result.matches_query
+        ]
+        text_summary = (
+            f"Found {match_count} matching frame(s) from {len(frames)} scanned. "
+            f"Matches at: {', '.join(match_times)}. "
+            f"Query: '{query}'"
+        )
+
+    return ToolResult(
+        text=text_summary,
+        data=cast("dict[str, Any]", result_data),
+        attachments=attachments if attachments else None,
+    )
 
 
 async def scan_camera_frames_tool(
@@ -836,143 +980,20 @@ async def scan_camera_frames_tool(
     max_frames = min(max_frames, 50)  # Cap at reasonable limit
 
     try:
-        # Get frames from camera backend (already parallelized internally)
-        logger.info(
-            f"Scanning {camera_id} from {start_time} to {end_time} "
-            f"(interval={interval_seconds}s, max_frames={max_frames})"
-        )
-
-        frames = await exec_context.camera_backend.get_frames_batch(
+        return await _scan_camera_frames_impl(
+            camera_backend=exec_context.camera_backend,
+            llm_client=llm_client,
+            timezone=exec_context.timezone,
             camera_id=camera_id,
-            start_time=start_dt,
-            end_time=end_dt,
-            interval_seconds=int(interval_seconds),
+            start_time=start_time,
+            end_time=end_time,
+            start_dt=start_dt,
+            end_dt=end_dt,
+            query=query,
+            interval_seconds=interval_seconds,
             max_frames=max_frames,
+            filter_matching=filter_matching,
         )
-
-        if not frames:
-            return ToolResult(
-                data={
-                    "camera_id": camera_id,
-                    "query": query,
-                    "frames_scanned": 0,
-                    "matches_found": 0,
-                    "message": "No frames found in the specified time range.",
-                }
-            )
-
-        logger.info(f"Got {len(frames)} frames, starting parallel analysis")
-
-        # Analyze all frames in parallel (provider handles rate limiting)
-        analysis_tasks = [
-            _analyze_single_frame(
-                llm_client=llm_client,
-                jpeg_bytes=frame.jpeg_bytes,
-                timestamp=frame.timestamp,
-                query=query,
-            )
-            for frame in frames
-        ]
-
-        results = await asyncio.gather(*analysis_tasks)
-
-        # Separate successful results and errors
-        successful_results = [r for r in results if r.error is None]
-        error_count = len(results) - len(successful_results)
-
-        # Filter to matching frames if requested
-        if filter_matching:
-            matching_results = [r for r in successful_results if r.matches_query]
-        else:
-            matching_results = successful_results
-
-        # Sort by timestamp
-        matching_results.sort(key=lambda r: r.timestamp)
-
-        # Build response data with typed structures
-        analysis_summaries: list[AnalysisSummaryDict] = []
-        attachments: list[ToolAttachment] = []
-
-        for result in matching_results:
-            ts_str = _to_local_isoformat(result.timestamp, exec_context.timezone)
-            summary: AnalysisSummaryDict = {
-                "timestamp": ts_str,
-                "matches_query": result.matches_query,
-                "description": result.description,
-                "confidence": result.confidence,
-                "detected_objects": result.detected_objects,
-            }
-            analysis_summaries.append(summary)
-
-            # Include attachments for matching frames (or all if not filtering)
-            if filter_matching and result.matches_query:
-                attachments.append(
-                    ToolAttachment(
-                        mime_type="image/jpeg",
-                        content=result.jpeg_bytes,
-                        description=f"[{ts_str}] {result.description}",
-                    )
-                )
-            elif not filter_matching:
-                match_label = "MATCH" if result.matches_query else "no match"
-                attachments.append(
-                    ToolAttachment(
-                        mime_type="image/jpeg",
-                        content=result.jpeg_bytes,
-                        description=f"[{ts_str}] ({match_label}) {result.description}",
-                    )
-                )
-
-        # Build summary with typed structures
-        match_count = len([r for r in successful_results if r.matches_query])
-
-        time_range: TimeRangeDict = {
-            "start": start_time,
-            "end": end_time,
-            "interval_seconds": interval_seconds,
-        }
-
-        result_data: ScanResultDict = {
-            "camera_id": camera_id,
-            "query": query,
-            "time_range": time_range,
-            "frames_scanned": len(frames),
-            "frames_analyzed": len(successful_results),
-            "matches_found": match_count,
-            "analysis_results": analysis_summaries,
-        }
-
-        if error_count > 0:
-            result_data["analysis_errors"] = error_count
-            result_data["warning"] = f"{error_count} frame(s) could not be analyzed"
-
-        # Generate text summary
-        if match_count == 0:
-            text_summary = (
-                f"Scanned {len(frames)} frames from {camera_id} "
-                f"({start_time} to {end_time}). "
-                f"No frames matched the query: '{query}'"
-            )
-        else:
-            match_times = [
-                (r.timestamp if r.timestamp.tzinfo else r.timestamp.replace(tzinfo=UTC))
-                .astimezone(exec_context.timezone)
-                .strftime("%H:%M:%S")
-                for r in matching_results
-                if r.matches_query
-            ]
-            text_summary = (
-                f"Found {match_count} matching frame(s) from {len(frames)} scanned. "
-                f"Matches at: {', '.join(match_times)}. "
-                f"Query: '{query}'"
-            )
-
-        return ToolResult(
-            text=text_summary,
-            data=cast("dict[str, Any]", result_data),
-            attachments=attachments if attachments else None,
-        )
-
     except ValueError as e:
         # Expected errors (invalid camera ID, etc.) - return cleanly
         return ToolResult(data={"error": str(e)})

@@ -209,15 +209,10 @@ class BasePage:
         async def handle_request_finished(request: Request) -> None:
             try:
                 response = await request.response()
-                if response:
-                    status = response.status
-                    logger.info(
-                        f"Request finished: {request.method} {request.url} -> {status}"
-                    )
-                else:
-                    logger.info(
-                        f"Request finished: {request.method} {request.url} -> No response"
-                    )
+                status = response.status if response else "No response"
+                logger.info(
+                    f"Request finished: {request.method} {request.url} -> {status}"
+                )
             except Exception as e:
                 logger.error(f"Error handling request finish: {e}")
 

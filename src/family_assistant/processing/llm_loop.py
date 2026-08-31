@@ -41,7 +41,7 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Sequence
+    from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 
     from family_assistant.camera.protocol import CameraBackend
     from family_assistant.config_models import AppConfig
@@ -577,21 +577,28 @@ class LLMStreamingLoop:
                 tool_calls_from_stream = []
                 done_provider_metadata = None
 
-                try:
+                async def stream_events(
+                    messages_for_attempt: list[LLMMessage],
+                    tools_for_attempt: list[ToolDefinition] | None,
+                    tool_choice_for_attempt: str,
+                    content_for_attempt: list[str],
+                    tool_calls_for_attempt: list[ToolCallItem],
+                ) -> AsyncGenerator[LLMStreamEvent]:
+                    nonlocal done_provider_metadata, final_reasoning_info
                     async for event in self.llm_client.generate_response_stream(
-                        messages=messages,
-                        tools=tools_to_offer,
-                        tool_choice=tool_choice_mode,
+                        messages=messages_for_attempt,
+                        tools=tools_for_attempt,
+                        tool_choice=tool_choice_for_attempt,
                     ):
                         # Yield content events as they come
                         if event.type == "content" and event.content:
-                            accumulated_content.append(event.content)
-                            yield (event, None)  # No message to save yet
+                            content_for_attempt.append(event.content)
+                            yield event
 
                         # Collect tool calls
                         elif event.type == "tool_call" and event.tool_call:
-                            tool_calls_from_stream.append(event.tool_call)
-                            yield (event, None)  # No message to save yet
+                            tool_calls_for_attempt.append(event.tool_call)
+                            yield event
 
                         # Handle done event
                         elif event.type == "done":
@@ -609,33 +616,60 @@ class LLMStreamingLoop:
                             logger.error(f"Stream error: {event.error}")
                             raise _map_stream_error_to_exception(event)
 
-                    # Check for empty response (no content and no tool calls)
-                    if not accumulated_content and not tool_calls_from_stream:
+                def should_retry_empty_response(
+                    content_for_attempt: list[str],
+                    tool_calls_for_attempt: list[ToolCallItem],
+                    iteration: int,
+                    offered_tools: list[ToolDefinition] | None,
+                    choice_mode: str,
+                    message_count: int,
+                ) -> bool:
+                    nonlocal empty_response_retry_attempted
+                    if not content_for_attempt and not tool_calls_for_attempt:
                         if not empty_response_retry_attempted:
                             logger.warning(
                                 "LLM returned empty response (no content, no tool calls). "
                                 "iteration=%d/%d, tools_offered=%d, tool_choice=%s, "
                                 "num_messages=%d. Re-prompting.",
-                                current_iteration,
+                                iteration,
                                 max_iterations,
-                                len(tools_to_offer) if tools_to_offer else 0,
-                                tool_choice_mode,
-                                len(messages),
+                                len(offered_tools) if offered_tools else 0,
+                                choice_mode,
+                                message_count,
                             )
                             empty_response_retry_attempted = True
-                            continue
+                            return True
                         logger.warning(
                             "LLM returned empty response on retry. "
                             "iteration=%d/%d, tools_offered=%d, tool_choice=%s, "
                             "num_messages=%d. Proceeding with empty response.",
-                            current_iteration,
+                            iteration,
                             max_iterations,
-                            len(tools_to_offer) if tools_to_offer else 0,
-                            tool_choice_mode,
-                            len(messages),
+                            len(offered_tools) if offered_tools else 0,
+                            choice_mode,
+                            message_count,
                         )
+                    return False
 
-                    break  # Success, exit while loop
+                stream_iterator = stream_events(
+                    messages,
+                    tools_to_offer,
+                    tool_choice_mode,
+                    accumulated_content,
+                    tool_calls_from_stream,
+                )
+                retry_empty_response = False
+                try:
+                    async for stream_event in stream_iterator:
+                        yield (stream_event, None)
+                    retry_empty_response = should_retry_empty_response(
+                        accumulated_content,
+                        tool_calls_from_stream,
+                        current_iteration,
+                        tools_to_offer,
+                        tool_choice_mode,
+                        len(messages),
+                    )
 
                 except ContextLengthError as e:
                     if (
@@ -667,6 +701,12 @@ class LLMStreamingLoop:
                 except Exception as e:
                     logger.exception(f"Error in LLM streaming: {e}")
                     raise
+                finally:
+                    await stream_iterator.aclose()
+
+                if retry_empty_response:
+                    continue
+                break  # Success, exit while loop
 
             # Combine accumulated content
             final_content = (

@@ -361,6 +361,58 @@ class AuthService:
         )
         return await self.oauth.oidc_provider.authorize_redirect(request, redirect_uri)  # type: ignore
 
+    @staticmethod
+    def _complete_auth_callback(request: Request, token: User) -> RedirectResponse:
+        user_info = token.get("userinfo")
+        if not user_info:
+            logger.warning("OIDC callback successful but no userinfo found in token.")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not fetch user information.",
+            )
+
+        if ALLOWED_OIDC_EMAILS:
+            email = user_info.get("email")
+            if not email:
+                logger.warning(
+                    f"OIDC login attempt without email in userinfo (sub: {user_info.get('sub')})"
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Authentication failed: No email provided by OIDC provider and email allowlist is enabled.",
+                )
+
+            allowed_emails = [e.strip().lower() for e in ALLOWED_OIDC_EMAILS.split(",")]
+            if email.lower() not in allowed_emails:
+                logger.warning(f"Unauthorized OIDC login attempt for email: {email}")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Access denied: Email '{email}' is not in the allowlist.",
+                )
+
+        config_from_state = getattr(request.app.state, "config", None)
+        if config_from_state is not None:
+            resolver = getattr(request.app.state, "user_identity_resolver", None)
+            if resolver is None:
+                resolver = UserIdentityResolver(config_from_state)
+                request.app.state.user_identity_resolver = resolver
+            try:
+                resolver.resolve_oidc_user(dict(user_info))
+            except UserIdentityResolutionError as exc:
+                logger.warning("Unmapped OIDC login rejected: %s", exc)
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=str(exc),
+                ) from exc
+
+        _clear_token_session_binding(request)
+        request.session["user"] = dict(user_info)
+        logger.info(
+            f"User logged in successfully: {user_info.get('email') or user_info.get('sub')}"
+        )
+        redirect_url = request.session.pop("redirect_after_login", "/")
+        return RedirectResponse(url=redirect_url)
+
     async def handle_auth_callback(self, request: Request) -> RedirectResponse:
         """Handles the callback from the OIDC provider after authentication."""
         if not self.oauth:
@@ -371,64 +423,7 @@ class AuthService:
 
         try:
             token = await self.oauth.oidc_provider.authorize_access_token(request)  # type: ignore
-            user_info = token.get("userinfo")
-            if user_info:
-                # Check email allowlist if configured
-                if ALLOWED_OIDC_EMAILS:
-                    email = user_info.get("email")
-                    if not email:
-                        logger.warning(
-                            f"OIDC login attempt without email in userinfo (sub: {user_info.get('sub')})"
-                        )
-                        raise HTTPException(
-                            status_code=status.HTTP_403_FORBIDDEN,
-                            detail="Authentication failed: No email provided by OIDC provider and email allowlist is enabled.",
-                        )
-
-                    allowed_emails = [
-                        e.strip().lower() for e in ALLOWED_OIDC_EMAILS.split(",")
-                    ]
-                    if email.lower() not in allowed_emails:
-                        logger.warning(
-                            f"Unauthorized OIDC login attempt for email: {email}"
-                        )
-                        raise HTTPException(
-                            status_code=status.HTTP_403_FORBIDDEN,
-                            detail=f"Access denied: Email '{email}' is not in the allowlist.",
-                        )
-
-                config_from_state = getattr(request.app.state, "config", None)
-                if config_from_state is not None:
-                    resolver = getattr(
-                        request.app.state, "user_identity_resolver", None
-                    )
-                    if resolver is None:
-                        resolver = UserIdentityResolver(config_from_state)
-                        request.app.state.user_identity_resolver = resolver
-                    try:
-                        resolver.resolve_oidc_user(dict(user_info))
-                    except UserIdentityResolutionError as exc:
-                        logger.warning("Unmapped OIDC login rejected: %s", exc)
-                        raise HTTPException(
-                            status_code=status.HTTP_403_FORBIDDEN,
-                            detail=str(exc),
-                        ) from exc
-
-                _clear_token_session_binding(request)
-                request.session["user"] = dict(user_info)
-                logger.info(
-                    f"User logged in successfully: {user_info.get('email') or user_info.get('sub')}"
-                )
-                redirect_url = request.session.pop("redirect_after_login", "/")
-                return RedirectResponse(url=redirect_url)
-            else:
-                logger.warning(
-                    "OIDC callback successful but no userinfo found in token."
-                )
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Could not fetch user information.",
-                )
+            return self._complete_auth_callback(request, token)
         except HTTPException:
             # Re-raise HTTPExceptions as-is (e.g., 403 Forbidden from allowlist)
             raise

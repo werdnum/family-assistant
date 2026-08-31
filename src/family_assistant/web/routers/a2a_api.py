@@ -13,6 +13,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import suppress
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import APIRouter, Depends, Request
@@ -839,6 +840,69 @@ def _sse_jsonrpc(
     return {"event": event_type, "data": json.dumps(envelope)}
 
 
+@dataclass
+class _A2AStreamState:
+    accumulated_text: str = ""
+    attachment_ids: list[str] | None = None
+    has_error: bool = False
+    is_canceled: bool = False
+    error_msg: str = ""
+
+
+async def _forward_a2a_stream_events(
+    request_id: str | int | None,
+    service: ProcessingService,
+    db_context: Database,
+    message: Message,
+    conversation_id: str,
+    content_parts: list[ContentPartDict],
+    user_id: str,
+    cancel_event: asyncio.Event,
+    task_id: str,
+    context_id: str,
+    artifact_id: str,
+    state: _A2AStreamState,
+) -> AsyncIterator[dict[str, str]]:
+    async for stream_event in service.handle_chat_interaction_stream(
+        db_context=db_context,
+        interface_type="a2a",
+        conversation_id=conversation_id,
+        trigger_content_parts=content_parts,
+        trigger_interface_message_id=message.message_id,
+        user_name=user_id,
+        user_id=user_id,
+        initial_taint_sources=_initial_taint_sources_from_message(message),
+    ):
+        if cancel_event.is_set():
+            state.is_canceled = True
+            break
+        if stream_event.type == "content" and stream_event.content:
+            state.accumulated_text += stream_event.content
+            artifact_event = TaskArtifactUpdateEvent(
+                task_id=task_id,
+                context_id=context_id,
+                artifact=Artifact(
+                    artifact_id=artifact_id,
+                    parts=[Part(root=TextPart(text=stream_event.content))],
+                ),
+                append=True,
+            )
+            yield _sse_jsonrpc(
+                request_id,
+                "artifact",
+                artifact_event.model_dump(exclude_none=True),
+            )
+        elif stream_event.type == "error":
+            state.has_error = True
+            state.error_msg = stream_event.error or "Unknown error"
+        elif stream_event.type == "done" and stream_event.metadata:
+            # A done event closes an agentic turn, not the interaction. Keep
+            # streaming and retain the last turn's response attachments.
+            state.attachment_ids = stream_event.metadata.get(
+                "attachment_ids", state.attachment_ids
+            )
+
+
 async def _stream_message(
     request_id: str | int | None,
     send_params: MessageSendParams,
@@ -962,12 +1026,8 @@ async def _stream_message(
     )
 
     # Stream the interaction with a separate DB context for ProcessingService
-    accumulated_text = ""
-    attachment_ids: list[str] | None = None
-    has_error = False
-    is_canceled = False
-    error_msg = ""
     artifact_id = uuid.uuid4().hex
+    stream_state = _A2AStreamState()
 
     # Register cancellation event so tasks/cancel can signal us
     cancel_events: dict[str, asyncio.Event] = request.app.state.a2a_cancel_events
@@ -976,54 +1036,33 @@ async def _stream_message(
     try:
         db_context = Database(db_engine)
         try:
-            async for stream_event in service.handle_chat_interaction_stream(
-                db_context=db_context,
-                interface_type="a2a",
-                conversation_id=conversation_id,
-                trigger_content_parts=content_parts,
-                trigger_interface_message_id=message.message_id,
-                user_name=user_id,
-                user_id=user_id,
-                initial_taint_sources=_initial_taint_sources_from_message(message),
+            async for response_event in _forward_a2a_stream_events(
+                request_id,
+                service,
+                db_context,
+                message,
+                conversation_id,
+                content_parts,
+                user_id,
+                cancel_event,
+                task_id,
+                context_id,
+                artifact_id,
+                stream_state,
             ):
-                # Check for cooperative cancellation between chunks
-                if cancel_event.is_set():
-                    is_canceled = True
-                    break
-                if stream_event.type == "content" and stream_event.content:
-                    accumulated_text += stream_event.content
-                    artifact_event = TaskArtifactUpdateEvent(
-                        task_id=task_id,
-                        context_id=context_id,
-                        artifact=Artifact(
-                            artifact_id=artifact_id,
-                            parts=[Part(root=TextPart(text=stream_event.content))],
-                        ),
-                        append=True,
-                    )
-                    yield _sse_jsonrpc(
-                        request_id,
-                        "artifact",
-                        artifact_event.model_dump(exclude_none=True),
-                    )
-                elif stream_event.type == "error":
-                    has_error = True
-                    error_msg = stream_event.error or "Unknown error"
-                elif stream_event.type == "done":
-                    # 'done' closes an agentic turn, not the interaction: a turn
-                    # that called a tool emits one and keeps going, and the
-                    # attachments a tool queued are only known to the last one.
-                    # Stopping here would truncate every tool-using reply.
-                    if stream_event.metadata:
-                        attachment_ids = stream_event.metadata.get(
-                            "attachment_ids", attachment_ids
-                        )
+                yield response_event
         except Exception:
             logger.exception("Error during A2A streaming for task %s", task_id)
-            has_error = True
-            error_msg = "Internal streaming error"
+            stream_state.has_error = True
+            stream_state.error_msg = "Internal streaming error"
     finally:
         cancel_events.pop(task_id, None)
+
+    accumulated_text = stream_state.accumulated_text
+    attachment_ids = stream_state.attachment_ids
+    has_error = stream_state.has_error
+    is_canceled = stream_state.is_canceled
+    error_msg = stream_state.error_msg
 
     # Files the turn queued for its response are not part of the text stream, so
     # they are resolved here and ride out on the final artifact chunk.

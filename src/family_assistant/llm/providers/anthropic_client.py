@@ -6,7 +6,7 @@ import base64
 import json
 import logging
 import os
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Sequence
 from dataclasses import asdict
 from typing import (
     TYPE_CHECKING,
@@ -424,34 +424,12 @@ class AnthropicClient(BaseLLMClient):
 
         for attempt in range(max_retries + 1):
             try:
-                processed_messages = self._process_tool_messages(attempt_messages)
-                system_blocks, api_messages = (
-                    self._convert_messages_to_anthropic_format(processed_messages)
+                tool_input = await self._request_native_output_tool(
+                    attempt_messages=attempt_messages,
+                    tool_name=tool_name,
+                    description=description,
+                    input_schema=input_schema,
                 )
-                # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
-                params: dict[str, Any] = {
-                    "model": self.model,
-                    "messages": api_messages,
-                    "max_tokens": 8192,
-                    "tools": [
-                        self._create_native_output_tool(
-                            name=tool_name,
-                            description=description,
-                            input_schema=input_schema,
-                        )
-                    ],
-                    "tool_choice": {"type": "tool", "name": tool_name},
-                    **self.default_kwargs,
-                    **self._get_model_specific_params(self.model),
-                }
-                # This path always forces the output tool, so thinking can never
-                # be valid here regardless of how the model is configured.
-                self._strip_thinking_for_forced_tool_choice(params)
-                if system_blocks:
-                    params["system"] = system_blocks
-
-                response = await self.client.messages.create(**params)
-                tool_input = self._extract_forced_tool_input(response, tool_name)
                 raw_response = json.dumps(tool_input)
                 return parse_output(tool_input)
 
@@ -483,6 +461,42 @@ class AnthropicClient(BaseLLMClient):
             raw_response=raw_response,
             validation_error=last_error,
         )
+
+    async def _request_native_output_tool(
+        self,
+        *,
+        attempt_messages: list[LLMMessage],
+        tool_name: str,
+        description: str,
+        input_schema: dict[str, object],
+    ) -> dict[str, object]:
+        """Request and extract one forced native-output tool call."""
+        processed_messages = self._process_tool_messages(attempt_messages)
+        system_blocks, api_messages = self._convert_messages_to_anthropic_format(
+            processed_messages
+        )
+        # ast-grep-ignore: no-dict-any - kwargs dict for client.messages.create(**params) requires heterogeneous values
+        params: dict[str, Any] = {
+            "model": self.model,
+            "messages": api_messages,
+            "max_tokens": 8192,
+            "tools": [
+                self._create_native_output_tool(
+                    name=tool_name,
+                    description=description,
+                    input_schema=input_schema,
+                )
+            ],
+            "tool_choice": {"type": "tool", "name": tool_name},
+            **self.default_kwargs,
+            **self._get_model_specific_params(self.model),
+        }
+        self._strip_thinking_for_forced_tool_choice(params)
+        if system_blocks:
+            params["system"] = system_blocks
+
+        response = await self.client.messages.create(**params)
+        return self._extract_forced_tool_input(response, tool_name)
 
     async def generate_structured(
         self,
@@ -1050,67 +1064,67 @@ class AnthropicClient(BaseLLMClient):
             )
 
             try:
-                processed_messages = self._process_tool_messages(list(messages))
-
-                system_blocks, api_messages = (
-                    self._convert_messages_to_anthropic_format(processed_messages)
+                return await self._generate_response_success(
+                    messages, tools, tool_choice, telemetry
                 )
-
-                params = self._build_request_params(
-                    api_messages, system_blocks, tools, tool_choice
-                )
-
-                response = await self.client.messages.create(**params)
-
-                # Parse response
-                content_text = ""
-                tool_calls = []
-
-                for block in response.content:
-                    if block.type == "text":
-                        content_text += block.text
-                    elif block.type == "tool_use":
-                        tool_calls.append(
-                            ToolCallItem(
-                                id=block.id,
-                                type="function",
-                                function=ToolCallFunction(
-                                    name=block.name,
-                                    arguments=json.dumps(block.input),
-                                ),
-                            )
-                        )
-
-                thinking_blocks = self._extract_thinking_blocks(response.content)
-
-                telemetry.record_response_metadata(
-                    resolved_model=response.model,
-                    response_id=response.id,
-                    finish_reason=response.stop_reason,
-                )
-
-                reasoning_info = telemetry.finalize_usage(
-                    self._reasoning_info_from_usage(response.usage)
-                    if response.usage
-                    else None
-                )
-
-                llm_output = LLMOutput(
-                    content=content_text or None,
-                    tool_calls=tool_calls if tool_calls else None,
-                    reasoning_info=reasoning_info,
-                    provider_metadata=self._thinking_metadata(thinking_blocks),
-                    resolved_model=response.model,
-                )
-
-                telemetry.record_output(llm_output)
-                telemetry.finish_success(asdict(llm_output))
-
-                return llm_output
 
             except Exception as e:
                 telemetry.finish_error(e)
                 self._raise_mapped_error(e)
+
+    async def _generate_response_success(
+        self,
+        messages: Sequence[LLMMessage],
+        tools: list[ToolDefinition] | None,
+        tool_choice: str | None,
+        telemetry: LLMCallTelemetry,
+    ) -> LLMOutput:
+        """Run and record one successful non-streaming Anthropic request."""
+        processed_messages = self._process_tool_messages(list(messages))
+        system_blocks, api_messages = self._convert_messages_to_anthropic_format(
+            processed_messages
+        )
+        params = self._build_request_params(
+            api_messages, system_blocks, tools, tool_choice
+        )
+        response = await self.client.messages.create(**params)
+
+        content_text = ""
+        tool_calls = []
+        for block in response.content:
+            if block.type == "text":
+                content_text += block.text
+            elif block.type == "tool_use":
+                tool_calls.append(
+                    ToolCallItem(
+                        id=block.id,
+                        type="function",
+                        function=ToolCallFunction(
+                            name=block.name,
+                            arguments=json.dumps(block.input),
+                        ),
+                    )
+                )
+
+        thinking_blocks = self._extract_thinking_blocks(response.content)
+        telemetry.record_response_metadata(
+            resolved_model=response.model,
+            response_id=response.id,
+            finish_reason=response.stop_reason,
+        )
+        reasoning_info = telemetry.finalize_usage(
+            self._reasoning_info_from_usage(response.usage) if response.usage else None
+        )
+        llm_output = LLMOutput(
+            content=content_text or None,
+            tool_calls=tool_calls if tool_calls else None,
+            reasoning_info=reasoning_info,
+            provider_metadata=self._thinking_metadata(thinking_blocks),
+            resolved_model=response.model,
+        )
+        telemetry.record_output(llm_output)
+        telemetry.finish_success(asdict(llm_output))
+        return llm_output
 
     def _raise_mapped_error(self, e: Exception) -> NoReturn:
         """Map Anthropic SDK exceptions to our exception hierarchy."""
@@ -1274,7 +1288,7 @@ class AnthropicClient(BaseLLMClient):
                 streaming=True,
             )
 
-            try:
+            async def stream_events() -> AsyncGenerator[LLMStreamEvent]:
                 processed_messages = self._process_tool_messages(list(messages))
 
                 system_blocks, api_messages = (
@@ -1384,6 +1398,10 @@ class AnthropicClient(BaseLLMClient):
 
                 yield LLMStreamEvent(type="done", metadata=metadata)
 
+            events = stream_events()
+            try:
+                async for stream_event in events:
+                    yield stream_event
             except Exception as e:
                 telemetry.finish_error(e)
 
@@ -1415,6 +1433,8 @@ class AnthropicClient(BaseLLMClient):
                         "model": self.model,
                     },
                 )
+            finally:
+                await events.aclose()
         finally:
             span.end()
 
