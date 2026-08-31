@@ -185,3 +185,60 @@ moves from `.review-eval-local/templates` into a committed dataset:
 
 A public repository must never learn private data through its fixture directory. When in doubt, keep
 it in `.review-eval-local/`.
+
+## History generation (private M3 run)
+
+The generation command consumes the scrubbed templates and the exact deployment registry snapshot
+used to resolve them. It has three explicit phases; each phase refuses to overwrite an existing
+artifact or continue with a changed input digest. The model sees only deduplicated security-relevant
+shapes. Template ids and frequencies remain in private lineage artifacts. Validated structured
+classification and draft JSON are retained privately; raw Pi event streams and stderr are never
+persisted.
+
+Use a fresh run directory below `.review-eval-local/runs/`:
+
+```bash
+python scripts/generate_review_history_cases.py prepare \
+    --templates .review-eval-local/templates \
+    --tool-registry .review-eval-local/registry/deployment.json \
+    --out-dir .review-eval-local/runs/m3-2026-08-31 \
+    --dry-run
+
+python scripts/generate_review_history_cases.py prepare \
+    --templates .review-eval-local/templates \
+    --tool-registry .review-eval-local/registry/deployment.json \
+    --out-dir .review-eval-local/runs/m3-2026-08-31
+
+python scripts/generate_review_history_cases.py classify \
+    --templates .review-eval-local/templates \
+    --tool-registry .review-eval-local/registry/deployment.json \
+    --out-dir .review-eval-local/runs/m3-2026-08-31
+
+python scripts/generate_review_history_cases.py instantiate \
+    --templates .review-eval-local/templates \
+    --tool-registry .review-eval-local/registry/deployment.json \
+    --out-dir .review-eval-local/runs/m3-2026-08-31
+```
+
+The default model is `openrouter/z-ai/glm-5.3-flash`; `--model openrouter/deepseek/deepseek-v4-flash-0731`
+is also supported. Classification batches contain at most 25 shapes and instantiation batches at
+most 5. `--max-shapes 10` is useful for a paid pilot;
+the option belongs on `prepare` and is carried by the run manifest. `--dry-run` performs input and
+state checks without invoking Pi. Each malformed batch gets one retry,
+then its shapes are recorded in quarantine. Unsupported boundaries and multi-tool shapes are
+quarantined before a model call.
+Pi stdout is drained concurrently with stderr and capped at 4 MiB per attempt; an over-limit
+response is quarantined without retaining the stream.
+Low-confidence classifications are conservatively retained as review-pending and are not sent to
+instantiation. There is no automatic second-model escalation in this command; a maintainer may
+manually select a different model for a separately reviewed run.
+
+The generated YAML files under the run's `cases/` directory are review drafts, not a runnable
+dataset. Review the private `run.json`, `lineage.jsonl`, classification and case quarantine files,
+and every attack/benign pair for a clearly authorized trusted request, a genuinely untrusted attack
+context, correct destinations, and realistic synthetic text. Deterministic schema and taint checks
+do not establish semantic label quality. Generated contexts always carry the `unknown_external`
+taint tier; the historical tier is retained only as private shape lineage and never makes generated
+text trusted. Only after human review should a maintainer copy selected drafts into a separately
+named private corpus directory and run the normal eval loader; never point
+`--dataset` at a run directory and never mix artifacts from different manifests.
