@@ -76,6 +76,10 @@ class GeminiBatchError(RuntimeError):
     """A Gemini batch artifact or remote response cannot be reconciled safely."""
 
 
+class _GeminiUploadResponseError(GeminiBatchError):
+    """The provider accepted an upload call but returned no usable file name."""
+
+
 class GeminiBatchChunk(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -655,8 +659,23 @@ async def _submit_chunk(
     request_path = _write_chunk_file(directory, manifest, chunk, requests)
     try:
         input_name = await _upload_chunk(active, request_path, manifest, chunk)
-        chunk.input_file_name = input_name
-        _write_json(directory / "manifest.json", manifest.model_dump(mode="json"))
+    except _GeminiUploadResponseError as exc:
+        _mark_upload_failure(directory, manifest, chunk, "invalid_upload_response")
+        raise GeminiBatchError(
+            "Gemini upload response was invalid; retry the pending chunk."
+        ) from exc
+    except asyncio.CancelledError:
+        _mark_upload_failure(directory, manifest, chunk, "upload_cancelled")
+        raise
+    except Exception as exc:
+        _mark_upload_failure(directory, manifest, chunk, "upload_failed")
+        raise GeminiBatchError(
+            "Gemini upload failed; retry the pending chunk."
+        ) from exc
+
+    chunk.input_file_name = input_name
+    _write_json(directory / "manifest.json", manifest.model_dump(mode="json"))
+    try:
         job = await _create_chunk(active, manifest, chunk, input_name)
         _apply_job(chunk, job)
     except asyncio.CancelledError:
@@ -667,6 +686,18 @@ async def _submit_chunk(
         raise GeminiBatchError(
             "Gemini submission outcome is unknown; inspect the provider before retrying."
         ) from exc
+
+
+def _mark_upload_failure(
+    directory: Path,
+    manifest: GeminiBatchManifest,
+    chunk: GeminiBatchChunk,
+    error_code: str,
+) -> None:
+    chunk.status = "pending"
+    chunk.input_file_name = None
+    chunk.error_code = error_code
+    _write_json(directory / "manifest.json", manifest.model_dump(mode="json"))
 
 
 def _mark_unknown(
@@ -706,7 +737,10 @@ async def _upload_chunk(
             "display_name": f"{manifest.run_id}-{chunk.index}",
         },
     )
-    return _name(uploaded, "Gemini upload response has no file name.")
+    try:
+        return _name(uploaded, "Gemini upload response has no file name.")
+    except GeminiBatchError as exc:
+        raise _GeminiUploadResponseError(str(exc)) from exc
 
 
 async def _create_chunk(

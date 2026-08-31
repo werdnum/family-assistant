@@ -39,11 +39,15 @@ class _FakeFiles:
     def __init__(self) -> None:
         self.downloaded: list[str] = []
         self.output = b""
+        self.upload_error: Exception | None = None
+        self.upload_response: object = SimpleNamespace(name="files/input-0")
 
     async def upload(self, *, file: str, config: dict[str, object]) -> object:
         assert file.endswith("upload-0.jsonl")
         assert config["mime_type"] == "application/jsonl"
-        return SimpleNamespace(name="files/input-0")
+        if self.upload_error is not None:
+            raise self.upload_error
+        return self.upload_response
 
     async def download(self, *, file: str) -> bytes:
         self.downloaded.append(file)
@@ -55,9 +59,12 @@ class _FakeBatches:
         self.create_calls: list[dict[str, object]] = []
         self.get_calls: list[str] = []
         self.state = "JOB_STATE_RUNNING"
+        self.create_error: Exception | None = None
 
     async def create(self, **kwargs: object) -> object:
         self.create_calls.append(kwargs)
+        if self.create_error is not None:
+            raise self.create_error
         return SimpleNamespace(name="batches/run-0", state="JOB_STATE_RUNNING")
 
     async def get(self, *, name: str) -> object:
@@ -206,6 +213,79 @@ async def test_fake_submit_poll_and_harvest_records_usage(private_root: Path) ->
         "thinking_tokens": 2 * count,
         "total_tokens": 11 * count,
     }
+
+
+@pytest.mark.asyncio
+async def test_upload_failure_is_pending_and_retryable(private_root: Path) -> None:
+    run_dir = private_root / "runs" / "native"
+    prepare_gemini_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
+    )
+    client = _FakeClient()
+    client.aio.files.upload_error = RuntimeError("temporary upload failure")
+
+    with pytest.raises(GeminiBatchError, match="upload failed"):
+        await submit_gemini_batch(
+            run_dir, approved_spend_usd=1.0, approve_spend=True, client=client
+        )
+
+    payload = json.loads((run_dir / "manifest.json").read_text())
+    assert payload["chunks"][0]["status"] == "pending"
+    assert payload["chunks"][0]["error_code"] == "upload_failed"
+    assert payload["chunks"][0]["input_file_name"] is None
+    assert client.aio.batches.create_calls == []
+
+    client.aio.files.upload_error = None
+    submitted = await submit_gemini_batch(
+        run_dir, approved_spend_usd=1.0, approve_spend=True, client=client
+    )
+    assert submitted.chunks[0].status == "running"
+    assert submitted.chunks[0].error_code is None
+    assert len(client.aio.batches.create_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_malformed_upload_response_is_pending_and_retryable(
+    private_root: Path,
+) -> None:
+    run_dir = private_root / "runs" / "native"
+    prepare_gemini_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
+    )
+    client = _FakeClient()
+    client.aio.files.upload_response = SimpleNamespace()
+
+    with pytest.raises(GeminiBatchError, match="upload response was invalid"):
+        await submit_gemini_batch(
+            run_dir, approved_spend_usd=1.0, approve_spend=True, client=client
+        )
+
+    payload = json.loads((run_dir / "manifest.json").read_text())
+    assert payload["chunks"][0]["status"] == "pending"
+    assert payload["chunks"][0]["error_code"] == "invalid_upload_response"
+    assert payload["chunks"][0]["input_file_name"] is None
+    assert client.aio.batches.create_calls == []
+
+
+@pytest.mark.asyncio
+async def test_batch_creation_failure_is_submission_unknown(private_root: Path) -> None:
+    run_dir = private_root / "runs" / "native"
+    prepare_gemini_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
+    )
+    client = _FakeClient()
+    client.aio.batches.create_error = RuntimeError("ambiguous create failure")
+
+    with pytest.raises(GeminiBatchError, match="outcome is unknown"):
+        await submit_gemini_batch(
+            run_dir, approved_spend_usd=1.0, approve_spend=True, client=client
+        )
+
+    payload = json.loads((run_dir / "manifest.json").read_text())
+    assert payload["chunks"][0]["status"] == "submission_unknown"
+    assert payload["chunks"][0]["error_code"] == "submission_unknown"
+    assert payload["chunks"][0]["input_file_name"] == "files/input-0"
+    assert len(client.aio.batches.create_calls) == 1
 
 
 @pytest.mark.asyncio
