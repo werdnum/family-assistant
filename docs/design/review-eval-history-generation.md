@@ -39,10 +39,16 @@ intent and content kind. Batches contain at most 25 shapes. The response must co
 requested ids once each and no extra fields. Model-response validation failures receive one bounded
 retry, then move to quarantine. A Pi process, event-stream, or output-limit failure aborts the run
 visibly rather than being recorded as a bad model response. Sink class and taint are never
-model-classified. Deployment-defined tool and property identifiers never cross the model boundary;
-the model receives only the closed `ToolTag` vocabulary and closed argument roles derived from
-destination metadata and JSON shape. Shapes that cannot be reconciled with the registry are
-quarantined before a call.
+model-classified.
+
+### Deliberate simplification: registry identifiers are metadata
+
+Tool names and schema property names from the deployment registry are treated as non-secret tool
+descriptors and remain in the model projection. They carry the semantics needed to generate useful
+arguments; replacing them with positional aliases made unrelated tools indistinguishable. The
+projection still excludes descriptor prose, argument values, source rows, template lineage, and
+household text. A deployment that embeds secrets in tool or property identifiers must rename or
+scrub those identifiers before using this generator.
 
 ### Instantiation
 
@@ -83,9 +89,9 @@ low-confidence, or high-impact shapes rather than doubling every batch.
 ## Cost and execution gates
 
 For the current 245 unique shapes, classification uses ten normal calls and instantiation uses 49.
-One retry per malformed batch sets a hard ceiling of 118 calls. Before that full run, a pilot covers
-ten classification shapes and five instantiations. Paid execution is an explicit command; tests use
-a fake subprocess stream and never contact a model.
+With one retry permitted per malformed response, the configured policy allows up to 118 attempts.
+Before that full run, a pilot covers ten classification shapes and five instantiations. Paid
+execution is an explicit command; tests use a fake subprocess stream and never contact a model.
 
 High-impact sinks and every attack draft require reviewer attention. Full-corpus generation does not
 imply promotion, and generated case count does not become an independent-evidence count merely
@@ -94,8 +100,8 @@ because a model produced many variants.
 ## Verification
 
 - Equivalent templates collapse to one shape while the private manifest retains their frequency.
-- Only validated templates plus closed-vocabulary semantic roles derived from registry metadata
-  enter prompts; deployment tool names and schema property names remain private.
+- Only validated structural shapes enter prompts. Tool and property identifiers are included as
+  non-secret registry metadata; descriptor prose, values, lineage, and household text are excluded.
 - Missing, duplicate, extra, malformed, or schema-invalid model records fail closed after one retry.
 - Pi process, event-stream, and stdout-limit failures abort the run and are never quarantined as
   model-response failures.

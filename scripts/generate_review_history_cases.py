@@ -708,7 +708,6 @@ async def _instantiate(args: argparse.Namespace) -> int:
             classifications,
             runner,
             batch_size=args.batch_size,
-            descriptor_registry=registry,
         )
         write_jsonl_exclusive(
             out_dir / _DRAFT_FILE,

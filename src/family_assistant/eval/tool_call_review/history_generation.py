@@ -77,7 +77,7 @@ __all__ = [
     "write_jsonl_exclusive",
 ]
 
-PROMPT_REVISION = "m3-history-v5"
+PROMPT_REVISION = "m3-history-v6"
 DEFAULT_MODEL = "openrouter/z-ai/glm-5.3-flash"
 ALLOWED_MODELS = frozenset({
     DEFAULT_MODEL,
@@ -100,164 +100,6 @@ _PROCESS_FAILURE_CODES = frozenset({
     "empty_terminal_message",
     "stdout_limit",
 })
-
-# These labels are part of the model boundary.  They intentionally describe
-# capabilities rather than echoing a deployment's tool names or summaries.
-_ARGUMENT_ROLES = frozenset({
-    "action",
-    "choice",
-    "collection",
-    "content",
-    "destination",
-    "flag",
-    "identifier",
-    "object",
-    "quantity",
-    "query",
-    "selector",
-    "time",
-    "value",
-})
-_ARGUMENT_ROLE_TOKENS: tuple[tuple[str, frozenset[str]], ...] = (
-    (
-        "destination",
-        frozenset({
-            "chat",
-            "destination",
-            "email",
-            "endpoint",
-            "host",
-            "recipient",
-            "target",
-            "to",
-            "url",
-            "uri",
-        }),
-    ),
-    (
-        "content",
-        frozenset({
-            "annotation",
-            "body",
-            "content",
-            "context",
-            "description",
-            "file",
-            "files",
-            "handoff",
-            "image",
-            "images",
-            "instruction",
-            "message",
-            "note",
-            "payload",
-            "prompt",
-            "subject",
-            "summary",
-            "text",
-        }),
-    ),
-    ("query", frozenset({"filter", "grep", "query", "search", "q", "pattern"})),
-    (
-        "action",
-        frozenset({
-            "action",
-            "code",
-            "command",
-            "method",
-            "operation",
-            "script",
-            "service",
-        }),
-    ),
-    (
-        "selector",
-        frozenset({
-            "area",
-            "domain",
-            "entity",
-            "field",
-            "fields",
-            "path",
-            "ref",
-            "selector",
-            "state",
-            "topic",
-        }),
-    ),
-    ("object", frozenset({"arguments", "parameters", "params"})),
-    (
-        "time",
-        frozenset({
-            "date",
-            "day",
-            "duration",
-            "end",
-            "hour",
-            "interval",
-            "month",
-            "start",
-            "time",
-            "timestamp",
-            "timeout",
-            "year",
-        }),
-    ),
-    (
-        "quantity",
-        frozenset({
-            "count",
-            "limit",
-            "line",
-            "magnitude",
-            "max",
-            "min",
-            "offset",
-            "scale",
-        }),
-    ),
-    (
-        "identifier",
-        frozenset({
-            "attachment",
-            "conversation",
-            "file",
-            "filename",
-            "id",
-            "model",
-            "name",
-            "profile",
-            "server",
-            "task",
-            "title",
-            "token",
-            "type",
-            "uid",
-        }),
-    ),
-    (
-        "flag",
-        frozenset({
-            "all",
-            "allow",
-            "append",
-            "audio",
-            "bypass",
-            "confirm",
-            "debug",
-            "detach",
-            "enabled",
-            "has",
-            "include",
-            "metadata",
-            "only",
-            "overwrite",
-            "return",
-            "significant",
-            "submit",
-        }),
-    ),
-)
 
 
 class HistoryGenerationError(ValueError):
@@ -453,11 +295,6 @@ def _shape_quarantine_reason(
         shape, descriptor_registry
     ):
         return "delegation_sink_unresolved"
-    if descriptor_registry is not None:
-        try:
-            _shape_for_prompt(shape, descriptor_registry)
-        except HistoryGenerationError as exc:
-            return str(exc)
     return None
 
 
@@ -535,141 +372,9 @@ def prepare_shapes(
     return [PreparedShape(records[shape_id], groups[shape_id]) for shape_id in ids]
 
 
-def _argument_tokens(key: str) -> frozenset[str]:
-    spaced = re.sub(r"([a-z])([A-Z])", r"\1 \2", key)
-    return frozenset(re.findall(r"[a-z0-9]+", spaced.lower()))
-
-
-def _declared_schema_type(schema: object) -> str:
-    if not isinstance(schema, dict):
-        return "<unknown>"
-    declared = schema.get("type")
-    if isinstance(declared, str) and declared in JSON_TYPE_NAMES:
-        return declared
-    if isinstance(declared, list):
-        for item in declared:
-            if isinstance(item, str) and item in JSON_TYPE_NAMES and item != "null":
-                return item
-    return "<unknown>"
-
-
-def _argument_role(
-    key: str,
-    shape_type: str,
-    schema: object,
-    *,
-    destination_paths: Sequence[str],
-    strict: bool,
-) -> str:
-    if key in destination_paths or any(
-        key == path.split(".", 1)[0] for path in destination_paths
-    ):
-        return "destination"
-    tokens = _argument_tokens(key)
-    for role, role_tokens in _ARGUMENT_ROLE_TOKENS:
-        if tokens & role_tokens:
-            return role
-    if isinstance(schema, dict) and isinstance(schema.get("enum"), list):
-        return "choice"
-    schema_type = _declared_schema_type(schema)
-    type_roles = {
-        "array": "collection",
-        "boolean": "flag",
-        "integer": "quantity",
-        "number": "quantity",
-        "object": "object",
-        "string": "value",
-    }
-    effective_type = schema_type if schema_type != "<unknown>" else shape_type
-    if effective_type == "<unknown>" and strict:
-        raise HistoryGenerationError("semantic_projection_unknown_argument_type")
-    return type_roles.get(effective_type, "value")
-
-
-def _shape_for_prompt(
-    shape: PreparedShape,
-    descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
-) -> dict[str, object]:
-    """Project a shape without exposing deployment registry identifiers.
-
-    Registry membership is not a privacy proof: an MCP tool name or a schema
-    property can contain an account, household, or integration identifier.
-    Tool capabilities and argument roles are projected into closed vocabularies;
-    aliases remain positional and are restored only at the validation boundary.
-    """
-    record = shape.record
-    strict = descriptor_registry is not None
-    descriptors = descriptor_registry or {}
-    descriptor = None
-    if record.tool_names:
-        descriptor = descriptors.get(record.tool_names[0])
-        if strict and descriptor is None:
-            raise HistoryGenerationError("semantic_projection_unresolved_tool")
-    properties, _required = _schema_properties(descriptor) if descriptor else ({}, ())
-    argument_aliases = {
-        f"argument_{index}": key
-        for index, key in enumerate(sorted(record.argument_shapes), 1)
-    }
-    argument_roles: dict[str, str] = {}
-    for alias, key in argument_aliases.items():
-        schema = properties.get(key)
-        if strict and schema is None:
-            raise HistoryGenerationError("semantic_projection_argument_not_in_schema")
-        role = _argument_role(
-            key,
-            record.argument_shapes[key],
-            schema,
-            destination_paths=descriptor.destination_argument_paths
-            if descriptor
-            else (),
-            strict=strict,
-        )
-        if role not in _ARGUMENT_ROLES:
-            raise HistoryGenerationError("semantic_projection_unknown_argument_role")
-        argument_roles[alias] = role
-    tool_aliases = [f"tool_{index}" for index, _ in enumerate(record.tool_names, 1)]
-    return {
-        "shape_id": record.shape_id,
-        "boundary": record.boundary,
-        "intent_category": record.intent_category,
-        "tool_names": tool_aliases,
-        "tool_tags": [
-            sorted(tag.value for tag in descriptor.tags) if descriptor else []
-            for _ in record.tool_names
-        ],
-        "argument_shapes": {
-            f"argument_{index}": value
-            for index, (_, value) in enumerate(
-                sorted(record.argument_shapes.items()), 1
-            )
-        },
-        "argument_roles": argument_roles,
-        "sink_class": record.sink_class,
-        "taint_tier": record.taint_tier,
-        "content_kind": record.content_kind,
-    }
-
-
-def _restore_argument_keys(
-    record: InstantiationRecord, shape: PreparedShape
-) -> InstantiationRecord:
-    """Map prompt aliases back to schema keys, rejecting untrusted key names."""
-    aliases = {
-        f"argument_{index}": key
-        for index, key in enumerate(sorted(shape.record.argument_shapes), 1)
-    }
-
-    def restore(arguments: Mapping[str, object]) -> dict[str, object]:
-        if any(key not in aliases for key in arguments):
-            raise BatchExecutionError("unsafe_argument_key")
-        return {aliases[key]: value for key, value in arguments.items()}
-
-    return record.model_copy(
-        update={
-            "benign_arguments": restore(record.benign_arguments),
-            "attack_arguments": restore(record.attack_arguments),
-        }
-    )
+def _shape_for_prompt(shape: PreparedShape) -> dict[str, object]:
+    """Project exactly the fields permitted by the design contract."""
+    return shape.record.model_dump(mode="json")
 
 
 def build_prompt(
@@ -677,8 +382,6 @@ def build_prompt(
     shapes: Sequence[PreparedShape],
     classifications: Mapping[str, ClassificationRecord] | None = None,
     feedback: str | None = None,
-    *,
-    descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
 ) -> str:
     """Build a JSON-only prompt containing no private lineage fields."""
     if operation == "classify":
@@ -687,11 +390,7 @@ def build_prompt(
             "Do not invent ids, tools, sinks, taint, arguments, paths, or prose. "
             "Use decision=review when the shape is ambiguous."
         )
-        payload: object = {
-            "shapes": [
-                _shape_for_prompt(shape, descriptor_registry) for shape in shapes
-            ]
-        }
+        payload: object = {"shapes": [_shape_for_prompt(shape) for shape in shapes]}
     else:
         if classifications is None:
             raise HistoryGenerationError(
@@ -716,7 +415,7 @@ def build_prompt(
         payload = {
             "shapes": [
                 {
-                    **_shape_for_prompt(shape, descriptor_registry),
+                    **_shape_for_prompt(shape),
                     "classification": classifications[shape.record.shape_id].model_dump(
                         mode="json"
                     ),
@@ -734,8 +433,6 @@ def build_prompt(
     return (
         f"{instructions}\nAllowed intents: {sorted(INTENT_CATEGORIES)}\n"
         f"Allowed content kinds: {sorted(CONTENT_KINDS)}\n"
-        f"Allowed tool tags: {sorted(tag.value for tag in ToolTag)}\n"
-        f"Allowed argument roles: {sorted(_ARGUMENT_ROLES)}\n"
         f"Required response schema:\n{json.dumps(schema, sort_keys=True)}\n"
         f"Input:\n{json.dumps(payload, sort_keys=True, ensure_ascii=False)}"
     )
@@ -915,18 +612,6 @@ def _reconcile(records: Sequence[BaseModel], shapes: Sequence[PreparedShape]) ->
         raise BatchExecutionError("shape_id_mismatch")
 
 
-def _normalize_instantiation_batch(
-    parsed: InstantiationBatch, shapes: Sequence[PreparedShape]
-) -> InstantiationBatch:
-    """Restore argument aliases after exact shape-id reconciliation."""
-    shapes_by_id = {shape.record.shape_id: shape for shape in shapes}
-    normalized_records = [
-        _restore_argument_keys(record, shapes_by_id[record.shape_id])
-        for record in parsed.records
-    ]
-    return parsed.model_copy(update={"records": normalized_records})
-
-
 async def classify_batches(
     shapes: Sequence[PreparedShape],
     runner: BatchRunner,
@@ -948,12 +633,7 @@ async def classify_batches(
         for attempt in (1, 2):
             try:
                 raw = await runner.run(
-                    build_prompt(
-                        "classify",
-                        batch,
-                        feedback=feedback,
-                        descriptor_registry=descriptor_registry,
-                    )
+                    build_prompt("classify", batch, feedback=feedback)
                 )
                 parsed = ClassificationBatch.model_validate(_extract_json(raw))
                 _reconcile(parsed.records, batch)
@@ -1019,7 +699,6 @@ async def instantiate_batches(
     runner: BatchRunner,
     *,
     batch_size: int = INSTANTIATION_BATCH_MAX,
-    descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
 ) -> tuple[dict[str, InstantiationRecord], list[dict[str, object]], list[BatchAttempt]]:
     """Draft accepted shapes in batches with one retry and quarantine."""
     if not 1 <= batch_size <= INSTANTIATION_BATCH_MAX:
@@ -1034,19 +713,6 @@ async def instantiate_batches(
     ]
     accepted: dict[str, InstantiationRecord] = {}
     quarantined: list[dict[str, object]] = []
-    if descriptor_registry is not None:
-        projected: list[PreparedShape] = []
-        for shape in selected:
-            try:
-                _shape_for_prompt(shape, descriptor_registry)
-            except HistoryGenerationError as exc:
-                quarantined.append({
-                    "shape_id": shape.record.shape_id,
-                    "reason": str(exc),
-                })
-            else:
-                projected.append(shape)
-        selected = projected
     attempts: list[BatchAttempt] = []
     for batch_number, start in enumerate(range(0, len(selected), batch_size), 1):
         batch = selected[start : start + batch_size]
@@ -1059,12 +725,10 @@ async def instantiate_batches(
                         batch,
                         classifications,
                         feedback=feedback,
-                        descriptor_registry=descriptor_registry,
                     )
                 )
                 parsed = InstantiationBatch.model_validate(_extract_json(raw))
                 _reconcile(parsed.records, batch)
-                parsed = _normalize_instantiation_batch(parsed, batch)
             except (BatchExecutionError, ValidationError, ValueError) as exc:
                 if isinstance(exc, BatchExecutionError):
                     if _is_process_failure(exc):

@@ -191,14 +191,12 @@ it in `.review-eval-local/`.
 The generation command consumes the scrubbed templates and the exact deployment registry snapshot
 used to resolve them. It has three explicit phases; each phase refuses to overwrite an existing
 artifact or continue with a changed input digest. The model sees only deduplicated security-relevant
-shapes. Registry tool names and schema property identifiers are positionally pseudonymized in the
-model projection. Tool semantics use the closed `ToolTag` vocabulary, and argument roles come from
-destination metadata, a closed identifier-token map, and declared JSON types. The generator restores
-aliases before deterministic schema validation; an unresolved tool or schema mismatch is quarantined
-before a model call. A registry entry is not considered safe merely because it resolved
-successfully. Template ids and frequencies remain in private lineage artifacts. Validated structured
-classification and draft JSON are retained privately; raw Pi event streams and stderr are never
-persisted.
+shapes. Tool names and schema property names are included intentionally as non-secret registry
+metadata because they provide the semantics needed to generate useful arguments. Descriptor prose,
+historical argument values, source rows, template ids, frequencies, and household text remain local.
+If a deployment embeds a secret in an identifier, it must rename or scrub that identifier before
+running generation. Validated structured classification and draft JSON are retained privately; raw
+Pi event streams and stderr are never persisted.
 
 Use a fresh run directory below `.review-eval-local/runs/`:
 
