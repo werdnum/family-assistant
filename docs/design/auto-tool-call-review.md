@@ -179,16 +179,19 @@ The reviewer's context is a typed structure assembled deterministically:
 - **The originating request, for delegated runs.** A delegated subconversation is unattended in the
   same mechanical sense — no trusted user row of its own — but unlike an event or a schedule, a
   human did ask for something; they asked it in the conversation that delegated. The delegating
-  turn's active user row travels with the run as the trigger's *originating request*, and renders
+  turn's user rows travel with the run as the trigger's *originating request* — all of them, in
+  order, since mid-turn steering adds to the active plan rather than replacing it, and a reviewer
+  given only "also include pricing" would deny what the opening request authorized. They render
   under the same taint-metadata rule as everything else: its own stored provenance decides, so an
   email-intake turn (whose sender-controlled body is represented as a user row) propagates nothing.
-  A chain of delegations passes on what it inherited rather than re-deriving it, so nesting answers
-  to the same human message. The delegation *goal* is a separate field and stays what it always was
-  — model-composed text carrying the delegating turn's taint — so a turn that read untrusted content
-  before delegating stubs its goal while its human request still renders. That distinction is the
-  point: it is what lets the reviewer tell a faithful delegation from a smuggled one on exactly the
-  turns where smuggling is possible, where previously both rendered as stubs and `confirm` and
-  `deny` collapsed into `deny`.
+  One such row disqualifies the whole turn, so a mixed one cannot contribute the half that happens
+  to qualify. A chain of delegations passes on what it inherited rather than re-deriving it, so
+  nesting answers to the same human message. The delegation *goal* is a separate field and stays
+  what it always was — model-composed text carrying the delegating turn's taint — so a turn that
+  read untrusted content before delegating stubs its goal while its human request still renders.
+  That distinction is the point: it is what lets the reviewer tell a faithful delegation from a
+  smuggled one on exactly the turns where smuggling is possible, where previously both rendered as
+  stubs and `confirm` and `deny` collapsed into `deny`.
 
   Propagation is built at one chokepoint (`build_delegation_review_trigger`), which every delegation
   boundary — synchronous, worker-run, and the completion wake — routes through, so a new boundary

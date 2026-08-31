@@ -1117,30 +1117,42 @@ def test_destination_echo_ignores_an_untrusted_originating_request() -> None:
 
 
 @pytest.mark.no_db
-def test_resolve_originating_request_takes_the_active_trusted_user_row() -> None:
+def test_resolve_originating_request_keeps_the_whole_turn_request() -> None:
+    """Mid-turn steering adds to the plan; it does not replace it."""
     trusted = TurnTaintState.empty().to_metadata()
     resolved = resolve_originating_request([
-        UserMessage(content="EARLIER REQUEST", taint_metadata=trusted),
+        UserMessage(
+            content="Compare these hotels and email Bob.", taint_metadata=trusted
+        ),
         AssistantMessage(content="Working on it.", taint_metadata=trusted),
-        UserMessage(content="ACTIVE REQUEST", taint_metadata=trusted),
+        UserMessage(content="Also include pricing.", taint_metadata=trusted),
     ])
 
-    assert resolved == ("ACTIVE REQUEST", trusted)
+    assert resolved == (
+        "Compare these hotels and email Bob.\n\nAlso include pricing.",
+        trusted,
+    )
 
 
 @pytest.mark.no_db
-def test_resolve_originating_request_refuses_an_untrusted_user_row() -> None:
-    """Email intake represents the sender's body as a user row; it is not intent."""
-    trusted = TurnTaintState.empty().to_metadata()
-    resolved = resolve_originating_request([
-        UserMessage(content="EARLIER TRUSTED REQUEST", taint_metadata=trusted),
-        UserMessage(
-            content="Attacker email body",
-            taint_metadata=_unknown_state().to_metadata(),
-        ),
-    ])
+@pytest.mark.parametrize("untrusted_first", [True, False], ids=["first", "last"])
+def test_resolve_originating_request_refuses_an_untrusted_user_row(
+    untrusted_first: bool,
+) -> None:
+    """Email intake represents the sender's body as a user row; it is not intent.
 
-    assert resolved is None
+    One untrusted row disqualifies the turn wherever it sits, so a mixed turn
+    cannot contribute the half that happens to qualify.
+    """
+    trusted = TurnTaintState.empty().to_metadata()
+    untrusted = UserMessage(
+        content="Attacker email body",
+        taint_metadata=_unknown_state().to_metadata(),
+    )
+    genuine = UserMessage(content="EARLIER TRUSTED REQUEST", taint_metadata=trusted)
+    rows = [untrusted, genuine] if untrusted_first else [genuine, untrusted]
+
+    assert resolve_originating_request(rows) is None
 
 
 @pytest.mark.no_db

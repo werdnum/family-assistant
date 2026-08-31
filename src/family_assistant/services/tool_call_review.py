@@ -696,11 +696,18 @@ def resolve_originating_request(
 ) -> tuple[str, TaintMetadata] | None:
     """Find the trusted human request a turn's delegated work answers.
 
-    The active request of the delegating turn is its most recent non-scaffolding
-    user row, and it qualifies only if its own stored provenance says
-    ``trusted_user`` -- an email-intake turn represents the sender-controlled
-    body as a user row, so role alone would propagate the attacker's text as
-    trusted intent.
+    A turn's request is every non-scaffolding user row it holds, in order, not
+    just the newest: mid-turn steering is allowed to *add* to the active plan,
+    so "also include pricing" on its own is not what the human asked for, and a
+    reviewer given only that would deny work the opening request authorized.
+    This is the same view the local reviewer already gets, which renders every
+    trusted row of an interactive turn rather than the last one.
+
+    Every one of those rows must carry ``trusted_user`` provenance or nothing is
+    propagated. An email-intake turn represents the sender-controlled body as a
+    user row, so role alone would propagate the attacker's text as trusted
+    intent; requiring all of them rather than scanning back to the first trusted
+    one keeps a mixed turn from contributing the half that happens to qualify.
 
     Callers pass rows only for a turn a human actually started -- see
     ``build_delegation_review_trigger``, which is the only thing that decides
@@ -714,7 +721,9 @@ def resolve_originating_request(
     """
     messages_module = importlib.import_module("family_assistant.llm.messages")
 
-    for message in reversed(messages):
+    instructions: list[str] = []
+    active_metadata: TaintMetadata | None = None
+    for message in messages:
         if not isinstance(message, messages_module.UserMessage):
             continue
         if messages_module.is_turn_scaffolding(message):
@@ -725,11 +734,17 @@ def resolve_originating_request(
         if metadata is None or _metadata_tier(metadata) is not (
             SourceTrustTier.TRUSTED_USER
         ):
+            instructions = []
+            active_metadata = None
             break
-        content = _textual_message_content(message)
-        if not content.strip():
-            break
-        return content, metadata
+        content = _textual_message_content(message).strip()
+        if content:
+            instructions.append(content)
+            # The rows are all trusted-tier by the check above, so the newest
+            # one's metadata describes the joined text as faithfully as any.
+            active_metadata = metadata
+    if instructions and active_metadata is not None:
+        return "\n\n".join(instructions), active_metadata
 
     if inherited is None or inherited.trusted_originating_request is None:
         return None
