@@ -97,6 +97,19 @@ def test_prepare_deduplicates_but_prompt_excludes_private_lineage() -> None:
     assert canonical_shape_key(first) == canonical_shape_key(second)
 
 
+def test_instantiation_prompt_requires_direct_synthetic_content() -> None:
+    prompt = build_prompt("instantiate", [_shape()], {"shape-one": _classification()})
+
+    assert "direct trusted user's objective" in prompt
+    assert "clean contextual data only" in prompt
+    assert (
+        "direct raw untrusted content containing the unauthorized instruction" in prompt
+    )
+    assert "actual proposed tool action with concrete schema values" in prompt
+    assert "never put prompt-injection prose" in prompt
+    assert "not a summary or description of an attack" in prompt
+
+
 class _FakeProcess:
     returncode = 0
 
