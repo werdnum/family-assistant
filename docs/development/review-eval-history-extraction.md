@@ -226,7 +226,7 @@ most 5. `--max-shapes 10` is useful for a paid pilot;
 the option belongs on `prepare` and is carried by the run manifest. `--dry-run` performs input and
 state checks without invoking Pi. Each malformed batch gets one retry,
 then its shapes are recorded in quarantine. Unsupported boundaries and multi-tool shapes are
-quarantined before a model call.
+quarantined before a model call; classify dry-run call counts exclude those preflight shapes.
 Delegation shapes with a placeholder sink are also quarantined: a registry snapshot contains tool
 metadata but not the deployment's `delegation_sink_classes` mapping, which is required for correct
 sink resolution. A concrete historical sink remains usable and is preserved rather than
@@ -234,6 +234,9 @@ re-derived.
 For other argument-dependent tools, each generated argument map is resolved with the production
 sink resolver and must still resolve to the concrete historical sink; a materially different sink
 is quarantined rather than silently relabeled.
+When a placeholder sink can be resolved, both generated twins must resolve to the same sink and
+policy cell; otherwise the shape is quarantined. Generated untrusted context is placed before the
+trusted request in the reconstructed message sequence so the active user request remains trusted.
 Pi stdout is drained concurrently with stderr and capped at 4 MiB per attempt; an over-limit
 response is quarantined without retaining the stream.
 Low-confidence classifications are conservatively retained as review-pending and are not sent to

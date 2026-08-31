@@ -36,6 +36,7 @@ from family_assistant.eval.tool_call_review.history_generation import (
     PreparedShape,
     ShapeRecord,
     build_cases,
+    classification_preflight,
     classify_batches,
     instantiate_batches,
     is_runnable_classification,
@@ -437,7 +438,82 @@ def _read_drafts(path: Path) -> list[InstantiationRecord]:
     ids = [record.shape_id for record in records]
     if len(ids) != len(set(ids)):
         raise HistoryGenerationError("duplicate instantiation shape id")
+    if ids != sorted(ids):
+        raise HistoryGenerationError("instantiation drafts are not sorted by shape id")
     return records
+
+
+def _load_existing_instantiation_artifacts(
+    out_dir: Path,
+    selected: Sequence[PreparedShape],
+    manifest: Mapping[str, object],
+) -> tuple[dict[str, InstantiationRecord], list[dict[str, object]]] | None:
+    """Load a complete persisted model result for safe no-call finalization.
+
+    A failed process may have persisted both model artifacts before it stopped
+    while constructing cases. Reusing them is safe only when the pair covers
+    exactly the currently selected shapes and any manifest counts already
+    present agree. One artifact without the other is an ambiguous mixed run.
+    """
+    draft_path = out_dir / _DRAFT_FILE
+    quarantine_path = out_dir / _INSTANTIATION_QUARANTINE_FILE
+    draft_exists = draft_path.exists()
+    quarantine_exists = quarantine_path.exists()
+    if not draft_exists and not quarantine_exists:
+        return None
+    if draft_exists != quarantine_exists:
+        raise HistoryGenerationError(
+            "partial instantiation artifacts cannot be resumed safely"
+        )
+    drafts = _read_drafts(draft_path)
+    quarantine = _read_quarantine(quarantine_path)
+    expected = {shape.record.shape_id for shape in selected}
+    draft_ids = {record.shape_id for record in drafts}
+    quarantine_ids = [record["shape_id"] for record in quarantine]
+    quarantine_id_set = set(quarantine_ids)
+    if len(quarantine_ids) != len(quarantine_id_set):
+        raise HistoryGenerationError("duplicate instantiation quarantine shape id")
+    if draft_ids & quarantine_id_set:
+        raise HistoryGenerationError(
+            "shape appears in instantiation drafts and quarantine"
+        )
+    if draft_ids | quarantine_id_set != expected:
+        raise HistoryGenerationError(
+            "instantiation artifacts do not exactly cover selected shapes"
+        )
+    accepted_count = manifest.get("instantiation_accepted")
+    quarantined_count = manifest.get("instantiation_quarantined")
+    if accepted_count is not None and accepted_count != len(drafts):
+        raise HistoryGenerationError(
+            "instantiation accepted count does not match persisted drafts"
+        )
+    if quarantined_count is not None and quarantined_count != len(quarantine):
+        raise HistoryGenerationError(
+            "instantiation quarantine count does not match persisted quarantine"
+        )
+    accepted_counts = manifest.get("accepted_counts")
+    quarantine_counts = manifest.get("quarantine_counts")
+    if accepted_counts is not None and not isinstance(accepted_counts, dict):
+        raise HistoryGenerationError("instantiation accepted counts are malformed")
+    if quarantine_counts is not None and not isinstance(quarantine_counts, dict):
+        raise HistoryGenerationError("instantiation quarantine counts are malformed")
+    if (
+        isinstance(accepted_counts, dict)
+        and accepted_counts.get("instantiation") is not None
+        and accepted_counts.get("instantiation") != len(drafts)
+    ):
+        raise HistoryGenerationError(
+            "instantiation accepted count is inconsistent with manifest"
+        )
+    if (
+        isinstance(quarantine_counts, dict)
+        and quarantine_counts.get("instantiation") is not None
+        and quarantine_counts.get("instantiation") != len(quarantine)
+    ):
+        raise HistoryGenerationError(
+            "instantiation quarantine count is inconsistent with manifest"
+        )
+    return ({record.shape_id: record for record in drafts}, quarantine)
 
 
 async def _classify(args: argparse.Namespace) -> int:
@@ -449,12 +525,14 @@ async def _classify(args: argparse.Namespace) -> int:
         raise HistoryGenerationError("classify requires a prepared run")
     _ensure_new_phase(out_dir, (_CLASSIFICATION_FILE, _CLASSIFICATION_QUARANTINE_FILE))
     if args.dry_run:
+        runnable, preflight_quarantine = classification_preflight(shapes, registry)
         print(
             json.dumps(
                 {
                     "phase": "classify",
-                    "shape_count": len(shapes),
-                    "calls": (len(shapes) + args.batch_size - 1) // args.batch_size,
+                    "shape_count": len(runnable),
+                    "preflight_quarantined": len(preflight_quarantine),
+                    "calls": (len(runnable) + args.batch_size - 1) // args.batch_size,
                 },
                 sort_keys=True,
             )
@@ -512,10 +590,6 @@ async def _instantiate(args: argparse.Namespace) -> int:
         raise HistoryGenerationError("instantiate requires a classified run")
     if not (out_dir / _CLASSIFICATION_FILE).exists():
         raise HistoryGenerationError("classification artifact is missing")
-    _ensure_new_phase(
-        out_dir,
-        (_DRAFT_FILE, _INSTANTIATION_QUARANTINE_FILE, _CASE_QUARANTINE_FILE),
-    )
     classifications = _read_classifications(out_dir / _CLASSIFICATION_FILE)
     classification_quarantine = _read_quarantine(
         out_dir / _CLASSIFICATION_QUARANTINE_FILE
@@ -530,27 +604,41 @@ async def _instantiate(args: argparse.Namespace) -> int:
         if shape.record.shape_id in classifications
         and is_runnable_classification(classifications[shape.record.shape_id])
     ]
+    existing = _load_existing_instantiation_artifacts(out_dir, selected, manifest)
+    if existing is None:
+        _ensure_new_phase(
+            out_dir,
+            (_DRAFT_FILE, _INSTANTIATION_QUARANTINE_FILE, _CASE_QUARANTINE_FILE),
+        )
+    else:
+        _ensure_new_phase(out_dir, (_CASE_QUARANTINE_FILE,))
     if args.dry_run:
         print(
             json.dumps(
                 {
                     "phase": "instantiate",
                     "shape_count": len(selected),
-                    "calls": (len(selected) + args.batch_size - 1) // args.batch_size,
+                    "calls": 0
+                    if existing is not None
+                    else (len(selected) + args.batch_size - 1) // args.batch_size,
                 },
                 sort_keys=True,
             )
         )
         return 0
-    runner = BatchRunner(model=args.model, executable=args.pi)
-    drafts, quarantine, attempts = await instantiate_batches(
-        selected, classifications, runner, batch_size=args.batch_size
-    )
-    write_jsonl_exclusive(
-        out_dir / _DRAFT_FILE,
-        (drafts[shape_id].model_dump(mode="json") for shape_id in sorted(drafts)),
-    )
-    write_jsonl_exclusive(out_dir / _INSTANTIATION_QUARANTINE_FILE, quarantine)
+    if existing is None:
+        runner = BatchRunner(model=args.model, executable=args.pi)
+        drafts, quarantine, attempts = await instantiate_batches(
+            selected, classifications, runner, batch_size=args.batch_size
+        )
+        write_jsonl_exclusive(
+            out_dir / _DRAFT_FILE,
+            (drafts[shape_id].model_dump(mode="json") for shape_id in sorted(drafts)),
+        )
+        write_jsonl_exclusive(out_dir / _INSTANTIATION_QUARANTINE_FILE, quarantine)
+    else:
+        drafts, quarantine = existing
+        attempts = []
     cases, case_quarantine = build_cases(
         selected,
         list(drafts.values()),

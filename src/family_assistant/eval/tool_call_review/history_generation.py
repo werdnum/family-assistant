@@ -20,6 +20,8 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from family_assistant.eval.tool_call_review.loader import (
+    CaseInputConstructionError,
+    CaseSchemaValidationError,
     validate_against_tool_schema,
     validate_review_input_constructible,
 )
@@ -65,6 +67,7 @@ __all__ = [
     "build_cases",
     "build_prompt",
     "canonical_shape_key",
+    "classification_preflight",
     "classify_batches",
     "instantiate_batches",
     "is_runnable_classification",
@@ -273,6 +276,24 @@ def _shape_quarantine_reason(
     ):
         return "delegation_sink_unresolved"
     return None
+
+
+def classification_preflight(
+    shapes: Sequence[PreparedShape],
+    descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
+) -> tuple[list[PreparedShape], list[dict[str, object]]]:
+    """Separate shapes that need no model call from runnable classifications."""
+    preflight = [
+        (shape, _shape_quarantine_reason(shape, descriptor_registry))
+        for shape in shapes
+    ]
+    quarantined: list[dict[str, object]] = [
+        {"shape_id": shape.record.shape_id, "reason": reason}
+        for shape, reason in preflight
+        if reason is not None
+    ]
+    runnable = [shape for shape, reason in preflight if reason is None]
+    return runnable, quarantined
 
 
 def load_templates(
@@ -584,17 +605,8 @@ async def classify_batches(
     if not 1 <= batch_size <= CLASSIFICATION_BATCH_MAX:
         raise HistoryGenerationError("classification batch size must be 1..25")
     accepted: dict[str, ClassificationRecord] = {}
-    preflight = [
-        (shape, _shape_quarantine_reason(shape, descriptor_registry))
-        for shape in shapes
-    ]
-    quarantined: list[dict[str, object]] = [
-        {"shape_id": shape.record.shape_id, "reason": reason}
-        for shape, reason in preflight
-        if reason is not None
-    ]
+    runnable, quarantined = classification_preflight(shapes, descriptor_registry)
     attempts: list[BatchAttempt] = []
-    runnable = [shape for shape, reason in preflight if reason is None]
     for batch_number, start in enumerate(range(0, len(runnable), batch_size), 1):
         batch = runnable[start : start + batch_size]
         feedback: str | None = None
@@ -898,12 +910,12 @@ def _case_from_draft(
     context = draft.attack_context if label == "attack" else draft.benign_context
     payload = ConversationPayload.model_validate({
         "messages": [
+            {"role": "user", "content": context, "taint_metadata": taint},
             {
                 "role": "user",
                 "content": draft.trusted_request,
                 "taint_metadata": trusted,
             },
-            {"role": "user", "content": context, "taint_metadata": taint},
         ],
         "tool_name": tool_name,
         "arguments": arguments,
@@ -958,6 +970,8 @@ def _assert_pair_distinct(
         raise HistoryGenerationError("identical_context")
     benign_payload = cast("ConversationPayload", benign.payload)
     attack_payload = cast("ConversationPayload", attack.payload)
+    if benign_payload.sink_class != attack_payload.sink_class:
+        raise HistoryGenerationError("pair_sink_mismatch")
     if benign_payload.arguments == attack_payload.arguments:
         raise HistoryGenerationError("identical_argument_maps")
 
@@ -1013,6 +1027,15 @@ def build_cases(
         try:
             benign, attack = _case_pair(shape, draft, descriptor_registry)
             _validate_pair(shape, draft, benign, attack, descriptor_registry)
+        except CaseSchemaValidationError:
+            quarantine.append({"shape_id": shape_id, "reason": "tool_schema_invalid"})
+            continue
+        except CaseInputConstructionError:
+            quarantine.append({
+                "shape_id": shape_id,
+                "reason": "review_input_unconstructible",
+            })
+            continue
         except (HistoryGenerationError, ValidationError, KeyError, ValueError) as exc:
             reason = (
                 str(exc)
