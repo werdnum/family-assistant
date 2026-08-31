@@ -8,6 +8,9 @@ available while a reply is being generated.
 Find the bot contact in Telegram — whoever set up the assistant will tell you its name — and send
 messages as you would to a person.
 
+- **Rich formatting and tables:** responses support full standard Markdown including headers,
+  bold/italic, bulleted/numbered lists, inline code/code blocks, and formatted tables with column
+  alignments.
 - **Slash commands** switch the assistant into a specialised mode for a request, for example
   `/browse` for complex web tasks. See [slash-commands.md](slash-commands.md).
 - **Reply to a message** using Telegram's reply feature when you're following up on something

@@ -53,6 +53,11 @@ from family_assistant.telegram.chunking import (
     split_message_text,
 )
 from family_assistant.telegram.markdown_utils import convert_to_telegram_markdown
+from family_assistant.telegram.rich_messages import (
+    is_rich_message_compatibility_error,
+    send_rich_message,
+    should_attempt_rich_message,
+)
 from family_assistant.telegram.types import AttachmentData, TriggerAttachment
 from family_assistant.tools.confirmation import (
     TOOL_CONFIRMATION_RENDERERS,
@@ -800,37 +805,64 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 force_reply_markup = ForceReply(selective=False)
 
                 if final_llm_content_to_send:
-                    # Convert to Telegram MarkdownV2 with bug fixes
-                    text_to_send, parse_mode = convert_to_telegram_markdown(
-                        final_llm_content_to_send
-                    )
-
-                    try:
-                        sent_assistant_message = await self._send_message_chunks(
-                            context=context,
-                            chat_id=chat_id,
-                            text=text_to_send,
-                            parse_mode=ParseMode.MARKDOWN_V2 if parse_mode else None,
-                            reply_to_message_id=reply_target_message_id,
-                            reply_markup=force_reply_markup,
-                        )
-                    except BadRequest as parse_err:
-                        # Defense-in-depth: If Telegram still rejects due to parse errors, fall back to plain text
-                        if "Can't parse entities" in str(parse_err) and parse_mode:
-                            logger.warning(
-                                f"Telegram rejected MarkdownV2 message (parse error): {parse_err}. Falling back to plain text.",
-                                exc_info=False,
-                            )
-                            sent_assistant_message = await self._send_message_chunks(
-                                context=context,
+                    sent_assistant_message = None
+                    if should_attempt_rich_message(final_llm_content_to_send):
+                        try:
+                            sent_assistant_message = await send_rich_message(
+                                bot=context.bot,
                                 chat_id=chat_id,
                                 text=final_llm_content_to_send,
-                                parse_mode=None,
                                 reply_to_message_id=reply_target_message_id,
                                 reply_markup=force_reply_markup,
                             )
-                        else:
-                            raise
+                            logger.info(
+                                "Sent assistant response as Telegram rich message to chat %s.",
+                                chat_id,
+                            )
+                        except Exception as rich_err:
+                            if not is_rich_message_compatibility_error(rich_err):
+                                raise
+                            logger.info(
+                                "Telegram rejected rich message (%s); falling back to standard sendMessage.",
+                                rich_err,
+                            )
+
+                    if sent_assistant_message is None:
+                        # Convert to Telegram MarkdownV2 with bug fixes
+                        text_to_send, parse_mode = convert_to_telegram_markdown(
+                            final_llm_content_to_send
+                        )
+
+                        try:
+                            sent_assistant_message = await self._send_message_chunks(
+                                context=context,
+                                chat_id=chat_id,
+                                text=text_to_send,
+                                parse_mode=ParseMode.MARKDOWN_V2
+                                if parse_mode
+                                else None,
+                                reply_to_message_id=reply_target_message_id,
+                                reply_markup=force_reply_markup,
+                            )
+                        except BadRequest as parse_err:
+                            # Defense-in-depth: If Telegram still rejects due to parse errors, fall back to plain text
+                            if "Can't parse entities" in str(parse_err) and parse_mode:
+                                logger.warning(
+                                    f"Telegram rejected MarkdownV2 message (parse error): {parse_err}. Falling back to plain text.",
+                                    exc_info=False,
+                                )
+                                sent_assistant_message = (
+                                    await self._send_message_chunks(
+                                        context=context,
+                                        chat_id=chat_id,
+                                        text=final_llm_content_to_send,
+                                        parse_mode=None,
+                                        reply_to_message_id=reply_target_message_id,
+                                        reply_markup=force_reply_markup,
+                                    )
+                                )
+                            else:
+                                raise
 
                     if (
                         sent_assistant_message
@@ -1338,37 +1370,59 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
             if final_llm_content_to_send:
                 sent_assistant_message = None
-                # Convert to Telegram MarkdownV2 with bug fixes
-                text_to_send, parse_mode = convert_to_telegram_markdown(
-                    final_llm_content_to_send
-                )
-
-                try:
-                    sent_assistant_message = await self._send_message_chunks(
-                        context=context,
-                        chat_id=chat_id,
-                        text=text_to_send,
-                        parse_mode=ParseMode.MARKDOWN_V2 if parse_mode else None,
-                        reply_to_message_id=reply_target_message_id_for_bot,
-                        reply_markup=force_reply_markup,
-                    )
-                except BadRequest as parse_err:
-                    # Defense-in-depth: If Telegram still rejects due to parse errors, fall back to plain text
-                    if "Can't parse entities" in str(parse_err) and parse_mode:
-                        logger.warning(
-                            f"Telegram rejected MarkdownV2 message (parse error): {parse_err}. Falling back to plain text.",
-                            exc_info=False,
-                        )
-                        sent_assistant_message = await self._send_message_chunks(
-                            context=context,
+                if should_attempt_rich_message(final_llm_content_to_send):
+                    try:
+                        sent_assistant_message = await send_rich_message(
+                            bot=context.bot,
                             chat_id=chat_id,
                             text=final_llm_content_to_send,
-                            parse_mode=None,
                             reply_to_message_id=reply_target_message_id_for_bot,
                             reply_markup=force_reply_markup,
                         )
-                    else:
-                        raise
+                        logger.info(
+                            "Sent slash command response as Telegram rich message to chat %s.",
+                            chat_id,
+                        )
+                    except Exception as rich_err:
+                        if not is_rich_message_compatibility_error(rich_err):
+                            raise
+                        logger.info(
+                            "Telegram rejected slash command rich message (%s); falling back to standard sendMessage.",
+                            rich_err,
+                        )
+
+                if sent_assistant_message is None:
+                    # Convert to Telegram MarkdownV2 with bug fixes
+                    text_to_send, parse_mode = convert_to_telegram_markdown(
+                        final_llm_content_to_send
+                    )
+
+                    try:
+                        sent_assistant_message = await self._send_message_chunks(
+                            context=context,
+                            chat_id=chat_id,
+                            text=text_to_send,
+                            parse_mode=ParseMode.MARKDOWN_V2 if parse_mode else None,
+                            reply_to_message_id=reply_target_message_id_for_bot,
+                            reply_markup=force_reply_markup,
+                        )
+                    except BadRequest as parse_err:
+                        # Defense-in-depth: If Telegram still rejects due to parse errors, fall back to plain text
+                        if "Can't parse entities" in str(parse_err) and parse_mode:
+                            logger.warning(
+                                f"Telegram rejected MarkdownV2 message (parse error): {parse_err}. Falling back to plain text.",
+                                exc_info=False,
+                            )
+                            sent_assistant_message = await self._send_message_chunks(
+                                context=context,
+                                chat_id=chat_id,
+                                text=final_llm_content_to_send,
+                                parse_mode=None,
+                                reply_to_message_id=reply_target_message_id_for_bot,
+                                reply_markup=force_reply_markup,
+                            )
+                        else:
+                            raise
 
                 if sent_assistant_message and last_assistant_internal_id is not None:
                     await db_ctx.message_history.update_interface_id(
