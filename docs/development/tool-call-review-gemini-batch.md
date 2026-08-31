@@ -34,7 +34,10 @@ a verdict. Ambiguous upload or batch-creation outcomes are marked `submission_un
 automatically retried. A successful job is harvested only after every output key exactly matches the
 prepared keys, has one candidate, a `STOP` finish reason, nonempty text, and valid
 `ToolCallReviewResponse` JSON. Usage metadata, including thinking tokens where supplied, is retained
-as optional private metadata; no aggregate cost is claimed when the provider does not report it.
+as optional private metadata; no aggregate cost is claimed when the provider does not report it. The
+raw REST operation envelope may name these documented states with either the `BATCH_STATE_*`
+vocabulary or the SDK's `JOB_STATE_*` vocabulary; the runner maps only the six corresponding
+pending/running/succeeded/failed/cancelled/expired states and rejects everything else.
 
 Input and result files, structured drafts, reasons, and manifests remain under `.review-eval-local`.
 The report is a normal `EvalReport`, but asynchronous batch trials correctly record latency as

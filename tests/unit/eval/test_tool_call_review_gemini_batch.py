@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from family_assistant.eval import private_paths
+from family_assistant.eval.tool_call_review import gemini_batch as batch_module
 from family_assistant.eval.tool_call_review.gemini_batch import (
     GeminiBatchClient,
     GeminiBatchError,
@@ -144,6 +145,31 @@ def test_prepare_writes_native_wire_contract(private_root: Path) -> None:
         )["key"]
         == line["key"]
     )
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        "BATCH_STATE_PENDING",
+        "BATCH_STATE_RUNNING",
+        "BATCH_STATE_SUCCEEDED",
+        "BATCH_STATE_FAILED",
+        "BATCH_STATE_CANCELLED",
+        "BATCH_STATE_EXPIRED",
+        "JOB_STATE_RUNNING",
+    ],
+)
+def test_documented_batch_and_sdk_state_vocabularies_are_accepted(
+    state: str,
+) -> None:
+    assert batch_module._job_state({"state": state}) in {
+        "pending",
+        "running",
+        "succeeded",
+        "failed",
+        "cancelled",
+        "expired",
+    }
 
 
 @pytest.mark.asyncio

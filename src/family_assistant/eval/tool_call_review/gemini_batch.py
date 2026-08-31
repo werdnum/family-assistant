@@ -547,6 +547,12 @@ def _job_state(job: object) -> str:
         "JOB_STATE_FAILED": "failed",
         "JOB_STATE_CANCELLED": "cancelled",
         "JOB_STATE_EXPIRED": "expired",
+        "BATCH_STATE_PENDING": "pending",
+        "BATCH_STATE_RUNNING": "running",
+        "BATCH_STATE_SUCCEEDED": "succeeded",
+        "BATCH_STATE_FAILED": "failed",
+        "BATCH_STATE_CANCELLED": "cancelled",
+        "BATCH_STATE_EXPIRED": "expired",
     }
     if state not in mapping:
         raise GeminiBatchError("Gemini Batch API returned an unknown job state.")
