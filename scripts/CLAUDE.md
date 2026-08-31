@@ -83,11 +83,12 @@ atomically. If a fetch fails, fix the reported prerequisite or network/repositor
 with no pre-created `upstream/` directory.
 
 `build_public_corpus_cases.py` turns one fetched source into schema-validated browser-ablation cases
-under a fresh `.review-eval-local/public/<corpus>/` directory. Use `--evaluation-split dev` for
-iteration and `--evaluation-split gate` for held-out evidence; InjecAgent additionally supports
-`--injecagent-variants base|enhanced|both`. The command refuses every existing output path,
-validates the staged cases through the normal loader, and atomically publishes cases plus
-provenance.
+under a fresh `.review-eval-local/public/<corpus>/` directory. `--out-dir` is resolved through the
+private-tree containment guard and rejects tracked paths or symlink escapes. Use
+`--evaluation-split dev` for iteration and `--evaluation-split gate` for held-out evidence;
+InjecAgent additionally supports `--injecagent-variants base|enhanced|both`. The command refuses
+every existing output path, validates the staged cases through the normal loader, and atomically
+publishes cases plus provenance.
 
 ## Adding New Scripts
 

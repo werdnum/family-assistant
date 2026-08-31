@@ -151,9 +151,9 @@ The case schema can represent matched groups and controlled browser visibility t
 reports visibility slices and paired transitions without inflating independent-input counts.
 
 Verification: schema round trips; malformed, incomplete, non-browser, or payload-mismatched groups
-fail loudly; hidden cases use the single fixed marker; correlated variants stay in one holdout
-group; and synthetic trial fixtures prove the aggregate paired metrics and source-family
-denominators.
+fail loudly; hidden cases use the single fixed marker; correlated variants keep the browser security
+context identical across attack and benign controls; correlated variants stay in one holdout group;
+and synthetic trial fixtures prove the aggregate paired metrics and source-family denominators.
 
 ### Milestone 2: public-corpus adapters
 

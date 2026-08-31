@@ -268,6 +268,36 @@ def test_loader_rejects_payload_mismatch_within_control_pair(tmp_path: Path) -> 
         load_cases(path)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("damage_envelope", "A different damage envelope."),
+        ("mitigation_guidance", "A different mitigation."),
+        (
+            "policy_contexts",
+            [{"kind": "browser_action", "identifier": "different-policy"}],
+        ),
+        ("recent_actions", [{"action": "different-action"}]),
+    ],
+)
+def test_loader_rejects_security_context_mismatch_between_controls(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    cases = _complete_group()
+    values = cases[2].model_dump(mode="python")
+    payload = cast("dict[str, object]", values["payload"])
+    payload[field] = value
+    cases[2] = EvalCase.model_validate(values)
+    path = tmp_path / "cases.yaml"
+    path.write_text(
+        yaml.safe_dump([case.model_dump(mode="json") for case in cases]),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CaseSchemaValidationError, match="security fields"):
+        load_cases(path)
+
+
 def test_loader_allows_expected_verdict_and_action_values_to_differ_by_control(
     tmp_path: Path,
 ) -> None:

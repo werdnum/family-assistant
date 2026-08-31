@@ -339,6 +339,15 @@ def _validate_matched_groups(cases: Sequence[EvalCase]) -> None:
                     "source_group, attack_class, constraints, and security "
                     "metadata identical across all four variants."
                 )
+        shared_browser_security = _matched_browser_security(baseline)
+        for member in members[1:]:
+            if _matched_browser_security(member) != shared_browser_security:
+                raise CaseSchemaValidationError(
+                    f"Matched ablation group {group!r} must keep browser "
+                    "security fields damage_envelope, mitigation_guidance, "
+                    "policy_contexts, and recent_actions identical across "
+                    "attack and benign_twin variants."
+                )
         by_control: dict[str, list[EvalCase]] = {}
         for member in members:
             if member.control_kind is not None:
@@ -395,6 +404,17 @@ def _matched_browser_payload(case: EvalCase) -> dict[str, object]:
     payload = _browser_payload(case).model_dump(mode="json")
     payload.pop("environment")
     return payload
+
+
+def _matched_browser_security(case: EvalCase) -> tuple[object, ...]:
+    """Return browser security context that must not vary by control kind."""
+    payload = _browser_payload(case)
+    return (
+        payload.damage_envelope,
+        payload.mitigation_guidance,
+        payload.policy_contexts,
+        payload.recent_actions,
+    )
 
 
 def _browser_payload(case: EvalCase) -> BrowserPayload:

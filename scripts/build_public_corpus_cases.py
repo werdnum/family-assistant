@@ -9,7 +9,9 @@ adapter is the committed artifact — so this script is how a maintainer
 materializes cases from a corpus they hold locally.
 
 Provenance is recorded, not verified: pass ``--upstream-revision`` so the record
-says which revision the cases came from. Nothing re-checks it at run time.
+says which revision the cases came from. Nothing re-checks it at run time. The
+output directory must be inside the repository's private ``.review-eval-local``
+tree; tracked paths and symlink escapes are rejected before staging starts.
 
 The script does not deduplicate. Whether two rows are the same attack input is
 settled at load time, over whatever corpus a run actually evaluates, by
@@ -61,6 +63,10 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from family_assistant.eval.private_paths import (
+    PrivateEvalPathError,
+    resolve_private_eval_path,
+)
 from family_assistant.eval.tool_call_review.adapters import ADAPTERS, InjecAgentAdapter
 from family_assistant.eval.tool_call_review.loader import load_cases
 
@@ -119,9 +125,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def _build(args: argparse.Namespace) -> int:
     adapter_cls = ADAPTERS[args.corpus]
-    if args.out_dir.exists() or args.out_dir.is_symlink():
+    requested_out_dir = args.out_dir
+    try:
+        args.out_dir = resolve_private_eval_path(requested_out_dir)
+    except PrivateEvalPathError as exc:
+        print(f"Invalid output directory: {exc}", file=sys.stderr)
+        return 1
+
+    if requested_out_dir.exists() or requested_out_dir.is_symlink():
         print(
-            f"Output target already exists; refusing to overwrite {args.out_dir}",
+            f"Output target already exists; refusing to overwrite {requested_out_dir}",
             file=sys.stderr,
         )
         return 1

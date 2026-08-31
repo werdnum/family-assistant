@@ -16,6 +16,7 @@ import pyarrow as pa
 import pytest
 from pyarrow import parquet
 
+from family_assistant.eval import private_paths
 from family_assistant.eval.tool_call_review.adapters import (
     ADAPTERS,
     DeepsetPromptInjectionsAdapter,
@@ -47,6 +48,13 @@ if TYPE_CHECKING:
     from types import ModuleType
 
 _ADAPTER_CLASSES = (DeepsetPromptInjectionsAdapter, InjecAgentAdapter)
+
+
+@pytest.fixture(autouse=True)
+def _private_eval_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give materialization tests an isolated private destination root."""
+    monkeypatch.setattr(private_paths, "PROJECT_ROOT", tmp_path)
+    (tmp_path / ".review-eval-local").mkdir()
 
 
 @pytest.mark.parametrize("adapter_cls", _ADAPTER_CLASSES)
@@ -879,7 +887,7 @@ def test_sample_build_records_the_revision_the_lineage_carries(tmp_path: Path) -
     records that all said "sample".
     """
     script = _load_corpus_build_script()
-    out_dir = tmp_path / "deepset-output"
+    out_dir = tmp_path / ".review-eval-local" / "deepset-output"
     exit_code = script.main([
         "--corpus",
         "deepset_prompt_injections",
@@ -908,7 +916,7 @@ def test_build_can_materialize_only_the_family_level_gate_split(
 ) -> None:
     """The split filter operates on pre-expansion lineage assignments."""
     script = _load_corpus_build_script()
-    out_dir = tmp_path / "injecagent-gate"
+    out_dir = tmp_path / ".review-eval-local" / "injecagent-gate"
     exit_code = script.main([
         "--corpus",
         "injecagent",
@@ -926,7 +934,8 @@ def test_build_can_materialize_only_the_family_level_gate_split(
 def test_build_refuses_existing_or_symlink_output_targets(tmp_path: Path) -> None:
     """Materialization never overwrites an operator-owned output path."""
     script = _load_corpus_build_script()
-    existing = tmp_path / "existing"
+    private_root = tmp_path / ".review-eval-local"
+    existing = private_root / "existing"
     existing.mkdir()
     (existing / "keep.txt").write_text("keep", encoding="utf-8")
 
@@ -940,11 +949,23 @@ def test_build_refuses_existing_or_symlink_output_targets(tmp_path: Path) -> Non
         ])
         == 1
     )
+
+    tracked = tmp_path / "tracked-output"
+    assert (
+        script.main([
+            "--corpus",
+            "deepset_prompt_injections",
+            "--use-sample",
+            "--out-dir",
+            str(tracked),
+        ])
+        == 1
+    )
     assert (existing / "keep.txt").read_text(encoding="utf-8") == "keep"
 
     symlink_target = tmp_path / "symlink-target"
     symlink_target.mkdir()
-    symlink = tmp_path / "symlink-output"
+    symlink = private_root / "symlink-output"
     symlink.symlink_to(symlink_target, target_is_directory=True)
     assert (
         script.main([
@@ -963,7 +984,7 @@ def test_build_validation_failure_leaves_no_partial_target(
 ) -> None:
     """A staged loader failure removes only its private staging directory."""
     script = _load_corpus_build_script()
-    out_dir = tmp_path / "failed-output"
+    out_dir = tmp_path / ".review-eval-local" / "failed-output"
 
     def fail_validation(_path: Path) -> list[EvalCase]:
         raise ValueError("synthetic staged validation failure")
@@ -979,13 +1000,16 @@ def test_build_validation_failure_leaves_no_partial_target(
         ])
 
     assert not out_dir.exists()
-    assert not list(tmp_path.glob(".failed-output.staging.*"))
+    assert not list((tmp_path / ".review-eval-local").glob(".failed-output.staging.*"))
 
 
 def test_build_success_is_deterministic(tmp_path: Path) -> None:
     """Repeated materialization produces byte-identical case artifacts."""
     script = _load_corpus_build_script()
-    outputs = [tmp_path / "first", tmp_path / "second"]
+    outputs = [
+        tmp_path / ".review-eval-local" / "first",
+        tmp_path / ".review-eval-local" / "second",
+    ]
     for out_dir in outputs:
         assert (
             script.main([
@@ -1004,7 +1028,7 @@ def test_build_success_is_deterministic(tmp_path: Path) -> None:
 
 def test_upstream_revision_cannot_contradict_the_sample(tmp_path: Path) -> None:
     script = _load_corpus_build_script()
-    out_dir = tmp_path / "deepset-output"
+    out_dir = tmp_path / ".review-eval-local" / "deepset-output"
     exit_code = script.main([
         "--corpus",
         "deepset_prompt_injections",
@@ -1021,7 +1045,7 @@ def test_injecagent_variant_selection_is_not_accepted_for_sample(
     tmp_path: Path,
 ) -> None:
     script = _load_corpus_build_script()
-    out_dir = tmp_path / "injecagent-output"
+    out_dir = tmp_path / ".review-eval-local" / "injecagent-output"
     exit_code = script.main([
         "--corpus",
         "injecagent",
