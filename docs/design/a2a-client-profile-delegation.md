@@ -46,7 +46,8 @@ A2A is JSON-RPC 2.0 over HTTP. Key concepts:
   data)
 - **Artifact**: Deliverable output of a task (distinct from conversational messages)
 - **Streaming**: SSE via `message/stream` method
-- **Python SDK**: `a2a-sdk` package provides `A2ACardResolver`, `BaseClient`, `ClientFactory`
+- **Python SDK**: `a2a-sdk` v1 provides `A2ACardResolver`, `Client`, and `ClientFactory`, including
+  transport-level compatibility with agents that still advertise protocol v0.3
 
 ### Existing A2A Server in This Project
 

@@ -7,7 +7,7 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-import a2a.types as a2a_types
+import a2a.compat.v0_3.types as a2a_types
 
 from family_assistant.a2a.attachments import default_a2a_peer_taint_source
 from family_assistant.a2a.types import Message, Part, Role, Task, TaskState

@@ -17,7 +17,7 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "a2a-sdk>=0.3.0",
+    "a2a-sdk>=1.0.0",
     "python-telegram-bot[ext]>=22.0,<23.0",
     # Use [ext] instead of [job-queue] for v21+
     # Direct provider SDKs
