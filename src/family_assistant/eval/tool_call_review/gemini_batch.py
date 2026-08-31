@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, cast
 
 import httpx
 from google import genai
+from google.genai import errors as genai_errors
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from family_assistant.eval.private_paths import resolve_private_eval_path
@@ -682,10 +683,35 @@ async def _submit_chunk(
         _mark_unknown(directory, manifest, chunk)
         raise
     except Exception as exc:
+        if _is_definitive_creation_rejection(exc):
+            _mark_creation_rejected(directory, manifest, chunk)
+            raise GeminiBatchError(
+                "Gemini batch creation was rejected; correct the request and retry."
+            ) from exc
         _mark_unknown(directory, manifest, chunk)
         raise GeminiBatchError(
             "Gemini submission outcome is unknown; inspect the provider before retrying."
         ) from exc
+
+
+def _is_definitive_creation_rejection(exc: BaseException) -> bool:
+    return (
+        isinstance(exc, genai_errors.ClientError)
+        and isinstance(exc.code, int)
+        and 400 <= exc.code < 500
+        and exc.code not in {408, 409}
+    )
+
+
+def _mark_creation_rejected(
+    directory: Path,
+    manifest: GeminiBatchManifest,
+    chunk: GeminiBatchChunk,
+) -> None:
+    chunk.status = "pending"
+    chunk.batch_name = None
+    chunk.error_code = "creation_rejected"
+    _write_json(directory / "manifest.json", manifest.model_dump(mode="json"))
 
 
 def _mark_upload_failure(

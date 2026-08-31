@@ -30,15 +30,17 @@ python scripts/tool_call_review_gemini_batch.py harvest \
 The approved amount is an operator approval recorded in the private manifest, not a
 provider-enforced spend cap. Request `max_tokens` is recorded and bounds each output; truncation, an
 error arm, an unknown state, or malformed output is unavailable evidence and is never converted into
-a verdict. Upload failures remain pending with an upload error code and can be retried; only
-ambiguous batch-creation outcomes are marked `submission_unknown` and are never automatically
-retried. A successful job is harvested only after every output key exactly matches the prepared
-keys, has one candidate, a `STOP` finish reason, nonempty text, and valid `ToolCallReviewResponse`
-JSON. Usage metadata, including thinking tokens where supplied, is retained as optional private
-metadata; no aggregate cost is claimed when the provider does not report it. The raw REST operation
-envelope may name these documented states with either the `BATCH_STATE_*` vocabulary or the SDK's
-`JOB_STATE_*` vocabulary; the runner maps only the six corresponding
-pending/running/succeeded/failed/cancelled/expired states and rejects everything else.
+a verdict. Upload failures remain pending with an upload error code and can be retried. Definitive
+Gemini client rejections (4xx other than 408 and 409) remain pending with `creation_rejected` so the
+request can be corrected and retried; ambiguous batch-creation outcomes are marked
+`submission_unknown` and are never automatically retried. A successful job is harvested only after
+every output key exactly matches the prepared keys, has one candidate, a `STOP` finish reason,
+nonempty text, and valid `ToolCallReviewResponse` JSON. Usage metadata, including thinking tokens
+where supplied, is retained as optional private metadata; no aggregate cost is claimed when the
+provider does not report it. The raw REST operation envelope may name these documented states with
+either the `BATCH_STATE_*` vocabulary or the SDK's `JOB_STATE_*` vocabulary; the runner maps only
+the six corresponding pending/running/succeeded/failed/cancelled/expired states and rejects
+everything else.
 
 Input and result files, structured drafts, reasons, and manifests remain under `.review-eval-local`.
 The report is a normal `EvalReport`, but asynchronous batch trials correctly record latency as

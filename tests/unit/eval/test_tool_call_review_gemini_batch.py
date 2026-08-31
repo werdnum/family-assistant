@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
+from google.genai import errors as genai_errors
 
 from family_assistant.eval import private_paths
 from family_assistant.eval.tool_call_review import gemini_batch as batch_module
@@ -286,6 +287,85 @@ async def test_batch_creation_failure_is_submission_unknown(private_root: Path) 
     assert payload["chunks"][0]["error_code"] == "submission_unknown"
     assert payload["chunks"][0]["input_file_name"] == "files/input-0"
     assert len(client.aio.batches.create_calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", [400, 401, 429])
+async def test_definitive_creation_rejection_is_pending_and_retryable(
+    private_root: Path, code: int
+) -> None:
+    run_dir = private_root / "runs" / "native"
+    prepare_gemini_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
+    )
+    client = _FakeClient()
+    client.aio.batches.create_error = genai_errors.ClientError(code, {})
+
+    with pytest.raises(GeminiBatchError, match="creation was rejected"):
+        await submit_gemini_batch(
+            run_dir, approved_spend_usd=1.0, approve_spend=True, client=client
+        )
+
+    payload = json.loads((run_dir / "manifest.json").read_text())
+    assert payload["chunks"][0]["status"] == "pending"
+    assert payload["chunks"][0]["error_code"] == "creation_rejected"
+    assert payload["chunks"][0]["input_file_name"] == "files/input-0"
+
+    client.aio.batches.create_error = None
+    submitted = await submit_gemini_batch(
+        run_dir, approved_spend_usd=1.0, approve_spend=True, client=client
+    )
+    assert submitted.chunks[0].status == "running"
+    assert submitted.chunks[0].error_code is None
+    assert len(client.aio.batches.create_calls) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", [408, 409])
+async def test_ambiguous_client_creation_error_is_submission_unknown(
+    private_root: Path, code: int
+) -> None:
+    run_dir = private_root / "runs" / "native"
+    prepare_gemini_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
+    )
+    client = _FakeClient()
+    client.aio.batches.create_error = genai_errors.ClientError(code, {})
+
+    with pytest.raises(GeminiBatchError, match="outcome is unknown"):
+        await submit_gemini_batch(
+            run_dir, approved_spend_usd=1.0, approve_spend=True, client=client
+        )
+
+    payload = json.loads((run_dir / "manifest.json").read_text())
+    assert payload["chunks"][0]["status"] == "submission_unknown"
+    assert payload["chunks"][0]["error_code"] == "submission_unknown"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "creation_error",
+    [genai_errors.ServerError(500, {}), TimeoutError("request timed out")],
+    ids=["server", "timeout"],
+)
+async def test_server_and_timeout_creation_errors_are_submission_unknown(
+    private_root: Path, creation_error: Exception
+) -> None:
+    run_dir = private_root / "runs" / "native"
+    prepare_gemini_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
+    )
+    client = _FakeClient()
+    client.aio.batches.create_error = creation_error
+
+    with pytest.raises(GeminiBatchError, match="outcome is unknown"):
+        await submit_gemini_batch(
+            run_dir, approved_spend_usd=1.0, approve_spend=True, client=client
+        )
+
+    payload = json.loads((run_dir / "manifest.json").read_text())
+    assert payload["chunks"][0]["status"] == "submission_unknown"
+    assert payload["chunks"][0]["error_code"] == "submission_unknown"
 
 
 @pytest.mark.asyncio

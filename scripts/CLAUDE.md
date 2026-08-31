@@ -117,7 +117,7 @@ operator audit; it is not an enforceable provider-side spend cap.
 `tool_call_review_gemini_batch.py` is the separate native Google Gemini Batch API runner. It uses
 the same staged prepare/submit/poll/harvest workflow, but its manifest and uploaded/result JSONL are
 provider-specific. It requires `GEMINI_API_KEY`, records positive operator approval without claiming
-a provider spend cap, leaves failed or malformed uploads pending for retry, refuses ambiguous
-job-creation outcomes, and harvests only exactly reconciled successful `STOP` responses. See
-`docs/development/tool-call-review-gemini-batch.md`; native batch reports are review drafts until
-maintainers promote cases through the ordinary corpus workflow.
+a provider spend cap, leaves failed or malformed uploads and definitive 4xx creation rejections
+pending for retry, refuses ambiguous job-creation outcomes, and harvests only exactly reconciled
+successful `STOP` responses. See `docs/development/tool-call-review-gemini-batch.md`; native batch
+reports are review drafts until maintainers promote cases through the ordinary corpus workflow.
