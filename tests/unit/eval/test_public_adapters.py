@@ -971,6 +971,69 @@ def test_sample_build_records_the_revision_the_lineage_carries(tmp_path: Path) -
     assert "sample-row-3" in provenance
 
 
+def test_build_reads_revision_from_fetched_manifest(tmp_path: Path) -> None:
+    """Materializing fetched input carries its ancestor manifest revision."""
+    script = _load_corpus_build_script()
+    private_root = tmp_path / ".review-eval-local"
+    input_dir = private_root / "upstream" / "deepset"
+    input_dir.mkdir(parents=True)
+    (private_root / "upstream" / "manifest.txt").write_text(
+        "deepset.revision=4f61ecb038e9c3fb77e21034b22511b523772cdd\n",
+        encoding="utf-8",
+    )
+    (input_dir / "test.csv").write_text(
+        "text,label\nattack content,1\nbenign content,0\n",
+        encoding="utf-8",
+    )
+    out_dir = private_root / "public" / "deepset-output"
+
+    assert (
+        script.main([
+            "--corpus",
+            "deepset_prompt_injections",
+            "--input",
+            str(input_dir),
+            "--out-dir",
+            str(out_dir),
+        ])
+        == 0
+    )
+    provenance = (out_dir / "deepset_prompt_injections.provenance.md").read_text(
+        encoding="utf-8"
+    )
+    assert "**Revision**: 4f61ecb038e9c3fb77e21034b22511b523772cdd" in provenance
+
+
+def test_build_refuses_manifest_revision_override(tmp_path: Path) -> None:
+    """A fetched input cannot be relabeled with a contradictory revision."""
+    script = _load_corpus_build_script()
+    private_root = tmp_path / ".review-eval-local"
+    input_dir = private_root / "upstream" / "deepset"
+    input_dir.mkdir(parents=True)
+    (private_root / "upstream" / "manifest.txt").write_text(
+        "deepset.revision=4f61ecb038e9c3fb77e21034b22511b523772cdd\n",
+        encoding="utf-8",
+    )
+    (input_dir / "test.csv").write_text(
+        "text,label\nattack content,1\nbenign content,0\n",
+        encoding="utf-8",
+    )
+
+    assert (
+        script.main([
+            "--corpus",
+            "deepset_prompt_injections",
+            "--input",
+            str(input_dir),
+            "--upstream-revision",
+            "0" * 40,
+            "--out-dir",
+            str(private_root / "public" / "deepset-output"),
+        ])
+        == 1
+    )
+
+
 def test_build_can_materialize_only_the_family_level_gate_split(
     tmp_path: Path,
 ) -> None:

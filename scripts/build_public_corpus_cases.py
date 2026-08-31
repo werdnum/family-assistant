@@ -8,10 +8,11 @@ you fetched, and the license. The corpora themselves are never committed — the
 adapter is the committed artifact — so this script is how a maintainer
 materializes cases from a corpus they hold locally.
 
-Provenance is recorded, not verified: pass ``--upstream-revision`` so the record
-says which revision the cases came from. Nothing re-checks it at run time. The
-output directory must be inside the repository's private ``.review-eval-local``
-tree; tracked paths and symlink escapes are rejected before staging starts.
+Provenance is read from the fetched corpus manifest when one is present, and a
+manifest revision cannot be contradicted by ``--upstream-revision``. An input
+without a manifest must provide that explicit revision. The output directory
+must be inside the repository's private ``.review-eval-local`` tree; tracked
+paths and symlink escapes are rejected before staging starts.
 
 The script does not deduplicate. Whether two rows are the same attack input is
 settled at load time, over whatever corpus a run actually evaluates, by
@@ -26,12 +27,11 @@ Usage:
         --input .review-eval-local/upstream/deepset \\
         --out-dir .review-eval-local/public/deepset
 
-    # Record the revision the cases came from (base is the default):
+    # The revision is read from the ancestor fetch manifest automatically:
     python scripts/build_public_corpus_cases.py \\
         --corpus injecagent \\
         --input .review-eval-local/upstream/InjecAgent/data \\
-        --out-dir .review-eval-local/public/injecagent \\
-        --upstream-revision <commit-sha>
+        --out-dir .review-eval-local/public/injecagent
 
     # Include the enhanced variant as a separate source slice:
     python scripts/build_public_corpus_cases.py \\
@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -75,6 +76,12 @@ if TYPE_CHECKING:
         AdaptedCase,
         Adapter,
     )
+
+_CORPUS_MANIFEST_KEYS = {
+    "deepset_prompt_injections": "deepset.revision",
+    "injecagent": "injecagent.revision",
+}
+_COMMIT_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -159,8 +166,19 @@ def _build(args: argparse.Namespace) -> int:
         adapter = adapter_cls.from_sample()
         print(f"Adapting the committed sample for {args.corpus}.")
     else:
+        requested_input = args.input
+        try:
+            args.input = resolve_private_eval_path(requested_input)
+        except PrivateEvalPathError as exc:
+            print(f"Invalid input corpus path: {exc}", file=sys.stderr)
+            return 1
         if not args.input.exists():
-            print(f"Input corpus not found: {args.input}", file=sys.stderr)
+            print(f"Input corpus not found: {requested_input}", file=sys.stderr)
+            return 1
+        try:
+            args.upstream_revision = _resolve_upstream_revision(args)
+        except ValueError as exc:
+            print(f"Invalid corpus provenance: {exc}", file=sys.stderr)
             return 1
         if args.corpus == "injecagent":
             adapter = InjecAgentAdapter.from_path(
@@ -237,6 +255,53 @@ def _build(args: argparse.Namespace) -> int:
     print(f"Wrote {len(loaded)} case(s) to {cases_path}")
     print(f"Wrote provenance record to {provenance_path}")
     return 0
+
+
+def _resolve_upstream_revision(args: argparse.Namespace) -> str:
+    """Resolve and verify the revision associated with a fetched input."""
+    manifest_revision = _manifest_revision(args.input, args.corpus)
+    explicit_revision = args.upstream_revision
+    if manifest_revision is None:
+        if explicit_revision is None:
+            raise ValueError(
+                "input has no ancestor manifest.txt; pass --upstream-revision "
+                "with the exact upstream commit SHA"
+            )
+        if not _COMMIT_SHA_PATTERN.fullmatch(explicit_revision):
+            raise ValueError(
+                "--upstream-revision must be a 40-character lowercase commit SHA"
+            )
+        return explicit_revision
+    if explicit_revision is not None and explicit_revision != manifest_revision:
+        raise ValueError(
+            f"--upstream-revision {explicit_revision!r} disagrees with the "
+            f"manifest revision {manifest_revision!r}"
+        )
+    return manifest_revision
+
+
+def _manifest_revision(input_path: Path, corpus: str) -> str | None:
+    """Read the corpus revision from the nearest private fetch manifest."""
+    manifest_key = _CORPUS_MANIFEST_KEYS[corpus]
+    private_root = resolve_private_eval_path(".review-eval-local")
+    current = input_path if input_path.is_dir() else input_path.parent
+    while current.is_relative_to(private_root):
+        manifest = current / "manifest.txt"
+        if manifest.is_file():
+            values = [
+                line.partition("=")[2]
+                for line in manifest.read_text(encoding="utf-8").splitlines()
+                if line.startswith(f"{manifest_key}=")
+            ]
+            if len(values) != 1 or not _COMMIT_SHA_PATTERN.fullmatch(values[0]):
+                raise ValueError(
+                    f"{manifest} must contain exactly one valid {manifest_key} entry"
+                )
+            return values[0]
+        if current == private_root:
+            break
+        current = current.parent
+    return None
 
 
 def _render_provenance(

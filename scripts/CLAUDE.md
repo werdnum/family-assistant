@@ -90,8 +90,10 @@ under a fresh `.review-eval-local/public/<corpus>/` directory. `--out-dir` is re
 private-tree containment guard and rejects tracked paths or symlink escapes. Use
 `--evaluation-split dev` for iteration and `--evaluation-split gate` for held-out evidence;
 InjecAgent additionally supports `--injecagent-variants base|enhanced|both`. The command refuses
-every existing output path, validates the staged cases through the normal loader, and atomically
-publishes cases plus provenance.
+every existing output path, reads the matching revision from the ancestor `upstream/manifest.txt`
+(or requires an exact `--upstream-revision` for an input without a manifest), refuses a
+contradictory explicit revision, validates the staged cases through the normal loader, and
+atomically publishes cases plus provenance.
 
 ## Adding New Scripts
 
