@@ -76,11 +76,12 @@ template naming one of those tools drops out — not as an error, as a smaller c
 extraction hit this: an entire household's transport, search and maps calls abstracted into
 templates that were then refused for an unresolvable tool name.
 
-A **registry snapshot** is the running registry written down: `scripts/dump_tool_registry.py`
-connects once through the same provider the application uses, merges what the servers advertise with
-the local descriptors, and writes one JSON file. Both the extractor and the runner read it with
-`--tool-registry`, so a template extracted under a deployment's registry replays under the same one
-— including on a machine with no MCP servers, which is where the eval usually runs.
+A **registry snapshot** is the running registry written down: `scripts/dump_tool_registry.py` builds
+local descriptors through the same deployment-effective construction path as startup, connects once
+through the same MCP provider the application uses, and writes the merged registry as one JSON file.
+Both the extractor and the runner read it with `--tool-registry`, so a template extracted under a
+deployment's registry replays under the same one — including on a machine with no MCP servers, which
+is where the eval usually runs.
 
 Two properties make it a snapshot rather than a cache. It **fails loudly**: an unknown version, an
 unrecognized tag or a missing descriptor field raises instead of resolving what it can, because a

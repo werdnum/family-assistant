@@ -25,6 +25,7 @@ from family_assistant.eval.tool_call_review.scrub import (
 )
 from family_assistant.paths import PROJECT_ROOT
 from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS
+from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.metadata import ToolDescriptor, ToolTag
 
 if TYPE_CHECKING:
@@ -329,10 +330,12 @@ def test_the_dump_reads_the_overlay_the_deployment_runs(
     )
 
     monkeypatch.setenv("CONFIG_FILE", str(overlay))
-    assert "transport" in script._configured_servers(None)
+    config = script._load_deployment_config(None)
+    assert "transport" in script._configured_servers(config)
 
     monkeypatch.delenv("CONFIG_FILE")
-    assert "transport" in script._configured_servers(str(overlay))
+    config = script._load_deployment_config(str(overlay))
+    assert "transport" in script._configured_servers(config)
 
 
 def test_a_run_records_which_registry_it_measured_under() -> None:
@@ -362,7 +365,7 @@ def test_a_named_overlay_that_is_not_there_aborts_the_dump(tmp_path: Path) -> No
     script = _load_dump_registry_script()
 
     with pytest.raises(SystemExit, match="does not exist"):
-        script._configured_servers(str(tmp_path / "typo.yaml"))
+        script._load_deployment_config(str(tmp_path / "typo.yaml"))
 
 
 def test_a_named_env_overlay_that_is_not_there_aborts_the_dump(
@@ -379,7 +382,36 @@ def test_a_named_env_overlay_that_is_not_there_aborts_the_dump(
 
     monkeypatch.setenv("CONFIG_FILE", str(tmp_path / "typo.yaml"))
     with pytest.raises(SystemExit, match=r"\$CONFIG_FILE.*does not exist"):
-        script._configured_servers(None)
+        script._load_deployment_config(None)
 
     monkeypatch.delenv("CONFIG_FILE")
-    script._configured_servers(None)
+    script._load_deployment_config(None)
+
+
+def test_local_only_dump_uses_the_deployment_effective_registry(
+    tmp_path: Path,
+) -> None:
+    """Even without MCP, a snapshot must describe this deployment's schemas."""
+    script = _load_dump_registry_script()
+    overlay = tmp_path / "deployment.yaml"
+    overlay.write_text(
+        "ai_worker_config:\n  available_agents: [codex]\n", encoding="utf-8"
+    )
+    snapshot_path = tmp_path / "registry.json"
+
+    result = script.main([
+        "--config-file",
+        str(overlay),
+        "--local-only",
+        "--out",
+        str(snapshot_path),
+        "--allow-external-out",
+    ])
+
+    registry = load_registry_snapshot(snapshot_path)
+    worker = registry["spawn_worker"]
+    assert result == 0
+    assert worker.definition["function"]["parameters"]["properties"]["agent"][  # type: ignore[index]
+        "enum"
+    ] == ["codex"]
+    assert set(registry).isdisjoint(GOOGLE_TOOL_REQUIRED_SCOPES)
