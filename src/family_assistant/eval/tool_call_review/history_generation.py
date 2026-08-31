@@ -353,8 +353,52 @@ def prepare_shapes(
 
 
 def _shape_for_prompt(shape: PreparedShape) -> dict[str, object]:
-    """Project exactly the fields permitted by the design contract."""
-    return shape.record.model_dump(mode="json")
+    """Project a shape without exposing deployment registry identifiers.
+
+    Registry membership is not a privacy proof: an MCP tool name or a schema
+    property can contain an account, household, or integration identifier.
+    The model only needs cardinality and JSON value shapes, so names are
+    positionally pseudonymized. Instantiation restores these aliases at the
+    deterministic boundary before schema validation.
+    """
+    record = shape.record
+    return {
+        "shape_id": record.shape_id,
+        "boundary": record.boundary,
+        "intent_category": record.intent_category,
+        "tool_names": [f"tool_{index}" for index, _ in enumerate(record.tool_names, 1)],
+        "argument_shapes": {
+            f"argument_{index}": value
+            for index, (_, value) in enumerate(
+                sorted(record.argument_shapes.items()), 1
+            )
+        },
+        "sink_class": record.sink_class,
+        "taint_tier": record.taint_tier,
+        "content_kind": record.content_kind,
+    }
+
+
+def _restore_argument_keys(
+    record: InstantiationRecord, shape: PreparedShape
+) -> InstantiationRecord:
+    """Map prompt aliases back to schema keys, rejecting untrusted key names."""
+    aliases = {
+        f"argument_{index}": key
+        for index, key in enumerate(sorted(shape.record.argument_shapes), 1)
+    }
+
+    def restore(arguments: Mapping[str, object]) -> dict[str, object]:
+        if any(key not in aliases for key in arguments):
+            raise BatchExecutionError("unsafe_argument_key")
+        return {aliases[key]: value for key, value in arguments.items()}
+
+    return record.model_copy(
+        update={
+            "benign_arguments": restore(record.benign_arguments),
+            "attack_arguments": restore(record.attack_arguments),
+        }
+    )
 
 
 def build_prompt(
@@ -592,6 +636,18 @@ def _reconcile(records: Sequence[BaseModel], shapes: Sequence[PreparedShape]) ->
         raise BatchExecutionError("shape_id_mismatch")
 
 
+def _normalize_instantiation_batch(
+    parsed: InstantiationBatch, shapes: Sequence[PreparedShape]
+) -> InstantiationBatch:
+    """Restore argument aliases after exact shape-id reconciliation."""
+    shapes_by_id = {shape.record.shape_id: shape for shape in shapes}
+    normalized_records = [
+        _restore_argument_keys(record, shapes_by_id[record.shape_id])
+        for record in parsed.records
+    ]
+    return parsed.model_copy(update={"records": normalized_records})
+
+
 async def classify_batches(
     shapes: Sequence[PreparedShape],
     runner: BatchRunner,
@@ -705,6 +761,7 @@ async def instantiate_batches(
                 )
                 parsed = InstantiationBatch.model_validate(_extract_json(raw))
                 _reconcile(parsed.records, batch)
+                parsed = _normalize_instantiation_batch(parsed, batch)
             except (BatchExecutionError, ValidationError, ValueError) as exc:
                 code = (
                     exc.code
