@@ -791,6 +791,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 force_reply_markup = ForceReply(selective=False)
 
                 if final_llm_content_to_send:
+                    sent_assistant_message = None
                     if should_attempt_rich_message(final_llm_content_to_send):
                         try:
                             sent_assistant_message = await send_rich_message(
