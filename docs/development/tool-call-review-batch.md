@@ -38,6 +38,8 @@ Remote status responses must contain one of OpenRouter's documented lifecycle st
 `cancelled`); missing or unknown statuses fail closed. If submission already reports `completed`
 without an inline `results` list, the manifest leaves the result artifact unset so the next `status`
 poll fetches and persists the completed result before harvest.
+Polling also fails immediately when any chunk is still `pending` without a provider batch ID; run
+`submit` (or retry a definitive rejected submission) before polling.
 
 Harvest refuses incomplete batches, item errors, missing IDs, duplicate IDs, extra IDs, malformed
 structured output, verdicts outside a case's allowed space, or a changed request artifact. A

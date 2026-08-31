@@ -123,6 +123,16 @@ class BatchManifest(BaseModel):
     report_file: str | None = None
 
 
+def _reject_unsubmitted_chunks(manifest: BatchManifest) -> None:
+    if any(
+        chunk.status == "pending" and chunk.batch_id is None
+        for chunk in manifest.chunks
+    ):
+        raise BatchError(
+            "Cannot poll a run with unsubmitted pending chunks; submit or retry the run first."
+        )
+
+
 class _PreparedRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -502,6 +512,7 @@ async def update_batch_status(
 ) -> BatchManifest:
     """Poll each submitted chunk once and retain completed result envelopes privately."""
     directory, manifest = _read_manifest(run_dir)
+    _reject_unsubmitted_chunks(manifest)
     key = api_key or os.environ.get("OPENROUTER_API_KEY")
     if not key:
         raise BatchError("OPENROUTER_API_KEY is required for status.")
@@ -547,6 +558,11 @@ def _parse_result(result: dict[str, object]) -> ToolCallReviewResponse:
         or not isinstance(choices[0], dict)
     ):
         raise BatchError("A completed batch result has an invalid choice list.")
+    if choices[0].get("finish_reason") != "stop":
+        raise BatchError(
+            "A completed batch result did not finish successfully; "
+            "truncated or otherwise incomplete output is unavailable evidence."
+        )
     message = choices[0].get("message")
     if not isinstance(message, dict):
         raise BatchError("A completed batch result has no assistant message.")

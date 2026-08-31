@@ -55,13 +55,14 @@ class _FakeBatchClient(BatchClient):
                     "response": {
                         "choices": [
                             {
+                                "finish_reason": "stop",
                                 "message": {
                                     "content": json.dumps({
                                         "verdict": "deny",
                                         "reason": "fake result",
                                         "safer_alternative": None,
                                     })
-                                }
+                                },
                             }
                         ]
                     },
@@ -118,6 +119,22 @@ def test_prepare_refuses_zero_runnable_cases_before_artifacts(
         prepare_batch([empty_dataset], run_dir)
 
     assert not run_dir.exists()
+
+
+@pytest.mark.asyncio
+async def test_status_rejects_unsubmitted_pending_chunks_without_network_call(
+    private_root: Path,
+) -> None:
+    run_dir = private_root / "runs" / "pilot"
+    prepare_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
+    )
+    fake = _FakeBatchClient()
+
+    with pytest.raises(BatchError, match="unsubmitted pending chunks"):
+        await update_batch_status(run_dir, api_key="test-only", client=fake)
+
+    assert fake.submitted == []
 
 
 @pytest.mark.asyncio
@@ -186,6 +203,34 @@ async def test_completed_submit_without_results_is_fetched_by_status(
     assert updated.chunks[0].result_file == "batch-result-0.json"
     report = harvest_batch(run_dir)
     assert len(report.trials) == 19
+
+
+@pytest.mark.asyncio
+async def test_harvest_rejects_valid_json_with_truncated_finish_reason(
+    private_root: Path,
+) -> None:
+    run_dir = private_root / "runs" / "pilot"
+    prepare_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
+    )
+    fake = _FakeBatchClient()
+    await submit_batch(
+        run_dir,
+        approved_spend_usd=1.0,
+        approve_spend=True,
+        api_key="test-only",
+        client=fake,
+    )
+    await update_batch_status(run_dir, api_key="test-only", client=fake)
+
+    result_path = run_dir / "batch-result-0.json"
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    first_choice = result["results"][0]["response"]["choices"][0]
+    first_choice["finish_reason"] = "length"
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+
+    with pytest.raises(BatchError, match="finish successfully|truncated"):
+        harvest_batch(run_dir)
 
 
 def test_submit_requires_explicit_spend_approval(private_root: Path) -> None:
