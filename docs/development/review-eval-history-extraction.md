@@ -231,6 +231,9 @@ Delegation shapes with a placeholder sink are also quarantined: a registry snaps
 metadata but not the deployment's `delegation_sink_classes` mapping, which is required for correct
 sink resolution. A concrete historical sink remains usable and is preserved rather than
 re-derived.
+For other argument-dependent tools, each generated argument map is resolved with the production
+sink resolver and must still resolve to the concrete historical sink; a materially different sink
+is quarantined rather than silently relabeled.
 Pi stdout is drained concurrently with stderr and capped at 4 MiB per attempt; an over-limit
 response is quarantined without retaining the stream.
 Low-confidence classifications are conservatively retained as review-pending and are not sent to

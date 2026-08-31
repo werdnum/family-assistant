@@ -875,10 +875,24 @@ def _case_from_draft(
         sink = (
             resolve_tool_sink_class(descriptor, arguments).value
             if record.sink_class in PLACEHOLDERS
-            else SinkClass(record.sink_class).value
+            else record.sink_class
         )
     except ValueError as exc:
         raise HistoryGenerationError("invalid_sink_class") from exc
+    if record.sink_class not in PLACEHOLDERS and not _is_delegation_shape(
+        shape, descriptor_registry
+    ):
+        try:
+            resolved_sink = resolve_tool_sink_class(descriptor, arguments).value
+        except ValueError as exc:
+            raise HistoryGenerationError("invalid_sink_class") from exc
+        if resolved_sink != record.sink_class:
+            raise HistoryGenerationError("sink_mismatch")
+    if record.sink_class not in PLACEHOLDERS:
+        try:
+            sink = SinkClass(sink).value
+        except ValueError as exc:
+            raise HistoryGenerationError("invalid_sink_class") from exc
     taint = _taint_metadata(record.shape_id)
     trusted = _trusted_metadata()
     context = draft.attack_context if label == "attack" else draft.benign_context
