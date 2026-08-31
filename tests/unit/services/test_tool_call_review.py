@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from dataclasses import replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal, cast
 
 import pytest
@@ -1276,16 +1277,23 @@ class _FakeMessageHistory:
         rows: Sequence[LLMMessage],
         read_log: list[str],
         visible_only_log: list[bool],
+        before_log: list[datetime | None],
     ) -> None:
         self._rows = rows
         self._read_log = read_log
         self._visible_only_log = visible_only_log
+        self._before_log = before_log
 
     async def get_by_turn_id(
-        self, turn_id: str, *, visible_only: bool = False
+        self,
+        turn_id: str,
+        *,
+        visible_only: bool = False,
+        before: datetime | None = None,
     ) -> Sequence[LLMMessage]:
         self._read_log.append(turn_id)
         self._visible_only_log.append(visible_only)
+        self._before_log.append(before)
         return self._rows
 
 
@@ -1295,6 +1303,32 @@ class _FakeMessageHistoryDatabase:
     def __init__(self, rows: Sequence[LLMMessage]) -> None:
         self.turn_ids_read: list[str] = []
         self.visible_only_reads: list[bool] = []
+        self.before_bounds: list[datetime | None] = []
         self.message_history = _FakeMessageHistory(
-            rows, self.turn_ids_read, self.visible_only_reads
+            rows, self.turn_ids_read, self.visible_only_reads, self.before_bounds
         )
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_history_read_is_bounded_to_when_the_work_was_handed_off() -> None:
+    """A queued run answers to the request that caused it, not what came next."""
+    trusted = TurnTaintState.empty().to_metadata()
+    db = _FakeMessageHistoryDatabase([
+        UserMessage(content="THE REQUEST", taint_metadata=trusted)
+    ])
+    handed_off_at = datetime(2026, 8, 31, 10, 0, tzinfo=UTC)
+
+    await build_delegation_review_trigger(
+        cast("Database", db),
+        trigger_type="delegation_request",
+        active_request_role="user",
+        definition="the goal",
+        definition_taint_metadata=trusted,
+        payload_present=False,
+        source_turn_id="parent_turn",
+        source_started_by_human=True,
+        source_rows_before=handed_off_at,
+    )
+
+    assert db.before_bounds == [handed_off_at]

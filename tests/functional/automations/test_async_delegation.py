@@ -4164,6 +4164,70 @@ async def test_delegating_from_a_completion_wake_propagates_no_wake_data(
     assert "WAKE RESULT DATA" not in _review_prompt_for(trigger)
 
 
+@pytest.mark.asyncio
+async def test_steering_sent_after_enqueue_is_not_the_originating_request(
+    db_engine: AsyncEngine,
+) -> None:
+    """A run answers to the request that caused it, not to what came next.
+
+    The delegating turn keeps accepting mid-turn user input while a queued run
+    waits, and that input is persisted trusted into the same turn. Reading the
+    turn as it ended would hand the run a destination the user named for
+    something else, after the goal was composed.
+    """
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    db_context = Database(engine=db_engine)
+    await db_context.message_history.add_message(
+        UserMessage(content="Summarize the hotel options."),
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=TEST_CONVERSATION_ID,
+        timestamp=SystemClock().now() - timedelta(minutes=5),
+        turn_id="turn_async_delegation",
+        user_id="async-delegation-user",
+    )
+    result = await delegate_to_service_tool(
+        exec_context=_tool_context(db_context, processing_service, chat_interface),
+        target_service_id="target_profile",
+        user_request="Summarize the hotel options.",
+        delivery_hint="background",
+    )
+    assert isinstance(result.data, dict)
+    delegation_id = result.data["delegation_id"]
+    assert isinstance(delegation_id, str)
+
+    # The user steers the still-running turn after the run was queued.
+    await db_context.message_history.add_message(
+        UserMessage(content="Also mail the receipts to accountant@example.test."),
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=TEST_CONVERSATION_ID,
+        timestamp=SystemClock().now() + timedelta(minutes=5),
+        turn_id="turn_async_delegation",
+        user_id="async-delegation-user",
+    )
+
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        {
+            "delegation_id": delegation_id,
+            "interface_type": TEST_INTERFACE_TYPE,
+            "conversation_id": TEST_CONVERSATION_ID,
+            "user_name": TEST_USER_NAME,
+        },
+    )
+
+    assert len(target_service.calls) == 1
+    trigger = target_service.calls[0]["tool_call_review_trigger"]
+    assert trigger is not None
+    assert trigger.originating_request == "Summarize the hotel options."
+    assert "accountant@example.test" not in _review_prompt_for(trigger)
+
+
 def _review_prompt_for(trigger: TriggerReviewInput) -> str:
     """Render the reviewer prompt a delegated call would actually be judged on."""
     messages = assemble_tool_call_review_messages(

@@ -26,6 +26,7 @@ from family_assistant.security.taint import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
+    from datetime import datetime
 
     from family_assistant.config_models import ToolCallReviewConfig
     from family_assistant.llm import LLMInterface
@@ -749,6 +750,7 @@ async def build_delegation_review_trigger(
     source_turn_id: str | None,
     source_started_by_human: bool,
     source_messages: Sequence[LLMMessage] | None = None,
+    source_rows_before: datetime | None = None,
     inherited: TriggerReviewInput | None = None,
 ) -> TriggerReviewInput:
     """Build the review trigger for a turn that runs on another turn's behalf.
@@ -772,6 +774,10 @@ async def build_delegation_review_trigger(
 
     History reads ask for visible rows only, so an internal row pinned into a
     turn (a wake's result data) is never mistaken for something a person sent.
+    A turn also keeps accepting steering input while it runs, so a caller
+    reading history for work handed off earlier passes ``source_rows_before``
+    to get the request as it stood then: a delegated run answers to the request
+    that caused it, not to whatever the same human said next.
     """
     messages: Sequence[LLMMessage] = ()
     if source_started_by_human:
@@ -780,7 +786,9 @@ async def build_delegation_review_trigger(
             if source_messages is not None
             else (
                 await db.message_history.get_by_turn_id(
-                    source_turn_id, visible_only=True
+                    source_turn_id,
+                    visible_only=True,
+                    before=source_rows_before,
                 )
                 if source_turn_id is not None
                 else []

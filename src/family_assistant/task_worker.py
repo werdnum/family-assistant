@@ -172,6 +172,10 @@ async def _delegation_run_review_trigger(
         # the visible-rows read: a completion wake's result data is an internal
         # row, and an event or script trigger row carries untrusted provenance.
         source_started_by_human=run["source_subconversation_id"] is None,
+        # The delegating turn keeps accepting steering input after this run was
+        # queued. The run answers to the request that caused it, so read the
+        # turn as it stood when it was created.
+        source_rows_before=run["created_at"],
     )
 
 
