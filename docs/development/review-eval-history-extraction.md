@@ -185,3 +185,81 @@ moves from `.review-eval-local/templates` into a committed dataset:
 
 A public repository must never learn private data through its fixture directory. When in doubt, keep
 it in `.review-eval-local/`.
+
+## History generation (private M3 run)
+
+The generation command consumes the scrubbed templates and the exact deployment registry snapshot
+used to resolve them. It has three explicit phases; each phase refuses to overwrite an existing
+artifact or continue with a changed input digest. The model sees only deduplicated security-relevant
+shapes. Tool names and schema property names are included intentionally as non-secret registry
+metadata because they provide the semantics needed to generate useful arguments. Descriptor prose,
+historical argument values, source rows, template ids, frequencies, and household text remain local.
+If a deployment embeds a secret in an identifier, it must rename or scrub that identifier before
+running generation. Validated structured classification and draft JSON are retained privately; raw
+Pi event streams and stderr are never persisted.
+
+Use a fresh run directory below `.review-eval-local/runs/`:
+
+```bash
+python scripts/generate_review_history_cases.py prepare \
+    --templates .review-eval-local/templates \
+    --tool-registry .review-eval-local/registry/deployment.json \
+    --out-dir .review-eval-local/runs/m3-2026-08-31 \
+    --dry-run
+
+python scripts/generate_review_history_cases.py prepare \
+    --templates .review-eval-local/templates \
+    --tool-registry .review-eval-local/registry/deployment.json \
+    --out-dir .review-eval-local/runs/m3-2026-08-31
+
+python scripts/generate_review_history_cases.py classify \
+    --templates .review-eval-local/templates \
+    --tool-registry .review-eval-local/registry/deployment.json \
+    --out-dir .review-eval-local/runs/m3-2026-08-31
+
+python scripts/generate_review_history_cases.py instantiate \
+    --templates .review-eval-local/templates \
+    --tool-registry .review-eval-local/registry/deployment.json \
+    --out-dir .review-eval-local/runs/m3-2026-08-31
+```
+
+The default model is `openrouter/z-ai/glm-5.3-flash`;
+`--model openrouter/deepseek/deepseek-v4-flash-0731` is also supported. Classification batches
+contain at most 25 shapes and instantiation batches at most 5. `--max-shapes 10` is useful for a
+paid pilot; the option belongs on `prepare` and is carried by the run manifest. `--dry-run` performs
+input and state checks without invoking Pi. Each malformed model response gets one retry, then its
+shapes are recorded in quarantine. Pi process, event-stream, and stdout-limit failures abort the run
+instead of quarantining shapes. Unsupported boundaries and multi-tool shapes are quarantined before
+a model call; classify dry-run call counts exclude those preflight shapes. During instantiation,
+each returned argument map is completed for omitted required properties and checked against the
+resolved descriptor schema before the retry decision; unknown keys and invalid values therefore
+receive model feedback once before quarantine. Sink and pair invariants remain in case building.
+Instantiation also writes a private `instantiation-attempts.jsonl` ledger beside the drafts and
+quarantine. A no-call resume requires all three artifacts to be present, valid, sorted, and to cover
+exactly the selected shapes; a partial or mismatched set fails closed. The ledger is copied into the
+final run manifest so paid-attempt audit information survives case-building failures. Delegation
+shapes with a placeholder sink are also quarantined: a registry snapshot contains tool metadata but
+not the deployment's `delegation_sink_classes` mapping, which is required for correct sink
+resolution. A concrete historical sink remains usable and is preserved rather than re-derived. For
+other argument-dependent tools, each generated argument map is resolved with the production sink
+resolver and must still resolve to the concrete historical sink; a materially different sink is
+quarantined rather than silently relabeled. When a placeholder sink can be resolved, both generated
+twins must resolve to the same sink and policy cell; otherwise the shape is quarantined. Generated
+untrusted context is placed before the trusted request in the reconstructed message sequence so the
+active user request remains trusted. Pi stdout is drained concurrently with stderr and capped at 4
+MiB per attempt; an over-limit response aborts the run without retaining the stream. Low-confidence
+classifications are conservatively retained as review-pending and are not sent to instantiation.
+There is no automatic second-model escalation in this command; a maintainer may manually select a
+different model for a separately reviewed run.
+
+The generated YAML files under the run's `cases/` directory are review drafts, not a runnable
+dataset. Review the private `run.json`, `lineage.jsonl`, classification and case quarantine files,
+and every attack/benign pair for a clearly authorized trusted request, a genuinely untrusted attack
+context, correct destinations, and realistic synthetic text. Deterministic schema and taint checks
+do not establish semantic label quality. Generated contexts always carry the `unknown_external`
+taint tier; the historical tier is retained only as private shape lineage and never makes generated
+text trusted. The generated benign and attack argument maps must differ so they represent distinct
+proposed tool actions; a pair with identical maps is quarantined. Only after human review should a
+maintainer copy selected drafts into a separately named private corpus directory and run the normal
+eval loader; never point `--dataset` at a run directory and never mix artifacts from different
+manifests.

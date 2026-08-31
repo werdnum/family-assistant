@@ -52,6 +52,7 @@ __all__ = [
     "load_cases",
     "validate_against_tool_schema",
     "validate_review_input_constructible",
+    "validate_tool_arguments",
 ]
 
 _CASE_SUFFIXES = (".jsonl", ".yaml", ".yml", ".json")
@@ -203,23 +204,29 @@ def validate_against_tool_schema(
     descriptor = resolve_tool_descriptor(
         payload.tool_name, registry=descriptor_registry
     )
+    validate_tool_arguments(payload.arguments, descriptor)
+
+
+def validate_tool_arguments(
+    arguments: Mapping[str, object], descriptor: ToolDescriptor
+) -> None:
+    """Validate one argument map against an already-resolved descriptor."""
     function = descriptor.definition.get("function")
     if not isinstance(function, dict):
         raise CaseSchemaValidationError(
-            f"Tool {payload.tool_name!r} has no function definition to validate "
+            f"Tool {descriptor.name!r} has no function definition to validate "
             "arguments against."
         )
     parameters = function.get("parameters")
     if not isinstance(parameters, dict):
         raise CaseSchemaValidationError(
-            f"Tool {payload.tool_name!r} declares no parameter schema."
+            f"Tool {descriptor.name!r} declares no parameter schema."
         )
     try:
-        _TOOL_ARGUMENT_VALIDATOR(parameters).validate(payload.arguments)
+        _TOOL_ARGUMENT_VALIDATOR(parameters).validate(arguments)
     except jsonschema.ValidationError as exc:
         raise CaseSchemaValidationError(
-            f"Case {case.id!r} arguments violate the schema of tool "
-            f"{payload.tool_name!r}: {exc.message}"
+            f"Arguments violate the schema of tool {descriptor.name!r}: {exc.message}"
         ) from exc
 
 
