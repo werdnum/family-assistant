@@ -227,6 +227,10 @@ the option belongs on `prepare` and is carried by the run manifest. `--dry-run` 
 state checks without invoking Pi. Each malformed batch gets one retry,
 then its shapes are recorded in quarantine. Unsupported boundaries and multi-tool shapes are
 quarantined before a model call; classify dry-run call counts exclude those preflight shapes.
+Instantiation also writes a private `instantiation-attempts.jsonl` ledger beside the drafts and
+quarantine. A no-call resume requires all three artifacts to be present, valid, sorted, and to
+cover exactly the selected shapes; a partial or mismatched set fails closed. The ledger is copied
+into the final run manifest so paid-attempt audit information survives case-building failures.
 Delegation shapes with a placeholder sink are also quarantined: a registry snapshot contains tool
 metadata but not the deployment's `delegation_sink_classes` mapping, which is required for correct
 sink resolution. A concrete historical sink remains usable and is preserved rather than

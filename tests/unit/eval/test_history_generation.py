@@ -13,6 +13,7 @@ import pytest
 import family_assistant.eval.tool_call_review.history_generation as generation
 import scripts.generate_review_history_cases as cli
 from family_assistant.eval.tool_call_review.history_generation import (
+    BatchAttempt,
     BatchExecutionError,
     BatchRunner,
     ClassificationRecord,
@@ -530,6 +531,7 @@ def test_build_cases_adds_required_argument_and_marks_context_untrusted() -> Non
     assert {case.label for case in cases} == {"attack", "benign"}
     for case in cases:
         payload = cast("ConversationPayload", case.payload)
+        assert case.placement == "leading"
         assert payload.arguments["message_content"] == "synthetic-value"
         metadata = cast("dict[str, object]", payload.messages[0]["taint_metadata"])
         assert metadata["max_tier"] == "unknown_external"
@@ -844,6 +846,16 @@ def test_complete_instantiation_artifacts_can_be_loaded_for_resume(
         json.dumps(draft.model_dump(mode="json")) + "\n", encoding="utf-8"
     )
     (tmp_path / "instantiation-quarantine.jsonl").write_text("", encoding="utf-8")
+    attempt = BatchAttempt(
+        operation="instantiate",
+        batch_number=1,
+        attempt=1,
+        status="accepted",
+        record_count=1,
+    )
+    (tmp_path / "instantiation-attempts.jsonl").write_text(
+        json.dumps(attempt.model_dump(mode="json")) + "\n", encoding="utf-8"
+    )
 
     result = cli._load_existing_instantiation_artifacts(
         tmp_path,
@@ -857,9 +869,10 @@ def test_complete_instantiation_artifacts_can_be_loaded_for_resume(
     )
 
     assert result is not None
-    drafts, quarantine = result
+    drafts, quarantine, attempts = result
     assert drafts == {"shape-one": draft}
     assert quarantine == []
+    assert attempts == [attempt]
 
 
 @pytest.mark.asyncio
@@ -876,6 +889,17 @@ async def test_instantiate_resumes_complete_pair_without_pi(
         json.dumps(draft.model_dump(mode="json")) + "\n", encoding="utf-8"
     )
     (tmp_path / "instantiation-quarantine.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "instantiation-attempts.jsonl").write_text(
+        json.dumps({
+            "operation": "instantiate",
+            "batch_number": 1,
+            "attempt": 1,
+            "status": "accepted",
+            "record_count": 1,
+        })
+        + "\n",
+        encoding="utf-8",
+    )
     manifest: dict[str, object] = {
         "phase": "classified",
         "classification_accepted": 1,
@@ -911,6 +935,17 @@ async def test_instantiate_resumes_complete_pair_without_pi(
     assert await cli._instantiate(args) == 0
     assert (tmp_path / "cases" / "history-draft-shape-one-benign.yaml").exists()
     assert (tmp_path / "cases" / "history-draft-shape-one-attack.yaml").exists()
+    persisted_manifest = json.loads((tmp_path / "run.json").read_text())
+    assert persisted_manifest["attempts"] == [
+        {
+            "operation": "instantiate",
+            "batch_number": 1,
+            "attempt": 1,
+            "status": "accepted",
+            "error_code": None,
+            "record_count": 1,
+        }
+    ]
 
 
 @pytest.mark.parametrize("artifact", ["drafts.jsonl", "instantiation-quarantine.jsonl"])
@@ -936,8 +971,49 @@ def test_inconsistent_instantiation_artifacts_fail_closed(tmp_path: Path) -> Non
         json.dumps({"shape_id": "shape-extra", "reason": "failed"}) + "\n",
         encoding="utf-8",
     )
+    (tmp_path / "instantiation-attempts.jsonl").write_text(
+        json.dumps({
+            "operation": "instantiate",
+            "batch_number": 1,
+            "attempt": 1,
+            "status": "accepted",
+            "record_count": 1,
+        })
+        + "\n",
+        encoding="utf-8",
+    )
 
     with pytest.raises(cli.HistoryGenerationError, match="exactly cover"):
+        cli._load_existing_instantiation_artifacts(tmp_path, [_shape()], {})
+
+
+@pytest.mark.parametrize(
+    ("raw", "reason"),
+    [
+        ("not-json\n", "invalid instantiation attempt"),
+        (
+            json.dumps({
+                "operation": "instantiate",
+                "batch_number": 1,
+                "attempt": 1,
+                "status": "accepted",
+                "record_count": 2,
+            })
+            + "\n",
+            "shape count mismatch",
+        ),
+    ],
+)
+def test_instantiation_attempt_ledger_must_match(
+    tmp_path: Path, raw: str, reason: str
+) -> None:
+    (tmp_path / "drafts.jsonl").write_text(
+        json.dumps(_draft().model_dump(mode="json")) + "\n", encoding="utf-8"
+    )
+    (tmp_path / "instantiation-quarantine.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "instantiation-attempts.jsonl").write_text(raw, encoding="utf-8")
+
+    with pytest.raises(cli.HistoryGenerationError, match=reason):
         cli._load_existing_instantiation_artifacts(tmp_path, [_shape()], {})
 
 

@@ -62,6 +62,7 @@ _CLASSIFICATION_FILE = "classification.jsonl"
 _CLASSIFICATION_QUARANTINE_FILE = "classification-quarantine.jsonl"
 _DRAFT_FILE = "drafts.jsonl"
 _INSTANTIATION_QUARANTINE_FILE = "instantiation-quarantine.jsonl"
+_INSTANTIATION_ATTEMPTS_FILE = "instantiation-attempts.jsonl"
 _CASE_QUARANTINE_FILE = "case-quarantine.jsonl"
 _PROVIDER = "openrouter"
 
@@ -443,11 +444,76 @@ def _read_drafts(path: Path) -> list[InstantiationRecord]:
     return records
 
 
+def _read_instantiation_attempts(path: Path) -> list[BatchAttempt]:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise HistoryGenerationError(f"cannot read {path}") from exc
+    attempts: list[BatchAttempt] = []
+    for line in lines:
+        try:
+            attempt = BatchAttempt.model_validate(json.loads(line))
+        except (json.JSONDecodeError, ValidationError) as exc:
+            raise HistoryGenerationError(
+                f"invalid instantiation attempt in {path}"
+            ) from exc
+        if attempt.operation != "instantiate":
+            raise HistoryGenerationError(
+                "instantiation attempt ledger contains another operation"
+            )
+        attempts.append(attempt)
+    if [(attempt.batch_number, attempt.attempt) for attempt in attempts] != sorted(
+        (attempt.batch_number, attempt.attempt) for attempt in attempts
+    ):
+        raise HistoryGenerationError("instantiation attempt ledger is not sorted")
+    return attempts
+
+
+def _reconcile_instantiation_attempts(
+    attempts: Sequence[BatchAttempt], selected: Sequence[PreparedShape]
+) -> None:
+    """Check that an attempt ledger describes exactly the selected batches."""
+    batches: dict[int, list[BatchAttempt]] = {}
+    for attempt in attempts:
+        if attempt.batch_number in batches:
+            prior = batches[attempt.batch_number]
+            if attempt.attempt != len(prior) + 1:
+                raise HistoryGenerationError("instantiation attempt sequence mismatch")
+        elif attempt.batch_number != len(batches) + 1:
+            raise HistoryGenerationError("instantiation batch sequence mismatch")
+        batches.setdefault(attempt.batch_number, []).append(attempt)
+    if not batches and not selected:
+        return
+    if not batches:
+        raise HistoryGenerationError("instantiation attempt ledger is empty")
+    expected_total = 0
+    for records in batches.values():
+        if len(records) > 2 or records[-1].status not in {"accepted", "quarantined"}:
+            raise HistoryGenerationError("instantiation attempt outcome mismatch")
+        if len(records) == 2 and records[0].status != "retry":
+            raise HistoryGenerationError("instantiation retry ledger mismatch")
+        if len(records) == 1 and records[0].status != "accepted":
+            raise HistoryGenerationError("instantiation attempt outcome mismatch")
+        record_count = records[0].record_count
+        if any(record.record_count != record_count for record in records):
+            raise HistoryGenerationError("instantiation attempt count mismatch")
+        if record_count < 1 or record_count > INSTANTIATION_BATCH_MAX:
+            raise HistoryGenerationError("instantiation batch size mismatch")
+        expected_total += record_count
+    if expected_total != len(selected):
+        raise HistoryGenerationError(
+            "instantiation attempt ledger shape count mismatch"
+        )
+
+
 def _load_existing_instantiation_artifacts(
     out_dir: Path,
     selected: Sequence[PreparedShape],
     manifest: Mapping[str, object],
-) -> tuple[dict[str, InstantiationRecord], list[dict[str, object]]] | None:
+) -> (
+    tuple[dict[str, InstantiationRecord], list[dict[str, object]], list[BatchAttempt]]
+    | None
+):
     """Load a complete persisted model result for safe no-call finalization.
 
     A failed process may have persisted both model artifacts before it stopped
@@ -457,16 +523,20 @@ def _load_existing_instantiation_artifacts(
     """
     draft_path = out_dir / _DRAFT_FILE
     quarantine_path = out_dir / _INSTANTIATION_QUARANTINE_FILE
+    attempts_path = out_dir / _INSTANTIATION_ATTEMPTS_FILE
     draft_exists = draft_path.exists()
     quarantine_exists = quarantine_path.exists()
-    if not draft_exists and not quarantine_exists:
+    attempts_exists = attempts_path.exists()
+    if not draft_exists and not quarantine_exists and not attempts_exists:
         return None
-    if draft_exists != quarantine_exists:
+    if not (draft_exists and quarantine_exists and attempts_exists):
         raise HistoryGenerationError(
             "partial instantiation artifacts cannot be resumed safely"
         )
     drafts = _read_drafts(draft_path)
     quarantine = _read_quarantine(quarantine_path)
+    attempts = _read_instantiation_attempts(attempts_path)
+    _reconcile_instantiation_attempts(attempts, selected)
     expected = {shape.record.shape_id for shape in selected}
     draft_ids = {record.shape_id for record in drafts}
     quarantine_ids = [record["shape_id"] for record in quarantine]
@@ -513,7 +583,7 @@ def _load_existing_instantiation_artifacts(
         raise HistoryGenerationError(
             "instantiation quarantine count is inconsistent with manifest"
         )
-    return ({record.shape_id: record for record in drafts}, quarantine)
+    return ({record.shape_id: record for record in drafts}, quarantine, attempts)
 
 
 async def _classify(args: argparse.Namespace) -> int:
@@ -608,7 +678,12 @@ async def _instantiate(args: argparse.Namespace) -> int:
     if existing is None:
         _ensure_new_phase(
             out_dir,
-            (_DRAFT_FILE, _INSTANTIATION_QUARANTINE_FILE, _CASE_QUARANTINE_FILE),
+            (
+                _DRAFT_FILE,
+                _INSTANTIATION_QUARANTINE_FILE,
+                _INSTANTIATION_ATTEMPTS_FILE,
+                _CASE_QUARANTINE_FILE,
+            ),
         )
     else:
         _ensure_new_phase(out_dir, (_CASE_QUARANTINE_FILE,))
@@ -636,9 +711,12 @@ async def _instantiate(args: argparse.Namespace) -> int:
             (drafts[shape_id].model_dump(mode="json") for shape_id in sorted(drafts)),
         )
         write_jsonl_exclusive(out_dir / _INSTANTIATION_QUARANTINE_FILE, quarantine)
+        write_jsonl_exclusive(
+            out_dir / _INSTANTIATION_ATTEMPTS_FILE,
+            (attempt.model_dump(mode="json") for attempt in attempts),
+        )
     else:
-        drafts, quarantine = existing
-        attempts = []
+        drafts, quarantine, attempts = existing
     cases, case_quarantine = build_cases(
         selected,
         list(drafts.values()),

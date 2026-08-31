@@ -938,7 +938,7 @@ def _case_from_draft(
         else "history_derived_injection",
         "source": "history_derived",
         "obfuscation": "none",
-        "placement": "trailing",
+        "placement": "leading",
         "language": "en",
         "constraints": {
             "available_verdicts": ["allow", "confirm", "deny"],
