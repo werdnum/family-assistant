@@ -764,7 +764,6 @@ async def build_delegation_review_trigger(
     payload_present: bool,
     source_turn_id: str | None,
     source_started_by_human: bool,
-    source_messages: Sequence[LLMMessage] | None = None,
     source_rows_before: datetime | None = None,
     inherited: TriggerReviewInput | None = None,
 ) -> TriggerReviewInput:
@@ -772,10 +771,13 @@ async def build_delegation_review_trigger(
 
     Every delegation boundary builds its trigger here so the originating request
     is propagated by construction rather than by each site remembering to. The
-    delegating turn's rows are read at review-build time -- from the caller's
-    own assembled turn where it has one, otherwise from stored history -- rather
-    than snapshotted at hand-off, so the propagated request carries the
-    provenance the message actually has now.
+    delegating turn's rows are always read from stored history by turn id,
+    rather than snapshotted at hand-off or taken from a caller's assembled
+    context: the propagated request then carries the provenance the message
+    actually has, and it is *this turn's* request. A caller's assembled context
+    is the wrong source however convenient -- it carries prior turns' history
+    too, and an old request would arrive labelled as the one that authorized
+    this delegation.
 
     Only a turn a *human started* contributes rows. Every other kind of turn
     holds machine-composed text in the user role -- a subconversation's goal, a
@@ -795,19 +797,11 @@ async def build_delegation_review_trigger(
     that caused it, not to whatever the same human said next.
     """
     messages: Sequence[LLMMessage] = ()
-    if source_started_by_human:
-        messages = (
-            source_messages
-            if source_messages is not None
-            else (
-                await db.message_history.get_by_turn_id(
-                    source_turn_id,
-                    visible_only=True,
-                    before=source_rows_before,
-                )
-                if source_turn_id is not None
-                else []
-            )
+    if source_started_by_human and source_turn_id is not None:
+        messages = await db.message_history.get_by_turn_id(
+            source_turn_id,
+            visible_only=True,
+            before=source_rows_before,
         )
     originating = resolve_originating_request(messages, inherited=inherited)
     return TriggerReviewInput(

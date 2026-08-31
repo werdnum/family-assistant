@@ -4228,6 +4228,65 @@ async def test_steering_sent_after_enqueue_is_not_the_originating_request(
     assert "accountant@example.test" not in _review_prompt_for(trigger)
 
 
+@pytest.mark.asyncio
+async def test_synchronous_delegation_ignores_earlier_turns(
+    db_engine: AsyncEngine,
+) -> None:
+    """A delegation answers to its own turn, not to the conversation's past.
+
+    The assembled context a turn hands its tools carries prior turns too, so
+    reading it would let a tainted goal reuse a recipient the user named days
+    ago and collect a destination echo for it.
+    """
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(
+        target_service, async_delegation_enabled=False
+    )
+    chat_interface = AsyncMock(spec=ChatInterface)
+
+    db_context = Database(engine=db_engine)
+    earlier = UserMessage(
+        content="Last week: mail the invoice to accountant@example.test.",
+        taint_metadata=TurnTaintState.empty().to_metadata(),
+    )
+    await db_context.message_history.add_message(
+        earlier,
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=TEST_CONVERSATION_ID,
+        timestamp=SystemClock().now() - timedelta(days=7),
+        turn_id="turn_last_week",
+        user_id="async-delegation-user",
+    )
+    await db_context.message_history.add_message(
+        UserMessage(
+            content="Summarize today's hotel options.",
+            taint_metadata=TurnTaintState.empty().to_metadata(),
+        ),
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=TEST_CONVERSATION_ID,
+        timestamp=SystemClock().now(),
+        turn_id="turn_async_delegation",
+        user_id="async-delegation-user",
+    )
+
+    context = replace(
+        _tool_context(db_context, processing_service, chat_interface),
+        # What the model saw this turn: the whole conversation, older turn first.
+        tool_call_review_messages=(earlier,),
+    )
+    await delegate_to_service_tool(
+        exec_context=context,
+        target_service_id="target_profile",
+        user_request="Summarize the hotels.",
+    )
+
+    assert len(target_service.calls) == 1
+    trigger = target_service.calls[0]["tool_call_review_trigger"]
+    assert trigger is not None
+    assert trigger.originating_request == "Summarize today's hotel options."
+    assert "accountant@example.test" not in _review_prompt_for(trigger)
+
+
 def _review_prompt_for(trigger: TriggerReviewInput) -> str:
     """Render the reviewer prompt a delegated call would actually be judged on."""
     messages = assemble_tool_call_review_messages(

@@ -157,6 +157,10 @@ async def _delegation_review_trigger(
     rather than blind. Delegating from an unattended turn carries forward only
     what this turn itself inherited: its own rows hold composed text -- a goal,
     a wake's result data, an event payload -- never a human request.
+
+    The turn's rows come from history rather than from
+    ``tool_call_review_messages``, which carries prior turns as well: an earlier
+    request must not arrive labelled as the one that authorized this delegation.
     """
     return await build_delegation_review_trigger(
         exec_context.db_context,
@@ -171,7 +175,6 @@ async def _delegation_review_trigger(
         # trigger. An interactive turn carries none, and only it holds a human
         # message.
         source_started_by_human=exec_context.tool_call_review_trigger is None,
-        source_messages=exec_context.tool_call_review_messages,
         inherited=exec_context.tool_call_review_trigger,
     )
 
