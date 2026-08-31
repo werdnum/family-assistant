@@ -11,6 +11,7 @@ import pytest
 
 import scripts.tool_call_review_batch as batch_cli
 from family_assistant.eval import private_paths
+from family_assistant.eval.tool_call_review import batch as batch_module
 from family_assistant.eval.tool_call_review.batch import (
     BatchClient,
     BatchError,
@@ -117,6 +118,63 @@ def test_prepare_chunks_and_private_artifacts(private_root: Path) -> None:
     assert [len(chunk.request_ids) for chunk in manifest.chunks] == [7, 7, 5]
     assert (private_root / "runs/pilot/manifest.json").is_file()
     assert (private_root / "runs/pilot/requests.jsonl").is_file()
+
+
+def test_gemini_schema_normalizes_nullable_constraints() -> None:
+    normalized = batch_module._normalize_gemini_schema({
+        "type": "object",
+        "properties": {
+            "value": {
+                "anyOf": [
+                    {"maxLength": 2000, "type": "string"},
+                    {"type": "null"},
+                ]
+            }
+        },
+    })
+
+    assert normalized == {
+        "type": "object",
+        "properties": {"value": {"maxLength": 2000, "type": ["string", "null"]}},
+    }
+
+
+def test_gemini_schema_normalizes_nested_nullable_schemas() -> None:
+    normalized = batch_module._normalize_gemini_schema({
+        "$defs": {
+            "Nested": {
+                "type": "array",
+                "items": {
+                    "anyOf": [
+                        {"type": "integer"},
+                        {"type": "null"},
+                    ]
+                },
+            }
+        }
+    })
+
+    assert normalized == {
+        "$defs": {
+            "Nested": {
+                "type": "array",
+                "items": {"type": ["integer", "null"]},
+            }
+        }
+    }
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"anyOf": [{"type": "string"}, {"type": "integer"}]},
+        {"anyOf": [{"$ref": "#/$defs/Value"}, {"type": "null"}]},
+        {"anyOf": [{"type": "string"}, {"type": "null"}, {"type": "null"}]},
+    ],
+)
+def test_gemini_schema_rejects_unsupported_unions(schema: dict[str, object]) -> None:
+    with pytest.raises(BatchError, match="unsupported"):
+        batch_module._normalize_gemini_schema(schema)
 
 
 def test_prepare_refuses_zero_runnable_cases_before_artifacts(
@@ -244,6 +302,15 @@ async def test_submit_status_harvest_is_resumable(private_root: Path) -> None:
     response_format = cast("dict[str, object]", first_body["response_format"])
     schema = cast("dict[str, object]", response_format["json_schema"])
     assert schema["strict"] is True
+    response_schema = cast("dict[str, object]", schema["schema"])
+    safer_alternative = cast("dict[str, object]", response_schema["properties"])[
+        "safer_alternative"
+    ]
+    assert safer_alternative == {
+        "maxLength": 2000,
+        "type": ["string", "null"],
+        "title": "Safer Alternative",
+    }
     await update_batch_status(run_dir, api_key="test-only", client=fake)
     report = harvest_batch(run_dir)
 

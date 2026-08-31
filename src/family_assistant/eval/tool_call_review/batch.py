@@ -234,14 +234,53 @@ def _response_format() -> dict[str, object]:
     strict_json_schema = importlib.import_module(
         "openai.lib._pydantic"
     ).to_strict_json_schema
+    schema = _normalize_gemini_schema(strict_json_schema(ToolCallReviewResponse))
     return {
         "type": "json_schema",
         "json_schema": {
             "name": "tool_call_review_response",
             "strict": True,
-            "schema": strict_json_schema(ToolCallReviewResponse),
+            "schema": schema,
         },
     }
+
+
+def _normalize_gemini_schema(schema: object) -> object:
+    """Convert supported Pydantic nullable unions to Gemini's type-array form."""
+    if isinstance(schema, list):
+        return [_normalize_gemini_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+
+    normalized = {key: _normalize_gemini_schema(value) for key, value in schema.items()}
+    branches = normalized.get("anyOf")
+    if branches is None:
+        return normalized
+    if not isinstance(branches, list) or len(branches) != 2:
+        raise BatchError("Response schema contains an unsupported anyOf union.")
+    null_branches = [branch for branch in branches if _is_null_schema(branch)]
+    if len(null_branches) != 1:
+        raise BatchError("Response schema contains an unsupported anyOf union.")
+    nullable_branch = next(branch for branch in branches if branch not in null_branches)
+    if not isinstance(nullable_branch, dict):
+        raise BatchError("Response schema contains an unsupported nullable union.")
+    branch_type = nullable_branch.get("type")
+    if not isinstance(branch_type, str) or branch_type == "null":
+        raise BatchError("Response schema contains an unsupported nullable union.")
+
+    result = {key: value for key, value in normalized.items() if key != "anyOf"}
+    for key, value in nullable_branch.items():
+        if key == "type":
+            continue
+        if key in result and result[key] != value:
+            raise BatchError("Response schema contains conflicting nullable metadata.")
+        result[key] = value
+    result["type"] = [branch_type, "null"]
+    return result
+
+
+def _is_null_schema(schema: object) -> bool:
+    return isinstance(schema, dict) and schema == {"type": "null"}
 
 
 def _custom_id(case_id: str, seed_index: int) -> str:
