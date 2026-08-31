@@ -23,7 +23,7 @@ from telegram import (
     Update,
 )
 from telegram.constants import ChatAction, ParseMode
-from telegram.error import BadRequest, Conflict, TelegramError
+from telegram.error import BadRequest, Conflict
 from telegram.ext import (
     CallbackContext,
     CommandHandler,
@@ -54,6 +54,7 @@ from family_assistant.telegram.chunking import (
 )
 from family_assistant.telegram.markdown_utils import convert_to_telegram_markdown
 from family_assistant.telegram.rich_messages import (
+    is_rich_message_compatibility_error,
     send_rich_message,
     should_attempt_rich_message,
 )
@@ -803,12 +804,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                                 "Sent assistant response as Telegram rich message to chat %s.",
                                 chat_id,
                             )
-                        except (
-                            BadRequest,
-                            TelegramError,
-                            AttributeError,
-                            NotImplementedError,
-                        ) as rich_err:
+                        except Exception as rich_err:
+                            if not is_rich_message_compatibility_error(rich_err):
+                                raise
                             logger.info(
                                 "Telegram rejected rich message (%s); falling back to standard sendMessage.",
                                 rich_err,
@@ -1358,12 +1356,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             "Sent slash command response as Telegram rich message to chat %s.",
                             chat_id,
                         )
-                    except (
-                        BadRequest,
-                        TelegramError,
-                        AttributeError,
-                        NotImplementedError,
-                    ) as rich_err:
+                    except Exception as rich_err:
+                        if not is_rich_message_compatibility_error(rich_err):
+                            raise
                         logger.info(
                             "Telegram rejected slash command rich message (%s); falling back to standard sendMessage.",
                             rich_err,

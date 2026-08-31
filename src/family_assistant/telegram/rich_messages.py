@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from telegram import Bot, Message
 from telegram.constants import ParseMode
-from telegram.error import TelegramError
+from telegram.error import BadRequest, TelegramError
 
 if TYPE_CHECKING:
     from telegram import (
@@ -73,6 +73,32 @@ class InputRichMessage:
 def has_markdown_table(text: str) -> bool:
     """Check if ``text`` contains a Markdown table."""
     return bool(_MARKDOWN_TABLE_REGEX.search(text))
+
+
+class RichMessageUnsupportedError(TelegramError):
+    """Raised when sendRichMessage is unsupported or returns an incompatible response."""
+
+
+def is_rich_message_compatibility_error(error: Exception) -> bool:
+    """Determine whether an error from sending a rich message indicates an unsupported endpoint or format rejection.
+
+    Returns True only for errors that prove the message was not delivered and that falling back
+    to standard sendMessage is appropriate (e.g. BadRequest, AttributeError, NotImplementedError,
+    or RichMessageUnsupportedError).
+
+    Returns False for delivery-ambiguous or transient errors (e.g. TimedOut, NetworkError, RetryAfter)
+    so that they propagate to the caller's standard retry or error handling without risking
+    duplicate message sends.
+    """
+    return isinstance(
+        error,
+        (
+            BadRequest,
+            AttributeError,
+            NotImplementedError,
+            RichMessageUnsupportedError,
+        ),
+    )
 
 
 def should_attempt_rich_message(
@@ -235,7 +261,9 @@ async def send_rich_message(
             return cast("Message", result)
         if isinstance(result, dict):
             return cast("Message", Message.de_json(result, bot))
-        raise TelegramError(f"Unexpected response from sendRichMessage: {result!r}")
+        raise RichMessageUnsupportedError(
+            f"Unexpected response from sendRichMessage: {result!r}"
+        )
 
     raise AttributeError(
         f"Bot instance {type(bot).__name__} does not support sending rich messages."

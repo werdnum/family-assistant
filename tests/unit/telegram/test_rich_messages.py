@@ -10,13 +10,23 @@ from unittest.mock import AsyncMock
 import pytest
 from telegram import ForceReply, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
-from telegram.error import BadRequest, RetryAfter
+from telegram.error import (
+    BadRequest,
+    Forbidden,
+    NetworkError,
+    RetryAfter,
+    TelegramError,
+    TimedOut,
+)
 
+from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.telegram.chunking import TELEGRAM_MAX_MESSAGE_LENGTH
 from family_assistant.telegram.interface import TelegramChatInterface
 from family_assistant.telegram.rich_messages import (
     InputRichMessage,
+    RichMessageUnsupportedError,
     has_markdown_table,
+    is_rich_message_compatibility_error,
     send_rich_message,
     should_attempt_rich_message,
 )
@@ -40,11 +50,13 @@ class _FakeRichBot:
         *,
         reject_rich: bool = False,
         flood_control_on_rich: bool = False,
+        rich_error: Exception | None = None,
     ) -> None:
         self.calls: list[_SentRichMessageCall] = []
         self.standard_sent: list[dict[str, object]] = []
         self._reject_rich = reject_rich
         self._flood_control_on_rich = flood_control_on_rich
+        self._rich_error = rich_error
         self.rich_attempts = 0
 
     async def _send_message(
@@ -56,6 +68,8 @@ class _FakeRichBot:
         self.rich_attempts += 1
         if self._flood_control_on_rich and self.rich_attempts == 1:
             raise RetryAfter(0)
+        if self._rich_error is not None:
+            raise self._rich_error
         if self._reject_rich:
             raise BadRequest("Unknown method: sendRichMessage")
         self.calls.append(
@@ -269,3 +283,57 @@ async def test_chat_interface_retries_flood_control_on_rich_message() -> None:
     assert bot.rich_attempts == 2
     assert len(bot.calls) == 1
     assert len(bot.standard_sent) == 0
+
+
+def test_is_rich_message_compatibility_error() -> None:
+    # Compatibility and format rejections (safe to fall back)
+    assert is_rich_message_compatibility_error(
+        BadRequest("Unknown method: sendRichMessage")
+    )
+    assert is_rich_message_compatibility_error(
+        RichMessageUnsupportedError("unsupported")
+    )
+    assert is_rich_message_compatibility_error(AttributeError("no transport method"))
+    assert is_rich_message_compatibility_error(NotImplementedError("stub"))
+
+    # Transient / delivery-ambiguous errors (must propagate, not duplicate send)
+    assert not is_rich_message_compatibility_error(TimedOut("Request timed out"))
+    assert not is_rich_message_compatibility_error(NetworkError("Connection reset"))
+    assert not is_rich_message_compatibility_error(RetryAfter(5))
+    assert not is_rich_message_compatibility_error(Forbidden("Bot was blocked"))
+    assert not is_rich_message_compatibility_error(TelegramError("Generic error"))
+    assert not is_rich_message_compatibility_error(RuntimeError("Unexpected error"))
+
+
+@pytest.mark.asyncio
+async def test_chat_interface_does_not_fallback_on_transient_network_error() -> None:
+    bot = _FakeRichBot(rich_error=TimedOut("Timed out waiting for response"))
+    interface = TelegramChatInterface(cast("Application", SimpleNamespace(bot=bot)))
+
+    table_text = "| Col1 | Col2 |\n| --- | --- |\n| Val1 | Val2 |"
+    with pytest.raises(ChatDeliveryError) as exc_info:
+        await interface.send_message(
+            conversation_id="123456",
+            text=table_text,
+            parse_mode="MarkdownV2",
+        )
+
+    assert exc_info.value.transient is True
+    # Verify no fallback sendMessage was sent, preventing duplicate deliveries
+    assert len(bot.standard_sent) == 0
+
+
+@pytest.mark.asyncio
+async def test_send_rich_message_raises_unsupported_error_on_invalid_response() -> None:
+    mock_bot = AsyncMock()
+    mock_bot.send_rich_message = None
+    mock_bot._send_message = AsyncMock(return_value="not a message object or dict")
+
+    with pytest.raises(
+        RichMessageUnsupportedError, match="Unexpected response from sendRichMessage"
+    ):
+        await send_rich_message(
+            bot=cast("Any", mock_bot),
+            chat_id=12345,
+            text="Hello world",
+        )

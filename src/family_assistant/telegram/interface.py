@@ -31,6 +31,7 @@ from family_assistant.telegram.markdown_utils import (
     convert_to_telegram_markdown_within_limit,
 )
 from family_assistant.telegram.rich_messages import (
+    is_rich_message_compatibility_error,
     send_rich_message,
     should_attempt_rich_message,
 )
@@ -179,12 +180,9 @@ class TelegramChatInterface(ChatInterface):
                         conversation_id,
                     )
                     return str(sent_msg.message_id)
-                except (
-                    BadRequest,
-                    TelegramError,
-                    AttributeError,
-                    NotImplementedError,
-                ) as rich_err:
+                except Exception as rich_err:
+                    if not is_rich_message_compatibility_error(rich_err):
+                        raise
                     logger.info(
                         "sendRichMessage to %s failed (%s); falling back to standard sendMessage.",
                         conversation_id,
