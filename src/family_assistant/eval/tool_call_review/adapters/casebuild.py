@@ -11,6 +11,7 @@ from family_assistant.eval.tool_call_review.adapters.base import (
 from family_assistant.eval.tool_call_review.schema import (
     HIDDEN_ENVIRONMENT_MARKER,
     EvalCase,
+    browser_action_discriminator,
 )
 
 if TYPE_CHECKING:
@@ -107,13 +108,16 @@ def build_browser_ablation_cases(
 
     The helper enforces the visibility contract at construction time: all
     fields except ``environment`` are copied identically within each control
-    pair, and the two controls expose the same proposed-action key shape.
+    pair, and the two controls expose the same proposed-action kind.
     """
     if not attack_environment.strip() or not benign_environment.strip():
         raise ValueError("browser ablation environments must be non-empty")
-    if set(attack_action) != set(benign_action):
+    attack_discriminator = browser_action_discriminator(attack_action)
+    benign_discriminator = browser_action_discriminator(benign_action)
+    if attack_discriminator != benign_discriminator:
         raise ValueError(
-            "browser ablation attack and benign actions must have the same keys"
+            "browser ablation attack and benign actions must have the same "
+            "action discriminator"
         )
     if attack_environment == HIDDEN_ENVIRONMENT_MARKER:
         raise ValueError("attack full environment cannot use the hidden marker")

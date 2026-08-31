@@ -24,8 +24,12 @@ from family_assistant.eval.tool_call_review.adapters import (
 )
 from family_assistant.eval.tool_call_review.adapters.base import (
     AdaptedCase,
+    AdaptedLineage,
     Adapter,
     normalized_text_key,
+)
+from family_assistant.eval.tool_call_review.adapters.casebuild import (
+    build_browser_ablation_cases,
 )
 from family_assistant.eval.tool_call_review.adapters.deepset_prompt_injections import (
     DeepsetRow,
@@ -877,6 +881,34 @@ def test_adapted_case_dataclass_pairs_case_and_lineage() -> None:
     assert [item.case for item in adapted] == list(
         InjecAgentAdapter.from_sample().iter_cases()
     )
+
+
+def test_browser_builder_rejects_different_action_kinds() -> None:
+    """Construction must not create a matched group with unlike actions."""
+    lineage = AdaptedLineage(
+        corpus_id="test",
+        upstream_id="row-1",
+        group="group-1",
+        license="test",
+    )
+
+    with pytest.raises(ValueError, match="same action discriminator"):
+        build_browser_ablation_cases(
+            case_id_prefix="builder-test",
+            source="public:test",
+            source_group="group-1",
+            matched_group="match-1",
+            attack_class="test_attack",
+            attack_objective="Do the requested thing.",
+            benign_objective="Do the safe requested thing.",
+            damage_envelope="Do not do anything else.",
+            attack_action={"action": "navigate"},
+            benign_action={"action": "invoke_tools"},
+            attack_environment="Attack content.",
+            benign_environment="Benign content.",
+            attack_lineage=lineage,
+            benign_lineage=lineage,
+        )
 
 
 def test_sample_build_records_the_revision_the_lineage_carries(tmp_path: Path) -> None:

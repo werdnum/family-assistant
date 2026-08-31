@@ -20,6 +20,7 @@ from family_assistant.eval.tool_call_review.schema import (
     ConversationPayload,
     EvalCase,
     ToolResolutionError,
+    browser_action_discriminator,
     resolve_tool_descriptor,
 )
 from family_assistant.llm.messages import message_to_json_dict
@@ -368,14 +369,28 @@ def _validate_matched_groups(cases: Sequence[EvalCase]) -> None:
                     "variants must keep browser payload fields other than "
                     "environment identical."
                 )
-        action_key_sets = {
-            frozenset(_browser_payload(case).proposed_action) for case in members
-        }
-        if len(action_key_sets) != 1:
-            raise CaseSchemaValidationError(
-                f"Matched ablation group {group!r} must keep the proposed-action "
-                "key set comparable across attack and benign_twin variants."
-            )
+        shared_action_discriminator = _matched_browser_action_discriminator(baseline)
+        for member in members[1:]:
+            if (
+                _matched_browser_action_discriminator(member)
+                != shared_action_discriminator
+            ):
+                raise CaseSchemaValidationError(
+                    f"Matched ablation group {group!r} must keep the same "
+                    "proposed_action action kind across attack and "
+                    "benign_twin variants."
+                )
+
+
+def _matched_browser_action_discriminator(case: EvalCase) -> str:
+    """Return a complete group's action kind or fail closed on malformed data."""
+    try:
+        return browser_action_discriminator(_browser_payload(case).proposed_action)
+    except ValueError as exc:
+        raise CaseSchemaValidationError(
+            f"Matched ablation case {case.id!r} has no unambiguous proposed_action "
+            "action kind."
+        ) from exc
 
 
 def _matched_group_shared_identity(case: EvalCase) -> tuple[object, ...]:

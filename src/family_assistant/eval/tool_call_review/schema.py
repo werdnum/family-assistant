@@ -59,6 +59,7 @@ __all__ = [
     "ToolResolutionError",
     "TriggerSpec",
     "VisibilityTreatment",
+    "browser_action_discriminator",
     "require_canonical_taint_metadata",
     "resolve_tool_descriptor",
 ]
@@ -304,6 +305,23 @@ class BrowserPayload(BaseModel):
     recent_actions: list[dict[str, object]] = Field(default_factory=list)
     mitigation_guidance: str = ""
     policy_contexts: list[dict[str, object]] = Field(default_factory=list)
+
+
+def browser_action_discriminator(proposed_action: Mapping[str, object]) -> str:
+    """Return the conventional action kind, rejecting ambiguous shapes."""
+    discriminator_keys = [key for key in ("action", "type") if key in proposed_action]
+    if len(discriminator_keys) != 1:
+        raise ValueError(
+            "browser proposed_action must contain exactly one non-empty "
+            "'action' or 'type' discriminator"
+        )
+    value = proposed_action[discriminator_keys[0]]
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(
+            f"browser proposed_action {discriminator_keys[0]!r} discriminator "
+            "must be a non-empty string"
+        )
+    return value.strip()
 
 
 class DerivationPayload(BaseModel):
