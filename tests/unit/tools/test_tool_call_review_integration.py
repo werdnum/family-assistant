@@ -78,6 +78,12 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import ToolArguments, ToolDefinition
 
 
+# These waits guard against a hang, not a deadline: the assertions around them
+# are what check ordering. A budget tight enough to expire on a loaded machine
+# turns a passing test into a flake without testing anything more.
+_HANG_GUARD_SECONDS = 30
+
+
 class _ReviewLLM:
     def __init__(
         self,
@@ -1029,7 +1035,7 @@ async def test_observe_taint_review_is_nonblocking_and_close_drains_audit(
     assert result.get_text() == "executed before shadow verdict"
     assert executions == 1
     assert not release.is_set()
-    await asyncio.wait_for(entered.wait(), timeout=1)
+    await asyncio.wait_for(entered.wait(), timeout=_HANG_GUARD_SECONDS)
     assert await _review_events(context) == []
 
     release.set()
@@ -1802,10 +1808,10 @@ async def test_concurrent_denials_reserve_single_escalation_before_await(
     first_task = asyncio.create_task(
         provider.execute_tool("reviewed_tool", {}, context, "first-concurrent")
     )
-    await asyncio.wait_for(confirmation.entered.wait(), timeout=1)
+    await asyncio.wait_for(confirmation.entered.wait(), timeout=_HANG_GUARD_SECONDS)
     second = await asyncio.wait_for(
         provider.execute_tool("reviewed_tool", {}, context, "second-concurrent"),
-        timeout=1,
+        timeout=_HANG_GUARD_SECONDS,
     )
     confirmation.release.set()
     first = await first_task

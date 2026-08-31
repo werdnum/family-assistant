@@ -15,7 +15,7 @@ import uuid
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta  # Added Union
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Required, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, Required, TypedDict, cast
 
 import aiofiles.os
 from dateutil import rrule
@@ -103,7 +103,10 @@ from family_assistant.services.deferred_tool_confirmation import (
 )
 from family_assistant.services.notification_targets import notify_conversation
 from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
-from family_assistant.services.tool_call_review import TriggerReviewInput
+from family_assistant.services.tool_call_review import (
+    TriggerReviewInput,
+    build_delegation_review_trigger,
+)
 from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.storage.database import (
     Database,
@@ -136,6 +139,44 @@ from family_assistant.utils.clock import Clock, SystemClock
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+
+
+async def _delegation_run_review_trigger(
+    exec_context: ToolExecutionContext,
+    run: DelegationRunDict,
+    *,
+    trigger_type: str,
+    active_request_role: Literal["user", "system"],
+    payload_present: bool,
+) -> TriggerReviewInput:
+    """Build a delegation run's review trigger from the turn that delegated.
+
+    The request text was composed by the delegating turn's model and so carries
+    that turn's persisted taint. The human message behind it is read back from
+    the delegating turn's stored rows, where its own provenance decides whether
+    the reviewer may read it -- a run delegated off an email-intake turn
+    propagates nothing, because that turn's user row is not trusted, and one
+    delegated off another unattended turn propagates nothing either, because
+    that turn's rows hold composed text rather than a human request.
+    """
+    return await build_delegation_review_trigger(
+        exec_context.db_context,
+        trigger_type=trigger_type,
+        active_request_role=active_request_role,
+        definition=run["request_text"],
+        definition_taint_metadata=run["taint_state_json"],
+        payload_present=payload_present,
+        source_turn_id=run["source_turn_id"],
+        # A subconversation turn holds a composed goal rather than a human
+        # message. The delegating turn's other unattended shapes are excluded by
+        # the visible-rows read: a completion wake's result data is an internal
+        # row, and an event or script trigger row carries untrusted provenance.
+        source_started_by_human=run["source_subconversation_id"] is None,
+        # The delegating turn keeps accepting steering input after this run was
+        # queued. The run answers to the request that caused it, so read the
+        # turn as it stood when it was created.
+        source_rows_before=run["created_at"],
+    )
 
 
 def _taint_sources_from_delegation_run(
@@ -1618,11 +1659,11 @@ class TaskWorker:
                 request_confirmation_callback=request_confirmation_callback,
                 subconversation_id=run["subconversation_id"],
                 initial_taint_sources=_taint_sources_from_delegation_run(run),
-                tool_call_review_trigger=TriggerReviewInput(
+                tool_call_review_trigger=await _delegation_run_review_trigger(
+                    exec_context,
+                    run,
                     trigger_type="delegation_request",
                     active_request_role="user",
-                    definition=run["request_text"],
-                    definition_taint_metadata=None,
                     payload_present=False,
                 ),
             )
@@ -2840,11 +2881,11 @@ class TaskWorker:
             trigger_role="system",
             turn_id=wake_turn_id,
             initial_taint_sources=_taint_sources_from_delegation_run(run),
-            tool_call_review_trigger=TriggerReviewInput(
+            tool_call_review_trigger=await _delegation_run_review_trigger(
+                exec_context,
+                run,
                 trigger_type="delegation_completion",
                 active_request_role="system",
-                definition=run["request_text"],
-                definition_taint_metadata=None,
                 payload_present=True,
             ),
         )

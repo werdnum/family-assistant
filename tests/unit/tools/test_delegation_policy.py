@@ -95,6 +95,19 @@ def _unknown_external_tracker() -> InMemoryTurnTaintTracker:
     return tracker
 
 
+def _db_without_history() -> Database:
+    """A database whose turn history is empty.
+
+    Delegation reads the delegating turn for the human request behind the goal.
+    These tests exercise policy and plumbing, not that lookup, so the read is
+    real enough to be awaited and returns nothing.
+    """
+    db = MagicMock(spec=Database)
+    db.message_history = MagicMock()
+    db.message_history.get_by_turn_id = AsyncMock(return_value=[])
+    return cast("Database", db)
+
+
 @pytest.mark.asyncio
 async def test_delegate_to_service_blocks_disallowed_source_profile() -> None:
     target_service = _Namespace(
@@ -116,7 +129,7 @@ async def test_delegate_to_service_blocks_disallowed_source_profile() -> None:
         conversation_id="conversation",
         user_name="User",
         turn_id=None,
-        db_context=MagicMock(spec=Database),
+        db_context=_db_without_history(),
         processing_service=cast("ProcessingService", source_service),
         clock=None,
         home_assistant_client=None,
@@ -165,7 +178,7 @@ async def test_delegate_to_service_refuses_over_length_request_when_confirming()
         conversation_id="conversation",
         user_name="User",
         turn_id=None,
-        db_context=MagicMock(spec=Database),
+        db_context=_db_without_history(),
         processing_service=cast("ProcessingService", source_service),
         clock=None,
         home_assistant_client=None,
@@ -224,7 +237,7 @@ async def test_synchronous_delegate_to_service_passes_parent_taint_sources() -> 
         conversation_id="conversation",
         user_name="User",
         turn_id="turn-1",
-        db_context=MagicMock(spec=Database),
+        db_context=_db_without_history(),
         processing_service=cast("ProcessingService", source_service),
         clock=None,
         home_assistant_client=None,
@@ -277,7 +290,7 @@ async def test_synchronous_remote_delegation_accepts_review_trigger() -> None:
         conversation_id="conversation",
         user_name="User",
         turn_id="turn-remote-sync",
-        db_context=MagicMock(spec=Database),
+        db_context=_db_without_history(),
         processing_service=cast("ProcessingService", source_service),
         clock=None,
         home_assistant_client=None,

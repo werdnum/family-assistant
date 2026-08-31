@@ -17,7 +17,10 @@ from sqlalchemy.exc import IntegrityError
 
 from family_assistant.llm.content_parts import attachment_content, text_content
 from family_assistant.security.taint import TaintMetadata, TaintSource, TurnTaintState
-from family_assistant.services.tool_call_review import TriggerReviewInput
+from family_assistant.services.tool_call_review import (
+    TriggerReviewInput,
+    build_delegation_review_trigger,
+)
 from family_assistant.storage.delegation_runs import TERMINAL_DELEGATION_STATUSES
 from family_assistant.tools.confirmation import (
     MAX_DELEGATION_REQUEST_CHARS,
@@ -138,6 +141,42 @@ def _taint_sources_from_metadata(
     if metadata is None:
         return ()
     return TurnTaintState.from_metadata(metadata).sources
+
+
+async def _delegation_review_trigger(
+    exec_context: ToolExecutionContext,
+    *,
+    definition: str,
+) -> TriggerReviewInput:
+    """Build the delegated subconversation's trigger from the delegating turn.
+
+    The goal is composed by this turn's model, so it carries this turn's taint
+    and renders as trusted intent only when nothing untrusted entered. The
+    human request behind it is propagated separately and judged on its own
+    provenance, which is what keeps a delegation off a tainted turn reviewable
+    rather than blind. Delegating from an unattended turn carries forward only
+    what this turn itself inherited: its own rows hold composed text -- a goal,
+    a wake's result data, an event payload -- never a human request.
+
+    The turn's rows come from history rather than from
+    ``tool_call_review_messages``, which carries prior turns as well: an earlier
+    request must not arrive labelled as the one that authorized this delegation.
+    """
+    return await build_delegation_review_trigger(
+        exec_context.db_context,
+        trigger_type="delegation_request",
+        active_request_role="user",
+        definition=definition,
+        definition_taint_metadata=_current_taint_metadata(exec_context),
+        payload_present=False,
+        source_turn_id=exec_context.turn_id,
+        # An unattended turn -- a delegated run, a delegation-completion wake, an
+        # event, a schedule, a script -- is exactly one carrying a review
+        # trigger. An interactive turn carries none, and only it holds a human
+        # message.
+        source_started_by_human=exec_context.tool_call_review_trigger is None,
+        inherited=exec_context.tool_call_review_trigger,
+    )
 
 
 def _terminal_delegation_run(run: DelegationRunDict | None) -> bool:
@@ -391,12 +430,9 @@ async def _synchronous_delegation_result(
             initial_taint_sources=_taint_sources_from_metadata(
                 _current_taint_metadata(exec_context)
             ),
-            tool_call_review_trigger=TriggerReviewInput(
-                trigger_type="delegation_request",
-                active_request_role="user",
+            tool_call_review_trigger=await _delegation_review_trigger(
+                exec_context,
                 definition=json.dumps(content_parts, sort_keys=True),
-                definition_taint_metadata=None,
-                payload_present=False,
             ),
         )
     except Exception as e:

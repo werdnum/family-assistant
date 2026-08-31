@@ -26,6 +26,7 @@ from family_assistant.security.taint import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
+    from datetime import datetime
 
     from family_assistant.config_models import ToolCallReviewConfig
     from family_assistant.llm import LLMInterface
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
         ToolMessage,
         UserMessage,
     )
+    from family_assistant.storage.database import Database
     from family_assistant.tools.metadata import ToolDescriptor
 
 logger = logging.getLogger(__name__)
@@ -58,6 +60,8 @@ _REVIEW_BOUNDARY_NAMES = (
     "trusted_trigger_definition",
     "trigger_definition_stub",
     "trigger_payload_stub",
+    "trusted_originating_request",
+    "originating_request_stub",
 )
 _REVIEW_BOUNDARY_RE = re.compile(
     r"<\s*/?\s*(?:" + "|".join(_REVIEW_BOUNDARY_NAMES) + r")\b[^>]*>",
@@ -199,13 +203,32 @@ class DestinationEchoSignal(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class TriggerReviewInput:
-    """Trusted-intent candidate and active boundary for an unattended turn."""
+    """Trusted-intent candidate and active boundary for an unattended turn.
+
+    A delegated run differs from an event or scheduled one: a human did ask for
+    something, they just asked it in the conversation that delegated rather than
+    in the subconversation now under review. ``originating_request`` carries
+    that message down, and its own stored provenance decides whether it renders
+    -- the delegating profile composes the *goal*, never this field, so a turn
+    that read untrusted content cannot manufacture trusted intent for its
+    subconversation.
+    """
 
     trigger_type: str
     active_request_role: Literal["user", "system"]
     definition: str | None = None
     definition_taint_metadata: TaintMetadata | None = None
     payload_present: bool = True
+    originating_request: str | None = None
+    originating_request_taint_metadata: TaintMetadata | None = None
+
+    @property
+    def trusted_originating_request(self) -> str | None:
+        """The originating request, or ``None`` unless it proves trusted."""
+        tier = _metadata_tier(self.originating_request_taint_metadata)
+        if tier is not SourceTrustTier.TRUSTED_USER:
+            return None
+        return self.originating_request
 
 
 @dataclass(frozen=True, slots=True)
@@ -256,12 +279,16 @@ def _render_fenced_data(tag: str, value: object, *, language: str = "json") -> s
     return f"<{tag}>\n```{language}\n{rendered}\n```\n</{tag}>"
 
 
-def _message_tier(message: LLMMessage) -> SourceTrustTier | None:
-    """Read a row's explicit tier; missing provenance never means trusted."""
-    metadata = getattr(message, "taint_metadata", None)
+def _metadata_tier(metadata: TaintMetadata | None) -> SourceTrustTier | None:
+    """Read explicit taint metadata's tier; absent metadata is not a tier."""
     if metadata is None:
         return None
     return TurnTaintState.from_metadata(metadata).max_tier
+
+
+def _message_tier(message: LLMMessage) -> SourceTrustTier | None:
+    """Read a row's explicit tier; missing provenance never means trusted."""
+    return _metadata_tier(getattr(message, "taint_metadata", None))
 
 
 def _textual_message_content(message: LLMMessage) -> str:
@@ -406,14 +433,27 @@ def _render_policy_contexts(
     )
 
 
+def _render_originating_request(trigger: TriggerReviewInput) -> str:
+    """Render the human request a delegated turn ultimately answers."""
+    if trigger.originating_request is None:
+        return "[No originating trusted request was supplied.]"
+    trusted = trigger.trusted_originating_request
+    if trusted is not None:
+        return _render_fenced_data(
+            "trusted_originating_request", trusted, language="text"
+        )
+    tier = _metadata_tier(trigger.originating_request_taint_metadata)
+    tier_text = tier.config_value if tier is not None else "missing"
+    return (
+        "<originating_request_stub>Originating request, "
+        f"tier {tier_text}; content omitted</originating_request_stub>"
+    )
+
+
 def _render_trigger(trigger: TriggerReviewInput | None) -> str:
     if trigger is None:
         return "[No unattended trigger definition was supplied.]"
-    definition_tier = (
-        TurnTaintState.from_metadata(trigger.definition_taint_metadata).max_tier
-        if trigger.definition_taint_metadata is not None
-        else None
-    )
+    definition_tier = _metadata_tier(trigger.definition_taint_metadata)
     if (
         trigger.definition is not None
         and definition_tier is SourceTrustTier.TRUSTED_USER
@@ -437,7 +477,7 @@ def _render_trigger(trigger: TriggerReviewInput | None) -> str:
         if trigger.payload_present
         else "[No trigger payload was supplied.]"
     )
-    return f"{definition}\n{payload}"
+    return f"{definition}\n{payload}\n{_render_originating_request(trigger)}"
 
 
 def _local_tool_description(descriptor: ToolDescriptor) -> str | None:
@@ -497,7 +537,10 @@ def assemble_tool_call_review_messages(
         "Trusted operator guidance:\n<trusted_guidance>\n"
         + _neutralize_review_boundaries(guidance)
         + "\n</trusted_guidance>",
-        "Unattended trigger context:\n" + _render_trigger(review_input.trigger),
+        "Unattended trigger context. A `trusted_originating_request`, where "
+        "present, is the human request in the conversation that started this "
+        "run; the trigger definition and the proposed call must be derivable "
+        "from it:\n" + _render_trigger(review_input.trigger),
         "Destination echo signal:\n" + destination_echo,
     ])
     system = (
@@ -646,6 +689,134 @@ def _destination_echo_matches(destination: str, request_text: str) -> bool:
     )
 
 
+def resolve_originating_request(
+    messages: Sequence[LLMMessage],
+    *,
+    inherited: TriggerReviewInput | None = None,
+) -> tuple[str, TaintMetadata] | None:
+    """Find the trusted human request a turn's delegated work answers.
+
+    A turn's request is every non-scaffolding user row it holds, in order, not
+    just the newest: mid-turn steering is allowed to *add* to the active plan,
+    so "also include pricing" on its own is not what the human asked for, and a
+    reviewer given only that would deny work the opening request authorized.
+    This is the same view the local reviewer already gets, which renders every
+    trusted row of an interactive turn rather than the last one.
+
+    Every one of those rows must carry ``trusted_user`` provenance or nothing is
+    propagated. An email-intake turn represents the sender-controlled body as a
+    user row, so role alone would propagate the attacker's text as trusted
+    intent; requiring all of them rather than scanning back to the first trusted
+    one keeps a mixed turn from contributing the half that happens to qualify.
+
+    Callers pass rows only for a turn a human actually started -- see
+    ``build_delegation_review_trigger``, which is the only thing that decides
+    that. Every unattended turn puts machine-composed text in the user role (a
+    delegated goal, a completion wake's result data, an event payload), and a
+    clean one is stamped ``trusted_user`` like any other untainted row, so
+    reading those rows would launder generated text into the field that claims
+    to be the human request and into the destination echo that reads it. Such a
+    turn passes on the request it inherited unchanged instead, so a chain
+    answers to the same human message or to none.
+    """
+    messages_module = importlib.import_module("family_assistant.llm.messages")
+
+    instructions: list[str] = []
+    active_metadata: TaintMetadata | None = None
+    for message in messages:
+        if not isinstance(message, messages_module.UserMessage):
+            continue
+        if messages_module.is_turn_scaffolding(message):
+            continue
+        metadata = cast(
+            "TaintMetadata | None", getattr(message, "taint_metadata", None)
+        )
+        if metadata is None or _metadata_tier(metadata) is not (
+            SourceTrustTier.TRUSTED_USER
+        ):
+            instructions = []
+            active_metadata = None
+            break
+        content = _textual_message_content(message).strip()
+        if content:
+            instructions.append(content)
+            # The rows are all trusted-tier by the check above, so the newest
+            # one's metadata describes the joined text as faithfully as any.
+            active_metadata = metadata
+    if instructions and active_metadata is not None:
+        return "\n\n".join(instructions), active_metadata
+
+    if inherited is None or inherited.trusted_originating_request is None:
+        return None
+    inherited_metadata = inherited.originating_request_taint_metadata
+    if inherited_metadata is None:
+        return None
+    return inherited.trusted_originating_request, inherited_metadata
+
+
+async def build_delegation_review_trigger(
+    db: Database,
+    *,
+    trigger_type: str,
+    active_request_role: Literal["user", "system"],
+    definition: str | None,
+    definition_taint_metadata: TaintMetadata | None,
+    payload_present: bool,
+    source_turn_id: str | None,
+    source_started_by_human: bool,
+    source_rows_before: datetime | None = None,
+    inherited: TriggerReviewInput | None = None,
+) -> TriggerReviewInput:
+    """Build the review trigger for a turn that runs on another turn's behalf.
+
+    Every delegation boundary builds its trigger here so the originating request
+    is propagated by construction rather than by each site remembering to. The
+    delegating turn's rows are always read from stored history by turn id,
+    rather than snapshotted at hand-off or taken from a caller's assembled
+    context: the propagated request then carries the provenance the message
+    actually has, and it is *this turn's* request. A caller's assembled context
+    is the wrong source however convenient -- it carries prior turns' history
+    too, and an old request would arrive labelled as the one that authorized
+    this delegation.
+
+    Only a turn a *human started* contributes rows. Every other kind of turn
+    holds machine-composed text in the user role -- a subconversation's goal, a
+    completion wake's result data, an event payload -- and a clean one of those
+    is stamped ``trusted_user`` like any other untainted row, so reading it
+    would launder generated text into the field that claims to be the human
+    request. Such a turn carries the request forward only through ``inherited``,
+    which the live trigger supplies and a worker-claimed run has not got -- so a
+    nested worker-run delegation propagates nothing, per the design doc's
+    accepted residual.
+
+    History reads ask for visible rows only, so an internal row pinned into a
+    turn (a wake's result data) is never mistaken for something a person sent.
+    A turn also keeps accepting steering input while it runs, so a caller
+    reading history for work handed off earlier passes ``source_rows_before``
+    to get the request as it stood then: a delegated run answers to the request
+    that caused it, not to whatever the same human said next.
+    """
+    messages: Sequence[LLMMessage] = ()
+    if source_started_by_human and source_turn_id is not None:
+        messages = await db.message_history.get_by_turn_id(
+            source_turn_id,
+            visible_only=True,
+            before=source_rows_before,
+        )
+    originating = resolve_originating_request(messages, inherited=inherited)
+    return TriggerReviewInput(
+        trigger_type=trigger_type,
+        active_request_role=active_request_role,
+        definition=definition,
+        definition_taint_metadata=definition_taint_metadata,
+        payload_present=payload_present,
+        originating_request=originating[0] if originating is not None else None,
+        originating_request_taint_metadata=(
+            originating[1] if originating is not None else None
+        ),
+    )
+
+
 def compute_trusted_destination_echo(
     destination: str | None,
     messages: Sequence[LLMMessage],
@@ -683,17 +854,17 @@ def compute_trusted_destination_echo(
         )
 
     trigger_matches = False
-    if trigger is not None and trigger.definition is not None:
-        definition_tier = (
-            TurnTaintState.from_metadata(trigger.definition_taint_metadata).max_tier
-            if trigger.definition_taint_metadata is not None
+    if trigger is not None:
+        trusted_definition = (
+            trigger.definition
+            if _metadata_tier(trigger.definition_taint_metadata)
+            is SourceTrustTier.TRUSTED_USER
             else None
         )
-        if definition_tier is SourceTrustTier.TRUSTED_USER:
-            trigger_matches = _destination_echo_matches(
-                destination,
-                trigger.definition,
-            )
+        trigger_matches = any(
+            text is not None and _destination_echo_matches(destination, text)
+            for text in (trusted_definition, trigger.trusted_originating_request)
+        )
 
     return DestinationEchoSignal(matched=request_matches or trigger_matches)
 

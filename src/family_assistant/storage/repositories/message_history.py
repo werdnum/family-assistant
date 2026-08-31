@@ -1873,12 +1873,26 @@ class MessageHistoryRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
         return {row["user_id"] for row in rows if row["user_id"] is not None}
 
-    async def get_by_turn_id(self, turn_id: str) -> list[LLMMessage]:
+    async def get_by_turn_id(
+        self,
+        turn_id: str,
+        *,
+        visible_only: bool = False,
+        before: datetime | None = None,
+    ) -> list[LLMMessage]:
         """
         Retrieves all messages for a specific turn.
 
         Args:
             turn_id: The turn identifier
+            visible_only: Exclude internal rows -- machine-generated material
+                the turn was given rather than anything a person sent. Callers
+                asking "what did the human say here?" need this; callers
+                reconstructing what the model saw do not.
+            before: Exclude rows persisted at or after this time. A turn keeps
+                accepting user input while it runs, so a caller reconstructing
+                what the turn looked like at some earlier moment -- rather than
+                how it ended -- has to say when.
 
         Returns:
             List of typed LLMMessage objects in the turn
@@ -1888,6 +1902,10 @@ class MessageHistoryRepository(BaseRepository):
             .where(message_history_table.c.turn_id == turn_id)
             .order_by(message_history_table.c.timestamp.asc())
         )
+        if visible_only:
+            stmt = stmt.where(_visible_message_condition())
+        if before is not None:
+            stmt = stmt.where(message_history_table.c.timestamp < before)
 
         rows = await self._db.fetch_all(stmt)
         return [self._process_message_row(row) for row in rows]
