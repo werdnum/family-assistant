@@ -24,7 +24,9 @@ LOCAL_ROOT="$REPO_ROOT/.review-eval-local"
 CORPUS_ROOT="$LOCAL_ROOT/upstream"
 MANIFEST="$CORPUS_ROOT/manifest.txt"
 
+[[ ! -L "$LOCAL_ROOT" ]] || die "refusing symlinked private eval root $LOCAL_ROOT"
 mkdir -p "$LOCAL_ROOT"
+[[ ! -L "$LOCAL_ROOT" ]] || die "private eval root became a symlink: $LOCAL_ROOT"
 
 resolve_main_revision() {
     local remote="$1"
