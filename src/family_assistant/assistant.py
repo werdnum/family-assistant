@@ -90,13 +90,15 @@ from family_assistant.services.confirmation_waiters import (
     ConfirmationResultWaiterRegistry,
 )
 from family_assistant.services.credential_encryption import CredentialEncryption
+from family_assistant.services.effective_tool_registry import (
+    build_effective_local_tool_registrations,
+)
 from family_assistant.services.google_provider import GOOGLE_PROVIDER
 from family_assistant.services.notification_dispatcher import NotificationDispatcher
 from family_assistant.services.oauth_credentials import OAuthCredentialResolver
 from family_assistant.services.oauth_integration_state import (
     OAuthIntegrationState,
     evaluate_oauth_integration_state,
-    filter_oauth_tool_registrations,
 )
 from family_assistant.services.push_notification import PushNotificationService
 from family_assistant.services.tool_call_review import ToolCallReviewer
@@ -127,12 +129,6 @@ from family_assistant.task_worker import (
     handle_log_message as original_handle_log_message,
 )
 from family_assistant.tools import (
-    AVAILABLE_FUNCTIONS as local_tool_implementations,
-)
-from family_assistant.tools import (
-    LOCAL_TOOL_METADATA_BY_NAME as local_tool_metadata_by_name,
-)
-from family_assistant.tools import (
     MAX_POLICY_RULE_PRIORITY,
     CompositeToolsProvider,
     LocalToolsProvider,
@@ -147,11 +143,6 @@ from family_assistant.tools import (
     ToolPolicyConfig,
     ToolPolicyDecision,
     ToolsProvider,
-    _scan_user_docs,
-    build_local_tool_registrations,
-)
-from family_assistant.tools import (
-    TOOLS_DEFINITION as local_tools_definition,
 )
 from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.worker import reconcile_stale_tasks
@@ -178,7 +169,7 @@ if TYPE_CHECKING:
     from family_assistant.security.taint import SinkClass
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.storage.types import EventConditionEvaluatorConfig
-    from family_assistant.tools import ToolDefinition, ToolRegistration
+    from family_assistant.tools import ToolRegistration
     from family_assistant.tools.types import CalendarConfig as CalendarConfigDict
     from family_assistant.tools.types import ToolExecutionContext
 
@@ -951,17 +942,11 @@ class Assistant:
         """Build the shared local and MCP tool-provider root."""
         assert self.fastapi_app is not None
         assert self.shared_httpx_client is not None
-        base_local_tools_definition = self._build_local_tool_definitions()
         google_integration_state = self._setup_google_integration()
 
         logger.info("Creating root ToolsProvider with all available tools")
-        root_local_registrations = build_local_tool_registrations(
-            definitions=base_local_tools_definition,
-            implementations=local_tool_implementations,
-            metadata_by_name=local_tool_metadata_by_name,
-        )
-        root_local_registrations = filter_oauth_tool_registrations(
-            root_local_registrations, google_integration_state
+        root_local_registrations = build_effective_local_tool_registrations(
+            self.config, google_integration_state
         )
         self._root_local_registrations = root_local_registrations
         root_local_provider = LocalToolsProvider(
@@ -991,50 +976,6 @@ class Assistant:
             "Root ToolsProvider initialized with %s tools",
             len(self.fastapi_app.state.tool_definitions),
         )
-
-    def _build_local_tool_definitions(self) -> list[ToolDefinition]:
-        """Customize local tool definitions using deployment configuration."""
-        available_doc_files = _scan_user_docs()
-        formatted_doc_list_for_tool_desc = ", ".join(available_doc_files) or "None"
-        base_local_tools_definition = copy.deepcopy(local_tools_definition)
-
-        # Format the doc tool description with the list of available user docs.
-        # The delegate_to_service profile catalog is no longer injected into the
-        # tool schema; it is appended to each delegate-capable profile's system
-        # prompt instead (see ProcessingService.delegation_catalog_addition).
-        for tool_def_template in base_local_tools_definition:
-            tool_name = tool_def_template.get("function", {}).get("name")
-            if tool_name == "get_user_documentation_content":
-                try:
-                    tool_def_template["function"]["description"] = tool_def_template[
-                        "function"
-                    ]["description"].format(
-                        available_doc_files=formatted_doc_list_for_tool_desc
-                    )
-                except KeyError as e:
-                    logger.error(
-                        "Failed to format doc tool description during assistant setup: %s",
-                        e,
-                    )
-                break
-
-        # Update the spawn_worker tool's agent enum from config
-        available_agents = self.config.ai_worker_config.available_agents
-        for tool_def_template in base_local_tools_definition:
-            if tool_def_template.get("function", {}).get("name") == "spawn_worker":
-                agent_param = (
-                    tool_def_template["function"]
-                    .get("parameters", {})
-                    .get("properties", {})
-                    .get("agent")
-                )
-                if agent_param:
-                    agent_param["enum"] = available_agents
-                    logger.debug(
-                        f"Updated spawn_worker agent enum to {available_agents}"
-                    )
-                break
-        return base_local_tools_definition
 
     def _setup_google_integration(self) -> OAuthIntegrationState:
         """Resolve and publish the Google integration state."""

@@ -84,16 +84,16 @@ The maintainer skim is a **second layer on top of** the validator, not the bound
 
 ```bash
 # Dry run: classify, validate, report counts and rejections, write nothing.
-poe review-eval-extract-history -- --database-url "sqlite+aiosqlite:///family_assistant.db" --dry-run
+poe review-eval-extract-history --database-url "sqlite+aiosqlite:///family_assistant.db" --dry-run
 
 # Write committable templates into the private dir.
-poe review-eval-extract-history -- \
+poe review-eval-extract-history \
     --database-url "sqlite+aiosqlite:///family_assistant.db" \
     --out-dir .review-eval-local/templates
 
 # Recent history only, which is usually what you want: the task shapes a
 # template set is meant to describe are the ones in use now.
-poe review-eval-extract-history -- \
+poe review-eval-extract-history \
     --database-url "sqlite+aiosqlite:///family_assistant.db" \
     --since 2026-06-01 --out-dir .review-eval-local/templates
 ```
@@ -113,7 +113,7 @@ itself:
 python scripts/dump_tool_registry.py --out /tmp/registry.json --allow-external-out
 
 # Then extract against it:
-poe review-eval-extract-history -- \
+poe review-eval-extract-history \
     --database-url "$DATABASE_URL" --since 2026-06-01 \
     --tool-registry .review-eval-local/registry/deployment.json \
     --out-dir .review-eval-local/templates
@@ -124,8 +124,10 @@ writing a partial registry: its tools would simply be missing, and a missing too
 indistinguishable from one that never existed, so the next extraction would reject those calls and
 report a smaller corpus instead of a broken input. The overlay is resolved as `$CONFIG_FILE` then
 `config.yaml`, the same way the application entry point resolves it, so the snapshot describes the
-deployment the dump runs inside; `--config-file` overrides it. `--local-only` snapshots just the
-built-in list, which is what the extractor already does by default and is useful mainly for testing.
+deployment the dump runs inside; `--config-file` overrides it. Local descriptors are built through
+the same deployment-effective path as startup, including configuration-driven schemas and OAuth
+availability. `--local-only` skips MCP connections but preserves those local customizations, which
+makes it useful for checking the local half of a deployment registry.
 
 A `stamp` run records a `registry_hash` alongside its `dataset_hash`. The registry is an input to
 every reviewer prompt — tags, destination paths and the MCP server id all render into the tool

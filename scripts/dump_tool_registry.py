@@ -8,9 +8,9 @@ startup and existing only in a running process, so history extraction and case
 replay both drop any tool that came from an MCP server: the name does not
 resolve, and the template or case falls out of the harness.
 
-This connects to the configured servers through the same ``MCPToolsProvider``
-the application uses, merges what they advertise with the local descriptors, and
-writes the result as one JSON file. ``scripts/extract_review_history.py`` and
+This builds the same deployment-effective local registry as application startup,
+connects through the same ``MCPToolsProvider`` for external tools, and writes the
+merged result as one JSON file. ``scripts/extract_review_history.py`` and
 ``scripts/tool_call_review_eval.py`` both read it with ``--tool-registry``, so a
 template extracted under a deployment's registry can be replayed under the same
 one -- on a machine with no MCP servers, which is where the eval usually runs.
@@ -57,16 +57,26 @@ from family_assistant.eval.private_paths import (
 from family_assistant.eval.tool_call_review.registry_snapshot import (
     descriptors_to_snapshot,
 )
+from family_assistant.services.effective_tool_registry import (
+    build_effective_local_tool_registrations,
+)
+from family_assistant.services.google_provider import GOOGLE_PROVIDER
+from family_assistant.services.oauth_integration_state import (
+    evaluate_oauth_integration_state,
+)
 from family_assistant.tools import (
-    LOCAL_TOOL_DESCRIPTORS,
     MCPServerConfig,
     MCPToolsProvider,
+    build_local_tool_descriptors,
 )
+from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.mcp import MCP_SERVER_STATUS_CONNECTED, MCPServerStatus
+from family_assistant.web.auth import AUTH_ENABLED
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from family_assistant.config_models import AppConfig
     from family_assistant.tools.metadata import ToolDescriptor
 
 logger = logging.getLogger("dump_tool_registry")
@@ -94,7 +104,8 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--config-file",
         default=None,
         help=(
-            "Operator config overlay to read servers from. Defaults to "
+            "Operator config overlay to build the local registry and MCP server "
+            "set from. Defaults to "
             "$CONFIG_FILE, then config.yaml -- the same resolution the "
             "application entry point uses, so the snapshot describes the "
             "deployment this runs inside."
@@ -110,8 +121,9 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--local-only",
         action="store_true",
         help=(
-            "Snapshot the local tool list without contacting MCP servers. "
-            "Produces a registry no larger than the built-in default."
+            "Snapshot the deployment-effective local tool list without contacting "
+            "MCP servers. Configuration-driven schemas and OAuth availability "
+            "still apply."
         ),
     )
     return parser.parse_args(argv)
@@ -131,15 +143,11 @@ def _resolve_out_path(raw_out: str, *, allow_external: bool) -> Path:
         ) from exc
 
 
-def _configured_servers(config_file: str | None) -> dict[str, MCPServerConfig]:
-    """Read mcp_config.mcpServers from the shipped and operator configuration.
+def _load_deployment_config(config_file: str | None) -> AppConfig:
+    """Load the same shipped and operator configuration as the application.
 
-    The overlay is resolved exactly as ``family_assistant.__main__`` resolves it,
-    because a snapshot taken from a different configuration than the deployment
-    runs describes a registry that deployment does not have -- connecting to
-    servers it disabled, or omitting the ones it added. Which is the failure
-    this script exists to prevent, arriving through the config file instead of
-    through a dead server.
+    The registry's local definitions and MCP server set both depend on this
+    overlay, so it is loaded once and shared by both construction paths.
     """
     # `load_config` treats every overlay as optional and silently omits one that
     # does not exist, so a mistyped path would produce a plausible snapshot of
@@ -162,7 +170,11 @@ def _configured_servers(config_file: str | None) -> dict[str, MCPServerConfig]:
             "An overlay that is not there would be skipped silently and the "
             "snapshot would describe the shipped defaults."
         )
-    config = load_config(config_file_path=named or DEFAULT_CONFIG_FILE)
+    return load_config(config_file_path=named or DEFAULT_CONFIG_FILE)
+
+
+def _configured_servers(config: AppConfig) -> dict[str, MCPServerConfig]:
+    """Return the deployment's configured MCP servers."""
     return {
         server_id: cast("MCPServerConfig", server_config.model_dump())
         for server_id, server_config in config.mcp_config.mcpServers.items()
@@ -238,12 +250,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     out_path = _resolve_out_path(args.out, allow_external=args.allow_external_out)
 
-    descriptors: list[ToolDescriptor] = list(LOCAL_TOOL_DESCRIPTORS)
+    config = _load_deployment_config(args.config_file)
+    google_integration_state = evaluate_oauth_integration_state(
+        GOOGLE_PROVIDER,
+        config,
+        auth_enabled=AUTH_ENABLED,
+        tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+    )
+    registrations = build_effective_local_tool_registrations(
+        config, google_integration_state
+    )
+    descriptors: list[ToolDescriptor] = build_local_tool_descriptors(registrations)
     local_count = len(descriptors)
     if args.local_only:
-        print(f"Local-only snapshot: {local_count} tool(s), no MCP servers contacted.")
+        print(
+            f"Deployment-effective local snapshot: {local_count} tool(s), "
+            "no MCP servers contacted."
+        )
     else:
-        server_configs = _configured_servers(args.config_file)
+        server_configs = _configured_servers(config)
         print(
             f"Connecting to {len(server_configs)} configured MCP server(s): "
             f"{', '.join(sorted(server_configs)) or '(none)'}"
