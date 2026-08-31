@@ -22,6 +22,7 @@ from family_assistant.eval.tool_call_review.history_generation import (
     build_prompt,
     canonical_shape_key,
     classify_batches,
+    instantiate_batches,
     prepare_shapes,
 )
 from family_assistant.eval.tool_call_review.scrub import TaskTemplate
@@ -397,6 +398,71 @@ async def test_unsupported_shape_is_quarantined_before_model_call() -> None:
     assert runner.calls == 0
 
 
+@pytest.mark.asyncio
+async def test_delegation_placeholder_sink_is_quarantined_before_model_call() -> None:
+    registry = {descriptor.name: descriptor for descriptor in LOCAL_TOOL_DESCRIPTORS}
+    delegation_shape = PreparedShape(
+        _shape().record.model_copy(
+            update={
+                "tool_names": ("delegate_to_service",),
+                "intent_category": "delegate_task",
+                "argument_shapes": {},
+                "sink_class": "<unknown>",
+            }
+        ),
+        ["delegation-one"],
+    )
+    runner = _FakeRunner([])
+
+    accepted, quarantine, attempts = await classify_batches(
+        [delegation_shape], cast("BatchRunner", runner), descriptor_registry=registry
+    )
+
+    assert not accepted
+    assert quarantine == [
+        {"shape_id": "shape-one", "reason": "delegation_sink_unresolved"}
+    ]
+    assert attempts == []
+    assert runner.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_delegation_concrete_sink_can_be_classified() -> None:
+    registry = {descriptor.name: descriptor for descriptor in LOCAL_TOOL_DESCRIPTORS}
+    delegation_shape = PreparedShape(
+        _shape().record.model_copy(
+            update={
+                "tool_names": ("delegate_to_service",),
+                "intent_category": "delegate_task",
+                "argument_shapes": {},
+                "sink_class": "arbitrary_external_message",
+            }
+        ),
+        ["delegation-one"],
+    )
+    response = json.dumps({
+        "schema_version": "m3.classification-batch.v1",
+        "records": [
+            {
+                "shape_id": "shape-one",
+                "intent_category": "delegate_task",
+                "content_kind": "none",
+                "confidence": "high",
+                "decision": "accept",
+            }
+        ],
+    })
+    runner = _FakeRunner([response])
+
+    accepted, quarantine, _attempts = await classify_batches(
+        [delegation_shape], cast("BatchRunner", runner), descriptor_registry=registry
+    )
+
+    assert accepted["shape-one"].decision == "accept"
+    assert not quarantine
+    assert runner.calls == 1
+
+
 def test_build_cases_adds_required_argument_and_marks_context_untrusted() -> None:
     registry = {descriptor.name: descriptor for descriptor in LOCAL_TOOL_DESCRIPTORS}
     cases, quarantine = build_cases(
@@ -568,6 +634,47 @@ def test_build_cases_rejects_identical_argument_maps() -> None:
     assert quarantine == [
         {"shape_id": "shape-one", "reason": "identical_argument_maps"}
     ]
+
+
+def test_build_cases_skips_instantiation_quarantine_without_duplicate_failure() -> None:
+    registry = {descriptor.name: descriptor for descriptor in LOCAL_TOOL_DESCRIPTORS}
+    cases, quarantine = build_cases(
+        [_shape()],
+        [],
+        {"shape-one": _classification()},
+        registry,
+        already_quarantined=("shape-one",),
+    )
+
+    assert cases == []
+    assert quarantine == []
+
+
+@pytest.mark.asyncio
+async def test_instantiation_retry_exhaustion_is_not_quarantined_again() -> None:
+    bad = json.dumps({
+        "schema_version": "m3.instantiation-batch.v1",
+        "records": [],
+    })
+    runner = _FakeRunner([bad, bad])
+    classifications = {"shape-one": _classification()}
+    accepted, quarantine, attempts = await instantiate_batches(
+        [_shape()], classifications, cast("BatchRunner", runner)
+    )
+    registry = {descriptor.name: descriptor for descriptor in LOCAL_TOOL_DESCRIPTORS}
+    cases, case_quarantine = build_cases(
+        [_shape()],
+        list(accepted.values()),
+        classifications,
+        registry,
+        already_quarantined=(cast("str", record["shape_id"]) for record in quarantine),
+    )
+
+    assert not accepted
+    assert quarantine == [{"shape_id": "shape-one", "reason": "shape_id_mismatch"}]
+    assert [attempt.status for attempt in attempts] == ["retry", "quarantined"]
+    assert cases == []
+    assert case_quarantine == []
 
 
 def test_output_path_must_be_private() -> None:

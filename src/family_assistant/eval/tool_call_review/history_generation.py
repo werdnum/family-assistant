@@ -43,6 +43,7 @@ from family_assistant.security.taint import (
     TurnTaintState,
     resolve_tool_sink_class,
 )
+from family_assistant.tools.metadata import ToolTag
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping, Sequence
@@ -249,6 +250,29 @@ def _shape_id(key: Mapping[str, object]) -> str:
     encoded = json.dumps(key, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:16]
     return f"shape-{digest}"
+
+
+def _is_delegation_shape(
+    shape: PreparedShape, descriptor_registry: Mapping[str, ToolDescriptor] | None
+) -> bool:
+    if descriptor_registry is None:
+        return False
+    return any(
+        ToolTag.DELEGATION in descriptor_registry[tool_name].tags
+        for tool_name in shape.record.tool_names
+    )
+
+
+def _shape_quarantine_reason(
+    shape: PreparedShape, descriptor_registry: Mapping[str, ToolDescriptor] | None
+) -> str | None:
+    if shape.record.boundary != "conversation" or len(shape.record.tool_names) != 1:
+        return "unsupported_boundary_or_tool_count"
+    if shape.record.sink_class in PLACEHOLDERS and _is_delegation_shape(
+        shape, descriptor_registry
+    ):
+        return "delegation_sink_unresolved"
+    return None
 
 
 def load_templates(
@@ -552,6 +576,7 @@ async def classify_batches(
     runner: BatchRunner,
     *,
     batch_size: int = CLASSIFICATION_BATCH_MAX,
+    descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
 ) -> tuple[
     dict[str, ClassificationRecord], list[dict[str, object]], list[BatchAttempt]
 ]:
@@ -559,20 +584,17 @@ async def classify_batches(
     if not 1 <= batch_size <= CLASSIFICATION_BATCH_MAX:
         raise HistoryGenerationError("classification batch size must be 1..25")
     accepted: dict[str, ClassificationRecord] = {}
-    quarantined: list[dict[str, object]] = [
-        {
-            "shape_id": shape.record.shape_id,
-            "reason": "unsupported_boundary_or_tool_count",
-        }
+    preflight = [
+        (shape, _shape_quarantine_reason(shape, descriptor_registry))
         for shape in shapes
-        if shape.record.boundary != "conversation" or len(shape.record.tool_names) != 1
+    ]
+    quarantined: list[dict[str, object]] = [
+        {"shape_id": shape.record.shape_id, "reason": reason}
+        for shape, reason in preflight
+        if reason is not None
     ]
     attempts: list[BatchAttempt] = []
-    runnable = [
-        shape
-        for shape in shapes
-        if shape.record.boundary == "conversation" and len(shape.record.tool_names) == 1
-    ]
+    runnable = [shape for shape, reason in preflight if reason is None]
     for batch_number, start in enumerate(range(0, len(runnable), batch_size), 1):
         batch = runnable[start : start + batch_size]
         feedback: str | None = None
@@ -839,6 +861,10 @@ def _case_from_draft(
         raise HistoryGenerationError("unsupported_boundary_or_tool_count")
     tool_name = record.tool_names[0]
     descriptor = descriptor_registry[tool_name]
+    if record.sink_class in PLACEHOLDERS and _is_delegation_shape(
+        shape, descriptor_registry
+    ):
+        raise HistoryGenerationError("delegation_sink_unresolved")
     raw_arguments = (
         draft.attack_arguments if label == "attack" else draft.benign_arguments
     )
@@ -950,9 +976,12 @@ def build_cases(
     drafts: Sequence[InstantiationRecord],
     classifications: Mapping[str, ClassificationRecord],
     descriptor_registry: Mapping[str, ToolDescriptor],
+    *,
+    already_quarantined: Iterable[str] = (),
 ) -> tuple[list[EvalCase], list[dict[str, object]]]:
     """Wrap drafts into validated twins, quarantining only explicit failures."""
     by_id = {draft.shape_id: draft for draft in drafts}
+    excluded = set(already_quarantined)
     cases: list[EvalCase] = []
     quarantine: list[dict[str, object]] = []
     for shape in shapes:
@@ -960,6 +989,8 @@ def build_cases(
         if shape_id not in classifications or not is_runnable_classification(
             classifications[shape_id]
         ):
+            continue
+        if shape_id in excluded:
             continue
         draft = by_id.get(shape_id)
         if draft is None:

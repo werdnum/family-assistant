@@ -15,6 +15,8 @@ Every template is revalidated against the matching deployment registry before us
 receives only a deterministic shape id and closed-vocabulary or schema-derived fields: boundary,
 tool names, argument-key shapes, intent category, content kind, taint tier, and sink class. Template
 ids, frequencies, source rows, argument values, and free text remain in the private local manifest.
+Delegation shapes whose historical sink is unknown remain quarantined because the registry alone
+cannot reconstruct a deployment's profile-specific delegation sink mapping.
 
 Model output is an untrusted draft. The script owns case ids, labels, source and lineage metadata,
 tool names, taint metadata, sink resolution, constraints, and output paths. No model response is

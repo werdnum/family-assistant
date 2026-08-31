@@ -442,7 +442,7 @@ def _read_drafts(path: Path) -> list[InstantiationRecord]:
 
 async def _classify(args: argparse.Namespace) -> int:
     out_dir = _resolve_output(args.out_dir)
-    manifest, _templates, _registry, shapes = _require_run(
+    manifest, _templates, registry, shapes = _require_run(
         out_dir, args.templates, args.tool_registry, args.model
     )
     if manifest.get("phase") != "prepared":
@@ -462,7 +462,7 @@ async def _classify(args: argparse.Namespace) -> int:
         return 0
     runner = BatchRunner(model=args.model, executable=args.pi)
     classifications, quarantine, attempts = await classify_batches(
-        shapes, runner, batch_size=args.batch_size
+        shapes, runner, batch_size=args.batch_size, descriptor_registry=registry
     )
     write_jsonl_exclusive(
         out_dir / _CLASSIFICATION_FILE,
@@ -552,7 +552,11 @@ async def _instantiate(args: argparse.Namespace) -> int:
     )
     write_jsonl_exclusive(out_dir / _INSTANTIATION_QUARANTINE_FILE, quarantine)
     cases, case_quarantine = build_cases(
-        selected, list(drafts.values()), classifications, registry
+        selected,
+        list(drafts.values()),
+        classifications,
+        registry,
+        already_quarantined=(cast("str", record["shape_id"]) for record in quarantine),
     )
     write_jsonl_exclusive(out_dir / _CASE_QUARANTINE_FILE, case_quarantine)
     for case in cases:
