@@ -137,7 +137,10 @@ def test_should_attempt_rich_message() -> None:
     assert should_attempt_rich_message(long_text) is True
 
     short_prose = "Hello, world!"
-    assert should_attempt_rich_message(short_prose) is False
+    assert should_attempt_rich_message(short_prose) is True
+    assert should_attempt_rich_message(short_prose, parse_mode="MarkdownV2") is True
+
+    assert should_attempt_rich_message("") is False
 
 
 @pytest.mark.asyncio
@@ -208,6 +211,23 @@ async def test_chat_interface_sends_rich_message_for_tables() -> None:
         conversation_id="123456",
         text=table_text,
         parse_mode="MarkdownV2",
+    )
+
+    assert msg_id == "201"
+    assert len(bot.calls) == 1
+    assert bot.calls[0].endpoint == "sendRichMessage"
+    assert len(bot.standard_sent) == 0
+
+
+@pytest.mark.asyncio
+async def test_chat_interface_sends_rich_message_for_prose_by_default() -> None:
+    bot = _FakeRichBot()
+    interface = TelegramChatInterface(cast("Application", SimpleNamespace(bot=bot)))
+
+    prose_text = "Hello! Here is your daily update: everything looks good."
+    msg_id = await interface.send_message(
+        conversation_id="123456",
+        text=prose_text,
     )
 
     assert msg_id == "201"

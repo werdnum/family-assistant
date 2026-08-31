@@ -12,16 +12,15 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from telegram import Message
 from telegram.constants import ParseMode
-
-from family_assistant.telegram.chunking import TELEGRAM_MAX_MESSAGE_LENGTH
+from telegram.error import TelegramError
 
 if TYPE_CHECKING:
     from telegram import (
         Bot,
         ForceReply,
         InlineKeyboardMarkup,
-        Message,
         ReplyKeyboardMarkup,
         ReplyKeyboardRemove,
     )
@@ -80,20 +79,24 @@ def has_markdown_table(text: str) -> bool:
 def should_attempt_rich_message(
     text: str, parse_mode: str | ParseMode | None = None
 ) -> bool:
-    """Determine whether a message would benefit from being sent as a rich message.
+    """Determine whether a message should be sent as a Telegram Bot API 10.1 rich message.
 
-    Rich messages are particularly useful when:
-    1. The text contains Markdown tables (which cannot be rendered natively in classic MarkdownV2).
-    2. The text exceeds the classic single message length limit (4,000 characters).
+    Rich messages use Telegram's native CommonMark/GFM markdown parser and larger payload limits,
+    eliminating the entity escaping bugs of legacy MarkdownV2 and natively supporting Markdown tables.
+    Returns True for all standard Markdown or unspecified parse modes when text is non-empty.
     """
-    if parse_mode is not None and parse_mode not in {
-        "MarkdownV2",
-        "Markdown",
-        ParseMode.MARKDOWN_V2,
-        ParseMode.MARKDOWN,
-    }:
+    if not text:
         return False
-    return has_markdown_table(text) or len(text) > TELEGRAM_MAX_MESSAGE_LENGTH
+    return not (
+        parse_mode is not None
+        and parse_mode
+        not in {
+            "MarkdownV2",
+            "Markdown",
+            ParseMode.MARKDOWN_V2,
+            ParseMode.MARKDOWN,
+        }
+    )
 
 
 async def send_rich_message(
@@ -214,11 +217,16 @@ async def send_rich_message(
         if api_kwargs is not None:
             kwargs["api_kwargs"] = api_kwargs
 
-        return await bot._send_message(
+        result = await bot._send_message(
             "sendRichMessage",
             data=data,
             **kwargs,
         )
+        if isinstance(result, Message) or hasattr(result, "message_id"):
+            return result  # type: ignore[return-value]
+        if isinstance(result, dict):
+            return Message.de_json(result, bot)  # type: ignore[return-value]
+        raise TelegramError(f"Unexpected response from sendRichMessage: {result!r}")
 
     raise AttributeError(
         f"Bot instance {type(bot).__name__} does not support sending rich messages."
