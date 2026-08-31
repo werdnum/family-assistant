@@ -202,6 +202,7 @@ dev = [
     "monkeytype>=23.3.0", # Runtime type inference from tests
     "browser-handoff-service",
     "jsonschema>=4.24.0",
+    "pyarrow>=25.0.1",
 ]
 local-embeddings = [
     "sentence-transformers>=3.0.1",

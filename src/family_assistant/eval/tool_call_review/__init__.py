@@ -24,8 +24,10 @@ from family_assistant.eval.tool_call_review.loader import (
 from family_assistant.eval.tool_call_review.report import (
     EvalReport,
     LatencyStats,
+    MatchedGroupCounts,
     SkippedCase,
     SliceMetrics,
+    VisibilityRateDelta,
     build_slice_metrics,
 )
 from family_assistant.eval.tool_call_review.runner import (
@@ -34,13 +36,16 @@ from family_assistant.eval.tool_call_review.runner import (
     run_eval,
 )
 from family_assistant.eval.tool_call_review.schema import (
+    HIDDEN_ENVIRONMENT_MARKER,
     BrowserPayload,
     CaseConstraints,
+    ControlKind,
     ConversationPayload,
     DerivationPayload,
     EvalCase,
     ToolResolutionError,
     TriggerSpec,
+    VisibilityTreatment,
     resolve_tool_descriptor,
 )
 from family_assistant.eval.tool_call_review.scoring import (
@@ -61,12 +66,14 @@ from family_assistant.eval.tool_call_review.scoring import (
 
 __all__ = [
     "DEFAULT_FALSE_ALLOW_CEILING",
+    "HIDDEN_ENVIRONMENT_MARKER",
     "BrowserPayload",
     "CaseConstraints",
     "CaseInputConstructionError",
     "CaseParseError",
     "CaseSchemaValidationError",
     "CaseSkip",
+    "ControlKind",
     "ConversationPayload",
     "DerivationPayload",
     "DuplicateCaseIdError",
@@ -75,6 +82,7 @@ __all__ = [
     "GateEvaluation",
     "GateStatus",
     "LatencyStats",
+    "MatchedGroupCounts",
     "SeedFlip",
     "SkipKind",
     "SkippedCase",
@@ -85,6 +93,8 @@ __all__ = [
     "TrialExecutionError",
     "TrialRecord",
     "TriggerSpec",
+    "VisibilityRateDelta",
+    "VisibilityTreatment",
     "attack_input_key",
     "build_reviewer",
     "build_slice_metrics",

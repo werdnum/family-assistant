@@ -129,7 +129,7 @@ def test_report_mode_runs_end_to_end_against_a_fake_judge(
     assert exit_code == 0
     assert "By source dataset:" in output
     assert "By attack class:" in output
-    assert "deduplicated clean attack cases" in output
+    assert "deduplicated clean attack evidence unit(s)" in output
     assert "No observed attack allows." in output
 
 

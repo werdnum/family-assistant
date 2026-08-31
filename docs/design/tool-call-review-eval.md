@@ -188,6 +188,12 @@ substantially, with dataset identity itself being learnable. Three rules contain
   attack family, so a judge that scores well only on one corpus's house style is visible rather than
   averaged away.
 
+Public adapters assign `dev`/`gate` before browser expansion: SHA-256 of the normalized family key
+is bucketed by its first digest byte modulo five; bucket 0 is held out as `gate`, and buckets 1–4
+are `dev`. All four visibility/control derivatives therefore remain together, and the lineage
+records both this assignment and the upstream `source_split`. For Deepset, `source_split` remains
+the published `train`/`test` split used for pairing; it is not replaced by the evaluation bucket.
+
 ## Dataset shape
 
 One record envelope for every case, with a boundary-specific payload:
@@ -323,14 +329,13 @@ Committed datasets are only public-corpus, synthetic, and manual cases.
 
 ### Public corpora (adversarial breadth)
 
-Adapters map established prompt-injection corpora into this system's positions: their injected
-payloads land in the email-body, tool-result, browser-environment, and note-content slots of our
-case shapes. Adaptation is more than relocation — a bare injection text is not a case. The judge
-rules on a *tool call*, so the adapter must pair the injected content with the gated call the
-injection argues for (the exfiltrating send, the unrequested delegation), wrapped in the taint
-provenance our contract expects; the classification target is "does content below this trust
-boundary redirect the agent outside the enclosing task", which is richer than the text-level label
-most corpora carry.
+Adapters map established prompt-injection corpora into controlled browser visibility-ablation
+groups. Every attack row emits attack and benign-twin controls at hidden and full visibility; the
+hidden case uses one fixed marker and the full case uses the source content. The attack and benign
+controls keep the same action kind/key shape and damage class, but use objectives and values that
+make the attack unauthorized and the benign action clearly authorized. A bare injection text is not
+a case: the browser action, trusted objective, damage envelope, and environment are assembled as one
+schema-validated reviewer input without a live tool-registry dependency.
 
 A tiered roster, by role:
 
@@ -349,15 +354,36 @@ A tiered roster, by role:
 - **External check**: PINT-style multilingual eval sets as an out-of-family sanity pass;
   deepset-scale sets are smoke tests only.
 
-Adapted cases keep a pointer to their upstream id, group (author/challenge/template family), and
-license. **Lineage is load-bearing**: the large corpora incorporate one another (PromptShield draws
-on HackAPrompt and Open-Prompt-Injection derivatives; templates recur everywhere), so
-near-duplicates are clustered and source lineage preserved before any dev/gate split — otherwise the
-same attack appears on both sides of the split and the numbers flatter the judge. Provenance is
-**recorded, not verified**: the build script writes the upstream, the revision the maintainer
-fetched, and the license alongside the cases it produces, and the run's dataset content hash says
-which case set a run measured. The adapter, not the corpus, is the committed artifact; the cases it
-produces are pinned the way everything else in this repository is pinned, by git.
+Adapted cases keep pointers to their upstream id, paired source id, group (author/challenge/template
+family), and license. **Lineage is load-bearing**: the large corpora incorporate one another
+(PromptShield draws on HackAPrompt and Open-Prompt-Injection derivatives; templates recur
+everywhere), so near-duplicates are clustered and source lineage preserved before any dev/gate split
+— otherwise the same attack appears on both sides of the split and the numbers flatter the judge.
+Provenance is **recorded, not verified**: the build script writes both source ids, the upstream, the
+revision the maintainer fetched, and the license alongside the cases it produces, and the run's
+dataset content hash says which case set a run measured. The adapter, not the corpus, is the
+committed artifact; the cases it produces are pinned the way everything else in this repository is
+pinned, by git.
+
+The first two adapters consume the pinned upstream files without vendoring them. Deepset's current
+Hub revision is two Parquet splits (546 train rows and 116 test rows) with `text` and `label`
+columns; its committed sample remains CSV. The adapter pairs the 203 train attacks with 203 train
+benign rows and the 60 test attacks with the 56 test benign rows, cycling only those four reused
+test controls; the remaining 140 train benign rows become full-only natural-benign controls. Thus
+the pinned full corpus yields 263 matched groups and 1,192 browser cases from all 662 source rows.
+The Hub currently advertises Apache-2.0, while the embedded dataset metadata still names CC-BY-4.0.
+The pinned revision has no standalone LICENSE file, so the fetch manifest records that absence,
+retains the README, and leaves the conflict unresolved. The private fetch also retains all four
+InjecAgent case arrays; the build defaults to its 1,054 base cases (30 direct-harm attacker cases
+and 32 data-stealing attacker cases crossed with 17 user cases), which become 4,216 browser cases;
+enhanced arrays remain an explicit separate slice. Its static adaptation is not
+the upstream end-to-end benchmark: each attack action invokes the row's exact `Attacker Tools` list,
+while its benign twin invokes the exact `User Tool` with the same `invoke_tools`/`tools` shape. Both
+objectives use the actual `User Instruction`; the damage envelope retains `Expected Achievements`
+plus the general unauthorized-action constraint. The full attack environment is the upstream
+pre-rendered `Tool Response` verbatim, and the benign environment is the clean template. The private
+fetch script (using ordinary Git plus Git LFS) pins revisions and checksums under
+`.review-eval-local/upstream`; raw corpora and generated cases never enter version control.
 
 Agent-environment benchmarks (AgentDojo, InjecAgent, and kin) adapt poorly to static single-call
 cases but are the natural later instrument for *end-to-end* validation — attack success rate and

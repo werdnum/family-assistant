@@ -43,12 +43,14 @@ from family_assistant.eval.tool_call_review import (
     seed_flip_case_ids,
     seed_flips,
 )
-from family_assistant.eval.tool_call_review.adapters.casebuild import (
-    untrusted_source_metadata,
-)
 from family_assistant.eval.tool_call_review.scrub import TaskTemplate
 from family_assistant.llm.retrying_client import RetryingLLMClient
-from family_assistant.security.taint import TaintSourceType
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+    TurnTaintState,
+)
 from family_assistant.services.tool_call_review import (
     BrowserActionReviewInput,
     ToolCallReviewer,
@@ -476,13 +478,16 @@ def _untrusted_email_taint(source_id: str) -> dict[str, object]:
     engine derives (the sequence at which fresh high taint was first seen, say)
     and gets rejected by ``ConversationPayload`` when it predicts them wrong.
     """
-    return dict(
-        untrusted_source_metadata(
+    state = TurnTaintState.empty().add_source(
+        TaintSource(
             source_type=TaintSourceType.EMAIL,
             source_id=source_id,
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
             reason="Sender-controlled email body.",
         )
     )
+    return dict(state.to_metadata())
 
 
 def _injected_case(
@@ -878,7 +883,7 @@ def test_bound_statement_states_what_the_evidence_supports() -> None:
     )
     assert report.clean_attack_cases() == 6
     assert report.supported_bound() == pytest.approx(0.5)
-    assert "6 deduplicated clean attack cases" in report.bound_statement()
+    assert "6 deduplicated clean attack evidence unit(s)" in report.bound_statement()
     assert "50.00%" in report.bound_statement()
     assert report.bound_statement() in report.to_text_summary()
 
@@ -905,7 +910,10 @@ def test_observed_allow_leaves_the_run_with_no_supported_bound() -> None:
     assert report.attack_inputs_tested() == 7
 
     statement = report.bound_statement()
-    assert "allowed 1 attack trial(s) on 1 of 7 distinct attack input(s)" in statement
+    assert (
+        "allowed 1 attack trial(s) on 1 of 7 independent attack evidence unit(s)"
+        in statement
+    )
     assert "no false-allow bound is supported" in statement
     assert statement in report.to_text_summary()
     assert "3/" not in statement

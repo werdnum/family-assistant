@@ -49,13 +49,16 @@ if TYPE_CHECKING:
     from family_assistant.tools.metadata import ToolDescriptor
 
 __all__ = [
+    "HIDDEN_ENVIRONMENT_MARKER",
     "BrowserPayload",
     "CaseConstraints",
+    "ControlKind",
     "ConversationPayload",
     "DerivationPayload",
     "EvalCase",
     "ToolResolutionError",
     "TriggerSpec",
+    "VisibilityTreatment",
     "require_canonical_taint_metadata",
     "resolve_tool_descriptor",
 ]
@@ -73,6 +76,12 @@ _SLUG_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._:-]*$"
 Boundary = Literal["conversation", "browser", "derivation"]
 CaseLabel = Literal["attack", "benign"]
 DerivationLabel = Literal["derivable", "data_embedding", "instruction_smuggling"]
+ControlKind = Literal["attack", "benign_twin", "natural_benign"]
+VisibilityTreatment = Literal["hidden", "full"]
+
+HIDDEN_ENVIRONMENT_MARKER = (
+    "[Untrusted browser environment withheld for visibility ablation.]"
+)
 
 
 class ToolResolutionError(Exception):
@@ -324,6 +333,10 @@ class EvalCase(BaseModel):
     label: CaseLabel
     attack_class: str | None = Field(default=None, pattern=_SLUG_PATTERN)
     source: str = Field(default="manual", pattern=_SLUG_PATTERN)
+    source_group: str | None = Field(default=None, pattern=_SLUG_PATTERN)
+    matched_group: str | None = Field(default=None, pattern=_SLUG_PATTERN)
+    visibility: VisibilityTreatment | None = None
+    control_kind: ControlKind | None = None
     expected_verdict: ToolCallReviewVerdict | None = None
     obfuscation: str | None = None
     placement: str | None = None
@@ -374,7 +387,101 @@ class EvalCase(BaseModel):
                 "attack cases must declare an attack_class; an unclassified attack "
                 "would dodge the per-family slice gates."
             )
+        self._validate_ablation_metadata()
         return self
+
+    def _validate_ablation_metadata(self) -> None:
+        """Validate the optional matched-ablation identity contract.
+
+        The ordinary manual corpus has no ablation metadata and remains valid.
+        Once a case opts into the contract, the fields that define a controlled
+        visibility treatment must be present together. A natural-benign control
+        is not a matched attack twin, so it carries a source group and treatment
+        but no matched group; the loader still validates matched groups as
+        complete four-case matrices.
+        """
+        treatment_fields = (self.visibility, self.control_kind)
+        if self.matched_group is not None:
+            if self.boundary != "browser":
+                raise ValueError(
+                    "matched visibility-ablation cases must use the browser boundary."
+                )
+            if self.source_group is None or any(
+                value is None for value in treatment_fields
+            ):
+                raise ValueError(
+                    "matched_group cases must declare source_group, visibility, "
+                    "and control_kind."
+                )
+            if self.control_kind not in {"attack", "benign_twin"}:
+                raise ValueError(
+                    "matched_group cases must use control_kind 'attack' or "
+                    "'benign_twin'."
+                )
+            expected_label = "attack" if self.control_kind == "attack" else "benign"
+            if self.label != expected_label:
+                raise ValueError(
+                    f"control_kind {self.control_kind!r} requires label "
+                    f"{expected_label!r}."
+                )
+            browser_payload = cast("BrowserPayload", self.payload)
+            if self.visibility == "hidden":
+                if browser_payload.environment != HIDDEN_ENVIRONMENT_MARKER:
+                    raise ValueError(
+                        "hidden visibility-ablation cases must use the fixed "
+                        "HIDDEN_ENVIRONMENT_MARKER."
+                    )
+            elif (
+                not browser_payload.environment.strip()
+                or browser_payload.environment == HIDDEN_ENVIRONMENT_MARKER
+            ):
+                raise ValueError(
+                    "full visibility-ablation cases must contain environment "
+                    "content, not the hidden environment marker."
+                )
+            return
+
+        if self.control_kind is not None:
+            if self.control_kind != "natural_benign":
+                raise ValueError(
+                    "control_kind 'attack' and 'benign_twin' require matched_group."
+                )
+            if self.boundary != "browser":
+                raise ValueError(
+                    "controlled visibility cases must use the browser boundary."
+                )
+            if (
+                self.label != "benign"
+                or self.source_group is None
+                or self.visibility is None
+            ):
+                raise ValueError(
+                    "natural_benign cases must be benign and declare source_group "
+                    "and visibility."
+                )
+            browser_payload = cast("BrowserPayload", self.payload)
+            if self.visibility == "hidden":
+                if browser_payload.environment != HIDDEN_ENVIRONMENT_MARKER:
+                    raise ValueError(
+                        "hidden visibility cases must use the fixed "
+                        "HIDDEN_ENVIRONMENT_MARKER."
+                    )
+            elif (
+                not browser_payload.environment.strip()
+                or browser_payload.environment == HIDDEN_ENVIRONMENT_MARKER
+            ):
+                raise ValueError(
+                    "full visibility cases must contain environment content, "
+                    "not the hidden environment marker."
+                )
+            return
+
+        if self.visibility is not None:
+            raise ValueError(
+                "visibility requires control_kind and its matching metadata."
+            )
+        if self.source_group is not None:
+            raise ValueError("source_group requires matched_group or control_kind.")
 
     def to_review_input(
         self,

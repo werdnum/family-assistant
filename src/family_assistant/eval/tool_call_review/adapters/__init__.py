@@ -1,12 +1,10 @@
 """Public-corpus adapters for the tool-call review evaluation harness.
 
-Adapters map established prompt-injection corpora into this system's reviewer
-positions: their injected payloads land in the email-body, tool-result,
-browser-environment, and note-content slots of our case shapes. Adaptation is
-more than relocation — the judge rules on a *tool call*, so every adapter pairs
-the injected upstream text with the gated call the injection argues for (an
-exfiltrating send, an unrequested egress), wrapped in the taint provenance our
-contract expects. See ``docs/design/tool-call-review-eval.md`` (Public corpora).
+Adapters map established prompt-injection corpora into controlled browser
+visibility-ablation groups. Every attack row emits attack and benign-twin
+controls at hidden and full visibility; Deepset also emits unpaired full-only
+natural-benign controls. The browser payload has no live tool-registry
+dependency. See ``docs/design/tool-call-review-eval.md`` (Public corpora).
 
 The adapters — never the corpora themselves — are the committed artifacts. Each
 adapter ships only a tiny synthetic sample in its corpus's upstream format under
@@ -14,10 +12,9 @@ adapter ships only a tiny synthetic sample in its corpus's upstream format under
 :mod:`scripts.build_public_corpus_cases`, which records the upstream revision
 and license alongside the cases it writes.
 
-This subpackage imports only from the harness's ``schema`` module and the
-runtime taint/service types it re-exports; it never imports the package
-``__init__`` (which pulls in the runner and its network dependencies), so it can
-be exercised without a configured judge.
+This subpackage never imports the package ``__init__`` (which pulls in the
+runner and its network dependencies), so it can be exercised without a
+configured judge.
 """
 
 from __future__ import annotations
