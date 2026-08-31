@@ -15,6 +15,7 @@ import scripts.generate_review_history_cases as cli
 from family_assistant.eval.tool_call_review.history_generation import (
     BatchAttempt,
     BatchExecutionError,
+    BatchProcessError,
     BatchRunner,
     ClassificationRecord,
     InstantiationRecord,
@@ -29,9 +30,12 @@ from family_assistant.eval.tool_call_review.history_generation import (
 )
 from family_assistant.eval.tool_call_review.scrub import TaskTemplate
 from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS
+from family_assistant.tools.metadata import ToolDescriptor, ToolTag
 
 if TYPE_CHECKING:
     from family_assistant.eval.tool_call_review.schema import ConversationPayload
+    from family_assistant.llm import ToolDefinition
+    from family_assistant.tools.types import ToolPropertySchema
 
 pytestmark = pytest.mark.no_db
 
@@ -194,6 +198,67 @@ def test_prompt_projection_hides_deployment_identifiers() -> None:
     assert "account_alice_8391" not in prompt
     assert '"tool_1"' in prompt
     assert '"argument_1"' in prompt
+
+
+def test_prompt_projection_exposes_only_closed_semantic_roles() -> None:
+    tool_name = "mcp_private_account_8391"
+    properties: dict[str, ToolPropertySchema] = {
+        "private_target_8391": {"type": "string"},
+        "private_payload_8391": {"type": "string"},
+        "private_query_8391": {"type": "string"},
+    }
+    definition: ToolDefinition = {
+        "type": "function",
+        "function": {
+            "name": tool_name,
+            "description": "A deliberately generic external communication tool.",
+            "parameters": {"type": "object", "properties": properties},
+        },
+    }
+    descriptor = ToolDescriptor(
+        name=tool_name,
+        definition=definition,
+        tags=frozenset({ToolTag.EXTERNAL_COMM}),
+        origin="mcp",
+        destination_argument_paths=("private_target_8391",),
+    )
+    shape = PreparedShape(
+        _shape().record.model_copy(
+            update={
+                "tool_names": (tool_name,),
+                "argument_shapes": {key: "string" for key in properties},
+            }
+        ),
+        ["private-template"],
+    )
+
+    prompt = build_prompt(
+        "classify", [shape], descriptor_registry={tool_name: descriptor}
+    )
+
+    assert tool_name not in prompt
+    assert all(key not in prompt for key in properties)
+    assert '"tool_tags": [["external_comm"]]' in prompt
+    assert '"argument_roles": {' in prompt
+    payload = json.loads(prompt.rsplit("Input:\n", 1)[1])
+    assert payload["shapes"][0]["argument_roles"] == {
+        "argument_1": "content",
+        "argument_2": "query",
+        "argument_3": "destination",
+    }
+
+
+def test_unprojectable_shape_is_quarantined_before_model_call() -> None:
+    shape = _shape()
+
+    runnable, quarantine = generation.classification_preflight(
+        shapes=[shape], descriptor_registry={}
+    )
+
+    assert runnable == []
+    assert quarantine == [
+        {"shape_id": "shape-one", "reason": "semantic_projection_unresolved_tool"}
+    ]
 
 
 class _FakeProcess:
@@ -362,6 +427,50 @@ class _FakeRunner:
     async def run(self, _prompt: str) -> str:
         self.calls += 1
         return next(self.results)
+
+
+class _FailingRunner:
+    def __init__(self, code: str) -> None:
+        self.code = code
+        self.calls = 0
+
+    async def run(self, _prompt: str) -> str:
+        self.calls += 1
+        raise BatchProcessError(self.code)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "code", ["process_error", "process_exit", "process_timeout", "stdout_limit"]
+)
+async def test_classification_process_failures_abort_without_quarantine(
+    code: str,
+) -> None:
+    runner = _FailingRunner(code)
+
+    with pytest.raises(BatchProcessError, match=code):
+        await classify_batches([_shape()], cast("BatchRunner", runner))
+
+    assert runner.calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "code", ["process_error", "process_exit", "process_timeout", "stdout_limit"]
+)
+async def test_instantiation_process_failures_abort_without_quarantine(
+    code: str,
+) -> None:
+    runner = _FailingRunner(code)
+
+    with pytest.raises(BatchProcessError, match=code):
+        await instantiate_batches(
+            [_shape()],
+            {"shape-one": _classification()},
+            cast("BatchRunner", runner),
+        )
+
+    assert runner.calls == 1
 
 
 @pytest.mark.asyncio

@@ -192,10 +192,13 @@ The generation command consumes the scrubbed templates and the exact deployment 
 used to resolve them. It has three explicit phases; each phase refuses to overwrite an existing
 artifact or continue with a changed input digest. The model sees only deduplicated security-relevant
 shapes. Registry tool names and schema property identifiers are positionally pseudonymized in the
-model projection; the generator restores the aliases before deterministic schema validation. A
-registry entry is not considered safe merely because it resolved successfully. Template ids and
-frequencies remain in private lineage artifacts. Validated structured classification and draft JSON
-are retained privately; raw Pi event streams and stderr are never persisted.
+model projection. Tool semantics use the closed `ToolTag` vocabulary, and argument roles come from
+destination metadata, a closed identifier-token map, and declared JSON types. The generator restores
+aliases before deterministic schema validation; an unresolved tool or schema mismatch is quarantined
+before a model call. A registry entry is not considered safe merely because it resolved
+successfully. Template ids and frequencies remain in private lineage artifacts. Validated structured
+classification and draft JSON are retained privately; raw Pi event streams and stderr are never
+persisted.
 
 Use a fresh run directory below `.review-eval-local/runs/`:
 
@@ -226,10 +229,11 @@ The default model is `openrouter/z-ai/glm-5.3-flash`;
 `--model openrouter/deepseek/deepseek-v4-flash-0731` is also supported. Classification batches
 contain at most 25 shapes and instantiation batches at most 5. `--max-shapes 10` is useful for a
 paid pilot; the option belongs on `prepare` and is carried by the run manifest. `--dry-run` performs
-input and state checks without invoking Pi. Each malformed batch gets one retry, then its shapes are
-recorded in quarantine. Unsupported boundaries and multi-tool shapes are quarantined before a model
-call; classify dry-run call counts exclude those preflight shapes. Instantiation also writes a
-private `instantiation-attempts.jsonl` ledger beside the drafts and quarantine. A no-call resume
+input and state checks without invoking Pi. Each malformed model response gets one retry, then its
+shapes are recorded in quarantine. Pi process, event-stream, and stdout-limit failures abort the run
+instead of quarantining shapes. Unsupported boundaries and multi-tool shapes are quarantined before
+a model call; classify dry-run call counts exclude those preflight shapes. Instantiation also writes
+a private `instantiation-attempts.jsonl` ledger beside the drafts and quarantine. A no-call resume
 requires all three artifacts to be present, valid, sorted, and to cover exactly the selected shapes;
 a partial or mismatched set fails closed. The ledger is copied into the final run manifest so
 paid-attempt audit information survives case-building failures. Delegation shapes with a placeholder
@@ -242,7 +246,7 @@ silently relabeled. When a placeholder sink can be resolved, both generated twin
 the same sink and policy cell; otherwise the shape is quarantined. Generated untrusted context is
 placed before the trusted request in the reconstructed message sequence so the active user request
 remains trusted. Pi stdout is drained concurrently with stderr and capped at 4 MiB per attempt; an
-over-limit response is quarantined without retaining the stream. Low-confidence classifications are
+over-limit response aborts the run without retaining the stream. Low-confidence classifications are
 conservatively retained as review-pending and are not sent to instantiation. There is no automatic
 second-model escalation in this command; a maintainer may manually select a different model for a
 separately reviewed run.

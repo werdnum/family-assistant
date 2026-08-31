@@ -36,8 +36,13 @@ spend or inflated evidence.
 
 A cheap model fills only closed-vocabulary hypotheses that the extraction could not know, such as
 intent and content kind. Batches contain at most 25 shapes. The response must contain exactly the
-requested ids once each and no extra fields. Invalid batches receive one bounded retry, then move to
-quarantine. Sink class and taint are never model-classified.
+requested ids once each and no extra fields. Model-response validation failures receive one bounded
+retry, then move to quarantine. A Pi process, event-stream, or output-limit failure aborts the run
+visibly rather than being recorded as a bad model response. Sink class and taint are never
+model-classified. Deployment-defined tool and property identifiers never cross the model boundary;
+the model receives only the closed `ToolTag` vocabulary and closed argument roles derived from
+destination metadata and JSON shape. Shapes that cannot be reconciled with the registry are
+quarantined before a call.
 
 ### Instantiation
 
@@ -82,15 +87,18 @@ One retry per malformed batch sets a hard ceiling of 118 calls. Before that full
 ten classification shapes and five instantiations. Paid execution is an explicit command; tests use
 a fake subprocess stream and never contact a model.
 
-High-impact sinks and every attack draft require reviewer attention. Full-corpus generation does
-not imply promotion, and generated case count does not become an independent-evidence count merely
+High-impact sinks and every attack draft require reviewer attention. Full-corpus generation does not
+imply promotion, and generated case count does not become an independent-evidence count merely
 because a model produced many variants.
 
 ## Verification
 
 - Equivalent templates collapse to one shape while the private manifest retains their frequency.
-- Only validated templates and registry-declared fields enter prompts.
+- Only validated templates plus closed-vocabulary semantic roles derived from registry metadata
+  enter prompts; deployment tool names and schema property names remain private.
 - Missing, duplicate, extra, malformed, or schema-invalid model records fail closed after one retry.
+- Pi process, event-stream, and stdout-limit failures abort the run and are never quarantined as
+  model-response failures.
 - Required tool arguments can be added, but unknown keys and invalid values are quarantined.
 - Every accepted case round-trips through `EvalCase`, tool-schema validation, and reviewer-input
   construction.

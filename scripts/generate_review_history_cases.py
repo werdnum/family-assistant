@@ -704,7 +704,11 @@ async def _instantiate(args: argparse.Namespace) -> int:
     if existing is None:
         runner = BatchRunner(model=args.model, executable=args.pi)
         drafts, quarantine, attempts = await instantiate_batches(
-            selected, classifications, runner, batch_size=args.batch_size
+            selected,
+            classifications,
+            runner,
+            batch_size=args.batch_size,
+            descriptor_registry=registry,
         )
         write_jsonl_exclusive(
             out_dir / _DRAFT_FILE,
