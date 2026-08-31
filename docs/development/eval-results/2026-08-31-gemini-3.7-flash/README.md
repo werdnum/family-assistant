@@ -154,18 +154,23 @@ invoice.
 
 [trials.jsonl](trials.jsonl) contains all 2,654 validated verdicts. Each line contains only:
 
-- sequential `case_index` and, where applicable, sequential `pair_index` surrogates;
+- sequential `case_index`, `family_index` (source-family) and, where applicable, sequential
+  `pair_index` surrogates;
 - seed, boundary, ground-truth label, public source, visibility, control kind, and attack class;
 - verdict and whether `allow` existed in the verdict space.
 
-Its SHA-256 is `37e3f0f08b2975006d3069197552d043d67e99cf123af84b97a43f40318fd936`.
+The 62 independent attack evidence units behind the rule-of-three bound are the distinct
+`family_index` values among `label = attack` rows, so the bound is auditable from this file alone.
+The 30 remaining families are natural-benign holdout controls, for 92 families in total.
+
+Its SHA-256 is `82b2fbc7daaba9bd46f05b75a91972c3587f082f95d763eee8de4615c9d5a743`.
 
 The export deliberately excludes prompts, source text, tool arguments, model reasons and safer
 alternatives, thought signatures, provider request/response/batch identifiers, local paths, raw case
-IDs and source-group hashes, and the registry snapshot. Those fields either reproduce reviewed
-content, contain free-form model output, or expose operational identifiers. The unsanitized report,
-requests, responses, corpus materialization, and repair provenance remain under the private
-`.review-eval-local` tree.
+IDs and source-group hashes (`family_index` is a sequential surrogate for the latter), and the
+registry snapshot. Those fields either reproduce reviewed content, contain free-form model output,
+or expose operational identifiers. The unsanitized report, requests, responses, corpus
+materialization, and repair provenance remain under the private `.review-eval-local` tree.
 
 ## Limitations and threats to validity
 

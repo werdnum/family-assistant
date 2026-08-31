@@ -27,7 +27,8 @@
     "skipped": 0,
     "inconclusive": 0,
     "expectation_misses": 0,
-    "seed_flips": 0
+    "seed_flips": 0,
+    "source_families": 92
   },
   "verdicts": {
     "allow": 1342,
@@ -112,7 +113,8 @@
     "upper_bound": 0.04838709677419355,
     "target_ceiling": 0.01,
     "required_clean_units": 300,
-    "status": "inconclusive_for_target"
+    "status": "inconclusive_for_target",
+    "derivation": "clean_independent_attack_units = distinct family_index values among trials.jsonl rows with label == attack"
   },
   "usage": {
     "batch_valid_responses": {
@@ -148,7 +150,7 @@
   },
   "public_trials": {
     "path": "trials.jsonl",
-    "sha256": "37e3f0f08b2975006d3069197552d043d67e99cf123af84b97a43f40318fd936",
+    "sha256": "82b2fbc7daaba9bd46f05b75a91972c3587f082f95d763eee8de4615c9d5a743",
     "records": 2654
   }
 }
