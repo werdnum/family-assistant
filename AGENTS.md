@@ -374,9 +374,10 @@ least-privilege access, input validation, and defense in depth.
   accept a residual risk or simplification, write it down in the change or its design doc (e.g. a
   "Deliberate simplifications" section) with the rationale. A documented, reasoned acceptance closes
   the thread; an undocumented one gets re-litigated every review round.
-- **Never leave tests broken.** Fix all test failures rather than dismissing them as 'unrelated' or
-  'pre-existing' — you are responsible for failures in or near the code you changed. For flakiness
-  in areas completely unrelated to your change, see "Debugging and Change Verification" below.
+- **Do not leave failures caused by the change broken.** Investigate failures in or near the code
+  you changed and fix those caused by or plausibly coupled to it. Report unrelated, pre-existing, or
+  environmental failures as blockers or follow-up work rather than automatically expanding the PR.
+  For unrelated flakiness, see "Debugging and Change Verification" below.
 - **Hook bypassing**: never bypass pre-commit hooks, PreToolUse hooks, or other verification hooks
   (e.g. `--no-verify`, `--no-gpg-sign`) without explicit permission from the user.
 
