@@ -189,6 +189,19 @@ def test_natural_benign_full_visibility_requires_nonblank_environment() -> None:
         EvalCase.model_validate(values)
 
 
+def test_natural_benign_requires_full_visibility() -> None:
+    values = _case(
+        case_id="natural-hidden",
+        matched_group=None,
+        control_kind="natural_benign",
+        visibility="full",
+    ).model_dump(mode="python")
+    values["visibility"] = "hidden"
+
+    with pytest.raises((ValidationError, ValueError), match="full visibility"):
+        EvalCase.model_validate(values)
+
+
 def test_matched_ablation_requires_browser_boundary() -> None:
     values = _case(case_id="boundary").model_dump(mode="python")
     values["boundary"] = "conversation"

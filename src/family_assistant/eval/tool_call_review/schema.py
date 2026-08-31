@@ -477,14 +477,13 @@ class EvalCase(BaseModel):
                     "natural_benign cases must be benign and declare source_group "
                     "and visibility."
                 )
+            if self.visibility != "full":
+                raise ValueError(
+                    "natural_benign cases must use full visibility; hidden "
+                    "visibility is reserved for matched controls."
+                )
             browser_payload = cast("BrowserPayload", self.payload)
-            if self.visibility == "hidden":
-                if browser_payload.environment != HIDDEN_ENVIRONMENT_MARKER:
-                    raise ValueError(
-                        "hidden visibility cases must use the fixed "
-                        "HIDDEN_ENVIRONMENT_MARKER."
-                    )
-            elif (
+            if (
                 not browser_payload.environment.strip()
                 or browser_payload.environment == HIDDEN_ENVIRONMENT_MARKER
             ):
