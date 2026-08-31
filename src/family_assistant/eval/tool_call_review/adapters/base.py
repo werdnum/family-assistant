@@ -32,6 +32,7 @@ __all__ = [
     "AdaptedCase",
     "AdaptedLineage",
     "Adapter",
+    "evaluation_split_for_group",
     "normalized_text_key",
 ]
 
@@ -48,6 +49,17 @@ def normalized_text_key(text: str) -> str:
     return hashlib.sha256(collapsed.encode("utf-8")).hexdigest()
 
 
+def evaluation_split_for_group(group: str) -> str:
+    """Assign a family to a deterministic dev/gate split before expansion.
+
+    Five-way bucketing reserves one bucket for held-out gate evidence and four
+    for prompt iteration. The input is the already-normalized family key, so
+    every visibility/control derivative of a family receives the same split.
+    """
+    digest = hashlib.sha256(group.encode("utf-8")).digest()
+    return "gate" if digest[0] % 5 == 0 else "dev"
+
+
 @dataclass(frozen=True, slots=True)
 class AdaptedLineage:
     """Provenance for one adapted case, preserved before any dev/gate split.
@@ -55,8 +67,12 @@ class AdaptedLineage:
     ``group`` clusters cases that share an author, challenge, or template
     family — the unit BIPIA-style combinatorial corpora and human adversarial
     pools must be held out by, since a random row-level split would leave the
-    same family on both sides. It is a split-assignment label and nothing else;
-    whether two cases are the same input is not a question lineage answers.
+    same family on both sides. ``paired_upstream_id`` records the source row
+    paired into a matched control, without copying its content. ``source_split``
+    preserves the upstream split or source slice, while ``evaluation_split``
+    records the deterministic family-level dev/gate assignment. It is a
+    split-assignment label and nothing else; whether two cases are the same
+    input is not a question lineage answers.
     """
 
     corpus_id: str
@@ -64,6 +80,10 @@ class AdaptedLineage:
     group: str
     license: str
     upstream_revision: str | None = None
+    paired_upstream_id: str | None = None
+    adapter_version: str = "unspecified"
+    source_split: str | None = None
+    evaluation_split: str = "dev"
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,14 +101,16 @@ class Adapter(ABC):
     Concrete adapters declare their ``corpus_id``, ``license``, and ``upstream``
     identifier as class attributes, load rows via :meth:`from_path` (or
     :meth:`from_sample`), and implement :meth:`iter_adapted`. The ``source``
-    string on every emitted case is ``public:<corpus_id>``, matching the design
-    doc's slice convention; the richer lineage travels in the paired
-    :class:`AdaptedLineage` and the sidecar the build script writes.
+    string on every emitted case is a ``public:<corpus_id>`` slice (possibly
+    variant-qualified), matching the design doc's convention; the richer
+    lineage travels in the paired :class:`AdaptedLineage` and the sidecar the
+    build script writes.
     """
 
     corpus_id: ClassVar[str]
     license: ClassVar[str]
     upstream: ClassVar[str]
+    adapter_version: ClassVar[str] = "browser-ablation-v2"
 
     rows: Sequence[object]
     upstream_revision: str | None = None

@@ -7,6 +7,18 @@ today's prompt assembly and the eval measures the current system.
 
 from __future__ import annotations
 
+from family_assistant.eval.tool_call_review.batch import (
+    BATCH_SCHEMA_VERSION,
+    BatchClient,
+    BatchError,
+    BatchManifest,
+    BatchRejectedError,
+    harvest_batch,
+    prepare_batch,
+    submit_batch,
+    update_batch_status,
+    validate_prepare_inputs,
+)
 from family_assistant.eval.tool_call_review.loader import (
     CaseInputConstructionError,
     CaseParseError,
@@ -24,8 +36,10 @@ from family_assistant.eval.tool_call_review.loader import (
 from family_assistant.eval.tool_call_review.report import (
     EvalReport,
     LatencyStats,
+    MatchedGroupCounts,
     SkippedCase,
     SliceMetrics,
+    VisibilityRateDelta,
     build_slice_metrics,
 )
 from family_assistant.eval.tool_call_review.runner import (
@@ -34,13 +48,16 @@ from family_assistant.eval.tool_call_review.runner import (
     run_eval,
 )
 from family_assistant.eval.tool_call_review.schema import (
+    HIDDEN_ENVIRONMENT_MARKER,
     BrowserPayload,
     CaseConstraints,
+    ControlKind,
     ConversationPayload,
     DerivationPayload,
     EvalCase,
     ToolResolutionError,
     TriggerSpec,
+    VisibilityTreatment,
     resolve_tool_descriptor,
 )
 from family_assistant.eval.tool_call_review.scoring import (
@@ -60,13 +77,20 @@ from family_assistant.eval.tool_call_review.scoring import (
 )
 
 __all__ = [
+    "BATCH_SCHEMA_VERSION",
     "DEFAULT_FALSE_ALLOW_CEILING",
+    "HIDDEN_ENVIRONMENT_MARKER",
+    "BatchClient",
+    "BatchError",
+    "BatchManifest",
+    "BatchRejectedError",
     "BrowserPayload",
     "CaseConstraints",
     "CaseInputConstructionError",
     "CaseParseError",
     "CaseSchemaValidationError",
     "CaseSkip",
+    "ControlKind",
     "ConversationPayload",
     "DerivationPayload",
     "DuplicateCaseIdError",
@@ -75,6 +99,7 @@ __all__ = [
     "GateEvaluation",
     "GateStatus",
     "LatencyStats",
+    "MatchedGroupCounts",
     "SeedFlip",
     "SkipKind",
     "SkippedCase",
@@ -85,6 +110,8 @@ __all__ = [
     "TrialExecutionError",
     "TrialRecord",
     "TriggerSpec",
+    "VisibilityRateDelta",
+    "VisibilityTreatment",
     "attack_input_key",
     "build_reviewer",
     "build_slice_metrics",
@@ -93,12 +120,17 @@ __all__ = [
     "clean_attack_case_count",
     "content_hash",
     "evaluate_gate",
+    "harvest_batch",
     "load_cases",
+    "prepare_batch",
     "required_clean_cases",
     "resolve_tool_descriptor",
     "run_eval",
     "seed_flip_case_ids",
     "seed_flips",
+    "submit_batch",
+    "update_batch_status",
     "validate_against_tool_schema",
+    "validate_prepare_inputs",
     "validate_review_input_constructible",
 ]

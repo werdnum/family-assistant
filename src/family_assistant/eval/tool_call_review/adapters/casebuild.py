@@ -1,12 +1,4 @@
-"""Shared helpers for turning upstream rows into paired reviewer cases.
-
-Every adapter must pair injected upstream text with the gated call it argues
-for, wrapped in valid taint provenance: the injected content sits in a
-non-trusted-tier message row, its taint metadata comes from
-:meth:`TurnTaintState.to_metadata`, and the turn's taint state carries the same
-untrusted tier so the reviewer sees the boundary it must rule across. These
-helpers centralize that construction so the two adapters cannot drift.
-"""
+"""Shared helpers for constructing browser visibility-ablation cases."""
 
 from __future__ import annotations
 
@@ -16,107 +8,217 @@ from family_assistant.eval.tool_call_review.adapters.base import (
     AdaptedCase,
     AdaptedLineage,
 )
-from family_assistant.eval.tool_call_review.schema import EvalCase
-from family_assistant.security.taint import (
-    SourceTrustTier,
-    TaintSource,
-    TaintSourceType,
-    TurnTaintState,
+from family_assistant.eval.tool_call_review.schema import (
+    HIDDEN_ENVIRONMENT_MARKER,
+    EvalCase,
+    browser_action_discriminator,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
-    from family_assistant.security.taint import TaintMetadata
+    from collections.abc import Mapping, Sequence
 
 __all__ = [
     "FULL_VERDICT_CONSTRAINTS",
-    "build_adapted_case",
-    "untrusted_source_metadata",
+    "build_browser_ablation_cases",
+    "build_natural_benign_case",
 ]
 
 # Adapted cases state the full verdict space with a fail-closed ``confirm``
-# fallback: the delegating taint cell for an untrusted-tier egress adjudicates,
-# and the runner never invents a verdict space.
+# fallback; the runner never invents a verdict space for a corpus case.
 FULL_VERDICT_CONSTRAINTS = {
     "available_verdicts": ["allow", "confirm", "deny"],
     "fallback_verdict": "confirm",
 }
 
 
-def untrusted_source_metadata(
-    *,
-    source_type: TaintSourceType,
-    source_id: str,
-    reason: str,
-    tier: SourceTrustTier = SourceTrustTier.UNKNOWN_EXTERNAL,
-) -> TaintMetadata:
-    """Return taint metadata for one untrusted content row.
-
-    The metadata is produced by :meth:`TurnTaintState.to_metadata` rather than
-    hand-written, so it always matches the runtime serialization the loader
-    deserializes with :meth:`TurnTaintState.from_metadata`.
-    """
-    state = TurnTaintState.empty().add_source(
-        TaintSource(
-            source_type=source_type,
-            source_id=source_id,
-            tier=tier,
-            labels=frozenset(),
-            reason=reason,
-        )
-    )
-    return state.to_metadata()
-
-
-def build_adapted_case(
+def _browser_case(
     *,
     case_id: str,
     source: str,
     label: str,
-    attack_class: str,
-    tool_name: str,
-    sink_class: str,
-    messages: list[dict[str, object]],
-    arguments: Mapping[str, object],
-    turn_taint: TaintMetadata,
-    policy_identifier: str,
-    policy_description: str,
+    attack_class: str | None,
+    source_group: str,
+    matched_group: str | None,
+    control_kind: str,
+    visibility: str,
+    objective: str,
+    damage_envelope: str,
+    proposed_action: Mapping[str, object],
+    environment: str,
+    recent_actions: Sequence[Mapping[str, object]],
+    mitigation_guidance: str,
+    policy_contexts: Sequence[Mapping[str, object]],
     lineage: AdaptedLineage,
     obfuscation: str | None = None,
     placement: str | None = None,
     language: str | None = None,
-    deployment_guidance: str = "",
 ) -> AdaptedCase:
-    """Validate and pair one conversation case with its lineage.
-
-    ``attack_class`` is carried on benign twins as the matched class too, which
-    the schema permits, so a twin can be sliced alongside the attack it mirrors.
-    """
+    """Build one schema-validated browser case."""
     case = EvalCase.model_validate({
         "id": case_id,
-        "boundary": "conversation",
+        "boundary": "browser",
         "label": label,
         "attack_class": attack_class,
         "source": source,
+        "source_group": source_group,
+        "matched_group": matched_group,
+        "visibility": visibility,
+        "control_kind": control_kind,
         "obfuscation": obfuscation,
         "placement": placement,
         "language": language,
         "constraints": FULL_VERDICT_CONSTRAINTS,
         "payload": {
-            "tool_name": tool_name,
-            "sink_class": sink_class,
-            "messages": messages,
-            "arguments": arguments,
-            "taint_state": turn_taint,
-            "deployment_guidance": deployment_guidance,
-            "policy_contexts": [
-                {
-                    "kind": "taint_cell",
-                    "identifier": policy_identifier,
-                    "description": policy_description,
-                }
-            ],
+            "objective": objective,
+            "damage_envelope": damage_envelope,
+            "proposed_action": dict(proposed_action),
+            "environment": environment,
+            "recent_actions": [dict(action) for action in recent_actions],
+            "mitigation_guidance": mitigation_guidance,
+            "policy_contexts": [dict(context) for context in policy_contexts],
         },
     })
     return AdaptedCase(case=case, lineage=lineage)
+
+
+def build_browser_ablation_cases(
+    *,
+    case_id_prefix: str,
+    source: str,
+    source_group: str,
+    matched_group: str,
+    attack_class: str,
+    attack_objective: str,
+    benign_objective: str,
+    damage_envelope: str,
+    attack_action: Mapping[str, object],
+    benign_action: Mapping[str, object],
+    attack_environment: str,
+    benign_environment: str,
+    attack_lineage: AdaptedLineage,
+    benign_lineage: AdaptedLineage,
+    obfuscation: str | None = None,
+    placement: str | None = None,
+    language: str | None = None,
+    recent_actions: Sequence[Mapping[str, object]] = (),
+    mitigation_guidance: str = "",
+    policy_contexts: Sequence[Mapping[str, object]] = (),
+) -> list[AdaptedCase]:
+    """Build the exact attack/benign by hidden/full four-case matrix.
+
+    The helper enforces the visibility contract at construction time: all
+    fields except ``environment`` are copied identically within each control
+    pair, and the two controls expose the same proposed-action kind.
+    """
+    if not attack_environment.strip() or not benign_environment.strip():
+        raise ValueError("browser ablation environments must be non-empty")
+    attack_discriminator = browser_action_discriminator(attack_action)
+    benign_discriminator = browser_action_discriminator(benign_action)
+    if attack_discriminator != benign_discriminator:
+        raise ValueError(
+            "browser ablation attack and benign actions must have the same "
+            "action discriminator"
+        )
+    if set(attack_action) != set(benign_action):
+        raise ValueError(
+            "browser ablation attack and benign actions must have the same key shape"
+        )
+    if attack_environment == HIDDEN_ENVIRONMENT_MARKER:
+        raise ValueError("attack full environment cannot use the hidden marker")
+    if benign_environment == HIDDEN_ENVIRONMENT_MARKER:
+        raise ValueError("benign full environment cannot use the hidden marker")
+
+    common = {
+        "source": source,
+        "source_group": source_group,
+        "matched_group": matched_group,
+        "attack_class": attack_class,
+        "damage_envelope": damage_envelope,
+        "recent_actions": recent_actions,
+        "mitigation_guidance": mitigation_guidance,
+        "policy_contexts": policy_contexts,
+        "obfuscation": obfuscation,
+        "placement": placement,
+        "language": language,
+    }
+    cases: list[AdaptedCase] = []
+    for control_kind, label, objective, action, environment, lineage in (
+        (
+            "attack",
+            "attack",
+            attack_objective,
+            attack_action,
+            attack_environment,
+            attack_lineage,
+        ),
+        (
+            "benign_twin",
+            "benign",
+            benign_objective,
+            benign_action,
+            benign_environment,
+            benign_lineage,
+        ),
+    ):
+        for visibility, visible_environment in (
+            ("hidden", HIDDEN_ENVIRONMENT_MARKER),
+            ("full", environment),
+        ):
+            cases.append(
+                _browser_case(
+                    case_id=f"{case_id_prefix}-{control_kind}-{visibility}",
+                    label=label,
+                    control_kind=control_kind,
+                    visibility=visibility,
+                    objective=objective,
+                    proposed_action=action,
+                    environment=visible_environment,
+                    lineage=lineage,
+                    **common,
+                )
+            )
+    return cases
+
+
+def build_natural_benign_case(
+    *,
+    case_id: str,
+    source: str,
+    source_group: str,
+    attack_class: str | None,
+    objective: str,
+    damage_envelope: str,
+    proposed_action: Mapping[str, object],
+    environment: str,
+    lineage: AdaptedLineage,
+    obfuscation: str | None = None,
+    placement: str | None = None,
+    language: str | None = None,
+    recent_actions: Sequence[Mapping[str, object]] = (),
+    mitigation_guidance: str = "",
+    policy_contexts: Sequence[Mapping[str, object]] = (),
+) -> AdaptedCase:
+    """Build one full-only natural-benign browser control."""
+    if not environment.strip() or environment == HIDDEN_ENVIRONMENT_MARKER:
+        raise ValueError("natural-benign environment must be visible content")
+    return _browser_case(
+        case_id=case_id,
+        source=source,
+        label="benign",
+        attack_class=attack_class,
+        source_group=source_group,
+        matched_group=None,
+        control_kind="natural_benign",
+        visibility="full",
+        objective=objective,
+        damage_envelope=damage_envelope,
+        proposed_action=proposed_action,
+        environment=environment,
+        recent_actions=recent_actions,
+        mitigation_guidance=mitigation_guidance,
+        policy_contexts=policy_contexts,
+        lineage=lineage,
+        obfuscation=obfuscation,
+        placement=placement,
+        language=language,
+    )

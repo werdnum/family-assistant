@@ -16,9 +16,11 @@ from jsonschema import Draft202012Validator, validators
 from pydantic import ValidationError
 
 from family_assistant.eval.tool_call_review.schema import (
+    BrowserPayload,
     ConversationPayload,
     EvalCase,
     ToolResolutionError,
+    browser_action_discriminator,
     resolve_tool_descriptor,
 )
 from family_assistant.llm.messages import message_to_json_dict
@@ -291,7 +293,163 @@ def load_cases(
                     f"Duplicate case id {case.id!r} (seen again in {file_path})."
                 )
             by_id[case.id] = case
-    return [by_id[case_id] for case_id in sorted(by_id)]
+    cases = [by_id[case_id] for case_id in sorted(by_id)]
+    _validate_matched_groups(cases)
+    return cases
+
+
+def _validate_matched_groups(cases: Sequence[EvalCase]) -> None:
+    """Reject incomplete or contradictory matched-ablation groups.
+
+    The four visibility/control variants are one dataset-level contract, not
+    an invariant a single case can establish. Validation therefore happens
+    after all case files have been loaded. Legacy cases and natural-benign
+    controls have no matched group and are unaffected.
+    """
+    groups: dict[str, list[EvalCase]] = {}
+    for case in cases:
+        if case.matched_group is not None:
+            groups.setdefault(case.matched_group, []).append(case)
+
+    expected = {
+        ("attack", "hidden"),
+        ("attack", "full"),
+        ("benign_twin", "hidden"),
+        ("benign_twin", "full"),
+    }
+    for group, members in groups.items():
+        actual = {(case.control_kind, case.visibility) for case in members}
+        if len(members) != len(expected) or actual != expected:
+            raise CaseSchemaValidationError(
+                f"Matched ablation group {group!r} must contain exactly one "
+                "attack and one benign_twin at each hidden/full visibility "
+                f"treatment; found {len(members)} case(s) with {sorted(actual)!r}."
+            )
+        source_groups = {case.source_group for case in members}
+        if len(source_groups) != 1:
+            raise CaseSchemaValidationError(
+                f"Matched ablation group {group!r} must use one source_group; "
+                f"found {sorted(source_groups, key=lambda value: value or '')!r}."
+            )
+        baseline = members[0]
+        shared_identity = _matched_group_shared_identity(baseline)
+        for member in members[1:]:
+            if _matched_group_shared_identity(member) != shared_identity:
+                raise CaseSchemaValidationError(
+                    f"Matched ablation group {group!r} must keep source, "
+                    "source_group, attack_class, constraints, and security "
+                    "metadata identical across all four variants."
+                )
+        shared_browser_security = _matched_browser_security(baseline)
+        for member in members[1:]:
+            if _matched_browser_security(member) != shared_browser_security:
+                raise CaseSchemaValidationError(
+                    f"Matched ablation group {group!r} must keep browser "
+                    "security fields damage_envelope, mitigation_guidance, "
+                    "policy_contexts, and recent_actions identical across "
+                    "attack and benign_twin variants."
+                )
+        by_control: dict[str, list[EvalCase]] = {}
+        for member in members:
+            if member.control_kind is not None:
+                by_control.setdefault(member.control_kind, []).append(member)
+        for control_kind, control_members in by_control.items():
+            if _matched_control_pair_identity(
+                control_members[0]
+            ) != _matched_control_pair_identity(control_members[1]):
+                raise CaseSchemaValidationError(
+                    f"Matched ablation group {group!r} {control_kind} hidden/full "
+                    "variants must keep expectation and case metadata identical."
+                )
+            if _matched_browser_payload(control_members[0]) != _matched_browser_payload(
+                control_members[1]
+            ):
+                raise CaseSchemaValidationError(
+                    f"Matched ablation group {group!r} {control_kind} hidden/full "
+                    "variants must keep browser payload fields other than "
+                    "environment identical."
+                )
+        shared_action_discriminator = _matched_browser_action_discriminator(baseline)
+        for member in members[1:]:
+            if (
+                _matched_browser_action_discriminator(member)
+                != shared_action_discriminator
+            ):
+                raise CaseSchemaValidationError(
+                    f"Matched ablation group {group!r} must keep the same "
+                    "proposed_action action kind across attack and "
+                    "benign_twin variants."
+                )
+        shared_action_keys = frozenset(_browser_payload(baseline).proposed_action)
+        for member in members[1:]:
+            if (
+                frozenset(_browser_payload(member).proposed_action)
+                != shared_action_keys
+            ):
+                raise CaseSchemaValidationError(
+                    f"Matched ablation group {group!r} must keep the same "
+                    "proposed_action key shape across attack and "
+                    "benign_twin variants."
+                )
+
+
+def _matched_browser_action_discriminator(case: EvalCase) -> str:
+    """Return a complete group's action kind or fail closed on malformed data."""
+    try:
+        return browser_action_discriminator(_browser_payload(case).proposed_action)
+    except ValueError as exc:
+        raise CaseSchemaValidationError(
+            f"Matched ablation case {case.id!r} has no unambiguous proposed_action "
+            "action kind."
+        ) from exc
+
+
+def _matched_group_shared_identity(case: EvalCase) -> tuple[object, ...]:
+    """Return top-level identity/security fields shared by all group variants."""
+    return (
+        case.boundary,
+        case.source,
+        case.source_group,
+        case.attack_class,
+        case.constraints.model_dump(mode="json"),
+    )
+
+
+def _matched_control_pair_identity(case: EvalCase) -> tuple[object, ...]:
+    """Return metadata that must match between hidden/full control pairs."""
+    return (
+        case.expected_verdict,
+        case.obfuscation,
+        case.placement,
+        case.language,
+    )
+
+
+def _matched_browser_payload(case: EvalCase) -> dict[str, object]:
+    """Return the browser payload with the controlled environment removed."""
+    payload = _browser_payload(case).model_dump(mode="json")
+    payload.pop("environment")
+    return payload
+
+
+def _matched_browser_security(case: EvalCase) -> tuple[object, ...]:
+    """Return browser security context that must not vary by control kind."""
+    payload = _browser_payload(case)
+    return (
+        payload.damage_envelope,
+        payload.mitigation_guidance,
+        payload.policy_contexts,
+        payload.recent_actions,
+    )
+
+
+def _browser_payload(case: EvalCase) -> BrowserPayload:
+    """Return a matched case's browser payload with a clear contract error."""
+    if not isinstance(case.payload, BrowserPayload):
+        raise CaseSchemaValidationError(
+            f"Matched ablation case {case.id!r} must use a browser payload."
+        )
+    return case.payload
 
 
 def content_hash(cases: Sequence[EvalCase]) -> str:

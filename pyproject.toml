@@ -202,6 +202,7 @@ dev = [
     "monkeytype>=23.3.0", # Runtime type inference from tests
     "browser-handoff-service",
     "jsonschema>=4.24.0",
+    "pyarrow>=25.0.1",
 ]
 local-embeddings = [
     "sentence-transformers>=3.0.1",
@@ -358,6 +359,10 @@ shell = "for mod in $(monkeytype list-modules | grep '^family_assistant\\.'); do
 [tool.poe.tasks.review-eval]
 help = "Replay the tool-call reviewer over labeled cases and report per-slice scores"
 cmd = "python scripts/tool_call_review_eval.py"
+
+[tool.poe.tasks.review-eval-batch]
+help = "Prepare, submit, poll, and harvest a private OpenRouter batch review eval"
+cmd = "python scripts/tool_call_review_batch.py"
 
 [tool.poe.tasks.review-eval-extract-history]
 help = "Abstract message history into committable task templates (private dir only)"
