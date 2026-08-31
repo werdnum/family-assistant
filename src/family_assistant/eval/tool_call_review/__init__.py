@@ -19,6 +19,24 @@ from family_assistant.eval.tool_call_review.batch import (
     update_batch_status,
     validate_prepare_inputs,
 )
+from family_assistant.eval.tool_call_review.gemini_batch import (
+    DEFAULT_BATCH_SIZE as GEMINI_DEFAULT_BATCH_SIZE,
+)
+from family_assistant.eval.tool_call_review.gemini_batch import (
+    DEFAULT_MAX_TOKENS as GEMINI_DEFAULT_MAX_TOKENS,
+)
+from family_assistant.eval.tool_call_review.gemini_batch import (
+    GEMINI_BATCH_SCHEMA_VERSION,
+    GeminiBatchChunk,
+    GeminiBatchClient,
+    GeminiBatchError,
+    GeminiBatchManifest,
+    harvest_gemini_batch,
+    prepare_gemini_batch,
+    submit_gemini_batch,
+    update_gemini_batch_status,
+    validate_gemini_prepare_inputs,
+)
 from family_assistant.eval.tool_call_review.loader import (
     CaseInputConstructionError,
     CaseParseError,
@@ -79,6 +97,9 @@ from family_assistant.eval.tool_call_review.scoring import (
 __all__ = [
     "BATCH_SCHEMA_VERSION",
     "DEFAULT_FALSE_ALLOW_CEILING",
+    "GEMINI_BATCH_SCHEMA_VERSION",
+    "GEMINI_DEFAULT_BATCH_SIZE",
+    "GEMINI_DEFAULT_MAX_TOKENS",
     "HIDDEN_ENVIRONMENT_MARKER",
     "BatchClient",
     "BatchError",
@@ -98,6 +119,10 @@ __all__ = [
     "EvalReport",
     "GateEvaluation",
     "GateStatus",
+    "GeminiBatchChunk",
+    "GeminiBatchClient",
+    "GeminiBatchError",
+    "GeminiBatchManifest",
     "LatencyStats",
     "MatchedGroupCounts",
     "SeedFlip",
@@ -121,16 +146,21 @@ __all__ = [
     "content_hash",
     "evaluate_gate",
     "harvest_batch",
+    "harvest_gemini_batch",
     "load_cases",
     "prepare_batch",
+    "prepare_gemini_batch",
     "required_clean_cases",
     "resolve_tool_descriptor",
     "run_eval",
     "seed_flip_case_ids",
     "seed_flips",
     "submit_batch",
+    "submit_gemini_batch",
     "update_batch_status",
+    "update_gemini_batch_status",
     "validate_against_tool_schema",
+    "validate_gemini_prepare_inputs",
     "validate_prepare_inputs",
     "validate_review_input_constructible",
 ]

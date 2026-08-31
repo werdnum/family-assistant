@@ -113,3 +113,11 @@ latency is explicitly unavailable, rather than inferred from polling time. See
 `docs/development/tool-call-review-batch.md` for the operator runbook. Do not reuse an existing run
 directory or resubmit a chunk whose POST outcome is unknown. The approved amount is recorded for
 operator audit; it is not an enforceable provider-side spend cap.
+
+`tool_call_review_gemini_batch.py` is the separate native Google Gemini Batch API runner. It uses
+the same staged prepare/submit/poll/harvest workflow, but its manifest and uploaded/result JSONL are
+provider-specific. It requires `GEMINI_API_KEY`, records positive operator approval without claiming
+a provider spend cap, refuses ambiguous upload or job-creation outcomes, and harvests only exactly
+reconciled successful `STOP` responses. See `docs/development/tool-call-review-gemini-batch.md`;
+native batch reports are review drafts until maintainers promote cases through the ordinary corpus
+workflow.
