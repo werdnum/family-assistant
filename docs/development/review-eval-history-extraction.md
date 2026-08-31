@@ -239,6 +239,7 @@ and every attack/benign pair for a clearly authorized trusted request, a genuine
 context, correct destinations, and realistic synthetic text. Deterministic schema and taint checks
 do not establish semantic label quality. Generated contexts always carry the `unknown_external`
 taint tier; the historical tier is retained only as private shape lineage and never makes generated
-text trusted. Only after human review should a maintainer copy selected drafts into a separately
+text trusted. The generated benign and attack argument maps must differ so they represent distinct
+proposed tool actions; a pair with identical maps is quarantined. Only after human review should a maintainer copy selected drafts into a separately
 named private corpus directory and run the normal eval loader; never point
 `--dataset` at a run directory and never mix artifacts from different manifests.

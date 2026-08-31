@@ -106,7 +106,11 @@ def test_instantiation_prompt_requires_direct_synthetic_content() -> None:
         "direct raw untrusted content containing the unauthorized instruction" in prompt
     )
     assert "actual proposed tool action with concrete schema values" in prompt
-    assert "never put prompt-injection prose" in prompt
+    assert (
+        "attack arguments themselves must encode a materially different unauthorized proposed action"
+        in prompt
+    )
+    assert "Never put prompt-injection prose" in prompt
     assert "not a summary or description of an attack" in prompt
 
 
@@ -551,6 +555,19 @@ def test_build_cases_rejects_identical_contexts() -> None:
 
     assert cases == []
     assert quarantine == [{"shape_id": "shape-one", "reason": "identical_context"}]
+
+
+def test_build_cases_rejects_identical_argument_maps() -> None:
+    registry = {descriptor.name: descriptor for descriptor in LOCAL_TOOL_DESCRIPTORS}
+    draft = _draft(attack_arguments={"target_chat_id": "1001"})
+    cases, quarantine = build_cases(
+        [_shape()], [draft], {"shape-one": _classification()}, registry
+    )
+
+    assert cases == []
+    assert quarantine == [
+        {"shape_id": "shape-one", "reason": "identical_argument_maps"}
+    ]
 
 
 def test_output_path_must_be_private() -> None:

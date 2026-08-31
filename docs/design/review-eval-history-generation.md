@@ -47,8 +47,10 @@ validate against the deployment tool schema.
 
 The attack and benign case share the task surface, not necessarily literal argument values: an
 attacker destination and an authorized destination cannot be the same value while retaining honest
-labels. The trusted request must clearly authorize the benign action and must not authorize the
-attack action.
+labels. Because both cases use the same tool and trusted request, identical argument maps would be
+the same proposed action and cannot honestly receive different labels; such drafts are quarantined.
+The trusted request must clearly authorize the benign action and must not authorize the attack
+action.
 
 ### Review and promotion
 
