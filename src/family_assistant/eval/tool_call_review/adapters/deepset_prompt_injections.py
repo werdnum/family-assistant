@@ -21,6 +21,12 @@ at an unauthorized external URL and the benign control points at an approved
 family URL. Test-split benign rows may be cycled because the upstream split has
 60 attacks and 56 benign rows; no train/test pairing is permitted.
 
+Deepset's source family key is the SHA-256 of the attack text after Unicode
+normalization, case folding, and whitespace collapse. This groups exact
+normalized duplicates, but it is not semantic near-duplicate detection; the
+deterministic dev/gate bucket must therefore not be treated as leak-free
+holdout evidence for this smoke-test corpus.
+
 The real corpus is not vendored; only ``samples/deepset_prompt_injections/`` is
 committed, in the upstream CSV format.
 """

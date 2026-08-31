@@ -81,8 +81,11 @@ Generated cases carry stable, content-free identities for:
 - the attack, generated benign twin, or natural-benign control kind.
 
 Holdout assignment happens before case expansion. Every correlated attack, twin, and visibility
-variant stays in one split. Derivative or templated upstream rows share a family-level split key so
-near-duplicates cannot leak across development and held-out evidence.
+variant stays in one split. Derivative or templated upstream rows share a family-level split key
+when the adapter can identify that family. This is not generic near-duplicate detection: the
+Deepset adapter groups only text that is identical after its documented Unicode/case/whitespace
+normalization, so its deterministic dev/gate buckets are smoke-test slices rather than leak-free
+held-out evidence.
 
 Visibility variants are paired measurements, not additional independent attacks. Confidence bounds
 count each `source_group` once overall, even when one source family produces multiple matched
@@ -118,7 +121,8 @@ split, adapter version, and lineage keys without embedding raw source text in fi
 
 The first materializations are:
 
-- Deepset Prompt Injections, preserving its published train/test split; and
+- Deepset Prompt Injections, preserving its published train/test split as a smoke-test corpus;
+  its adapter's dev/gate bucket is not a near-duplicate-safe ship-decision holdout; and
 - InjecAgent base direct-harm and data-stealing cases, preserving their attack-family structure.
 
 InjecAgent is adapted to the application's reviewer boundaries; this is not a reproduction of the

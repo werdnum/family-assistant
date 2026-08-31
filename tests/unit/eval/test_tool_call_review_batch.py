@@ -235,7 +235,7 @@ async def test_submit_rejects_nonfinite_or_nonpositive_spend_before_mutation(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("status_code", [400, 401])
+@pytest.mark.parametrize("status_code", [400, 401, 429])
 async def test_http_rejection_leaves_chunk_pending_and_retryable(
     private_root: Path, status_code: int
 ) -> None:
@@ -280,6 +280,52 @@ async def test_http_rejection_leaves_chunk_pending_and_retryable(
     )
     assert retried.chunks[0].status == "validating"
     assert retried.chunks[0].error_code is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [408, 409, 500, 503])
+async def test_ambiguous_http_submission_is_permanent(
+    private_root: Path, status_code: int
+) -> None:
+    run_dir = private_root / "runs" / "pilot"
+    prepare_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(status_code, json={"error": "ambiguous response"})
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    batch_client = BatchClient(
+        "https://openrouter.ai/api", "test-only", client=http_client
+    )
+    try:
+        with pytest.raises(BatchError, match="outcome is unknown"):
+            await submit_batch(
+                run_dir,
+                approved_spend_usd=1.0,
+                approve_spend=True,
+                api_key="test-only",
+                client=batch_client,
+            )
+    finally:
+        await http_client.aclose()
+
+    manifest_json = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest_json["chunks"][0]["status"] == "submission_unknown"
+    assert manifest_json["chunks"][0]["error_code"] == "submission_unknown"
+
+    retry_client = _FakeBatchClient()
+    retried = await submit_batch(
+        run_dir,
+        approved_spend_usd=1.0,
+        approve_spend=True,
+        api_key="test-only",
+        client=retry_client,
+    )
+    assert retried.chunks[0].status == "submission_unknown"
+    assert retry_client.submitted == []
 
 
 @pytest.mark.parametrize("value", ["0", "-1", "nan", "inf", "-inf"])

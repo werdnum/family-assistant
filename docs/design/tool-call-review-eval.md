@@ -357,8 +357,10 @@ A tiered roster, by role:
 Adapted cases keep pointers to their upstream id, paired source id, group (author/challenge/template
 family), and license. **Lineage is load-bearing**: the large corpora incorporate one another
 (PromptShield draws on HackAPrompt and Open-Prompt-Injection derivatives; templates recur
-everywhere), so near-duplicates are clustered and source lineage preserved before any dev/gate split
-— otherwise the same attack appears on both sides of the split and the numbers flatter the judge.
+everywhere), so adapters should cluster the families they can identify and preserve source lineage
+before any dev/gate split. This is not a generic near-duplicate guarantee: Deepset's adapter groups
+only exact text after its documented normalization, so its deterministic buckets are smoke-test
+slices and not leak-free ship-decision evidence.
 Provenance is **recorded, not verified**: the build script writes both source ids, the upstream, the
 revision the maintainer fetched, and the license alongside the cases it produces, and the run's
 dataset content hash says which case set a run measured. The adapter, not the corpus, is the

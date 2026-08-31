@@ -63,6 +63,7 @@ _DOCUMENTED_STATUSES = frozenset({
     "cancelling",
     *tuple(_TERMINAL),
 })
+_AMBIGUOUS_HTTP_STATUSES = frozenset({408, 409})
 
 
 class BatchError(RuntimeError):
@@ -381,7 +382,15 @@ class BatchClient:
             json=payload,
         )
         if not 200 <= response.status_code < 300:
-            raise BatchRejectedError(response.status_code)
+            if (
+                400 <= response.status_code < 500
+                and response.status_code not in _AMBIGUOUS_HTTP_STATUSES
+            ):
+                raise BatchRejectedError(response.status_code)
+            raise BatchError(
+                f"Batch API returned HTTP {response.status_code}; "
+                "submission outcome is unknown."
+            )
         try:
             value = response.json()
         except ValueError as exc:

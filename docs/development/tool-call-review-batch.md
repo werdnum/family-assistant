@@ -40,10 +40,11 @@ without an inline `results` list, the manifest leaves the result artifact unset 
 poll fetches and persists the completed result before harvest.
 
 Harvest refuses incomplete batches, item errors, missing IDs, duplicate IDs, extra IDs, malformed
-structured output, verdicts outside a case's allowed space, or a changed request artifact. An HTTP
-rejection (for example, 400 or 401) proves that no batch was accepted: the chunk stays `pending`,
-records `submission_rejected`, and can be retried after the cause is corrected. An ambiguous
-submission outcome is recorded as `submission_unknown` and is never automatically resubmitted,
-because server-side acceptance could otherwise create a duplicate billable batch. The final report
-remains compatible with the normal evaluator; batch trials mark latency as unavailable rather than
-using polling time as a per-request measurement.
+structured output, verdicts outside a case's allowed space, or a changed request artifact. A
+definitive client-side HTTP rejection (a 4xx response other than 408 or 409, including 429) proves
+that no batch was accepted: the chunk stays `pending`, records `submission_rejected`, and can be
+retried after the cause is corrected. HTTP 408/409 and all 5xx responses are ambiguous and recorded
+as `submission_unknown`; they are never automatically resubmitted because server-side acceptance
+could otherwise create a duplicate billable batch. The final report remains compatible with the
+normal evaluator; batch trials mark latency as unavailable rather than using polling time as a
+per-request measurement.
