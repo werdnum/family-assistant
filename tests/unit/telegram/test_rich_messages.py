@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock
 
 import pytest
@@ -149,7 +149,7 @@ async def test_send_rich_message_via_internal_transport() -> None:
     markup = InlineKeyboardMarkup([[InlineKeyboardButton("OK", callback_data="ok")]])
 
     result = await send_rich_message(
-        bot=bot,
+        bot=cast("Any", bot),
         chat_id=12345,
         text="# Report\n| A | B |\n|---|---|\n| 1 | 2 |",
         reply_to_message_id=99,
@@ -178,7 +178,7 @@ async def test_send_rich_message_via_native_bot_method() -> None:
     )
 
     result = await send_rich_message(
-        bot=bot,
+        bot=cast("Any", bot),
         chat_id=54321,
         text="<b>Hello</b>",
         is_html=True,

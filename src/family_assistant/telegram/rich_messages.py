@@ -10,15 +10,14 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
-from telegram import Message
+from telegram import Bot, Message
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 
 if TYPE_CHECKING:
     from telegram import (
-        Bot,
         ForceReply,
         InlineKeyboardMarkup,
         ReplyKeyboardMarkup,
@@ -100,7 +99,7 @@ def should_attempt_rich_message(
 
 
 async def send_rich_message(
-    bot: Bot | object,
+    bot: Bot,
     chat_id: int | str,
     text: str | InputRichMessage | dict[str, object],
     *,
@@ -177,24 +176,31 @@ async def send_rich_message(
         rich_payload = rich_msg.to_dict()
 
     # 2. Check if bot has native send_rich_message (e.g. PTB v23+)
-    if hasattr(bot, "send_rich_message") and callable(bot.send_rich_message):
-        return await bot.send_rich_message(
-            chat_id=chat_id,
-            rich_message=rich_payload,
-            reply_to_message_id=reply_to_message_id,
-            reply_markup=reply_markup,
-            message_thread_id=message_thread_id,
-            disable_notification=disable_notification,
-            protect_content=protect_content,
-            read_timeout=read_timeout,
-            write_timeout=write_timeout,
-            connect_timeout=connect_timeout,
-            pool_timeout=pool_timeout,
-            api_kwargs=api_kwargs,
+    bot_any: Any = bot
+    native_send: Any = getattr(bot_any, "send_rich_message", None)
+    if callable(native_send):
+        res: Any = await cast(
+            "Any",
+            native_send(
+                chat_id=chat_id,
+                rich_message=rich_payload,
+                reply_to_message_id=reply_to_message_id,
+                reply_markup=reply_markup,
+                message_thread_id=message_thread_id,
+                disable_notification=disable_notification,
+                protect_content=protect_content,
+                read_timeout=read_timeout,
+                write_timeout=write_timeout,
+                connect_timeout=connect_timeout,
+                pool_timeout=pool_timeout,
+                api_kwargs=api_kwargs,
+            ),
         )
+        return cast("Message", res)
 
     # 3. Call PTB's _send_message transport layer
-    if hasattr(bot, "_send_message") and callable(bot._send_message):
+    transport_send: Any = getattr(bot_any, "_send_message", None)
+    if callable(transport_send):
         data: dict[str, object] = {
             "chat_id": chat_id,
             "rich_message": rich_payload,
@@ -217,15 +223,18 @@ async def send_rich_message(
         if api_kwargs is not None:
             kwargs["api_kwargs"] = api_kwargs
 
-        result = await bot._send_message(
-            "sendRichMessage",
-            data=data,
-            **kwargs,
+        result: Any = await cast(
+            "Any",
+            transport_send(
+                "sendRichMessage",
+                data=data,
+                **kwargs,
+            ),
         )
         if isinstance(result, Message) or hasattr(result, "message_id"):
-            return result  # type: ignore[return-value]
+            return cast("Message", result)
         if isinstance(result, dict):
-            return Message.de_json(result, bot)  # type: ignore[return-value]
+            return cast("Message", Message.de_json(result, bot))
         raise TelegramError(f"Unexpected response from sendRichMessage: {result!r}")
 
     raise AttributeError(
