@@ -699,9 +699,15 @@ def resolve_originating_request(
     user row, and it qualifies only if its own stored provenance says
     ``trusted_user`` -- an email-intake turn represents the sender-controlled
     body as a user row, so role alone would propagate the attacker's text as
-    trusted intent. When the delegating turn is itself delegated it has no such
-    row, and the request it inherited is passed on unchanged, so a chain of
-    delegations answers to the same human message rather than to nothing.
+    trusted intent.
+
+    Callers pass rows only for a turn a human actually spoke in. A
+    subconversation's own trigger row is a *goal* its parent's model composed,
+    and a clean parent stamps it ``trusted_user``; reading it here would launder
+    model-authored text into the field that claims to be the human request, and
+    into the destination echo that reads that field. A delegated turn therefore
+    contributes no rows, and passes on the request it inherited unchanged, so a
+    chain answers to the same human message or to none.
     """
     messages_module = importlib.import_module("family_assistant.llm.messages")
 
@@ -739,6 +745,7 @@ async def build_delegation_review_trigger(
     definition_taint_metadata: TaintMetadata | None,
     payload_present: bool,
     source_turn_id: str | None,
+    source_is_subconversation: bool,
     source_messages: Sequence[LLMMessage] | None = None,
     inherited: TriggerReviewInput | None = None,
 ) -> TriggerReviewInput:
@@ -750,13 +757,24 @@ async def build_delegation_review_trigger(
     own assembled turn where it has one, otherwise from stored history -- rather
     than snapshotted at hand-off, so the propagated request carries the
     provenance the message actually has now.
+
+    A delegating turn that is *itself* a subconversation contributes no rows: it
+    holds no human message, only a goal its own parent composed. Such a chain
+    carries the request forward only through ``inherited``, which the live
+    trigger supplies where there is one and a worker-claimed run has not got --
+    so a nested worker-run delegation propagates nothing, per the design doc's
+    accepted residual.
     """
-    messages = source_messages
-    if messages is None:
+    messages: Sequence[LLMMessage] = ()
+    if not source_is_subconversation:
         messages = (
-            await db.message_history.get_by_turn_id(source_turn_id)
-            if source_turn_id is not None
-            else []
+            source_messages
+            if source_messages is not None
+            else (
+                await db.message_history.get_by_turn_id(source_turn_id)
+                if source_turn_id is not None
+                else []
+            )
         )
     originating = resolve_originating_request(messages, inherited=inherited)
     return TriggerReviewInput(

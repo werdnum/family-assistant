@@ -194,7 +194,8 @@ The reviewer's context is a typed structure assembled deterministically:
   boundary — synchronous, worker-run, and the completion wake — routes through, so a new boundary
   gets the behaviour by construction rather than by remembering to. The rows are read at
   trigger-build time rather than snapshotted at hand-off, so the propagated request carries the
-  provenance the message actually has.
+  provenance the message actually has, and only for a turn a human actually spoke in — see the
+  nested-delegation residual below for why a subconversation's own rows are withheld.
 
   Missing authoring provenance also affects the runtime taint state, not just what the reviewer can
   render. At present **every unattended callback** enters as `unknown_external`, including event
@@ -623,14 +624,18 @@ When this design is working:
   exemption.** The disclosed call cannot causally contain a result that has not returned. Once the
   read returns, its recorded scope disables the exemption for later disclosures. This avoids a
   turn-wide pending-read reservation mechanism solely for an impossible data dependency.
-- **A nested worker-run delegation propagates no originating request.** The inheritance a chain
-  needs travels on the delegating turn's live trigger, which a run claimed later by a worker does
-  not have; it reads the delegating turn's stored rows instead, and a subconversation's rows are all
-  tainted. So a second-level *asynchronous* delegation reviews as it did before propagation existed
-  — stubs, with ambiguity taking the deferral path — while first-level and synchronous chains carry
-  the request. Closing it means either persisting the request with the run or resolving the parent
-  chain at claim time, and neither is worth the storage or the recursion for a rare shape whose
-  fallback is the previous, safe behaviour.
+- **A nested worker-run delegation propagates no originating request.** A subconversation holds no
+  human message — only a goal its parent's model composed — so its rows are never read for
+  originating intent. (A clean parent stamps that goal row `trusted_user`, which is exactly why the
+  rule is "not a human's turn", not "not trusted": reading it would launder model-authored text,
+  including any recipient the model added, into the field that claims to be the human request and
+  into the destination echo that reads it.) A chain therefore carries the request forward only on
+  the delegating turn's live trigger, which a run claimed later by a worker does not have. So a
+  second-level *asynchronous* delegation reviews as it did before propagation existed — stubs, with
+  ambiguity taking the deferral path — while synchronous chains and every first-level delegation
+  carry the request. Closing it means either persisting the request with the run or resolving the
+  parent chain at claim time, and neither is worth the storage or the recursion for a rare shape
+  whose fallback is the previous, safe behaviour.
 - **Shadow-then-enforce means a window where verdicts are recorded but nothing blocks.** Identical
   to today's posture; the window ends at M5.
 

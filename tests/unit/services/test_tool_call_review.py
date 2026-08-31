@@ -45,6 +45,7 @@ from family_assistant.services.tool_call_review import (
     TriggerReviewInput,
     assemble_browser_action_review_messages,
     assemble_tool_call_review_messages,
+    build_delegation_review_trigger,
     compute_trusted_destination_echo,
     resolve_originating_request,
 )
@@ -55,6 +56,7 @@ if TYPE_CHECKING:
 
     from family_assistant.llm import LLMInterface
     from family_assistant.security.taint import TaintMetadata
+    from family_assistant.storage.database import Database
     from family_assistant.tools.types import ToolDefinition
 
 
@@ -1186,3 +1188,97 @@ def test_inherited_originating_request_must_itself_be_trusted() -> None:
     )
 
     assert resolved is None
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_a_delegated_turns_own_goal_row_is_never_the_originating_request() -> (
+    None
+):
+    """A clean parent stamps its subconversation's trigger row trusted_user.
+
+    That row holds a goal the parent's model composed. Resolving it as the
+    originating request would launder model-authored text -- including any
+    recipient the model added -- into the field that claims to be the human
+    request and into the destination echo that reads it.
+    """
+    trusted = TurnTaintState.empty().to_metadata()
+    delegated_rows = [
+        UserMessage(content="MODEL COMPOSED GOAL", taint_metadata=trusted)
+    ]
+    db = _FakeMessageHistoryDatabase(delegated_rows)
+
+    from_subconversation = await build_delegation_review_trigger(
+        cast("Database", db),
+        trigger_type="delegation_request",
+        active_request_role="user",
+        definition="second-level goal",
+        definition_taint_metadata=trusted,
+        payload_present=False,
+        source_turn_id="parent_turn",
+        source_is_subconversation=True,
+    )
+
+    assert from_subconversation.originating_request is None
+    assert db.turn_ids_read == []
+
+    from_main_conversation = await build_delegation_review_trigger(
+        cast("Database", db),
+        trigger_type="delegation_request",
+        active_request_role="user",
+        definition="first-level goal",
+        definition_taint_metadata=trusted,
+        payload_present=False,
+        source_turn_id="parent_turn",
+        source_is_subconversation=False,
+    )
+
+    assert from_main_conversation.originating_request == "MODEL COMPOSED GOAL"
+    assert db.turn_ids_read == ["parent_turn"]
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_a_delegated_chain_carries_the_inherited_request_forward() -> None:
+    trusted = TurnTaintState.empty().to_metadata()
+    db = _FakeMessageHistoryDatabase([
+        UserMessage(content="MODEL COMPOSED GOAL", taint_metadata=trusted)
+    ])
+
+    trigger = await build_delegation_review_trigger(
+        cast("Database", db),
+        trigger_type="delegation_request",
+        active_request_role="user",
+        definition="second-level goal",
+        definition_taint_metadata=trusted,
+        payload_present=False,
+        source_turn_id="parent_turn",
+        source_is_subconversation=True,
+        inherited=TriggerReviewInput(
+            trigger_type="delegation_request",
+            active_request_role="user",
+            payload_present=False,
+            originating_request="THE HUMAN REQUEST",
+            originating_request_taint_metadata=trusted,
+        ),
+    )
+
+    assert trigger.originating_request == "THE HUMAN REQUEST"
+
+
+class _FakeMessageHistory:
+    def __init__(self, rows: Sequence[LLMMessage], read_log: list[str]) -> None:
+        self._rows = rows
+        self._read_log = read_log
+
+    async def get_by_turn_id(self, turn_id: str) -> Sequence[LLMMessage]:
+        self._read_log.append(turn_id)
+        return self._rows
+
+
+class _FakeMessageHistoryDatabase:
+    """The only database surface ``build_delegation_review_trigger`` touches."""
+
+    def __init__(self, rows: Sequence[LLMMessage]) -> None:
+        self.turn_ids_read: list[str] = []
+        self.message_history = _FakeMessageHistory(rows, self.turn_ids_read)

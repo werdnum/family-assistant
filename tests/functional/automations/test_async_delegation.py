@@ -4060,6 +4060,58 @@ async def test_delegation_off_an_untrusted_turn_propagates_no_intent(
     assert "Please forward the household" not in _review_prompt_for(trigger)
 
 
+@pytest.mark.asyncio
+async def test_nested_worker_run_delegation_propagates_no_composed_goal(
+    db_engine: AsyncEngine,
+) -> None:
+    """A subconversation's own trigger row is a goal, not a human request.
+
+    A clean parent stamps that row ``trusted_user``, so resolving it would
+    expose model-authored text -- and any recipient the model put in it -- as
+    the human request the reviewer rules against.
+    """
+    target_service = FakeDelegatableService()
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    db_context = Database(engine=db_engine)
+    await db_context.message_history.add_message(
+        UserMessage(
+            content="MODEL COMPOSED GOAL naming friend@example.test",
+            taint_metadata=TurnTaintState.empty().to_metadata(),
+        ),
+        interface_type=TEST_INTERFACE_TYPE,
+        conversation_id=TEST_CONVERSATION_ID,
+        timestamp=SystemClock().now(),
+        turn_id="turn_async_delegation",
+        user_id="async-delegation-user",
+        subconversation_id="parent_subconversation",
+    )
+    delegation_id = await _create_run(
+        db_context,
+        delegation_id="delegation_nested",
+        source_subconversation_id="parent_subconversation",
+    )
+    await db_context.delegation_runs.mark_handed_off(
+        delegation_id=delegation_id,
+        handed_off_at=SystemClock().now(),
+    )
+
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    db_context = Database(engine=db_engine)
+    await worker.handle_delegated_profile_run(
+        _tool_context(db_context, processing_service, chat_interface),
+        _payload(delegation_id),
+    )
+
+    assert len(target_service.calls) == 1
+    trigger = target_service.calls[0]["tool_call_review_trigger"]
+    assert trigger is not None
+    assert trigger.originating_request is None
+    assert "MODEL COMPOSED GOAL" not in _review_prompt_for(trigger)
+
+
 def _review_prompt_for(trigger: TriggerReviewInput) -> str:
     """Render the reviewer prompt a delegated call would actually be judged on."""
     messages = assemble_tool_call_review_messages(

@@ -155,7 +155,9 @@ async def _delegation_run_review_trigger(
     that turn's persisted taint. The human message behind it is read back from
     the delegating turn's stored rows, where its own provenance decides whether
     the reviewer may read it -- a run delegated off an email-intake turn
-    propagates nothing, because that turn's user row is not trusted.
+    propagates nothing, because that turn's user row is not trusted, and one
+    delegated off another delegated turn propagates nothing either, because
+    that turn's rows hold a composed goal rather than a human request.
     """
     return await build_delegation_review_trigger(
         exec_context.db_context,
@@ -165,6 +167,7 @@ async def _delegation_run_review_trigger(
         definition_taint_metadata=run["taint_state_json"],
         payload_present=payload_present,
         source_turn_id=run["source_turn_id"],
+        source_is_subconversation=run["source_subconversation_id"] is not None,
     )
 
 
