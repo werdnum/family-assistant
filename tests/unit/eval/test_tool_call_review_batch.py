@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, cast
 import httpx
 import pytest
 
+import scripts.tool_call_review_batch as batch_cli
 from family_assistant.eval import private_paths
 from family_assistant.eval.tool_call_review.batch import (
     BatchClient,
@@ -172,6 +173,120 @@ class _UnknownOutcomeClient(_FakeBatchClient):
     ) -> dict[str, object]:
         self.submitted.append(payload or {})
         raise httpx.ReadTimeout("test timeout")
+
+
+class _MalformedStatusClient(_FakeBatchClient):
+    def __init__(self, status: object) -> None:
+        super().__init__()
+        self.status = status
+
+    async def request(
+        self, method: str, path: str, payload: dict[str, object] | None = None
+    ) -> dict[str, object]:
+        if method == "POST":
+            return {"id": "batch-1", "status": self.status}
+        assert method == "GET"
+        return {"id": path.rsplit("/", 1)[1], "status": self.status}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status", [None, "submitted", "not-a-status", {"state": "done"}]
+)
+async def test_batch_status_must_be_documented_and_well_formed(
+    private_root: Path, status: object
+) -> None:
+    run_dir = private_root / "runs" / "pilot"
+    prepare_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
+    )
+
+    with pytest.raises(BatchError, match="missing or unknown batch status"):
+        await submit_batch(
+            run_dir,
+            approved_spend_usd=1.0,
+            approve_spend=True,
+            api_key="test-only",
+            client=_MalformedStatusClient(status),
+        )
+
+    manifest_json = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest_json["chunks"][0]["status"] == "submission_unknown"
+    assert manifest_json["chunks"][0]["error_code"] == "invalid_status"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status", [None, "submitted", "not-a-status", {"state": "done"}]
+)
+async def test_status_poll_rejects_malformed_remote_lifecycle_status(
+    private_root: Path, status: object
+) -> None:
+    run_dir = private_root / "runs" / "pilot"
+    prepare_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
+    )
+    submit_client = _FakeBatchClient()
+    await submit_batch(
+        run_dir,
+        approved_spend_usd=1.0,
+        approve_spend=True,
+        api_key="test-only",
+        client=submit_client,
+    )
+    malformed_client = _MalformedStatusClient(status)
+    malformed_client.submitted = submit_client.submitted
+
+    with pytest.raises(BatchError, match="missing or unknown batch status"):
+        await update_batch_status(run_dir, api_key="test-only", client=malformed_client)
+
+    persisted = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert persisted["chunks"][0]["status"] == "validating"
+    assert persisted["chunks"][0]["status"] != "in_progress"
+
+
+@pytest.mark.asyncio
+async def test_status_poll_accepts_cancelling_lifecycle_status(
+    private_root: Path,
+) -> None:
+    run_dir = private_root / "runs" / "pilot"
+    prepare_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
+    )
+    submit_client = _FakeBatchClient()
+    await submit_batch(
+        run_dir,
+        approved_spend_usd=1.0,
+        approve_spend=True,
+        api_key="test-only",
+        client=submit_client,
+    )
+    cancelling_client = _MalformedStatusClient("cancelling")
+    cancelling_client.submitted = submit_client.submitted
+
+    manifest = await update_batch_status(
+        run_dir, api_key="test-only", client=cancelling_client
+    )
+
+    assert manifest.chunks[0].status == "cancelling"
+
+
+@pytest.mark.parametrize(
+    "option,value",
+    [
+        ("--interval-seconds", "0"),
+        ("--interval-seconds", "nan"),
+        ("--interval-seconds", "inf"),
+        ("--max-wait-seconds", "-1"),
+        ("--max-wait-seconds", "nan"),
+        ("--max-wait-seconds", "inf"),
+    ],
+)
+def test_poll_timing_arguments_must_be_finite_and_in_range(
+    option: str, value: str
+) -> None:
+    with pytest.raises(SystemExit):
+        batch_cli._parser().parse_args(["poll", "--run-dir", "run", option, value])
 
 
 @pytest.mark.asyncio

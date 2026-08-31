@@ -32,7 +32,9 @@ is not an enforceable provider-side spend cap. OpenRouter usage/cost fields are 
 metadata and may be absent. The manifest records dataset/model/provider, request IDs, request
 SHA-256, remote batch IDs, statuses, optional usage, and approval metadata; it does not record raw
 event streams. `status` is a single poll and `poll` repeats it. Polling exits unsuccessfully for
-failed, expired, cancelled, or unknown terminal states.
+failed, expired, cancelled, or unknown terminal states. Remote status responses must contain one of
+OpenRouter's documented lifecycle statuses (`validating`, `in_progress`, `finalizing`, `cancelling`,
+`completed`, `failed`, `expired`, or `cancelled`); missing or unknown statuses fail closed.
 
 Harvest refuses incomplete batches, item errors, missing IDs, duplicate IDs, extra IDs, malformed
 structured output, verdicts outside a case's allowed space, or a changed request artifact. An

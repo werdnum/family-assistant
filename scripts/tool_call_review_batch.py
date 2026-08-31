@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import math
 import sys
+import time
 from pathlib import Path
 
 from family_assistant.eval.tool_call_review import (
@@ -27,6 +29,20 @@ from family_assistant.eval.tool_call_review.registry_snapshot import (
     RegistrySnapshotError,
     load_registry_snapshot,
 )
+
+
+def _finite_positive(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise argparse.ArgumentTypeError("must be finite and greater than zero")
+    return parsed
+
+
+def _finite_nonnegative(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed) or parsed < 0:
+        raise argparse.ArgumentTypeError("must be finite and nonnegative")
+    return parsed
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -60,8 +76,10 @@ def _parser() -> argparse.ArgumentParser:
     ):
         command = commands.add_parser(name, help=help_text)
         command.add_argument("--run-dir", required=True, type=Path)
-        command.add_argument("--interval-seconds", type=float, default=30.0)
-        command.add_argument("--max-wait-seconds", type=float, default=86400.0)
+        command.add_argument("--interval-seconds", type=_finite_positive, default=30.0)
+        command.add_argument(
+            "--max-wait-seconds", type=_finite_nonnegative, default=86400.0
+        )
 
     harvest = commands.add_parser(
         "harvest", help="Reconcile completed results into EvalReport."
@@ -130,8 +148,12 @@ async def _main(args: argparse.Namespace) -> int:
         print(" ".join(f"{chunk.index}:{chunk.status}" for chunk in manifest.chunks))
         return 0
     if args.command == "poll":
-        elapsed = 0.0
-        while elapsed <= args.max_wait_seconds:
+        if not math.isfinite(args.interval_seconds) or args.interval_seconds <= 0:
+            raise BatchError("--interval-seconds must be finite and greater than zero.")
+        if not math.isfinite(args.max_wait_seconds) or args.max_wait_seconds < 0:
+            raise BatchError("--max-wait-seconds must be finite and nonnegative.")
+        deadline = time.monotonic() + args.max_wait_seconds
+        while True:
             manifest = await update_batch_status(args.run_dir)
             _ensure_terminal_success(manifest)
             if all(
@@ -145,9 +167,12 @@ async def _main(args: argparse.Namespace) -> int:
                     )
                 )
                 return 0
-            await asyncio.sleep(args.interval_seconds)
-            elapsed += args.interval_seconds
-        raise BatchError("Polling deadline elapsed before all chunks became terminal.")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise BatchError(
+                    "Polling deadline elapsed before all chunks became terminal."
+                )
+            await asyncio.sleep(min(args.interval_seconds, remaining))
     report = harvest_batch(args.run_dir)
     print(report.to_text_summary())
     return 1 if report.observed_allows() else 0

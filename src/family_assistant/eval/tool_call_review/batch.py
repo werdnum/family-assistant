@@ -54,10 +54,23 @@ DEFAULT_BATCH_SIZE = 500
 DEFAULT_MAX_TOKENS = 512
 DEFAULT_API_BASE_URL = "https://openrouter.ai/api"
 _TERMINAL = frozenset({"completed", "failed", "expired", "cancelled"})
+_DOCUMENTED_STATUSES = frozenset({
+    "validating",
+    "in_progress",
+    "finalizing",
+    "cancelling",
+    *tuple(_TERMINAL),
+})
 
 
 class BatchError(RuntimeError):
     """A batch artifact or remote response cannot be reconciled safely."""
+
+
+def _validated_status(value: object) -> str:
+    if not isinstance(value, str) or value not in _DOCUMENTED_STATUSES:
+        raise BatchError("Batch API returned a missing or unknown batch status.")
+    return value
 
 
 class BatchChunk(BaseModel):
@@ -430,9 +443,15 @@ async def submit_batch(
                 )
                 raise BatchError("Batch API response did not contain a batch id.")
             chunk.batch_id = batch_id
-            chunk.status = str(result.get("status", "submitted"))
-            if chunk.status not in {"validating", "in_progress", "submitted"}:
-                chunk.status = "submitted"
+            try:
+                chunk.status = _validated_status(result.get("status"))
+            except BatchError:
+                chunk.status = "submission_unknown"
+                chunk.error_code = "invalid_status"
+                _write_json(
+                    directory / "manifest.json", manifest.model_dump(mode="json")
+                )
+                raise
             _write_json(directory / "manifest.json", manifest.model_dump(mode="json"))
         return manifest
     finally:
@@ -459,7 +478,7 @@ async def update_batch_status(
             }:
                 continue
             result = await active.request("GET", f"/beta/batches/{chunk.batch_id}")
-            chunk.status = str(result.get("status", "unknown"))
+            chunk.status = _validated_status(result.get("status"))
             usage = result.get("usage")
             chunk.usage = usage if isinstance(usage, dict) else None
             costs = [
@@ -474,8 +493,6 @@ async def update_batch_status(
                 _write_json(directory / chunk.result_file, result)
             elif chunk.status in _TERMINAL:
                 chunk.error_code = "remote_batch_failed"
-            else:
-                chunk.status = "in_progress"
             _write_json(directory / "manifest.json", manifest.model_dump(mode="json"))
         return manifest
     finally:
