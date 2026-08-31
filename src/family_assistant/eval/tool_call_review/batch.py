@@ -44,6 +44,7 @@ __all__ = [
     "BATCH_SCHEMA_VERSION",
     "BatchError",
     "BatchManifest",
+    "BatchRejectedError",
     "harvest_batch",
     "prepare_batch",
     "submit_batch",
@@ -66,6 +67,14 @@ _DOCUMENTED_STATUSES = frozenset({
 
 class BatchError(RuntimeError):
     """A batch artifact or remote response cannot be reconciled safely."""
+
+
+class BatchRejectedError(BatchError):
+    """The provider returned an HTTP response rejecting the request."""
+
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+        super().__init__(f"Batch API rejected request with HTTP {status_code}.")
 
 
 def _validated_status(value: object) -> str:
@@ -372,7 +381,7 @@ class BatchClient:
             json=payload,
         )
         if not 200 <= response.status_code < 300:
-            raise BatchError(f"Batch API returned HTTP {response.status_code}.")
+            raise BatchRejectedError(response.status_code)
         try:
             value = response.json()
         except ValueError as exc:
@@ -423,6 +432,14 @@ async def submit_batch(
             }
             try:
                 result = await active.request("POST", "/beta/batches", payload)
+            except BatchRejectedError:
+                chunk.status = "pending"
+                chunk.batch_id = None
+                chunk.error_code = "submission_rejected"
+                _write_json(
+                    directory / "manifest.json", manifest.model_dump(mode="json")
+                )
+                raise
             except asyncio.CancelledError:
                 chunk.status = "submission_unknown"
                 chunk.error_code = "submission_unknown"
@@ -457,6 +474,7 @@ async def submit_batch(
                     directory / "manifest.json", manifest.model_dump(mode="json")
                 )
                 raise
+            chunk.error_code = None
             if chunk.status == "completed" and isinstance(result.get("results"), list):
                 chunk.result_file = f"batch-result-{chunk.index}.json"
                 _write_json(directory / chunk.result_file, result)

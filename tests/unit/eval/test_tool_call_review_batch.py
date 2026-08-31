@@ -14,6 +14,7 @@ from family_assistant.eval import private_paths
 from family_assistant.eval.tool_call_review.batch import (
     BatchClient,
     BatchError,
+    BatchRejectedError,
     harvest_batch,
     prepare_batch,
     submit_batch,
@@ -231,6 +232,54 @@ async def test_submit_rejects_nonfinite_or_nonpositive_spend_before_mutation(
     manifest_json = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest_json["spend_approved"] is False
     assert manifest_json["approved_spend_usd"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [400, 401])
+async def test_http_rejection_leaves_chunk_pending_and_retryable(
+    private_root: Path, status_code: int
+) -> None:
+    run_dir = private_root / "runs" / "pilot"
+    prepare_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(status_code, json={"error": "request rejected"})
+
+    transport = httpx.MockTransport(handler)
+    http_client = httpx.AsyncClient(transport=transport)
+    batch_client = BatchClient(
+        "https://openrouter.ai/api", "test-only", client=http_client
+    )
+    try:
+        with pytest.raises(BatchRejectedError, match=f"HTTP {status_code}"):
+            await submit_batch(
+                run_dir,
+                approved_spend_usd=1.0,
+                approve_spend=True,
+                api_key="test-only",
+                client=batch_client,
+            )
+    finally:
+        await http_client.aclose()
+
+    manifest_json = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    chunk = manifest_json["chunks"][0]
+    assert chunk["status"] == "pending"
+    assert chunk["batch_id"] is None
+    assert chunk["error_code"] == "submission_rejected"
+
+    retried = await submit_batch(
+        run_dir,
+        approved_spend_usd=1.0,
+        approve_spend=True,
+        api_key="test-only",
+        client=_FakeBatchClient(),
+    )
+    assert retried.chunks[0].status == "validating"
+    assert retried.chunks[0].error_code is None
 
 
 @pytest.mark.parametrize("value", ["0", "-1", "nan", "inf", "-inf"])
