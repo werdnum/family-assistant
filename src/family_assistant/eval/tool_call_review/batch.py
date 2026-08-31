@@ -519,9 +519,10 @@ async def update_batch_status(
     active = client or BatchClient(manifest.api_base_url, key)
     try:
         for index, chunk in enumerate(manifest.chunks):
-            if chunk.batch_id is None or (
-                chunk.status in _TERMINAL | {"submission_unknown"}
-                and not (chunk.status == "completed" and chunk.result_file is None)
+            if chunk.batch_id is None:
+                continue
+            if chunk.status in _TERMINAL and not (
+                chunk.status == "completed" and chunk.result_file is None
             ):
                 continue
             result = await active.request("GET", f"/beta/batches/{chunk.batch_id}")

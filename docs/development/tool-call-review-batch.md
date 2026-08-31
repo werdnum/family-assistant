@@ -37,9 +37,9 @@ Remote status responses must contain one of OpenRouter's documented lifecycle st
 (`validating`, `in_progress`, `finalizing`, `cancelling`, `completed`, `failed`, `expired`, or
 `cancelled`); missing or unknown statuses fail closed. If submission already reports `completed`
 without an inline `results` list, the manifest leaves the result artifact unset so the next `status`
-poll fetches and persists the completed result before harvest.
-Polling also fails immediately when any chunk is still `pending` without a provider batch ID; run
-`submit` (or retry a definitive rejected submission) before polling.
+poll fetches and persists the completed result before harvest. Polling also fails immediately when
+any chunk is still `pending` without a provider batch ID; run `submit` (or retry a definitive
+rejected submission) before polling.
 
 Harvest refuses incomplete batches, item errors, missing IDs, duplicate IDs, extra IDs, malformed
 structured output, verdicts outside a case's allowed space, or a changed request artifact. A
@@ -50,3 +50,7 @@ as `submission_unknown`; they are never automatically resubmitted because server
 could otherwise create a duplicate billable batch. The final report remains compatible with the
 normal evaluator; batch trials mark latency as unavailable rather than using polling time as a
 per-request measurement.
+
+If an ambiguous submission response included a batch ID, `status` can still poll that ID and
+reconcile the remote batch; an ambiguous response without an ID remains unpollable and must not be
+retried automatically.

@@ -83,6 +83,17 @@ class _CompletedOnSubmitClient(_FakeBatchClient):
         return await super().request(method, path, payload)
 
 
+class _UnknownStatusOnSubmitClient(_FakeBatchClient):
+    async def request(
+        self, method: str, path: str, payload: dict[str, object] | None = None
+    ) -> dict[str, object]:
+        if method == "POST":
+            assert payload is not None
+            self.submitted.append(payload)
+            return {"id": "batch-1"}
+        return await super().request(method, path, payload)
+
+
 @pytest.fixture
 def private_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     root = tmp_path / "repo"
@@ -203,6 +214,35 @@ async def test_completed_submit_without_results_is_fetched_by_status(
     assert updated.chunks[0].result_file == "batch-result-0.json"
     report = harvest_batch(run_dir)
     assert len(report.trials) == 19
+
+
+@pytest.mark.asyncio
+async def test_unknown_submission_with_batch_id_can_be_reconciled_by_status(
+    private_root: Path,
+) -> None:
+    run_dir = private_root / "runs" / "pilot"
+    prepare_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
+    )
+    fake = _UnknownStatusOnSubmitClient()
+
+    with pytest.raises(BatchError, match="missing or unknown batch status"):
+        await submit_batch(
+            run_dir,
+            approved_spend_usd=1.0,
+            approve_spend=True,
+            api_key="test-only",
+            client=fake,
+        )
+
+    persisted = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert persisted["chunks"][0]["status"] == "submission_unknown"
+    assert persisted["chunks"][0]["batch_id"] == "batch-1"
+
+    updated = await update_batch_status(run_dir, api_key="test-only", client=fake)
+
+    assert updated.chunks[0].status == "completed"
+    assert updated.chunks[0].result_file == "batch-result-0.json"
 
 
 @pytest.mark.asyncio
@@ -371,6 +411,13 @@ async def test_ambiguous_http_submission_is_permanent(
     )
     assert retried.chunks[0].status == "submission_unknown"
     assert retry_client.submitted == []
+
+    status_client = _FakeBatchClient()
+    unchanged = await update_batch_status(
+        run_dir, api_key="test-only", client=status_client
+    )
+    assert unchanged.chunks[0].status == "submission_unknown"
+    assert status_client.submitted == []
 
 
 @pytest.mark.parametrize("value", ["0", "-1", "nan", "inf", "-inf"])
