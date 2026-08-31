@@ -74,6 +74,21 @@ page has no such row the slug is the only thing left, so that entry is written w
 `"id_source": "url-slug (no documented Model code row)"` — treat those ids as unverified against the
 API until a real call confirms them, rather than as equivalent to a documented code.
 
+### Review-eval public corpus scripts
+
+`fetch_review_eval_corpora.sh` fetches pinned Deepset Prompt Injections and InjecAgent source files
+into `.review-eval-local/upstream/`, then records revisions and SHA-256 checksums. It requires Git,
+Git LFS, and `shasum`; it refuses an existing output tree and publishes a fully staged fetch
+atomically. If a fetch fails, fix the reported prerequisite or network/repository error and rerun it
+with no pre-created `upstream/` directory.
+
+`build_public_corpus_cases.py` turns one fetched source into schema-validated browser-ablation cases
+under a fresh `.review-eval-local/public/<corpus>/` directory. Use `--evaluation-split dev` for
+iteration and `--evaluation-split gate` for held-out evidence; InjecAgent additionally supports
+`--injecagent-variants base|enhanced|both`. The command refuses every existing output path,
+validates the staged cases through the normal loader, and atomically publishes cases plus
+provenance.
+
 ## Adding New Scripts
 
 Development and deployment scripts go in `scripts/`; container build/run tooling goes in
