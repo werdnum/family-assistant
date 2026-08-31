@@ -115,6 +115,14 @@ give rare scenarios ideal behavior when reasonable behavior suffices.
 - **Treat machinery-edge-case findings as a design signal.** When review keeps finding new edge
   cases inside defensive machinery rather than in real user-facing behavior, step back and simplify
   or centralize the design. Do not patch each machinery edge case with more state.
+- **Challenge unrequested promises before demanding proof.** If the author volunteered a guarantee,
+  coverage claim, or attestation that the requested outcome does not require, first ask whether the
+  claim should be withdrawn or narrowed. Do not demand evaluators, evidence ledgers, signatures, or
+  enforcement machinery merely to rescue an unnecessary promise.
+- **Track finding lineage on rereview.** Distinguish a defect in the original change from a defect
+  in code added solely for earlier feedback. When the latter would require another defensive layer,
+  treat that as a scope checkpoint: recommend deletion, narrowing, reuse, or a bounded residual, and
+  require the decision owner's approval before prescribing an expanded design.
 - **Machinery vs. a sentence.** When the honest resolution is to document an accepted residual
   behavior, prefer requiring that documentation over requiring new synchronization, classification,
   or plumbing. A *silent* gap is a finding; a documented, reasoned acceptance is not.

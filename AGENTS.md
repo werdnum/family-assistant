@@ -346,6 +346,15 @@ least-privilege access, input validation, and defense in depth.
   reasonable behaviour suffices; that trades disproportionate complexity for negligible benefit and
   tends to spawn the machinery-edge-case spiral (see the cost/benefit gate in
   `REVIEW_GUIDELINES.md`).
+- **Withdraw unrequested promises before defending them.** Do not invent guarantees, coverage
+  claims, or attestations the user did not request and then add machinery to make them true. If
+  review shows such a promise cannot be justified, narrow or remove the promise first; reviewers
+  must question whether the promise belongs, not only whether it is proven.
+- **Stop review-fix loops at the scope boundary.** On rereview, distinguish defects in the original
+  change from defects introduced by earlier feedback. If repairing review-added code would require
+  another layer of state, validation, attestation, retries, or lifecycle machinery, prefer deletion,
+  narrowing, reuse of an existing chokepoint, or an accepted bounded residual unless the user
+  explicitly authorizes the expanded design.
 - **Design docs are approach-level documents.** When review surfaces an edge case in a design doc,
   respond by increasing altitude — restate the rule so the general case covers it — rather than
   appending a paragraph for that case. Defer construction detail (field names, wire formats,
