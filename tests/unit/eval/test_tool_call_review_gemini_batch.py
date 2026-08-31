@@ -164,6 +164,24 @@ async def _complete_fake_batch(
     return run_dir, manifest, client
 
 
+async def _prepare_pending_upload_failure(
+    private_root: Path,
+) -> tuple[Path, _FakeClient]:
+    run_dir = private_root / "runs" / "native"
+    prepare_gemini_batch(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
+    )
+    client = _FakeClient()
+    client.aio.files.upload_error = RuntimeError("temporary upload failure")
+
+    with pytest.raises(GeminiBatchError, match="upload failed"):
+        await submit_gemini_batch(
+            run_dir, approved_spend_usd=1.0, approve_spend=True, client=client
+        )
+
+    return run_dir, client
+
+
 def test_prepare_writes_native_wire_contract(private_root: Path) -> None:
     manifest = prepare_gemini_batch(
         ["src/family_assistant/eval/tool_call_review/datasets/manual"],
@@ -259,25 +277,18 @@ async def test_fake_harvest_records_usage(private_root: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_upload_failure_is_pending_and_retryable(private_root: Path) -> None:
-    run_dir = private_root / "runs" / "native"
-    prepare_gemini_batch(
-        ["src/family_assistant/eval/tool_call_review/datasets/manual"], run_dir
-    )
-    client = _FakeClient()
-    client.aio.files.upload_error = RuntimeError("temporary upload failure")
-
-    with pytest.raises(GeminiBatchError, match="upload failed"):
-        await submit_gemini_batch(
-            run_dir, approved_spend_usd=1.0, approve_spend=True, client=client
-        )
-
+async def test_upload_failure_is_pending(private_root: Path) -> None:
+    run_dir, client = await _prepare_pending_upload_failure(private_root)
     payload = json.loads((run_dir / "manifest.json").read_text())
     assert payload["chunks"][0]["status"] == "pending"
     assert payload["chunks"][0]["error_code"] == "upload_failed"
     assert payload["chunks"][0]["input_file_name"] is None
     assert client.aio.batches.create_calls == []
 
+
+@pytest.mark.asyncio
+async def test_pending_upload_failure_is_retryable(private_root: Path) -> None:
+    run_dir, client = await _prepare_pending_upload_failure(private_root)
     client.aio.files.upload_error = None
     submitted = await submit_gemini_batch(
         run_dir, approved_spend_usd=1.0, approve_spend=True, client=client
