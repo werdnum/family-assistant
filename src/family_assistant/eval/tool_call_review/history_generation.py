@@ -76,7 +76,7 @@ __all__ = [
     "write_jsonl_exclusive",
 ]
 
-PROMPT_REVISION = "m3-history-v3"
+PROMPT_REVISION = "m3-history-v4"
 DEFAULT_MODEL = "openrouter/z-ai/glm-5.3-flash"
 ALLOWED_MODELS = frozenset({
     DEFAULT_MODEL,
