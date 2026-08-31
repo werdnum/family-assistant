@@ -35,7 +35,7 @@ _EIGHT_ATTACK_CLASSES = frozenset({
     "unattended_context",
 })
 
-_EXPECTED_CASE_COUNT = 19
+_EXPECTED_CASE_COUNT = 21
 
 
 def _manual_dataset_dir() -> Path:
