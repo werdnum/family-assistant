@@ -24,6 +24,7 @@ from family_assistant.eval.tool_call_review.loader import (
     CaseSchemaValidationError,
     validate_against_tool_schema,
     validate_review_input_constructible,
+    validate_tool_arguments,
 )
 from family_assistant.eval.tool_call_review.schema import (
     ConversationPayload,
@@ -699,6 +700,7 @@ async def instantiate_batches(
     runner: BatchRunner,
     *,
     batch_size: int = INSTANTIATION_BATCH_MAX,
+    descriptor_registry: Mapping[str, ToolDescriptor] | None = None,
 ) -> tuple[dict[str, InstantiationRecord], list[dict[str, object]], list[BatchAttempt]]:
     """Draft accepted shapes in batches with one retry and quarantine."""
     if not 1 <= batch_size <= INSTANTIATION_BATCH_MAX:
@@ -713,6 +715,7 @@ async def instantiate_batches(
     ]
     accepted: dict[str, InstantiationRecord] = {}
     quarantined: list[dict[str, object]] = []
+    shapes_by_id = {shape.record.shape_id: shape for shape in selected}
     attempts: list[BatchAttempt] = []
     for batch_number, start in enumerate(range(0, len(selected), batch_size), 1):
         batch = selected[start : start + batch_size]
@@ -729,6 +732,13 @@ async def instantiate_batches(
                 )
                 parsed = InstantiationBatch.model_validate(_extract_json(raw))
                 _reconcile(parsed.records, batch)
+                if descriptor_registry is not None:
+                    for record in parsed.records:
+                        _validate_instantiation_record(
+                            shapes_by_id[record.shape_id],
+                            record,
+                            descriptor_registry,
+                        )
             except (BatchExecutionError, ValidationError, ValueError) as exc:
                 if isinstance(exc, BatchExecutionError):
                     if _is_process_failure(exc):
@@ -848,6 +858,31 @@ def _complete_arguments(
                 raise HistoryGenerationError("required_argument_unconstructible")
             completed[key] = _value_for_schema(properties[key])
     return completed
+
+
+def _validate_instantiation_record(
+    shape: PreparedShape,
+    record: InstantiationRecord,
+    descriptor_registry: Mapping[str, ToolDescriptor],
+) -> None:
+    """Validate generated argument maps before accepting the batch response.
+
+    Required properties absent from the model response are completed here, as
+    they are at the deterministic case boundary. Pair distinctness, sink
+    resolution, and sink consistency remain build-time checks.
+    """
+    tool_name = shape.record.tool_names[0]
+    descriptor = descriptor_registry.get(tool_name)
+    if descriptor is None:
+        raise BatchExecutionError("unresolvable_tool")
+    for arguments in (record.benign_arguments, record.attack_arguments):
+        try:
+            completed = _complete_arguments(
+                arguments, descriptor, shape.record.argument_shapes.keys()
+            )
+            validate_tool_arguments(completed, descriptor)
+        except (CaseSchemaValidationError, HistoryGenerationError) as exc:
+            raise BatchExecutionError("tool_schema_invalid") from exc
 
 
 def _taint_metadata(shape_id: str) -> dict[str, object]:

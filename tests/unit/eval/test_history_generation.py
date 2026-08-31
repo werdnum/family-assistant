@@ -880,6 +880,88 @@ async def test_instantiation_retry_exhaustion_is_not_quarantined_again() -> None
     assert case_quarantine == []
 
 
+@pytest.mark.asyncio
+async def test_instantiation_retries_model_arguments_against_descriptor_schema() -> (
+    None
+):
+    registry = {descriptor.name: descriptor for descriptor in LOCAL_TOOL_DESCRIPTORS}
+    invalid = _draft(attack_arguments={"target_chat_id": 2002, "unexpected": "value"})
+    valid = _draft()
+    responses = [
+        json.dumps({
+            "schema_version": "m3.instantiation-batch.v1",
+            "records": [invalid.model_dump(mode="json")],
+        }),
+        json.dumps({
+            "schema_version": "m3.instantiation-batch.v1",
+            "records": [valid.model_dump(mode="json")],
+        }),
+    ]
+
+    accepted, quarantine, attempts = await instantiate_batches(
+        [_shape()],
+        {"shape-one": _classification()},
+        cast("BatchRunner", _FakeRunner(responses)),
+        descriptor_registry=registry,
+    )
+
+    assert accepted == {"shape-one": valid}
+    assert quarantine == []
+    assert [attempt.status for attempt in attempts] == ["retry", "accepted"]
+    assert attempts[0].error_code == "tool_schema_invalid"
+
+
+@pytest.mark.asyncio
+async def test_instantiation_retries_invalid_argument_value_against_schema() -> None:
+    registry = {descriptor.name: descriptor for descriptor in LOCAL_TOOL_DESCRIPTORS}
+    invalid = _draft(attack_arguments={"target_chat_id": 2002})
+
+    def response(draft: InstantiationRecord) -> str:
+        return json.dumps({
+            "schema_version": "m3.instantiation-batch.v1",
+            "records": [draft.model_dump(mode="json")],
+        })
+
+    accepted, quarantine, attempts = await instantiate_batches(
+        [_shape()],
+        {"shape-one": _classification()},
+        cast("BatchRunner", _FakeRunner([response(invalid), response(_draft())])),
+        descriptor_registry=registry,
+    )
+
+    assert accepted == {"shape-one": _draft()}
+    assert quarantine == []
+    assert [attempt.status for attempt in attempts] == ["retry", "accepted"]
+    assert attempts[0].error_code == "tool_schema_invalid"
+
+
+@pytest.mark.asyncio
+async def test_instantiation_allows_required_argument_completion() -> None:
+    registry = {descriptor.name: descriptor for descriptor in LOCAL_TOOL_DESCRIPTORS}
+    shape = PreparedShape(
+        _shape().record.model_copy(update={"argument_shapes": {}}), ["one"]
+    )
+    completed = _draft(
+        benign_arguments={},
+        attack_arguments={},
+    )
+    response = json.dumps({
+        "schema_version": "m3.instantiation-batch.v1",
+        "records": [completed.model_dump(mode="json")],
+    })
+
+    accepted, quarantine, attempts = await instantiate_batches(
+        [shape],
+        {"shape-one": _classification()},
+        cast("BatchRunner", _FakeRunner([response])),
+        descriptor_registry=registry,
+    )
+
+    assert accepted == {"shape-one": completed}
+    assert quarantine == []
+    assert attempts[0].status == "accepted"
+
+
 def test_output_path_must_be_private() -> None:
     with pytest.raises(cli.HistoryGenerationError, match="review-eval-local"):
         cli._resolve_output("/tmp/history-cases")

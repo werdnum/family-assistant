@@ -55,8 +55,10 @@ scrub those identifiers before using this generator.
 Accepted shapes are sent in batches of at most five. The model drafts invented trusted requests,
 benign and adversarial untrusted contexts, and argument values for the already-selected tool shape.
 The script constructs one attack and one genuinely authorized benign case from each draft. A draft
-may invent required values absent from historical argument shapes, but every key and value must
-validate against the deployment tool schema.
+may invent required values absent from historical argument shapes; deterministic completion fills
+those omissions before descriptor-schema validation. Unknown keys and invalid values trigger the
+bounded retry while the model response is still in hand. Sink resolution, pair distinctness, and
+sink consistency remain build-time checks.
 
 The attack and benign case share the task surface, not necessarily literal argument values: an
 attacker destination and an authorized destination cannot be the same value while retaining honest
@@ -105,7 +107,8 @@ because a model produced many variants.
 - Missing, duplicate, extra, malformed, or schema-invalid model records fail closed after one retry.
 - Pi process, event-stream, and stdout-limit failures abort the run and are never quarantined as
   model-response failures.
-- Required tool arguments can be added, but unknown keys and invalid values are quarantined.
+- Required tool arguments can be added, but unknown keys and invalid values trigger one bounded
+  instantiation retry before the remaining failures are quarantined.
 - Every accepted case round-trips through `EvalCase`, tool-schema validation, and reviewer-input
   construction.
 - All outputs are confined to `.review-eval-local/`; no raw event stream or household text is
