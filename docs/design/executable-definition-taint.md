@@ -104,8 +104,9 @@ Each executable definition carries a **definition record** with three parts:
    - `judge_allowed` — the tool-call reviewer returned `allow` for the write, from whichever layer
      gated it and in **any** `taint_policy.mode`: an `allow` computed under `observe` is the same
      reviewer over the same records as under `enforce` (see "What cures" below for why the mode is
-     deliberately not a condition). The disposition records the delegating layer and the mode for
-     audit, and the verdict id stays in `taint_audit_events` as the audit anchor.
+     deliberately not a condition). The disposition records the delegating layer, the mode, and the
+     reviewer revision for audit, and the verdict id stays in `taint_audit_events` as the audit
+     anchor.
    - absent — legacy rows, hash mismatch, or a write no gate examined. `confirm` and `deny` verdicts
      are recorded too — for audit and for the flip-time backlog listing — but resolve exactly as
      absent: an unapproved escalation and an unenforced denial cure nothing.
@@ -403,7 +404,7 @@ close-vocabulary marking at every consultation, and the audit anchor to the crea
   and the cure is an additive, hash-bound, auditable record consulted deterministically.
 - Escalation verdicts never cure in any mode: a `deny`, or a `confirm` without an actual sighted
   human approval, resolves as absent — only `allow` verdicts and human approvals cure, and every
-  disposition records the layer and mode that produced it for audit.
+  disposition records the layer, mode, and reviewer revision that produced it for audit.
 - The trigger payload never launders: no record state renders payload content or suppresses its
   taint source.
 - A cured firing gains only its baseline: every sink its turn reaches is still gated by the same
@@ -439,18 +440,23 @@ close-vocabulary marking at every consultation, and the audit anchor to the crea
   maximum even if the human dictated the instruction verbatim; content-derived per-field stamping
   remains the risk document's contingent-tier refinement and composes here unchanged (it would
   upgrade some stamps to `clean`, reducing how often the cure is needed at all).
-- **A cure granted under a weaker configuration survives later hardening.** Dispositions record the
-  gate that actually ran at the write, and resolution never re-evaluates them against the
-  configuration in effect at the firing — so a `judge_allowed` stored under the floorless defaults
-  keeps curing after an operator adds the `confirm` floor, which from then on governs new writes
-  only. Deliberately accepted rather than mechanized: re-validation would couple every firing to
-  live policy — cures flapping with configuration edits, a second evaluation path maintained forever
-  — for a one-time transition in a small, enumerable population. The remedy is procedural: the
-  attestation surface (M4) lists definitions with their stamp and disposition, so applying the floor
-  comes with a one-time review of the existing judge-cured estate, documented next to the floor in
-  `CONFIGURATION_REFERENCE.md` the same way the enforce-migration pin is. An operator who skips that
-  review has accepted judge-vetted definitions continuing under judge authority — the shipped
-  posture at the time they were created.
+- **A cure reflects the gate as it stood at the write; later improvement does not re-litigate it.**
+  Dispositions record the gate that actually ran, and resolution never re-evaluates them against
+  whatever exists at the firing — neither the current configuration (a `judge_allowed` stored under
+  the floorless defaults keeps curing after an operator adds the `confirm` floor, which governs new
+  writes only) nor the current reviewer (an `allow` from an early, since-recalibrated reviewer
+  model, prompt, or guidance keeps curing after the reviewer improves). Deliberately accepted rather
+  than mechanized, in both directions for the same reason: re-validation would couple every firing
+  to live policy or to reviewer version bookkeeping — cures flapping with configuration edits and
+  prompt tweaks, a second evaluation path maintained forever — for transitions in a small,
+  enumerable population, and a stale-reviewer false allow is just the headline false-negative
+  residual wearing a timestamp, bounded the same way (the firing's own sinks stay gated). The remedy
+  is procedural: dispositions record layer, mode, and reviewer revision, and the attestation surface
+  (M4) lists definitions with their stamp and disposition, so applying a floor, fixing a reviewer,
+  or approaching the flip comes with a one-time filterable review of the existing judge-cured estate
+  — documented next to the floor in `CONFIGURATION_REFERENCE.md` the same way the enforce-migration
+  pin is. An operator who skips that review has accepted judge-vetted definitions continuing under
+  the judge authority in effect when they were created.
 - **The closure walk covers stored artifacts, not conversation.** A definition that instructs the
   agent to read some other artifact at fire time gets no special treatment; whatever it reads
   contributes taint the ordinary way.
@@ -514,15 +520,15 @@ a payload renders intent while carrying payload taint; an automation referencing
 in a tainted turn resolves un-cured.
 
 **M3 — The cure.** Dispositions written at the confirmation and adjudication chokepoints in every
-mode, recording layer and mode (an `allow` cures from any layer in any mode; `confirm` cures only
-through an actual approval, with full-payload rendering required; `deny` never cures); resolution
-honours `human_confirmed` and `judge_allowed`; review-status vocabulary in the reviewer rendering;
-echo eligibility rules. The taint-cell path depends on the risk document's executable-persistence
-sink split; the static `review` and confirmation paths work wherever those gates exist today.
-*Verify:* a human-confirmed tainted creation fires clean and renders marked attested; a
-judge-allowed creation cures with `taint_policy.mode` still `observe`, through the taint layer and
-the static layer alike; a recorded `confirm` verdict without an approval, and a recorded `deny`,
-resolve as absent; a floored cell yields only human-backed cures for writes made under it; a
+mode, recording layer, mode, and reviewer revision (an `allow` cures from any layer in any mode;
+`confirm` cures only through an actual approval, with full-payload rendering required; `deny` never
+cures); resolution honours `human_confirmed` and `judge_allowed`; review-status vocabulary in the
+reviewer rendering; echo eligibility rules. The taint-cell path depends on the risk document's
+executable-persistence sink split; the static `review` and confirmation paths work wherever those
+gates exist today. *Verify:* a human-confirmed tainted creation fires clean and renders marked
+attested; a judge-allowed creation cures with `taint_policy.mode` still `observe`, through the taint
+layer and the static layer alike; a recorded `confirm` verdict without an approval, and a recorded
+`deny`, resolve as absent; a floored cell yields only human-backed cures for writes made under it; a
 patch-style update presents the complete merged definition to the gate, and the gated payload is
 identical to the content the new record's hash covers; no test path rewrites an authoring stamp.
 
