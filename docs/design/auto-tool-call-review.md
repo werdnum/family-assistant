@@ -222,10 +222,11 @@ The reviewer's context is a typed structure assembled deterministically:
   creator identity alone is not enough to suppress it.
   [executable-definition-taint.md](executable-definition-taint.md) is the design that closes this:
   definitions are stamped and hash-bound at the executable-persistence write, and the disposition of
-  the gate that admitted the write — a sighted human confirmation, or an `allow` verdict from an
-  enforcement-live gate (a blocking static `review` rule in any mode, or an `adjudicate` taint cell
-  under `enforce`) — cures the authoring taint for the definition's firings instead of propagating
-  it through time, with everything uncured keeping exactly this fail-closed behavior.
+  the gate that admitted the write — a sighted human confirmation, or the reviewer's `allow` verdict
+  on the write, in any layer and any `taint_policy.mode` (the judge's `allow` is the same
+  computation whether or not enforcement could have blocked; only escalation verdicts require the
+  gate to have been real) — cures the authoring taint for the definition's firings instead of
+  propagating it through time, with everything uncured keeping exactly this fail-closed behavior.
 
 ### On rendering arguments: the auto-mode position, not the stub position
 
