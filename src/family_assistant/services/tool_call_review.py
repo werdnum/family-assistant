@@ -930,19 +930,24 @@ def compute_trusted_destination_echo(
             _textual_message_content(request),
         )
 
-    trigger_matches = False
+    # The originating request is a human's own words carried down from the
+    # delegating turn -- it renders only when its stored provenance proves that
+    # -- so a match there is request evidence, not a stored definition's.
+    definition_matches = False
+    originating_matches = False
     if trigger is not None:
-        trigger_matches = any(
-            text is not None and _destination_echo_matches(destination, text)
-            for text in (
-                trigger.definition_echo_eligible_text,
-                trigger.trusted_originating_request,
+        definition_matches = trigger.definition_echo_eligible_text is not None and (
+            _destination_echo_matches(
+                destination, trigger.definition_echo_eligible_text
             )
         )
+        originating_matches = trigger.trusted_originating_request is not None and (
+            _destination_echo_matches(destination, trigger.trusted_originating_request)
+        )
 
-    if request_matches:
+    if request_matches or originating_matches:
         return DestinationEchoSignal(matched=True, source="request")
-    if trigger_matches:
+    if definition_matches:
         return DestinationEchoSignal(matched=True, source="definition")
     return DestinationEchoSignal(matched=False)
 

@@ -870,6 +870,36 @@ def test_a_human_attested_definition_feeds_the_echo_and_names_its_source() -> No
 
 
 @pytest.mark.no_db
+def test_a_propagated_human_request_match_is_request_evidence() -> None:
+    """The originating request is the human's own words, not a stored definition.
+
+    A delegated turn answers a request made in the conversation that delegated,
+    so a destination found there appeared in what a person wrote -- and must not
+    read back to the reviewer as having appeared in a stored definition.
+    """
+    trusted = TurnTaintState.empty().to_metadata()
+    echo = compute_trusted_destination_echo(
+        "friend@example.test",
+        [],
+        trigger=TriggerReviewInput(
+            trigger_type="delegation",
+            active_request_role="system",
+            definition="Send the delegated summary on.",
+            definition_taint_metadata=machine_authored_taint_metadata(
+                TurnTaintState.empty()
+            ),
+            originating_request="Send the summary to friend@example.test.",
+            originating_request_taint_metadata=trusted,
+        ),
+    )
+
+    assert echo is not None
+    assert echo.matched
+    assert echo.source == "request"
+    assert "current trusted request" in echo.reviewer_text
+
+
+@pytest.mark.no_db
 def test_a_request_match_outranks_a_definition_match() -> None:
     """The human's own current words are the stronger evidence, and say so."""
     trusted = TurnTaintState.empty().to_metadata()
