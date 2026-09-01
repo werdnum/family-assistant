@@ -521,3 +521,48 @@ async def test_a_clean_patch_does_not_launder_a_legacy_listener(
     record = _record(await _listener_row(db_engine, listener_id))
 
     assert record.taint_metadata.get("max_tier") == "unknown_external"
+
+
+@pytest.mark.asyncio
+async def test_a_web_ui_write_stamps_trusted_user(db_engine: AsyncEngine) -> None:
+    """No model in the loop, so the definition is human-direct by construction."""
+    db = Database(engine=db_engine)
+
+    automation_id = await db.schedule_automations.create(
+        name="Daily Brief",
+        recurrence_rule="FREQ=DAILY",
+        action_type="wake_llm",
+        action_config=cast("ActionConfig", {"instruction": "Summarize my day"}),
+        conversation_id="test_conv",
+        timezone=ZoneInfo("UTC"),
+        definition_taint_state=TurnTaintState.empty(),
+        definition_disposition=CreationDisposition.CLEAN,
+        definition_human_direct=True,
+    )
+
+    record = _record(await _schedule_row(db_engine, automation_id))
+
+    assert record.taint_metadata.get("max_tier") == "trusted_user"
+    assert record.disposition is CreationDisposition.CLEAN
+
+
+@pytest.mark.asyncio
+async def test_a_web_ui_listener_write_stamps_trusted_user(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(engine=db_engine)
+
+    listener_id = await db.events.create_event_listener(
+        name="Motion Detector",
+        source_id="home_assistant",
+        match_conditions={"entity_id": "sensor.hallway_motion"},
+        conversation_id="test_conv",
+        action_config=cast("ActionConfig", {"instruction": "Tell me about it"}),
+        definition_taint_state=TurnTaintState.empty(),
+        definition_disposition=CreationDisposition.CLEAN,
+        definition_human_direct=True,
+    )
+
+    record = _record(await _listener_row(db_engine, listener_id))
+
+    assert record.taint_metadata.get("max_tier") == "trusted_user"

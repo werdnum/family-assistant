@@ -320,6 +320,32 @@ def authoring_taint_state(tracker: TurnTaintTracker | None) -> TurnTaintState:
     return tracker.snapshot()
 
 
+def callback_definition_content(definition: str | None) -> dict[str, object]:
+    """The executable fields of a one-shot callback, for hashing.
+
+    A reminder or future callback has no durable definition table: its
+    definition is the text the firing turn is handed, and its record rides the
+    enqueued payload.
+    """
+    return {"definition": definition}
+
+
+def stamp_callback_definition(
+    definition: str | None,
+    *,
+    tracker: TurnTaintTracker | None,
+    disposition: CreationDisposition | None = None,
+    gate: GateProvenance | None = None,
+) -> DefinitionRecordDict:
+    """Stamp a one-shot callback's definition at enqueue, for its payload."""
+    return stamp_definition(
+        content=callback_definition_content(definition),
+        taint_state=authoring_taint_state(tracker),
+        disposition=disposition,
+        gate=gate,
+    ).to_dict()
+
+
 def merge_retained_definition(
     state: TurnTaintState,
     *,

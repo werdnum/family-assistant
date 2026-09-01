@@ -85,6 +85,7 @@ if TYPE_CHECKING:
         RequestConfirmationCallback,
     )
     from family_assistant.scripting.monty_engine import WakeRequest
+    from family_assistant.security.definition_records import DefinitionRecordDict
     from family_assistant.services.confirmation_waiters import (
         ConfirmationResultWaiterRegistry,
     )
@@ -433,6 +434,10 @@ class LlmCallbackPayload(TypedDict, total=False):
     tool_call_review_trigger_type: str
     tool_call_review_trigger_definition: str | None
     tool_call_review_trigger_payload_present: bool
+    # A one-shot callback has no durable definition table, so its definition
+    # record rides the payload beside the definition it describes. Absent for
+    # legacy tasks queued before this field existed, which resolve fail-closed.
+    tool_call_review_definition_record: DefinitionRecordDict
 
 
 class ScriptExecutionPayload(TypedDict, total=False):
@@ -774,8 +779,15 @@ async def _schedule_reminder_follow_up(
     current_attempt: int,
     max_follow_ups: int,
     created_by_user_id: str | None = None,
+    definition_record: DefinitionRecordDict | None = None,
 ) -> None:
-    """Helper function to schedule a follow-up reminder."""
+    """Helper function to schedule a follow-up reminder.
+
+    ``definition_record`` is the originating reminder's record, carried forward
+    unchanged: a follow-up repeats the same content, so it is the same stored
+    intent and re-stamping it in the worker's own turn would misattribute its
+    authorship.
+    """
     # Removed storage import - using repository pattern
 
     # Parse the follow-up interval
@@ -830,6 +842,12 @@ async def _schedule_reminder_follow_up(
             "current_attempt": current_attempt + 1,
         },
     }
+    if definition_record is not None:
+        # A follow-up repeats the originating reminder's content, so it is the
+        # same stored intent: it carries that write's record forward rather than
+        # minting one in the worker's turn, which would misattribute authorship.
+        # ast-grep-ignore: no-unstamped-executable-definition-write - carried forward unchanged
+        payload["tool_call_review_definition_record"] = definition_record
     if created_by_user_id is not None:
         payload["created_by_user_id"] = created_by_user_id
 
@@ -1379,6 +1397,7 @@ async def handle_llm_callback(
                     current_attempt=current_attempt,
                     max_follow_ups=max_follow_ups,
                     created_by_user_id=payload.get("created_by_user_id"),
+                    definition_record=payload.get("tool_call_review_definition_record"),
                 )
                 logger.info("Successfully scheduled follow-up reminder")
             except Exception as e:

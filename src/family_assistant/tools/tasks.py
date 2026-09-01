@@ -22,6 +22,7 @@ from family_assistant.actions import (
     assert_wake_llm_allowed,
     execute_action,
 )
+from family_assistant.security.definition_records import stamp_callback_definition
 from family_assistant.tools.automations import validate_action_scripts
 from family_assistant.tools.stored_scripts import validate_script_action_config
 from family_assistant.utils.clock import SystemClock
@@ -344,6 +345,9 @@ async def schedule_reminder_tool(
         "tool_call_review_trigger_type": "reminder",
         "tool_call_review_trigger_definition": message,
         "tool_call_review_trigger_payload_present": False,
+        "tool_call_review_definition_record": stamp_callback_definition(
+            message, tracker=exec_context.taint_tracker
+        ),
         "reminder_config": {
             "is_reminder": True,
             "follow_up": follow_up,
@@ -440,6 +444,9 @@ async def schedule_future_callback_tool(
         "tool_call_review_trigger_type": "scheduled_callback",
         "tool_call_review_trigger_definition": context,
         "tool_call_review_trigger_payload_present": False,
+        "tool_call_review_definition_record": stamp_callback_definition(
+            context, tracker=exec_context.taint_tracker
+        ),
     }
     if exec_context.user_id is not None:
         payload["created_by_user_id"] = exec_context.user_id
@@ -623,8 +630,17 @@ async def modify_pending_callback_tool(
         updates["scheduled_at"] = scheduled_dt.astimezone(UTC)  # Store as UTC
 
     if new_context:
+        # Editing a pending callback is a mutation like any other: the record
+        # and the definition it describes are replaced together, in the editing
+        # turn. Leaving the stored record against new content would strand it
+        # -- fail-closed at the firing, but silently un-curing a legitimate
+        # edit instead of re-gating it.
         new_payload = task_payload.copy()
         new_payload["callback_context"] = new_context
+        new_payload["tool_call_review_trigger_definition"] = new_context
+        new_payload["tool_call_review_definition_record"] = stamp_callback_definition(
+            new_context, tracker=exec_context.taint_tracker
+        )
         updates["payload"] = new_payload
 
     if not updates:
@@ -786,6 +802,7 @@ async def schedule_action_tool(
             processing_profile_id=exec_context.processing_profile_id,
             created_by_user_id=exec_context.user_id,
             allow_wake_llm=exec_context.allow_wake_llm,
+            definition_taint_tracker=exec_context.taint_tracker,
         )
 
         return f"OK. {action_type} action scheduled for {schedule_time}"

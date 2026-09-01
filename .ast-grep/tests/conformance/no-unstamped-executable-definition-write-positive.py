@@ -33,3 +33,12 @@ def hoist_an_unstamped_record(some_hash: str) -> Update:
     return update(schedule_automations_table).values(
         definition_record=definition_record,
     )
+
+
+def edit_a_callback_payload_without_a_record(
+    payload: dict[str, Any],
+    new_context: str,
+) -> None:
+    """Editing a pending callback's content must obtain a fresh record."""
+    payload["callback_context"] = new_context
+    payload["tool_call_review_definition_record"] = {"content_hash": "stale"}

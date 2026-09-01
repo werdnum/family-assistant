@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from family_assistant.security.definition_records import stamp_callback_definition
+from family_assistant.security.taint import TurnTaintTracker
 from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import enqueue_task
 
@@ -82,6 +84,7 @@ async def execute_action(
     tool_call_review_trigger_type: str | None = None,
     tool_call_review_trigger_definition: str | None = None,
     tool_call_review_trigger_payload_present: bool | None = None,
+    definition_taint_tracker: TurnTaintTracker | None = None,
 ) -> None:
     """
     Execute an action. Used by both event listeners and scheduled tasks.
@@ -104,6 +107,10 @@ async def execute_action(
             because the triggering event is untrusted.
         created_by_user_id: Creating user for script actions; confirm-gated
             tool calls from the script are addressed to this user.
+        definition_taint_tracker: The authoring turn's taint tracker, stamped
+            onto the enqueued definition record. Absent means the write cannot
+            prove its turn was clean, so the definition stamps unknown_external
+            and its firings stay fail-closed.
         allow_wake_llm: Whether the acting profile may wake the LLM. When False,
             a wake_llm action is refused loudly (see assert_wake_llm_allowed)
             rather than being enqueued for a turn that would escape the profile's
@@ -155,6 +162,10 @@ async def execute_action(
                 else False
             ),
         }
+        payload["tool_call_review_definition_record"] = stamp_callback_definition(
+            payload["tool_call_review_trigger_definition"],
+            tracker=definition_taint_tracker,
+        )
         if user_name:
             payload["user_name"] = user_name
         if created_by_user_id is not None:

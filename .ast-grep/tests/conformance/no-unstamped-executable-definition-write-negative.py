@@ -4,7 +4,10 @@ from typing import Any
 
 from sqlalchemy import Insert, Update, insert, update
 
-from family_assistant.security.definition_records import stamp_definition
+from family_assistant.security.definition_records import (
+    stamp_callback_definition,
+    stamp_definition,
+)
 from family_assistant.security.taint import TurnTaintState
 from family_assistant.storage.schedule_automations import schedule_automations_table
 
@@ -61,4 +64,16 @@ def build_a_row_typed_dict(row: dict[str, Any]) -> dict[str, Any]:
     return dict(
         name=row["name"],
         definition_record=row.get("definition_record"),
+    )
+
+
+def edit_a_callback_payload_with_a_fresh_record(
+    payload: dict[str, Any],
+    new_context: str,
+) -> None:
+    """The record and the definition it describes are replaced together."""
+    payload["callback_context"] = new_context
+    payload["tool_call_review_definition_record"] = stamp_callback_definition(
+        new_context,
+        tracker=None,
     )

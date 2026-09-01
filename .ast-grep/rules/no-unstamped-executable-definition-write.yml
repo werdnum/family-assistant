@@ -24,6 +24,12 @@ note: |
         taint_state=authoring_taint_state(exec_context.taint_tracker),
     ).to_dict()
 
+  A one-shot callback has no definition table, so the same rule covers the payload field
+  ``tool_call_review_definition_record``: creating or editing a callback's executable
+  content obtains a fresh record from ``stamp_callback_definition()``. Carrying an
+  originating write's record forward unchanged -- a follow-up reminder repeats the same
+  content -- is the one legitimate exception, and takes an inline exemption saying so.
+
   Hoisting the stamped record into a local named ``definition_record`` is fine -- several
   write paths need it more than once -- and that local's own binding is checked by the same
   rule, so the chain back to the chokepoint stays closed. A local under any other name is
@@ -62,6 +68,8 @@ rule:
                 any:
                   - pattern: $X["definition_record"] = None
                   - pattern: $X["definition_record"] = definition_record
+        # The one-shot callback payload's record, edited in place.
+        - pattern: $X["tool_call_review_definition_record"] = $VALUE
         # The hoisted local itself: this is what keeps the hoist honest.
         - all:
             - pattern: definition_record = $VALUE
@@ -69,5 +77,7 @@ rule:
                 pattern: definition_record = None
     - not:
         has:
-          pattern: stamp_definition($$$ARGS)
+          any:
+            - pattern: stamp_definition($$$ARGS)
+            - pattern: stamp_callback_definition($$$CB_ARGS)
           stopBy: end
