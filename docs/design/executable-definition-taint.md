@@ -101,9 +101,12 @@ Each executable definition carries a **definition record** with three parts:
      confirmation that cannot render them does not cure (mirroring the reviewer contract's rule that
      an unrenderable payload is refused rather than truncated). A sighted human approval of the full
      definition is attestation in the risk document's sense, bound to the hash it approved.
-   - `judge_allowed` — the tool-call reviewer returned `allow` for the write under `enforce`, from
-     whichever layer gated it (an `adjudicate` taint cell or a static `review` rule). The verdict id
-     stays in `taint_audit_events` as the audit anchor.
+   - `judge_allowed` — the tool-call reviewer returned `allow` for the write from a gate whose
+     verdict actually governed execution: a static `review` rule (blocking in every mode — static
+     tool policy is not subject to `taint_policy.mode`), or an `adjudicate` taint cell under
+     `enforce`. A taint-cell verdict under `observe` has its effect downgraded to `audit`, so it
+     could not have blocked and does not cure. The verdict id stays in `taint_audit_events` as the
+     audit anchor.
    - absent — legacy rows, hash mismatch, or a write that no real gate examined.
 
    The disposition is written by the existing confirmation and adjudication chokepoints themselves,
@@ -202,14 +205,20 @@ Everything else about the firing is unchanged:
 
 ### What cures, and what deliberately does not
 
-Only a disposition that **could have blocked the write** cures. An `allow` verdict recorded in
-`observe` mode, or a write through a cell configured `audit`, records nothing curative: in those
-postures the gate was not real, so its output cannot stand in for one. This makes the cure and the
-gate turn on together — a deployment in `observe` feels neither the creation gate nor firing-time
+Only a disposition that **could have blocked the write** cures — where "could have blocked" is a
+property of the delegating gate, not of `taint_policy.mode` alone. A taint-cell verdict whose effect
+was downgraded to `audit` by `observe` mode, or a write through a cell configured `audit`, records
+nothing curative: that gate was not real, so its output cannot stand in for one. A static `review`
+rule's verdict and a static or taint-layer confirmation, by contrast, govern execution in every
+mode, so they cure in every mode. When both layers gate the same write, the one-judgment merge
+already runs the reviewer once with both delegating contexts; the verdict cures iff at least one of
+those contexts was enforcement-live. This makes the cure and the gate turn on together, per layer: a
+deployment in pure `observe` with no static gates feels neither the creation gate nor firing-time
 enforcement, and the day it flips to `enforce`, tainted-authored definitions start being gated *and*
-start being curable in the same motion. (Clean-authored and web-UI definitions — the overwhelming
-majority — resolve trusted in every mode, which is where most of this design's value lands:
-reminders, clean-turn schedules, and dashboard-created listeners stop entering as `unknown_external`
+start being curable in the same motion — while a deployment that already gates executable writes
+statically gets real cures today. (Clean-authored and web-UI definitions — the overwhelming majority
+— resolve trusted in every mode, which is where most of this design's value lands: reminders,
+clean-turn schedules, and dashboard-created listeners stop entering as `unknown_external`
 immediately.)
 
 The strength of the cure inherits the creation cell's configuration, with no new dial. Under this
@@ -353,9 +362,10 @@ close-vocabulary marking at every consultation, and the audit anchor to the crea
   authoring turn's trusted context — the judge's best operating point — and the firings' own sinks
   remain gated. Operators for whom this is unacceptable apply the executable-persistence `confirm`
   floor, which makes every cure human-backed.
-- **Observe-mode deployments accumulate tainted-authored definitions with no cures.** Also no
-  enforcement friction, so nothing is worse than today; on the flip to `enforce`, those definitions
-  gate until touched, re-gated, or attested — the migration section's paths apply.
+- **Observe-mode deployments without static gates accumulate tainted-authored definitions with no
+  cures.** Also no enforcement friction, so nothing is worse than today; a static `review` or
+  `confirm` rule on executable writes cures in any mode, and on the flip to `enforce`, the remaining
+  definitions gate until touched, re-gated, or attested — the migration section's paths apply.
 - **Whole-definition stamping.** A mixed authoring turn stamps the whole definition at the turn
   maximum even if the human dictated the instruction verbatim; content-derived per-field stamping
   remains the risk document's contingent-tier refinement and composes here unchanged (it would
@@ -418,14 +428,16 @@ hash-mismatched definition stubs and taints as today; an event firing with a tru
 a payload renders intent while carrying payload taint; an automation referencing a script re-saved
 in a tainted turn resolves un-cured.
 
-**M3 — The cure.** Dispositions written at the confirmation and adjudication chokepoints
-(enforce-mode only for verdicts; full-payload rendering required for confirmations); resolution
-honours `human_confirmed` and `judge_allowed`; review-status vocabulary in the reviewer rendering;
-echo eligibility rules. Depends on the risk document's executable-persistence sink split for the
-adjudicated path; the confirmation path works wherever a gate confirms today. *Verify:* a
-human-confirmed tainted creation fires clean and renders marked attested; a judge-allowed creation
-under `enforce` fires clean and renders marked judge-allowed; an observe-mode `allow` verdict does
-not cure; a floored cell yields only human-backed cures; no test path rewrites an authoring stamp.
+**M3 — The cure.** Dispositions written at the confirmation and adjudication chokepoints (verdicts
+cure only from enforcement-live gates — a static `review` rule in any mode, a taint cell under
+`enforce`; full-payload rendering required for confirmations); resolution honours `human_confirmed`
+and `judge_allowed`; review-status vocabulary in the reviewer rendering; echo eligibility rules. The
+taint-cell path depends on the risk document's executable-persistence sink split; the static
+`review` and confirmation paths work wherever those gates exist today. *Verify:* a human-confirmed
+tainted creation fires clean and renders marked attested; a judge-allowed creation through a static
+`review` rule cures with `taint_policy.mode` still `observe`, and through a taint cell only under
+`enforce`; a taint-cell `allow` verdict under `observe` does not cure; a floored cell yields only
+human-backed cures; no test path rewrites an authoring stamp.
 
 **M4 — Attestation surface and documentation.** The hash-bound review operation for the three
 artifact classes, in the web UI; user documentation for how automations become trusted;
