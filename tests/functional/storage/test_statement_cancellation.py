@@ -32,15 +32,15 @@ _MARKER = "test_statement_cancellation_marker"
 # The revision before head: the test rewinds to it so a migration is actually
 # pending while the tight ceiling is in force. Both this and the head asserted
 # below move with each new migration.
-_PREVIOUS_REVISION = "527b07ec550b"
-_HEAD_REVISION = "tool_call_review_audit"
-_HEAD_REVISION_COLUMNS = (
-    "review_verdict",
-    "review_status",
-    "review_latency_ms",
-    "review_context_json",
-)
-_HEAD_REVISION_TABLE = "taint_audit_events"
+_PREVIOUS_REVISION = "tool_call_review_audit"
+_HEAD_REVISION = "631e7ea62ec4"
+# Columns the head revision adds, by table: the test drops them to make the
+# migration genuinely pending, then asserts they came back.
+_HEAD_REVISION_COLUMNS_BY_TABLE = {
+    "event_listeners": ("definition_record",),
+    "schedule_automations": ("definition_record",),
+    "scripts": ("definition_record",),
+}
 
 _alembic_version_table = sa.Table(
     "alembic_version",
@@ -192,10 +192,9 @@ async def test_migrations_still_run_under_a_ceiling_that_aborts_queries(
     db = Database(db_engine)
 
     async def regress_to_previous_revision(txn: DatabaseTransaction) -> None:
-        for column in _HEAD_REVISION_COLUMNS:
-            await txn.execute(
-                sa.text(f"ALTER TABLE {_HEAD_REVISION_TABLE} DROP COLUMN {column}")
-            )
+        for table, columns in _HEAD_REVISION_COLUMNS_BY_TABLE.items():
+            for column in columns:
+                await txn.execute(sa.text(f"ALTER TABLE {table} DROP COLUMN {column}"))
         await txn.execute(
             sa.update(_alembic_version_table).values(version_num=_PREVIOUS_REVISION)
         )
@@ -221,18 +220,20 @@ async def test_migrations_still_run_under_a_ceiling_that_aborts_queries(
     verification_engine = create_engine_with_sqlite_optimizations(url)
     try:
         async with verification_engine.connect() as conn:
-            columns = await conn.run_sync(
-                lambda sync_conn: {
-                    column["name"]
-                    for column in sa.inspect(sync_conn).get_columns(
-                        _HEAD_REVISION_TABLE
-                    )
-                }
-            )
+            columns_by_table = {
+                table: await conn.run_sync(
+                    lambda sync_conn, table=table: {
+                        column["name"]
+                        for column in sa.inspect(sync_conn).get_columns(table)
+                    }
+                )
+                for table in _HEAD_REVISION_COLUMNS_BY_TABLE
+            }
             revision = await conn.scalar(
                 sa.select(_alembic_version_table.c.version_num)
             )
-        assert set(_HEAD_REVISION_COLUMNS) <= columns
+        for table, expected in _HEAD_REVISION_COLUMNS_BY_TABLE.items():
+            assert set(expected) <= columns_by_table[table], table
         assert revision == _HEAD_REVISION
     finally:
         await verification_engine.dispose()

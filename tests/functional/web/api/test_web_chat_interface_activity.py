@@ -147,7 +147,9 @@ async def test_send_message_persists_runtime_taint_metadata(
     assert default_row is not None
     assert default_row["taint_metadata_version"] == "runtime_v2"
     assert default_row["taint_metadata_json"] is not None
-    assert default_row["taint_metadata_json"].get("max_tier") == "trusted_user"
+    # An outbound delivery row is machine-composed, so it stamps at the trusted
+    # pole's authorship floor rather than as the human's own words.
+    assert default_row["taint_metadata_json"].get("max_tier") == "trusted_internal"
 
     assert tainted_row is not None
     assert tainted_row["taint_metadata_version"] == "runtime_v2"
