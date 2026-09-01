@@ -13,6 +13,7 @@ from sqlalchemy.sql import functions as func
 
 from family_assistant.security.definition_records import (
     CreationDisposition,
+    listener_definition_content,
     merge_retained_definition,
     stamp_definition,
 )
@@ -32,33 +33,6 @@ from family_assistant.storage.types import (
     MatchConditions,
     RecentEventDict,
 )
-
-
-def listener_definition_content(
-    *,
-    name: str | None,
-    description: str | None,
-    source_id: str,
-    match_conditions: MatchConditions,
-    action_type: str,
-    action_config: ActionConfig | None,
-    condition_script: str | None,
-) -> dict[str, object]:
-    """The executable fields of an event listener, for hashing.
-
-    What the listener matches on, what it then runs, and what a firing renders
-    as intent. ``one_time``, ``enabled`` and the rate-limit counters are
-    management state and excluded, so activation changes do not void a record.
-    """
-    return {
-        "name": name,
-        "description": description,
-        "source_id": source_id,
-        "match_conditions": match_conditions,
-        "action_type": action_type,
-        "action_config": action_config,
-        "condition_script": condition_script,
-    }
 
 
 class EventsRepository(BaseRepository):

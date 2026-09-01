@@ -52,6 +52,18 @@ from family_assistant.scripting import (
 )
 from family_assistant.scripting.apis.keychute import add_keychute_http_api
 from family_assistant.scripting.config import ScriptConfig
+from family_assistant.security.definition_records import (
+    UNRESOLVED_DEFINITION,
+    DefinitionResolution,
+)
+from family_assistant.security.definition_resolution import (
+    CallbackPayloadRef,
+    DefinitionRef,
+    EventListenerRef,
+    ScheduleAutomationRef,
+    StoredScriptRef,
+    resolve_definition_closure,
+)
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
     SourceTrustTier,
@@ -463,14 +475,104 @@ class ScriptExecutionPayload(TypedDict, total=False):
     created_by_user_id: str
 
 
+def _llm_callback_definition_refs(
+    payload: LlmCallbackPayload,
+    # ast-grep-ignore: no-dict-any - Legacy event callbacks carry arbitrary external JSON
+    callback_context: str | dict[str, Any],
+) -> tuple[DefinitionRef, ...]:
+    """Name the definition artifacts this firing renders, for closure resolution.
+
+    A durable definition outranks the payload record: an event-listener wake is
+    enqueued by the *firing*, whose turn has no authoring tracker, so its
+    payload record stamps unknown_external and describes nothing about who
+    wrote the listener. The listener row does, and it is also the content a
+    later edit changes under the record. A one-shot callback has no row, so its
+    payload record is the only thing there is. Naming nothing -- a legacy task
+    queued before any of this existed -- resolves fail-closed.
+
+    A durable definition is resolved against the row as it stands *now*, while
+    the definition text handed to the reviewer was snapshotted at enqueue. The
+    two describe the same content because every update that changes a
+    definition re-enqueues its task with the new text, and an out-of-band edit
+    of the row voids the record's hash rather than re-describing the snapshot.
+    """
+    listener_id = (
+        callback_context.get("listener_id")
+        if isinstance(callback_context, dict)
+        else None
+    )
+    if listener_id is not None:
+        try:
+            return (EventListenerRef(listener_id=int(listener_id)),)
+        except (TypeError, ValueError):
+            return ()
+
+    automation_id = payload.get("automation_id")
+    if automation_id is not None and payload.get("automation_type") == "schedule":
+        try:
+            return (ScheduleAutomationRef(automation_id=int(automation_id)),)
+        except (TypeError, ValueError):
+            return ()
+
+    record = payload.get("tool_call_review_definition_record")
+    if record is not None:
+        return (
+            CallbackPayloadRef(
+                record=record,
+                definition=payload.get("tool_call_review_trigger_definition"),
+            ),
+        )
+    return ()
+
+
+def _script_execution_definition_refs(
+    payload: ScriptExecutionPayload,
+) -> tuple[DefinitionRef, ...]:
+    """Name the definition artifacts a script firing executes.
+
+    A stored script named by an automation is the executable closure this
+    design's weakest-link rule exists for: the automation says *when* and *with
+    what*, the script body says *what runs*, each carries its own record, and
+    re-saving the script from a tainted turn un-cures every automation that
+    names it until the script's own gate cures it again. An inline script body
+    needs no second artifact -- it is part of the automation's own hashed
+    content.
+    """
+    refs: list[DefinitionRef] = []
+    listener_id = payload.get("listener_id")
+    automation_id = payload.get("automation_id")
+    if listener_id is not None:
+        try:
+            refs.append(EventListenerRef(listener_id=int(listener_id)))
+        except (TypeError, ValueError):
+            return ()
+    elif automation_id is not None and payload.get("automation_type") == "schedule":
+        try:
+            refs.append(ScheduleAutomationRef(automation_id=int(automation_id)))
+        except (TypeError, ValueError):
+            return ()
+    script_name = payload.get("script_name")
+    if script_name:
+        refs.append(StoredScriptRef(name=script_name))
+    return tuple(refs)
+
+
 def _llm_callback_review_trigger(
     payload: LlmCallbackPayload,
     # ast-grep-ignore: no-dict-any - Legacy event callbacks carry arbitrary external JSON
     callback_context: str | dict[str, Any],
     *,
     is_reminder: bool,
+    definition_resolution: DefinitionResolution = UNRESOLVED_DEFINITION,
 ) -> TriggerReviewInput:
-    """Build a fail-closed trigger from explicit or legacy callback metadata."""
+    """Build a trigger from explicit or legacy callback metadata.
+
+    ``definition_resolution`` is what the stored record still entitles the
+    definition to (see
+    :func:`family_assistant.security.definition_resolution.resolve_definition_closure`).
+    An unresolved definition keeps the pre-existing fail-closed behaviour: the
+    reviewer sees a stub and the turn seeds as an unattended external trigger.
+    """
     metadata = payload.get("metadata")
     metadata_source = metadata.get("source") if isinstance(metadata, dict) else None
     legacy_event_payload = isinstance(callback_context, dict) and (
@@ -513,9 +615,7 @@ def _llm_callback_review_trigger(
         trigger_type=trigger_type,
         active_request_role="user",
         definition=definition,
-        # Definitions do not persist authoring provenance yet. They must remain
-        # stubs until the storage schema can prove trusted authorship.
-        definition_taint_metadata=None,
+        definition_taint_metadata=definition_resolution.taint_metadata,
         payload_present=payload_present,
     )
 
@@ -527,10 +627,15 @@ def _llm_callback_trigger_taint_sources(
     """Return fail-closed provenance for unattended external callback content.
 
     Callback wrappers are not trusted user turns. Only a payload-free definition
-    with explicit trusted-user provenance may enter as trusted intent. Everything
-    else must enter the live tracker as unknown external and stay a tainted user
-    message; promoting attacker-controlled callback text to a system message
-    would give it instruction priority despite its provenance.
+    whose stored record resolves at the trusted pole may enter as trusted
+    intent. Everything else must enter the live tracker as unknown external and
+    stay a tainted user message; promoting attacker-controlled callback text to
+    a system message would give it instruction priority despite its provenance.
+
+    The definition and the payload are judged separately, which is what makes a
+    resolved record worth having: a trusted definition fired with event data
+    still enters tainted -- by the payload -- while rendering its intent, so the
+    reviewer finally has something to judge the payload's alignment against.
     """
     definition_is_explicitly_trusted = (
         trigger.definition is not None
@@ -542,21 +647,35 @@ def _llm_callback_trigger_taint_sources(
     if definition_is_explicitly_trusted and not trigger.payload_present:
         return ()
 
-    if trigger.trigger_type == "event_listener":
+    if definition_is_explicitly_trusted:
+        source_type = (
+            TaintSourceType.EVENT
+            if trigger.trigger_type == "event_listener"
+            else TaintSourceType.AUTOMATION_TRIGGER
+        )
+        reason = (
+            "Trigger payload is untrusted external content "
+            f"({trigger.trigger_type}); its definition resolved trusted."
+        )
+        labels = frozenset({"unattended_callback", "trigger_payload"})
+    elif trigger.trigger_type == "event_listener":
         source_type = TaintSourceType.EVENT
         reason = "Event-listener callback content is an untrusted external trigger."
+        labels = frozenset({"unattended_callback"})
     elif trigger.trigger_type in {"script_wake_llm", "script_failure"}:
         source_type = TaintSourceType.AUTOMATION_TRIGGER
         reason = (
             "Script callback content has untrusted automation provenance "
             f"({trigger.trigger_type})."
         )
+        labels = frozenset({"unattended_callback"})
     else:
         source_type = TaintSourceType.AUTOMATION_TRIGGER
         reason = (
             "Unattended callback content lacks explicit trusted-user provenance "
             f"({trigger.trigger_type})."
         )
+        labels = frozenset({"unattended_callback"})
 
     automation_id = payload.get("automation_id")
     return (
@@ -566,7 +685,7 @@ def _llm_callback_trigger_taint_sources(
                 f"automation:{automation_id}" if automation_id is not None else None
             ),
             tier=SourceTrustTier.UNKNOWN_EXTERNAL,
-            labels=frozenset({"unattended_callback"}),
+            labels=labels,
             reason=reason,
         ),
     )
@@ -1213,10 +1332,15 @@ async def handle_llm_callback(
         else:
             trigger_text = f"System Callback Trigger:\n\nThe time is now {current_time_str}.\nYour scheduled context was:\n---\n{callback_context}\n---"
 
+        definition_resolution = await resolve_definition_closure(
+            db_context,
+            _llm_callback_definition_refs(payload, callback_context),
+        )
         review_trigger = _llm_callback_review_trigger(
             payload,
             callback_context,
             is_reminder=is_reminder,
+            definition_resolution=definition_resolution,
         )
         callback_trigger_taint_sources = _llm_callback_trigger_taint_sources(
             payload, review_trigger
@@ -4903,6 +5027,11 @@ async def handle_script_execution(
             "Missing required field in payload: script_code or script_name"
         )
 
+    script_definition_resolution = await resolve_definition_closure(
+        exec_context.db_context,
+        _script_execution_definition_refs(payload),
+    )
+
     if listener_id:
         logger.info(
             f"Starting script execution for listener {listener_id} in conversation {conversation_id}"
@@ -4960,7 +5089,7 @@ async def handle_script_execution(
                 trigger_type="event_script" if listener_id else "scheduled_script",
                 active_request_role="system",
                 definition=script_code,
-                definition_taint_metadata=None,
+                definition_taint_metadata=script_definition_resolution.taint_metadata,
                 payload_present=bool(event_data),
             ),
         )

@@ -15,7 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.security.definition_records import (
     CreationDisposition,
+    automation_definition_content,
     definition_record_from_row,
+    listener_definition_content,
+    script_definition_content,
     stamp_definition,
 )
 from family_assistant.security.taint import (
@@ -27,11 +30,6 @@ from family_assistant.security.taint import (
 )
 from family_assistant.storage.database import Database
 from family_assistant.storage.events import event_listeners_table
-from family_assistant.storage.repositories.events import listener_definition_content
-from family_assistant.storage.repositories.schedule_automations import (
-    automation_definition_content,
-)
-from family_assistant.storage.repositories.scripts import script_definition_content
 from family_assistant.storage.schedule_automations import schedule_automations_table
 from family_assistant.storage.scripts import scripts_table
 from family_assistant.tools.automations import (
