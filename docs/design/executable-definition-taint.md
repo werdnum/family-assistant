@@ -291,19 +291,21 @@ reviewer deliberately runs off the critical path — `_start_shadow_review` deta
 executes immediately — so a shadow `allow` attaches to the definition record *asynchronously*, when
 the review completes. The attach is hash-guarded like every disposition write, so a mutation racing
 the completion leaves the new content uncured rather than mis-attributed, and until the verdict
-lands the definition resolves uncured, fail-closed. A callback immediate enough to fire inside that
-window enters uncured once, where `enforce` — whose verdict completes before the write — would have
-cured it first: at most one early firing per definition, seconds wide, biased conservative.
+lands the definition resolves uncured, fail-closed. Firings inside that window enter uncured where
+`enforce` — whose verdict completes before the write — would have cured them first: a
+latency-bounded window, seconds wide, during which a busy event listener may fire more than once,
+with every such firing biased conservative. No per-definition serialization is added to shrink it —
+the window is a measurement caveat, not a correctness problem.
 
 What remains overstated in shadow data is bounded, visible, and conservative. Firings of definitions
 whose creation verdict was `confirm` or `deny` still count in full — a population that under
 `enforce` would be human-reviewed or absent, and one the flip decision can size directly from the
 recorded dispositions rather than reconstruct. Later interactive turns re-tainted through history by
-uncured firings' persisted rows count too, as does the one-early-firing verdict-latency window
-above. All bias the numbers high, so a measurement within budget remains sufficient to flip; the
-residual backlog at the flip — legacy definitions and the escalation-verdict population — is the
-one-time migration hump the attestation surface's disposition listing exists to burn down in one
-sitting, budgeted with the flip rather than read as steady-state friction.
+uncured firings' persisted rows count too, as do firings inside the verdict-latency window above.
+All bias the numbers high, so a measurement within budget remains sufficient to flip; the residual
+backlog at the flip — legacy definitions and the escalation-verdict population — is the one-time
+migration hump the attestation surface's disposition listing exists to burn down in one sitting,
+budgeted with the flip rather than read as steady-state friction.
 
 ### Stored scripts and the executable closure
 
