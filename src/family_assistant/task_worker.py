@@ -511,9 +511,12 @@ def _llm_callback_definition_refs(
     that window -- or, on SQLite, a delete whose id a new listener reuses --
     would pair the payload's content with the row's record. Accepted as a
     bounded residual rather than closed by carrying the snapshot through the
-    payload: the window is a minute wide, needs an edit or delete/recreate
-    racing a matching event, and a listener wake carrying event data enters the
-    turn tainted by its payload regardless.
+    payload: the window is a minute wide, and reaching it needs an edit -- or a
+    delete whose id a new listener reuses -- to race a matching event. The
+    acceptance rests on that alone: the payload taint a wake enters with is a
+    backstop only where the listener includes event data, and a listener
+    configured with ``include_event_data: false`` sends no payload, so a
+    definition resolved inside the window contributes no trigger taint at all.
     """
     listener_id = (
         callback_context.get("listener_id")
