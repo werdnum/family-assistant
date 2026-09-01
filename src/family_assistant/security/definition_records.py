@@ -26,7 +26,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from enum import Enum, StrEnum
-from typing import TYPE_CHECKING, TypedDict, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from family_assistant.security.taint import (
     SourceTrustTier,
@@ -42,6 +42,8 @@ from family_assistant.security.taint import (
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+    from family_assistant.storage.types import ActionConfig, MatchConditions
 
 DEFINITION_RECORD_VERSION = "definition_v1"
 
@@ -320,6 +322,98 @@ def authoring_taint_state(tracker: TurnTaintTracker | None) -> TurnTaintState:
     return tracker.snapshot()
 
 
+def automation_definition_content(
+    *,
+    name: str | None,
+    description: str | None,
+    recurrence_rule: str,
+    action_type: str,
+    action_config: ActionConfig | None,
+) -> dict[str, object]:
+    """The executable fields of a schedule automation, for hashing.
+
+    Everything that determines *what runs* and *what the agent is told*: the
+    schedule, the action, and the name and description a firing renders as
+    intent. Management state (enabled, execution counts, next_scheduled_at) is
+    excluded -- toggling an automation changes no content, so a valid record
+    must survive it, per the design's activation rule.
+    """
+    return {
+        "name": name,
+        "description": description,
+        "recurrence_rule": recurrence_rule,
+        "action_type": action_type,
+        "action_config": action_config,
+    }
+
+
+def listener_definition_content(
+    *,
+    name: str | None,
+    description: str | None,
+    source_id: str,
+    match_conditions: MatchConditions,
+    action_type: str,
+    action_config: ActionConfig | None,
+    condition_script: str | None,
+) -> dict[str, object]:
+    """The executable fields of an event listener, for hashing.
+
+    What the listener matches on, what it then runs, and what a firing renders
+    as intent. ``one_time``, ``enabled`` and the rate-limit counters are
+    management state and excluded, so activation changes do not void a record.
+    """
+    return {
+        "name": name,
+        "description": description,
+        "source_id": source_id,
+        "match_conditions": match_conditions,
+        "action_type": action_type,
+        "action_config": action_config,
+        "condition_script": condition_script,
+    }
+
+
+def script_definition_content(
+    *,
+    name: str,
+    description: str,
+    script_code: str,
+    # ast-grep-ignore: no-dict-any - JSON Schema parameter is genuinely arbitrary
+    parameters_schema: dict[str, Any] | None,
+) -> dict[str, object]:
+    """The executable fields of a stored script, for hashing.
+
+    The body is the executable content; the name, description, and parameter
+    schema shape how a caller invokes it and what a firing renders as intent.
+    """
+    return {
+        "name": name,
+        "description": description,
+        "script_code": script_code,
+        "parameters_schema": parameters_schema,
+    }
+
+
+def script_invocation_content(
+    action_config: Mapping[str, object] | None,
+) -> dict[str, object]:
+    """The executable fields of a one-shot script action, for hashing.
+
+    A ``schedule_action`` script invocation has no durable definition table:
+    its definition is the action config the task payload carries, which names
+    the body to run (inline code, or a stored script and the parameters to run
+    it with) and the tool set and timeout to run it under. Hashing the config
+    whole means a change to any of those voids the record, with nothing to
+    enumerate and keep in step.
+
+    The stored script a config *names* is a separate artifact with its own
+    record; the closure walk resolves both, so an invocation cures only what
+    the invoking turn is entitled to and never what the script body is.
+    """
+    return {"action_config": dict(action_config) if action_config is not None else None}
+
+
 def callback_definition_content(definition: str | None) -> dict[str, object]:
     """The executable fields of a one-shot callback, for hashing.
 
@@ -346,6 +440,87 @@ def stamp_callback_definition(
     ).to_dict()
 
 
+@dataclass(frozen=True, slots=True)
+class DefinitionResolution:
+    """What a firing may make of one definition artifact's stored record.
+
+    Resolution is a pure function of the stored record and the content it is
+    checked against: a record whose hash no longer matches its content is void,
+    and a void record is indistinguishable from an absent one. Both leave the
+    definition unresolved, which is the fail-closed state -- the firing renders
+    a stub and seeds the turn as an unattended external trigger, exactly as
+    before this design.
+
+    ``taint_metadata`` is what a resolved definition renders *as*: for a
+    trusted-pole stamp it is the stamp itself; for a cured one it is the clean
+    machine-authored baseline the definition would have had if authored
+    untainted, since the cure restores that baseline and nothing more. Either
+    way it is never ``trusted_user`` unless a human typed the definition, so
+    the reviewer's human-words consumers stay honest.
+    """
+
+    taint_metadata: TaintMetadata | None
+    disposition: CreationDisposition | None = None
+
+    @property
+    def resolved(self) -> bool:
+        """Whether the definition may render as trusted intent."""
+        return self.taint_metadata is not None
+
+    @property
+    def tier(self) -> SourceTrustTier:
+        """The tier a resolved definition renders at; the untrusted floor when unresolved."""
+        if self.taint_metadata is None:
+            return SourceTrustTier.UNKNOWN_EXTERNAL
+        return TurnTaintState.from_metadata(self.taint_metadata).max_tier
+
+    def combine(self, other: DefinitionResolution) -> DefinitionResolution:
+        """Weakest of two resolutions, for the executable closure walk.
+
+        A firing executes or renders more than one artifact -- an automation and
+        the stored script it names -- and each carries its own record, because
+        cross-artifact hashes would rot the moment either side is edited. The
+        weakest resolution therefore governs the whole firing: editing a shared
+        script from a tainted turn un-cures every automation that references it
+        until the script's own gate cures it again.
+        """
+        return other if other.tier > self.tier else self
+
+
+UNRESOLVED_DEFINITION = DefinitionResolution(taint_metadata=None)
+"""A definition with no usable record: absent, unreadable, void, or uncured."""
+
+
+def resolve_definition_record(
+    stored_record: object,
+    content: Mapping[str, object],
+) -> DefinitionResolution:
+    """Resolve a stored record against the content it is supposed to describe.
+
+    Two things resolve a definition as trusted intent: a stamp at the trusted
+    pole, meaning the authoring turn held nothing externally authored; or a
+    curing disposition, meaning a gate made a real decision about this exact
+    content. Everything else -- a tainted stamp no gate cured, an escalation
+    nobody approved, a denial, a legacy row, content that changed under the
+    record -- is unresolved and fails closed.
+    """
+    record = definition_record_from_row(stored_record)
+    if record is None or not record.matches(content):
+        return UNRESOLVED_DEFINITION
+    stamp_tier = TurnTaintState.from_metadata(record.taint_metadata).max_tier
+    if not is_externally_authored(stamp_tier):
+        return DefinitionResolution(
+            taint_metadata=record.taint_metadata,
+            disposition=record.disposition,
+        )
+    if record.cures:
+        return DefinitionResolution(
+            taint_metadata=machine_authored_taint_metadata(TurnTaintState.empty()),
+            disposition=record.disposition,
+        )
+    return UNRESOLVED_DEFINITION
+
+
 def merge_retained_definition(
     state: TurnTaintState,
     *,
@@ -364,18 +539,7 @@ def merge_retained_definition(
     checked against the content it actually described -- a record whose hash no
     longer matches is void, and voids resolve as uncured.
     """
-    record = definition_record_from_row(stored_record)
-    resolved_clean = (
-        record is not None
-        and record.matches(retained_content)
-        and (
-            record.cures
-            or not is_externally_authored(
-                TurnTaintState.from_metadata(record.taint_metadata).max_tier
-            )
-        )
-    )
-    if resolved_clean:
+    if resolve_definition_record(stored_record, retained_content).resolved:
         return state
     return state.add_source(
         TaintSource(

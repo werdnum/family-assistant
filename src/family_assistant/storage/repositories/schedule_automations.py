@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from family_assistant.security.definition_records import (
     CreationDisposition,
+    automation_definition_content,
     merge_retained_definition,
     stamp_definition,
 )
@@ -72,31 +73,6 @@ def _build_script_payload(
     else:
         payload["script_code"] = action_config.get("script_code", "")
     return payload
-
-
-def automation_definition_content(
-    *,
-    name: str | None,
-    description: str | None,
-    recurrence_rule: str,
-    action_type: str,
-    action_config: ActionConfig | None,
-) -> dict[str, object]:
-    """The executable fields of a schedule automation, for hashing.
-
-    Everything that determines *what runs* and *what the agent is told*: the
-    schedule, the action, and the name and description a firing renders as
-    intent. Management state (enabled, execution counts, next_scheduled_at) is
-    excluded -- toggling an automation changes no content, so a valid record
-    must survive it, per the design's activation rule.
-    """
-    return {
-        "name": name,
-        "description": description,
-        "recurrence_rule": recurrence_rule,
-        "action_type": action_type,
-        "action_config": action_config,
-    }
 
 
 class ScheduleAutomationsRepository(BaseRepository):

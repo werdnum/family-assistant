@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from family_assistant.security.definition_records import (
     CreationDisposition,
+    script_definition_content,
     stamp_definition,
 )
 from family_assistant.storage.repositories.base import BaseRepository
@@ -38,31 +39,12 @@ class ScriptRow(ScriptModel):
     id: int
     created_at: datetime
     updated_at: datetime
+    definition_record: str | None = None
+    """The stored definition record, as written: JSON text, parsed at resolution."""
 
 
 class ScriptNotFoundError(Exception):
     """Raised when a script cannot be found."""
-
-
-def script_definition_content(
-    *,
-    name: str,
-    description: str,
-    script_code: str,
-    # ast-grep-ignore: no-dict-any - JSON Schema parameter is genuinely arbitrary
-    parameters_schema: dict[str, Any] | None,
-) -> dict[str, object]:
-    """The executable fields of a stored script, for hashing.
-
-    The body is the executable content; the name, description, and parameter
-    schema shape how a caller invokes it and what a firing renders as intent.
-    """
-    return {
-        "name": name,
-        "description": description,
-        "script_code": script_code,
-        "parameters_schema": parameters_schema,
-    }
 
 
 class ScriptsRepository(BaseRepository):
@@ -295,4 +277,5 @@ def _row_to_script_row(row: dict[str, Any]) -> ScriptRow:
         parameters_schema=_parse_parameters_schema(row.get("parameters_schema")),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        definition_record=row.get("definition_record"),
     )
