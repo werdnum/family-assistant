@@ -481,7 +481,10 @@ async def test_unattended_trigger_reaches_reviewer_as_provenance_stub(
     assert "Earlier interactive request mentioned friend@example.test." not in prompt
     assert "Current callback payload mentions friend@example.test." not in prompt
     assert "<trigger_payload_stub>" in prompt
-    assert "Destination appears nowhere in the current trusted request." in prompt
+    assert (
+        "Destination appears nowhere in the current trusted request or in an "
+        "attested trigger definition." in prompt
+    )
     reviews = await _review_events(context)
     assert len(reviews) == 1
     review_context = reviews[0]["review_context_json"]

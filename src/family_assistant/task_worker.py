@@ -656,11 +656,14 @@ def _llm_callback_review_trigger(
     if payload_present is None:
         payload_present = legacy_event_payload or legacy_script_payload
 
+    creator = payload.get("created_by_user_id")
     return TriggerReviewInput(
         trigger_type=trigger_type,
         active_request_role="user",
         definition=definition,
         definition_taint_metadata=definition_resolution.taint_metadata,
+        definition_disposition=definition_resolution.disposition,
+        definition_creator=creator if isinstance(creator, str) else None,
         payload_present=payload_present,
     )
 
@@ -5138,6 +5141,8 @@ async def handle_script_execution(
                 active_request_role="system",
                 definition=script_code,
                 definition_taint_metadata=script_definition_resolution.taint_metadata,
+                definition_disposition=script_definition_resolution.disposition,
+                definition_creator=payload.get("created_by_user_id"),
                 payload_present=bool(event_data),
             ),
         )
