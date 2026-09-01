@@ -333,12 +333,18 @@ re-validation rule automation_provenance.md already applies to stored-script cap
 table; their definition is the enqueued payload. The stamp, hash, and disposition ride the task
 payload alongside the existing `tool_call_review_trigger_definition` fields, snapshotted at enqueue
 from the live tracker and the gate that admitted the call. Follow-up reminders re-enqueued by the
-task worker carry the original record forward unchanged — the content is the same content. Editing a
-pending callback is a mutation like any other: `modify_pending_callback` today replaces
-`callback_context` in place without touching the review-definition fields, which under this design
-would strand a stale record against new content — so it, too, obtains a fresh record from the
-stamping helper in the editing turn, and the payload's definition field is updated with the content
-it describes.
+task worker carry the original record forward unchanged — the content is the same content. One
+consequence of the asynchronous observe-mode attach follows from the record living in the payload: a
+follow-up re-enqueued *before* the originating write's verdict lands copies the still-pending
+record, and the verdict — which attaches to the originating write — does not chase the descendant
+chain. A tainted-turn one-shot that fires inside the verdict-latency window therefore leaves its
+follow-up chain uncured: bounded to that seconds-wide window, conservative in shadow data,
+impossible under `enforce` (whose verdict completes before the write), and accepted rather than
+solved with descendant-task tracking. Editing a pending callback is a mutation like any other:
+`modify_pending_callback` today replaces `callback_context` in place without touching the
+review-definition fields, which under this design would strand a stale record against new content —
+so it, too, obtains a fresh record from the stamping helper in the editing turn, and the payload's
+definition field is updated with the content it describes.
 
 ### The stamping chokepoint
 
@@ -549,12 +555,14 @@ gates exist today. *Verify:* a human-confirmed tainted creation fires clean and 
 attested; a judge-allowed creation cures with `taint_policy.mode` still `observe`, through the taint
 layer and the static layer alike; an observe-mode `allow` attaches asynchronously after review
 completion, bound to the originating write's generation — a firing before completion enters uncured,
-the next firing enters cured, a mutation racing the completion leaves the new content uncured, and a
-same-content rewrite from another turn does not inherit the earlier write's verdict; a recorded
-`confirm` verdict without an approval, and a recorded `deny`, resolve as absent; a floored cell
-yields only human-backed cures for writes made under it; a patch-style update presents the complete
-merged definition to the gate, and the gated payload is identical to the content the new record's
-hash covers; no test path rewrites an authoring stamp.
+the next firing of a durable-table definition enters cured (a one-shot follow-up chain re-enqueued
+inside the window keeps the pending record, per the one-shot section), a mutation racing the
+completion leaves the new content uncured, and a same-content rewrite from another turn does not
+inherit the earlier write's verdict; a recorded `confirm` verdict without an approval, and a
+recorded `deny`, resolve as absent; a floored cell yields only human-backed cures for writes made
+under it; a patch-style update presents the complete merged definition to the gate, and the gated
+payload is identical to the content the new record's hash covers; no test path rewrites an authoring
+stamp.
 
 **M4 — Attestation surface and documentation.** The hash-bound review operation for the three
 artifact classes, in the web UI, listing each definition with its stamp and disposition (which is
