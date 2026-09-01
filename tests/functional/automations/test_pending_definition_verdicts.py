@@ -249,3 +249,34 @@ async def test_a_verdict_reaches_a_one_shot_callbacks_payload(
         ],
     )
     assert resolution.resolved
+
+
+@pytest.mark.asyncio
+async def test_a_verdict_never_rewrites_the_authoring_stamp(
+    db_engine: AsyncEngine,
+) -> None:
+    """The stamp stays the deterministic statement of what authored the content.
+
+    A cure is an additive record beside the stamp, not a mutation of it: the
+    definition still says it was written in a turn that had read untrusted
+    content, and the disposition says a gate examined it anyway.
+    """
+    db = Database(engine=db_engine)
+    pending, gate = _pending()
+    automation_id = await _create_automation(db, gate)
+    before = await db.schedule_automations.get_by_id(automation_id)
+    assert before is not None
+    stamp = definition_record_from_row(before["definition_record"])
+    assert stamp is not None
+
+    await attach_pending_verdict(
+        db, pending, disposition=CreationDisposition.JUDGE_ALLOWED, gate=_GATE
+    )
+
+    after = await db.schedule_automations.get_by_id(automation_id)
+    assert after is not None
+    cured = definition_record_from_row(after["definition_record"])
+    assert cured is not None
+    assert cured.taint_metadata == stamp.taint_metadata
+    assert cured.content_hash == stamp.content_hash
+    assert cured.taint_metadata.get("max_tier") == "unknown_external"
