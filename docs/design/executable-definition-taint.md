@@ -181,9 +181,7 @@ the tier.
 "Marked" means the review-status vocabulary (`clean` / `attested` / `judge-allowed at creation`,
 plus creator identity) renders as closed-vocabulary context alongside the definition, so the
 firing-time reviewer always knows whether it is weighing a human's sighted approval or a prior
-machine verdict. The two disposition rows resolve subject to the policy-revalidation rule below: a
-stored disposition counts only while it would still be a sufficient gate outcome under the current
-configuration. The definition renders in the *definition* field, never in `originating_request`:
+machine verdict. The definition renders in the *definition* field, never in `originating_request`:
 that field remains reserved for literal human-authored rows, per the delegation design's laundering
 rule — a definition is usually model-composed even in a clean turn, and must not occupy the slot
 that claims to be the human's own words.
@@ -234,21 +232,17 @@ The strength of the cure inherits the creation cell's configuration, with no new
 repository's shipped judge-forward defaults, a tainted-turn creation adjudicates with a full verdict
 space, so the judge can cure. An operator who applies the recommended hardening set — a `confirm`
 floor on executable persistence at externally authored tiers, per the risk document — thereby makes
-every cure human-backed, because tainted creations can then only pass through confirmation. "Who may
-make stored intent trusted" is exactly the question the creation cell's strictness already answers;
-a separate curing knob would be a second place to configure the same decision.
+every *subsequent* cure human-backed, because tainted creations can then only pass through
+confirmation. "Who may make stored intent trusted" is exactly the question the creation cell's
+strictness already answers; a separate curing knob would be a second place to configure the same
+decision.
 
-And the inheritance holds through time, not only at write time: **a stored disposition is
-revalidated against current policy at every resolution.** A disposition cures only if it would still
-be a sufficient outcome of the definition's creation cell, at the definition's stored authoring
-tier, under the configuration in effect at the firing — `human_confirmed` satisfies any cell up to a
-`confirm` floor, while `judge_allowed` satisfies only a cell whose verdict space still includes
-`allow`. The moment an operator floors the cell at `confirm`, every machine-approved definition at
-that tier stops resolving trusted — hash unchanged, record intact — and drops to the un-cured path
-until a human attests or re-confirms it; that is the hardening applying to the stored estate rather
-than only to future writes, which is what tighten-only has to mean for a durable record. Loosening
-composes the same way in reverse: a `human_confirmed` disposition remains sufficient under any
-weaker cell, so removing a floor never invalidates a human's decision.
+The inheritance governs each write at the moment it happens, and deliberately nothing later:
+resolution is a pure function of the stored record, and a disposition, once validly granted, stands
+until the content changes. It is *not* re-evaluated against the configuration in effect at each
+firing — so a `judge_allowed` granted under the floorless defaults keeps curing after an operator
+later adds the floor. That is a deliberate simplification, not an oversight; the trade and its
+procedural remedy are recorded in the accepted residuals.
 
 Mutation re-enters the chokepoint. `update_automation`, script saves, and `modify_pending_callback`
 re-stamp, re-hash, and re-gate: a tainted update of a clean definition produces a new record whose
@@ -369,11 +363,9 @@ close-vocabulary marking at every consultation, and the audit anchor to the crea
   taint source.
 - A cured firing gains only its baseline: every sink its turn reaches is still gated by the same
   cells, against a reviewer that now has intent to judge with.
-- An operator floor on the creation cell simultaneously governs execution and cure eligibility —
-  tighten-only, with no second surface to misconfigure — and cure validity is policy-current:
-  dispositions are revalidated against the configuration in effect at each firing, so tightening a
-  floor immediately un-cures every machine-approved definition it covers, while no configuration
-  change ever invalidates a human's sighted approval.
+- An operator floor on the creation cell simultaneously governs execution and cure eligibility for
+  every subsequent write — tighten-only, with no second surface to misconfigure; the stored estate's
+  behaviour under later hardening is a documented accepted residual, not a silent one.
 - Definition text never occupies the originating-request field, and model-composed definition text
   never feeds the destination echo — only text stamped exactly `trusted_user` (human-direct) or
   sighted in full (`human_confirmed`) does, labeled with its definition provenance.
@@ -399,6 +391,18 @@ close-vocabulary marking at every consultation, and the audit anchor to the crea
   maximum even if the human dictated the instruction verbatim; content-derived per-field stamping
   remains the risk document's contingent-tier refinement and composes here unchanged (it would
   upgrade some stamps to `clean`, reducing how often the cure is needed at all).
+- **A cure granted under a weaker configuration survives later hardening.** Dispositions record the
+  gate that actually ran at the write, and resolution never re-evaluates them against the
+  configuration in effect at the firing — so a `judge_allowed` stored under the floorless defaults
+  keeps curing after an operator adds the `confirm` floor, which from then on governs new writes
+  only. Deliberately accepted rather than mechanized: re-validation would couple every firing to
+  live policy — cures flapping with configuration edits, a second evaluation path maintained forever
+  — for a one-time transition in a small, enumerable population. The remedy is procedural: the
+  attestation surface (M4) lists definitions with their stamp and disposition, so applying the floor
+  comes with a one-time review of the existing judge-cured estate, documented next to the floor in
+  `CONFIGURATION_REFERENCE.md` the same way the enforce-migration pin is. An operator who skips that
+  review has accepted judge-vetted definitions continuing under judge authority — the shipped
+  posture at the time they were created.
 - **The closure walk covers stored artifacts, not conversation.** A definition that instructs the
   agent to read some other artifact at fire time gets no special treatment; whatever it reads
   contributes taint the ordinary way.
@@ -468,15 +472,16 @@ taint-cell path depends on the risk document's executable-persistence sink split
 tainted creation fires clean and renders marked attested; a judge-allowed creation through a static
 `review` rule cures with `taint_policy.mode` still `observe`, and through a taint cell only under
 `enforce`; a taint-cell `allow` verdict under `observe` does not cure; a floored cell yields only
-human-backed cures; adding a `confirm` floor after the fact stops a stored `judge_allowed`
-disposition from resolving trusted at the next firing while a `human_confirmed` one still resolves;
-no test path rewrites an authoring stamp.
+human-backed cures for writes made under it; no test path rewrites an authoring stamp.
 
 **M4 — Attestation surface and documentation.** The hash-bound review operation for the three
-artifact classes, in the web UI; user documentation for how automations become trusted;
-`CONFIGURATION_REFERENCE.md` gains the interaction with the executable-persistence floor and the
-simplified enforce-migration note. *Verify:* attesting a legacy automation makes its next firing
-resolve trusted; any content change invalidates the attestation; docs build.
+artifact classes, in the web UI, listing each definition with its stamp and disposition (which is
+what makes the hardening residual's one-time review a filter rather than an audit); user
+documentation for how automations become trusted; `CONFIGURATION_REFERENCE.md` gains the interaction
+with the executable-persistence floor — including the one-time review of existing judge-cured
+definitions when adding it — and the simplified enforce-migration note. *Verify:* attesting a legacy
+automation makes its next firing resolve trusted; any content change invalidates the attestation;
+docs build.
 
 ## Review questions
 
