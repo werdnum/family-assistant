@@ -135,13 +135,20 @@ authenticated channel; everything else composed inside the boundary stamps at le
 turn is `trusted_internal`, and in a tainted turn remains the turn maximum as today. Three rules
 keep the split cheap:
 
-- **Gating is unchanged.** The shipped matrix treats `trusted_internal` identically to
-  `trusted_user` in every cell — the split makes no policy distinction today, only preserves room
-  for one, like the `known_contact`/`recognized_machine` ordering. Comparisons that mean "externally
-  authored" re-anchor to the new boundary behind a shared helper rather than raw tier comparisons,
-  so the boundary lives in one place. Ordinary turns will max at `trusted_internal` (every turn
-  contains assistant output), which is exactly why the distinction is meaningless at turn
-  granularity and consumed only per row, per field, and per artifact.
+- **Gating is unchanged — by inheritance, not by copied cells.** The shipped matrix treats
+  `trusted_internal` identically to `trusted_user` in every cell, and the equivalence is defined
+  centrally in the evaluator, not by duplicating rows: a `trusted_internal` lookup with no explicit
+  entry resolves to the configuration's `trusted_user` entry, across the default matrix, `matrix`,
+  `matrix_overrides`, and `operator_minimum` alike. This is what keeps the split from silently
+  relaxing *operator* policy — a deployment that wrote a custom floor on `trusted_user` must keep
+  covering ordinary model output after it reclassifies, and per-tier map lookups would walk straight
+  past that entry. An operator who wants the two trusted tiers to differ writes an explicit
+  `trusted_internal` entry; absence inherits. The split makes no policy distinction today, only
+  preserves room for one, like the `known_contact`/`recognized_machine` ordering. Comparisons that
+  mean "externally authored" re-anchor to the new boundary behind a shared helper rather than raw
+  tier comparisons, so the boundary lives in one place. Ordinary turns will max at
+  `trusted_internal` (every turn contains assistant output), which is exactly why the distinction is
+  meaningless at turn granularity and consumed only per row, per field, and per artifact.
 - **Evidential consumers get the distinction from the field they already read.** The reviewer's
   conversation rendering generalizes to at-or-below `trusted_internal`, so clean assistant context
   keeps rendering; the originating-request qualification and the destination echo narrow to exactly
@@ -350,9 +357,11 @@ close-vocabulary marking at every consultation, and the audit anchor to the crea
 - Definition text never occupies the originating-request field, and model-composed definition text
   never feeds the destination echo — only text stamped exactly `trusted_user` (human-direct) or
   sighted in full (`human_confirmed`) does, labeled with its definition provenance.
-- The `trusted_internal` split never weakens gating: the shipped matrix treats it identically to
-  `trusted_user`, human-words consumers narrow rather than widen, and pre-split rows stamped under
-  the conflated meaning never qualify as human-authored (epoch-guarded).
+- The `trusted_internal` split never weakens gating: shipped *and operator* configuration alike
+  govern it through central trusted-pole inheritance (an absent `trusted_internal` entry resolves to
+  the `trusted_user` entry in every policy map), human-words consumers narrow rather than widen, and
+  pre-split rows stamped under the conflated meaning never qualify as human-authored
+  (epoch-guarded).
 
 ## Accepted residuals
 
@@ -406,7 +415,9 @@ consumers; the reviewer's row rendering generalized to at-or-below `trusted_inte
 originating-request qualification narrows to exactly `trusted_user`. *Verify:* merge and round-trip
 tests for the new tier; a clean turn's assistant row stamps `trusted_internal` and still renders to
 the reviewer; a machine-composed user row no longer qualifies as an originating request by tier
-alone; no matrix cell distinguishes the two trusted tiers; a pre-epoch `trusted_user` row does not
+alone; no shipped matrix cell distinguishes the two trusted tiers; an operator `matrix_overrides` or
+`operator_minimum` entry written only for `trusted_user` governs a `trusted_internal` evaluation
+unless an explicit `trusted_internal` entry overrides it; a pre-epoch `trusted_user` row does not
 qualify as human-authored.
 
 **M1 — Definition records at rest.** Stamping helper; provenance-plus-hash storage on
