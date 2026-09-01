@@ -110,6 +110,51 @@ Each executable definition carries a **definition record** with three parts:
    not by the automation tools — whichever layer gated the write records how it resolved, so a new
    write path or a new gating layer gets the behaviour by construction.
 
+### Splitting the conflated tier: `trusted_internal`
+
+`trusted_user` today names two different things — its own definition says so: "direct input from an
+authenticated user, *or system-authored control text*." Content a human literally typed through an
+authenticated channel, and content authored *inside the trust boundary* without a human hand —
+system templates, the fixed-template scheduler trigger, and model output composed in turns whose
+inputs were all trusted — share tier 0. For gating the conflation is harmless: both are the trusted
+pole and the matrix treats them identically. But every consumer that needs *the human's words* has
+had to reconstruct the distinction structurally. The delegation design qualifies originating-request
+rows by "a turn a human started" plus role and visibility precisely because the tier cannot say who
+wrote the text — its own residual notes that a machine-composed clean row "is stamped `trusted_user`
+like any other untainted row," which is why its rule had to be "not a human's turn" rather than "not
+trusted." An earlier draft of this design added an authoring-channel bit to the definition record
+for the same reason. Each patch is local; the conflation is global.
+
+This design proposes the vocabulary fix instead: a new tier, **`trusted_internal`**, ranked between
+`trusted_user` and `known_contact`. `trusted_user` narrows to direct human input through an
+authenticated channel; everything else composed inside the boundary stamps at least
+`trusted_internal` — authorship floors the stamp, so a model-composed row or definition in a clean
+turn is `trusted_internal`, and in a tainted turn remains the turn maximum as today. Three rules
+keep the split cheap:
+
+- **Gating is unchanged.** The shipped matrix treats `trusted_internal` identically to
+  `trusted_user` in every cell — the split makes no policy distinction today, only preserves room
+  for one, like the `known_contact`/`recognized_machine` ordering. Comparisons that mean "externally
+  authored" re-anchor to the new boundary behind a shared helper rather than raw tier comparisons,
+  so the boundary lives in one place. Ordinary turns will max at `trusted_internal` (every turn
+  contains assistant output), which is exactly why the distinction is meaningless at turn
+  granularity and consumed only per row, per field, and per artifact.
+- **Evidential consumers get the distinction from the field they already read.** The reviewer's
+  conversation rendering generalizes to at-or-below `trusted_internal`, so clean assistant context
+  keeps rendering; the originating-request qualification and the destination echo narrow to exactly
+  `trusted_user` — which is what they always meant. The human-started-turn structural predicate
+  stays as defence in depth, and pre-split rows, stamped under the conflated meaning, never qualify
+  for human-words consumers (the epoch pattern covers the transition).
+- **It rides the existing envelopes.** The tier field already round-trips through row metadata,
+  artifact provenance, and delegation serialization. A parallel authorship field would have to be
+  added to every envelope, merge function, and consumer separately — the exact field-gets-dropped
+  failure mode the serialization work keeps rediscovering (`sensitive_reads` not surviving
+  `to_metadata()` is the standing example).
+
+For this design specifically: a definition written through the web UI stamps `trusted_user`; one the
+model composed in a clean turn stamps `trusted_internal`; the authoring-channel bit dissolves into
+the tier.
+
 ### Firing-time resolution
 
 `_llm_callback_review_trigger` and the script-execution seeding path stop hard-coding
@@ -117,7 +162,7 @@ Each executable definition carries a **definition record** with three parts:
 
 | record state                                  | definition renders to reviewer as        | trigger taint contribution |
 | --------------------------------------------- | ---------------------------------------- | -------------------------- |
-| stamp `trusted_user`, hash valid              | trusted definition                       | none                       |
+| stamp ≤ `trusted_internal`, hash valid        | trusted definition                       | none                       |
 | tainted stamp + `human_confirmed`, hash valid | trusted definition, marked attested      | none                       |
 | tainted stamp + `judge_allowed`, hash valid   | trusted definition, marked judge-allowed | none                       |
 | tainted stamp, no curing disposition          | stub (today)                             | `unknown_external` (today) |
@@ -145,16 +190,15 @@ Everything else about the firing is unchanged:
 - **Capability provenance is unchanged.** Profile resolution, `allow_wake_llm`, and the fail-loud
   rules of automation_provenance.md are untouched.
 - **The destination echo** extends to firings only through text a human actually authored or
-  sighted. A `trusted_user` stamp is not enough: it describes the authoring *turn*, while the
-  definition text is usually model-composed even in a clean turn, and a model-introduced destination
-  must not read back as strong evidence that it appeared in the user's words. Echo-eligible text is
-  therefore a definition written human-direct (the web UI, no model in the loop — the record carries
-  an authoring-channel bit for exactly this distinction) or one whose disposition is
-  `human_confirmed`, where the human approved the exact rendered text, destinations included.
-  Model-composed definitions — clean-turn and judge-cured alike — render as trusted intent but never
-  feed the echo, and a definition-sourced match names its provenance ("appears in the attested
-  definition", never "in the trusted request"). The echo remains a signal, never a bypass, either
-  way.
+  sighted. A clean authoring turn is not enough: the definition text is usually model-composed even
+  then, and a model-introduced destination must not read back as strong evidence that it appeared in
+  the user's words. Echo-eligible text is therefore a definition stamped exactly `trusted_user`
+  (human-direct, e.g. the web UI — the narrowed meaning the tier split gives that stamp) or one
+  whose disposition is `human_confirmed`, where the human approved the exact rendered text,
+  destinations included. Model-composed definitions — `trusted_internal` and judge-cured alike —
+  render as trusted intent but never feed the echo, and a definition-sourced match names its
+  provenance ("appears in the attested definition", never "in the trusted request"). The echo
+  remains a signal, never a bypass, either way.
 
 ### What cures, and what deliberately does not
 
@@ -273,13 +317,19 @@ close-vocabulary marking at every consultation, and the audit anchor to the crea
   conversational context, and stale rows rendered years later would mislead more than they inform.
   Recorded as a deliberate simplification; the delegation machinery remains the pattern for live
   crossings.
+- **An authoring-channel bit on the definition record** instead of the tier split (an earlier
+  revision of this design). It answers the human-authored question for definitions only, leaving
+  every other consumer of the same distinction — the originating-request qualification, the echo
+  against conversation rows — on their structural workarounds, and it is a parallel field that every
+  envelope and merge function must remember to carry. The tier split answers the question once, in
+  the field everything already persists.
 
 ## Security properties
 
 - No firing ever enters trusted on identity, age, or absence of information: only a valid-hash
-  record whose stamp is `trusted_user` or whose disposition is a real gate's `allow`/approval
-  resolves trusted, and every other state — legacy, mismatch, uncured — is exactly today's
-  fail-closed behaviour.
+  record whose stamp is at or below `trusted_internal` or whose disposition is a real gate's
+  `allow`/approval resolves trusted, and every other state — legacy, mismatch, uncured — is exactly
+  today's fail-closed behaviour.
 - Nothing probabilistic writes or rewrites stored provenance; the authoring stamp is append-only
   history, and the cure is an additive, hash-bound, auditable record consulted deterministically.
 - The trigger payload never launders: no record state renders payload content or suppresses its
@@ -289,8 +339,11 @@ close-vocabulary marking at every consultation, and the audit anchor to the crea
 - An operator floor on the creation cell simultaneously governs execution and cure eligibility —
   tighten-only, with no second surface to misconfigure.
 - Definition text never occupies the originating-request field, and model-composed definition text
-  never feeds the destination echo — only text a human typed (a human-direct write) or sighted in
-  full (`human_confirmed`) does, labeled with its definition provenance.
+  never feeds the destination echo — only text stamped exactly `trusted_user` (human-direct) or
+  sighted in full (`human_confirmed`) does, labeled with its definition provenance.
+- The `trusted_internal` split never weakens gating: the shipped matrix treats it identically to
+  `trusted_user`, human-words consumers narrow rather than widen, and pre-split rows stamped under
+  the conflated meaning never qualify as human-authored (epoch-guarded).
 
 ## Accepted residuals
 
@@ -335,22 +388,35 @@ paragraph can be retired for deployments that adopt this design before flipping 
 Each milestone is a PR-sized, independently shippable unit; construction detail (column names, hash
 canonicalization, payload field names) belongs to the PRs.
 
-**M1 — Definition records at rest.** Stamping helper; provenance-plus-hash storage (including the
-authoring-channel bit) on `schedule_automations`, `event_listeners`, and `scripts`; payload fields
-for one-shot callbacks; re-stamping on every executable-content mutation, `modify_pending_callback`
-included; web-UI trusted-by-construction stamps; the conformance rule keyed on executable-content
-mutation. No behaviour change at firing time. *Verify:* round-trip tests per artifact; a clean-turn
-creation stamps `trusted_user` and a mixed turn stamps the turn maximum; a `modify_pending_callback`
-edit replaces the record and the payload definition together; the conformance rule fails on a
-fixture write path that mutates executable content without the helper.
+**M0 — The `trusted_internal` tier.** The new tier member ranked between `trusted_user` and
+`known_contact`; the authorship floor at row and artifact stamping (non-human-direct content stamps
+at least `trusted_internal`); matrix equivalence with `trusted_user` in every shipped cell; the
+externally-authored boundary helper replacing raw tier comparisons; the epoch guard for human-words
+consumers; the reviewer's row rendering generalized to at-or-below `trusted_internal` while the
+originating-request qualification narrows to exactly `trusted_user`. *Verify:* merge and round-trip
+tests for the new tier; a clean turn's assistant row stamps `trusted_internal` and still renders to
+the reviewer; a machine-composed user row no longer qualifies as an originating request by tier
+alone; no matrix cell distinguishes the two trusted tiers; a pre-epoch `trusted_user` row does not
+qualify as human-authored.
+
+**M1 — Definition records at rest.** Stamping helper; provenance-plus-hash storage on
+`schedule_automations`, `event_listeners`, and `scripts`; payload fields for one-shot callbacks;
+re-stamping on every executable-content mutation, `modify_pending_callback` included; web-UI
+`trusted_user` stamps, model-composed clean-turn `trusted_internal` stamps; the conformance rule
+keyed on executable-content mutation. No behaviour change at firing time. *Verify:* round-trip tests
+per artifact; a web-UI creation stamps `trusted_user`, a clean-turn model creation stamps
+`trusted_internal`, and a mixed turn stamps the turn maximum; a `modify_pending_callback` edit
+replaces the record and the payload definition together; the conformance rule fails on a fixture
+write path that mutates executable content without the helper.
 
 **M2 — Firing-time resolution for deterministic stamps.** `_llm_callback_review_trigger` and the
-script-execution seeding resolve records; `trusted_user`-stamped, hash-valid definitions render and
-contribute no trigger taint; the payload/definition taint split; the closure walk. *Verify:* a
-reminder scheduled in a clean turn delivers without an `unknown_external` source; the same reminder
-scheduled in a tainted turn still enters tainted; a hash-mismatched definition stubs and taints as
-today; an event firing with a trusted definition and a payload renders intent while carrying payload
-taint; an automation referencing a script re-saved in a tainted turn resolves un-cured.
+script-execution seeding resolve records; trusted-pole-stamped (at or below `trusted_internal`),
+hash-valid definitions render and contribute no trigger taint; the payload/definition taint split;
+the closure walk. *Verify:* a reminder scheduled in a clean turn delivers without an
+`unknown_external` source; the same reminder scheduled in a tainted turn still enters tainted; a
+hash-mismatched definition stubs and taints as today; an event firing with a trusted definition and
+a payload renders intent while carrying payload taint; an automation referencing a script re-saved
+in a tainted turn resolves un-cured.
 
 **M3 — The cure.** Dispositions written at the confirmation and adjudication chokepoints
 (enforce-mode only for verdicts; full-payload rendering required for confirmations); resolution
@@ -373,13 +439,17 @@ resolve trusted; any content change invalidates the attestation; docs build.
    should the shipped default require `human_confirmed` for the cure even where the judge may
    `allow` the write itself (splitting execution authority from curing authority, at the cost of the
    second dial this design argues against)?
-2. Should the disposition record the *delegating layer* (taint cell vs. static rule) and require a
+2. Is the `trusted_internal` tier split the right home for the human-authored distinction, versus an
+   orthogonal authorship field on taint metadata — given that it makes ordinary turns max at
+   `trusted_internal` and re-anchors every "externally authored" comparison, in exchange for the
+   distinction riding the one field every envelope already persists?
+3. Should the disposition record the *delegating layer* (taint cell vs. static rule) and require a
    taint-layer gate specifically, or is any enforce-mode gate on the write sufficient — as designed
    — given that static confirmations render the same payload?
-3. Is the closure-walk weakest-link rule right for stored scripts, or should an automation
+4. Is the closure-walk weakest-link rule right for stored scripts, or should an automation
    referencing a script pin the script's hash at automation-gate time (tighter, but re-creates the
    cross-artifact staleness this design avoids)?
-4. Is whole-definition stamping acceptable for v1, with per-field content-derived stamping left to
+5. Is whole-definition stamping acceptable for v1, with per-field content-derived stamping left to
    the contingent tier?
-5. Should follow-up reminders re-enqueued by the task worker really inherit the original record
+6. Should follow-up reminders re-enqueued by the task worker really inherit the original record
    unchanged, or does each re-enqueue deserve a fresh gate evaluation?
