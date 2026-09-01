@@ -289,15 +289,16 @@ The risk document's design principle — nothing probabilistic ever writes prove
 or persists a verdict as trust — is amended for exactly one artifact class, executable definitions,
 in exactly one direction:
 
-- **What is preserved:** no verdict ever rewrites the authoring stamp. The stored provenance remains
-  the deterministic record of what authored the definition, forensics intact; `judge_allowed` is an
-  additive record beside it, not a mutation of it. No verdict touches notes, calendar events, or any
-  other artifact class. No verdict relaxes a configured floor — a floored creation cell excludes
-  `allow`, and with it the judge's ability to cure, by the same configuration that excludes it from
-  executing.
-- **What is amended:** a persisted enforce-mode `allow` verdict on the *creation* is consulted, by a
-  deterministic resolution function, when seeding the definition's firings — a verdict persisting as
-  trust, for this class, bounded by the hash and revocable by any content change.
+- **What is preserved:** no verdict ever rewrites the authoring stamp. The current record's stored
+  provenance remains the deterministic statement of what authored the definition's current content;
+  `judge_allowed` is an additive record beside it, not a mutation of it. No verdict touches notes,
+  calendar events, or any other artifact class. No verdict relaxes a configured floor — a floored
+  creation cell excludes `allow`, and with it the judge's ability to cure, by the same configuration
+  that excludes it from executing.
+- **What is amended:** a persisted `allow` verdict from an enforcement-live gate on the *creation*
+  is consulted, by a deterministic resolution function, when seeding the definition's firings — a
+  verdict persisting as trust, for this class, bounded by the hash and revocable by any content
+  change.
 
 The amendment is justified by an asymmetry unique to this class. For every other artifact, un-cured
 taint degrades to *judgment at use time with full context*: the turn that reads a tainted note has a
@@ -346,8 +347,10 @@ close-vocabulary marking at every consultation, and the audit anchor to the crea
   record whose stamp is at or below `trusted_internal` or whose disposition is a real gate's
   `allow`/approval resolves trusted, and every other state — legacy, mismatch, uncured — is exactly
   today's fail-closed behaviour.
-- Nothing probabilistic writes or rewrites stored provenance; the authoring stamp is append-only
-  history, and the cure is an additive, hash-bound, auditable record consulted deterministically.
+- Nothing probabilistic writes or rewrites stored provenance: the current record's stamp is written
+  only by the deterministic stamping chokepoint, a mutation replaces the whole record through that
+  same chokepoint (no versioned stamp history is kept or promised), no verdict ever touches a stamp,
+  and the cure is an additive, hash-bound, auditable record consulted deterministically.
 - The trigger payload never launders: no record state renders payload content or suppresses its
   taint source.
 - A cured firing gains only its baseline: every sink its turn reaches is still gated by the same
@@ -467,8 +470,8 @@ resolve trusted; any content change invalidates the attestation; docs build.
    `trusted_internal` and re-anchors every "externally authored" comparison, in exchange for the
    distinction riding the one field every envelope already persists?
 3. Should the disposition record the *delegating layer* (taint cell vs. static rule) and require a
-   taint-layer gate specifically, or is any enforce-mode gate on the write sufficient — as designed
-   — given that static confirmations render the same payload?
+   taint-layer gate specifically, or is any enforcement-live gate on the write sufficient — as
+   designed — given that static confirmations render the same payload?
 4. Is the closure-walk weakest-link rule right for stored scripts, or should an automation
    referencing a script pin the script's hash at automation-gate time (tighter, but re-creates the
    cross-artifact staleness this design avoids)?
