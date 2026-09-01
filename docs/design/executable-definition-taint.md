@@ -221,17 +221,26 @@ sighted human approval; an unapproved escalation decided nothing about the defin
 cures **in every mode**: the reviewer that runs at an `adjudicate` cell under `observe` is the same
 reviewer, over the same records, with the same authoring context, computing the same verdict as
 under `enforce` — the mode changes what happens on a deny, and nothing about what an `allow` means.
-An earlier revision additionally required the gate to have been enforcement-live for `allow`; that
-is withdrawn as protecting nothing at real cost. Withholding the cure in `observe` filters no one —
-the write executed regardless — while it makes the dry run measure a system that will never exist,
-and in practice pushes the operator toward blunter instruments: the realistic disposal of an
-accumulated observe-era backlog is an epoch-style bulk amnesty resting on the operator's presumption
-that few real injections are latent in the store, which blesses shadow-*denied* and never-reviewed
-definitions indiscriminately. A per-definition `allow`, recorded with the layer and mode that
-produced it, is strictly more discriminating than the amnesty it replaces. (Clean-authored and
-web-UI definitions — the overwhelming majority — resolve trusted regardless, which is where most of
-this design's value lands: reminders, clean-turn schedules, and dashboard-created listeners stop
-entering as `unknown_external` immediately.)
+That identity carries one precondition, which is a correction to the current merged-review path
+rather than a caveat: the verdict must have been computed under the **enforce-equivalent verdict
+space**. Today, a static `review` rule co-gating a call under `observe` deliberately omits the taint
+cell's constraints from the merged review (`include_observe_taint_constraints=False`), so a floored
+taint cell whose space is `{confirm, deny}` could be widened back to include `allow` by the static
+layer's presence — an `allow` that `enforce` could never have issued. A review that can record a
+curative disposition therefore applies the observe-mode taint constraints, and an `allow` issued
+under a wider verdict space than `enforce` would offer never cures. This is what keeps "a floored
+cell yields only human-backed cures" true in every mode, and keeps the shadow numbers free of a
+low-biased term. An earlier revision additionally required the gate to have been enforcement-live
+for `allow`; that is withdrawn as protecting nothing at real cost. Withholding the cure in `observe`
+filters no one — the write executed regardless — while it makes the dry run measure a system that
+will never exist, and in practice pushes the operator toward blunter instruments: the realistic
+disposal of an accumulated observe-era backlog is an epoch-style bulk amnesty resting on the
+operator's presumption that few real injections are latent in the store, which blesses
+shadow-*denied* and never-reviewed definitions indiscriminately. A per-definition `allow`, recorded
+with the layer and mode that produced it, is strictly more discriminating than the amnesty it
+replaces. (Clean-authored and web-UI definitions — the overwhelming majority — resolve trusted
+regardless, which is where most of this design's value lands: reminders, clean-turn schedules, and
+dashboard-created listeners stop entering as `unknown_external` immediately.)
 
 The strength of the cure inherits the creation cell's configuration, with no new dial. Under this
 repository's shipped judge-forward defaults, a tainted-turn creation adjudicates with a full verdict
@@ -546,21 +555,25 @@ a payload renders intent while carrying payload taint; an automation referencing
 in a tainted turn resolves un-cured.
 
 **M3 — The cure.** Dispositions written at the confirmation and adjudication chokepoints in every
-mode, recording layer, mode, and reviewer revision (an `allow` cures from any layer in any mode;
-`confirm` cures only through an actual approval, with full-payload rendering required; `deny` never
-cures); resolution honours `human_confirmed` and `judge_allowed`; review-status vocabulary in the
-reviewer rendering; echo eligibility rules. The taint-cell path depends on the risk document's
-executable-persistence sink split; the static `review` and confirmation paths work wherever those
-gates exist today. *Verify:* a human-confirmed tainted creation fires clean and renders marked
-attested; a judge-allowed creation cures with `taint_policy.mode` still `observe`, through the taint
-layer and the static layer alike; an observe-mode `allow` attaches asynchronously after review
-completion, bound to the originating write's generation — a firing before completion enters uncured,
-the next firing of a durable-table definition enters cured (a one-shot follow-up chain re-enqueued
-inside the window keeps the pending record, per the one-shot section), a mutation racing the
-completion leaves the new content uncured, and a same-content rewrite from another turn does not
-inherit the earlier write's verdict; a recorded `confirm` verdict without an approval, and a
-recorded `deny`, resolve as absent; a floored cell yields only human-backed cures for writes made
-under it; a patch-style update presents the complete merged definition to the gate, and the gated
+mode, recording layer, mode, and reviewer revision (an `allow` cures from any layer in any mode
+*when computed under the enforce-equivalent verdict space* — merged reviews that can record a
+curative disposition apply the observe-mode taint constraints, correcting the current
+`include_observe_taint_constraints=False` path for these writes; `confirm` cures only through an
+actual approval, with full-payload rendering required; `deny` never cures); resolution honours
+`human_confirmed` and `judge_allowed`; review-status vocabulary in the reviewer rendering; echo
+eligibility rules. The taint-cell path depends on the risk document's executable-persistence sink
+split; the static `review` and confirmation paths work wherever those gates exist today. *Verify:* a
+human-confirmed tainted creation fires clean and renders marked attested; a judge-allowed creation
+cures with `taint_policy.mode` still `observe`, through the taint layer and the static layer alike;
+an observe-mode `allow` attaches asynchronously after review completion, bound to the originating
+write's generation — a firing before completion enters uncured, the next firing of a durable-table
+definition enters cured (a one-shot follow-up chain re-enqueued inside the window keeps the pending
+record, per the one-shot section), a mutation racing the completion leaves the new content uncured,
+and a same-content rewrite from another turn does not inherit the earlier write's verdict; a
+recorded `confirm` verdict without an approval, and a recorded `deny`, resolve as absent; a floored
+cell yields only human-backed cures for writes made under it, including under `observe` when a
+static `review` rule co-gates the write (the merged review's static-layer `allow` does not cure past
+the floor); a patch-style update presents the complete merged definition to the gate, and the gated
 payload is identical to the content the new record's hash covers; no test path rewrites an authoring
 stamp.
 
