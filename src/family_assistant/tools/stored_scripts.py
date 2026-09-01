@@ -12,6 +12,7 @@ from family_assistant.scripting.apis.keychute import (
     get_keychute_config,
     keychute_external_function_names,
 )
+from family_assistant.security.definition_records import authoring_taint_state
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
@@ -198,6 +199,7 @@ async def save_script_tool(
         description=description,
         script_code=code,
         parameters_schema=parameters_schema,
+        definition_taint_state=authoring_taint_state(exec_context.taint_tracker),
     )
     return ToolResult(
         data={

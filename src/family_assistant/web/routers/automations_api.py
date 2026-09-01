@@ -8,6 +8,8 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from family_assistant.processing import ProcessingService
+from family_assistant.security.definition_records import CreationDisposition
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.storage.database import Database
 from family_assistant.storage.models import Automation
 from family_assistant.storage.types import (
@@ -232,6 +234,11 @@ async def _update_automation_record(
                 if request.action_config is not _UNSET
                 else None
             ),
+            # Edited through the authenticated web UI: human-direct, and the
+            # repository hashes the complete post-mutation definition.
+            definition_taint_state=TurnTaintState.empty(),
+            definition_disposition=CreationDisposition.CLEAN,
+            definition_human_direct=True,
         )
     else:
         if not isinstance(request, UpdateScheduleAutomationRequest):
@@ -259,6 +266,11 @@ async def _update_automation_record(
                 if request.action_config is not _UNSET
                 else _UNSET
             ),
+            # Edited through the authenticated web UI: human-direct, and the
+            # repository hashes the complete post-mutation definition.
+            definition_taint_state=TurnTaintState.empty(),
+            definition_disposition=CreationDisposition.CLEAN,
+            definition_human_direct=True,
         )
 
     if not success:
@@ -407,6 +419,12 @@ async def create_event_automation(
             enabled=request.enabled,
             processing_profile_id=processing_service.service_config.id,
             created_by_user_id=str(current_user["user_identifier"]),
+            # Written through the authenticated web UI with no model in the
+            # loop, so the definition is human-direct by construction and needs
+            # no gate: the zero-friction path, as for notes.
+            definition_taint_state=TurnTaintState.empty(),
+            definition_disposition=CreationDisposition.CLEAN,
+            definition_human_direct=True,
         )
 
         # Fetch the created automation
@@ -488,6 +506,12 @@ async def create_schedule_automation(
             timezone=processing_service.service_config.timezone,
             processing_profile_id=processing_service.service_config.id,
             created_by_user_id=str(current_user["user_identifier"]),
+            # Written through the authenticated web UI with no model in the
+            # loop, so the definition is human-direct by construction and needs
+            # no gate: the zero-friction path, as for notes.
+            definition_taint_state=TurnTaintState.empty(),
+            definition_disposition=CreationDisposition.CLEAN,
+            definition_human_direct=True,
         )
 
         # Fetch the created automation

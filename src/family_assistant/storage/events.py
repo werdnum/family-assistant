@@ -111,6 +111,16 @@ event_listeners_table = Table(
         nullable=False,
         server_default=func.now(),  # pylint: disable=not-callable
     ),
+    # Definition record: the authoring turn's taint stamp, a hash over this
+    # definition's executable fields, and how the creation left its gate. A
+    # firing resolves it to decide whether the definition renders as trusted
+    # intent; a hash mismatch voids it and fails closed. See
+    # docs/design/executable-definition-taint.md.
+    Column(
+        "definition_record",
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=True,
+    ),
     # Rate limiting fields
     Column("daily_executions", Integer, nullable=False, server_default="0"),
     Column("daily_reset_at", DateTime(timezone=True), nullable=True),

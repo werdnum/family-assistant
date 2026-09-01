@@ -15,6 +15,7 @@ from family_assistant.scripting.apis.keychute import (
     keychute_external_function_names,
 )
 from family_assistant.scripting.validator import ScriptValidator
+from family_assistant.security.definition_records import authoring_taint_state
 from family_assistant.tools.stored_scripts import (
     AUTOMATION_RUNTIME_GLOBALS,
     validate_script_action_config,
@@ -575,6 +576,9 @@ async def create_automation_tool(
                 condition_script=condition_script,
                 processing_profile_id=exec_context.processing_profile_id,
                 created_by_user_id=exec_context.user_id,
+                definition_taint_state=authoring_taint_state(
+                    exec_context.taint_tracker
+                ),
             )
 
             # Return structured data with human-readable text
@@ -606,6 +610,9 @@ async def create_automation_tool(
                 timezone=exec_context.timezone,
                 processing_profile_id=exec_context.processing_profile_id,
                 created_by_user_id=exec_context.user_id,
+                definition_taint_state=authoring_taint_state(
+                    exec_context.taint_tracker
+                ),
             )
 
             # Get the automation to show next scheduled time
@@ -977,6 +984,9 @@ async def update_automation_tool(
                 ),
                 one_time=existing.one_time or False,
                 enabled=existing.enabled,
+                definition_taint_state=authoring_taint_state(
+                    exec_context.taint_tracker
+                ),
                 condition_script=condition_script,
                 processing_profile_id=restamp_profile_id,
                 created_by_user_id=restamp_user_id,
@@ -1005,6 +1015,9 @@ async def update_automation_tool(
                     update_kwargs["created_by_user_id"] = restamp_user_id
             if description is not None:
                 update_kwargs["description"] = description
+            update_kwargs["definition_taint_state"] = authoring_taint_state(
+                exec_context.taint_tracker
+            )
 
             success = await exec_context.db_context.schedule_automations.update(
                 **update_kwargs

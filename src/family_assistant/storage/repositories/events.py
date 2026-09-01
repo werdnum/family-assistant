@@ -11,6 +11,12 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.sql import functions as func
 
+from family_assistant.security.definition_records import (
+    CreationDisposition,
+    merge_retained_definition,
+    stamp_definition,
+)
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.storage.datetime_utils import normalize_datetime
 from family_assistant.storage.events import (
     EventActionType,
@@ -26,6 +32,33 @@ from family_assistant.storage.types import (
     MatchConditions,
     RecentEventDict,
 )
+
+
+def listener_definition_content(
+    *,
+    name: str | None,
+    description: str | None,
+    source_id: str,
+    match_conditions: MatchConditions,
+    action_type: str,
+    action_config: ActionConfig | None,
+    condition_script: str | None,
+) -> dict[str, object]:
+    """The executable fields of an event listener, for hashing.
+
+    What the listener matches on, what it then runs, and what a firing renders
+    as intent. ``one_time``, ``enabled`` and the rate-limit counters are
+    management state and excluded, so activation changes do not void a record.
+    """
+    return {
+        "name": name,
+        "description": description,
+        "source_id": source_id,
+        "match_conditions": match_conditions,
+        "action_type": action_type,
+        "action_config": action_config,
+        "condition_script": condition_script,
+    }
 
 
 class EventsRepository(BaseRepository):
@@ -154,6 +187,9 @@ class EventsRepository(BaseRepository):
         enabled: bool = True,
         processing_profile_id: str | None = None,
         created_by_user_id: str | None = None,
+        definition_taint_state: TurnTaintState | None = None,
+        definition_disposition: CreationDisposition | None = None,
+        definition_human_direct: bool = False,
     ) -> int:
         """
         Create a new event listener.
@@ -193,6 +229,20 @@ class EventsRepository(BaseRepository):
                     created_by_user_id=created_by_user_id,
                     created_at=datetime.now(UTC),
                     daily_executions=0,
+                    definition_record=stamp_definition(
+                        content=listener_definition_content(
+                            name=name,
+                            description=description,
+                            source_id=source_id,
+                            match_conditions=match_conditions,
+                            action_type=str(getattr(action_type, "value", action_type)),
+                            action_config=action_config,
+                            condition_script=condition_script,
+                        ),
+                        taint_state=definition_taint_state,
+                        disposition=definition_disposition,
+                        human_direct=definition_human_direct,
+                    ).to_dict(),
                 )
                 .returning(event_listeners_table.c.id)
             )
@@ -385,6 +435,9 @@ class EventsRepository(BaseRepository):
         condition_script: str | None = None,
         processing_profile_id: str | None = None,
         created_by_user_id: str | None = None,
+        definition_taint_state: TurnTaintState | None = None,
+        definition_disposition: CreationDisposition | None = None,
+        definition_human_direct: bool = False,
     ) -> bool:
         """
         Update an event listener.
@@ -437,6 +490,42 @@ class EventsRepository(BaseRepository):
 
         # Always update condition_script (can be None to clear it)
         update_values["condition_script"] = condition_script
+
+        merged_action_config: ActionConfig | None = (
+            action_config if action_config is not None else existing["action_config"]
+        )
+        # Hash the complete post-mutation definition: ``action_config`` is
+        # retained from the stored row when the caller omits it, so a record
+        # built from the arguments alone would describe content no gate saw.
+        stamp_state = merge_retained_definition(
+            definition_taint_state
+            if definition_taint_state is not None
+            else TurnTaintState.empty(),
+            stored_record=existing.get("definition_record"),
+            retained_content=listener_definition_content(
+                name=str(existing["name"]),
+                description=existing["description"],
+                source_id=str(existing["source_id"]),
+                match_conditions=existing["match_conditions"],
+                action_type=str(existing["action_type"]),
+                action_config=existing["action_config"],
+                condition_script=existing["condition_script"],
+            ),
+        )
+        update_values["definition_record"] = stamp_definition(
+            content=listener_definition_content(
+                name=name,
+                description=description,
+                source_id=str(existing["source_id"]),
+                match_conditions=match_conditions,
+                action_type=str(existing["action_type"]),
+                action_config=merged_action_config,
+                condition_script=condition_script,
+            ),
+            taint_state=stamp_state,
+            disposition=definition_disposition,
+            human_direct=definition_human_direct,
+        ).to_dict()
 
         # Update the listener
         stmt = (

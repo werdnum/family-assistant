@@ -63,6 +63,8 @@ class EventListenerDict(TypedDict):
     daily_executions: int
     daily_reset_at: datetime | None
     last_execution_at: datetime | None
+    # ast-grep-ignore: no-dict-any - the stored definition record is JSON as written
+    definition_record: dict[str, Any] | None
 
 
 class ScheduleAutomationDict(TypedDict):
@@ -83,6 +85,8 @@ class ScheduleAutomationDict(TypedDict):
     created_at: datetime
     last_execution_at: datetime | None
     execution_count: int
+    # ast-grep-ignore: no-dict-any - the stored definition record is JSON as written
+    definition_record: dict[str, Any] | None
 
 
 class RecentEventDict(TypedDict):

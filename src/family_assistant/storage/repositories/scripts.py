@@ -4,15 +4,22 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 from sqlalchemy import delete, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from family_assistant.security.definition_records import (
+    CreationDisposition,
+    stamp_definition,
+)
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.scripts import scripts_table
+
+if TYPE_CHECKING:
+    from family_assistant.security.taint import TurnTaintState
 
 
 class ScriptModel(BaseModel):
@@ -37,6 +44,27 @@ class ScriptNotFoundError(Exception):
     """Raised when a script cannot be found."""
 
 
+def script_definition_content(
+    *,
+    name: str,
+    description: str,
+    script_code: str,
+    # ast-grep-ignore: no-dict-any - JSON Schema parameter is genuinely arbitrary
+    parameters_schema: dict[str, Any] | None,
+) -> dict[str, object]:
+    """The executable fields of a stored script, for hashing.
+
+    The body is the executable content; the name, description, and parameter
+    schema shape how a caller invokes it and what a firing renders as intent.
+    """
+    return {
+        "name": name,
+        "description": description,
+        "script_code": script_code,
+        "parameters_schema": parameters_schema,
+    }
+
+
 class ScriptsRepository(BaseRepository):
     """Repository for managing stored scripts."""
 
@@ -47,6 +75,10 @@ class ScriptsRepository(BaseRepository):
         script_code: str,
         # ast-grep-ignore: no-dict-any - JSON Schema parameter is genuinely arbitrary
         parameters_schema: dict[str, Any] | None = None,
+        *,
+        definition_taint_state: TurnTaintState | None = None,
+        definition_disposition: CreationDisposition | None = None,
+        definition_human_direct: bool = False,
     ) -> ScriptRow:
         """Save or update a script (upsert by name).
 
@@ -66,6 +98,21 @@ class ScriptsRepository(BaseRepository):
         schema_json = (
             json.dumps(parameters_schema) if parameters_schema is not None else None
         )
+        # A save replaces the whole body, so there is nothing retained to merge:
+        # the arguments are already the complete post-mutation definition.
+        definition_record = json.dumps(
+            stamp_definition(
+                content=script_definition_content(
+                    name=name,
+                    description=description,
+                    script_code=script_code,
+                    parameters_schema=parameters_schema,
+                ),
+                taint_state=definition_taint_state,
+                disposition=definition_disposition,
+                human_direct=definition_human_direct,
+            ).to_dict()
+        )
 
         if self._db.dialect_name == "postgresql":
             stmt = pg_insert(scripts_table).values(
@@ -75,6 +122,7 @@ class ScriptsRepository(BaseRepository):
                 parameters_schema=schema_json,
                 created_at=now,
                 updated_at=now,
+                definition_record=definition_record,
             )
             stmt = stmt.on_conflict_do_update(
                 index_elements=["name"],
@@ -83,6 +131,7 @@ class ScriptsRepository(BaseRepository):
                     "script_code": stmt.excluded.script_code,
                     "parameters_schema": stmt.excluded.parameters_schema,
                     "updated_at": stmt.excluded.updated_at,
+                    "definition_record": stmt.excluded.definition_record,
                 },
             )
             await self._db.execute(stmt)
@@ -96,6 +145,7 @@ class ScriptsRepository(BaseRepository):
                     parameters_schema=schema_json,
                     created_at=now,
                     updated_at=now,
+                    definition_record=definition_record,
                 )
                 await self._db.execute(stmt)
             except IntegrityError:
@@ -107,6 +157,7 @@ class ScriptsRepository(BaseRepository):
                         script_code=script_code,
                         parameters_schema=schema_json,
                         updated_at=now,
+                        definition_record=definition_record,
                     )
                 )
                 await self._db.execute(stmt)

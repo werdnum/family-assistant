@@ -11,6 +11,12 @@ from dateutil.parser import ParserError
 from sqlalchemy import delete, insert, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from family_assistant.security.definition_records import (
+    CreationDisposition,
+    merge_retained_definition,
+    stamp_definition,
+)
+from family_assistant.security.taint import TurnTaintState
 from family_assistant.storage.database import DatabaseExecutor, DatabaseTransaction
 from family_assistant.storage.datetime_utils import normalize_datetime
 from family_assistant.storage.repositories.base import BaseRepository
@@ -68,6 +74,31 @@ def _build_script_payload(
     return payload
 
 
+def automation_definition_content(
+    *,
+    name: str | None,
+    description: str | None,
+    recurrence_rule: str,
+    action_type: str,
+    action_config: ActionConfig | None,
+) -> dict[str, object]:
+    """The executable fields of a schedule automation, for hashing.
+
+    Everything that determines *what runs* and *what the agent is told*: the
+    schedule, the action, and the name and description a firing renders as
+    intent. Management state (enabled, execution counts, next_scheduled_at) is
+    excluded -- toggling an automation changes no content, so a valid record
+    must survive it, per the design's activation rule.
+    """
+    return {
+        "name": name,
+        "description": description,
+        "recurrence_rule": recurrence_rule,
+        "action_type": action_type,
+        "action_config": action_config,
+    }
+
+
 class ScheduleAutomationsRepository(BaseRepository):
     """Repository for managing schedule-based automations."""
 
@@ -97,6 +128,7 @@ class ScheduleAutomationsRepository(BaseRepository):
             next_scheduled_at=normalize_datetime(row["next_scheduled_at"]),
             action_type=row["action_type"],
             action_config=row["action_config"],
+            definition_record=row.get("definition_record"),
             enabled=row["enabled"],
             processing_profile_id=row.get("processing_profile_id"),
             created_by_user_id=row.get("created_by_user_id"),
@@ -169,6 +201,9 @@ class ScheduleAutomationsRepository(BaseRepository):
         timezone: ZoneInfo,
         processing_profile_id: str | None = None,
         created_by_user_id: str | None = None,
+        definition_taint_state: TurnTaintState | None = None,
+        definition_disposition: CreationDisposition | None = None,
+        definition_human_direct: bool = False,
     ) -> int:
         """
         Create a schedule automation and schedule first task instance.
@@ -195,6 +230,19 @@ class ScheduleAutomationsRepository(BaseRepository):
         if next_scheduled_at is None:
             raise ValueError(f"Invalid RRULE: {recurrence_rule}")
 
+        definition_record = stamp_definition(
+            content=automation_definition_content(
+                name=name,
+                description=description,
+                recurrence_rule=recurrence_rule,
+                action_type=action_type,
+                action_config=action_config,
+            ),
+            taint_state=definition_taint_state,
+            disposition=definition_disposition,
+            human_direct=definition_human_direct,
+        ).to_dict()
+
         async def _create(txn: DatabaseTransaction) -> int:
             """Insert the automation and enqueue its first task together.
 
@@ -218,6 +266,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                     created_by_user_id=created_by_user_id,
                     created_at=datetime.now(UTC),
                     execution_count=0,
+                    definition_record=definition_record,
                 )
                 .returning(schedule_automations_table.c.id)
             )
@@ -589,6 +638,9 @@ class ScheduleAutomationsRepository(BaseRepository):
         timezone: ZoneInfo,
         processing_profile_id: str | None | object = _UNSET,
         created_by_user_id: str | None | object = _UNSET,
+        definition_taint_state: TurnTaintState | None = None,
+        definition_disposition: CreationDisposition | None = None,
+        definition_human_direct: bool = False,
     ) -> bool:
         """
         Update automation configuration, synchronizing task queue as needed.
@@ -687,6 +739,49 @@ class ScheduleAutomationsRepository(BaseRepository):
         # exists on the recurrence-changing branch.
         recurrence_override = recurrence_rule if recurrence_changing else None
         next_at_override = next_at if recurrence_changing else None
+
+        # The record covers the *complete post-mutation* definition, not the
+        # patch: a patch-style call omits fields that the stored row supplies,
+        # so a record built from the arguments alone would describe content the
+        # gate never saw. Merging here means what was gated and what the hash
+        # covers are identical by construction.
+        # A partial update retains the fields it does not mention, so reading
+        # the prior definition back is an artifact read: a clean-turn patch to
+        # a legacy or uncured automation gates instead of laundering it.
+        stamp_state = merge_retained_definition(
+            definition_taint_state
+            if definition_taint_state is not None
+            else TurnTaintState.empty(),
+            stored_record=existing.get("definition_record"),
+            retained_content=automation_definition_content(
+                name=cast("str | None", existing["name"]),
+                description=cast("str | None", existing["description"]),
+                recurrence_rule=cast("str", existing["recurrence_rule"]),
+                action_type=cast("str", existing["action_type"]),
+                action_config=cast("ActionConfig | None", existing["action_config"]),
+            ),
+        )
+        update_values["definition_record"] = stamp_definition(
+            content=automation_definition_content(
+                name=cast("str | None", update_values.get("name", existing["name"])),
+                description=cast(
+                    "str | None",
+                    update_values.get("description", existing["description"]),
+                ),
+                recurrence_rule=cast(
+                    "str",
+                    update_values.get("recurrence_rule", existing["recurrence_rule"]),
+                ),
+                action_type=cast("str", existing["action_type"]),
+                action_config=cast(
+                    "ActionConfig | None",
+                    update_values.get("action_config", existing["action_config"]),
+                ),
+            ),
+            taint_state=stamp_state,
+            disposition=definition_disposition,
+            human_direct=definition_human_direct,
+        ).to_dict()
 
         async def _apply(txn: DatabaseTransaction) -> bool:
             """Re-sync the task queue and write the new state as one unit.
