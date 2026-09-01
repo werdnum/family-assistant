@@ -10,15 +10,20 @@ from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
 
 import pytest
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from family_assistant.security.definition_records import stamp_callback_definition
+from family_assistant.actions import ActionType, execute_action
+from family_assistant.security.definition_records import (
+    callback_definition_content,
+    stamp_callback_definition,
+)
 from family_assistant.security.definition_resolution import (
-    CallbackPayloadRef,
+    DefinitionRef,
     EventListenerRef,
+    LoadedScriptRef,
+    PayloadDefinitionRef,
     ScheduleAutomationRef,
-    StoredScriptRef,
     resolve_definition_closure,
 )
 from family_assistant.security.taint import (
@@ -30,6 +35,7 @@ from family_assistant.security.taint import (
 )
 from family_assistant.storage.database import Database
 from family_assistant.storage.schedule_automations import schedule_automations_table
+from family_assistant.storage.tasks import tasks_table
 from family_assistant.task_worker import (
     LlmCallbackPayload,
     ScriptExecutionPayload,
@@ -45,6 +51,8 @@ from family_assistant.tools.automations import (
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from family_assistant.security.definition_records import DefinitionResolution
 
 
@@ -139,6 +147,19 @@ async def _create_listener(
         action_config={"instruction": "Tell me about it"},
     )
     return _created_id(result)
+
+
+async def _latest_script_payload(db_engine: AsyncEngine) -> "Mapping[str, object]":
+    db = Database(engine=db_engine)
+    row = await db.fetch_one(
+        select(tasks_table)
+        .where(tasks_table.c.task_type == "script_execution")
+        .order_by(tasks_table.c.id.desc())
+    )
+    assert row is not None
+    payload = row["payload"]
+    assert isinstance(payload, dict)
+    return cast("Mapping[str, object]", payload)
 
 
 async def _resolve(
@@ -359,6 +380,21 @@ async def test_a_listener_row_outranks_the_firings_own_payload_record(
     assert (await _resolve(db_engine, payload)).resolved
 
 
+async def _script_refs(
+    db: Database, payload: ScriptExecutionPayload
+) -> "tuple[DefinitionRef, ...]":
+    """Build the refs the handler would, from the row it would have loaded."""
+    script_name = payload.get("script_name")
+    stored_script = await db.scripts.get_by_name(script_name) if script_name else None
+    return _script_execution_definition_refs(payload, stored_script=stored_script)
+
+
+async def _resolve_script(
+    db: Database, payload: ScriptExecutionPayload
+) -> "DefinitionResolution":
+    return await resolve_definition_closure(db, await _script_refs(db, payload))
+
+
 @pytest.mark.asyncio
 async def test_a_script_re_saved_in_a_tainted_turn_un_cures_its_automation(
     db_engine: AsyncEngine,
@@ -383,13 +419,10 @@ async def test_a_script_re_saved_in_a_tainted_turn_un_cures_its_automation(
         "conversation_id": "test_conv",
     }
 
-    assert _script_execution_definition_refs(payload) == (
-        ScheduleAutomationRef(automation_id=automation_id),
-        StoredScriptRef(name="greet"),
-    )
-    assert (
-        await resolve_definition_closure(db, _script_execution_definition_refs(payload))
-    ).resolved
+    refs = await _script_refs(db, payload)
+    assert refs[0] == ScheduleAutomationRef(automation_id=automation_id)
+    assert isinstance(refs[1], LoadedScriptRef)
+    assert (await _resolve_script(db, payload)).resolved
 
     await db.scripts.save(
         name="greet",
@@ -398,8 +431,159 @@ async def test_a_script_re_saved_in_a_tainted_turn_un_cures_its_automation(
         definition_taint_state=_tainted_tracker().snapshot(),
     )
 
+    assert not (await _resolve_script(db, payload)).resolved
+
+
+@pytest.mark.asyncio
+async def test_a_one_shot_script_action_resolves_on_its_own_invocation(
+    db_engine: AsyncEngine,
+) -> None:
+    """A tainted turn must not inherit a clean shared script's provenance.
+
+    ``schedule_action`` names no durable automation, so without the payload's
+    own record the closure would be the stored script alone -- and a tainted
+    turn choosing that script, and the parameters to run it with, would fire as
+    trusted intent.
+    """
+    db = Database(engine=db_engine)
+    await db.scripts.save(
+        name="greet",
+        description="Say hello",
+        script_code="print('hi')",
+        definition_taint_state=TurnTaintState.empty(),
+    )
+    action_config = {"script_name": "greet", "parameters": {"who": "world"}}
+
+    for tracker, expected in ((_clean_tracker(), True), (_tainted_tracker(), False)):
+        await execute_action(
+            db_ctx=db,
+            action_type=ActionType.SCRIPT,
+            action_config=dict(action_config),
+            conversation_id="test_conv",
+            interface_type="web",
+            context={"scheduled_via": "schedule_action tool"},
+            definition_taint_tracker=tracker,
+        )
+        payload = cast(
+            "ScriptExecutionPayload", await _latest_script_payload(db_engine)
+        )
+
+        assert (await _resolve_script(db, payload)).resolved is expected
+
+
+@pytest.mark.asyncio
+async def test_a_one_shot_script_action_is_void_when_its_config_changes(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(engine=db_engine)
+    await db.scripts.save(
+        name="greet",
+        description="Say hello",
+        script_code="print('hi')",
+        definition_taint_state=TurnTaintState.empty(),
+    )
+    await execute_action(
+        db_ctx=db,
+        action_type=ActionType.SCRIPT,
+        action_config={"script_name": "greet", "parameters": {"who": "world"}},
+        conversation_id="test_conv",
+        interface_type="web",
+        context={"scheduled_via": "schedule_action tool"},
+        definition_taint_tracker=_clean_tracker(),
+    )
+    payload = cast("ScriptExecutionPayload", await _latest_script_payload(db_engine))
+    assert (await _resolve_script(db, payload)).resolved
+
+    tampered = cast(
+        "ScriptExecutionPayload",
+        {**payload, "config": {"script_name": "greet", "parameters": {"who": "them"}}},
+    )
+    assert not (await _resolve_script(db, tampered)).resolved
+
+
+@pytest.mark.asyncio
+async def test_a_listener_script_action_resolves_from_the_listener_row(
+    db_engine: AsyncEngine,
+) -> None:
+    """The firing's own payload record must not un-resolve a durable listener.
+
+    An event listener enqueues its script action at fire time, in a turn with
+    no authoring tracker, so the record that rides that payload stamps
+    unknown_external. The listener row is what says who wrote the definition.
+    """
+    db = Database(engine=db_engine)
+    await db.scripts.save(
+        name="greet",
+        description="Say hello",
+        script_code="print('hi')",
+        definition_taint_state=TurnTaintState.empty(),
+    )
+    listener_id = await _create_listener(db_engine, tracker=_clean_tracker())
+    await execute_action(
+        db_ctx=db,
+        action_type=ActionType.SCRIPT,
+        action_config={"script_name": "greet"},
+        conversation_id="test_conv",
+        interface_type="web",
+        context={"listener_id": listener_id},
+        definition_taint_tracker=None,
+    )
+    payload = cast("ScriptExecutionPayload", await _latest_script_payload(db_engine))
+
+    refs = await _script_refs(db, payload)
+    assert refs[0] == EventListenerRef(listener_id=listener_id)
+    assert (await _resolve_script(db, payload)).resolved
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_script_payload_with_no_record_stays_fail_closed(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(engine=db_engine)
+    await db.scripts.save(
+        name="greet",
+        description="Say hello",
+        script_code="print('hi')",
+        definition_taint_state=TurnTaintState.empty(),
+    )
+    payload: ScriptExecutionPayload = {
+        "script_name": "greet",
+        "conversation_id": "test_conv",
+    }
+
+    assert await _script_refs(db, payload) == ()
+    assert not (await _resolve_script(db, payload)).resolved
+
+
+@pytest.mark.asyncio
+async def test_the_body_read_for_execution_is_the_body_resolved(
+    db_engine: AsyncEngine,
+) -> None:
+    """A save landing between the two reads must not re-provenance the old body.
+
+    The handler reads the row once to get the body it will run and resolves
+    that same row, so a clean save that lands afterwards cannot lend its record
+    to code this firing is not executing.
+    """
+    db = Database(engine=db_engine)
+    await db.scripts.save(
+        name="greet",
+        description="Say hello",
+        script_code="print('hi')",
+        definition_taint_state=_tainted_tracker().snapshot(),
+    )
+    executing = await db.scripts.get_by_name("greet")
+    assert executing is not None
+
+    await db.scripts.save(
+        name="greet",
+        description="Say hello",
+        script_code="print('goodbye')",
+        definition_taint_state=TurnTaintState.empty(),
+    )
+
     assert not (
-        await resolve_definition_closure(db, _script_execution_definition_refs(payload))
+        await resolve_definition_closure(db, (LoadedScriptRef(script=executing),))
     ).resolved
 
 
@@ -410,8 +594,9 @@ async def test_a_missing_artifact_resolves_fail_closed(db_engine: AsyncEngine) -
     for ref in (
         ScheduleAutomationRef(automation_id=987654),
         EventListenerRef(listener_id=987654),
-        StoredScriptRef(name="no-such-script"),
-        CallbackPayloadRef(record=None, definition="anything"),
+        PayloadDefinitionRef(
+            record=None, content=callback_definition_content("anything")
+        ),
     ):
         assert not (await resolve_definition_closure(db, (ref,))).resolved
 

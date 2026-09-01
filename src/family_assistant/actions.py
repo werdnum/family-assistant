@@ -9,7 +9,12 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
-from family_assistant.security.definition_records import stamp_callback_definition
+from family_assistant.security.definition_records import (
+    authoring_taint_state,
+    script_invocation_content,
+    stamp_callback_definition,
+    stamp_definition,
+)
 from family_assistant.security.taint import TurnTaintTracker
 from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import enqueue_task
@@ -199,6 +204,16 @@ async def execute_action(
             script_payload["script_name"] = action_config["script_name"]
             if action_config.get("parameters"):
                 script_payload["script_parameters"] = action_config["parameters"]
+        # A one-shot script action is stored intent with no definition table:
+        # the action config the payload carries *is* the definition, so it
+        # stamps here like any other executable-persistence write. An action
+        # fired from a durable automation or listener stamps this too, and
+        # resolution ignores it in favour of that row -- this record is written
+        # by the firing, which has no authoring turn to speak for.
+        script_payload["tool_call_review_definition_record"] = stamp_definition(
+            content=script_invocation_content(action_config),
+            taint_state=authoring_taint_state(definition_taint_tracker),
+        ).to_dict()
         if user_name:
             script_payload["user_name"] = user_name
         if processing_profile_id is not None:

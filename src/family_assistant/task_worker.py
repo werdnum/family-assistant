@@ -55,13 +55,15 @@ from family_assistant.scripting.config import ScriptConfig
 from family_assistant.security.definition_records import (
     UNRESOLVED_DEFINITION,
     DefinitionResolution,
+    callback_definition_content,
+    script_invocation_content,
 )
 from family_assistant.security.definition_resolution import (
-    CallbackPayloadRef,
     DefinitionRef,
     EventListenerRef,
+    LoadedScriptRef,
+    PayloadDefinitionRef,
     ScheduleAutomationRef,
-    StoredScriptRef,
     resolve_definition_closure,
 )
 from family_assistant.security.taint import (
@@ -106,6 +108,7 @@ if TYPE_CHECKING:
         ConfirmationRequestRow,
     )
     from family_assistant.storage.repositories.delegation_runs import DelegationRunDict
+    from family_assistant.storage.repositories.scripts import ScriptRow
     from family_assistant.storage.types import MessageHistoryRow, TaskDict
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools import ToolsProvider
@@ -473,6 +476,11 @@ class ScriptExecutionPayload(TypedDict, total=False):
     # user) that created the automation, so validation and execution agree.
     processing_profile_id: str
     created_by_user_id: str
+    # A one-shot script action has no durable definition table, so its record
+    # rides the payload beside the action config it describes. A firing from a
+    # durable automation or listener carries one too and resolution ignores it:
+    # that record was stamped by the firing, which has no authoring turn.
+    tool_call_review_definition_record: DefinitionRecordDict
 
 
 def _llm_callback_definition_refs(
@@ -517,9 +525,11 @@ def _llm_callback_definition_refs(
     record = payload.get("tool_call_review_definition_record")
     if record is not None:
         return (
-            CallbackPayloadRef(
+            PayloadDefinitionRef(
                 record=record,
-                definition=payload.get("tool_call_review_trigger_definition"),
+                content=callback_definition_content(
+                    payload.get("tool_call_review_trigger_definition")
+                ),
             ),
         )
     return ()
@@ -527,6 +537,8 @@ def _llm_callback_definition_refs(
 
 def _script_execution_definition_refs(
     payload: ScriptExecutionPayload,
+    *,
+    stored_script: ScriptRow | None,
 ) -> tuple[DefinitionRef, ...]:
     """Name the definition artifacts a script firing executes.
 
@@ -535,8 +547,18 @@ def _script_execution_definition_refs(
     what*, the script body says *what runs*, each carries its own record, and
     re-saving the script from a tainted turn un-cures every automation that
     names it until the script's own gate cures it again. An inline script body
-    needs no second artifact -- it is part of the automation's own hashed
-    content.
+    needs no second artifact -- it is part of the invoking definition's own
+    hashed content.
+
+    ``stored_script`` is the row the firing already read to get the body it is
+    about to run, so provenance covers exactly that body rather than whatever a
+    second read would return.
+
+    The invoking definition is the durable automation or listener where there is
+    one, and otherwise the payload's own record -- a one-shot ``schedule_action``
+    script. Naming the stored script alone would be the laundering case: a
+    tainted turn choosing a clean shared script, and choosing the parameters to
+    run it with, must not inherit that script's provenance.
     """
     refs: list[DefinitionRef] = []
     listener_id = payload.get("listener_id")
@@ -551,9 +573,18 @@ def _script_execution_definition_refs(
             refs.append(ScheduleAutomationRef(automation_id=int(automation_id)))
         except (TypeError, ValueError):
             return ()
-    script_name = payload.get("script_name")
-    if script_name:
-        refs.append(StoredScriptRef(name=script_name))
+    else:
+        record = payload.get("tool_call_review_definition_record")
+        if record is None:
+            return ()
+        refs.append(
+            PayloadDefinitionRef(
+                record=record,
+                content=script_invocation_content(payload.get("config")),
+            )
+        )
+    if stored_script is not None:
+        refs.append(LoadedScriptRef(script=stored_script))
     return tuple(refs)
 
 
@@ -4992,6 +5023,7 @@ async def handle_script_execution(
     conversation_id = payload.get("conversation_id")
 
     # Resolve script_name to script_code from the scripts repository
+    stored_script: ScriptRow | None = None
     if not script_code and script_name:
         db = exec_context.db_context
         stored_script = await db.scripts.get_by_name(script_name)
@@ -5027,9 +5059,11 @@ async def handle_script_execution(
             "Missing required field in payload: script_code or script_name"
         )
 
+    # Resolved from the row already read above, so the provenance covers the
+    # exact body about to run rather than whatever a second read would return.
     script_definition_resolution = await resolve_definition_closure(
         exec_context.db_context,
-        _script_execution_definition_refs(payload),
+        _script_execution_definition_refs(payload, stored_script=stored_script),
     )
 
     if listener_id:

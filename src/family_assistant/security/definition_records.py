@@ -395,6 +395,25 @@ def script_definition_content(
     }
 
 
+def script_invocation_content(
+    action_config: Mapping[str, object] | None,
+) -> dict[str, object]:
+    """The executable fields of a one-shot script action, for hashing.
+
+    A ``schedule_action`` script invocation has no durable definition table:
+    its definition is the action config the task payload carries, which names
+    the body to run (inline code, or a stored script and the parameters to run
+    it with) and the tool set and timeout to run it under. Hashing the config
+    whole means a change to any of those voids the record, with nothing to
+    enumerate and keep in step.
+
+    The stored script a config *names* is a separate artifact with its own
+    record; the closure walk resolves both, so an invocation cures only what
+    the invoking turn is entitled to and never what the script body is.
+    """
+    return {"action_config": dict(action_config) if action_config is not None else None}
+
+
 def callback_definition_content(definition: str | None) -> dict[str, object]:
     """The executable fields of a one-shot callback, for hashing.
 

@@ -25,16 +25,16 @@ from family_assistant.security.definition_records import (
     UNRESOLVED_DEFINITION,
     DefinitionResolution,
     automation_definition_content,
-    callback_definition_content,
     listener_definition_content,
     resolve_definition_record,
     script_definition_content,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
 
     from family_assistant.storage.database import Database
+    from family_assistant.storage.repositories.scripts import ScriptRow
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,27 +52,35 @@ class EventListenerRef:
 
 
 @dataclass(frozen=True, slots=True)
-class StoredScriptRef:
-    """A script referenced by name, resolved against its stored body."""
+class LoadedScriptRef:
+    """A stored script already read for execution, resolved against that body.
 
-    name: str
+    The row is passed in rather than re-read by name on purpose. A firing loads
+    the body it is about to run and then resolves its provenance; a second read
+    could return a different body, and the record that came back with it would
+    then describe code this firing is not executing -- which is the one thing
+    the content hash exists to prevent.
+    """
+
+    script: ScriptRow
 
 
 @dataclass(frozen=True, slots=True)
-class CallbackPayloadRef:
-    """A one-shot callback, whose definition and record ride its task payload.
+class PayloadDefinitionRef:
+    """A definition that rides its task payload, having no durable table.
 
-    Reminders and future callbacks have no durable definition table, so there is
-    no row to read the content back from: the payload *is* the definition, and
-    the record travels beside the text it describes.
+    Reminders, future callbacks and one-shot script actions are all stored
+    intent with nowhere to store it but the enqueued task, so the record
+    travels beside the content it describes and ``content`` is that content,
+    rebuilt from the payload at the firing.
     """
 
     record: object
-    definition: str | None
+    content: Mapping[str, object]
 
 
 DefinitionRef = (
-    ScheduleAutomationRef | EventListenerRef | StoredScriptRef | CallbackPayloadRef
+    ScheduleAutomationRef | EventListenerRef | LoadedScriptRef | PayloadDefinitionRef
 )
 
 
@@ -108,10 +116,7 @@ async def _resolve_one(db: Database, ref: DefinitionRef) -> DefinitionResolution
                     condition_script=listener["condition_script"],
                 ),
             )
-        case StoredScriptRef(name=name):
-            script = await db.scripts.get_by_name(name)
-            if script is None:
-                return UNRESOLVED_DEFINITION
+        case LoadedScriptRef(script=script):
             return resolve_definition_record(
                 script.definition_record,
                 script_definition_content(
@@ -121,10 +126,8 @@ async def _resolve_one(db: Database, ref: DefinitionRef) -> DefinitionResolution
                     parameters_schema=script.parameters_schema,
                 ),
             )
-        case CallbackPayloadRef(record=record, definition=definition):
-            return resolve_definition_record(
-                record, callback_definition_content(definition)
-            )
+        case PayloadDefinitionRef(record=record, content=content):
+            return resolve_definition_record(record, content)
 
 
 async def resolve_definition_closure(
