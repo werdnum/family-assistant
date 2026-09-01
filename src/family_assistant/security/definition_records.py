@@ -424,6 +424,9 @@ def stamp_definition(
     metadata = (
         state.to_metadata() if human_direct else machine_authored_taint_metadata(state)
     )
+    externally_authored = is_externally_authored(
+        TurnTaintState.from_metadata(metadata).max_tier
+    )
     disposition: CreationDisposition | None = None
     gate: GateProvenance | None = None
     pending_write_id: str | None = None
@@ -432,11 +435,16 @@ def stamp_definition(
         disposition = gate_outcome.effective_disposition
         if disposition is not None and retains_uncured_content and disposition.cures:
             disposition = CreationDisposition.JUDGE_ALLOWED_NONBINDING
-        if gate_outcome.pending is not None and not retains_uncured_content:
+        if (
+            gate_outcome.pending is not None
+            and externally_authored
+            and not retains_uncured_content
+        ):
+            # Only a write that needs curing waits for a verdict. A clean stamp
+            # resolves on its own, and a write no cure could reach must not
+            # collect one later.
             pending_write_id = gate_outcome.pending.write_id
-    if disposition is None and not is_externally_authored(
-        TurnTaintState.from_metadata(metadata).max_tier
-    ):
+    if disposition is None and not externally_authored:
         disposition = CreationDisposition.CLEAN
     return DefinitionRecord(
         taint_metadata=metadata,

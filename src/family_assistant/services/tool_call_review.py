@@ -264,6 +264,10 @@ class TriggerReviewInput:
         verdict, so every rendered definition says which. The vocabulary is
         closed and the values are ours, never the definition's, so nothing the
         definition contains can dress itself up as a stronger status.
+
+        Only a *resolved* definition renders, and the non-curative dispositions
+        do not resolve, so the remaining cases all mean the same thing: the
+        stamp itself was trusted and no cure was needed.
         """
         if self.definition_disposition is CreationDisposition.HUMAN_CONFIRMED:
             return "attested by a human at creation"
