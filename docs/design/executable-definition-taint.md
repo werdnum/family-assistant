@@ -246,7 +246,26 @@ procedural remedy are recorded in the accepted residuals.
 
 Mutation re-enters the chokepoint. `update_automation`, script saves, and `modify_pending_callback`
 re-stamp, re-hash, and re-gate: a tainted update of a clean definition produces a new record whose
-disposition reflects the new gate, and the old record cannot survive it (the hash changed).
+disposition reflects the new gate, and the old record cannot survive it (the hash changed). Two
+rules make partial updates honest, and both are existing mechanisms applied here rather than new
+ones:
+
+- **The gate evaluates the complete post-mutation definition.** Patch-style tools merge omitted
+  fields from the stored row (`update_automation` fills `action_config`, `match_conditions`, and
+  `condition_script` from `existing` when the call omits them), so a gate shown only the patch
+  arguments would approve an innocuous recurrence change while the record cures a merged definition
+  whose action it never saw. The chokepoint therefore resolves the merged result *before* the gate
+  runs, and that is what the reviewer sees fenced and a confirmation must render — the same content
+  the hash covers, so what was gated and what was recorded are identical by construction.
+- **A mutation reads what it retains.** The prior definition's effective resolution — trusted for a
+  clean or cured hash-valid record, `unknown_external` otherwise — merges into the updating turn as
+  an artifact read, exactly as note read-back already merges stored provenance. A clean-turn patch
+  to a legacy or uncured definition therefore gates instead of laundering it: the retained content
+  taints the turn, the executable-persistence cell engages over the complete definition, and the new
+  record's whole-turn stamp carries the result. This is the risk document's `modify_calendar_event`
+  rule — partial modification retains unspecified fields, so the stored tier is the maximum of the
+  existing content's and the modifying turn's — applied to definitions.
+
 `enable_automation` / `disable_automation` change no content, so a valid record survives them — but
 the enable call itself remains an executable-persistence action gated in its own turn, per the risk
 document's activation rule. A definition mutated outside the write path resolves as hash-mismatch
@@ -450,9 +469,11 @@ re-stamping on every executable-content mutation, `modify_pending_callback` incl
 `trusted_user` stamps, model-composed clean-turn `trusted_internal` stamps; the conformance rule
 keyed on executable-content mutation. No behaviour change at firing time. *Verify:* round-trip tests
 per artifact; a web-UI creation stamps `trusted_user`, a clean-turn model creation stamps
-`trusted_internal`, and a mixed turn stamps the turn maximum; a `modify_pending_callback` edit
-replaces the record and the payload definition together; the conformance rule fails on a fixture
-write path that mutates executable content without the helper.
+`trusted_internal`, and a mixed turn stamps the turn maximum; a clean-turn patch update to an
+uncured or legacy definition stamps at least the prior content's effective tier (retention merges as
+an artifact read); a `modify_pending_callback` edit replaces the record and the payload definition
+together; the conformance rule fails on a fixture write path that mutates executable content without
+the helper.
 
 **M2 — Firing-time resolution for deterministic stamps.** `_llm_callback_review_trigger` and the
 script-execution seeding resolve records; trusted-pole-stamped (at or below `trusted_internal`),
@@ -472,7 +493,9 @@ taint-cell path depends on the risk document's executable-persistence sink split
 tainted creation fires clean and renders marked attested; a judge-allowed creation through a static
 `review` rule cures with `taint_policy.mode` still `observe`, and through a taint cell only under
 `enforce`; a taint-cell `allow` verdict under `observe` does not cure; a floored cell yields only
-human-backed cures for writes made under it; no test path rewrites an authoring stamp.
+human-backed cures for writes made under it; a patch-style update presents the complete merged
+definition to the gate, and the gated payload is identical to the content the new record's hash
+covers; no test path rewrites an authoring stamp.
 
 **M4 — Attestation surface and documentation.** The hash-bound review operation for the three
 artifact classes, in the web UI, listing each definition with its stamp and disposition (which is
