@@ -11,6 +11,7 @@ import pytest
 
 import scripts.tool_call_review_batch as batch_cli
 from family_assistant.eval import private_paths
+from family_assistant.eval.tool_call_review import batch as batch_module
 from family_assistant.eval.tool_call_review.batch import (
     BatchClient,
     BatchError,
@@ -103,7 +104,18 @@ def private_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return root / ".review-eval-local"
 
 
-def test_prepare_chunks_and_private_artifacts(private_root: Path) -> None:
+@pytest.fixture
+def manual_request_count() -> int:
+    _, request_count = batch_module.validate_prepare_inputs(
+        ["src/family_assistant/eval/tool_call_review/datasets/manual"],
+        seeds=1,
+    )
+    return request_count
+
+
+def test_prepare_chunks_and_private_artifacts(
+    private_root: Path, manual_request_count: int
+) -> None:
     manifest = prepare_batch(
         ["src/family_assistant/eval/tool_call_review/datasets/manual"],
         private_root / "runs" / "pilot",
@@ -111,12 +123,75 @@ def test_prepare_chunks_and_private_artifacts(private_root: Path) -> None:
         batch_size=7,
     )
 
-    assert manifest.request_count == 19
+    assert manifest.request_count == manual_request_count
     assert manifest.provider == "openrouter"
     assert manifest.api_base_url == "https://openrouter.ai/api"
-    assert [len(chunk.request_ids) for chunk in manifest.chunks] == [7, 7, 5]
+    full_chunks, remainder = divmod(manual_request_count, 7)
+    expected_chunk_lengths = [7] * full_chunks
+    if remainder:
+        expected_chunk_lengths.append(remainder)
+    assert [len(chunk.request_ids) for chunk in manifest.chunks] == (
+        expected_chunk_lengths
+    )
     assert (private_root / "runs/pilot/manifest.json").is_file()
     assert (private_root / "runs/pilot/requests.jsonl").is_file()
+
+
+def test_gemini_schema_normalizes_nullable_constraints() -> None:
+    normalized = batch_module._normalize_gemini_schema({
+        "type": "object",
+        "properties": {
+            "value": {
+                "anyOf": [
+                    {"maxLength": 2000, "type": "string"},
+                    {"type": "null"},
+                ]
+            }
+        },
+    })
+
+    assert normalized == {
+        "type": "object",
+        "properties": {"value": {"maxLength": 2000, "type": ["string", "null"]}},
+    }
+
+
+def test_gemini_schema_normalizes_nested_nullable_schemas() -> None:
+    normalized = batch_module._normalize_gemini_schema({
+        "$defs": {
+            "Nested": {
+                "type": "array",
+                "items": {
+                    "anyOf": [
+                        {"type": "integer"},
+                        {"type": "null"},
+                    ]
+                },
+            }
+        }
+    })
+
+    assert normalized == {
+        "$defs": {
+            "Nested": {
+                "type": "array",
+                "items": {"type": ["integer", "null"]},
+            }
+        }
+    }
+
+
+@pytest.mark.parametrize(
+    "schema",
+    [
+        {"anyOf": [{"type": "string"}, {"type": "integer"}]},
+        {"anyOf": [{"$ref": "#/$defs/Value"}, {"type": "null"}]},
+        {"anyOf": [{"type": "string"}, {"type": "null"}, {"type": "null"}]},
+    ],
+)
+def test_gemini_schema_rejects_unsupported_unions(schema: dict[str, object]) -> None:
+    with pytest.raises(BatchError, match="unsupported"):
+        batch_module._normalize_gemini_schema(schema)
 
 
 def test_prepare_refuses_zero_runnable_cases_before_artifacts(
@@ -220,7 +295,9 @@ async def test_status_rejects_unsubmitted_pending_chunks_without_network_call(
 
 
 @pytest.mark.asyncio
-async def test_submit_status_harvest_is_resumable(private_root: Path) -> None:
+async def test_submit_status_harvest_is_resumable(
+    private_root: Path, manual_request_count: int
+) -> None:
     run_dir = private_root / "runs" / "pilot"
     prepare_batch(
         ["src/family_assistant/eval/tool_call_review/datasets/manual"],
@@ -244,10 +321,19 @@ async def test_submit_status_harvest_is_resumable(private_root: Path) -> None:
     response_format = cast("dict[str, object]", first_body["response_format"])
     schema = cast("dict[str, object]", response_format["json_schema"])
     assert schema["strict"] is True
+    response_schema = cast("dict[str, object]", schema["schema"])
+    safer_alternative = cast("dict[str, object]", response_schema["properties"])[
+        "safer_alternative"
+    ]
+    assert safer_alternative == {
+        "maxLength": 2000,
+        "type": ["string", "null"],
+        "title": "Safer Alternative",
+    }
     await update_batch_status(run_dir, api_key="test-only", client=fake)
     report = harvest_batch(run_dir)
 
-    assert len(report.trials) == 19
+    assert len(report.trials) == manual_request_count
     assert all(trial.latency_ms is None for trial in report.trials)
     assert report.latency_source == "batch_api_unavailable"
     assert report.model_parameters == {
@@ -262,7 +348,7 @@ async def test_submit_status_harvest_is_resumable(private_root: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_completed_submit_without_results_is_fetched_by_status(
-    private_root: Path,
+    private_root: Path, manual_request_count: int
 ) -> None:
     run_dir = private_root / "runs" / "pilot"
     prepare_batch(
@@ -284,7 +370,7 @@ async def test_completed_submit_without_results_is_fetched_by_status(
 
     assert updated.chunks[0].result_file == "batch-result-0.json"
     report = harvest_batch(run_dir)
-    assert len(report.trials) == 19
+    assert len(report.trials) == manual_request_count
 
 
 @pytest.mark.asyncio

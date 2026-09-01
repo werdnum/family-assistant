@@ -364,6 +364,10 @@ cmd = "python scripts/tool_call_review_eval.py"
 help = "Prepare, submit, poll, and harvest a private OpenRouter batch review eval"
 cmd = "python scripts/tool_call_review_batch.py"
 
+[tool.poe.tasks.review-eval-gemini-batch]
+help = "Prepare, submit, poll, and harvest a private native Gemini batch review eval"
+cmd = "python scripts/tool_call_review_gemini_batch.py"
+
 [tool.poe.tasks.review-eval-extract-history]
 help = "Abstract message history into committable task templates (private dir only)"
 cmd = "python scripts/extract_review_history.py"
