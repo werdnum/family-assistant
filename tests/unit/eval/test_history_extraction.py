@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.no_db
 
 _TRUSTED = {
-    "version": "runtime_v1",
+    "version": "runtime_v2",
     "max_tier": "trusted_user",
     "history_high_taint_present": False,
     "fresh_high_taint_seen_at_sequence": None,

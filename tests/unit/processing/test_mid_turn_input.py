@@ -209,4 +209,4 @@ async def test_mid_turn_input_is_injected_after_tool_result(
     assert isinstance(generated_messages[-1], AssistantMessage)
     assert generated_messages[-1].content == "updated answer"
     assert generated_messages[-1].taint_metadata is not None
-    assert generated_messages[-1].taint_metadata.get("max_tier") == "trusted_user"
+    assert generated_messages[-1].taint_metadata.get("max_tier") == "trusted_internal"

@@ -248,7 +248,7 @@ async def test_send_message_to_user_tool(
             assert_that([
                 msg["taint_metadata_version"] for msg in bob_assistant_rows
             ]).described_as("Taint metadata version on recorded rows").contains_only(
-                "runtime_v1"
+                "runtime_v2"
             )
     finally:
         # Restore original context providers

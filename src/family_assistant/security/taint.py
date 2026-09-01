@@ -17,7 +17,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-TAINT_METADATA_VERSION = "runtime_v1"
+TAINT_METADATA_VERSION = "runtime_v2"
+LEGACY_TAINT_METADATA_VERSIONS = frozenset({"runtime_v1"})
+"""Metadata versions written before the trusted-pole authorship split.
+
+``runtime_v1`` rows stamped ``trusted_user`` under the conflated meaning of
+that tier — "direct input from an authenticated user, or system-authored
+control text" — so they cannot be read as evidence that a human authored the
+text. :func:`is_human_direct_metadata` treats them as not human-direct, which
+is the epoch guard for the transition."""
 A2A_TAINT_METADATA_KEY = "family_assistant_taint_metadata"
 LEGACY_MISSING_TAINT_METADATA_LABEL = "legacy_missing_taint_metadata"
 
@@ -63,12 +71,21 @@ _CODE_EXECUTING_HA_DOMAINS = frozenset({"python_script", "shell_command"})
 
 
 class SourceTrustTier(IntEnum):
-    """Monotonic source trust tier. Higher values are less trusted."""
+    """Monotonic source trust tier. Higher values are less trusted.
+
+    ``TRUSTED_USER`` and ``TRUSTED_INTERNAL`` are both the trusted pole and no
+    shipped policy cell distinguishes them; the split exists so that consumers
+    needing *the human's own words* — the reviewer's originating-request slot,
+    the destination echo — can ask for them by tier instead of reconstructing
+    authorship structurally. See :func:`is_externally_authored` for the
+    boundary every "is this external?" comparison should go through.
+    """
 
     TRUSTED_USER = 0
-    KNOWN_CONTACT = 1
-    RECOGNIZED_MACHINE = 2
-    UNKNOWN_EXTERNAL = 3
+    TRUSTED_INTERNAL = 1
+    KNOWN_CONTACT = 2
+    RECOGNIZED_MACHINE = 3
+    UNKNOWN_EXTERNAL = 4
 
     @classmethod
     def from_value(cls, value: object) -> SourceTrustTier:
@@ -88,6 +105,43 @@ class SourceTrustTier(IntEnum):
     def config_value(self) -> str:
         """Return the stable lower-case config representation."""
         return self.name.lower()
+
+
+EXTERNALLY_AUTHORED_MIN_TIER = SourceTrustTier.KNOWN_CONTACT
+"""First tier whose content was authored outside the trust boundary."""
+
+
+def is_externally_authored(tier: SourceTrustTier | None) -> bool:
+    """Whether content at this tier was authored outside the trust boundary.
+
+    The single place the trusted-pole boundary is expressed. Consumers that
+    used to write ``tier > TRUSTED_USER`` (or ``is TRUSTED_USER``) to mean
+    "external" must call this instead, so adding ``TRUSTED_INTERNAL`` between
+    the two poles does not silently reclassify ordinary model output as
+    external. Absent provenance is never trusted.
+    """
+    if tier is None:
+        return True
+    return tier >= EXTERNALLY_AUTHORED_MIN_TIER
+
+
+def is_human_direct_metadata(metadata: object) -> bool:
+    """Whether a stamp attests that a human typed this text themselves.
+
+    True only for content stamped exactly ``trusted_user`` under the post-split
+    vocabulary. Pre-split (``runtime_v1``) stamps used ``trusted_user`` for
+    system-authored control text too, so they never qualify -- the epoch guard
+    that keeps the transition from laundering machine text into human words.
+    """
+    if not isinstance(metadata, dict):
+        return False
+    if metadata.get("version") != TAINT_METADATA_VERSION:
+        return False
+    try:
+        tier = SourceTrustTier.from_value(metadata.get("max_tier"))
+    except (TypeError, ValueError):
+        return False
+    return tier is SourceTrustTier.TRUSTED_USER
 
 
 class SinkClass(StrEnum):
@@ -264,6 +318,19 @@ class TurnTaintState:
             sequence=next_sequence,
         )
 
+    def with_authorship_floor(self) -> TurnTaintState:
+        """Return this state floored at ``TRUSTED_INTERNAL``.
+
+        Applied when stamping content composed *inside* the trust boundary but
+        not typed by a human -- assistant rows, tool results, machine-composed
+        user rows. Authorship floors the stamp: a clean turn's model output is
+        ``trusted_internal``, and a tainted turn's stays at the turn maximum,
+        because the floor only ever raises.
+        """
+        if self.max_tier >= SourceTrustTier.TRUSTED_INTERNAL:
+            return self
+        return replace(self, max_tier=SourceTrustTier.TRUSTED_INTERNAL)
+
     def to_metadata(self, *, max_sources: int = 12) -> TaintMetadata:
         """Serialize a compact metadata representation for persistence."""
         return {
@@ -422,6 +489,40 @@ class InMemoryTurnTaintTracker:
         """Synchronously merge a source into the tracker."""
         self._state = self._state.add_source(source, from_history=from_history)
         return self._state
+
+
+def machine_authored_taint_metadata(
+    state: TurnTaintState,
+    *,
+    max_sources: int = 12,
+) -> TaintMetadata:
+    """Stamp a row the machine composed rather than a human typing it."""
+    return state.with_authorship_floor().to_metadata(max_sources=max_sources)
+
+
+def floor_machine_authored_metadata(
+    metadata: TaintMetadata | None,
+) -> TaintMetadata | None:
+    """Raise a machine-authored stamp to at least ``trusted_internal``.
+
+    Operates on the serialized stamp rather than the state so it can sit in a
+    row validator, where every construction path passes through. Absent
+    metadata stays absent: missing provenance is handled by the consumers that
+    already refuse to read it as trusted, and fabricating a stamp here would
+    invent provenance the writer never claimed.
+    """
+    if metadata is None:
+        return None
+    try:
+        tier = SourceTrustTier.from_value(metadata.get("max_tier"))
+    except (TypeError, ValueError):
+        return metadata
+    if tier >= SourceTrustTier.TRUSTED_INTERNAL:
+        return metadata
+    return {
+        **metadata,
+        "max_tier": SourceTrustTier.TRUSTED_INTERNAL.config_value,
+    }
 
 
 def merge_taint_state_into_tracker(
@@ -596,7 +697,7 @@ class TaintPolicyConfig(BaseModel):
                 resolved_matrix = _default_taint_matrix()
                 _merge_matrix(resolved_matrix, self.matrix)
                 _merge_matrix(resolved_matrix, self.matrix_overrides)
-                cell = resolved_matrix.get(tier, {}).get(sink_class)
+                cell = _trusted_pole_lookup(resolved_matrix, tier, sink_class)
                 if (
                     cell is not None
                     and _cell_outcome(cell) is TaintPolicyOutcome.ADJUDICATE
@@ -711,7 +812,7 @@ class TaintPolicyEvaluator:
         verdict_floor: TaintPolicyOutcome | None,
         fallback_outcome: TaintPolicyOutcome,
     ) -> tuple[TaintPolicyOutcome | None, TaintPolicyOutcome]:
-        minimum = self._config.operator_minimum.get(tier, {}).get(sink_class)
+        minimum = _trusted_pole_lookup(self._config.operator_minimum, tier, sink_class)
         if minimum is TaintPolicyOutcome.REDACT:
             msg = (
                 "A redact operator minimum cannot be applied to adjudicate for "
@@ -755,7 +856,8 @@ class TaintPolicyEvaluator:
         tier: SourceTrustTier,
         sink_class: SinkClass,
     ) -> TaintPolicyCell:
-        return self._matrix.get(tier, {}).get(sink_class, TaintPolicyOutcome.ALLOW)
+        cell = _trusted_pole_lookup(self._matrix, tier, sink_class)
+        return TaintPolicyOutcome.ALLOW if cell is None else cell
 
     def _apply_operator_minimum(
         self,
@@ -764,7 +866,7 @@ class TaintPolicyEvaluator:
         sink_class: SinkClass,
         outcome: TaintPolicyOutcome,
     ) -> TaintPolicyOutcome:
-        minimum = self._config.operator_minimum.get(tier, {}).get(sink_class)
+        minimum = _trusted_pole_lookup(self._config.operator_minimum, tier, sink_class)
         if minimum is None:
             return outcome
         if minimum is TaintPolicyOutcome.ADJUDICATE:
@@ -845,8 +947,10 @@ def _reject_relaxed_base_policy(
     _merge_matrix(base_matrix, base.matrix_overrides)
     for tier, sink_map in overrides.items():
         for sink_class, cell in sink_map.items():
-            minimum = base_matrix.get(tier, {}).get(sink_class)
-            operator_minimum = base.operator_minimum.get(tier, {}).get(sink_class)
+            minimum = _trusted_pole_lookup(base_matrix, tier, sink_class)
+            operator_minimum = _trusted_pole_lookup(
+                base.operator_minimum, tier, sink_class
+            )
             if minimum is not None and not _cell_satisfies_minimum(
                 cell,
                 minimum,
@@ -1046,6 +1150,27 @@ def _default_taint_matrix() -> dict[SourceTrustTier, dict[SinkClass, TaintPolicy
         SinkClass.SENSITIVE_READ_BROADENING: TaintPolicyOutcome.AUDIT,
     })
     return matrix
+
+
+def _trusted_pole_lookup[T](
+    mapping: Mapping[SourceTrustTier, Mapping[SinkClass, T]],
+    tier: SourceTrustTier,
+    sink_class: SinkClass,
+) -> T | None:
+    """Resolve one policy entry, inheriting ``trusted_user`` for the pole.
+
+    ``TRUSTED_INTERNAL`` makes no policy distinction from ``TRUSTED_USER``; the
+    equivalence lives here rather than in duplicated matrix rows so that
+    *operator* configuration inherits it too. A deployment that wrote a floor
+    or an override only for ``trusted_user`` keeps governing ordinary model
+    output after it reclassifies -- a per-tier ``dict.get`` would walk straight
+    past that entry and silently relax the policy. An explicit
+    ``trusted_internal`` entry wins where one is written.
+    """
+    entry = mapping.get(tier, {}).get(sink_class)
+    if entry is None and tier is SourceTrustTier.TRUSTED_INTERNAL:
+        return mapping.get(SourceTrustTier.TRUSTED_USER, {}).get(sink_class)
+    return entry
 
 
 def _merge_matrix(

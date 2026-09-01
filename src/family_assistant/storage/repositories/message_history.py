@@ -35,6 +35,7 @@ from family_assistant.llm.messages import (
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.security.taint import (
     LEGACY_MISSING_TAINT_METADATA_LABEL,
+    LEGACY_TAINT_METADATA_VERSIONS,
     TAINT_METADATA_VERSION,
     SourceTrustTier,
     TaintMetadata,
@@ -389,7 +390,11 @@ class MessageHistoryRepository(BaseRepository):
         )
         rows = await self._db.fetch_all(stmt)
         valid_tiers = {tier.config_value for tier in SourceTrustTier}
-        valid_versions = {TAINT_METADATA_VERSION, "legacy_inferred"}
+        valid_versions = {
+            TAINT_METADATA_VERSION,
+            *LEGACY_TAINT_METADATA_VERSIONS,
+            "legacy_inferred",
+        }
         diagnostics: list[MessageHistoryTaintDiagnosticsRow] = []
         for row in rows:
             role = str(row["role"])

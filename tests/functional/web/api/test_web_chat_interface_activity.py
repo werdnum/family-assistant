@@ -145,11 +145,11 @@ async def test_send_message_persists_runtime_taint_metadata(
     tainted_row = await ctx.message_history.get_row_by_internal_id(int(tainted_saved))
 
     assert default_row is not None
-    assert default_row["taint_metadata_version"] == "runtime_v1"
+    assert default_row["taint_metadata_version"] == "runtime_v2"
     assert default_row["taint_metadata_json"] is not None
     assert default_row["taint_metadata_json"].get("max_tier") == "trusted_user"
 
     assert tainted_row is not None
-    assert tainted_row["taint_metadata_version"] == "runtime_v1"
+    assert tainted_row["taint_metadata_version"] == "runtime_v2"
     assert tainted_row["taint_metadata_json"] is not None
     assert tainted_row["taint_metadata_json"].get("max_tier") == "unknown_external"

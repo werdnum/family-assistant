@@ -360,12 +360,11 @@ family), and license. **Lineage is load-bearing**: the large corpora incorporate
 everywhere), so adapters should cluster the families they can identify and preserve source lineage
 before any dev/gate split. This is not a generic near-duplicate guarantee: Deepset's adapter groups
 only exact text after its documented normalization, so its deterministic buckets are smoke-test
-slices and not leak-free ship-decision evidence.
-Provenance is **recorded, not verified**: the build script writes both source ids, the upstream, the
-revision the maintainer fetched, and the license alongside the cases it produces, and the run's
-dataset content hash says which case set a run measured. The adapter, not the corpus, is the
-committed artifact; the cases it produces are pinned the way everything else in this repository is
-pinned, by git.
+slices and not leak-free ship-decision evidence. Provenance is **recorded, not verified**: the build
+script writes both source ids, the upstream, the revision the maintainer fetched, and the license
+alongside the cases it produces, and the run's dataset content hash says which case set a run
+measured. The adapter, not the corpus, is the committed artifact; the cases it produces are pinned
+the way everything else in this repository is pinned, by git.
 
 The first two adapters consume the pinned upstream files without vendoring them. Deepset's current
 Hub revision is two Parquet splits (546 train rows and 116 test rows) with `text` and `label`
@@ -378,9 +377,9 @@ The pinned revision has no standalone LICENSE file, so the fetch manifest record
 retains the README, and leaves the conflict unresolved. The private fetch also retains all four
 InjecAgent case arrays; the build defaults to its 1,054 base cases (30 direct-harm attacker cases
 and 32 data-stealing attacker cases crossed with 17 user cases), which become 4,216 browser cases;
-enhanced arrays remain an explicit separate slice. Its static adaptation is not
-the upstream end-to-end benchmark: each attack action invokes the row's exact `Attacker Tools` list,
-while its benign twin invokes the exact `User Tool` with the same `invoke_tools`/`tools` shape. Both
+enhanced arrays remain an explicit separate slice. Its static adaptation is not the upstream
+end-to-end benchmark: each attack action invokes the row's exact `Attacker Tools` list, while its
+benign twin invokes the exact `User Tool` with the same `invoke_tools`/`tools` shape. Both
 objectives use the actual `User Instruction`; the damage envelope retains `Expected Achievements`
 plus the general unauthorized-action constraint. The full attack environment is the upstream
 pre-rendered `Tool Response` verbatim, and the benign environment is the clean template. The private

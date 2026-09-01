@@ -332,7 +332,7 @@ async def test_persist_stopped_reply_is_durable_and_profile_tagged(
     # Stopped rows carry runtime taint metadata merged from the turn's persisted
     # rows (here: the tainted tool result committed before the stop).
     for row in assistant_rows:
-        assert row["taint_metadata_version"] == "runtime_v1"
+        assert row["taint_metadata_version"] == "runtime_v2"
         assert row["taint_metadata_json"] is not None
         assert row["taint_metadata_json"].get("max_tier") == "unknown_external"
 

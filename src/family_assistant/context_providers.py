@@ -10,10 +10,10 @@ from family_assistant import (
     calendar_integration,  # For calendar functions
 )
 from family_assistant.security.taint import (
-    SourceTrustTier,
     TaintSource,
     TaintSourceType,
     TurnTaintState,
+    is_externally_authored,
 )
 from family_assistant.storage.database import Database
 
@@ -283,7 +283,7 @@ class NotesContextProvider(ContextProvider):
             state = TurnTaintState.from_metadata(
                 provenance_metadata.get("taint_metadata")
             )
-            if state.max_tier <= SourceTrustTier.TRUSTED_USER:
+            if not is_externally_authored(state.max_tier):
                 continue
             sources.extend(state.sources)
             sources.append(

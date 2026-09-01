@@ -191,7 +191,7 @@ async def test_handle_large_result_persists_taint_metadata() -> None:
     taint_metadata = cast(
         "TaintMetadata",
         {
-            "version": "runtime_v1",
+            "version": "runtime_v2",
             "max_tier": "unknown_external",
             "sources": [],
         },
@@ -245,7 +245,7 @@ async def test_tool_result_attachment_registration_persists_taint_metadata() -> 
     taint_metadata = cast(
         "TaintMetadata",
         {
-            "version": "runtime_v1",
+            "version": "runtime_v2",
             "max_tier": "unknown_external",
             "sources": [],
         },

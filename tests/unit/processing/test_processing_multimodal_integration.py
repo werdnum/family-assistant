@@ -244,7 +244,7 @@ class TestProcessingServiceMultimodal:
         assert "invalid arguments" in tool_message.content.lower()
         assert tool_message.error_traceback is not None
         assert tool_message.taint_metadata is not None
-        assert tool_message.taint_metadata.get("max_tier") == "trusted_user"
+        assert tool_message.taint_metadata.get("max_tier") == "trusted_internal"
 
     @pytest.mark.asyncio
     async def test_execute_single_tool_invalid_json_args_does_not_log_payload(

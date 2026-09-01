@@ -22,6 +22,8 @@ from family_assistant.security.taint import (
     SourceTrustTier,
     TaintMetadata,
     TurnTaintState,
+    is_externally_authored,
+    is_human_direct_metadata,
 )
 
 if TYPE_CHECKING:
@@ -225,8 +227,7 @@ class TriggerReviewInput:
     @property
     def trusted_originating_request(self) -> str | None:
         """The originating request, or ``None`` unless it proves trusted."""
-        tier = _metadata_tier(self.originating_request_taint_metadata)
-        if tier is not SourceTrustTier.TRUSTED_USER:
+        if not is_human_direct_metadata(self.originating_request_taint_metadata):
             return None
         return self.originating_request
 
@@ -359,7 +360,7 @@ def _render_conversation(
         if messages_module.is_turn_scaffolding(message):
             continue
         tier = _message_tier(message)
-        if tier is SourceTrustTier.TRUSTED_USER and index >= active_intent_index:
+        if not is_externally_authored(tier) and index >= active_intent_index:
             content = _neutralize_review_boundaries(_textual_message_content(message))
             rows.append(
                 f'<trusted_conversation index="{index}" role="{message.role}">\n'
@@ -383,7 +384,7 @@ def _render_provenance_digest(state: TurnTaintState) -> str:
             "source_type": source.source_type.value,
             "tier": source.tier.config_value,
         }
-        if source.tier is SourceTrustTier.TRUSTED_USER:
+        if not is_externally_authored(source.tier):
             item.update({
                 "source_id": source.source_id,
                 "labels": sorted(source.labels),
@@ -454,10 +455,7 @@ def _render_trigger(trigger: TriggerReviewInput | None) -> str:
     if trigger is None:
         return "[No unattended trigger definition was supplied.]"
     definition_tier = _metadata_tier(trigger.definition_taint_metadata)
-    if (
-        trigger.definition is not None
-        and definition_tier is SourceTrustTier.TRUSTED_USER
-    ):
+    if trigger.definition is not None and not is_externally_authored(definition_tier):
         definition = _render_fenced_data(
             "trusted_trigger_definition", trigger.definition, language="text"
         )
@@ -731,9 +729,7 @@ def resolve_originating_request(
         metadata = cast(
             "TaintMetadata | None", getattr(message, "taint_metadata", None)
         )
-        if metadata is None or _metadata_tier(metadata) is not (
-            SourceTrustTier.TRUSTED_USER
-        ):
+        if not is_human_direct_metadata(metadata):
             instructions = []
             active_metadata = None
             break
@@ -847,7 +843,9 @@ def compute_trusted_destination_echo(
                 request = message
                 break
     request_matches = False
-    if request is not None and _message_tier(request) is SourceTrustTier.TRUSTED_USER:
+    if request is not None and is_human_direct_metadata(
+        getattr(request, "taint_metadata", None)
+    ):
         request_matches = _destination_echo_matches(
             destination,
             _textual_message_content(request),
@@ -855,10 +853,12 @@ def compute_trusted_destination_echo(
 
     trigger_matches = False
     if trigger is not None:
+        # Model-composed definition text renders as trusted intent but never
+        # feeds the echo: a destination the model introduced must not read back
+        # as evidence that it appeared in the user's own words.
         trusted_definition = (
             trigger.definition
-            if _metadata_tier(trigger.definition_taint_metadata)
-            is SourceTrustTier.TRUSTED_USER
+            if is_human_direct_metadata(trigger.definition_taint_metadata)
             else None
         )
         trigger_matches = any(

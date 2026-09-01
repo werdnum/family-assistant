@@ -60,6 +60,9 @@ from family_assistant.security.taint import (
     TaintSourceType,
     TurnTaintState,
     coerce_taint_metadata,
+    floor_machine_authored_metadata,
+    is_externally_authored,
+    machine_authored_taint_metadata,
 )
 from family_assistant.storage.delegation_runs import (
     TERMINAL_DELEGATION_STATUSES,
@@ -527,8 +530,9 @@ def _llm_callback_trigger_taint_sources(
     definition_is_explicitly_trusted = (
         trigger.definition is not None
         and trigger.definition_taint_metadata is not None
-        and TurnTaintState.from_metadata(trigger.definition_taint_metadata).max_tier
-        is SourceTrustTier.TRUSTED_USER
+        and not is_externally_authored(
+            TurnTaintState.from_metadata(trigger.definition_taint_metadata).max_tier
+        )
     )
     if definition_is_explicitly_trusted and not trigger.payload_present:
         return ()
@@ -1244,7 +1248,9 @@ async def handle_llm_callback(
             )
         callback_trigger_message = UserMessage(
             content=trigger_text,
-            taint_metadata=callback_trigger_taint_state.to_metadata(),
+            taint_metadata=machine_authored_taint_metadata(
+                callback_trigger_taint_state
+            ),
         )
         if existing_callback_trigger is None:
             await db_context.message_history.add_message(
@@ -2833,7 +2839,9 @@ class TaskWorker:
             await exec_context.db_context.message_history.add_message(
                 UserMessage(
                     content=self._delegation_wakeup_data_text(run),
-                    taint_metadata=wakeup_data_taint_metadata,
+                    taint_metadata=floor_machine_authored_metadata(
+                        wakeup_data_taint_metadata
+                    ),
                 ),
                 interface_type=run["interface_type"],
                 conversation_id=run["conversation_id"],
