@@ -289,23 +289,32 @@ condition was withdrawn: the cheapest accurate simulation of the cure is the cur
 One mechanical consequence of the zero-latency shadow posture needs stating: under `observe` the
 reviewer deliberately runs off the critical path — `_start_shadow_review` detaches and the write
 executes immediately — so a shadow `allow` attaches to the definition record *asynchronously*, when
-the review completes. The attach is hash-guarded like every disposition write, so a mutation racing
-the completion leaves the new content uncured rather than mis-attributed, and until the verdict
-lands the definition resolves uncured, fail-closed. Firings inside that window enter uncured where
-`enforce` — whose verdict completes before the write — would have cured them first: a
-latency-bounded window, seconds wide, during which a busy event listener may fire more than once,
-with every such firing biased conservative. No per-definition serialization is added to shrink it —
-the window is a measurement caveat, not a correctness problem.
+the review completes. The attach is bound to the exact write that started the review — the record's
+write generation, not the content hash alone — because a verdict judges alignment with *that
+write's* authoring context: a same-content rewrite from a different turn produces the same hash but
+a different record, and must never inherit a verdict computed against someone else's request (its
+own review, over the same text but different trusted context, may legitimately differ). Any
+replacement of the record, identical content included, therefore leaves the new write awaiting its
+own verdict, and until a verdict lands a definition resolves uncured, fail-closed. Firings inside
+that window enter uncured where `enforce` — whose verdict completes before the write — would have
+cured them first: a latency-bounded window, seconds wide, during which a busy event listener may
+fire more than once, with every such firing biased conservative. No per-definition serialization is
+added to shrink it — the window is a measurement caveat, not a correctness problem.
 
-What remains overstated in shadow data is bounded, visible, and conservative. Firings of definitions
+What this design adds to shadow data biases only high, boundedly and visibly. Firings of definitions
 whose creation verdict was `confirm` or `deny` still count in full — a population that under
 `enforce` would be human-reviewed or absent, and one the flip decision can size directly from the
 recorded dispositions rather than reconstruct. Later interactive turns re-tainted through history by
 uncured firings' persisted rows count too, as do firings inside the verdict-latency window above.
-All bias the numbers high, so a measurement within budget remains sufficient to flip; the residual
-backlog at the flip — legacy definitions and the escalation-verdict population — is the one-time
-migration hump the attestation surface's disposition listing exists to burn down in one sitting,
-budgeted with the flip rather than read as steady-state friction.
+One caveat in the other direction is inherited, not created here: `observe` executes calls that
+`enforce` would deny, so enforcement-era trajectories can diverge — deny-and-continue rerouting,
+retries, escalation counters — in ways no shadow data can see. That is the reviewer design's general
+shadow-methodology limit, unchanged by this design, whose claim is scoped to the component it
+touches: definition-taint seeding contributes no low-biased term, so this design never makes a
+within-budget shadow measurement less sufficient than it already was. The residual backlog at the
+flip — legacy definitions and the escalation-verdict population — is the one-time migration hump the
+attestation surface's disposition listing exists to burn down in one sitting, budgeted with the flip
+rather than read as steady-state friction.
 
 ### Stored scripts and the executable closure
 
@@ -539,12 +548,13 @@ executable-persistence sink split; the static `review` and confirmation paths wo
 gates exist today. *Verify:* a human-confirmed tainted creation fires clean and renders marked
 attested; a judge-allowed creation cures with `taint_policy.mode` still `observe`, through the taint
 layer and the static layer alike; an observe-mode `allow` attaches asynchronously after review
-completion, hash-guarded — a firing before completion enters uncured, the next firing enters cured,
-and a mutation racing the completion leaves the new content uncured; a recorded `confirm` verdict
-without an approval, and a recorded `deny`, resolve as absent; a floored cell yields only
-human-backed cures for writes made under it; a patch-style update presents the complete merged
-definition to the gate, and the gated payload is identical to the content the new record's hash
-covers; no test path rewrites an authoring stamp.
+completion, bound to the originating write's generation — a firing before completion enters uncured,
+the next firing enters cured, a mutation racing the completion leaves the new content uncured, and a
+same-content rewrite from another turn does not inherit the earlier write's verdict; a recorded
+`confirm` verdict without an approval, and a recorded `deny`, resolve as absent; a floored cell
+yields only human-backed cures for writes made under it; a patch-style update presents the complete
+merged definition to the gate, and the gated payload is identical to the content the new record's
+hash covers; no test path rewrites an authoring stamp.
 
 **M4 — Attestation surface and documentation.** The hash-bound review operation for the three
 artifact classes, in the web UI, listing each definition with its stamp and disposition (which is
