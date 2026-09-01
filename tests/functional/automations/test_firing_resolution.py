@@ -735,7 +735,6 @@ async def test_a_static_layer_allow_cures_through_its_own_layer(
     [
         CreationDisposition.JUDGE_CONFIRM_REQUIRED,
         CreationDisposition.JUDGE_DENIED,
-        CreationDisposition.JUDGE_ALLOWED_NONBINDING,
     ],
 )
 async def test_a_recorded_non_decision_fires_uncured(

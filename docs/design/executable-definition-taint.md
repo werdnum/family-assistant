@@ -229,16 +229,16 @@ cell's constraints from the merged review (`include_observe_taint_constraints=Fa
 taint cell whose space is `{confirm, deny}` could be widened back to include `allow` by the static
 layer's presence — an `allow` that `enforce` could never have issued. A review that can record a
 curative disposition therefore compares its verdict against the observe-mode taint constraints, and
-an `allow` issued under a wider verdict space than `enforce` would offer is recorded as non-binding
-rather than curative. The comparison governs curing only: the verdict the call actually ran under is
-unchanged, so `observe` still blocks nothing. This is what keeps "a floored cell yields only
-human-backed cures" true in every mode, and keeps the shadow numbers free of a low-biased term. An
-earlier revision additionally required the gate to have been enforcement-live for `allow`; that is
-withdrawn as protecting nothing at real cost. Withholding the cure in `observe` filters no one — the
-write executed regardless — while it makes the dry run measure a system that will never exist, and
-in practice pushes the operator toward blunter instruments: the realistic disposal of an accumulated
-observe-era backlog is an epoch-style bulk amnesty resting on the operator's presumption that few
-real injections are latent in the store, which blesses shadow-*denied* and never-reviewed
+an `allow` issued under a wider verdict space than `enforce` would offer is recorded as the `allow`
+it was but does not bind. The comparison governs curing only: the verdict the call actually ran
+under is unchanged, so `observe` still blocks nothing. This is what keeps "a floored cell yields
+only human-backed cures" true in every mode, and keeps the shadow numbers free of a low-biased term.
+An earlier revision additionally required the gate to have been enforcement-live for `allow`; that
+is withdrawn as protecting nothing at real cost. Withholding the cure in `observe` filters no one —
+the write executed regardless — while it makes the dry run measure a system that will never exist,
+and in practice pushes the operator toward blunter instruments: the realistic disposal of an
+accumulated observe-era backlog is an epoch-style bulk amnesty resting on the operator's presumption
+that few real injections are latent in the store, which blesses shadow-*denied* and never-reviewed
 definitions indiscriminately. A per-definition `allow`, recorded with the layer and mode that
 produced it, is strictly more discriminating than the amnesty it replaces. (Clean-authored and
 web-UI definitions — the overwhelming majority — resolve trusted regardless, which is where most of
@@ -275,10 +275,10 @@ ones:
   exactly the fields the stored row supplied, and the retention rule below already resolves those. A
   patch whose retained content resolves trusted therefore cures normally: everything the new record
   vouches for was either gated now or gated when it was written. A patch that retains uncured
-  content — a legacy row, a hash mismatch, an unapproved escalation — records its verdict as
-  non-binding and cures nothing, because no gate has ever examined the content it keeps. That is
-  fail-closed by construction rather than by remembering, and it needs no pre-gate merge: the same
-  resolution that decides the retained content's tier decides whether the cure may attach.
+  content — a legacy row, a hash mismatch, an unapproved escalation — records its decision and cures
+  nothing, because no gate has ever examined the content it keeps. That is fail-closed by
+  construction rather than by remembering, and it needs no pre-gate merge: the same resolution that
+  decides the retained content's tier decides whether the cure may attach.
 - **A mutation reads what it retains.** The prior definition's effective resolution — trusted for a
   clean or cured hash-valid record, `unknown_external` otherwise — merges into the updating turn as
   an artifact read, exactly as note read-back already merges stored provenance. A clean-turn patch

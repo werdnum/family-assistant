@@ -2663,7 +2663,7 @@ async def test_an_allow_records_the_taint_cell_that_delegated_it(
 
     outcome = recorder.only
     assert outcome.disposition is CreationDisposition.JUDGE_ALLOWED
-    assert outcome.effective_disposition is CreationDisposition.JUDGE_ALLOWED
+    assert outcome.cure_permitted
     assert outcome.gate.layer is GateLayer.TAINT_CELL
     assert outcome.gate.mode == "enforce"
     assert outcome.gate.verdict_id is not None
@@ -2771,8 +2771,6 @@ async def test_a_static_layer_cannot_widen_a_floored_cell_into_a_cure(
     outcome = recorder.only
     assert outcome.disposition is CreationDisposition.JUDGE_ALLOWED
     assert not outcome.cure_permitted
-    assert outcome.effective_disposition is CreationDisposition.JUDGE_ALLOWED_NONBINDING
-    assert not outcome.effective_disposition.cures
 
 
 async def test_a_hard_confirm_approval_records_the_human(
@@ -2859,7 +2857,6 @@ async def test_an_observe_shadow_review_leaves_its_writes_pending_then_attaches(
 
     outcome = recorder.only
     assert outcome.disposition is None
-    assert outcome.effective_disposition is None
     assert outcome.gate.mode == "observe"
     assert len(pending_seen) == 1
     assert pending_seen[0].settled.is_set()

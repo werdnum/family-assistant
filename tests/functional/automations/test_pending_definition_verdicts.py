@@ -320,7 +320,10 @@ async def test_a_retained_uncured_patch_records_its_late_verdict_without_curing(
     record = definition_record_from_row(row["definition_record"])
     assert attached == 1
     assert record is not None
-    assert record.disposition is CreationDisposition.JUDGE_ALLOWED_NONBINDING
+    # Recorded as the verdict it was; it simply does not bind the merged content.
+    assert record.disposition is CreationDisposition.JUDGE_ALLOWED
+    assert not record.cure_eligible
+    assert not record.cures
     assert not await _resolved(db, automation_id)
 
 

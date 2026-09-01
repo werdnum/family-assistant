@@ -87,22 +87,6 @@ class CreationDisposition(StrEnum):
     about what an ``allow`` means.
     """
 
-    JUDGE_ALLOWED_NONBINDING = "judge_allowed_nonbinding"
-    """The reviewer returned ``allow``, but not about this exact content under this policy.
-
-    Two writes land here. One is an ``allow`` computed under a **wider verdict
-    space than ``enforce`` would offer**: a static ``review`` rule co-gating a
-    call under ``observe`` omits the taint cell's constraints from the merged
-    review, so a floored cell whose space is ``{confirm, deny}`` is widened back
-    to include ``allow`` by the static layer's presence. The other is a
-    **patch-style update that retained uncured content** -- the gate saw the
-    fields the call changed, never the fields the stored row supplied, so the
-    verdict cannot vouch for the merged definition the new record hashes.
-
-    Recorded either way, so both populations stay filterable at the flip, and
-    curative neither way.
-    """
-
     JUDGE_CONFIRM_REQUIRED = "judge_confirm_required"
     """The reviewer returned ``confirm`` and no human approved it.
 
@@ -237,28 +221,18 @@ class DefinitionGateOutcome:
 
     gate: GateProvenance
     cure_permitted: bool = True
-    """Whether an ``allow`` here was computed under the enforce-equivalent verdict space.
+    """Whether this verdict was computed under the enforce-equivalent verdict space.
 
     A static ``review`` rule co-gating a call under ``observe`` omits the taint
     cell's constraints from the merged review, so a floored cell whose space is
     ``{confirm, deny}`` can be widened back to include ``allow`` by the static
     layer's presence -- an ``allow`` ``enforce`` could never have issued. Such a
-    verdict is still recorded, for audit and for the flip-time backlog listing,
-    but it does not cure.
+    verdict is still recorded as the verdict it was, for audit and for the
+    flip-time backlog listing; what it loses is the cure.
     """
 
     pending: PendingDefinitionReview | None = None
     """The still-running review whose verdict this write awaits, under ``observe``."""
-
-    @property
-    def effective_disposition(self) -> CreationDisposition | None:
-        """The disposition as stamping should record it."""
-        if (
-            self.disposition is CreationDisposition.JUDGE_ALLOWED
-            and not self.cure_permitted
-        ):
-            return CreationDisposition.JUDGE_ALLOWED_NONBINDING
-        return self.disposition
 
 
 class DefinitionRecordDict(TypedDict):
@@ -270,7 +244,7 @@ class DefinitionRecordDict(TypedDict):
     disposition: str | None
     gate: dict[str, str | None] | None
     pending_write_id: str | None
-    pending_cure_eligible: bool
+    cure_eligible: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,14 +255,21 @@ class DefinitionRecord:
     content_hash: str
     disposition: CreationDisposition | None
     gate: GateProvenance | None = None
-    pending_cure_eligible: bool = True
-    """Whether a verdict still to arrive may cure this write, or only be recorded.
+    cure_eligible: bool = True
+    """Whether the recorded decision *binds this content*, or is only recorded.
 
-    A patch that retained uncured content is gated on the fields it changed and
-    on nothing the stored row supplied, so no verdict can vouch for the merged
-    definition. Under ``enforce`` the verdict is in hand at the write and lands
-    as ``judge_allowed_nonbinding`` directly; under ``observe`` it arrives later,
-    and this is what carries that same decision to it.
+    Kept separate from the disposition because they are two different facts, and
+    conflating them would make the audit record lie. A human who approves a
+    patch of a legacy definition really did approve -- the record says
+    ``human_confirmed``, because that is what happened -- but the confirmation
+    showed them the fields the call changed and never the ones the stored row
+    supplied, so their approval cannot vouch for the merged definition. The same
+    holds for an ``allow`` issued under a wider verdict space than ``enforce``
+    would offer. Both are recorded as the decisions they were, and neither
+    cures.
+
+    Legacy records, which predate the field, read as eligible: their
+    dispositions were only ever written where they bound.
     """
 
     pending_write_id: str | None = None
@@ -306,8 +287,16 @@ class DefinitionRecord:
 
     @property
     def cures(self) -> bool:
-        """Whether this record's disposition cures its authoring taint."""
-        return self.disposition is not None and self.disposition.cures
+        """Whether this record's decision cures its authoring taint.
+
+        Both halves are required: a curing disposition, and a decision that
+        actually bound the content this record describes.
+        """
+        return (
+            self.disposition is not None
+            and self.disposition.cures
+            and self.cure_eligible
+        )
 
     def to_dict(self) -> DefinitionRecordDict:
         """Serialize for storage."""
@@ -320,7 +309,7 @@ class DefinitionRecord:
             ),
             "gate": self.gate.to_dict() if self.gate is not None else None,
             "pending_write_id": self.pending_write_id,
-            "pending_cure_eligible": self.pending_cure_eligible,
+            "cure_eligible": self.cure_eligible,
         }
 
     @classmethod
@@ -356,7 +345,7 @@ class DefinitionRecord:
             pending_write_id=(
                 pending_write_id if isinstance(pending_write_id, str) else None
             ),
-            pending_cure_eligible=raw.get("pending_cure_eligible") is not False,
+            cure_eligible=raw.get("cure_eligible") is not False,
         )
 
     def with_verdict(
@@ -367,12 +356,10 @@ class DefinitionRecord:
         """This record with a late-arriving verdict recorded against it.
 
         The authoring stamp and the content hash are untouched: a verdict is an
-        additive record beside the stamp, never a mutation of it. A write the
-        verdict could not vouch for records it non-curatively, the same decision
-        the write would have reached had the verdict been in hand.
+        additive record beside the stamp, never a mutation of it. ``cure_eligible``
+        is untouched too -- the write already decided whether a verdict could bind
+        it, and the verdict's arrival does not revisit that.
         """
-        if disposition.cures and not self.pending_cure_eligible:
-            disposition = CreationDisposition.JUDGE_ALLOWED_NONBINDING
         return replace(
             self,
             disposition=disposition,
@@ -446,13 +433,13 @@ def stamp_definition(
     ``gate_outcome`` is how the gate that examined this write resolved, as
     deposited by the confirmation and adjudication chokepoints -- or, under
     ``observe``, that a verdict is still being computed for it, in which case
-    the record carries the write id the verdict will attach to. A curing
-    outcome is honoured only when the gate saw everything the new record
-    vouches for: ``retains_uncured_content`` says a patch kept content whose
-    own record is absent, void, or uncured, which the gate never examined, so
-    the verdict is recorded and the cure withheld. A clean stamp needs no cure
-    and records ``CLEAN`` when no gate engaged, so that "no gate was needed"
-    stays distinguishable from "no gate ran".
+    the record carries the write id the verdict will attach to. Its decision is
+    always recorded as the decision it was; whether that decision *binds* this
+    content is recorded beside it. ``retains_uncured_content`` says a patch kept
+    content whose own record is absent, void, or uncured, which the gate never
+    examined, so whoever decided cannot vouch for the merged definition. A clean
+    stamp needs no cure and records ``CLEAN`` when no gate engaged, so that "no
+    gate was needed" stays distinguishable from "no gate ran".
     """
     state = taint_state if taint_state is not None else TurnTaintState.empty()
     metadata = (
@@ -464,19 +451,19 @@ def stamp_definition(
     disposition: CreationDisposition | None = None
     gate: GateProvenance | None = None
     pending_write_id: str | None = None
-    pending_cure_eligible = True
+    # Two independent reasons a decision may fail to bind this content: the
+    # gate was shown less than the record vouches for, or the verdict space it
+    # was computed under was wider than ``enforce`` would have offered.
+    cure_eligible = not retains_uncured_content
     if gate_outcome is not None:
         gate = gate_outcome.gate
-        disposition = gate_outcome.effective_disposition
-        if disposition is not None and retains_uncured_content and disposition.cures:
-            disposition = CreationDisposition.JUDGE_ALLOWED_NONBINDING
+        disposition = gate_outcome.disposition
+        cure_eligible = cure_eligible and gate_outcome.cure_permitted
         if gate_outcome.pending is not None and externally_authored:
             # Only a write that needs curing waits for a verdict; a clean stamp
-            # resolves on its own. A write no verdict could cure still waits,
-            # so the verdict is recorded against it when it lands -- flagged
-            # here so it lands non-curatively.
+            # resolves on its own. A write no verdict could bind still waits,
+            # so the verdict is recorded against it when it lands.
             pending_write_id = gate_outcome.pending.write_id
-            pending_cure_eligible = not retains_uncured_content
     if disposition is None and not externally_authored:
         disposition = CreationDisposition.CLEAN
     return DefinitionRecord(
@@ -485,7 +472,7 @@ def stamp_definition(
         disposition=disposition,
         gate=gate,
         pending_write_id=pending_write_id,
-        pending_cure_eligible=pending_cure_eligible,
+        cure_eligible=cure_eligible,
     )
 
 
