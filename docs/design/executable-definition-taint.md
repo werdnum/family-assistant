@@ -286,15 +286,24 @@ built a counterfactual projection here — event-time bindings, audit joins, clo
 re-resolution — to reconstruct what the cure would have done. All of it dissolved when the mode
 condition was withdrawn: the cheapest accurate simulation of the cure is the cure.
 
+One mechanical consequence of the zero-latency shadow posture needs stating: under `observe` the
+reviewer deliberately runs off the critical path — `_start_shadow_review` detaches and the write
+executes immediately — so a shadow `allow` attaches to the definition record *asynchronously*, when
+the review completes. The attach is hash-guarded like every disposition write, so a mutation racing
+the completion leaves the new content uncured rather than mis-attributed, and until the verdict
+lands the definition resolves uncured, fail-closed. A callback immediate enough to fire inside that
+window enters uncured once, where `enforce` — whose verdict completes before the write — would have
+cured it first: at most one early firing per definition, seconds wide, biased conservative.
+
 What remains overstated in shadow data is bounded, visible, and conservative. Firings of definitions
 whose creation verdict was `confirm` or `deny` still count in full — a population that under
 `enforce` would be human-reviewed or absent, and one the flip decision can size directly from the
 recorded dispositions rather than reconstruct. Later interactive turns re-tainted through history by
-uncured firings' persisted rows count too. Both bias the numbers high, so a measurement within
-budget remains sufficient to flip; the residual backlog at the flip — legacy definitions and the
-escalation-verdict population — is the one-time migration hump the attestation surface's disposition
-listing exists to burn down in one sitting, budgeted with the flip rather than read as steady-state
-friction.
+uncured firings' persisted rows count too, as does the one-early-firing verdict-latency window
+above. All bias the numbers high, so a measurement within budget remains sufficient to flip; the
+residual backlog at the flip — legacy definitions and the escalation-verdict population — is the
+one-time migration hump the attestation surface's disposition listing exists to burn down in one
+sitting, budgeted with the flip rather than read as steady-state friction.
 
 ### Stored scripts and the executable closure
 
@@ -527,10 +536,13 @@ reviewer rendering; echo eligibility rules. The taint-cell path depends on the r
 executable-persistence sink split; the static `review` and confirmation paths work wherever those
 gates exist today. *Verify:* a human-confirmed tainted creation fires clean and renders marked
 attested; a judge-allowed creation cures with `taint_policy.mode` still `observe`, through the taint
-layer and the static layer alike; a recorded `confirm` verdict without an approval, and a recorded
-`deny`, resolve as absent; a floored cell yields only human-backed cures for writes made under it; a
-patch-style update presents the complete merged definition to the gate, and the gated payload is
-identical to the content the new record's hash covers; no test path rewrites an authoring stamp.
+layer and the static layer alike; an observe-mode `allow` attaches asynchronously after review
+completion, hash-guarded — a firing before completion enters uncured, the next firing enters cured,
+and a mutation racing the completion leaves the new content uncured; a recorded `confirm` verdict
+without an approval, and a recorded `deny`, resolve as absent; a floored cell yields only
+human-backed cures for writes made under it; a patch-style update presents the complete merged
+definition to the gate, and the gated payload is identical to the content the new record's hash
+covers; no test path rewrites an authoring stamp.
 
 **M4 — Attestation surface and documentation.** The hash-bound review operation for the three
 artifact classes, in the web UI, listing each definition with its stamp and disposition (which is
