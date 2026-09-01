@@ -499,10 +499,21 @@ def _llm_callback_definition_refs(
     queued before any of this existed -- resolves fail-closed.
 
     A durable definition is resolved against the row as it stands *now*, while
-    the definition text handed to the reviewer was snapshotted at enqueue. The
-    two describe the same content because every update that changes a
-    definition re-enqueues its task with the new text, and an out-of-band edit
-    of the row voids the record's hash rather than re-describing the snapshot.
+    the definition text handed to the reviewer was snapshotted at enqueue. For a
+    schedule automation the two always agree: every mutation cancels its pending
+    tasks and rebuilds them, so an edit cannot leave a task describing content
+    the row no longer has, and an out-of-band edit voids the record's hash
+    rather than re-describing the snapshot.
+
+    An event-listener wake is built at fire time from a listener cache refreshed
+    at most once a minute, so the two can briefly disagree: the wake renders the
+    cached definition while this resolves the row as it stands. An edit inside
+    that window -- or, on SQLite, a delete whose id a new listener reuses --
+    would pair the payload's content with the row's record. Accepted as a
+    bounded residual rather than closed by carrying the snapshot through the
+    payload: the window is a minute wide, needs an edit or delete/recreate
+    racing a matching event, and a listener wake carrying event data enters the
+    turn tainted by its payload regardless.
     """
     listener_id = (
         callback_context.get("listener_id")
