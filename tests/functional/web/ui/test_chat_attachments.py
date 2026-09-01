@@ -364,17 +364,16 @@ async def test_attachment_response_with_multiple_attachments(
     )
 
     # Verify attachment previews are now available
+    async def attachment_preview_count() -> int:
+        await chat_page.expand_tool_groups()
+        attachment_previews = page.locator('[data-testid="attachment-preview"]')
+        count = await attachment_previews.count()
+        if count == 0:
+            return 0
+        await attachment_previews.first.wait_for(state="visible", timeout=2000)
+        return count
+
     try:
-
-        async def attachment_preview_count() -> int:
-            await chat_page.expand_tool_groups()
-            attachment_previews = page.locator('[data-testid="attachment-preview"]')
-            count = await attachment_previews.count()
-            if count == 0:
-                return 0
-            await attachment_previews.first.wait_for(state="visible", timeout=2000)
-            return count
-
         preview_count = await wait_for_condition(
             attachment_preview_count,
             timeout=30.0,

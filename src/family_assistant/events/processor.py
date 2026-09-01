@@ -404,6 +404,13 @@ class EventProcessor:
             context=context,
             processing_profile_id=action_profile_id,
             created_by_user_id=listener.get("created_by_user_id"),
+            tool_call_review_trigger_type="event_listener",
+            tool_call_review_trigger_definition=(
+                str(action_config.get("context"))
+                if isinstance(action_config.get("context"), str)
+                else listener.get("description")
+            ),
+            tool_call_review_trigger_payload_present="event_data" in context,
         )
 
         logger.info(

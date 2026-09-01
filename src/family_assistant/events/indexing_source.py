@@ -105,24 +105,29 @@ class IndexingSource(BaseEventSource, EventSource):
                 event_data, future = await asyncio.wait_for(
                     self._event_queue.get(), timeout=1.0
                 )
-
-                # Send to processor
-                try:
-                    if self.processor:
-                        await self.processor.process_event(self.source_id, event_data)
-                    future.set_result(None)
-                except Exception as e:
-                    future.set_exception(e)
-                    raise
-                finally:
-                    # Clean up the future from pending set
-                    self._pending_events.discard(future)
-
             except TimeoutError:
                 # No event within timeout, continue loop to check _running
                 continue
+
+            try:
+                await self._deliver_event(event_data, future)
+            except TimeoutError:
+                continue
             except Exception as e:
                 logger.exception(f"Error processing queued event: {e}")
+
+    async def _deliver_event(
+        self, event_data: dict[str, object], future: asyncio.Future[None]
+    ) -> None:
+        try:
+            if self.processor:
+                await self.processor.process_event(self.source_id, event_data)
+            future.set_result(None)
+        except Exception as e:
+            future.set_exception(e)
+            raise
+        finally:
+            self._pending_events.discard(future)
 
     async def wait_for_pending_events(self, timeout: float = 10.0) -> None:
         """Wait for all pending events to be processed.

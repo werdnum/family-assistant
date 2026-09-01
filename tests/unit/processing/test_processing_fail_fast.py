@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import timedelta
 from pathlib import Path
@@ -37,7 +38,11 @@ from family_assistant.processing.attachments import (
 from family_assistant.processing.context import ContextPreparer
 from family_assistant.processing.types import ToolExecutionResult
 from family_assistant.storage.database import Database
-from family_assistant.tools.types import ToolAttachment, ToolResult
+from family_assistant.tools.types import (
+    ToolAttachment,
+    ToolCallReviewTurnState,
+    ToolResult,
+)
 from family_assistant.utils.clock import SystemClock
 from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
     RuleBasedMockLLMClient,
@@ -897,6 +902,110 @@ async def test_stream_done_attachment_metadata_lookup_propagates_failures() -> N
             processing_service=service,
         ):
             pass
+
+
+@pytest.mark.no_db
+@pytest.mark.asyncio
+async def test_denial_escalation_ends_after_complete_tool_result_batch_without_model() -> (
+    None
+):
+    class ModelCallMustNotRepeat:
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        async def generate_response_stream(
+            self,
+            *,
+            messages: list[object],
+            tools: list[dict[str, object]] | None,
+            tool_choice: str,
+        ) -> AsyncIterator[LLMStreamEvent]:
+            del messages, tools, tool_choice
+            self.call_count += 1
+            if self.call_count > 1:
+                raise AssertionError("termination must prevent another model call")
+            for call_id in ("denied-call", "batch-peer-call"):
+                yield LLMStreamEvent(
+                    type="tool_call",
+                    tool_call=ToolCallItem(
+                        id=call_id,
+                        type="function",
+                        function=ToolCallFunction(name="example_tool", arguments="{}"),
+                    ),
+                )
+            yield LLMStreamEvent(type="done", metadata={})
+
+    llm_client = ModelCallMustNotRepeat()
+    service = _make_service()
+    service.llm_client = cast("Any", llm_client)
+
+    async def execute_with_terminal_escalation(
+        tool_call: ToolCallItem,
+        **kwargs: object,
+    ) -> ToolExecutionResult:
+        review_state = cast("ToolCallReviewTurnState", kwargs["tool_call_review_state"])
+        if tool_call.id == "denied-call":
+            review_state.terminal_denial_escalation_message = (
+                "Automatic review stopped this turn after repeated denials."
+            )
+            # Let the peer finish first to prove termination waits for the full
+            # parallel batch rather than returning with an unanswered tool call.
+            # ast-grep-ignore: no-asyncio-sleep-in-tests - Yield to the peer task.
+            await asyncio.sleep(0)
+        return ToolExecutionResult(
+            stream_event=LLMStreamEvent(
+                type="tool_result",
+                tool_call_id=tool_call.id,
+                tool_result=f"result for {tool_call.id}",
+            ),
+            llm_message=ToolMessage(
+                tool_call_id=tool_call.id,
+                content=f"result for {tool_call.id}",
+                name="example_tool",
+            ),
+        )
+
+    service.tool_executor.execute = execute_with_terminal_escalation  # type: ignore[method-assign]
+    emitted: list[tuple[LLMStreamEvent, object | None]] = []
+    async for event, message in service.llm_loop.run_stream(
+        db_context=MagicMock(),
+        messages=[
+            SystemMessage(content="system"),
+            UserMessage(content="hello"),
+        ],
+        interface_type="test",
+        conversation_id="conv",
+        user_name="tester",
+        turn_id="turn",
+        chat_interface=None,
+        processing_service=service,
+    ):
+        emitted.append((event, message))
+
+    tool_results = [
+        (index, event.tool_call_id)
+        for index, (event, _message) in enumerate(emitted)
+        if event.type == "tool_result"
+    ]
+    terminal_content_index = next(
+        index
+        for index, (event, _message) in enumerate(emitted)
+        if event.type == "content"
+        and event.content
+        == "Automatic review stopped this turn after repeated denials."
+    )
+    assert {call_id for _index, call_id in tool_results} == {
+        "denied-call",
+        "batch-peer-call",
+    }
+    assert all(index < terminal_content_index for index, _call_id in tool_results)
+    assert llm_client.call_count == 1
+    final_message = emitted[-1][1]
+    assert isinstance(final_message, AssistantMessage)
+    assert (
+        final_message.content
+        == "Automatic review stopped this turn after repeated denials."
+    )
 
 
 @pytest.mark.no_db

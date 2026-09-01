@@ -30,6 +30,37 @@ def is_attachment_id(value: object) -> bool:
         return False
 
 
+async def _fetch_attachment_object(
+    attachment_id: str, context: ToolExecutionContext
+) -> ScriptAttachment | None:
+    attachment_registry = context.attachment_registry
+    if not attachment_registry:
+        logger.error("AttachmentRegistry not available in execution context")
+        return None
+
+    logger.debug(f"Looking up attachment {attachment_id} in registry")
+    metadata = await attachment_registry.get_attachment(
+        context.db_context, attachment_id, acting_user_id=context.user_id
+    )
+    if metadata is None:
+        logger.warning(f"Attachment not found or access denied: {attachment_id}")
+        return None
+
+    logger.debug(
+        f"Found attachment {attachment_id}: {metadata.description}, conversation_id: {metadata.conversation_id}"
+    )
+
+    def db_context_getter() -> Database:
+        return context.db_context
+
+    return ScriptAttachment(
+        metadata=metadata,
+        registry=attachment_registry,
+        db_context_getter=db_context_getter,
+        user_id=context.user_id,
+    )
+
+
 async def fetch_attachment_object(
     attachment_id: str, context: ToolExecutionContext
 ) -> ScriptAttachment | None:
@@ -44,39 +75,7 @@ async def fetch_attachment_object(
         ScriptAttachment object if found, None otherwise
     """
     try:
-        # Get attachment registry from context
-        attachment_registry = context.attachment_registry
-        if not attachment_registry:
-            logger.error("AttachmentRegistry not available in execution context")
-            return None
-
-        # Fetch attachment metadata
-        logger.debug(f"Looking up attachment {attachment_id} in registry")
-        metadata = await attachment_registry.get_attachment(
-            context.db_context, attachment_id, acting_user_id=context.user_id
-        )
-
-        if metadata is None:
-            logger.warning(f"Attachment not found or access denied: {attachment_id}")
-            return None
-
-        logger.debug(
-            f"Found attachment {attachment_id}: {metadata.description}, conversation_id: {metadata.conversation_id}"
-        )
-
-        # Create a Database getter for the ScriptAttachment
-        # Use the existing database context from the execution context to maintain transaction consistency
-        def db_context_getter() -> Database:
-            return context.db_context
-
-        # Create and return ScriptAttachment object
-        return ScriptAttachment(
-            metadata=metadata,
-            registry=attachment_registry,
-            db_context_getter=db_context_getter,
-            user_id=context.user_id,
-        )
-
+        return await _fetch_attachment_object(attachment_id, context)
     except Exception as e:
         logger.exception(f"Error fetching attachment {attachment_id}: {e}")
         return None

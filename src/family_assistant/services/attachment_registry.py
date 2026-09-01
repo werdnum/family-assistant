@@ -1521,7 +1521,11 @@ class AttachmentRegistry:
             # Write file to disk asynchronously
             async with aiofiles.open(file_path, "wb") as f:
                 await f.write(file_content)
+        except Exception as e:
+            logger.error(f"Failed to store attachment: {e}")
+            raise ValueError(f"Failed to store attachment: {e}") from e
 
+        try:
             # Create minimal attachment metadata object (caller should provide proper metadata)
             attachment_metadata = AttachmentMetadata(
                 attachment_id=attachment_id,
@@ -1537,16 +1541,14 @@ class AttachmentRegistry:
                     "storage_method": "file_only",
                 },
             )
-
-            logger.info(
-                f"Successfully stored attachment {attachment_id}: {safe_filename} ({len(file_content)} bytes)"
-            )
-
-            return attachment_metadata
-
         except Exception as e:
             logger.error(f"Failed to store attachment: {e}")
             raise ValueError(f"Failed to store attachment: {e}") from e
+
+        logger.info(
+            f"Successfully stored attachment {attachment_id}: {safe_filename} ({len(file_content)} bytes)"
+        )
+        return attachment_metadata
 
     async def store_attachment(self, file: UploadFile) -> AttachmentMetadata:
         """
@@ -1583,7 +1585,13 @@ class AttachmentRegistry:
             # Write file to disk asynchronously
             async with aiofiles.open(file_path, "wb") as f:
                 await f.write(file_content)
+        except Exception as e:
+            logger.error(f"Failed to store attachment: {e}")
+            raise HTTPException(
+                status_code=500, detail=f"Failed to store attachment: {e!s}"
+            ) from e
 
+        try:
             # Create attachment metadata
             attachment_metadata = AttachmentMetadata(
                 attachment_id=attachment_id,
@@ -1596,17 +1604,16 @@ class AttachmentRegistry:
                 storage_path=str(file_path.relative_to(self.storage_path)),
                 metadata={"original_filename": safe_filename, "upload_method": "api"},
             )
-
-            logger.info(
-                f"Successfully stored attachment {attachment_id}: {safe_filename} ({len(file_content)} bytes)"
-            )
-            return attachment_metadata
-
         except Exception as e:
             logger.error(f"Failed to store attachment: {e}")
             raise HTTPException(
                 status_code=500, detail=f"Failed to store attachment: {e!s}"
             ) from e
+
+        logger.info(
+            f"Successfully stored attachment {attachment_id}: {safe_filename} ({len(file_content)} bytes)"
+        )
+        return attachment_metadata
 
     async def resolve_attachment_path(
         self,

@@ -14,6 +14,20 @@ from family_assistant.events.home_assistant_source import HomeAssistantSource
 from family_assistant.events.processor import EventProcessor
 
 
+async def _run_health_check_iteration(source: HomeAssistantSource) -> None:
+    if source._connection_healthy:
+        time_since_last_event = time.time() - source._last_event_time
+        if time_since_last_event > 300:
+            connection_ok = await source._test_connection()
+            if not connection_ok:
+                source._connection_healthy = False
+                if source._websocket_task and not source._websocket_task.done():
+                    source._websocket_task.cancel()
+
+    # ast-grep-ignore: no-asyncio-sleep-in-tests - Simulating health check interval timing
+    await asyncio.sleep(source._health_check_interval)
+
+
 @pytest.mark.asyncio
 async def test_exponential_backoff_reconnection() -> None:
     """Test that reconnection uses exponential backoff."""
@@ -116,30 +130,7 @@ async def test_health_check_triggers_reconnection() -> None:
             # Skip initial delay
             while source._running:
                 try:
-                    # Check if connection is marked as healthy
-                    if source._connection_healthy:
-                        # Check if we've received any events recently
-                        time_since_last_event = time.time() - source._last_event_time
-
-                        # If no events for extended period, test the connection
-                        if time_since_last_event > 300:  # 5 minutes
-                            # Try to verify connection with a simple API call
-                            connection_ok = await source._test_connection()
-
-                            if not connection_ok:
-                                # Force reconnection by marking unhealthy
-                                source._connection_healthy = False
-                                # Cancel websocket task to trigger reconnection
-                                if (
-                                    source._websocket_task
-                                    and not source._websocket_task.done()
-                                ):
-                                    source._websocket_task.cancel()
-
-                    # Wait before next health check
-                    # ast-grep-ignore: no-asyncio-sleep-in-tests - Simulating health check interval timing
-                    await asyncio.sleep(source._health_check_interval)
-
+                    await _run_health_check_iteration(source)
                 except asyncio.CancelledError:
                     # Task is being cancelled, exit cleanly
                     break

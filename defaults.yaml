@@ -368,6 +368,23 @@ email_intake:
   max_attachment_bytes: 10485760
   max_total_attachment_bytes: 26214400
 
+# --- Automatic Tool-Call Review ---
+# A shared, non-agentic judge for calls delegated by runtime taint policy or a
+# static tools_policy rule with decision: "review". The reviewer has no tools;
+# it receives trusted conversation rows, a provenance digest, and the complete
+# proposed arguments fenced as untrusted data. Errors and budget exhaustion
+# resolve to each delegating rule's fail-closed fallback, never to allow.
+tool_call_review:
+  enabled: true
+  provider: "google"
+  model: "gemini-3.7-flash"
+  timeout_seconds: 30.0
+  max_reviews_per_turn: 25
+  escalation:
+    consecutive_denials: 3
+    total_denials_per_turn: 20
+  guidance: ""
+
 # --- Runtime Taint Policy ---
 # Tracks whether the current turn has incorporated untrusted external content
 # such as inbound email, browser snapshots, or untrusted tool output. Tool

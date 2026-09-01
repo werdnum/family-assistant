@@ -24,9 +24,13 @@ from family_assistant.security.taint import (
     merge_taint_state_into_tracker,
 )
 from family_assistant.tools import (
+    TaintTrackingToolsProvider,
+    ToolPolicyDeniedError,
     collect_system_prompt_addition,
+    find_provider_by_type,
     get_tool_definitions_for_advertisement,
 )
+from family_assistant.tools.types import ToolCallReviewTurnState
 
 from .attachments import AttachmentSelectionError
 from .protocol import TaintedSinkRefusedError
@@ -37,7 +41,7 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Sequence
+    from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 
     from family_assistant.camera.protocol import CameraBackend
     from family_assistant.config_models import AppConfig
@@ -45,6 +49,7 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.tool_call import ToolCallItem
     from family_assistant.security.taint import TaintSource, TurnTaintTracker
+    from family_assistant.services.tool_call_review import TriggerReviewInput
     from family_assistant.storage.database import Database
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools.types import EventSourcesById, ToolDefinition
@@ -184,6 +189,7 @@ class LLMStreamingLoop:
         mid_turn_input_provider: MidTurnInputProvider | None = None,
         initial_taint_sources: Sequence[TaintSource] | None = None,
         taint_tracker: TurnTaintTracker | None = None,
+        tool_call_review_trigger: TriggerReviewInput | None = None,
     ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
@@ -218,6 +224,7 @@ class LLMStreamingLoop:
             mid_turn_input_provider=mid_turn_input_provider,
             initial_taint_sources=initial_taint_sources,
             taint_tracker=taint_tracker,
+            tool_call_review_trigger=tool_call_review_trigger,
         ):
             if message is not None:
                 turn_messages.append(message)
@@ -252,6 +259,7 @@ class LLMStreamingLoop:
         mid_turn_input_provider: MidTurnInputProvider | None = None,
         initial_taint_sources: Sequence[TaintSource] | None = None,
         taint_tracker: TurnTaintTracker | None = None,
+        tool_call_review_trigger: TriggerReviewInput | None = None,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """
         Streaming version of process_message that yields LLMStreamEvent objects as they are generated.
@@ -294,8 +302,9 @@ class LLMStreamingLoop:
         else:
             merge_taint_state_into_tracker(taint_tracker, initial_taint_state)
         turn_taint_tracker = taint_tracker
+        tool_call_review_state = ToolCallReviewTurnState()
 
-        def refuse_if_sink_denied() -> None:
+        async def refuse_if_sink_denied() -> None:
             """Gate a sink-declaring profile on the turn's taint as it stands.
 
             The loop is the one place where the whole turn's taint is known --
@@ -310,11 +319,52 @@ class LLMStreamingLoop:
             """
             if processing_service is None:
                 return
-            sink_refusal = processing_service.sink_refusal_reason(
-                turn_taint_tracker.snapshot()
+            sink_class = processing_service.service_config.taint_sink_class
+            if sink_class is None:
+                return
+            taint_provider = find_provider_by_type(
+                tools_provider, TaintTrackingToolsProvider
             )
-            if sink_refusal is not None:
-                raise TaintedSinkRefusedError(sink_refusal)
+            if taint_provider is None:
+                sink_refusal = processing_service.sink_refusal_reason(
+                    turn_taint_tracker.snapshot()
+                )
+                if sink_refusal is not None:
+                    raise TaintedSinkRefusedError(sink_refusal)
+                return
+            execution_context = self.tool_executor.build_execution_context(
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                user_name=user_name,
+                user_id=user_id,
+                turn_id=turn_id,
+                db_context=db_context,
+                chat_interface=chat_interface,
+                chat_interfaces=chat_interfaces,
+                confirmation_ui_managers=confirmation_ui_managers,
+                request_confirmation_callback=request_confirmation_callback,
+                subconversation_id=subconversation_id,
+                processing_service=processing_service,
+                home_assistant_client=home_assistant_client,
+                camera_backend=camera_backend,
+                event_sources=event_sources,
+                taint_tracker=turn_taint_tracker,
+                taint_policy_snapshot=turn_taint_tracker.snapshot(),
+                tool_call_review_state=tool_call_review_state,
+                tool_call_review_messages=tuple(messages),
+                tool_call_review_trigger=tool_call_review_trigger,
+            )
+            try:
+                await taint_provider.authorize_taint_sink(
+                    name=f"profile:{processing_service.service_config.id}",
+                    sink_class=sink_class,
+                    arguments={"profile_id": processing_service.service_config.id},
+                    context=execution_context,
+                    call_id=f"profile_sink:{current_iteration}",
+                    taint_policy=processing_service.taint_policy,
+                )
+            except ToolPolicyDeniedError as exc:
+                raise TaintedSinkRefusedError(str(exc)) from exc
 
         async def refresh_on_demand_tools() -> tuple[list[ToolDefinition], str | None]:
             """Re-compute the tool list and system prompt addition for this turn.
@@ -352,6 +402,89 @@ class LLMStreamingLoop:
             addition = "\n\n".join(additions) if additions else None
             return defs, addition
 
+        async def build_done_metadata(
+            assistant_message: AssistantMessage,
+            reasoning_info: MessageReasoningInfo | None,
+        ) -> StreamEventMetadata:
+            """Build final event metadata, including any attachments queued so far."""
+            nonlocal pending_attachment_ids
+            if (
+                len(pending_attachment_ids)
+                > self.app_config.attachment_selection_threshold
+            ):
+                original_query = ""
+                for msg in reversed(messages):
+                    if is_turn_scaffolding(msg):
+                        continue
+                    if isinstance(msg, UserMessage):
+                        if isinstance(msg.content, str):
+                            original_query = msg.content
+                        elif isinstance(msg.content, list) and msg.content:
+                            for part in msg.content:
+                                if (
+                                    isinstance(part, dict)
+                                    and part.get("type") == "text"
+                                ):
+                                    original_query = part.get("text", "")
+                                    break
+                        if original_query:
+                            break
+
+                if original_query:
+                    try:
+                        pending_attachment_ids = (
+                            await self.attachment_processor.select_for_response(
+                                pending_attachment_ids=pending_attachment_ids,
+                                original_query=original_query,
+                                acting_user_id=user_id,
+                            )
+                        )
+                    except AttachmentSelectionError as exc:
+                        logger.warning(
+                            "Attachment selection failed; applying deterministic "
+                            "ID-sorted cap to auto-queued attachments. error=%s",
+                            exc,
+                        )
+                        pending_attachment_ids = sorted(pending_attachment_ids)[
+                            : self.app_config.max_response_attachments
+                        ]
+                    logger.info(
+                        "Final queued attachments count for response: %d",
+                        len(pending_attachment_ids),
+                    )
+
+            done_metadata: StreamEventMetadata = {"message": assistant_message}
+            if reasoning_info:
+                done_metadata["reasoning_info"] = reasoning_info
+            if pending_attachment_ids:
+                attachment_details = []
+                if self.attachment_processor.attachment_registry:
+                    for att_id in pending_attachment_ids:
+                        metadata = await self.attachment_processor.attachment_registry.get_attachment(
+                            db_context, att_id, acting_user_id=user_id
+                        )
+                        if metadata is None:
+                            raise ValueError(
+                                f"Missing metadata for pending attachment '{att_id}'"
+                            )
+                        attachment_details.append({
+                            "id": att_id,
+                            "type": self._infer_attachment_type(metadata.mime_type),
+                            "name": metadata.description or "Attachment",
+                            "content": f"/api/attachments/{att_id}",
+                            "mime_type": metadata.mime_type,
+                            "size": metadata.size,
+                        })
+
+                done_metadata["attachment_ids"] = pending_attachment_ids
+                done_metadata["attachments"] = attachment_details
+                logger.info(
+                    "Including %d attachment IDs and %d attachment details in done event",
+                    len(pending_attachment_ids),
+                    len(attachment_details),
+                )
+            return done_metadata
+
         tools_for_llm, system_prompt_addition = await refresh_on_demand_tools()
 
         logger.debug(
@@ -360,7 +493,7 @@ class LLMStreamingLoop:
 
         # Tool call loop
         while current_iteration <= max_iterations:
-            refuse_if_sink_denied()
+            await refuse_if_sink_denied()
             if (
                 mid_turn_input_provider is not None
                 and mid_turn_input_provider.should_interrupt()
@@ -444,21 +577,28 @@ class LLMStreamingLoop:
                 tool_calls_from_stream = []
                 done_provider_metadata = None
 
-                try:
+                async def stream_events(
+                    messages_for_attempt: list[LLMMessage],
+                    tools_for_attempt: list[ToolDefinition] | None,
+                    tool_choice_for_attempt: str,
+                    content_for_attempt: list[str],
+                    tool_calls_for_attempt: list[ToolCallItem],
+                ) -> AsyncGenerator[LLMStreamEvent]:
+                    nonlocal done_provider_metadata, final_reasoning_info
                     async for event in self.llm_client.generate_response_stream(
-                        messages=messages,
-                        tools=tools_to_offer,
-                        tool_choice=tool_choice_mode,
+                        messages=messages_for_attempt,
+                        tools=tools_for_attempt,
+                        tool_choice=tool_choice_for_attempt,
                     ):
                         # Yield content events as they come
                         if event.type == "content" and event.content:
-                            accumulated_content.append(event.content)
-                            yield (event, None)  # No message to save yet
+                            content_for_attempt.append(event.content)
+                            yield event
 
                         # Collect tool calls
                         elif event.type == "tool_call" and event.tool_call:
-                            tool_calls_from_stream.append(event.tool_call)
-                            yield (event, None)  # No message to save yet
+                            tool_calls_for_attempt.append(event.tool_call)
+                            yield event
 
                         # Handle done event
                         elif event.type == "done":
@@ -476,33 +616,60 @@ class LLMStreamingLoop:
                             logger.error(f"Stream error: {event.error}")
                             raise _map_stream_error_to_exception(event)
 
-                    # Check for empty response (no content and no tool calls)
-                    if not accumulated_content and not tool_calls_from_stream:
+                def should_retry_empty_response(
+                    content_for_attempt: list[str],
+                    tool_calls_for_attempt: list[ToolCallItem],
+                    iteration: int,
+                    offered_tools: list[ToolDefinition] | None,
+                    choice_mode: str,
+                    message_count: int,
+                ) -> bool:
+                    nonlocal empty_response_retry_attempted
+                    if not content_for_attempt and not tool_calls_for_attempt:
                         if not empty_response_retry_attempted:
                             logger.warning(
                                 "LLM returned empty response (no content, no tool calls). "
                                 "iteration=%d/%d, tools_offered=%d, tool_choice=%s, "
                                 "num_messages=%d. Re-prompting.",
-                                current_iteration,
+                                iteration,
                                 max_iterations,
-                                len(tools_to_offer) if tools_to_offer else 0,
-                                tool_choice_mode,
-                                len(messages),
+                                len(offered_tools) if offered_tools else 0,
+                                choice_mode,
+                                message_count,
                             )
                             empty_response_retry_attempted = True
-                            continue
+                            return True
                         logger.warning(
                             "LLM returned empty response on retry. "
                             "iteration=%d/%d, tools_offered=%d, tool_choice=%s, "
                             "num_messages=%d. Proceeding with empty response.",
-                            current_iteration,
+                            iteration,
                             max_iterations,
-                            len(tools_to_offer) if tools_to_offer else 0,
-                            tool_choice_mode,
-                            len(messages),
+                            len(offered_tools) if offered_tools else 0,
+                            choice_mode,
+                            message_count,
                         )
+                    return False
 
-                    break  # Success, exit while loop
+                stream_iterator = stream_events(
+                    messages,
+                    tools_to_offer,
+                    tool_choice_mode,
+                    accumulated_content,
+                    tool_calls_from_stream,
+                )
+                retry_empty_response = False
+                try:
+                    async for stream_event in stream_iterator:
+                        yield (stream_event, None)
+                    retry_empty_response = should_retry_empty_response(
+                        accumulated_content,
+                        tool_calls_from_stream,
+                        current_iteration,
+                        tools_to_offer,
+                        tool_choice_mode,
+                        len(messages),
+                    )
 
                 except ContextLengthError as e:
                     if (
@@ -534,6 +701,12 @@ class LLMStreamingLoop:
                 except Exception as e:
                     logger.exception(f"Error in LLM streaming: {e}")
                     raise
+                finally:
+                    await stream_iterator.aclose()
+
+                if retry_empty_response:
+                    continue
+                break  # Success, exit while loop
 
             # Combine accumulated content
             final_content = (
@@ -593,87 +766,10 @@ class LLMStreamingLoop:
                 reasoning_info=serialized_reasoning_info,
             )
 
-            # Yield a synthetic "done" event with the complete assistant message
-            # Include attachment IDs if any were captured from attach_to_response calls
-            # Automatically select attachments if too many accumulated
-            if (
-                len(pending_attachment_ids)
-                > self.app_config.attachment_selection_threshold
-            ):
-                # Extract original user query from messages (most recent first)
-                original_query = ""
-                for msg in reversed(messages):
-                    # Skip our own scaffolding: the turn-context block and the
-                    # final-iteration instruction are both newer than the user's
-                    # message, and selecting attachments against either would
-                    # match boilerplate rather than what the user actually asked.
-                    if is_turn_scaffolding(msg):
-                        continue
-                    if isinstance(msg, UserMessage):
-                        if isinstance(msg.content, str):
-                            original_query = msg.content
-                        elif isinstance(msg.content, list) and msg.content:
-                            for part in msg.content:
-                                if (
-                                    isinstance(part, dict)
-                                    and part.get("type") == "text"
-                                ):
-                                    original_query = part.get("text", "")
-                                    break
-                        if original_query:
-                            break
-
-                if original_query:
-                    try:
-                        pending_attachment_ids = (
-                            await self.attachment_processor.select_for_response(
-                                pending_attachment_ids=pending_attachment_ids,
-                                original_query=original_query,
-                                acting_user_id=user_id,
-                            )
-                        )
-                    except AttachmentSelectionError as exc:
-                        logger.warning(
-                            "Attachment selection failed; applying deterministic ID-sorted cap to auto-queued attachments. error=%s",
-                            exc,
-                        )
-                        pending_attachment_ids = sorted(pending_attachment_ids)[
-                            : self.app_config.max_response_attachments
-                        ]
-                    logger.info(
-                        "Final queued attachments count for response: %d",
-                        len(pending_attachment_ids),
-                    )
-
-            done_metadata: StreamEventMetadata = {"message": assistant_message_for_turn}
-            if serialized_reasoning_info:
-                done_metadata["reasoning_info"] = serialized_reasoning_info
-            if pending_attachment_ids:
-                # Fetch full metadata for each attachment for web UI display
-                attachment_details = []
-                if self.attachment_processor.attachment_registry:
-                    for att_id in pending_attachment_ids:
-                        metadata = await self.attachment_processor.attachment_registry.get_attachment(
-                            db_context, att_id, acting_user_id=user_id
-                        )
-                        if metadata is None:
-                            raise ValueError(
-                                f"Missing metadata for pending attachment '{att_id}'"
-                            )
-                        attachment_details.append({
-                            "id": att_id,
-                            "type": self._infer_attachment_type(metadata.mime_type),
-                            "name": metadata.description or "Attachment",
-                            "content": f"/api/attachments/{att_id}",
-                            "mime_type": metadata.mime_type,
-                            "size": metadata.size,
-                        })
-
-                done_metadata["attachment_ids"] = pending_attachment_ids
-                done_metadata["attachments"] = attachment_details
-                logger.info(
-                    f"Including {len(pending_attachment_ids)} attachment IDs and {len(attachment_details)} attachment details in done event"
-                )
+            # Yield a synthetic "done" event with the complete assistant message.
+            done_metadata = await build_done_metadata(
+                assistant_message_for_turn, serialized_reasoning_info
+            )
 
             yield (
                 LLMStreamEvent(type="done", metadata=done_metadata),
@@ -801,6 +897,7 @@ class LLMStreamingLoop:
             async def _execute_tool_call(
                 tool_call: ToolCallItem,
                 taint_policy_snapshot: TurnTaintState = pre_batch_taint_snapshot,
+                review_messages: tuple[LLMMessage, ...] = tuple(messages),
             ) -> ToolExecutionResult:
                 return await self.tool_executor.execute(
                     tool_call,
@@ -821,6 +918,9 @@ class LLMStreamingLoop:
                     event_sources=event_sources,
                     taint_tracker=taint_tracker,
                     taint_policy_snapshot=taint_policy_snapshot,
+                    tool_call_review_state=tool_call_review_state,
+                    tool_call_review_messages=review_messages,
+                    tool_call_review_trigger=tool_call_review_trigger,
                 )
 
             tool_execution_tasks = [
@@ -880,15 +980,47 @@ class LLMStreamingLoop:
             # Add tool responses to messages for next iteration
             messages.extend(tool_response_messages_for_llm)
 
+            termination_message = (
+                tool_call_review_state.terminal_denial_escalation_message
+            )
+            if termination_message is not None:
+                # Every tool call in the assistant's batch has a persisted result
+                # before this deterministic assistant row is emitted. Ending here
+                # preserves provider tool/result protocol validity and ensures the
+                # denied turn cannot reach another model invocation.
+                terminal_assistant_message = AssistantMessage(
+                    content=termination_message,
+                    taint_metadata=taint_tracker.snapshot().to_metadata(),
+                )
+                yield (
+                    LLMStreamEvent(type="content", content=termination_message),
+                    None,
+                )
+                terminal_done_metadata = await build_done_metadata(
+                    terminal_assistant_message, None
+                )
+                yield (
+                    LLMStreamEvent(type="done", metadata=terminal_done_metadata),
+                    terminal_assistant_message,
+                )
+                return
+
             if mid_turn_input_provider is not None:
                 pending_user_inputs = (
                     await mid_turn_input_provider.drain_pending_mid_turn_inputs()
                 )
                 for user_input in pending_user_inputs:
+                    # Mid-turn input providers are authenticated interface paths,
+                    # just like the user message that opened the turn.  Give both
+                    # the model-facing steering wrapper and the raw persisted row
+                    # explicit trusted-user provenance so the action reviewer can
+                    # render the updated intent and compute destination-echo signals.
+                    mid_turn_taint_metadata = TurnTaintState.empty().to_metadata()
                     # The model sees the wrapped steering prompt (re-evaluate the
                     # plan, etc.) so it adapts mid-turn...
                     mid_turn_message = UserMessage(
-                        content=self._format_mid_turn_user_input(user_input)
+                        content=self._format_mid_turn_user_input(user_input),
+                        taint_metadata=mid_turn_taint_metadata,
                     )
                     messages.append(mid_turn_message)
                     # ...but persist (and stream) only the raw user text, so a
@@ -900,7 +1032,10 @@ class LLMStreamingLoop:
                             content=user_input.content,
                             input_id=user_input.interface_message_id,
                         ),
-                        UserMessage(content=user_input.content),
+                        UserMessage(
+                            content=user_input.content,
+                            taint_metadata=mid_turn_taint_metadata,
+                        ),
                     )
 
             if (

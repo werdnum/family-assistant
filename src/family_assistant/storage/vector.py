@@ -251,7 +251,7 @@ async def add_document(
 
     visibility_labels_json = json.dumps(doc.visibility_labels or [])
 
-    values_to_insert = {
+    values_to_insert: dict[str, object] = {
         "source_type": doc.source_type,
         "source_id": doc.source_id,
         "source_uri": doc.source_uri,
@@ -263,40 +263,40 @@ async def add_document(
     }
 
     try:
-        # Atomic ON CONFLICT DO UPDATE upsert on both engines. A
-        # select-then-insert "manual upsert" races when two transactions index
-        # the same source_id concurrently (e.g. several index_message_history
-        # tasks for one turn running on parallel workers): both SELECT nothing,
-        # both INSERT, and the loser fails with a UNIQUE violation.
-        if db_context.dialect_name == "postgresql":
-            stmt = insert(DocumentRecord).values(**values_to_insert)
-        else:
-            stmt = sqlite_insert(DocumentRecord).values(**values_to_insert)
-        update_dict = {
-            col: getattr(stmt.excluded, col)
-            for col in values_to_insert
-            if col != "source_id"  # Don't update the conflict target
-        }
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["source_id"],  # The unique constraint column
-            set_=update_dict,
-        ).returning(DocumentRecord.id)
-        result = await db_context.execute(stmt)
-        doc_id_scalar = result.scalar_one()  # Get the inserted or existing ID
-        if (
-            doc_id_scalar is None
-        ):  # Should not happen with scalar_one() but good for typing
-            raise RuntimeError(f"Failed to get ID for document {doc.source_id}")
-        doc_id = doc_id_scalar
-        logger.info(
-            f"Successfully added/updated document with source_id {doc.source_id}, got ID: {doc_id}"
-        )
-        return doc_id
+        return await _add_document(db_context, doc, values_to_insert)
     except SQLAlchemyError as e:
         logger.exception(
             f"Database error adding/updating document with source_id {doc.source_id}: {e}"
         )
         raise
+
+
+async def _add_document(
+    db_context: DatabaseExecutor,
+    doc: Document,
+    values_to_insert: dict[str, object],
+) -> int:
+    if db_context.dialect_name == "postgresql":
+        stmt = insert(DocumentRecord).values(**values_to_insert)
+    else:
+        stmt = sqlite_insert(DocumentRecord).values(**values_to_insert)
+    update_dict = {
+        column: getattr(stmt.excluded, column)
+        for column in values_to_insert
+        if column != "source_id"
+    }
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["source_id"],
+        set_=update_dict,
+    ).returning(DocumentRecord.id)
+    result = await db_context.execute(stmt)
+    doc_id = result.scalar_one()
+    if doc_id is None:
+        raise RuntimeError(f"Failed to get ID for document {doc.source_id}")
+    logger.info(
+        f"Successfully added/updated document with source_id {doc.source_id}, got ID: {doc_id}"
+    )
+    return doc_id
 
 
 async def _load_document(
@@ -393,7 +393,7 @@ async def add_embedding(
     else:
         embedding_value = embedding
 
-    values_to_insert = {
+    values_to_insert: dict[str, object] = {
         "document_id": document_id,
         "chunk_index": chunk_index,
         "embedding_type": embedding_type,
@@ -405,31 +405,44 @@ async def add_embedding(
     }
 
     try:
-        # Atomic ON CONFLICT DO UPDATE upsert on both engines; see add_document
-        # for why a select-then-insert manual upsert is unsafe under
-        # concurrent indexing.
-        if db_context.dialect_name == "postgresql":
-            stmt = insert(DocumentEmbeddingRecord).values(**values_to_insert)
-        else:
-            stmt = sqlite_insert(DocumentEmbeddingRecord).values(**values_to_insert)
-        update_dict = {
-            col: getattr(stmt.excluded, col)
-            for col in values_to_insert
-            if col not in {"document_id", "chunk_index", "embedding_type"}
-        }
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["document_id", "chunk_index", "embedding_type"],
-            set_=update_dict,
-        )
-        await db_context.execute(stmt)
-        logger.info(
-            f"Successfully added/updated embedding for doc {document_id}, chunk {chunk_index}, type {embedding_type}"
+        await _add_embedding(
+            db_context,
+            values_to_insert,
+            document_id,
+            chunk_index,
+            embedding_type,
         )
     except SQLAlchemyError as e:
         logger.exception(
             f"Database error adding/updating embedding for doc {document_id}, chunk {chunk_index}, type {embedding_type}: {e}"
         )
         raise
+
+
+async def _add_embedding(
+    db_context: DatabaseExecutor,
+    values_to_insert: dict[str, object],
+    document_id: int,
+    chunk_index: int,
+    embedding_type: str,
+) -> None:
+    if db_context.dialect_name == "postgresql":
+        stmt = insert(DocumentEmbeddingRecord).values(**values_to_insert)
+    else:
+        stmt = sqlite_insert(DocumentEmbeddingRecord).values(**values_to_insert)
+    update_dict = {
+        column: getattr(stmt.excluded, column)
+        for column in values_to_insert
+        if column not in {"document_id", "chunk_index", "embedding_type"}
+    }
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["document_id", "chunk_index", "embedding_type"],
+        set_=update_dict,
+    )
+    await db_context.execute(stmt)
+    logger.info(
+        f"Successfully added/updated embedding for doc {document_id}, chunk {chunk_index}, type {embedding_type}"
+    )
 
 
 async def delete_document(db_context: DatabaseExecutor, document_id: int) -> bool:
@@ -439,22 +452,20 @@ async def delete_document(db_context: DatabaseExecutor, document_id: int) -> boo
     Returns:
         True if a document was deleted, False otherwise.
     """
+    stmt = delete(DocumentRecord).where(DocumentRecord.id == document_id)
     try:
-        stmt = delete(DocumentRecord).where(DocumentRecord.id == document_id)
-        # Use execute_with_retry as commit is handled by context manager
         result = await db_context.execute(stmt)
         deleted_count = result.rowcount
-        if deleted_count > 0:
-            logger.info(
-                f"Successfully deleted document {document_id} and its embeddings (via cascade)."
-            )
-            return True
-        else:
-            logger.warning(f"No document found with ID {document_id} to delete.")
-            return False
     except SQLAlchemyError as e:
         logger.exception(f"Database error deleting document {document_id}: {e}")
         raise
+    if deleted_count > 0:
+        logger.info(
+            f"Successfully deleted document {document_id} and its embeddings (via cascade)."
+        )
+        return True
+    logger.warning(f"No document found with ID {document_id} to delete.")
+    return False
 
 
 async def query_vectors(

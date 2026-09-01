@@ -24,7 +24,9 @@ The evaluation walks the design's conditions IN ORDER (first failure wins,
    governed tool is policy-allowed, the *fully merged effective* taint policy —
    queried through the same :class:`TaintPolicyEvaluator` the runtime uses —
    yields at least ``confirm`` at the ``unknown_external`` tier for each of the
-   floor sink classes. Validating the real evaluator (not a re-derived
+   floor sink classes. An ``adjudicate`` cell satisfies that requirement only
+   when its reviewer verdict floor is at least ``confirm``. Validating the real
+   evaluator (not a re-derived
    approximation) is deliberate: a full ``matrix:`` replacement that the runtime
    honors must be caught here too. When the requirement is waived
    (``require_taint_enforcement: false``) the floor is skipped entirely and the
@@ -213,14 +215,27 @@ def _profile_floor_reason(
     a floor sink below confirm is caught.
     """
     for sink_class in _FLOOR_SINK_CLASSES:
-        outcome = merged_policy_evaluator.evaluate(
+        evaluation = merged_policy_evaluator.evaluate(
             state=state, sink_class=sink_class
-        ).requested_outcome
-        if outcome not in _FLOOR_SATISFYING_OUTCOMES:
+        )
+        outcome = evaluation.requested_outcome
+        adjudicate_floor_satisfies = (
+            outcome is TaintPolicyOutcome.ADJUDICATE
+            and evaluation.verdict_floor in _FLOOR_SATISFYING_OUTCOMES
+        )
+        if outcome not in _FLOOR_SATISFYING_OUTCOMES and not adjudicate_floor_satisfies:
+            outcome_description = f"'{outcome.value}'"
+            if outcome is TaintPolicyOutcome.ADJUDICATE:
+                floor = evaluation.verdict_floor
+                floor_description = floor.value if floor is not None else "allow"
+                outcome_description += (
+                    f" with reviewer verdict floor '{floor_description}'"
+                )
             return (
                 f"{spec.display_name} integration is disabled: taint floor not met "
                 f"for profile '{profile_id}' — sink '{sink_class.value}' resolves to "
-                f"'{outcome.value}' (below 'confirm') at the unknown_external tier. "
+                f"{outcome_description} (below 'confirm') at the "
+                "unknown_external tier. "
                 "Raise it to confirm via taint_policy.matrix_overrides / "
                 "operator_minimum, or set "
                 f"{spec.config_attr}.require_taint_enforcement: false to accept the "

@@ -37,14 +37,23 @@ from family_assistant.processing.protocol import (
 from family_assistant.processing.service import ProcessingService
 from family_assistant.processing.types import ChatInteractionResult
 from family_assistant.security.taint import (
+    InMemoryTurnTaintTracker,
     SourceTrustTier,
     TaintSource,
     TaintSourceType,
     TurnTaintState,
 )
+from family_assistant.tools import (
+    TaintTrackingToolsProvider,
+    ToolExecutionContext,
+    ToolPolicyDeniedError,
+    find_provider_by_type,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+
+    from google.genai.interactions import Interaction
 
     from family_assistant.llm.content_parts import ContentPartDict
     from family_assistant.llm.messages import LLMMessage
@@ -150,6 +159,27 @@ def _attachment_taint_sources(
     )
 
 
+def _describe_interaction_errors(interaction: Interaction) -> str:
+    """Render ``interaction.errors`` for logs/tracebacks, or "" when absent.
+
+    The Interactions API records diagnostic faults / platform errors on the
+    interaction (e.g. the concurrency-limit cancellation it returns while a
+    same-account agent run is already in flight), and without them a terminal
+    status alone says nothing about *why*. Errors are optional on the SDK
+    model, and each carries only an optional code and message.
+    """
+    rendered = []
+    for error in interaction.errors or []:
+        fields = []
+        if error.code:
+            fields.append(f"code={error.code}")
+        if error.message:
+            fields.append(f"message={error.message}")
+        if fields:
+            rendered.append("{" + ", ".join(fields) + "}")
+    return "; ".join(rendered)
+
+
 class InteractionsAgentProcessingService(ProcessingService):
     """A ``ProcessingService`` for an Interactions API agent, also pollable.
 
@@ -200,18 +230,81 @@ class InteractionsAgentProcessingService(ProcessingService):
         _ = (conversation_id, subconversation_id)
         return None
 
-    def _refuse_denied_sink(self, state: TurnTaintState) -> None:
-        """Fail a delegated submit whose taint bars this profile's sink.
+    async def _authorize_profile_sink(
+        self,
+        state: TurnTaintState,
+        *,
+        conversation_id: str,
+        subconversation_id: str | None,
+        user_name: str,
+        acting_user_id: str | None,
+        db_context: Database,
+        messages: Sequence[LLMMessage],
+    ) -> None:
+        """Authorize a pollable submit through the shared reviewer chokepoint.
 
         A turn that runs the LLM loop is gated there instead (see
         ``ProcessingService.sink_refusal_reason``), against the turn's complete
         taint. This path never runs the loop, so it evaluates what it has: the
         parent turn's state -- carrying any approval the delegation gate
         recorded -- plus the attachments it is about to mount.
+
+        Production providers include :class:`TaintTrackingToolsProvider`, whose
+        named-sink authorization records policy audit, launches observe-mode
+        review in the background, and applies enforce-mode reviewer verdicts.
+        The legacy refusal remains only as a conservative fallback for embedded
+        callers and tests that supply a provider chain without taint tracking.
         """
-        refusal = self.sink_refusal_reason(state)
-        if refusal is not None:
-            raise TaintedSinkRefusedError(refusal)
+        sink_class = self.service_config.taint_sink_class
+        if sink_class is None:
+            return
+
+        taint_provider = find_provider_by_type(
+            self.tools_provider, TaintTrackingToolsProvider
+        )
+        if taint_provider is None:
+            refusal = self.sink_refusal_reason(state)
+            if refusal is not None:
+                raise TaintedSinkRefusedError(refusal)
+            return
+
+        context = ToolExecutionContext(
+            interface_type="delegation",
+            conversation_id=conversation_id,
+            user_name=user_name,
+            turn_id=None,
+            db_context=db_context,
+            processing_service=self,
+            clock=self.clock,
+            home_assistant_client=self.home_assistant_client,
+            event_sources=self.event_sources,
+            attachment_registry=self.attachment_registry,
+            camera_backend=self.camera_backend,
+            credential_resolvers=self.credential_resolvers,
+            api_backend=self.api_backend,
+            timezone=self.service_config.timezone,
+            user_id=acting_user_id,
+            processing_profile_id=self.service_config.id,
+            subconversation_id=subconversation_id,
+            tools_provider=self.tools_provider,
+            taint_tracker=InMemoryTurnTaintTracker(state),
+            taint_policy_snapshot=state,
+            tool_call_review_messages=tuple(messages),
+        )
+        try:
+            await taint_provider.authorize_taint_sink(
+                name=f"profile:{self.service_config.id}",
+                sink_class=sink_class,
+                arguments={
+                    "profile_id": self.service_config.id,
+                    "submission_mode": "pollable",
+                },
+                context=context,
+                call_id="profile_sink:submit_async",
+                taint_policy=self.taint_policy,
+            )
+        except ToolPolicyDeniedError as exc:
+            raise TaintedSinkRefusedError(str(exc)) from exc
 
     async def _build_environment_sources(
         self,
@@ -335,14 +428,24 @@ class InteractionsAgentProcessingService(ProcessingService):
                 state = state.add_source(source)
         for source in attachment_taint:
             state = state.add_source(source)
-        self._refuse_denied_sink(state)
 
         system_prompt = self.format_system_prompt(user_name=user_name)
         user_text = self._extract_user_content_for_history(content_parts)
         messages: list[LLMMessage] = []
         if system_prompt:
             messages.append(self._build_system_message(system_prompt))
-        messages.append(UserMessage(content=user_text))
+        messages.append(
+            UserMessage(content=user_text, taint_metadata=state.to_metadata())
+        )
+        await self._authorize_profile_sink(
+            state,
+            conversation_id=conversation_id,
+            subconversation_id=subconversation_id,
+            user_name=user_name,
+            acting_user_id=acting_user_id,
+            db_context=db_context,
+            messages=messages,
+        )
 
         previous_interaction_id: str | None = None
         if subconversation_id is not None:
@@ -389,9 +492,21 @@ class InteractionsAgentProcessingService(ProcessingService):
                 text_reply=interaction.output_text or ""
             )
         if is_interaction_terminal_error_status(interaction.status):
+            error_detail = _describe_interaction_errors(interaction)
+            logger.warning(
+                "Interactions API run on '%s' ended with status %s (interaction %s)%s",
+                self.service_config.id,
+                interaction.status,
+                remote_task_id,
+                f"; errors: {error_detail}" if error_detail else "",
+            )
             return ChatInteractionResult.error(
                 text_reply=f"The {self.service_config.id} run {interaction.status}.",
-                error_traceback=f"Interaction {remote_task_id} ended with status {interaction.status!r}.",
+                error_traceback=(
+                    f"Interaction {remote_task_id} ended with status "
+                    f"{interaction.status!r}."
+                    + (f" Errors: {error_detail}" if error_detail else "")
+                ),
             )
         return PENDING
 

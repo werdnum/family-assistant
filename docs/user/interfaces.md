@@ -8,6 +8,9 @@ available while a reply is being generated.
 Find the bot contact in Telegram — whoever set up the assistant will tell you its name — and send
 messages as you would to a person.
 
+- **Rich formatting and tables:** responses support full standard Markdown including headers,
+  bold/italic, bulleted/numbered lists, inline code/code blocks, and formatted tables with column
+  alignments.
 - **Slash commands** switch the assistant into a specialised mode for a request, for example
   `/browse` for complex web tasks. See [slash-commands.md](slash-commands.md).
 - **Reply to a message** using Telegram's reply feature when you're following up on something
@@ -234,6 +237,13 @@ status of a delegation reference at any time.
 
 Delegations can also be continued, so a specialist keeps its earlier context — useful for a
 follow-up question to a previous research delegation.
+
+Files travel with a delegation in both directions. A photo, PDF or spreadsheet from your
+conversation can be handed to the specialist to work on, and any file it produces — a chart, a
+converted document — comes back attached to the reply in the conversation, ready to open or
+download. This works the same way whether the specialist runs here or on another agent elsewhere.
+Very large files are the exception: if one is too big to hand over, the assistant tells you rather
+than quietly leaving it out.
 
 If the follow-up can't be delivered on the channel you asked from — a result too long for the chat
 app to accept, say — the assistant is told so and sends you something that does fit, such as a

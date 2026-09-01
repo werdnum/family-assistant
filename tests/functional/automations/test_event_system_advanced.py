@@ -22,6 +22,7 @@ from family_assistant.processing import ProcessingService, ProcessingServiceConf
 from family_assistant.storage import Database
 from family_assistant.storage.database import DatabaseTransaction
 from family_assistant.storage.events import EventSourceType, recent_events_table
+from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.types import EventListenerDict
 from family_assistant.task_worker import TaskWorker, handle_llm_callback
@@ -290,6 +291,9 @@ async def test_end_to_end_event_listener_wakes_llm(
     assert callback_context["source"] == "home_assistant"
     assert "event_data" in callback_context
     assert callback_context["event_data"]["entity_id"] == "binary_sensor.hallway_motion"
+    assert payload["tool_call_review_trigger_type"] == "event_listener"
+    assert payload["tool_call_review_trigger_payload_present"] is True
+    assert payload["tool_call_review_trigger_definition"] is None
 
     # Step 6: Start a task worker that will process the callback task
 
@@ -390,6 +394,14 @@ async def test_end_to_end_event_listener_wakes_llm(
     call_kwargs = mock_chat_interface.send_message.call_args[1]
     assert call_kwargs["conversation_id"] == "test_chat_123"
     assert "Motion detected" in call_kwargs["text"]
+
+    assistant_rows = await Database(db_engine).fetch_all(
+        select(message_history_table)
+        .where(message_history_table.c.conversation_id == "test_chat_123")
+        .where(message_history_table.c.role == "assistant")
+    )
+    assert len(assistant_rows) == 1
+    assert assistant_rows[0]["taint_metadata_json"]["max_tier"] == "unknown_external"
 
     # Cleanup is handled by the task_worker_manager fixture
 

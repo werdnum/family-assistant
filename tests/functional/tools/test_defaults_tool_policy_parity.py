@@ -15,7 +15,9 @@ from family_assistant.config_models import (
     DefaultProfileSettings,
     ServiceProfile,
 )
+from family_assistant.security.taint import SinkClass, resolve_tool_sink_class
 from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS, PolicyEngine, ToolDescriptor
+from family_assistant.tools.metadata import ToolTag
 from family_assistant.tools.policy import ToolPolicyConfig, ToolPolicyDecision
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -29,6 +31,11 @@ MCP_SERVER_IDS = (
     "scrape",
     "browser",
 )
+
+CONFINED_NON_SENSITIVE_READ_ALLOWLIST = {
+    # Static documentation shipped with the application, not acting-user data.
+    "get_user_documentation_content": "packaged application documentation",
+}
 
 
 def _load_defaults_yaml() -> dict[str, object]:
@@ -133,6 +140,43 @@ def test_shipped_profiles_define_effective_tool_policy() -> None:
             )
 
 
+def test_confined_profile_private_read_inventory_is_sensitive_tagged() -> None:
+    """Audit every reachable read in every shipped confined profile."""
+    _, profiles = _load_resolved_profiles()
+    global_policy = _load_global_tools_policy()
+    seen_allowlist_entries: set[str] = set()
+
+    for profile in profiles:
+        if profile.processing_config.include_aggregated_context:
+            continue
+        engine = _build_profile_policy_engine(
+            profile.id,
+            profile.tools_policy,
+            None,
+            global_policy,
+            profile.excluded_global_tools,
+        )
+        for descriptor in LOCAL_TOOL_DESCRIPTORS:
+            if ToolTag.READ_ONLY not in descriptor.tags:
+                continue
+            decision = engine.evaluate_for_advertisement(
+                descriptor,
+                can_confirm=True,
+            ).decision
+            if decision is ToolPolicyDecision.DENY:
+                continue
+            if ToolTag.SENSITIVE_DATA in descriptor.tags:
+                continue
+            assert descriptor.name in CONFINED_NON_SENSITIVE_READ_ALLOWLIST, (
+                f"{profile.id}: reachable read-only tool {descriptor.name!r} must "
+                "be tagged sensitive_data or explicitly justified in "
+                "CONFINED_NON_SENSITIVE_READ_ALLOWLIST"
+            )
+            seen_allowlist_entries.add(descriptor.name)
+
+    assert seen_allowlist_entries == set(CONFINED_NON_SENSITIVE_READ_ALLOWLIST)
+
+
 def test_ucp_tools_are_default_on_demand_and_not_confirm_gated() -> None:
     default_settings, profiles = _load_resolved_profiles()
     shopping_tool_names = {
@@ -146,6 +190,11 @@ def test_ucp_tools_are_default_on_demand_and_not_confirm_gated() -> None:
         if descriptor.name in shopping_tool_names
     }
     assert set(descriptors) == shopping_tool_names
+    cart_descriptor = descriptors["ucp_get_cart"]
+    assert ToolTag.SENSITIVE_DATA in cart_descriptor.tags
+    assert (
+        resolve_tool_sink_class(cart_descriptor) is SinkClass.ARBITRARY_EXTERNAL_MESSAGE
+    )
 
     default_engine = PolicyEngine.from_policy_config(default_settings.tools_policy)
     assert shopping_tool_names <= set(

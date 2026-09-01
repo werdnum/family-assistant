@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 def record_sensitive_read(
     exec_context: ToolExecutionContext,
     *,
-    kind: Literal["notes", "documents", "message_history", "attachments"],
+    kind: Literal["notes", "documents", "message_history", "attachments", "tool"],
     qualifier: str,
     surfaced_ids: Iterable[str],
     query_origin: Literal[

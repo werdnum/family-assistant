@@ -454,6 +454,19 @@ class GeminiImageBackend:
         self.client = genai.Client(api_key=api_key, debug_config=debug_config)
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
 
+    def _decode_image_bytes(self, image_data: bytes) -> bytes:
+        try:
+            text_data = image_data.decode("utf-8")
+        except UnicodeDecodeError:
+            self.logger.info("Image data is raw bytes (not UTF-8)")
+            return image_data
+
+        if text_data.startswith(("iVBOR", "/9j/", "R0lG")):
+            self.logger.info("Image data is Base64-encoded bytes, decoding")
+            return base64.b64decode(text_data)
+        self.logger.info("Image data appears to be raw bytes")
+        return image_data
+
     async def generate_image(self, prompt: str, style: str = "auto") -> bytes:
         """Generate image using Gemini API."""
         # Build full prompt with style guidance based on Gemini 3 Pro best practices
@@ -526,29 +539,7 @@ class GeminiImageBackend:
                             self.logger.info("Image data is string, decoding as Base64")
                             final_image_data = base64.b64decode(image_data)
                         elif isinstance(image_data, bytes):
-                            # Could be raw bytes or Base64-encoded bytes
-                            # Check if it looks like Base64 by examining the content
-                            try:
-                                # Try to decode as UTF-8 first to see if it's Base64 text
-                                text_data = image_data.decode("utf-8")
-                                if text_data.startswith((
-                                    "iVBOR",
-                                    "/9j/",
-                                    "R0lG",
-                                )):  # PNG, JPEG, GIF Base64 headers
-                                    self.logger.info(
-                                        "Image data is Base64-encoded bytes, decoding"
-                                    )
-                                    final_image_data = base64.b64decode(text_data)
-                                else:
-                                    self.logger.info(
-                                        "Image data appears to be raw bytes"
-                                    )
-                                    final_image_data = image_data
-                            except UnicodeDecodeError:
-                                # Not valid UTF-8, assume raw bytes
-                                self.logger.info("Image data is raw bytes (not UTF-8)")
-                                final_image_data = image_data
+                            final_image_data = self._decode_image_bytes(image_data)
 
                         if final_image_data:
                             self.logger.info(

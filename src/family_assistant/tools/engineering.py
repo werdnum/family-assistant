@@ -1491,7 +1491,7 @@ ENGINEERING_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "resolve_tool_policy",
             "description": (
-                "Resolve the live tool-policy decision (allow/deny/confirm) for "
+                "Resolve the live tool-policy decision (allow/deny/confirm/review) for "
                 "a tool name against a profile's policy engine, explaining which "
                 "rule matched (layer, priority, description) and the resolved "
                 "default decision. Use it to check whether and why a tool is "

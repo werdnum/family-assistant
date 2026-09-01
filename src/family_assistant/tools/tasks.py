@@ -295,78 +295,86 @@ async def schedule_reminder_tool(
         exec_context.clock or SystemClock()
     )  # Use context's clock or default to SystemClock
 
+    # Parse the ISO 8601 string, ensuring it's timezone-aware
     try:
-        # Parse the ISO 8601 string, ensuring it's timezone-aware
         scheduled_dt = isoparse(reminder_time)
-        if scheduled_dt.tzinfo is None:
-            logger.warning(
-                f"Reminder time '{reminder_time}' lacks timezone. Assuming {exec_context.timezone}."
-            )
-            scheduled_dt = scheduled_dt.replace(tzinfo=exec_context.timezone)
+    except ValueError as ve:
+        logger.error(f"Invalid reminder parameters: {ve}")
+        return f"Error: Invalid reminder parameters. {ve}"
 
-        # Ensure it's in the future
-        if scheduled_dt <= clock.now():
-            raise ValueError("Reminder time must be in the future.")
+    if scheduled_dt.tzinfo is None:
+        logger.warning(
+            f"Reminder time '{reminder_time}' lacks timezone. Assuming {exec_context.timezone}."
+        )
+        scheduled_dt = scheduled_dt.replace(tzinfo=exec_context.timezone)
 
-        # Validate follow-up interval format if follow-up is enabled
-        if follow_up:
-            interval_parts = follow_up_interval.lower().split()
-            if len(interval_parts) != 2:
-                raise ValueError(
-                    f"Invalid follow-up interval format: {follow_up_interval}"
-                )
-            try:
-                int(interval_parts[0])  # Validate it's a number
-                unit = interval_parts[1].rstrip("s")
-                if unit not in {"minute", "hour", "day"}:
-                    raise ValueError(f"Unknown time unit: {unit}")
-            except ValueError as e:
-                raise ValueError(
-                    f"Invalid follow-up interval: {follow_up_interval}"
-                ) from e
+    # Ensure it's in the future
+    if scheduled_dt <= clock.now():
+        message_text = "Reminder time must be in the future."
+        logger.error(f"Invalid reminder parameters: {message_text}")
+        return f"Error: Invalid reminder parameters. {message_text}"
 
-        task_id = f"llm_callback_{uuid.uuid4()}"
-        scheduling_time = clock.now()
-        payload: LlmCallbackPayload = {
-            "interface_type": interface_type,
-            "conversation_id": conversation_id,
-            "user_name": user_name,  # Save user_name in payload
-            "callback_context": message,
-            "scheduling_timestamp": scheduling_time.isoformat(),
-            "reminder_config": {
-                "is_reminder": True,
-                "follow_up": follow_up,
-                "follow_up_interval": follow_up_interval,
-                "max_follow_ups": max_follow_ups,
-                "current_attempt": 1,
-            },
-        }
-        if exec_context.user_id is not None:
-            payload["created_by_user_id"] = exec_context.user_id
+    # Validate follow-up interval format if follow-up is enabled
+    if follow_up:
+        interval_parts = follow_up_interval.lower().split()
+        if len(interval_parts) != 2:
+            message_text = f"Invalid follow-up interval format: {follow_up_interval}"
+            logger.error(f"Invalid reminder parameters: {message_text}")
+            return f"Error: Invalid reminder parameters. {message_text}"
+        try:
+            int(interval_parts[0])  # Validate it's a number
+            unit = interval_parts[1].rstrip("s")
+        except ValueError:
+            message_text = f"Invalid follow-up interval: {follow_up_interval}"
+            logger.error(f"Invalid reminder parameters: {message_text}")
+            return f"Error: Invalid reminder parameters. {message_text}"
+        if unit not in {"minute", "hour", "day"}:
+            message_text = f"Invalid follow-up interval: {follow_up_interval}"
+            logger.error(f"Invalid reminder parameters: {message_text}")
+            return f"Error: Invalid reminder parameters. {message_text}"
 
+    task_id = f"llm_callback_{uuid.uuid4()}"
+    scheduling_time = clock.now()
+    payload: LlmCallbackPayload = {
+        "interface_type": interface_type,
+        "conversation_id": conversation_id,
+        "user_name": user_name,  # Save user_name in payload
+        "callback_context": message,
+        "scheduling_timestamp": scheduling_time.isoformat(),
+        "tool_call_review_trigger_type": "reminder",
+        "tool_call_review_trigger_definition": message,
+        "tool_call_review_trigger_payload_present": False,
+        "reminder_config": {
+            "is_reminder": True,
+            "follow_up": follow_up,
+            "follow_up_interval": follow_up_interval,
+            "max_follow_ups": max_follow_ups,
+            "current_attempt": 1,
+        },
+    }
+    if exec_context.user_id is not None:
+        payload["created_by_user_id"] = exec_context.user_id
+
+    try:
         await db_context.tasks.enqueue(
             task_id=task_id,
             task_type="llm_callback",
             payload=payload,
             scheduled_at=scheduled_dt,
         )
-
-        logger.info(
-            f"Scheduled reminder task {task_id} for conversation {interface_type}:{conversation_id} at {scheduled_dt}"
-        )
-
-        follow_up_msg = ""
-        if follow_up:
-            follow_up_msg = f" (with follow-ups every {follow_up_interval}, up to {max_follow_ups} times)"
-
-        return f"OK. Reminder scheduled for {reminder_time}{follow_up_msg}."
-
-    except ValueError as ve:
-        logger.error(f"Invalid reminder parameters: {ve}")
-        return f"Error: Invalid reminder parameters. {ve}"
     except Exception as e:
         logger.exception(f"Failed to schedule reminder: {e}")
         return "Error: Failed to schedule the reminder."
+
+    logger.info(
+        f"Scheduled reminder task {task_id} for conversation {interface_type}:{conversation_id} at {scheduled_dt}"
+    )
+
+    follow_up_msg = ""
+    if follow_up:
+        follow_up_msg = f" (with follow-ups every {follow_up_interval}, up to {max_follow_ups} times)"
+
+    return f"OK. Reminder scheduled for {reminder_time}{follow_up_msg}."
 
 
 async def schedule_future_callback_tool(
@@ -399,54 +407,61 @@ async def schedule_future_callback_tool(
         exec_context.clock or SystemClock()
     )  # Use context's clock or default to SystemClock
 
+    # Parse the ISO 8601 string, ensuring it's timezone-aware
     try:
-        # Parse the ISO 8601 string, ensuring it's timezone-aware
         scheduled_dt = isoparse(callback_time)
-        if scheduled_dt.tzinfo is None:
-            # Or raise error, forcing LLM to provide timezone
-            logger.warning(
-                f"Callback time '{callback_time}' lacks timezone. Assuming {exec_context.timezone}."
-            )
-            scheduled_dt = scheduled_dt.replace(tzinfo=exec_context.timezone)
+    except ValueError as ve:
+        logger.error(f"Invalid callback time format or value: {callback_time} - {ve}")
+        return f"Error: Invalid callback time provided. Ensure it's a future ISO 8601 datetime with timezone. {ve}"
 
-        # Ensure it's in the future (optional, but good practice)
-        if (
-            scheduled_dt <= clock.now()
-        ):  # Compare against the potentially mocked clock's now
-            raise ValueError("Callback time must be in the future.")
+    if scheduled_dt.tzinfo is None:
+        # Or raise error, forcing LLM to provide timezone
+        logger.warning(
+            f"Callback time '{callback_time}' lacks timezone. Assuming {exec_context.timezone}."
+        )
+        scheduled_dt = scheduled_dt.replace(tzinfo=exec_context.timezone)
 
-        task_id = f"llm_callback_{uuid.uuid4()}"
-        scheduling_time = clock.now()  # Use the clock from context
-        payload: LlmCallbackPayload = {
-            "interface_type": interface_type,
-            "conversation_id": conversation_id,
-            "user_name": user_name,
-            "callback_context": context,
-            "scheduling_timestamp": scheduling_time.isoformat(),
-        }
-        if exec_context.user_id is not None:
-            payload["created_by_user_id"] = exec_context.user_id
-        # A future callback continues the user's own conversation, so it runs
-        # under the originating profile rather than the worker default.
-        if exec_context.processing_profile_id is not None:
-            payload["processing_profile_id"] = exec_context.processing_profile_id
+    # Ensure it's in the future (optional, but good practice)
+    if scheduled_dt <= clock.now():
+        message_text = "Callback time must be in the future."
+        logger.error(
+            f"Invalid callback time format or value: {callback_time} - {message_text}"
+        )
+        return f"Error: Invalid callback time provided. Ensure it's a future ISO 8601 datetime with timezone. {message_text}"
 
+    task_id = f"llm_callback_{uuid.uuid4()}"
+    scheduling_time = clock.now()  # Use the clock from context
+    payload: LlmCallbackPayload = {
+        "interface_type": interface_type,
+        "conversation_id": conversation_id,
+        "user_name": user_name,
+        "callback_context": context,
+        "scheduling_timestamp": scheduling_time.isoformat(),
+        "tool_call_review_trigger_type": "scheduled_callback",
+        "tool_call_review_trigger_definition": context,
+        "tool_call_review_trigger_payload_present": False,
+    }
+    if exec_context.user_id is not None:
+        payload["created_by_user_id"] = exec_context.user_id
+    # A future callback continues the user's own conversation, so it runs
+    # under the originating profile rather than the worker default.
+    if exec_context.processing_profile_id is not None:
+        payload["processing_profile_id"] = exec_context.processing_profile_id
+
+    try:
         await db_context.tasks.enqueue(
             task_id=task_id,
             task_type="llm_callback",
             payload=payload,
             scheduled_at=scheduled_dt,
         )
-        logger.info(
-            f"Scheduled LLM callback task {task_id} for conversation {interface_type}:{conversation_id} at {scheduled_dt}"
-        )
-        return f"OK. Callback scheduled for {callback_time}."
-    except ValueError as ve:
-        logger.error(f"Invalid callback time format or value: {callback_time} - {ve}")
-        return f"Error: Invalid callback time provided. Ensure it's a future ISO 8601 datetime with timezone. {ve}"
     except Exception as e:
         logger.exception(f"Failed to schedule callback task: {e}")
         return "Error: Failed to schedule the callback."
+    logger.info(
+        f"Scheduled LLM callback task {task_id} for conversation {interface_type}:{conversation_id} at {scheduled_dt}"
+    )
+    return f"OK. Callback scheduled for {callback_time}."
 
 
 async def list_pending_callbacks_tool(
@@ -471,70 +486,67 @@ async def list_pending_callbacks_tool(
         f"Executing list_pending_callbacks_tool for {interface_type}:{conversation_id}, limit={limit}"
     )
 
-    try:
-        # Filter pending llm_callback tasks for this conversation
-        # Note: We'll fetch all pending llm_callback tasks and filter in Python
-        # to avoid database-specific JSON syntax issues
-        stmt = (
-            select(
-                storage.tasks_table.c.task_id,
-                storage.tasks_table.c.scheduled_at,
-                storage.tasks_table.c.payload,
-            )
-            .where(
-                storage.tasks_table.c.task_type == "llm_callback",
-                storage.tasks_table.c.status == "pending",
-            )
-            .order_by(storage.tasks_table.c.scheduled_at.asc())
+    # Filter pending llm_callback tasks for this conversation
+    # Note: We'll fetch all pending llm_callback tasks and filter in Python
+    # to avoid database-specific JSON syntax issues
+    stmt = (
+        select(
+            storage.tasks_table.c.task_id,
+            storage.tasks_table.c.scheduled_at,
+            storage.tasks_table.c.payload,
         )
+        .where(
+            storage.tasks_table.c.task_type == "llm_callback",
+            storage.tasks_table.c.status == "pending",
+        )
+        .order_by(storage.tasks_table.c.scheduled_at.asc())
+    )
 
+    try:
         results = await db_context.fetch_all(stmt)
-
-        # Filter results in Python to match the conversation
-        filtered_results = []
-        for row in results:
-            payload = row.get("payload", {})
-            if (
-                payload.get("interface_type") == interface_type
-                and payload.get("conversation_id") == conversation_id
-            ):
-                filtered_results.append(row)
-                if len(filtered_results) >= limit:
-                    break
-
-        if not filtered_results:
-            return "No pending LLM callbacks found for this conversation."
-
-        formatted_callbacks = ["Pending LLM callbacks:"]
-        for row_proxy in filtered_results:
-            # row_proxy is already a Mapping[str, Any] as per fetch_all's contract
-            row: Mapping[str, Any] = row_proxy
-
-            task_id = row.get("task_id")
-            scheduled_at_utc = row.get("scheduled_at")
-            payload = row.get("payload", {})
-            callback_context = payload.get("callback_context", "No context available.")
-
-            scheduled_at_local_str = "Unknown time"
-            if scheduled_at_utc:
-                # Ensure scheduled_at_utc is timezone-aware (should be if stored correctly)
-                if scheduled_at_utc.tzinfo is None:
-                    scheduled_at_utc = scheduled_at_utc.replace(tzinfo=UTC)
-                scheduled_at_local = scheduled_at_utc.astimezone(tz)
-                scheduled_at_local_str = scheduled_at_local.strftime(
-                    "%Y-%m-%d %H:%M:%S %Z"
-                )
-
-            formatted_callbacks.append(
-                f"- Task ID: {task_id}\n  Scheduled At: {scheduled_at_local_str}\n  Context: {callback_context[:100]}{'...' if len(callback_context) > 100 else ''}"
-            )
-        return "\n".join(formatted_callbacks)
-
     except Exception as e:
         logger.exception(
             f"Error listing pending callbacks for {interface_type}:{conversation_id}: {e}"
         )
         return f"Error: Failed to list pending callbacks. {e}"
+
+    # Filter results in Python to match the conversation
+    filtered_results = []
+    for row in results:
+        payload = row.get("payload", {})
+        if (
+            payload.get("interface_type") == interface_type
+            and payload.get("conversation_id") == conversation_id
+        ):
+            filtered_results.append(row)
+            if len(filtered_results) >= limit:
+                break
+
+    if not filtered_results:
+        return "No pending LLM callbacks found for this conversation."
+
+    formatted_callbacks = ["Pending LLM callbacks:"]
+    for row_proxy in filtered_results:
+        # row_proxy is already a Mapping[str, Any] as per fetch_all's contract
+        row: Mapping[str, Any] = row_proxy
+
+        task_id = row.get("task_id")
+        scheduled_at_utc = row.get("scheduled_at")
+        payload = row.get("payload", {})
+        callback_context = payload.get("callback_context", "No context available.")
+
+        scheduled_at_local_str = "Unknown time"
+        if scheduled_at_utc:
+            # Ensure scheduled_at_utc is timezone-aware (should be if stored correctly)
+            if scheduled_at_utc.tzinfo is None:
+                scheduled_at_utc = scheduled_at_utc.replace(tzinfo=UTC)
+            scheduled_at_local = scheduled_at_utc.astimezone(tz)
+            scheduled_at_local_str = scheduled_at_local.strftime("%Y-%m-%d %H:%M:%S %Z")
+
+        formatted_callbacks.append(
+            f"- Task ID: {task_id}\n  Scheduled At: {scheduled_at_local_str}\n  Context: {callback_context[:100]}{'...' if len(callback_context) > 100 else ''}"
+        )
+    return "\n".join(formatted_callbacks)
 
 
 async def modify_pending_callback_tool(
@@ -567,72 +579,77 @@ async def modify_pending_callback_tool(
     if not new_callback_time and not new_context:
         return "Error: You must provide either a new_callback_time or a new_context to modify."
 
+    # Fetch the task to verify ownership and status
+    task_stmt = select(storage.tasks_table).where(
+        storage.tasks_table.c.task_id == task_id
+    )
     try:
-        # Fetch the task to verify ownership and status
-        task_stmt = select(storage.tasks_table).where(
-            storage.tasks_table.c.task_id == task_id
-        )
         task_row_proxy = await db_context.fetch_one(task_stmt)
-
-        if not task_row_proxy:
-            return f"Error: Callback task with ID '{task_id}' not found."
-
-        # task_row_proxy is already a Mapping[str, Any] as per fetch_one's contract
-        task: Mapping[str, Any] = task_row_proxy
-
-        if task.get("task_type") != "llm_callback":
-            return f"Error: Task '{task_id}' is not an LLM callback task."
-        if task.get("status") != "pending":
-            return f"Error: Callback task '{task_id}' is not pending (current status: {task.get('status')}). It cannot be modified."
-
-        task_payload = task.get("payload", {})
-        if (
-            task_payload.get("interface_type") != interface_type
-            or task_payload.get("conversation_id") != conversation_id
-        ):
-            return f"Error: Callback task '{task_id}' does not belong to this conversation. Modification denied."
-
-        # ast-grep-ignore: no-dict-any - task update fields vary per operation
-        updates: dict[str, Any] = {}
-        if new_callback_time:
-            try:
-                scheduled_dt = isoparse(new_callback_time)
-                if scheduled_dt.tzinfo is None:
-                    scheduled_dt = scheduled_dt.replace(tzinfo=tz)
-                if scheduled_dt <= clock.now():  # Use clock from context
-                    raise ValueError("New callback time must be in the future.")
-                updates["scheduled_at"] = scheduled_dt.astimezone(UTC)  # Store as UTC
-            except ValueError as ve:
-                return f"Error: Invalid new_callback_time. {ve}"
-
-        if new_context:
-            new_payload = task_payload.copy()
-            new_payload["callback_context"] = new_context
-            updates["payload"] = new_payload
-
-        if not updates:
-            return "No valid modifications specified."
-
-        # Perform the update
-        update_stmt = (
-            update(storage.tasks_table)
-            .where(storage.tasks_table.c.task_id == task_id)
-            .values(**updates)
-        )
-        result = await db_context.execute(update_stmt)
-
-        if result and result.rowcount > 0:  # type: ignore
-            # Notification happens automatically in enqueue_task when tasks are updated
-            return f"Callback task '{task_id}' modified successfully."
-        else:
-            # This case should ideally not be reached if fetch_one found the task
-            return f"Error: Failed to modify callback task '{task_id}'. It might have been processed or deleted."
-
     except Exception as e:
         logger.exception(
             f"Error modifying callback task '{task_id}' for {interface_type}:{conversation_id}: {e}"
         )
         return f"Error: Failed to modify callback task. {e}"
+
+    if not task_row_proxy:
+        return f"Error: Callback task with ID '{task_id}' not found."
+
+    # task_row_proxy is already a Mapping[str, Any] as per fetch_one's contract
+    task: Mapping[str, Any] = task_row_proxy
+
+    if task.get("task_type") != "llm_callback":
+        return f"Error: Task '{task_id}' is not an LLM callback task."
+    if task.get("status") != "pending":
+        return f"Error: Callback task '{task_id}' is not pending (current status: {task.get('status')}). It cannot be modified."
+
+    task_payload = task.get("payload", {})
+    if (
+        task_payload.get("interface_type") != interface_type
+        or task_payload.get("conversation_id") != conversation_id
+    ):
+        return f"Error: Callback task '{task_id}' does not belong to this conversation. Modification denied."
+
+    # ast-grep-ignore: no-dict-any - task update fields vary per operation
+    updates: dict[str, Any] = {}
+    if new_callback_time:
+        try:
+            scheduled_dt = isoparse(new_callback_time)
+        except ValueError as ve:
+            return f"Error: Invalid new_callback_time. {ve}"
+        if scheduled_dt.tzinfo is None:
+            scheduled_dt = scheduled_dt.replace(tzinfo=tz)
+        if scheduled_dt <= clock.now():  # Use clock from context
+            return "Error: Invalid new_callback_time. New callback time must be in the future."
+        updates["scheduled_at"] = scheduled_dt.astimezone(UTC)  # Store as UTC
+
+    if new_context:
+        new_payload = task_payload.copy()
+        new_payload["callback_context"] = new_context
+        updates["payload"] = new_payload
+
+    if not updates:
+        return "No valid modifications specified."
+
+    # Perform the update
+    update_stmt = (
+        update(storage.tasks_table)
+        .where(storage.tasks_table.c.task_id == task_id)
+        .values(**updates)
+    )
+    try:
+        result = await db_context.execute(update_stmt)
+    except Exception as e:
+        logger.exception(
+            f"Error modifying callback task '{task_id}' for {interface_type}:{conversation_id}: {e}"
+        )
+        return f"Error: Failed to modify callback task. {e}"
+
+    if result and result.rowcount > 0:  # type: ignore
+        # Notification happens automatically in enqueue_task when tasks are updated
+        return f"Callback task '{task_id}' modified successfully."
+
+    # This case should ideally not be reached if fetch_one found the task
+    return f"Error: Failed to modify callback task '{task_id}'. It might have been processed or deleted."
 
 
 async def cancel_pending_callback_tool(
@@ -655,44 +672,49 @@ async def cancel_pending_callback_tool(
         f"Executing cancel_pending_callback_tool for task_id='{task_id}' in {interface_type}:{conversation_id}"
     )
 
+    # Fetch the task to verify ownership and status
+    task_stmt = select(storage.tasks_table).where(
+        storage.tasks_table.c.task_id == task_id
+    )
     try:
-        # Fetch the task to verify ownership and status
-        task_stmt = select(storage.tasks_table).where(
-            storage.tasks_table.c.task_id == task_id
-        )
         task_row_proxy = await db_context.fetch_one(task_stmt)
-
-        if not task_row_proxy:
-            return f"Error: Callback task with ID '{task_id}' not found."
-
-        # task_row_proxy is already a Mapping[str, Any] as per fetch_one's contract
-        task: Mapping[str, Any] = task_row_proxy
-
-        if task.get("task_type") != "llm_callback":
-            return f"Error: Task '{task_id}' is not an LLM callback task."
-        if task.get("status") != "pending":
-            return f"Error: Callback task '{task_id}' is not pending (current status: {task.get('status')}). It cannot be cancelled."
-
-        task_payload = task.get("payload", {})
-        if (
-            task_payload.get("interface_type") != interface_type
-            or task_payload.get("conversation_id") != conversation_id
-        ):
-            return f"Error: Callback task '{task_id}' does not belong to this conversation. Cancellation denied."
-
-        # Mark as 'failed' with a specific error message indicating cancellation
-        await db_context.tasks.update_status(
-            task_id=task_id,
-            status="failed",  # Using 'failed' as 'cancelled' might not be a standard status
-            error="Callback cancelled by user.",
-        )
-        return f"Callback task '{task_id}' cancelled successfully."
-
     except Exception as e:
         logger.exception(
             f"Error cancelling callback task '{task_id}' for {interface_type}:{conversation_id}: {e}"
         )
         return f"Error: Failed to cancel callback task. {e}"
+
+    if not task_row_proxy:
+        return f"Error: Callback task with ID '{task_id}' not found."
+
+    # task_row_proxy is already a Mapping[str, Any] as per fetch_one's contract
+    task = task_row_proxy
+
+    if task.get("task_type") != "llm_callback":
+        return f"Error: Task '{task_id}' is not an LLM callback task."
+    if task.get("status") != "pending":
+        return f"Error: Callback task '{task_id}' is not pending (current status: {task.get('status')}). It cannot be cancelled."
+
+    task_payload = task.get("payload", {})
+    if (
+        task_payload.get("interface_type") != interface_type
+        or task_payload.get("conversation_id") != conversation_id
+    ):
+        return f"Error: Callback task '{task_id}' does not belong to this conversation. Cancellation denied."
+
+    # Mark as 'failed' with a specific error message indicating cancellation
+    try:
+        await db_context.tasks.update_status(
+            task_id=task_id,
+            status="failed",  # Using 'failed' as 'cancelled' might not be a standard status
+            error="Callback cancelled by user.",
+        )
+    except Exception as e:
+        logger.exception(
+            f"Error cancelling callback task '{task_id}' for {interface_type}:{conversation_id}: {e}"
+        )
+        return f"Error: Failed to cancel callback task. {e}"
+    return f"Callback task '{task_id}' cancelled successfully."
 
 
 async def schedule_action_tool(

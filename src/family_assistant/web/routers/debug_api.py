@@ -300,7 +300,7 @@ async def dump_profiles(
     - ``tools_config`` — enabled local tools (with eager/on-demand loading mode),
       enabled MCP servers, tools requiring confirmation, timeouts.
     - ``tools_policy`` — the full policy matrix: each rule's matcher (names,
-      tags, MCP server ids, argument equality), decision (allow/deny/confirm),
+      tags, MCP server ids, argument equality), decision (allow/deny/confirm/review),
       priority, and description; plus the default decision.
     - ``slash_commands``, ``visibility_grants``, and ``remote_a2a`` delegation
       config if configured.

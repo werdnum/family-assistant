@@ -143,6 +143,48 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
         """Returns a list of recorded calls."""
         return self._calls
 
+    def _evaluate_response_rule(
+        self,
+        index: int,
+        matcher: MatcherFunction,
+        response_generator: ResponseGenerator,
+        actual_kwargs: MatcherArgs,
+    ) -> LLMOutput | None:
+        if not matcher(actual_kwargs):
+            return None
+
+        if callable(response_generator):
+            logger.debug(
+                f"Rule {index + 1} matched. Response generator is callable ({type(response_generator).__name__}). Calling it."
+            )
+            actual_response_output = response_generator(actual_kwargs)
+        else:
+            actual_response_output = response_generator
+
+        logger.debug(
+            f"Rule {index + 1} matched. Actual response output type: {type(actual_response_output)}"
+        )
+        log_message_action = (
+            "Returning generated response from callable."
+            if callable(response_generator)
+            else "Returning predefined response object."
+        )
+        logger.info(
+            f"Rule {index + 1} matched for 'generate_response'. {log_message_action}"
+        )
+        tool_names = (
+            [tc.function.name for tc in actual_response_output.tool_calls]
+            if actual_response_output.tool_calls
+            else []
+        )
+        content_preview = (actual_response_output.content or "")[:50]
+        logger.info(
+            f" -> Mock LLM returning: content='{content_preview}...', "
+            f"tool_calls={len(actual_response_output.tool_calls) if actual_response_output.tool_calls else 0}, "
+            f"tool_names={tool_names}"
+        )
+        return actual_response_output
+
     async def generate_response(
         self,
         messages: list[LLMMessage],
@@ -174,44 +216,10 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
         # The matcher directly receives the kwargs for generate_response.
         for i, (matcher, response_generator) in enumerate(self.rules):
             try:
-                # Matcher function now only expects actual_kwargs
-                if matcher(actual_kwargs):
-                    actual_response_output: LLMOutput
-                    if callable(response_generator):
-                        logger.debug(
-                            f"Rule {i + 1} matched. Response generator is callable ({type(response_generator).__name__}). Calling it."
-                        )
-                        # If the response_generator is a callable, call it to get the LLMOutput
-                        actual_response_output = response_generator(actual_kwargs)
-                    else:
-                        # If it's not callable, assume it's already an LLMOutput instance
-                        actual_response_output = response_generator
-
-                    # Log type of actual_response_output before accessing attributes
-                    logger.debug(
-                        f"Rule {i + 1} matched. Actual response output type: {type(actual_response_output)}"
-                    )
-
-                    # Corrected logging to reflect that the response is now generated/retrieved
-                    log_message_action = (
-                        "Returning generated response from callable."
-                        if callable(response_generator)
-                        else "Returning predefined response object."
-                    )
-                    logger.info(
-                        f"Rule {i + 1} matched for 'generate_response'. {log_message_action}"
-                    )
-                    tool_names = (
-                        [tc.function.name for tc in actual_response_output.tool_calls]
-                        if actual_response_output.tool_calls
-                        else []
-                    )
-                    content_preview = (actual_response_output.content or "")[:50]
-                    logger.info(
-                        f" -> Mock LLM returning: content='{content_preview}...', "
-                        f"tool_calls={len(actual_response_output.tool_calls) if actual_response_output.tool_calls else 0}, "
-                        f"tool_names={tool_names}"
-                    )
+                actual_response_output = self._evaluate_response_rule(
+                    i, matcher, response_generator, actual_kwargs
+                )
+                if actual_response_output is not None:
                     return actual_response_output
             except Exception as e:
                 # Clarify if error was in matcher or response processing if possible,
@@ -360,6 +368,43 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
 
         return {"role": "user", "content": user_message_content}
 
+    def _evaluate_structured_rule(
+        self,
+        index: int,
+        matcher: MatcherFunction,
+        response_generator: StructuredResponseGenerator,
+        actual_kwargs: StructuredMatcherArgs,
+        response_model: type[T],
+    ) -> T | None:
+        if not matcher(actual_kwargs):
+            return None
+
+        if isinstance(response_generator, BaseModel):
+            actual_response = response_generator
+        else:
+            logger.debug(
+                f"Structured rule {index + 1} matched. Response generator is callable. Calling it."
+            )
+            actual_response = response_generator(actual_kwargs)
+
+        logger.info(
+            f"Structured rule {index + 1} matched for 'generate_structured'. "
+            f"Returning {type(actual_response).__name__}."
+        )
+        if not isinstance(actual_response, response_model):
+            raise StructuredOutputError(
+                message=(
+                    f"Mock returned {type(actual_response).__name__} but "
+                    f"expected {response_model.__name__}"
+                ),
+                provider="mock",
+                model=self.model,
+                raw_response=str(actual_response),
+                validation_error=None,
+            )
+
+        return actual_response
+
     async def generate_structured(
         self,
         messages: Sequence[LLMMessage],
@@ -386,39 +431,15 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
 
         for i, (matcher, response_generator) in enumerate(self.structured_rules):
             try:
-                if matcher(actual_kwargs):
-                    actual_response: BaseModel
-                    # Check if it's a static BaseModel instance or a callable
-                    if isinstance(response_generator, BaseModel):
-                        actual_response = response_generator
-                    else:
-                        # It's a callable that returns a BaseModel
-                        logger.debug(
-                            f"Structured rule {i + 1} matched. Response generator is callable. Calling it."
-                        )
-                        actual_response = response_generator(actual_kwargs)
-
-                    logger.info(
-                        f"Structured rule {i + 1} matched for 'generate_structured'. "
-                        f"Returning {type(actual_response).__name__}."
-                    )
-
-                    # Validate that the response matches the expected model type
-                    if not isinstance(actual_response, response_model):
-                        raise StructuredOutputError(
-                            message=(
-                                f"Mock returned {type(actual_response).__name__} but "
-                                f"expected {response_model.__name__}"
-                            ),
-                            provider="mock",
-                            model=self.model,
-                            raw_response=str(actual_response),
-                            validation_error=None,
-                        )
-
-                    # Type is validated by isinstance check above
-                    return actual_response  # type: ignore[return-value] # validated by isinstance
-
+                actual_response = self._evaluate_structured_rule(
+                    i,
+                    matcher,
+                    response_generator,
+                    actual_kwargs,
+                    response_model,
+                )
+                if actual_response is not None:
+                    return actual_response
             except StructuredOutputError:
                 raise
             except Exception as e:

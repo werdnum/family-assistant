@@ -150,7 +150,8 @@ async def _save_raw_mail_webhook(
     content_type_header: str,
 ) -> None:
     """Save an accepted raw Mailgun webhook request for debugging/replay."""
-    try:
+
+    async def save_raw_request() -> None:
         os.makedirs(mailbox_raw_dir, exist_ok=True)
         now_dt = datetime.now(UTC)
         timestamp_str = now_dt.strftime("%Y%m%d_%H%M%S_%f")
@@ -165,6 +166,9 @@ async def _save_raw_mail_webhook(
         logger.info(
             f"Saved raw webhook request body ({len(raw_body_content)} bytes) to: {raw_filepath}"
         )
+
+    try:
+        await save_raw_request()
     except Exception as e:
         logger.exception(f"Failed to save raw webhook request body: {e}")
 
@@ -239,7 +243,7 @@ async def handle_mail_webhook(
         logger.warning("Rejecting oversized inbound email webhook: %s", exc)
         raise HTTPException(status_code=413, detail=str(exc)) from exc
 
-    try:
+    async def process_mail() -> Response:
         # FastAPI's request.form() will parse multipart/form-data
         form_data = await request.form()
 
@@ -365,16 +369,22 @@ async def handle_mail_webhook(
                 form_item = form_data.get(attachment_field_name)
 
                 if isinstance(form_item, StarletteUploadFile) and form_item.filename:
-                    try:
+
+                    async def save_attachment(
+                        current_form_item: StarletteUploadFile,
+                        attachment_index: int,
+                    ) -> None:
+                        nonlocal total_attachment_size
+                        assert current_form_item.filename is not None
                         os.makedirs(base_attachment_dir, exist_ok=True)
                         # Sanitize filename (basic)
-                        safe_filename = os.path.basename(form_item.filename)
+                        safe_filename = os.path.basename(current_form_item.filename)
                         # Prefix the saved filename with the attachment index
                         # so that two parts sharing the same filename don't
                         # overwrite each other on disk and don't collapse to
                         # the same email-attachment dedup key
                         # (message_id, storage_path).
-                        persisted_filename = f"{i}-{safe_filename}"
+                        persisted_filename = f"{attachment_index}-{safe_filename}"
                         # Disk I/O happens at the absolute path; the
                         # registry row stores the relative path so
                         # environment moves (mounts, restores) stay
@@ -389,8 +399,10 @@ async def handle_mail_webhook(
                         )
 
                         # Save the uploaded file
-                        await form_item.seek(0)  # Ensure pointer is at the start
-                        content = await form_item.read()
+                        await current_form_item.seek(
+                            0
+                        )  # Ensure pointer is at the start
+                        content = await current_form_item.read()
                         size = len(content)
                         total_attachment_size += size
                         enforce_attachment_size_limits(
@@ -403,7 +415,7 @@ async def handle_mail_webhook(
                             await f_out.write(content)
 
                         attachment_mime_type = (
-                            form_item.content_type or "application/octet-stream"
+                            current_form_item.content_type or "application/octet-stream"
                         )
                         processed_attachments.append(
                             AttachmentData(
@@ -417,6 +429,9 @@ async def handle_mail_webhook(
                             f"Saved attachment '{safe_filename}' to {disk_path} "
                             f"(stored path: {persisted_storage_path})"
                         )
+
+                    try:
+                        await save_attachment(form_item, i)
                     except EmailIntakePayloadTooLargeError:
                         raise
                     except Exception as e:
@@ -492,6 +507,8 @@ async def handle_mail_webhook(
 
         return Response(status_code=200, content="Email received and processed.")
 
+    try:
+        return await process_mail()
     except EmailIntakePayloadTooLargeError as exc:
         logger.warning("Rejecting oversized inbound email webhook: %s", exc)
         raise HTTPException(status_code=413, detail=str(exc)) from exc
@@ -746,7 +763,7 @@ async def _handle_worker_completion(
     }
     status = status_map.get(outcome, "failed")
 
-    try:
+    async def update_task() -> None:
         # Update task status
         updated = await db_context.worker_tasks.update_task_status(
             task_id=task_id,
@@ -782,5 +799,7 @@ async def _handle_worker_completion(
         else:
             logger.warning(f"Worker task {task_id} not found for completion update")
 
+    try:
+        await update_task()
     except Exception as e:
         logger.exception(f"Failed to update worker task {task_id}: {e}")

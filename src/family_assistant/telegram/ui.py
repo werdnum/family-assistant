@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     from family_assistant.services.confirmation_waiters import (
         ConfirmationResultWaiterRegistry,
     )
+    from family_assistant.tools.types import ToolCallReviewAuthorization
 
 logger = logging.getLogger(__name__)
 TELEGRAM_CONFIRMATION_MESSAGE_LIMIT = 3800
@@ -285,6 +286,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
         wait_for_durable_execution: bool = True,
         taint_state_json: TaintMetadata | None = None,
         processing_profile_id: str | None = None,
+        tool_call_review_authorization: ToolCallReviewAuthorization | None = None,
     ) -> ConfirmationOutcome:
         """Sends confirmation message and waits for user response or timeout."""
         effective_timeout = min(timeout, self.confirmation_timeout)
@@ -327,6 +329,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                 decision_only=not wait_for_durable_execution,
                 processing_profile_id=processing_profile_id,
                 taint_state_json=taint_state_json,
+                tool_call_review_authorization=tool_call_review_authorization,
             )
             confirm_uuid = request["id"]
             if wait_for_durable_execution:
@@ -606,7 +609,8 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
         original_text_plain = query.message.text or original_text_markdown
         status_text = ""
         plain_status_text = ""
-        try:
+
+        async def resolve_action() -> tuple[str, str]:
             if action == "yes":
                 logger.debug(f"Approving confirmation result for {confirm_uuid}")
                 await self._approve_confirmation(
@@ -614,8 +618,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                     query.from_user.id if query.from_user else None,
                     pending_confirmation,
                 )
-                status_text = "\n\n*Confirmed* ✅"
-                plain_status_text = "\n\nConfirmed ✅"
+                return "\n\n*Confirmed* ✅", "\n\nConfirmed ✅"
             elif action == "no":
                 logger.debug(f"Rejecting confirmation result for {confirm_uuid}")
                 await self._reject_confirmation(
@@ -623,14 +626,11 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                     query.from_user.id if query.from_user else None,
                     pending_confirmation,
                 )
-                status_text = "\n\n*Cancelled* ❌"
-                plain_status_text = "\n\nCancelled ❌"
+                return "\n\n*Cancelled* ❌", "\n\nCancelled ❌"
             else:
                 logger.warning(
                     f"Unknown action '{action}' in confirmation callback {confirm_uuid}"
                 )
-                status_text = "\n\n*Error: Unknown action*"
-                plain_status_text = "\n\nError: Unknown action"
                 if (
                     pending_confirmation
                     and not pending_confirmation.decision_future.done()
@@ -638,6 +638,10 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                     pending_confirmation.decision_future.set_result(
                         ConfirmationOutcome(kind="failed", result="Unknown action")
                     )
+                return "\n\n*Error: Unknown action*", "\n\nError: Unknown action"
+
+        try:
+            status_text, plain_status_text = await resolve_action()
         except ConfirmationAuthorizationError as exc:
             logger.warning("Could not resolve Telegram confirmation: %s", exc)
             return

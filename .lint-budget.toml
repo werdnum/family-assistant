@@ -7,4 +7,4 @@
 # to make a lint failure go away — fix the code the rule is pointing at.
 
 [budgets]
-"PLW0717" = 268
+"PLW0717" = 0

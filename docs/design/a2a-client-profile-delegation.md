@@ -46,7 +46,8 @@ A2A is JSON-RPC 2.0 over HTTP. Key concepts:
   data)
 - **Artifact**: Deliverable output of a task (distinct from conversational messages)
 - **Streaming**: SSE via `message/stream` method
-- **Python SDK**: `a2a-sdk` package provides `A2ACardResolver`, `BaseClient`, `ClientFactory`
+- **Python SDK**: `a2a-sdk` v1 provides `A2ACardResolver`, `Client`, and `ClientFactory`, including
+  transport-level compatibility with agents that still advertise protocol v0.3
 
 ### Existing A2A Server in This Project
 
@@ -356,12 +357,12 @@ for profile_def in resolved_profiles:
 
 ### Content Part Mapping
 
-The existing `src/family_assistant/a2a/converters.py` already handles most of the conversion:
-
-- **Outbound (FA -> A2A)**: `content_parts_to_a2a_parts()` converts `ContentPartDict` lists to A2A
-  `Part` lists. The client adds a size guard for inline attachments
-  (`MAX_INLINE_ATTACHMENT_BYTES = 10 MB`) before calling this converter.
-- **Inbound (A2A -> FA)**: `a2a_parts_to_content_parts()` converts A2A parts back to FA format.
+Conversion is split by whether it needs the attachment registry.
+`src/family_assistant/a2a/converters.py` holds the I/O-free part (text and plain URL references);
+everything carrying attachment bytes goes through `A2AAttachmentTransfer` in
+`src/family_assistant/a2a/attachments.py`, in both directions and on both the client and the server.
+See [a2a-attachment-transfer.md](a2a-attachment-transfer.md); the size guard for inline attachments
+(`MAX_INLINE_ATTACHMENT_BYTES = 10 MB`) lives there and is applied by the client before sending.
 
 The client adds one new function for extracting a `ChatInteractionResult` from a completed A2A task:
 

@@ -51,7 +51,13 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Collection, Mapping, Sequence
+    from collections.abc import (
+        AsyncGenerator,
+        AsyncIterator,
+        Collection,
+        Mapping,
+        Sequence,
+    )
     from datetime import datetime
 
     from family_assistant.camera.protocol import CameraBackend
@@ -69,6 +75,7 @@ if TYPE_CHECKING:
     from family_assistant.services.api_backend import ApiBackend
     from family_assistant.services.attachment_registry import AttachmentRegistry
     from family_assistant.services.oauth_credentials import OAuthCredentialResolver
+    from family_assistant.services.tool_call_review import TriggerReviewInput
     from family_assistant.storage.database import Database
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools import OnDemandToolsView, ToolsProvider
@@ -277,8 +284,12 @@ class ProcessingService:
             sorted(state.approved_sinks),
         )
         permitted = {TaintPolicyOutcome.ALLOW, TaintPolicyOutcome.AUDIT}
-        if state.is_sink_approved(sink_class):
+        if state.is_sink_approved(sink_class, profile_id=self.service_config.id):
             permitted |= {TaintPolicyOutcome.CONFIRM}
+            if evaluation.verdict_floor is not TaintPolicyOutcome.DENY:
+                # A human approval carried with this exact turn already answers
+                # a confirmable adjudication. A deny floor remains absolute.
+                permitted |= {TaintPolicyOutcome.ADJUDICATE}
         if evaluation.effective_outcome in permitted:
             return None
 
@@ -1073,6 +1084,7 @@ class ProcessingService:
         mid_turn_input_provider: MidTurnInputProvider | None = None,
         initial_taint_sources: Sequence[TaintSource] | None = None,
         taint_tracker: TurnTaintTracker | None = None,
+        tool_call_review_trigger: TriggerReviewInput | None = None,
     ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
@@ -1103,6 +1115,7 @@ class ProcessingService:
             mid_turn_input_provider=mid_turn_input_provider,
             initial_taint_sources=initial_taint_sources,
             taint_tracker=taint_tracker,
+            tool_call_review_trigger=tool_call_review_trigger,
         )
 
     async def process_message_stream(
@@ -1122,6 +1135,7 @@ class ProcessingService:
         mid_turn_input_provider: MidTurnInputProvider | None = None,
         initial_taint_sources: Sequence[TaintSource] | None = None,
         taint_tracker: TurnTaintTracker | None = None,
+        tool_call_review_trigger: TriggerReviewInput | None = None,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """
         Streaming version of process_message that yields LLMStreamEvent objects as they are generated.
@@ -1152,6 +1166,7 @@ class ProcessingService:
             mid_turn_input_provider=mid_turn_input_provider,
             initial_taint_sources=initial_taint_sources,
             taint_tracker=taint_tracker,
+            tool_call_review_trigger=tool_call_review_trigger,
         ):
             yield item
 
@@ -1177,7 +1192,9 @@ class ProcessingService:
         trigger_is_internal: bool = False,
         pinned_history_message_ids: list[int] | None = None,
         trigger_role: Literal["user", "system"] = "user",
+        reuse_existing_user_row: bool = False,
         initial_taint_sources: Sequence[TaintSource] | None = None,
+        tool_call_review_trigger: TriggerReviewInput | None = None,
     ) -> ChatInteractionResult:
         """
         Handles a complete chat interaction from user input to final response.
@@ -1224,7 +1241,9 @@ class ProcessingService:
         )
 
         thread_root_id_for_turn: int | None = None
-        try:
+
+        async def interaction_success() -> ChatInteractionResult:
+            nonlocal thread_root_id_for_turn
             # --- 1-2. Persist user trigger + build LLM-ready messages ---
             (
                 thread_root_id_for_turn,
@@ -1246,6 +1265,7 @@ class ProcessingService:
                 trigger_is_internal=trigger_is_internal,
                 pinned_history_message_ids=pinned_history_message_ids,
                 trigger_role=trigger_role,
+                reuse_existing_user_row=reuse_existing_user_row,
                 initial_taint_sources=initial_taint_sources,
             )
 
@@ -1272,6 +1292,7 @@ class ProcessingService:
                     *context_taint_sources,
                     *(initial_taint_sources or ()),
                 ),
+                tool_call_review_trigger=tool_call_review_trigger,
             )
             final_reasoning_info = final_reasoning_info_from_process_msg
 
@@ -1351,6 +1372,8 @@ class ProcessingService:
                 attachment_ids=response_attachment_ids,
             )
 
+        try:
+            return await interaction_success()
         except TaintedSinkRefusedError as refusal:
             # A policy decision, not a fault: render the reason and skip the
             # error-history row and traceback the generic handler would write.
@@ -1409,6 +1432,7 @@ class ProcessingService:
         reuse_existing_user_row: bool = False,
         initial_taint_sources: Sequence[TaintSource] | None = None,
         taint_tracker: TurnTaintTracker | None = None,
+        tool_call_review_trigger: TriggerReviewInput | None = None,
     ) -> AsyncIterator[LLMStreamEvent]:
         """
         Streaming version of handle_chat_interaction.
@@ -1447,154 +1471,176 @@ class ProcessingService:
             )
 
         thread_root_id_for_turn: int | None = None
-        try:
-            with trace.use_span(span, end_on_exit=False):
-                try:
-                    # --- 1-2. Persist user trigger + build LLM-ready messages ---
-                    (
-                        thread_root_id_for_turn,
-                        typed_messages_for_llm,
-                        context_taint_sources,
-                    ) = await self._prepare_turn_messages_for_llm(
-                        db_context,
-                        interface_type=interface_type,
-                        conversation_id=conversation_id,
-                        trigger_content_parts=trigger_content_parts,
-                        trigger_interface_message_id=trigger_interface_message_id,
-                        user_name=user_name,
-                        turn_id=turn_id,
-                        user_id=user_id,
-                        replied_to_interface_id=replied_to_interface_id,
-                        trigger_attachments=trigger_attachments,
-                        subconversation_id=subconversation_id,
-                        reuse_existing_user_row=reuse_existing_user_row,
-                    )
 
-                    # --- 3. Stream LLM Processing ---
-                    # Ids already recorded on a tool row of this turn, so the
-                    # closing assistant row doesn't repeat them.
-                    recorded_on_tool_rows: set[str] = set()
-                    async for event, stream_msg in self.process_message_stream(
-                        db_context=db_context,
-                        messages=typed_messages_for_llm,
-                        interface_type=interface_type,
-                        conversation_id=conversation_id,
-                        user_name=user_name,
-                        user_id=user_id,
-                        turn_id=turn_id,
-                        chat_interface=chat_interface,
-                        chat_interfaces=chat_interfaces,
-                        confirmation_ui_managers=confirmation_ui_managers,
-                        request_confirmation_callback=request_confirmation_callback,
-                        subconversation_id=subconversation_id,
-                        mid_turn_input_provider=mid_turn_input_provider,
-                        initial_taint_sources=(
-                            *context_taint_sources,
-                            *(initial_taint_sources or ()),
-                        ),
-                        taint_tracker=taint_tracker,
+        async def interaction_events() -> AsyncGenerator[LLMStreamEvent]:
+            nonlocal thread_root_id_for_turn
+            # --- 1-2. Persist user trigger + build LLM-ready messages ---
+            (
+                thread_root_id_for_turn,
+                typed_messages_for_llm,
+                context_taint_sources,
+            ) = await self._prepare_turn_messages_for_llm(
+                db_context,
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                trigger_content_parts=trigger_content_parts,
+                trigger_interface_message_id=trigger_interface_message_id,
+                user_name=user_name,
+                turn_id=turn_id,
+                user_id=user_id,
+                replied_to_interface_id=replied_to_interface_id,
+                trigger_attachments=trigger_attachments,
+                subconversation_id=subconversation_id,
+                reuse_existing_user_row=reuse_existing_user_row,
+            )
+
+            # --- 3. Stream LLM Processing ---
+            # Ids already recorded on a tool row of this turn, so the
+            # closing assistant row doesn't repeat them.
+            recorded_on_tool_rows: set[str] = set()
+            async for event, stream_msg in self.process_message_stream(
+                db_context=db_context,
+                messages=typed_messages_for_llm,
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                user_name=user_name,
+                user_id=user_id,
+                turn_id=turn_id,
+                chat_interface=chat_interface,
+                chat_interfaces=chat_interfaces,
+                confirmation_ui_managers=confirmation_ui_managers,
+                request_confirmation_callback=request_confirmation_callback,
+                subconversation_id=subconversation_id,
+                mid_turn_input_provider=mid_turn_input_provider,
+                initial_taint_sources=(
+                    *context_taint_sources,
+                    *(initial_taint_sources or ()),
+                ),
+                taint_tracker=taint_tracker,
+                tool_call_review_trigger=tool_call_review_trigger,
+            ):
+                # A ``user_input`` echo is the client's proof that its
+                # steering message was delivered: seeing one is what
+                # stops it tracking the message for recovery. Publishing
+                # it before the row is written would let a failed write
+                # clear the client's only copy -- the message would exist
+                # nowhere, having been neither persisted nor acted on. So
+                # this one event is published after its save; everything
+                # else streams first, since the reply should not wait on
+                # a database round trip.
+                publish_after_save = event.type == "user_input"
+                if not publish_after_save:
+                    yield event
+
+                # Save messages as they're generated
+                if stream_msg is not None:
+                    if (
+                        isinstance(stream_msg, AssistantMessage)
+                        and stream_msg.content
+                        and not stream_msg.tool_calls
                     ):
-                        # A ``user_input`` echo is the client's proof that its
-                        # steering message was delivered: seeing one is what
-                        # stops it tracking the message for recovery. Publishing
-                        # it before the row is written would let a failed write
-                        # clear the client's only copy -- the message would exist
-                        # nowhere, having been neither persisted nor acted on. So
-                        # this one event is published after its save; everything
-                        # else streams first, since the reply should not wait on
-                        # a database round trip.
-                        publish_after_save = event.type == "user_input"
-                        if not publish_after_save:
-                            yield event  # noqa: ASYNC119
-
-                        # Save messages as they're generated
-                        if stream_msg is not None:
-                            if (
-                                isinstance(stream_msg, AssistantMessage)
-                                and stream_msg.content
-                                and not stream_msg.tool_calls
-                            ):
-                                # Skip messages that carry tool calls: see
-                                # the matching branch in
-                                # handle_chat_interaction for the
-                                # thought-signature rationale.
-                                stream_msg.content = normalize_latex_to_unicode(
-                                    stream_msg.content
-                                )
-                            recorded_on_tool_rows |= _tool_row_attachment_ids(
-                                stream_msg
-                            )
-                            # Every assistant message in the turn carries its
-                            # own call's usage and timing, not just the one that
-                            # closes it -- the intermediate iterations of a tool
-                            # loop are calls too, and used to save nothing.
-                            reasoning_info_for_stream = (
-                                stream_msg.reasoning_info
-                                if isinstance(stream_msg, AssistantMessage)
-                                else None
-                            )
-                            # The turn's closing assistant message arrives on the
-                            # same event as its response attachment ids, so this
-                            # is where they get recorded.
-                            response_attachments = (
-                                _response_attachment_references(
-                                    event.metadata.get("attachment_ids"),
-                                    recorded_on_tool_rows=recorded_on_tool_rows,
-                                )
-                                if _is_turn_closing_assistant_message(stream_msg)
-                                and event.metadata
-                                else None
-                            )
-                            await self._save_history_message(
-                                db_context,
-                                message=stream_msg,
-                                interface_type=interface_type,
-                                conversation_id=conversation_id,
-                                turn_id=turn_id,
-                                thread_root_id=thread_root_id_for_turn,
-                                subconversation_id=subconversation_id,
-                                user_id=user_id,
-                                reasoning_info=reasoning_info_for_stream,
-                                attachments=response_attachments,
-                            )
-
-                        if publish_after_save:
-                            yield event  # noqa: ASYNC119
-
-                except TaintedSinkRefusedError as refusal:
-                    logger.warning(
-                        "Runtime taint policy refused a turn on profile '%s': %s",
-                        self.service_config.id,
-                        refusal,
+                        # Skip messages that carry tool calls: see
+                        # the matching branch in
+                        # handle_chat_interaction for the
+                        # thought-signature rationale.
+                        stream_msg.content = normalize_latex_to_unicode(
+                            stream_msg.content
+                        )
+                    recorded_on_tool_rows |= _tool_row_attachment_ids(stream_msg)
+                    # Every assistant message in the turn carries its
+                    # own call's usage and timing, not just the one that
+                    # closes it -- the intermediate iterations of a tool
+                    # loop are calls too, and used to save nothing.
+                    reasoning_info_for_stream = (
+                        stream_msg.reasoning_info
+                        if isinstance(stream_msg, AssistantMessage)
+                        else None
                     )
-                    yield LLMStreamEvent(  # noqa: ASYNC119
-                        type="error",
-                        error=str(refusal),
-                        metadata={"error_id": str(uuid.uuid4())},
+                    # The turn's closing assistant message arrives on the
+                    # same event as its response attachment ids, so this
+                    # is where they get recorded.
+                    response_attachments = (
+                        _response_attachment_references(
+                            event.metadata.get("attachment_ids"),
+                            recorded_on_tool_rows=recorded_on_tool_rows,
+                        )
+                        if _is_turn_closing_assistant_message(stream_msg)
+                        and event.metadata
+                        else None
                     )
-                except Exception as e:
-                    span.set_status(StatusCode.ERROR, str(e))
-                    span.record_exception(e)
-                    logger.exception(f"Error in streaming chat interaction: {e}")
-                    processing_error_traceback = traceback.format_exc()
-                    error_message = _user_friendly_error_message(e)
-                    await self._persist_error_history_message(
+                    await self._save_history_message(
                         db_context,
-                        error_message=error_message,
-                        error_traceback=processing_error_traceback,
+                        message=stream_msg,
                         interface_type=interface_type,
                         conversation_id=conversation_id,
                         turn_id=turn_id,
                         thread_root_id=thread_root_id_for_turn,
                         subconversation_id=subconversation_id,
                         user_id=user_id,
-                    )
-                    error_event = LLMStreamEvent(
-                        type="error",
-                        error=error_message,
-                        metadata={"error_id": str(uuid.uuid4())},
+                        reasoning_info=reasoning_info_for_stream,
+                        attachments=response_attachments,
                     )
 
-                    yield error_event  # noqa: ASYNC119
+                if publish_after_save:
+                    yield event
+
+        events = interaction_events()
+
+        async def traced_events() -> AsyncGenerator[LLMStreamEvent]:
+            while True:
+                try:
+                    with trace.use_span(span, end_on_exit=False):
+                        stream_event = await anext(events)
+                except StopAsyncIteration:
+                    return
+                yield stream_event
+
+        traced_iterator = traced_events()
+        try:
+            async for stream_event in traced_iterator:
+                yield stream_event
+        except TaintedSinkRefusedError as refusal:
+            with trace.use_span(span, end_on_exit=False):
+                logger.warning(
+                    "Runtime taint policy refused a turn on profile '%s': %s",
+                    self.service_config.id,
+                    refusal,
+                )
+                refusal_event = LLMStreamEvent(
+                    type="error",
+                    error=str(refusal),
+                    metadata={"error_id": str(uuid.uuid4())},
+                )
+            yield refusal_event
+        except Exception as e:
+            with trace.use_span(span, end_on_exit=False):
+                span.set_status(StatusCode.ERROR, str(e))
+                span.record_exception(e)
+                logger.exception(f"Error in streaming chat interaction: {e}")
+                processing_error_traceback = traceback.format_exc()
+                error_message = _user_friendly_error_message(e)
+                await self._persist_error_history_message(
+                    db_context,
+                    error_message=error_message,
+                    error_traceback=processing_error_traceback,
+                    interface_type=interface_type,
+                    conversation_id=conversation_id,
+                    turn_id=turn_id,
+                    thread_root_id=thread_root_id_for_turn,
+                    subconversation_id=subconversation_id,
+                    user_id=user_id,
+                )
+                error_event = LLMStreamEvent(
+                    type="error",
+                    error=error_message,
+                    metadata={"error_id": str(uuid.uuid4())},
+                )
+            yield error_event
         finally:
-            span.end()
+            try:
+                await traced_iterator.aclose()
+            finally:
+                try:
+                    await events.aclose()
+                finally:
+                    span.end()

@@ -62,8 +62,6 @@ async def process_document_ingestion_request(
             "task_enqueued": bool,
             "error_detail": str | None
     """
-    file_ref: str | None = None
-    detected_mime_type: str | None = None
     original_filename_for_task: str | None = uploaded_file_filename
 
     if doc_metadata is None:
@@ -77,119 +75,22 @@ async def process_document_ingestion_request(
         doc_metadata["original_filename"] = original_filename_for_task
 
     try:
-        # Process uploaded file content if present
-        if uploaded_file_content and uploaded_file_filename:
-            if not document_storage_path:
-                raise ValueError(
-                    "File content provided, but document_storage_path is not configured."
-                )
-            original_filename_for_task = uploaded_file_filename
-            safe_basename = re.sub(
-                r"[^a-zA-Z0-9_.-]",
-                "_",
-                os.path.basename(uploaded_file_filename),
-            )
-            unique_filename = f"{uuid.uuid4()}_{safe_basename}"
-            target_file_path = document_storage_path / unique_filename
-
-            await asyncio.to_thread(
-                document_storage_path.mkdir, parents=True, exist_ok=True
-            )
-
-            await asyncio.to_thread(target_file_path.write_bytes, uploaded_file_content)
-
-            file_ref = str(target_file_path)
-            logger.info(
-                f"Uploaded file content for '{uploaded_file_filename}' saved to '{file_ref}' for document {source_id}."
-            )
-
-            try:
-                kind = filetype.guess(file_ref)
-                if kind is None:
-                    logger.warning(
-                        f"Could not determine file type for '{uploaded_file_filename}' (path: {file_ref}). "
-                        f"Falling back to client-provided content type: {uploaded_file_content_type}."
-                    )
-                    detected_mime_type = uploaded_file_content_type
-                else:
-                    detected_mime_type = kind.mime
-                    logger.info(
-                        f"Detected MIME type for '{uploaded_file_filename}' (path: {file_ref}): {detected_mime_type}"
-                    )
-            except Exception as fe:
-                logger.exception(
-                    f"Error detecting file type for '{uploaded_file_filename}' (path: {file_ref}): {fe}"
-                )
-                detected_mime_type = uploaded_file_content_type
-                logger.warning(
-                    f"Using client-provided content type '{detected_mime_type}' due to detection error for {uploaded_file_filename}."
-                )
-        elif url_to_scrape:
-            logger.info(f"Document ingestion request for URL: {url_to_scrape}")
-            # file_ref and detected_mime_type will remain None, original_filename_for_task also None
-        elif content_parts:
-            logger.info("Document ingestion request with content_parts.")
-            # file_ref and detected_mime_type will remain None, original_filename_for_task also None
-        else:
-            # This case should ideally be caught by the caller, but as a safeguard:
-            return {
-                "message": "Ingestion request failed: No content provided.",
-                "document_id": None,
-                "task_enqueued": False,
-                "error_detail": (
-                    "No file content, URL, or content_parts provided for ingestion."
-                ),
-            }
-
-        # Create Document Record in DB
-        doc_for_storage = IngestedDocument(
-            source_type=source_type,
-            source_id=source_id,
-            source_uri=source_uri,
-            title=title,
-            created_at=created_at_dt,
-            metadata=doc_metadata,
-            file_path=file_ref,
+        return await _process_document_ingestion_request(
+            db_context,
+            document_storage_path,
+            source_type,
+            source_id,
+            source_uri,
+            title,
+            content_parts,
+            uploaded_file_content,
+            uploaded_file_filename,
+            uploaded_file_content_type,
+            url_to_scrape,
+            created_at_dt,
+            doc_metadata,
+            original_filename_for_task,
         )
-
-        async def _store_and_enqueue(txn: "DatabaseTransaction") -> tuple[int, str]:
-            """Create the document record and queue its processing as one unit.
-
-            Split, a failed enqueue leaves a committed document with no task
-            behind it: never indexed, and the retry that would fix it collides
-            with the source identity already in the table.
-            """
-            document_id: int = await txn.vector.add_document(
-                doc=doc_for_storage,
-            )
-            logger.info(
-                f"Stored document record for {source_id}, got DB ID: {document_id}"
-            )
-
-            task_id = f"index-doc-{document_id}-{uuid.uuid4()}"
-            await txn.tasks.enqueue(
-                task_id=task_id,
-                task_type="process_uploaded_document",
-                payload={
-                    "document_id": document_id,
-                    "content_parts": content_parts,
-                    "file_ref": file_ref,
-                    "mime_type": detected_mime_type,
-                    "original_filename": original_filename_for_task,
-                    "url_to_scrape": url_to_scrape,
-                },
-            )
-            return document_id, task_id
-
-        document_id, task_id = await db_context.atomic(_store_and_enqueue)
-        logger.info(f"Enqueued task '{task_id}' to process document ID {document_id}")
-        return {
-            "message": "Document received and accepted for processing.",
-            "document_id": document_id,
-            "task_enqueued": True,
-            "error_detail": None,
-        }
-
     except (
         ValueError,
         json.JSONDecodeError,
@@ -242,3 +143,121 @@ async def process_document_ingestion_request(
             "error_detail": error_detail,
             "status_code": 500,  # Hint for API layer
         }
+
+
+async def _process_document_ingestion_request(
+    db_context: "Database",
+    document_storage_path: pathlib.Path | None,
+    source_type: str,
+    source_id: str,
+    source_uri: str | None,
+    title: str | None,
+    content_parts: dict[str, str] | None,
+    uploaded_file_content: bytes | None,
+    uploaded_file_filename: str | None,
+    uploaded_file_content_type: str | None,
+    url_to_scrape: str | None,
+    created_at_dt: datetime | None,
+    doc_metadata: dict[str, object],
+    original_filename_for_task: str | None,
+) -> IngestionResult:
+    file_ref: str | None = None
+    detected_mime_type: str | None = None
+
+    if uploaded_file_content and uploaded_file_filename:
+        if not document_storage_path:
+            raise ValueError(
+                "File content provided, but document_storage_path is not configured."
+            )
+        safe_basename = re.sub(
+            r"[^a-zA-Z0-9_.-]", "_", os.path.basename(uploaded_file_filename)
+        )
+        target_file_path = document_storage_path / f"{uuid.uuid4()}_{safe_basename}"
+        await asyncio.to_thread(
+            document_storage_path.mkdir, parents=True, exist_ok=True
+        )
+        await asyncio.to_thread(target_file_path.write_bytes, uploaded_file_content)
+        file_ref = str(target_file_path)
+        logger.info(
+            f"Uploaded file content for '{uploaded_file_filename}' saved to '{file_ref}' for document {source_id}."
+        )
+        try:
+            detected_mime_type = _detect_mime_type(
+                file_ref, uploaded_file_filename, uploaded_file_content_type
+            )
+        except Exception as file_type_error:
+            logger.exception(
+                f"Error detecting file type for '{uploaded_file_filename}' (path: {file_ref}): {file_type_error}"
+            )
+            detected_mime_type = uploaded_file_content_type
+            logger.warning(
+                f"Using client-provided content type '{detected_mime_type}' due to detection error for {uploaded_file_filename}."
+            )
+    elif url_to_scrape:
+        logger.info(f"Document ingestion request for URL: {url_to_scrape}")
+    elif content_parts:
+        logger.info("Document ingestion request with content_parts.")
+    else:
+        return {
+            "message": "Ingestion request failed: No content provided.",
+            "document_id": None,
+            "task_enqueued": False,
+            "error_detail": "No file content, URL, or content_parts provided for ingestion.",
+        }
+
+    doc_for_storage = IngestedDocument(
+        source_type=source_type,
+        source_id=source_id,
+        source_uri=source_uri,
+        title=title,
+        created_at=created_at_dt,
+        metadata=doc_metadata,
+        file_path=file_ref,
+    )
+
+    async def _store_and_enqueue(txn: "DatabaseTransaction") -> tuple[int, str]:
+        """Create the document record and queue its processing as one unit."""
+        document_id: int = await txn.vector.add_document(doc=doc_for_storage)
+        logger.info(f"Stored document record for {source_id}, got DB ID: {document_id}")
+        task_id = f"index-doc-{document_id}-{uuid.uuid4()}"
+        await txn.tasks.enqueue(
+            task_id=task_id,
+            task_type="process_uploaded_document",
+            payload={
+                "document_id": document_id,
+                "content_parts": content_parts,
+                "file_ref": file_ref,
+                "mime_type": detected_mime_type,
+                "original_filename": original_filename_for_task,
+                "url_to_scrape": url_to_scrape,
+            },
+        )
+        return document_id, task_id
+
+    document_id, task_id = await db_context.atomic(_store_and_enqueue)
+    logger.info(f"Enqueued task '{task_id}' to process document ID {document_id}")
+    return {
+        "message": "Document received and accepted for processing.",
+        "document_id": document_id,
+        "task_enqueued": True,
+        "error_detail": None,
+    }
+
+
+def _detect_mime_type(
+    file_ref: str,
+    uploaded_file_filename: str,
+    uploaded_file_content_type: str | None,
+) -> str | None:
+    kind = filetype.guess(file_ref)
+    if kind is None:
+        logger.warning(
+            f"Could not determine file type for '{uploaded_file_filename}' (path: {file_ref}). "
+            f"Falling back to client-provided content type: {uploaded_file_content_type}."
+        )
+        return uploaded_file_content_type
+    detected_mime_type: str = kind.mime
+    logger.info(
+        f"Detected MIME type for '{uploaded_file_filename}' (path: {file_ref}): {detected_mime_type}"
+    )
+    return detected_mime_type

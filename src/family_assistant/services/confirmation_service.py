@@ -24,13 +24,43 @@ if TYPE_CHECKING:
         ConfirmationRequestRow,
         ConfirmationStatus,
     )
-    from family_assistant.tools.types import ToolArgumentsView
+    from family_assistant.tools.types import (
+        ToolArgumentsView,
+        ToolCallReviewAuthorization,
+    )
 
 logger = logging.getLogger(__name__)
 
 CONFIRMATION_TOOL_EXECUTION_TASK_TYPE = "confirmation_tool_execution"
 DURABLE_CONFIRMATION_STATUS_POLL_SECONDS = 5.0
 DURABLE_CONFIRMATION_EXECUTION_WAIT_SECONDS = 1800.0
+
+
+def _review_authorization_fields(
+    *,
+    authorization: ToolCallReviewAuthorization | None,
+    tool_name: str,
+    tool_call_id: str | None,
+    tool_args: ToolArgumentsView,
+) -> tuple[str | None, str | None, str | None]:
+    """Return persisted policy fields only for the exact reviewed call."""
+    if authorization is None:
+        return None, None, None
+    if (
+        authorization.tool_name != tool_name
+        or authorization.tool_args != tool_args
+        or authorization.call_id not in {"", tool_call_id or ""}
+    ):
+        logger.warning(
+            "Ignoring mismatched tool-call review authorization for durable %s",
+            tool_name,
+        )
+        return None, None, None
+    return (
+        authorization.sink_class,
+        authorization.static_policy_reason,
+        authorization.taint_policy_reason,
+    )
 
 
 class ConfirmationError(Exception):
@@ -82,6 +112,7 @@ class ConfirmationService:
         sink_class: str | None = None,
         static_policy_reason: str | None = None,
         taint_policy_reason: str | None = None,
+        tool_call_review_authorization: ToolCallReviewAuthorization | None = None,
         decision_only: bool = False,
     ) -> ConfirmationRequestRow:
         """Create a durable pending confirmation request.
@@ -90,6 +121,18 @@ class ConfirmationService:
         executing the tool inline rather than enqueueing a background execution
         task — see :meth:`_approve`.
         """
+        if tool_call_review_authorization is not None:
+            (
+                sink_class,
+                static_policy_reason,
+                taint_policy_reason,
+            ) = _review_authorization_fields(
+                authorization=tool_call_review_authorization,
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+                tool_args=tool_args,
+            )
+
         request_id = f"confirm_{uuid.uuid4().hex[:12]}"
         request = await self._db.confirmation_requests.create(
             request_id=request_id,
@@ -367,6 +410,7 @@ async def create_durable_confirmation(
     sink_class: str | None = None,
     static_policy_reason: str | None = None,
     taint_policy_reason: str | None = None,
+    tool_call_review_authorization: ToolCallReviewAuthorization | None = None,
 ) -> ConfirmationRequestRow:
     """Record a durable pending confirmation for a tool that needs approval.
 
@@ -400,4 +444,5 @@ async def create_durable_confirmation(
         sink_class=sink_class,
         static_policy_reason=static_policy_reason,
         taint_policy_reason=taint_policy_reason,
+        tool_call_review_authorization=tool_call_review_authorization,
     )

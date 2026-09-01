@@ -46,6 +46,7 @@ class ToolPolicyDecision(StrEnum):
     ALLOW = "allow"
     DENY = "deny"
     CONFIRM = "confirm"
+    REVIEW = "review"
 
 
 class ToolMatcher(BaseModel):

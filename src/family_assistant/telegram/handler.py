@@ -53,8 +53,16 @@ from family_assistant.telegram.chunking import (
     split_message_text,
 )
 from family_assistant.telegram.markdown_utils import convert_to_telegram_markdown
+from family_assistant.telegram.rich_messages import (
+    is_rich_message_compatibility_error,
+    send_rich_message,
+    should_attempt_rich_message,
+)
 from family_assistant.telegram.types import AttachmentData, TriggerAttachment
-from family_assistant.tools.confirmation import TOOL_CONFIRMATION_RENDERERS
+from family_assistant.tools.confirmation import (
+    TOOL_CONFIRMATION_RENDERERS,
+    append_review_reason_to_confirmation,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -494,18 +502,21 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 user_id_str = resolved_user.user_id
 
                 for attachment in all_attachments:
-                    try:
+
+                    async def register_attachment(
+                        current_attachment: AttachmentData,
+                    ) -> None:
                         attachment_metadata = await self.telegram_service.attachment_registry.register_user_attachment(
                             db_context=db_context,
-                            content=attachment.content,
-                            filename=attachment.filename,
-                            mime_type=attachment.mime_type,
+                            content=current_attachment.content,
+                            filename=current_attachment.filename,
+                            mime_type=current_attachment.mime_type,
                             conversation_id=str(chat_id),
                             # Don't pass message_id here - the message_history entry
                             # doesn't exist yet and we use the internal DB ID, not
                             # the Telegram message ID
                             user_id=user_id_str,
-                            description=attachment.description
+                            description=current_attachment.description
                             or f"Telegram attachment from {user_name}",
                         )
 
@@ -557,6 +568,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         logger.info(
                             f"Stored Telegram attachment: {attachment_metadata.attachment_id} ({filename_log})"
                         )
+
+                    try:
+                        await register_attachment(attachment)
                     except Exception as attach_err:
                         logger.exception(
                             f"Error storing individual attachment '{attachment.filename}' from batch: {attach_err}"
@@ -573,17 +587,17 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         "Error: Could not process any of the attached files.",
                     )
 
-            sent_assistant_message: Message | None = None
             processing_error_traceback: str | None = None
-            pending_mid_turn_batch: list[
-                tuple[Update, list[AttachmentData] | None]
-            ] = []
             logger.debug(f"Proceeding with trigger content and user '{user_name}'.")
 
             interface_type = "telegram"
             conversation_id = str(chat_id)
 
-            try:
+            async def process_turn() -> None:
+                nonlocal processing_error_traceback, user_message_id
+                pending_mid_turn_batch: list[
+                    tuple[Update, list[AttachmentData] | None]
+                ] = []
                 selected_processing_service: ProcessingService = self.processing_service
 
                 if not selected_processing_service:
@@ -601,7 +615,12 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 replied_to_db_msg = None
 
                 if replied_to_interface_id:
-                    try:
+
+                    async def resolve_reply_context() -> None:
+                        nonlocal replied_to_db_msg
+                        nonlocal selected_processing_service
+                        nonlocal thread_root_id_for_turn
+                        assert replied_to_interface_id is not None
                         replied_to_db_msg = (
                             await db_context.message_history.get_row_by_interface_id(
                                 interface_type=interface_type,
@@ -650,6 +669,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                                 f"Could not find replied-to message {replied_to_interface_id} in DB. "
                                 f"Using default processing service ('{selected_processing_service.service_config.id}')."
                             )
+
+                    try:
+                        await resolve_reply_context()
                     except Exception as thread_err:
                         logger.exception(
                             f"Error determining thread root ID or profile from reply: {thread_err}"
@@ -693,6 +715,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             prompt_text = await renderer(tool_args, context)
                         else:
                             prompt_text = f"Confirm execution of tool: {tool_name}"
+                        prompt_text = append_review_reason_to_confirmation(
+                            prompt_text, context
+                        )
 
                         source_message_internal_id = None
                         if turn_id is not None:
@@ -720,6 +745,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             source_message_internal_id=source_message_internal_id,
                             taint_state_json=taint_state_json,
                             processing_profile_id=context.processing_profile_id,
+                            tool_call_review_authorization=(
+                                context.tool_call_review_authorization
+                            ),
                         )
                         return result
 
@@ -777,37 +805,64 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 force_reply_markup = ForceReply(selective=False)
 
                 if final_llm_content_to_send:
-                    # Convert to Telegram MarkdownV2 with bug fixes
-                    text_to_send, parse_mode = convert_to_telegram_markdown(
-                        final_llm_content_to_send
-                    )
-
-                    try:
-                        sent_assistant_message = await self._send_message_chunks(
-                            context=context,
-                            chat_id=chat_id,
-                            text=text_to_send,
-                            parse_mode=ParseMode.MARKDOWN_V2 if parse_mode else None,
-                            reply_to_message_id=reply_target_message_id,
-                            reply_markup=force_reply_markup,
-                        )
-                    except BadRequest as parse_err:
-                        # Defense-in-depth: If Telegram still rejects due to parse errors, fall back to plain text
-                        if "Can't parse entities" in str(parse_err) and parse_mode:
-                            logger.warning(
-                                f"Telegram rejected MarkdownV2 message (parse error): {parse_err}. Falling back to plain text.",
-                                exc_info=False,
-                            )
-                            sent_assistant_message = await self._send_message_chunks(
-                                context=context,
+                    sent_assistant_message = None
+                    if should_attempt_rich_message(final_llm_content_to_send):
+                        try:
+                            sent_assistant_message = await send_rich_message(
+                                bot=context.bot,
                                 chat_id=chat_id,
                                 text=final_llm_content_to_send,
-                                parse_mode=None,
                                 reply_to_message_id=reply_target_message_id,
                                 reply_markup=force_reply_markup,
                             )
-                        else:
-                            raise
+                            logger.info(
+                                "Sent assistant response as Telegram rich message to chat %s.",
+                                chat_id,
+                            )
+                        except Exception as rich_err:
+                            if not is_rich_message_compatibility_error(rich_err):
+                                raise
+                            logger.info(
+                                "Telegram rejected rich message (%s); falling back to standard sendMessage.",
+                                rich_err,
+                            )
+
+                    if sent_assistant_message is None:
+                        # Convert to Telegram MarkdownV2 with bug fixes
+                        text_to_send, parse_mode = convert_to_telegram_markdown(
+                            final_llm_content_to_send
+                        )
+
+                        try:
+                            sent_assistant_message = await self._send_message_chunks(
+                                context=context,
+                                chat_id=chat_id,
+                                text=text_to_send,
+                                parse_mode=ParseMode.MARKDOWN_V2
+                                if parse_mode
+                                else None,
+                                reply_to_message_id=reply_target_message_id,
+                                reply_markup=force_reply_markup,
+                            )
+                        except BadRequest as parse_err:
+                            # Defense-in-depth: If Telegram still rejects due to parse errors, fall back to plain text
+                            if "Can't parse entities" in str(parse_err) and parse_mode:
+                                logger.warning(
+                                    f"Telegram rejected MarkdownV2 message (parse error): {parse_err}. Falling back to plain text.",
+                                    exc_info=False,
+                                )
+                                sent_assistant_message = (
+                                    await self._send_message_chunks(
+                                        context=context,
+                                        chat_id=chat_id,
+                                        text=final_llm_content_to_send,
+                                        parse_mode=None,
+                                        reply_to_message_id=reply_target_message_id,
+                                        reply_markup=force_reply_markup,
+                                    )
+                                )
+                            else:
+                                raise
 
                     if (
                         sent_assistant_message
@@ -893,6 +948,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         context=context,
                     )
 
+            try:
+                await process_turn()
             except Exception as e:
                 logger.exception(
                     f"Unhandled error in process_chat_queue for chat {chat_id}: {e}"
@@ -922,7 +979,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                         )
 
                 if processing_error_traceback and user_message_id:
-                    try:
+
+                    async def save_error_traceback() -> None:
                         db_ctx_err = self.database
                         user_msg_record = (
                             await db_ctx_err.message_history.get_row_by_interface_id(
@@ -947,6 +1005,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             logger.error(
                                 "Could not find user message record to attach error traceback."
                             )
+
+                    try:
+                        await save_error_traceback()
                     except Exception as db_err_save:
                         logger.exception(
                             f"Failed to save error traceback to DB for chat {chat_id}: {db_err_save}"
@@ -1170,16 +1231,22 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             logger.info(
                 f"Slash command message {update.message.message_id} from chat {chat_id} contains photo."
             )
-            try:
+
+            async def load_photo() -> bytes:
+                assert update.message is not None
                 photo_size = update.message.photo[-1]
                 photo_file = await photo_size.get_file()
                 with io.BytesIO() as buf:
                     await photo_file.download_to_memory(out=buf)
                     buf.seek(0)
-                    photo_bytes = buf.read()
+                    loaded_photo = buf.read()
                 logger.debug(
                     f"Photo from slash command message {update.message.message_id} loaded."
                 )
+                return loaded_photo
+
+            try:
+                photo_bytes = await load_photo()
             except Exception as img_err:
                 logger.exception(
                     f"Failed to process photo for slash command {update.message.message_id}: {img_err}"
@@ -1214,10 +1281,10 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
         db_ctx = self.database
         processing_error_traceback: str | None = None
-        final_llm_content_to_send: str | None = None
-        last_assistant_internal_id: int | None = None
 
-        try:
+        async def process_command() -> None:
+            nonlocal processing_error_traceback
+            assert update.message is not None
 
             async def confirmation_callback_wrapper(
                 interface_type: str,
@@ -1236,6 +1303,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     prompt_text = await renderer(tool_args, context)
                 else:
                     prompt_text = f"Confirm execution of tool: {tool_name}"
+                prompt_text = append_review_reason_to_confirmation(prompt_text, context)
 
                 source_message_internal_id = None
                 if turn_id is not None:
@@ -1244,6 +1312,12 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     )
                     if source_row is not None:
                         source_message_internal_id = source_row["internal_id"]
+
+                taint_state_json = (
+                    context.taint_tracker.snapshot().to_metadata()
+                    if context.taint_tracker is not None
+                    else None
+                )
 
                 return await self.confirmation_manager.request_confirmation(
                     conversation_id=conversation_id,
@@ -1256,6 +1330,11 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     target_user_id=resolved_user.user_id,
                     tool_call_id=call_id,
                     source_message_internal_id=source_message_internal_id,
+                    taint_state_json=taint_state_json,
+                    processing_profile_id=context.processing_profile_id,
+                    tool_call_review_authorization=(
+                        context.tool_call_review_authorization
+                    ),
                 )
 
             chat_interfaces = self._get_chat_interfaces()
@@ -1291,37 +1370,59 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
             if final_llm_content_to_send:
                 sent_assistant_message = None
-                # Convert to Telegram MarkdownV2 with bug fixes
-                text_to_send, parse_mode = convert_to_telegram_markdown(
-                    final_llm_content_to_send
-                )
-
-                try:
-                    sent_assistant_message = await self._send_message_chunks(
-                        context=context,
-                        chat_id=chat_id,
-                        text=text_to_send,
-                        parse_mode=ParseMode.MARKDOWN_V2 if parse_mode else None,
-                        reply_to_message_id=reply_target_message_id_for_bot,
-                        reply_markup=force_reply_markup,
-                    )
-                except BadRequest as parse_err:
-                    # Defense-in-depth: If Telegram still rejects due to parse errors, fall back to plain text
-                    if "Can't parse entities" in str(parse_err) and parse_mode:
-                        logger.warning(
-                            f"Telegram rejected MarkdownV2 message (parse error): {parse_err}. Falling back to plain text.",
-                            exc_info=False,
-                        )
-                        sent_assistant_message = await self._send_message_chunks(
-                            context=context,
+                if should_attempt_rich_message(final_llm_content_to_send):
+                    try:
+                        sent_assistant_message = await send_rich_message(
+                            bot=context.bot,
                             chat_id=chat_id,
                             text=final_llm_content_to_send,
-                            parse_mode=None,
                             reply_to_message_id=reply_target_message_id_for_bot,
                             reply_markup=force_reply_markup,
                         )
-                    else:
-                        raise
+                        logger.info(
+                            "Sent slash command response as Telegram rich message to chat %s.",
+                            chat_id,
+                        )
+                    except Exception as rich_err:
+                        if not is_rich_message_compatibility_error(rich_err):
+                            raise
+                        logger.info(
+                            "Telegram rejected slash command rich message (%s); falling back to standard sendMessage.",
+                            rich_err,
+                        )
+
+                if sent_assistant_message is None:
+                    # Convert to Telegram MarkdownV2 with bug fixes
+                    text_to_send, parse_mode = convert_to_telegram_markdown(
+                        final_llm_content_to_send
+                    )
+
+                    try:
+                        sent_assistant_message = await self._send_message_chunks(
+                            context=context,
+                            chat_id=chat_id,
+                            text=text_to_send,
+                            parse_mode=ParseMode.MARKDOWN_V2 if parse_mode else None,
+                            reply_to_message_id=reply_target_message_id_for_bot,
+                            reply_markup=force_reply_markup,
+                        )
+                    except BadRequest as parse_err:
+                        # Defense-in-depth: If Telegram still rejects due to parse errors, fall back to plain text
+                        if "Can't parse entities" in str(parse_err) and parse_mode:
+                            logger.warning(
+                                f"Telegram rejected MarkdownV2 message (parse error): {parse_err}. Falling back to plain text.",
+                                exc_info=False,
+                            )
+                            sent_assistant_message = await self._send_message_chunks(
+                                context=context,
+                                chat_id=chat_id,
+                                text=final_llm_content_to_send,
+                                parse_mode=None,
+                                reply_to_message_id=reply_target_message_id_for_bot,
+                                reply_markup=force_reply_markup,
+                            )
+                        else:
+                            raise
 
                 if sent_assistant_message and last_assistant_internal_id is not None:
                     await db_ctx.message_history.update_interface_id(
@@ -1377,6 +1478,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     reply_to_message_id=reply_target_message_id_for_bot,
                     reply_markup=force_reply_markup,
                 )
+
+        try:
+            await process_command()
         except Exception as e:
             logger.exception(
                 f"Unhandled error in handle_generic_slash_command for chat {chat_id}: {e}"
@@ -1470,7 +1574,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 chat_id, update.message.media_group_id, context
             )
 
-        try:
+        async def load_attachments() -> None:
+            assert update.message is not None
             # Handle Photos
             if update.message.photo:
                 logger.info(
@@ -1696,6 +1801,8 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             f"Video from message {update.message.message_id} loaded."
                         )
 
+        try:
+            await load_attachments()
         except BadRequest as br_err:
             await self._cancel_pending_media_group_if_any(update, context)
             error_msg = str(br_err)

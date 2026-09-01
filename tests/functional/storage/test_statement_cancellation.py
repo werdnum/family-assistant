@@ -32,15 +32,15 @@ _MARKER = "test_statement_cancellation_marker"
 # The revision before head: the test rewinds to it so a migration is actually
 # pending while the tight ceiling is in force. Both this and the head asserted
 # below move with each new migration.
-_PREVIOUS_REVISION = "conversation_shares"
-_HEAD_REVISION = "527b07ec550b"
+_PREVIOUS_REVISION = "527b07ec550b"
+_HEAD_REVISION = "tool_call_review_audit"
 _HEAD_REVISION_COLUMNS = (
-    "notify_stage",
-    "notify_attempts",
-    "notify_error",
-    "notify_first_failed_at",
-    "notify_last_failed_at",
+    "review_verdict",
+    "review_status",
+    "review_latency_ms",
+    "review_context_json",
 )
+_HEAD_REVISION_TABLE = "taint_audit_events"
 
 _alembic_version_table = sa.Table(
     "alembic_version",
@@ -194,7 +194,7 @@ async def test_migrations_still_run_under_a_ceiling_that_aborts_queries(
     async def regress_to_previous_revision(txn: DatabaseTransaction) -> None:
         for column in _HEAD_REVISION_COLUMNS:
             await txn.execute(
-                sa.text(f"ALTER TABLE delegation_runs DROP COLUMN {column}")
+                sa.text(f"ALTER TABLE {_HEAD_REVISION_TABLE} DROP COLUMN {column}")
             )
         await txn.execute(
             sa.update(_alembic_version_table).values(version_num=_PREVIOUS_REVISION)
@@ -224,7 +224,9 @@ async def test_migrations_still_run_under_a_ceiling_that_aborts_queries(
             columns = await conn.run_sync(
                 lambda sync_conn: {
                     column["name"]
-                    for column in sa.inspect(sync_conn).get_columns("delegation_runs")
+                    for column in sa.inspect(sync_conn).get_columns(
+                        _HEAD_REVISION_TABLE
+                    )
                 }
             )
             revision = await conn.scalar(

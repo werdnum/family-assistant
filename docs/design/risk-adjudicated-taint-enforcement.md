@@ -620,11 +620,16 @@ proof — holds structurally forever.
   part of implementing this input.
 - The profile id and the matrix cell that delegated the decision, including its floor.
 
-**Verdicts:** `allow` (with one-line reason, audited), `confirm` (escalate to the existing durable
-confirmation machinery, judge's reason included in the rendered prompt so the human sees *why*),
-`deny_and_continue` (structured refusal tool result). Malformed output, timeout, or provider error ⇒
-`confirm`. Every verdict writes a `taint_audit_events` row with the verdict, reason, and latency;
-the existing diagnostics endpoint grows verdict counts.
+**Verdicts:** `allow` (with structured verdict and status audited), `confirm` (escalate to the
+existing durable confirmation machinery, judge's reason included in the rendered prompt so the human
+sees *why*), `deny_and_continue` (structured refusal tool result). Malformed output, timeout, or
+provider error ⇒ `confirm`. Every verdict writes a `taint_audit_events` row with verdict, status,
+latency, delegating context, and a fixed trusted reason; the judge's free-form rationale is not
+copied into durable audit storage. For message-originated calls, the existing `turn_id` plus
+`tool_call_id` correlation locates the canonical stored assistant message if later reconstruction is
+needed. Direct named-sink and other non-message-originated authorizations may have no corresponding
+message row and retain only the structured audit evidence. The existing diagnostics endpoint grows
+verdict counts.
 
 **The judge is itself an injection target, so it never reads the attacker.** The naive design — show
 the judge the full arguments and rely on fencing — would hand untrusted natural language a second
@@ -1072,11 +1077,12 @@ counter fields.
 (profile excludes ambient context ∧ no sensitive reads ∧ no protected history, fail-closed) in the
 evaluator path for `arbitrary_external_message`/`attacker_addressable_egress`. The second clause is
 only sound if every acquisition path records: `jq_query` resolves any acting-user-owned attachment,
-is granted globally (so the browser profile reaches it), and today records no sensitive read and
-carries no `SENSITIVE_DATA` tag — it gains `record_sensitive_read` on attachment resolution, as
-`read_text_attachment` and the document tools already do, and a test walks each exempt profile's
-tool inventory asserting that every tool able to resolve acting-user data records sensitive reads.
-*Verify:* both directions of the acceptance criterion — browser-profile turn unfloored,
+is granted globally (so the browser profile reaches it), and therefore carries `SENSITIVE_DATA`. The
+central tool-execution chokepoint reserves every read-only sensitive call before execution and
+records a conservative tool-level read after success unless the implementation supplied a narrower
+scope, as `read_text_attachment` and the document tools already do. A test walks each exempt
+profile's tool inventory asserting that every tool able to resolve acting-user data reaches this
+chokepoint. *Verify:* both directions of the acceptance criterion — browser-profile turn unfloored,
 context-bearing turn floored, indeterminate input floored, and post-handback/cookie-jar
 credential-bearing sessions re-floored via recorded sensitive reads.
 

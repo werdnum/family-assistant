@@ -15,7 +15,7 @@ import uuid
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta  # Added Union
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Required, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Literal, Required, TypedDict, cast
 
 import aiofiles.os
 from dateutil import rrule
@@ -33,7 +33,6 @@ from family_assistant.actions import (
 from family_assistant.llm.messages import (
     AssistantMessage,
     MessageAttachmentMetadata,
-    SystemMessage,
     UserMessage,
 )
 from family_assistant.processing import (
@@ -104,6 +103,10 @@ from family_assistant.services.deferred_tool_confirmation import (
 )
 from family_assistant.services.notification_targets import notify_conversation
 from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
+from family_assistant.services.tool_call_review import (
+    TriggerReviewInput,
+    build_delegation_review_trigger,
+)
 from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.storage.database import (
     Database,
@@ -120,17 +123,60 @@ from family_assistant.storage.tasks import (
 )
 from family_assistant.tools import ToolExecutionContext
 from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
-from family_assistant.tools.confirmation import TOOL_CONFIRMATION_RENDERERS
+from family_assistant.tools.confirmation import (
+    TOOL_CONFIRMATION_RENDERERS,
+    append_review_reason_to_confirmation,
+)
 from family_assistant.tools.stored_scripts import AUTOMATION_RUNTIME_GLOBALS
 from family_assistant.tools.types import (
     ConfirmationOutcome,
     RequestConfirmationCallback,
+    ToolCallReviewAuthorization,
+    ToolConfirmationAuthorization,
     ToolResult,
 )
 from family_assistant.utils.clock import Clock, SystemClock
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+
+
+async def _delegation_run_review_trigger(
+    exec_context: ToolExecutionContext,
+    run: DelegationRunDict,
+    *,
+    trigger_type: str,
+    active_request_role: Literal["user", "system"],
+    payload_present: bool,
+) -> TriggerReviewInput:
+    """Build a delegation run's review trigger from the turn that delegated.
+
+    The request text was composed by the delegating turn's model and so carries
+    that turn's persisted taint. The human message behind it is read back from
+    the delegating turn's stored rows, where its own provenance decides whether
+    the reviewer may read it -- a run delegated off an email-intake turn
+    propagates nothing, because that turn's user row is not trusted, and one
+    delegated off another unattended turn propagates nothing either, because
+    that turn's rows hold composed text rather than a human request.
+    """
+    return await build_delegation_review_trigger(
+        exec_context.db_context,
+        trigger_type=trigger_type,
+        active_request_role=active_request_role,
+        definition=run["request_text"],
+        definition_taint_metadata=run["taint_state_json"],
+        payload_present=payload_present,
+        source_turn_id=run["source_turn_id"],
+        # A subconversation turn holds a composed goal rather than a human
+        # message. The delegating turn's other unattended shapes are excluded by
+        # the visible-rows read: a completion wake's result data is an internal
+        # row, and an event or script trigger row carries untrusted provenance.
+        source_started_by_human=run["source_subconversation_id"] is None,
+        # The delegating turn keeps accepting steering input after this run was
+        # queued. The run answers to the request that caused it, so read the
+        # turn as it stood when it was created.
+        source_rows_before=run["created_at"],
+    )
 
 
 def _taint_sources_from_delegation_run(
@@ -379,6 +425,11 @@ class LlmCallbackPayload(TypedDict, total=False):
     # future-callback wakes carry their originating profile. Absent for reminders
     # (which switch to the "reminder" profile) and legacy tasks (run as default).
     processing_profile_id: str
+    # Reviewer-only trigger metadata. Kept separate from callback_context so an
+    # external event payload can never be mistaken for an automation definition.
+    tool_call_review_trigger_type: str
+    tool_call_review_trigger_definition: str | None
+    tool_call_review_trigger_payload_present: bool
 
 
 class ScriptExecutionPayload(TypedDict, total=False):
@@ -402,6 +453,114 @@ class ScriptExecutionPayload(TypedDict, total=False):
     # user) that created the automation, so validation and execution agree.
     processing_profile_id: str
     created_by_user_id: str
+
+
+def _llm_callback_review_trigger(
+    payload: LlmCallbackPayload,
+    # ast-grep-ignore: no-dict-any - Legacy event callbacks carry arbitrary external JSON
+    callback_context: str | dict[str, Any],
+    *,
+    is_reminder: bool,
+) -> TriggerReviewInput:
+    """Build a fail-closed trigger from explicit or legacy callback metadata."""
+    metadata = payload.get("metadata")
+    metadata_source = metadata.get("source") if isinstance(metadata, dict) else None
+    legacy_event_payload = isinstance(callback_context, dict) and (
+        "event_data" in callback_context or "listener_id" in callback_context
+    )
+    legacy_script_payload = metadata_source == "script_wake_llm"
+
+    trigger_type = payload.get("tool_call_review_trigger_type")
+    if trigger_type is None:
+        if is_reminder:
+            trigger_type = "reminder"
+        elif legacy_script_payload:
+            trigger_type = "script_wake_llm"
+        elif legacy_event_payload:
+            trigger_type = "event_listener"
+        else:
+            trigger_type = str(payload.get("automation_type") or "scheduled_callback")
+
+    if "tool_call_review_trigger_definition" in payload:
+        definition = payload.get("tool_call_review_trigger_definition")
+    elif legacy_script_payload:
+        # Legacy script wakes combine script output and external event data in
+        # callback_context. Omitting the definition is safer than treating that
+        # combined payload as human-authored intent.
+        definition = None
+    elif isinstance(callback_context, str):
+        definition = callback_context
+    else:
+        # Legacy event callbacks put the configured listener instruction in the
+        # `message` member and the untrusted event in `event_data`. Extract only
+        # the former; never serialize the combined object as a definition.
+        message = callback_context.get("message")
+        definition = message if isinstance(message, str) else None
+
+    payload_present = payload.get("tool_call_review_trigger_payload_present")
+    if payload_present is None:
+        payload_present = legacy_event_payload or legacy_script_payload
+
+    return TriggerReviewInput(
+        trigger_type=trigger_type,
+        active_request_role="user",
+        definition=definition,
+        # Definitions do not persist authoring provenance yet. They must remain
+        # stubs until the storage schema can prove trusted authorship.
+        definition_taint_metadata=None,
+        payload_present=payload_present,
+    )
+
+
+def _llm_callback_trigger_taint_sources(
+    payload: LlmCallbackPayload,
+    trigger: TriggerReviewInput,
+) -> tuple[TaintSource, ...]:
+    """Return fail-closed provenance for unattended external callback content.
+
+    Callback wrappers are not trusted user turns. Only a payload-free definition
+    with explicit trusted-user provenance may enter as trusted intent. Everything
+    else must enter the live tracker as unknown external and stay a tainted user
+    message; promoting attacker-controlled callback text to a system message
+    would give it instruction priority despite its provenance.
+    """
+    definition_is_explicitly_trusted = (
+        trigger.definition is not None
+        and trigger.definition_taint_metadata is not None
+        and TurnTaintState.from_metadata(trigger.definition_taint_metadata).max_tier
+        is SourceTrustTier.TRUSTED_USER
+    )
+    if definition_is_explicitly_trusted and not trigger.payload_present:
+        return ()
+
+    if trigger.trigger_type == "event_listener":
+        source_type = TaintSourceType.EVENT
+        reason = "Event-listener callback content is an untrusted external trigger."
+    elif trigger.trigger_type in {"script_wake_llm", "script_failure"}:
+        source_type = TaintSourceType.AUTOMATION_TRIGGER
+        reason = (
+            "Script callback content has untrusted automation provenance "
+            f"({trigger.trigger_type})."
+        )
+    else:
+        source_type = TaintSourceType.AUTOMATION_TRIGGER
+        reason = (
+            "Unattended callback content lacks explicit trusted-user provenance "
+            f"({trigger.trigger_type})."
+        )
+
+    automation_id = payload.get("automation_id")
+    return (
+        TaintSource(
+            source_type=source_type,
+            source_id=(
+                f"automation:{automation_id}" if automation_id is not None else None
+            ),
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset({"unattended_callback"}),
+            reason=reason,
+        ),
+    )
 
 
 class SystemEventCleanupPayload(TypedDict, total=False):
@@ -623,19 +782,19 @@ async def _schedule_reminder_follow_up(
 
     try:
         amount = int(interval_parts[0])
-        unit = interval_parts[1].rstrip("s")  # Remove plural 's'
-
-        if unit == "minute":
-            delta = timedelta(minutes=amount)
-        elif unit == "hour":
-            delta = timedelta(hours=amount)
-        elif unit == "day":
-            delta = timedelta(days=amount)
-        else:
-            logger.error(f"Unknown time unit in follow-up interval: {unit}")
-            return
     except ValueError:
         logger.error(f"Invalid follow-up interval: {follow_up_interval}")
+        return
+
+    unit = interval_parts[1].rstrip("s")  # Remove plural 's'
+    if unit == "minute":
+        delta = timedelta(minutes=amount)
+    elif unit == "hour":
+        delta = timedelta(hours=amount)
+    elif unit == "day":
+        delta = timedelta(days=amount)
+    else:
+        logger.error(f"Unknown time unit in follow-up interval: {unit}")
         return
 
     clock = exec_context.clock or SystemClock()
@@ -654,6 +813,11 @@ async def _schedule_reminder_follow_up(
         "user_name": exec_context.user_name,  # Preserve user_name for follow-up
         "callback_context": original_context,
         "scheduling_timestamp": current_scheduling_timestamp,
+        "tool_call_review_trigger_type": "reminder",
+        "tool_call_review_trigger_definition": (
+            original_context if isinstance(original_context, str) else None
+        ),
+        "tool_call_review_trigger_payload_present": False,
         "reminder_config": {
             "is_reminder": True,
             "follow_up": True,
@@ -916,6 +1080,11 @@ async def handle_llm_callback(
             )
             processing_service = resolved_service
 
+    # Callback execution is local-only. The registry is typed for both local
+    # and remote delegation services, while the guarded resolution above only
+    # returns a concrete local ProcessingService.
+    processing_service = cast("ProcessingService", processing_service)
+
     # A profile that may not wake the LLM must not run a woken turn even from an
     # already-enqueued task (legacy queue entries, or the profile's config
     # changed after the wake was scheduled). The creation-path guards cannot
@@ -961,6 +1130,17 @@ async def handle_llm_callback(
         )
         raise ValueError("Invalid scheduling_timestamp format") from e
 
+    # Every attempt of this task shares a turn id, which is what lets a retry
+    # recognise work a previous attempt already persisted. Resolve the exact
+    # callback trigger row before the reminder response query so that row does
+    # not look like a genuine user reply on retry. Excluding its internal id,
+    # rather than every row in the turn, still detects a real user message that
+    # was steered into the same active turn.
+    callback_turn_id = exec_context.turn_id or str(uuid.uuid4())
+    existing_callback_trigger = (
+        await db_context.message_history.get_user_row_by_turn_id(callback_turn_id)
+    )
+
     # For reminders with follow-up enabled, check if user responded since original scheduling
     intervening_messages = []
     if is_reminder and follow_up_enabled:
@@ -975,6 +1155,11 @@ async def handle_llm_callback(
             .where(message_history_table.c.timestamp > scheduling_timestamp_dt)
             .limit(1)
         )
+        if existing_callback_trigger is not None:
+            stmt = stmt.where(
+                message_history_table.c.internal_id
+                != existing_callback_trigger["internal_id"]
+            )
         intervening_messages = await db_context.fetch_all(stmt)
 
         if intervening_messages:
@@ -996,7 +1181,7 @@ async def handle_llm_callback(
         clock.now().astimezone(exec_context.timezone).strftime("%Y-%m-%d %H:%M:%S %Z")
     )  # Use timezone from context
 
-    try:
+    async def process_callback() -> None:
         # Construct the trigger message content for the LLM
         if is_reminder:
             if current_attempt == 1:
@@ -1006,9 +1191,14 @@ async def handle_llm_callback(
         else:
             trigger_text = f"System Callback Trigger:\n\nThe time is now {current_time_str}.\nYour scheduled context was:\n---\n{callback_context}\n---"
 
-        # Every attempt of this task shares a turn id, which is what lets a
-        # retry recognise work a previous attempt already persisted.
-        callback_turn_id = exec_context.turn_id or str(uuid.uuid4())
+        review_trigger = _llm_callback_review_trigger(
+            payload,
+            callback_context,
+            is_reminder=is_reminder,
+        )
+        callback_trigger_taint_sources = _llm_callback_trigger_taint_sources(
+            payload, review_trigger
+        )
 
         # The owner recorded on the payload owns confirm-gated tool calls made on
         # this turn AND any nested scheduled actions the turn creates (those tools
@@ -1042,18 +1232,44 @@ async def handle_llm_callback(
             )
             return
 
-        # Save the initial system trigger message for the callback to history
+        # Callback content is user-role input. Its application-generated wrapper
+        # does not make external content trustworthy enough for system-role
+        # instruction priority; explicit trusted provenance is represented by an
+        # empty taint baseline instead.
         callback_trigger_timestamp = clock.now()
-        await db_context.message_history.add_message(
-            SystemMessage(content=trigger_text),
-            interface_type=interface_type,
-            conversation_id=conversation_id,
-            turn_id=callback_turn_id,
-            timestamp=callback_trigger_timestamp,
+        callback_trigger_taint_state = TurnTaintState.empty()
+        for source in callback_trigger_taint_sources:
+            callback_trigger_taint_state = callback_trigger_taint_state.add_source(
+                source
+            )
+        callback_trigger_message = UserMessage(
+            content=trigger_text,
+            taint_metadata=callback_trigger_taint_state.to_metadata(),
         )
-        logger.info(
-            f"Saved system trigger message for callback {callback_turn_id} to history."
-        )
+        if existing_callback_trigger is None:
+            await db_context.message_history.add_message(
+                callback_trigger_message,
+                interface_type=interface_type,
+                conversation_id=conversation_id,
+                turn_id=callback_turn_id,
+                timestamp=callback_trigger_timestamp,
+                processing_profile_id=processing_service.service_config.id,
+                subconversation_id=exec_context.subconversation_id,
+                user_id=callback_owner_user_id,
+                attachments=trigger_attachments,
+                # This is application-generated turn input, not a user-authored
+                # message. Keep it durable for retry/review reconstruction but
+                # out of user-facing history and profile-adoption queries.
+                is_internal=True,
+            )
+            logger.info(
+                f"Saved trigger message for callback {callback_turn_id} to history."
+            )
+        else:
+            logger.info(
+                f"Reusing trigger message for callback {callback_turn_id} from "
+                "an earlier attempt."
+            )
 
         # --- Generation Phase (committed, durable) ---
         # Call the ProcessingService.
@@ -1069,7 +1285,17 @@ async def handle_llm_callback(
             # find this turn's reply on a retry.
             turn_id=callback_turn_id,
             trigger_content_parts=[{"type": "text", "text": trigger_text}],
-            trigger_interface_message_id=None,  # System trigger
+            trigger_interface_message_id=None,  # Internal callback trigger
+            # External event/script wake content remains user-role input with
+            # explicit unknown-external taint. The taint keeps it out of the
+            # reviewer's trusted-conversation channel without granting the
+            # attacker-controlled content system-role instruction priority.
+            trigger_role="user",
+            # The callback handler persists this row before generation so a
+            # retry after an interrupted generation can reuse the same durable
+            # trigger instead of creating another visible callback message.
+            reuse_existing_user_row=True,
+            initial_taint_sources=callback_trigger_taint_sources,
             user_name=exec_context.user_name,  # Use preserved user name from context
             user_id=callback_owner_user_id,
             replied_to_interface_id=None,  # Not a reply
@@ -1083,6 +1309,7 @@ async def handle_llm_callback(
                 ),
             ),
             trigger_attachments=trigger_attachments,  # Pass attachments from script wake_llm
+            tool_call_review_trigger=review_trigger,
         )
 
         final_llm_content_to_send = result.text_reply
@@ -1164,6 +1391,8 @@ async def handle_llm_callback(
             )
             raise RuntimeError("LLM failed to generate response content for callback.")
 
+    try:
+        await process_callback()
     except Exception as e:
         # Catch errors during the generate_llm_response_for_chat call or sending/saving messages
         # Need interface_type and conversation_id here
@@ -1413,7 +1642,9 @@ class TaskWorker:
             request_confirmation_callback = (
                 self._build_delegation_confirmation_callback(exec_context, run)
             )
-            result = await target_service.handle_chat_interaction(
+            result = await cast(
+                "ProcessingService", target_service
+            ).handle_chat_interaction(
                 db_context=exec_context.db_context,
                 interface_type=run["interface_type"],
                 conversation_id=run["conversation_id"],
@@ -1428,6 +1659,13 @@ class TaskWorker:
                 request_confirmation_callback=request_confirmation_callback,
                 subconversation_id=run["subconversation_id"],
                 initial_taint_sources=_taint_sources_from_delegation_run(run),
+                tool_call_review_trigger=await _delegation_run_review_trigger(
+                    exec_context,
+                    run,
+                    trigger_type="delegation_request",
+                    active_request_role="user",
+                    payload_present=False,
+                ),
             )
         except Exception:
             # A timeout cancellation (CancelledError) is intentionally NOT caught
@@ -2272,6 +2510,7 @@ class TaskWorker:
                 prompt_text = await renderer(tool_args, context)
             else:
                 prompt_text = f"Confirm execution of tool: {tool_name}"
+            prompt_text = append_review_reason_to_confirmation(prompt_text, context)
 
             display_turn_id = run["source_turn_id"] or turn_id
             execution_turn_id = turn_id
@@ -2304,6 +2543,7 @@ class TaskWorker:
                 wait_for_durable_execution=False,
                 taint_state_json=taint_state_json,
                 processing_profile_id=context.processing_profile_id,
+                tool_call_review_authorization=context.tool_call_review_authorization,
             )
 
         return request_confirmation
@@ -2641,6 +2881,13 @@ class TaskWorker:
             trigger_role="system",
             turn_id=wake_turn_id,
             initial_taint_sources=_taint_sources_from_delegation_run(run),
+            tool_call_review_trigger=await _delegation_run_review_trigger(
+                exec_context,
+                run,
+                trigger_type="delegation_completion",
+                active_request_role="system",
+                payload_present=True,
+            ),
         )
 
         # Phase 3: deliver, then record the delivery and mark notified atomically.
@@ -3121,7 +3368,8 @@ class TaskWorker:
         logger.info(
             f"RECURRENCE PROCESSING: Task {task_id} has recurrence rule: {recurrence_rule_str}. Scheduling next instance."
         )
-        try:
+
+        async def schedule_next() -> None:
             # Use the *scheduled_at* time of the completed task as the base for the next occurrence
             last_scheduled_at = task.get("scheduled_at")
             if not last_scheduled_at:
@@ -3199,6 +3447,8 @@ class TaskWorker:
                     f"RECURRENCE END: No further occurrences found for recurring task {original_task_id} based on rule '{recurrence_rule_str}'."
                 )
 
+        try:
+            await schedule_next()
         except Exception as recur_err:
             logger.exception(
                 f"RECURRENCE ERROR: Failed to calculate or enqueue next instance for recurring task {task_id} (Original: {original_task_id}): {recur_err}"
@@ -3446,7 +3696,8 @@ class TaskWorker:
                 "task.id": str(task["task_id"]),
             },
         ) as span:
-            try:
+
+            async def process_task() -> ScheduleAutomationAdvanceRequest | None:
                 # --- Create Execution Context ---
                 # Extract interface identifiers from payload
                 # Need to define these *before* using them in logging etc.
@@ -3628,6 +3879,8 @@ class TaskWorker:
                 )
                 return advance_request
 
+            try:
+                return await process_task()
             except Exception as handler_exc:
                 span.set_status(StatusCode.ERROR, str(handler_exc))
                 span.record_exception(handler_exc)
@@ -3792,7 +4045,7 @@ class TaskWorker:
         # all (allow_wake_llm=False) gets no LLM notification either; the
         # fixed-template push notification in _notify_task_failure still fires.
         script_profile_id = payload_dict.get("processing_profile_id")
-        notify_service = self.processing_service
+        notify_service: ProcessingService | None = self.processing_service
         if (
             script_profile_id
             and self.processing_service
@@ -3809,7 +4062,7 @@ class TaskWorker:
                     script_profile_id,
                 )
                 return
-            notify_service = candidate
+            notify_service = cast("ProcessingService", candidate)
         if notify_service and not notify_service.service_config.allow_wake_llm:
             logger.info(
                 "Skipping LLM error notification for task %s: profile '%s' is not "
@@ -3880,6 +4133,9 @@ class TaskWorker:
             interface_type=interface_type,
             callback_context=callback_context,
             scheduling_timestamp=datetime.now(UTC).isoformat(),
+            tool_call_review_trigger_type="script_failure",
+            tool_call_review_trigger_definition=script_code or None,
+            tool_call_review_trigger_payload_present=True,
         )
         # Run the notification turn under the script's own profile so its tool
         # policy and visibility confinement carry over to the woken turn.
@@ -3961,7 +4217,8 @@ class TaskWorker:
             return
 
         while not self.shutdown_event.is_set():  # Use self.shutdown_event
-            try:
+
+            async def run_iteration() -> None:
                 task = None  # Initialize task variable for the outer scope
                 # Clear the wake event BEFORE attempting a dequeue. Any
                 # notification that arrives after this point (including while the
@@ -3971,21 +4228,22 @@ class TaskWorker:
                 # Database context per iteration (starts a transaction)
                 if not self.engine:
                     raise RuntimeError("Database engine not initialized")
+                engine = self.engine
                 # Split task processing into separate transactions for better isolation
                 outbox_context = Database(
-                    engine=self.engine,
+                    engine=engine,
                 )
                 drained_count = await self._drain_schedule_automation_advance_outbox(
                     outbox_context
                 )
                 if drained_count > 0:
                     self._update_last_activity()
-                    continue
+                    return
 
                 # Transaction 1: Dequeue task (commits immediately)
                 task = None
                 dequeue_context = Database(
-                    engine=self.engine,
+                    engine=engine,
                 )
                 logger.debug(
                     "Polling for tasks on DB context: %s",
@@ -4012,25 +4270,26 @@ class TaskWorker:
                     # remaining work instead of waiting out the poll interval.
                     notify_other_workers(wake_up_event)
                     self._update_last_activity()  # Update activity when starting task processing
-                    try:  # Inner try for task processing
+
+                    async def process_dequeued_task() -> None:
                         # Transaction 2: Process task and update status (commits immediately)
                         process_context = Database(
-                            engine=self.engine,
+                            engine=engine,
                         )
                         advance_request = await self._process_task(
                             process_context, task, wake_up_event
                         )
                         if advance_request is not None:
                             advance_context = Database(
-                                engine=self.engine,
+                                engine=engine,
                             )
                             await self._flush_schedule_automation_advance_outbox(
                                 advance_context, advance_request.source_task_id
                             )
                         self._update_last_activity()  # Update after successful task processing
-                        # After successful task processing, immediately continue to check for more tasks
-                        # This eliminates unnecessary delays between tasks
-                        continue
+
+                    try:  # Inner try for task processing
+                        await process_dequeued_task()
                     except Exception as e:
                         logger.exception(
                             f"Error during task processing for worker {self.worker_id}: {e}"
@@ -4043,6 +4302,8 @@ class TaskWorker:
                     await self._wait_for_next_poll(wake_up_event)
                     self._update_last_activity()  # Update after polling cycle
 
+            try:
+                await run_iteration()
             # --- Exception handling for the outer try block (whole loop iteration) ---
             except asyncio.CancelledError:
                 logger.info(
@@ -4148,7 +4409,8 @@ async def handle_worker_task_cleanup(
     dirs_deleted = 0
     stale_marked = 0
 
-    try:
+    async def clean_up_worker_tasks() -> None:
+        nonlocal db_deleted, dirs_deleted, stale_marked
         # Step 0: Mark stale tasks as failed before cleanup
         stale_marked = await exec_context.db_context.worker_tasks.mark_stale_tasks()
         if stale_marked:
@@ -4190,6 +4452,9 @@ async def handle_worker_task_cleanup(
             f"deleted {db_deleted} database records, {dirs_deleted} task directories "
             f"older than {retention_hours} hours."
         )
+
+    try:
+        await clean_up_worker_tasks()
     except Exception as e:
         logger.exception(f"Error during worker task cleanup: {e}")
         raise
@@ -4321,11 +4586,12 @@ async def _process_script_wake_llm(
             trigger_attachments = []
 
             for attachment_id in all_attachment_ids:
-                try:
+
+                async def add_attachment(current_attachment_id: str) -> None:
                     # Get attachment metadata
                     attachment_metadata = await attachment_registry.get_attachment(
                         db_context=exec_context.db_context,
-                        attachment_id=attachment_id,
+                        attachment_id=current_attachment_id,
                         acting_user_id=exec_context.user_id,
                     )
 
@@ -4364,12 +4630,15 @@ async def _process_script_wake_llm(
                             )
                         )
                         logger.debug(
-                            f"Added attachment {attachment_id} to wake_llm context"
+                            f"Added attachment {current_attachment_id} to wake_llm context"
                         )
                     else:
                         logger.warning(
-                            f"Attachment {attachment_id} not found for script wake_llm"
+                            f"Attachment {current_attachment_id} not found for script wake_llm"
                         )
+
+                try:
+                    await add_attachment(attachment_id)
                 except Exception as e:
                     logger.error(
                         f"Error fetching attachment {attachment_id} for script wake_llm: {e}"
@@ -4429,6 +4698,13 @@ async def _process_script_wake_llm(
         "callback_context": wake_message,
         "scheduling_timestamp": scheduling_timestamp,
         "metadata": combined_context,
+        "tool_call_review_trigger_type": "script_wake_llm",
+        "tool_call_review_trigger_definition": (
+            exec_context.tool_call_review_trigger.definition
+            if exec_context.tool_call_review_trigger is not None
+            else None
+        ),
+        "tool_call_review_trigger_payload_present": bool(wake_contexts),
     }
     if exec_context.user_id is not None:
         payload["created_by_user_id"] = exec_context.user_id
@@ -4653,6 +4929,13 @@ async def handle_script_execution(
             request_confirmation_callback=build_script_confirmation_callback(
                 payload.get("created_by_user_id")
             ),
+            tool_call_review_trigger=TriggerReviewInput(
+                trigger_type="event_script" if listener_id else "scheduled_script",
+                active_request_role="system",
+                definition=script_code,
+                definition_taint_metadata=None,
+                payload_present=bool(event_data),
+            ),
         )
         logger.debug(
             f"Using tools from processing service for script execution: {processing_service.service_config.id}"
@@ -4700,7 +4983,7 @@ async def handle_script_execution(
         )
 
     # Execute the script
-    try:
+    async def execute_script() -> None:
         logger.debug(
             f"Executing script for listener {listener_id} with event data: {event_data}"
         )
@@ -4736,6 +5019,8 @@ async def handle_script_execution(
                     listener_id=listener_id,
                 )
 
+    try:
+        await execute_script()
     except ScriptTimeoutError as e:
         logger.error(
             f"Script timeout for listener {listener_id} after {e.timeout_seconds} seconds: {e}"
@@ -4873,6 +5158,12 @@ async def _build_confirmation_execution_context(
     # trackerless (which would persist tool results without taint metadata).
     taint_tracker = InMemoryTurnTaintTracker(taint_state)
 
+    confirmation_authorization = ToolConfirmationAuthorization(
+        tool_name=request["tool_name"],
+        call_id=request["tool_call_id"] or request["id"],
+        tool_args=dict(request["tool_args_json"]),
+    )
+
     async def approved_confirmation_callback(
         interface_type: str,
         conversation_id: str,
@@ -4890,16 +5181,13 @@ async def _build_confirmation_execution_context(
         _ = timeout_seconds
         _ = context
 
-        expected_call_id = request["tool_call_id"] or request["id"]
-        if tool_name == request["tool_name"] and tool_args == request["tool_args_json"]:
-            if call_id != expected_call_id:
-                logger.info(
-                    "Approved confirmation %s accepted nested confirmation "
-                    "callback %s for tool %s",
-                    request["id"],
-                    call_id,
-                    tool_name,
-                )
+        if (
+            not confirmation_authorization.consumed
+            and tool_name == confirmation_authorization.tool_name
+            and call_id == confirmation_authorization.call_id
+            and tool_args == confirmation_authorization.tool_args
+        ):
+            confirmation_authorization.consumed = True
             return ConfirmationOutcome(kind="approved")
 
         logger.warning(
@@ -4909,6 +5197,20 @@ async def _build_confirmation_execution_context(
             tool_name,
         )
         return ConfirmationOutcome(kind="rejected")
+
+    review_authorization = None
+    if request["sink_class"] is not None and (
+        request["static_policy_reason"] is not None
+        or request["taint_policy_reason"] is not None
+    ):
+        review_authorization = ToolCallReviewAuthorization(
+            tool_name=request["tool_name"],
+            call_id=request["tool_call_id"] or request["id"],
+            tool_args=dict(request["tool_args_json"]),
+            sink_class=request["sink_class"],
+            static_policy_reason=request["static_policy_reason"],
+            taint_policy_reason=request["taint_policy_reason"],
+        )
 
     return ToolExecutionContext(
         interface_type=interface_type,
@@ -4949,6 +5251,8 @@ async def _build_confirmation_execution_context(
         confirmation_result_waiters=exec_context.confirmation_result_waiters,
         taint_tracker=taint_tracker,
         taint_policy_snapshot=taint_state,
+        tool_call_review_authorization=review_authorization,
+        tool_confirmation_authorization=confirmation_authorization,
         credential_resolvers=processing_service.credential_resolvers,
         api_backend=processing_service.api_backend,
     )
@@ -5152,7 +5456,7 @@ async def _notify_confirmation_execution_result(
 
     chat_interface, delivery_conversation_id, reply_to_interface_id = delivery
 
-    try:
+    async def send_notification() -> None:
         result_text = _tool_result_text(result)
         attachment_ids = await _register_confirmation_result_attachments(
             context,
@@ -5183,6 +5487,9 @@ async def _notify_confirmation_execution_result(
             on_behalf_of_user_id=context.user_id,
             taint_metadata=result_taint_metadata,
         )
+
+    try:
+        await send_notification()
     except ChatDeliveryError as delivery_error:
         raise ConfirmationNotificationError(
             f"Confirmation {request['id']} result notification was not delivered: "
@@ -5271,7 +5578,8 @@ async def handle_confirmation_tool_execution(
                     notification_exc,
                 )
 
-    try:
+    async def execute_confirmation() -> str | ToolResult:
+        nonlocal execution_context
         processing_service = _resolve_confirmation_processing_service(
             exec_context,
             source_row,
@@ -5305,6 +5613,11 @@ async def handle_confirmation_tool_execution(
             execution_context,
             call_id,
         )
+
+        return result
+
+    try:
+        result = await execute_confirmation()
     except asyncio.CancelledError:
         current_task = asyncio.current_task()
         if current_task is not None:

@@ -8,7 +8,8 @@ import logging
 import os
 import tempfile
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
@@ -46,6 +47,21 @@ from family_assistant.web.app_creator import app as fastapi_app
 from tests.helpers import wait_for_tasks_to_complete
 
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def _cleanup_after_test(
+    cleanup: Callable[[bool], Awaitable[None]],
+) -> AsyncIterator[None]:
+    test_failed = False
+    try:
+        yield
+    except Exception as e:
+        test_failed = True
+        logger.exception(f"Test failed: {e}")
+        raise
+    finally:
+        await cleanup(test_failed)
 
 
 def _create_mock_processing_service() -> MagicMock:
@@ -88,50 +104,44 @@ TEST_QUERY_TEXT = "meeting about Project Alpha"  # Text relevant to the subject/
 
 
 # --- Debugging Helper ---
+async def _dump_table_contents(db: Database) -> None:
+    tasks_query = select(tasks_table)
+    all_tasks = await db.fetch_all(tasks_query)
+    logger.info("--- Tasks Table ---")
+    if all_tasks:
+        for task in all_tasks:
+            logger.info(f"  Task: {dict(task)}")
+    else:
+        logger.info("  (empty)")
+
+    docs_query = select(DocumentRecord)
+    all_docs = await db.fetch_all(docs_query)
+    logger.info("--- Documents Table ---")
+    if all_docs:
+        for doc in all_docs:
+            logger.info(f"  Document: {dict(doc)}")
+    else:
+        logger.info("  (empty)")
+
+    embeds_query = select(DocumentEmbeddingRecord)
+    all_embeds = await db.fetch_all(embeds_query)
+    logger.info("--- Document Embeddings Table ---")
+    if all_embeds:
+        for embed in all_embeds:
+            embed_dict = dict(embed)
+            if "embedding" in embed_dict and embed_dict["embedding"] is not None:
+                embed_dict["embedding"] = f"Vector[{len(embed_dict['embedding'])}]"
+            logger.info(f"  Embedding: {embed_dict}")
+    else:
+        logger.info("  (empty)")
+
+
 async def dump_tables_on_failure(engine: AsyncEngine) -> None:
     """Logs the content of relevant tables for debugging."""
     logger.info("--- Dumping table contents on failure ---")
     db = Database(engine=engine)
     try:
-        # Dump tasks table
-        tasks_query = select(tasks_table)
-        all_tasks = await db.fetch_all(tasks_query)
-        logger.info("--- Tasks Table ---")
-        if all_tasks:
-            for task in all_tasks:
-                logger.info(f"  Task: {dict(task)}")
-        else:
-            logger.info("  (empty)")
-
-        # Dump documents table
-        docs_query = select(DocumentRecord)
-        all_docs = await db.fetch_all(docs_query)
-        logger.info("--- Documents Table ---")
-        if all_docs:
-            for doc in all_docs:
-                # Access columns directly if it's a RowMapping, or adapt if it returns ORM objects
-                logger.info(
-                    f"  Document: {dict(doc)}"
-                )  # Assuming RowMapping for simplicity
-        else:
-            logger.info("  (empty)")
-
-        # Dump document_embeddings table
-        embeds_query = select(DocumentEmbeddingRecord)
-        all_embeds = await db.fetch_all(embeds_query)
-        logger.info("--- Document Embeddings Table ---")
-        if all_embeds:
-            for embed in all_embeds:
-                # Log relevant fields, potentially truncating the vector
-                embed_dict = dict(embed)
-                if "embedding" in embed_dict and embed_dict["embedding"] is not None:
-                    embed_dict["embedding"] = (
-                        f"Vector[{len(embed_dict['embedding'])}]"  # Avoid logging huge vectors
-                    )
-                logger.info(f"  Embedding: {embed_dict}")
-        else:
-            logger.info("  (empty)")
-
+        await _dump_table_contents(db)
     except Exception as dump_exc:
         logger.exception(f"Failed to dump tables on failure: {dump_exc}")
     logger.info("--- End table dump ---")
@@ -443,8 +453,17 @@ async def test_vector_ranking(
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
     await asyncio.sleep(0.1)
 
-    test_failed = False
-    try:
+    async def cleanup(test_failed: bool) -> None:
+        logger.info(f"Stopping background task worker {worker_id}...")
+        test_shutdown_event.set()
+        try:
+            await asyncio.wait_for(worker_task, timeout=5.0)
+            if test_failed:
+                await dump_tables_on_failure(pg_vector_db_engine)
+        except TimeoutError:
+            worker_task.cancel()
+
+    async with _cleanup_after_test(cleanup):
         await _ingest_and_index_email(
             http_client,
             pg_vector_db_engine,
@@ -506,21 +525,6 @@ async def test_vector_ranking(
         ).is_less_than(idx3)
 
         logger.info("--- Vector Ranking Test Passed ---")
-    except Exception as e:
-        test_failed = True
-        logger.exception(f"Test failed: {e}")
-        raise
-
-    finally:
-        # Stop worker
-        logger.info(f"Stopping background task worker {worker_id}...")
-        test_shutdown_event.set()
-        try:
-            await asyncio.wait_for(worker_task, timeout=5.0)
-            if test_failed:
-                await dump_tables_on_failure(pg_vector_db_engine)
-        except TimeoutError:
-            worker_task.cancel()
 
 
 @pytest.mark.asyncio
@@ -639,8 +643,17 @@ async def test_metadata_filtering(
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
     await asyncio.sleep(0.1)
 
-    test_failed = False
-    try:
+    async def cleanup(test_failed: bool) -> None:
+        logger.info(f"Stopping background task worker {worker_id}...")
+        test_shutdown_event.set()
+        try:
+            await asyncio.wait_for(worker_task, timeout=5.0)
+            if test_failed:
+                await dump_tables_on_failure(pg_vector_db_engine)
+        except TimeoutError:
+            worker_task.cancel()
+
+    async with _cleanup_after_test(cleanup):
         await _ingest_and_index_email(
             http_client,
             pg_vector_db_engine,
@@ -697,20 +710,6 @@ async def test_metadata_filtering(
         ).does_not_contain(email1_msg_id)
 
         logger.info("--- Metadata Filtering Test Passed ---")
-    except Exception as e:
-        test_failed = True
-        logger.exception(f"Test failed: {e}")
-        raise
-    finally:
-        # Stop worker
-        logger.info(f"Stopping background task worker {worker_id}...")
-        test_shutdown_event.set()
-        try:
-            await asyncio.wait_for(worker_task, timeout=5.0)
-            if test_failed:
-                await dump_tables_on_failure(pg_vector_db_engine)
-        except TimeoutError:
-            worker_task.cancel()
 
 
 @pytest.mark.asyncio
@@ -825,8 +824,17 @@ async def test_keyword_filtering(
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
     await asyncio.sleep(0.1)
 
-    test_failed = False
-    try:
+    async def cleanup(test_failed: bool) -> None:
+        logger.info(f"Stopping background task worker {worker_id}...")
+        test_shutdown_event.set()
+        try:
+            await asyncio.wait_for(worker_task, timeout=5.0)
+            if test_failed:
+                await dump_tables_on_failure(pg_vector_db_engine)
+        except TimeoutError:
+            worker_task.cancel()
+
+    async with _cleanup_after_test(cleanup):
         await _ingest_and_index_email(
             http_client,
             pg_vector_db_engine,
@@ -895,17 +903,3 @@ async def test_keyword_filtering(
             logger.info("Non-matching document correctly excluded from results.")
 
         logger.info("--- Keyword Filtering Test Passed ---")
-    except Exception as e:
-        test_failed = True
-        logger.exception(f"Test failed: {e}")
-        raise
-    finally:
-        # Stop worker
-        logger.info(f"Stopping background task worker {worker_id}...")
-        test_shutdown_event.set()
-        try:
-            await asyncio.wait_for(worker_task, timeout=5.0)
-            if test_failed:
-                await dump_tables_on_failure(pg_vector_db_engine)
-        except TimeoutError:
-            worker_task.cancel()

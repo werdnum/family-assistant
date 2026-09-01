@@ -972,18 +972,20 @@ class ChatPage(BasePage):
     async def conversation_exists_via_api(self, conversation_id: str) -> bool:
         """Check if a conversation exists by querying the API directly."""
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{self.base_url}/api/v1/chat/conversations"
-                )
-                if response.status_code == 200:
-                    data = response.json()
-                    conversations = data.get("conversations", [])
-                    return any(
-                        conv.get("conversation_id") == conversation_id
-                        for conv in conversations
-                    )
-                else:
-                    return False
+            return await self._conversation_exists_via_api_unchecked(conversation_id)
         except Exception:
             return False
+
+    async def _conversation_exists_via_api_unchecked(
+        self, conversation_id: str
+    ) -> bool:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(f"{self.base_url}/api/v1/chat/conversations")
+            if response.status_code != 200:
+                return False
+
+            data = response.json()
+            conversations = data.get("conversations", [])
+            return any(
+                conv.get("conversation_id") == conversation_id for conv in conversations
+            )

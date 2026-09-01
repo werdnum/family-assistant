@@ -8,36 +8,55 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
-import a2a.types as a2a_types
+import a2a.compat.v0_3.types as a2a_types
 import httpx
 from a2a.client import A2ACardResolver, Client, ClientConfig, ClientFactory
 from a2a.client.errors import (
     A2AClientError as SdkClientError,
 )
 from a2a.client.errors import (
-    A2AClientHTTPError as SdkHTTPError,
-)
-from a2a.client.errors import (
-    A2AClientJSONRPCError as SdkJSONRPCError,
-)
-from a2a.client.errors import (
     A2AClientTimeoutError as SdkTimeoutError,
 )
+from a2a.client.errors import AgentCardResolutionError
+from a2a.compat.v0_3.conversions import (
+    to_compat_message,
+    to_compat_task,
+    to_core_message,
+)
+from a2a.types import (
+    AgentCard as CoreAgentCard,
+)
+from a2a.types import (
+    CancelTaskRequest,
+    GetTaskRequest,
+    SendMessageConfiguration,
+    SendMessageRequest,
+)
+from a2a.types import (
+    Task as CoreTask,
+)
+from a2a.types import (
+    TaskState as CoreTaskState,
+)
+from a2a.utils.errors import JSON_RPC_ERROR_CODE_MAP
+from a2a.utils.errors import A2AError as SdkProtocolError
+from a2a.utils.errors import TaskNotFoundError as SdkTaskNotFoundError
 
-from family_assistant.a2a.converters import content_parts_to_a2a_parts
+from family_assistant.a2a.attachments import (
+    MAX_INLINE_ATTACHMENT_BYTES,
+    A2AAttachmentTransfer,
+)
+from family_assistant.a2a.converters import text_content_parts_to_a2a_parts
 from family_assistant.a2a.types import (
-    AgentCard,
     Message,
-    MessageSendParams,
     Part,
     Role,
     Task,
-    TaskIdParams,
-    TaskQueryParams,
     TaskState,
     TaskStatus,
 )
@@ -58,22 +77,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Limit on base64-encoded size in the JSON-RPC payload (not decoded file size).
-# Base64 inflates by ~33%, so this allows ~7.5 MB raw files.
-MAX_INLINE_ATTACHMENT_BYTES = 10 * 1024 * 1024
 POLL_INTERVAL_SECONDS = 1.0
-TERMINAL_TASK_STATES = {
-    TaskState.completed,
-    TaskState.failed,
-    TaskState.canceled,
-    TaskState.rejected,
-    TaskState.auth_required,
-    TaskState.input_required,
+CORE_TERMINAL_TASK_STATES = {
+    CoreTaskState.TASK_STATE_COMPLETED,
+    CoreTaskState.TASK_STATE_FAILED,
+    CoreTaskState.TASK_STATE_CANCELED,
+    CoreTaskState.TASK_STATE_REJECTED,
+    CoreTaskState.TASK_STATE_AUTH_REQUIRED,
+    CoreTaskState.TASK_STATE_INPUT_REQUIRED,
 }
-
-
-# JSON-RPC error code the A2A spec / FA server use for an unknown task id.
-_TASK_NOT_FOUND_CODE = -32001
+_HTTP_STATUS_PATTERN = re.compile(r"HTTP (?:Error:? )?(\d{3})", re.IGNORECASE)
 
 
 class A2AClientWrapper:
@@ -88,11 +101,13 @@ class A2AClientWrapper:
         agent_url: str,
         auth_config: A2AAuthConfig | None = None,
         timeout: float = 300.0,
+        attachments: A2AAttachmentTransfer | None = None,
     ) -> None:
         self._agent_url = agent_url
         self._auth_config = auth_config
         self._timeout = timeout
-        self._agent_card: AgentCard | None = None
+        self._attachments = attachments
+        self._agent_card: CoreAgentCard | None = None
         self._httpx_client: httpx.AsyncClient | None = None
 
     def _get_httpx_client(self) -> httpx.AsyncClient:
@@ -109,8 +124,14 @@ class A2AClientWrapper:
             )
         return self._httpx_client
 
-    async def discover(self) -> AgentCard:
-        """Fetch and cache the agent card."""
+    async def discover(self) -> CoreAgentCard:
+        """Fetch and cache a v1 core agent card.
+
+        The SDK resolver normalizes both v1 cards and legacy v0.3 cards into
+        the same protobuf representation. The selected interface retains its
+        protocol version so :class:`ClientFactory` can choose the matching
+        native or compatibility transport.
+        """
         if self._agent_card is not None:
             return self._agent_card
 
@@ -118,14 +139,15 @@ class A2AClientWrapper:
         resolver = A2ACardResolver(httpx_client=client, base_url=self._agent_url)
         try:
             self._agent_card = await resolver.get_agent_card()
-        except SdkHTTPError as exc:
+        except AgentCardResolutionError as exc:
             message = f"Failed to discover agent at {self._agent_url}: {exc}"
             # A 4xx card fetch is deterministic (bad agent-card URL / bad auth):
             # fail fast rather than polling to the cap. 5xx / network errors are
             # transient, as are the retryable 4xx statuses (408 request timeout,
             # 425 too early, 429 rate limited).
             if (
-                400 <= exc.status_code < 500
+                exc.status_code is not None
+                and 400 <= exc.status_code < 500
                 and exc.status_code not in RETRYABLE_4XX_STATUSES
             ):
                 raise A2APermanentError(message) from exc
@@ -145,6 +167,7 @@ class A2AClientWrapper:
         context_id: str | None = None,
         task_id: str | None = None,
         metadata: dict[str, object] | None = None,
+        acting_user_id: str | None = None,
     ) -> Task:
         """Send a message to the remote A2A agent and return the completed task.
 
@@ -153,6 +176,8 @@ class A2AClientWrapper:
             context_id: Optional context ID for conversation grouping.
             task_id: Optional task ID to continue a prior task.
             metadata: Optional metadata (e.g., profile selection).
+            acting_user_id: Canonical id of the user on whose behalf the
+                attachments referenced by ``content_parts`` are read.
 
         Returns:
             The A2A Task from the remote agent.
@@ -161,7 +186,9 @@ class A2AClientWrapper:
             A2AClientError: On network errors, unexpected task states, or protocol errors.
         """
         card = await self.discover()
-        a2a_parts = self._convert_and_validate_parts(content_parts)
+        a2a_parts = await self._convert_and_validate_parts(
+            content_parts, acting_user_id=acting_user_id
+        )
 
         message = Message(
             role=Role.user,
@@ -172,35 +199,47 @@ class A2AClientWrapper:
             metadata=metadata,
         )
 
-        client = self._get_httpx_client()
         try:
-            a2a_client = ClientFactory(
-                ClientConfig(
-                    streaming=True,
-                    polling=False,
-                    httpx_client=client,
-                    accepted_output_modes=card.default_output_modes or [],
-                )
-            ).create(card)
-            latest_task: Task | None = None
-            async for event in a2a_client.send_message(message):
-                if isinstance(event, Message):
-                    return self._message_to_completed_task(event, context_id)
-                task, _update = event
-                latest_task = task
-                if self._is_terminal(task):
-                    return task
-            if latest_task is None:
-                raise A2AClientError("A2A agent returned no message or task")
-            return await self._poll_until_terminal(a2a_client, latest_task)
-        except SdkClientError as exc:
-            raise A2AClientError(self._format_sdk_error(exc, card.url)) from exc
+            a2a_client = self._create_client(card, streaming=True, polling=False)
+            return await self._consume_message_events(a2a_client, message, context_id)
+        except (SdkProtocolError, ValueError) as exc:
+            self._raise_sdk_error(exc, self._card_url(card))
 
-    async def _poll_until_terminal(self, a2a_client: Client, task: Task) -> Task:
+    async def _consume_message_events(
+        self,
+        a2a_client: Client,
+        message: Message,
+        context_id: str | None,
+    ) -> Task:
+        latest_task: CoreTask | None = None
+        latest_task_id: str | None = None
+        request = SendMessageRequest(message=to_core_message(message))
+        async for response in a2a_client.send_message(request):
+            if response.HasField("message"):
+                return self._message_to_completed_task(
+                    to_compat_message(response.message), context_id
+                )
+            if response.HasField("task"):
+                latest_task = response.task
+                latest_task_id = latest_task.id
+                if self._is_core_terminal(latest_task):
+                    return to_compat_task(latest_task)
+            elif response.HasField("status_update"):
+                latest_task_id = response.status_update.task_id
+                if response.status_update.status.state in CORE_TERMINAL_TASK_STATES:
+                    task = await a2a_client.get_task(GetTaskRequest(id=latest_task_id))
+                    return to_compat_task(task)
+        if latest_task is None:
+            if latest_task_id is None:
+                raise A2AClientError("A2A agent returned no message or task")
+            latest_task = await a2a_client.get_task(GetTaskRequest(id=latest_task_id))
+        return await self._poll_until_terminal(a2a_client, latest_task)
+
+    async def _poll_until_terminal(self, a2a_client: Client, task: CoreTask) -> Task:
         """Poll tasks/get for agents that return a non-terminal message/send Task."""
         deadline = time.monotonic() + self._timeout
         latest_task = task
-        while not self._is_terminal(latest_task):
+        while not self._is_core_terminal(latest_task):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise A2AClientError(
@@ -208,8 +247,8 @@ class A2AClientWrapper:
                     f"(last state: {latest_task.status.state})"
                 )
             await asyncio.sleep(min(POLL_INTERVAL_SECONDS, remaining))
-            latest_task = await a2a_client.get_task(TaskQueryParams(id=latest_task.id))
-        return latest_task
+            latest_task = await a2a_client.get_task(GetTaskRequest(id=latest_task.id))
+        return to_compat_task(latest_task)
 
     async def submit(
         self,
@@ -218,6 +257,7 @@ class A2AClientWrapper:
         context_id: str | None = None,
         task_id: str | None = None,
         metadata: dict[str, object] | None = None,
+        acting_user_id: str | None = None,
     ) -> Task:
         """Submit a message without blocking and return the task as-is.
 
@@ -232,7 +272,9 @@ class A2AClientWrapper:
             A2AClientError: On network errors or protocol errors.
         """
         card = await self.discover()
-        a2a_parts = self._convert_and_validate_parts(content_parts)
+        a2a_parts = await self._convert_and_validate_parts(
+            content_parts, acting_user_id=acting_user_id
+        )
         message = Message(
             role=Role.user,
             parts=a2a_parts,
@@ -241,22 +283,22 @@ class A2AClientWrapper:
             task_id=task_id,
             metadata=metadata,
         )
-        params = MessageSendParams(
-            message=message,
-            configuration=a2a_types.MessageSendConfiguration(blocking=False),
+        request = SendMessageRequest(
+            message=to_core_message(message),
+            configuration=SendMessageConfiguration(return_immediately=True),
         )
-        result = await self._call_jsonrpc(
-            card.url,
-            "message/send",
-            params.model_dump(by_alias=True, exclude_none=True),
-        )
-        # message/send may return a Message (immediate reply) instead of a Task;
-        # treat it as a completed task, like the streaming send_message path.
-        if result.get("kind") == "message":
-            return self._message_to_completed_task(
-                Message.model_validate(result), context_id
-            )
-        return Task.model_validate(result)
+        try:
+            a2a_client = self._create_client(card, streaming=False, polling=True)
+            async for response in a2a_client.send_message(request):
+                if response.HasField("message"):
+                    return self._message_to_completed_task(
+                        to_compat_message(response.message), context_id
+                    )
+                if response.HasField("task"):
+                    return to_compat_task(response.task)
+            raise A2AClientError("A2A agent returned no message or task")
+        except (SdkProtocolError, ValueError) as exc:
+            self._raise_sdk_error(exc, self._card_url(card))
 
     async def get_task(self, task_id: str) -> Task:
         """Fetch the current state of a remote task via ``tasks/get``.
@@ -265,11 +307,11 @@ class A2AClientWrapper:
             A2AClientError: On network errors or protocol errors.
         """
         card = await self.discover()
-        params = TaskQueryParams(id=task_id)
-        result = await self._call_jsonrpc(
-            card.url, "tasks/get", params.model_dump(by_alias=True, exclude_none=True)
-        )
-        return Task.model_validate(result)
+        try:
+            client = self._create_client(card, streaming=False, polling=True)
+            return to_compat_task(await client.get_task(GetTaskRequest(id=task_id)))
+        except (SdkProtocolError, ValueError) as exc:
+            self._raise_sdk_error(exc, self._card_url(card))
 
     async def cancel_task(self, task_id: str) -> Task:
         """Request cancellation of a remote task via ``tasks/cancel``.
@@ -279,77 +321,81 @@ class A2AClientWrapper:
                 task that is not cancelable).
         """
         card = await self.discover()
-        params = TaskIdParams(id=task_id)
-        result = await self._call_jsonrpc(
-            card.url,
-            "tasks/cancel",
-            params.model_dump(by_alias=True, exclude_none=True),
-        )
-        return Task.model_validate(result)
+        try:
+            client = self._create_client(card, streaming=False, polling=True)
+            return to_compat_task(
+                await client.cancel_task(CancelTaskRequest(id=task_id))
+            )
+        except (SdkProtocolError, ValueError) as exc:
+            self._raise_sdk_error(exc, self._card_url(card))
 
-    async def _call_jsonrpc(
+    def _create_client(
         self,
-        url: str,
-        method: str,
-        params: dict[str, object],
-    ) -> dict[str, object]:
-        """POST a single JSON-RPC request and return the ``result`` object."""
-        client = self._get_httpx_client()
-        body = {
-            "jsonrpc": "2.0",
-            "id": str(uuid.uuid4()),
-            "method": method,
-            "params": params,
-        }
-        try:
-            response = await client.post(url, json=body)
-        except httpx.HTTPError as exc:
-            # Transport error (timeout / connection): the request may or may not
-            # have reached the remote — transient.
-            raise A2AClientError(
-                f"A2A {method} request to {url} failed: {exc}"
-            ) from exc
-        if response.status_code != 200:
-            # 4xx is a deterministic client error (auth, bad request); 5xx is a
-            # transient server error that may recover. A 404 specifically means
-            # the remote has no such task — a cue to re-submit, not to fail.
-            # Retryable 4xx (timeout / too early / rate limited) stay transient.
-            message = f"A2A {method} returned HTTP {response.status_code} from {url}"
-            if response.status_code == 404:
-                raise A2ATaskNotFoundError(message)
-            if (
-                400 <= response.status_code < 500
-                and response.status_code not in RETRYABLE_4XX_STATUSES
-            ):
-                raise A2APermanentError(message)
-            raise A2AClientError(message)
-        try:
-            payload = response.json()
-        except ValueError as exc:
-            # A 200 with a non-JSON body (e.g. a proxy / CDN HTML page) is a
-            # transient infrastructure glitch, not a protocol error — keep it in
-            # the A2AClientError hierarchy so the caller retries rather than
-            # crashing with a raw JSONDecodeError.
-            raise A2AClientError(
-                f"A2A {method} returned a non-JSON response from {url}"
-            ) from exc
-        error = payload.get("error")
-        if error:
-            # The remote answered with a definitive JSON-RPC error — deterministic.
-            # A task-not-found code is distinguished so the worker can re-submit a
-            # run whose original message/send may never have landed.
-            message = f"A2A {method} error {error.get('code')}: {error.get('message')}"
-            if error.get("code") == _TASK_NOT_FOUND_CODE:
-                raise A2ATaskNotFoundError(message)
-            raise A2APermanentError(message)
-        result = payload.get("result")
-        if result is None:
-            raise A2AClientError(f"A2A {method} returned no result")
-        return result
+        card: CoreAgentCard,
+        *,
+        streaming: bool,
+        polling: bool,
+    ) -> Client:
+        return ClientFactory(
+            ClientConfig(
+                streaming=streaming,
+                polling=polling,
+                httpx_client=self._get_httpx_client(),
+                accepted_output_modes=list(card.default_output_modes),
+            )
+        ).create(card)
 
     @staticmethod
-    def _is_terminal(task: Task) -> bool:
-        return task.status.state in TERMINAL_TASK_STATES
+    def _card_url(card: CoreAgentCard) -> str:
+        if card.supported_interfaces:
+            return card.supported_interfaces[0].url
+        return "unknown A2A endpoint"
+
+    @staticmethod
+    def _raise_sdk_error(exc: Exception, url: str) -> NoReturn:
+        if isinstance(exc, SdkTaskNotFoundError):
+            raise A2ATaskNotFoundError(f"A2A task not found at {url}: {exc}") from exc
+        if isinstance(exc, SdkTimeoutError):
+            raise A2AClientError(
+                f"Timeout connecting to A2A agent at {url}: {exc}"
+            ) from exc
+
+        match = _HTTP_STATUS_PATTERN.search(str(exc))
+        if match is not None:
+            status_code = int(match.group(1))
+            message = f"HTTP {status_code} from A2A agent at {url}: {exc}"
+            if status_code == 404:
+                raise A2ATaskNotFoundError(message) from exc
+            if 400 <= status_code < 500 and status_code not in RETRYABLE_4XX_STATUSES:
+                raise A2APermanentError(message) from exc
+            raise A2AClientError(message) from exc
+
+        if isinstance(exc, SdkClientError):
+            if "Network communication error" in str(exc):
+                raise A2AClientError(
+                    f"Cannot connect to A2A agent at {url}: {exc}"
+                ) from exc
+            raise A2AClientError(
+                f"A2A client error communicating with {url}: {exc}"
+            ) from exc
+
+        if isinstance(exc, SdkProtocolError):
+            code = next(
+                (
+                    error_code
+                    for error_type, error_code in JSON_RPC_ERROR_CODE_MAP.items()
+                    if isinstance(exc, error_type)
+                ),
+                None,
+            )
+            detail = f"{code}: {exc}" if code is not None else str(exc)
+            raise A2APermanentError(f"A2A JSON-RPC error {detail}") from exc
+
+        raise A2APermanentError(f"Cannot create A2A client for {url}: {exc}") from exc
+
+    @staticmethod
+    def _is_core_terminal(task: CoreTask) -> bool:
+        return task.status.state in CORE_TERMINAL_TASK_STATES
 
     @staticmethod
     def _message_to_completed_task(
@@ -362,23 +408,26 @@ class A2AClientWrapper:
             history=[message],
         )
 
-    @staticmethod
-    def _format_sdk_error(exc: SdkClientError, url: str) -> str:
-        if isinstance(exc, SdkJSONRPCError):
-            return f"A2A JSON-RPC error {exc.error.code}: {exc.error.message}"
-        if isinstance(exc, SdkTimeoutError):
-            return f"Timeout connecting to A2A agent at {url}: {exc.message}"
-        if isinstance(exc, SdkHTTPError):
-            if exc.status_code == 503 and "Network communication error" in exc.message:
-                return f"Cannot connect to A2A agent at {url}: {exc.message}"
-            return f"HTTP {exc.status_code} from A2A agent at {url}: {exc.message}"
-        return f"A2A client error communicating with {url}: {exc}"
-
-    def _convert_and_validate_parts(
-        self, content_parts: list[ContentPartDict]
+    async def _convert_and_validate_parts(
+        self, content_parts: list[ContentPartDict], *, acting_user_id: str | None
     ) -> list[Part]:
-        """Convert FA content parts to A2A parts with size validation."""
-        a2a_parts = content_parts_to_a2a_parts(content_parts)
+        """Convert FA content parts to A2A parts with size validation.
+
+        Attachment bytes are resolved and inlined when this client was given an
+        attachment transfer; without one, an attachment part is a deterministic
+        local error rather than a bare identifier on the wire.
+        """
+        try:
+            a2a_parts = (
+                await self._attachments.to_a2a_parts(
+                    content_parts, acting_user_id=acting_user_id
+                )
+                if self._attachments is not None
+                else text_content_parts_to_a2a_parts(content_parts)
+            )
+        except ValueError as exc:
+            # Deterministic: the same content parts fail identically on retry.
+            raise A2APermanentError(f"Cannot send message parts: {exc}") from exc
         for part in a2a_parts:
             self._validate_part_size(part)
         return a2a_parts

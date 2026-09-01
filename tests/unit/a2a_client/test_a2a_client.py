@@ -11,7 +11,16 @@ from typing import TYPE_CHECKING, ClassVar, cast
 
 import httpx
 import pytest
-from a2a.types import (
+
+from family_assistant.a2a.attachments import MAX_INLINE_ATTACHMENT_BYTES
+from family_assistant.a2a.auth import A2AAuthConfig
+from family_assistant.a2a.client import (
+    A2AClientError,
+    A2AClientWrapper,
+    A2APermanentError,
+)
+from family_assistant.a2a.result_converter import a2a_task_to_chat_result
+from family_assistant.a2a.types import (
     Artifact,
     Message,
     Part,
@@ -21,15 +30,6 @@ from a2a.types import (
     TaskStatus,
     TextPart,
 )
-
-from family_assistant.a2a.auth import A2AAuthConfig
-from family_assistant.a2a.client import (
-    MAX_INLINE_ATTACHMENT_BYTES,
-    A2AClientError,
-    A2AClientWrapper,
-    A2APermanentError,
-)
-from family_assistant.a2a.result_converter import a2a_task_to_chat_result
 from family_assistant.llm.content_parts import (
     ContentPartDict,
     image_url_content,
@@ -61,6 +61,25 @@ def _make_streaming_agent_card(url: str) -> dict:
     card["capabilities"]["streaming"] = True
     card["preferredTransport"] = "JSONRPC"
     return card
+
+
+def _make_v1_agent_card(url: str) -> dict:
+    return {
+        "name": "Test Agent v1",
+        "description": "A v1 A2A test agent",
+        "version": "1.0.0",
+        "supportedInterfaces": [
+            {
+                "url": url,
+                "protocolBinding": "JSONRPC",
+                "protocolVersion": "1.0",
+            }
+        ],
+        "capabilities": {"streaming": False},
+        "skills": [],
+        "defaultInputModes": ["text/plain"],
+        "defaultOutputModes": ["text/plain"],
+    }
 
 
 def _content_parts(text: str) -> list[ContentPartDict]:
@@ -280,6 +299,67 @@ class FakeA2AAgentHandler(BaseHTTPRequestHandler):
         }
 
 
+class FakeA2AV1AgentHandler(FakeA2AAgentHandler):
+    methods: ClassVar[list[str]] = []
+    version_headers: ClassVar[list[str | None]] = []
+    submit_return_immediately: ClassVar[bool | None] = None
+
+    def do_GET(self) -> None:
+        if self.path != "/.well-known/agent-card.json":
+            self.send_error(HTTPStatus.NOT_FOUND)
+            return
+        self.send_json(_make_v1_agent_card(self.rpc_url()))
+
+    def do_POST(self) -> None:
+        length = int(self.headers.get("Content-Length", "0"))
+        body = json.loads(self.rfile.read(length))
+        method = body.get("method")
+        type(self).methods.append(method)
+        type(self).version_headers.append(self.headers.get("A2A-Version"))
+        if method == "SendMessage":
+            configuration = body.get("params", {}).get("configuration", {})
+            return_immediately = configuration.get("returnImmediately", False)
+            type(self).submit_return_immediately = return_immediately
+            state = "working" if return_immediately else "completed"
+            self.send_json({
+                "jsonrpc": "2.0",
+                "id": body.get("id"),
+                "result": {"task": self.v1_task(state)},
+            })
+            return
+        if method == "GetTask":
+            self.send_json({
+                "jsonrpc": "2.0",
+                "id": body.get("id"),
+                "result": self.v1_task("completed"),
+            })
+            return
+        if method == "CancelTask":
+            self.send_json({
+                "jsonrpc": "2.0",
+                "id": body.get("id"),
+                "result": self.v1_task("canceled"),
+            })
+            return
+        self.send_json(self.jsonrpc_error(body.get("id"), -32601, "Method not found"))
+
+    def v1_task(self, state: str) -> dict:
+        state_name = f"TASK_STATE_{state.upper()}"
+        task = {
+            "id": self.task_id,
+            "contextId": "v1-test-ctx",
+            "status": {"state": state_name},
+        }
+        if state == "completed":
+            task["artifacts"] = [
+                {
+                    "artifactId": "v1-artifact-1",
+                    "parts": [{"text": self.text}],
+                }
+            ]
+        return task
+
+
 @pytest.fixture
 def fake_a2a_agent() -> Iterator[type[FakeA2AAgentHandler]]:
     FakeA2AAgentHandler.mode = "completed"
@@ -295,6 +375,25 @@ def fake_a2a_agent() -> Iterator[type[FakeA2AAgentHandler]]:
     FakeA2AAgentHandler.agent_url = f"http://127.0.0.1:{server.server_port}"
     try:
         yield FakeA2AAgentHandler
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+        server.server_close()
+
+
+@pytest.fixture
+def fake_a2a_v1_agent() -> Iterator[type[FakeA2AV1AgentHandler]]:
+    FakeA2AV1AgentHandler.task_id = f"task-{uuid.uuid4()}"
+    FakeA2AV1AgentHandler.text = "Hello from A2A v1"
+    FakeA2AV1AgentHandler.methods = []
+    FakeA2AV1AgentHandler.version_headers = []
+    FakeA2AV1AgentHandler.submit_return_immediately = None
+    server = ThreadingHTTPServer(("127.0.0.1", 0), FakeA2AV1AgentHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    FakeA2AV1AgentHandler.agent_url = f"http://127.0.0.1:{server.server_port}"
+    try:
+        yield FakeA2AV1AgentHandler
     finally:
         server.shutdown()
         thread.join(timeout=5)
@@ -431,6 +530,34 @@ class TestA2AClientWrapper:
         assert task.status.state == TaskState.completed
         assert task.artifacts is not None
         assert _text_part_text(task.artifacts[0].parts[0]) == "Hello back!"
+        await wrapper.close()
+
+    @pytest.mark.asyncio
+    async def test_v1_send_submit_get_and_cancel(
+        self, fake_a2a_v1_agent: type[FakeA2AV1AgentHandler]
+    ) -> None:
+        """All remote-task operations use the v1 interface advertised by the card."""
+        wrapper = A2AClientWrapper(agent_url=fake_a2a_v1_agent.agent_url)
+
+        sent = await wrapper.send_message(_content_parts("Hello"))
+        submitted = await wrapper.submit(_content_parts("Do this later"))
+        fetched = await wrapper.get_task(submitted.id)
+        canceled = await wrapper.cancel_task(submitted.id)
+
+        assert sent.status.state == TaskState.completed
+        assert sent.artifacts is not None
+        assert _text_part_text(sent.artifacts[0].parts[0]) == "Hello from A2A v1"
+        assert submitted.status.state == TaskState.working
+        assert fetched.status.state == TaskState.completed
+        assert canceled.status.state == TaskState.canceled
+        assert fake_a2a_v1_agent.methods == [
+            "SendMessage",
+            "SendMessage",
+            "GetTask",
+            "CancelTask",
+        ]
+        assert fake_a2a_v1_agent.version_headers == ["1.0"] * 4
+        assert fake_a2a_v1_agent.submit_return_immediately is True
         await wrapper.close()
 
     @pytest.mark.asyncio
@@ -585,13 +712,15 @@ class TestA2AClientWrapper:
             await wrapper.send_message(_content_parts("Hello"))
         await wrapper.close()
 
-    def test_attachment_size_validation_passes(self) -> None:
+    @pytest.mark.asyncio
+    async def test_attachment_size_validation_passes(self) -> None:
         """Small inline attachments pass validation."""
         parts = _content_parts("hello")
         wrapper = A2AClientWrapper(agent_url="http://agent.test")
-        wrapper._convert_and_validate_parts(parts)
+        await wrapper._convert_and_validate_parts(parts, acting_user_id=None)
 
-    def test_attachment_size_validation_rejects_large(self) -> None:
+    @pytest.mark.asyncio
+    async def test_attachment_size_validation_rejects_large(self) -> None:
         """Inline attachments exceeding limit are rejected."""
         large_data = "x" * (MAX_INLINE_ATTACHMENT_BYTES + 1000)
         parts = cast(
@@ -602,7 +731,7 @@ class TestA2AClientWrapper:
         # Permanent: an oversized attachment is a deterministic local input
         # error, so the worker must fail fast rather than poll until the cap.
         with pytest.raises(A2APermanentError, match="exceeds limit"):
-            wrapper._convert_and_validate_parts(parts)
+            await wrapper._convert_and_validate_parts(parts, acting_user_id=None)
 
     @pytest.mark.asyncio
     async def test_close_clears_state(self, httpx_mock: HTTPXMock) -> None:
@@ -667,7 +796,8 @@ def _make_task(
 
 
 class TestA2ATaskToChatResult:
-    def test_completed_with_text_artifact(self) -> None:
+    @pytest.mark.asyncio
+    async def test_completed_with_text_artifact(self) -> None:
         """Completed task with text artifact produces success result."""
         task = _make_task(
             artifacts=[
@@ -677,11 +807,12 @@ class TestA2ATaskToChatResult:
                 )
             ]
         )
-        result = a2a_task_to_chat_result(task)
+        result = await a2a_task_to_chat_result(task)
         assert not result.has_error
         assert result.text_reply == "Result text"
 
-    def test_completed_with_multiple_text_artifacts(self) -> None:
+    @pytest.mark.asyncio
+    async def test_completed_with_multiple_text_artifacts(self) -> None:
         """Multiple text artifacts are joined with double newline."""
         task = _make_task(
             artifacts=[
@@ -695,11 +826,12 @@ class TestA2ATaskToChatResult:
                 ),
             ]
         )
-        result = a2a_task_to_chat_result(task)
+        result = await a2a_task_to_chat_result(task)
         assert not result.has_error
         assert result.text_reply == "Part 1\n\nPart 2"
 
-    def test_completed_falls_back_to_agent_message(self) -> None:
+    @pytest.mark.asyncio
+    async def test_completed_falls_back_to_agent_message(self) -> None:
         """When no artifacts, falls back to last agent message."""
         task = _make_task(
             artifacts=[],
@@ -716,56 +848,63 @@ class TestA2ATaskToChatResult:
                 ),
             ],
         )
-        result = a2a_task_to_chat_result(task)
+        result = await a2a_task_to_chat_result(task)
         assert not result.has_error
         assert result.text_reply == "Agent reply"
 
-    def test_completed_no_output_is_error(self) -> None:
+    @pytest.mark.asyncio
+    async def test_completed_no_output_is_error(self) -> None:
         """Completed task with no artifacts or messages is an error."""
         task = _make_task(artifacts=[], history=[])
-        result = a2a_task_to_chat_result(task)
+        result = await a2a_task_to_chat_result(task)
         assert result.has_error
         assert "no output" in result.text_reply
 
-    def test_failed_task(self) -> None:
+    @pytest.mark.asyncio
+    async def test_failed_task(self) -> None:
         """Failed task state produces error result."""
         task = _make_task(state=TaskState.failed, message="LLM crashed")
-        result = a2a_task_to_chat_result(task)
+        result = await a2a_task_to_chat_result(task)
         assert result.has_error
         assert "LLM crashed" in result.text_reply
 
-    def test_canceled_task(self) -> None:
+    @pytest.mark.asyncio
+    async def test_canceled_task(self) -> None:
         """Canceled task produces error result."""
         task = _make_task(state=TaskState.canceled)
-        result = a2a_task_to_chat_result(task)
+        result = await a2a_task_to_chat_result(task)
         assert result.has_error
         assert "cancelled" in result.text_reply
 
-    def test_input_required_task(self) -> None:
+    @pytest.mark.asyncio
+    async def test_input_required_task(self) -> None:
         """Input required state produces error result."""
         task = _make_task(state=TaskState.input_required, message="Need more details")
-        result = a2a_task_to_chat_result(task)
+        result = await a2a_task_to_chat_result(task)
         assert result.has_error
         assert "more information" in result.text_reply
 
-    def test_rejected_task(self) -> None:
+    @pytest.mark.asyncio
+    async def test_rejected_task(self) -> None:
         """Rejected task produces error result."""
         task = _make_task(state=TaskState.rejected, message="Not authorized")
-        result = a2a_task_to_chat_result(task)
+        result = await a2a_task_to_chat_result(task)
         assert result.has_error
         assert "declined" in result.text_reply
 
-    def test_auth_required_task(self) -> None:
+    @pytest.mark.asyncio
+    async def test_auth_required_task(self) -> None:
         """Auth-required task produces error result."""
         task = _make_task(state=TaskState.auth_required, message="Login required")
-        result = a2a_task_to_chat_result(task)
+        result = await a2a_task_to_chat_result(task)
         assert result.has_error
         assert "declined" in result.text_reply
         assert "Login required" in result.text_reply
 
-    def test_non_terminal_task(self) -> None:
+    @pytest.mark.asyncio
+    async def test_non_terminal_task(self) -> None:
         """A non-terminal task is not treated as success."""
         task = _make_task(state=TaskState.working, message="Still running")
-        result = a2a_task_to_chat_result(task)
+        result = await a2a_task_to_chat_result(task)
         assert result.has_error
         assert "unexpected state" in result.text_reply

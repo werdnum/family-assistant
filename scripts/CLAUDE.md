@@ -74,9 +74,50 @@ page has no such row the slug is the only thing left, so that entry is written w
 `"id_source": "url-slug (no documented Model code row)"` — treat those ids as unverified against the
 API until a real call confirms them, rather than as equivalent to a documented code.
 
+### Review-eval public corpus scripts
+
+`fetch_review_eval_corpora.sh` fetches pinned Deepset Prompt Injections and InjecAgent source files
+into `.review-eval-local/upstream/`, then records revisions and SHA-256 checksums. It defaults to
+the verified manifest commits, so a bare invocation is reproducible; optional
+`--deepset-revision <sha>` and `--injecagent-revision <sha>` flags override the pins for an
+intentional acquisition. The script never resolves a moving branch such as `main`. It requires Git,
+Git LFS, and `shasum`; it refuses an existing output tree and publishes a fully staged fetch
+atomically. If a fetch fails, fix the reported prerequisite or network/repository error and rerun it
+with no pre-created `upstream/` directory.
+
+`build_public_corpus_cases.py` turns one fetched source into schema-validated browser-ablation cases
+under a fresh `.review-eval-local/public/<corpus>/` directory. `--out-dir` is resolved through the
+private-tree containment guard and rejects tracked paths or symlink escapes. Use
+`--evaluation-split dev` for iteration and `--evaluation-split gate` for held-out evidence;
+InjecAgent additionally supports `--injecagent-variants base|enhanced|both`. The command refuses
+every existing output path, reads the matching revision from the ancestor `upstream/manifest.txt`
+(or requires an exact `--upstream-revision` for an input without a manifest), refuses a
+contradictory explicit revision, validates the staged cases through the normal loader, and
+atomically publishes cases plus provenance.
+
 ## Adding New Scripts
 
 Development and deployment scripts go in `scripts/`; container build/run tooling goes in
 `.devcontainer/`; test utilities go in `tests/`. Name shell scripts in lowercase with hyphens
 (`build-and-push-container.sh`, not `build.sh`). Document the new script in this file and consider
 adding a poe task for it in `pyproject.toml`.
+
+### Batch review-eval runner
+
+`tool_call_review_batch.py` is the staged private runner for OpenRouter's asynchronous batch
+endpoint. `prepare` validates normal case inputs and writes deterministic request JSONL plus a
+private manifest; `submit` is the only network-spending phase and requires both a finite positive
+`--approved-spend-usd USD` and `--approve-spend`; `status` polls once, `poll` repeats it, and
+`harvest` requires exact result reconciliation before writing a private `EvalReport`. Batch result
+latency is explicitly unavailable, rather than inferred from polling time. See
+`docs/development/tool-call-review-batch.md` for the operator runbook. Do not reuse an existing run
+directory or resubmit a chunk whose POST outcome is unknown. The approved amount is recorded for
+operator audit; it is not an enforceable provider-side spend cap.
+
+`tool_call_review_gemini_batch.py` is the separate native Google Gemini Batch API runner. It uses
+the same staged prepare/submit/poll/harvest workflow, but its manifest and uploaded/result JSONL are
+provider-specific. It requires `GEMINI_API_KEY`, records positive operator approval without claiming
+a provider spend cap, leaves failed or malformed uploads and definitive 4xx creation rejections
+pending for retry, refuses ambiguous job-creation outcomes, and harvests only exactly reconciled
+successful `STOP` responses. See `docs/development/tool-call-review-gemini-batch.md`; native batch
+reports are review drafts until maintainers promote cases through the ordinary corpus workflow.

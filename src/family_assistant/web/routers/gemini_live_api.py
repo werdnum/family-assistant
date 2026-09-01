@@ -184,68 +184,92 @@ async def _get_formatted_system_prompt(
 ) -> str:
     """Get the formatted system prompt with context injected."""
     try:
-        service_config = processing_service.service_config
-
-        aggregated_context = ""
-        if service_config.include_aggregated_context:
-            aggregated_context = (
-                await processing_service.context_preparer.aggregate_context()
-            )
-
-        # Get system prompt template
-        system_prompt_template = service_config.prompts.get(
-            "system_prompt", "You are a helpful assistant."
-        )
-
-        # Get user info
-        user = get_user_from_request(request)
-        user_name = user.get("name") if user else "User"
-
-        # Format the system prompt
-        format_args = {
-            "user_name": user_name,
-            "server_url": processing_service.server_url,
-            "profile_id": service_config.id,
-        }
-
-        # Simple placeholder replacement
-        formatted = system_prompt_template
-        for key, value in format_args.items():
-            formatted = formatted.replace(f"{{{key}}}", str(value))
-
-        delegation_addition = await processing_service.delegation_catalog_addition()
-        if delegation_addition:
-            formatted = f"{formatted}\n\n{delegation_addition}"
-
-        # Add voice mode specific instruction
-        voice_instruction = (
-            "[Voice Mode Active] You are currently in voice conversation mode. "
-            "Keep responses concise and conversational. Speak naturally as if talking to the user."
-        )
-
-        # A Live API session hands the model one system instruction and then only
-        # audio, so there is no message list to carry the turn-context block the
-        # chat path appends. It is inlined at the tail instead, where its
-        # <turn_context> tags keep it distinct from the instructions above it --
-        # preceded by the same guidance the chat path puts in the system prompt,
-        # without which a voice model reads the literal tags out loud.
-        guidance = turn_context_guidance(
-            includes_aggregated_context=service_config.include_aggregated_context,
-            placement="inline",
-        )
-        turn_context = render_turn_context_block(
-            current_time_str=processing_service.current_time_str(),
-            aggregated_context=aggregated_context,
-        )
-
-        return (
-            f"{formatted.strip()}\n\n{voice_instruction}\n\n{guidance}\n\n"
-            f"{turn_context}"
-        )
+        return await _format_system_prompt(request, processing_service)
 
     except Exception as e:
         logger.exception(f"Error getting system prompt: {e}")
         return "You are a helpful voice assistant. Keep responses concise and conversational."
+
+
+async def _format_system_prompt(
+    request: Request,
+    processing_service: ProcessingService,
+) -> str:
+    service_config = processing_service.service_config
+
+    aggregated_context = ""
+    if service_config.include_aggregated_context:
+        aggregated_context = (
+            await processing_service.context_preparer.aggregate_context()
+        )
+
+    system_prompt_template = service_config.prompts.get(
+        "system_prompt", "You are a helpful assistant."
+    )
+    user = get_user_from_request(request)
+    user_name = user.get("name") if user else "User"
+    format_args = {
+        "user_name": user_name,
+        "server_url": processing_service.server_url,
+        "profile_id": service_config.id,
+    }
+
+    formatted = system_prompt_template
+    for key, value in format_args.items():
+        formatted = formatted.replace(f"{{{key}}}", str(value))
+
+    delegation_addition = await processing_service.delegation_catalog_addition()
+    if delegation_addition:
+        formatted = f"{formatted}\n\n{delegation_addition}"
+
+    voice_instruction = (
+        "[Voice Mode Active] You are currently in voice conversation mode. "
+        "Keep responses concise and conversational. Speak naturally as if talking to the user."
+    )
+    guidance = turn_context_guidance(
+        includes_aggregated_context=service_config.include_aggregated_context,
+        placement="inline",
+    )
+    turn_context = render_turn_context_block(
+        current_time_str=processing_service.current_time_str(),
+        aggregated_context=aggregated_context,
+    )
+
+    return f"{formatted.strip()}\n\n{voice_instruction}\n\n{guidance}\n\n{turn_context}"
+
+
+def _create_token_response(
+    *,
+    api_key: str,
+    gemini_tools: list[GeminiToolDeclaration],
+    system_instruction: str,
+    gemini_live_config: GeminiLiveConfig,
+) -> EphemeralTokenResponse:
+    from google import (  # noqa: PLC0415 - Import here to handle missing dependency gracefully
+        genai,
+    )
+
+    client = genai.Client(api_key=api_key, http_options={"api_version": "v1alpha"})
+
+    now = datetime.datetime.now(tz=datetime.UTC)
+    token_response = client.auth_tokens.create(
+        config={
+            "uses": 1,
+            "expire_time": now + datetime.timedelta(minutes=30),
+            "new_session_expire_time": now + datetime.timedelta(minutes=1),
+        }
+    )
+    expires_at = (now + datetime.timedelta(minutes=30)).isoformat()
+
+    logger.info("Successfully created Gemini Live ephemeral token")
+    return EphemeralTokenResponse(
+        token=token_response.name,
+        expires_at=expires_at,
+        tools=gemini_tools,
+        system_instruction=system_instruction,
+        model=gemini_live_config.model,
+        config=gemini_live_config,
+    )
 
 
 @gemini_live_router.post("/ephemeral-token")
@@ -318,34 +342,12 @@ async def create_ephemeral_token(
 
     # Create ephemeral token via Google GenAI SDK
     try:
-        from google import (  # noqa: PLC0415 - Import here to handle missing dependency gracefully
-            genai,
-        )
-
-        client = genai.Client(api_key=api_key, http_options={"api_version": "v1alpha"})
-
-        now = datetime.datetime.now(tz=datetime.UTC)
-        token_response = client.auth_tokens.create(
-            config={
-                "uses": 1,  # Single use token
-                "expire_time": now + datetime.timedelta(minutes=30),
-                "new_session_expire_time": now + datetime.timedelta(minutes=1),
-            }
-        )
-
-        expires_at = (now + datetime.timedelta(minutes=30)).isoformat()
-
-        logger.info("Successfully created Gemini Live ephemeral token")
-
-        return EphemeralTokenResponse(
-            token=token_response.name,
-            expires_at=expires_at,
-            tools=gemini_tools,
+        return _create_token_response(
+            api_key=api_key,
+            gemini_tools=gemini_tools,
             system_instruction=system_instruction,
-            model=gemini_live_config.model,
-            config=gemini_live_config,
+            gemini_live_config=gemini_live_config,
         )
-
     except ImportError as e:
         logger.error(f"google-genai SDK not available: {e}")
         raise HTTPException(

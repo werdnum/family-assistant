@@ -45,6 +45,12 @@ from family_assistant.config_sources import (
     load_yaml_file,
 )
 from family_assistant.delegation_security import DelegationSecurityLevel
+from family_assistant.security.taint import (
+    SinkClass,
+    SourceTrustTier,
+    TaintAdjudicateCell,
+    TaintPolicyOutcome,
+)
 from family_assistant.tools.metadata import ToolDescriptor
 from family_assistant.tools.policy import PolicyEngine, ToolPolicyDecision
 
@@ -979,6 +985,55 @@ class TestResolveServiceProfile:
         result = resolve_service_profile(profile_def, default_settings, {})
 
         assert result["taint_policy"] == profile_def["taint_policy"]
+
+    def test_structured_adjudicate_cell_survives_profile_resolution(self) -> None:
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "max_iterations": 10},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "taint_policy": {
+                "matrix_overrides": {
+                    "unknown_external": {
+                        "sandbox_network": {
+                            "outcome": "adjudicate",
+                            "verdict_floor": "confirm",
+                            "fallback": "deny",
+                        }
+                    }
+                }
+            },
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["taint_policy"] == profile_def["taint_policy"]
+
+    def test_app_config_parses_structured_adjudicate_cell(self) -> None:
+        config = AppConfig.model_validate({
+            "taint_policy": {
+                "matrix_overrides": {
+                    "unknown_external": {
+                        "sandbox_network": {
+                            "outcome": "adjudicate",
+                            "verdict_floor": "confirm",
+                            "fallback": "deny",
+                        }
+                    }
+                }
+            }
+        })
+
+        cell = config.taint_policy.matrix_overrides[SourceTrustTier.UNKNOWN_EXTERNAL][
+            SinkClass.SANDBOX_NETWORK
+        ]
+        assert isinstance(cell, TaintAdjudicateCell)
+        assert cell.outcome is TaintPolicyOutcome.ADJUDICATE
+        assert cell.verdict_floor is TaintPolicyOutcome.CONFIRM
+        assert cell.fallback is TaintPolicyOutcome.DENY
 
     def test_profile_without_processing_config_inherits_timezone(self) -> None:
         """Profile without processing_config inherits timezone from defaults."""

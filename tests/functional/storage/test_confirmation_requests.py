@@ -25,7 +25,10 @@ from family_assistant.storage.repositories.confirmation_requests import (
     ConfirmationRequestRow,
     ConfirmationRequestsRepository,
 )
-from family_assistant.tools.types import ToolArgumentsView
+from family_assistant.tools.types import (
+    ToolArgumentsView,
+    ToolCallReviewAuthorization,
+)
 
 RaceMode = Literal[
     "reject_before_approve",
@@ -243,6 +246,67 @@ async def test_create_request_is_visible_from_separate_context(
     assert fetched["status"] == "pending"
     assert fetched["target_user_id"] == "user-1"
     assert fetched["tool_args_json"]["title"] == "Ticket"
+
+
+@pytest.mark.asyncio
+async def test_create_request_persists_exact_review_authorization_fields(
+    db_engine: AsyncEngine,
+) -> None:
+    service = _service(db_engine)
+    tool_args = {"title": "Ticket", "start": "2026-05-01T09:00:00-07:00"}
+    created = await service.create_request(
+        target_user_id="user-1",
+        tool_name="calendar.create_event",
+        tool_args=tool_args,
+        tool_call_id="reviewed-call-1",
+        source_message_internal_id=None,
+        confirmation_prompt="Create calendar event: Ticket",
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+        tool_call_review_authorization=ToolCallReviewAuthorization(
+            tool_name="calendar.create_event",
+            call_id="reviewed-call-1",
+            tool_args=dict(tool_args),
+            sink_class="artifact_write",
+            static_policy_reason="Static policy delegated this call to review.",
+            taint_policy_reason="External content reached an artifact write.",
+        ),
+    )
+
+    fetched = await Database(engine=db_engine).confirmation_requests.get(created["id"])
+
+    assert fetched is not None
+    assert fetched["sink_class"] == "artifact_write"
+    assert fetched["static_policy_reason"] == (
+        "Static policy delegated this call to review."
+    )
+    assert fetched["taint_policy_reason"] == (
+        "External content reached an artifact write."
+    )
+
+    mismatched = await service.create_request(
+        target_user_id="user-1",
+        tool_name="calendar.create_event",
+        tool_args=tool_args,
+        tool_call_id="different-call",
+        source_message_internal_id=None,
+        confirmation_prompt="Create calendar event: Ticket",
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+        tool_call_review_authorization=ToolCallReviewAuthorization(
+            tool_name="calendar.create_event",
+            call_id="reviewed-call-1",
+            tool_args=dict(tool_args),
+            sink_class="artifact_write",
+            static_policy_reason="Must not persist for a different call.",
+            taint_policy_reason=None,
+        ),
+    )
+    mismatched_fetched = await Database(engine=db_engine).confirmation_requests.get(
+        mismatched["id"]
+    )
+    assert mismatched_fetched is not None
+    assert mismatched_fetched["sink_class"] is None
+    assert mismatched_fetched["static_policy_reason"] is None
+    assert mismatched_fetched["taint_policy_reason"] is None
 
 
 @pytest.mark.asyncio

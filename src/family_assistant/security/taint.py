@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from enum import IntEnum, StrEnum
 from typing import TYPE_CHECKING, Literal, Protocol, TypedDict, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -109,6 +109,7 @@ class TaintPolicyOutcome(StrEnum):
 
     ALLOW = "allow"
     AUDIT = "audit"
+    ADJUDICATE = "adjudicate"
     CONFIRM = "confirm"
     REDACT = "redact"
     DENY = "deny"
@@ -152,7 +153,7 @@ class TaintSource:
 class SensitiveReadScope:
     """Private corpus scope touched by a sensitive read."""
 
-    kind: Literal["notes", "documents", "message_history", "attachments"]
+    kind: Literal["notes", "documents", "message_history", "attachments", "tool"]
     qualifier: str
     surfaced_ids: frozenset[str]
 
@@ -177,14 +178,14 @@ class TurnTaintState:
     history_high_taint_present: bool
     sequence: int = 0
     approved_sinks: frozenset[str] = frozenset()
-    """Sink classes a human has approved for *this* taint, by policy value.
+    """Exact profile-sink handoffs a human approved for *this* taint.
 
     Travels with the taint rather than beside it, because it is a fact about
-    the same content: "someone was shown this and said yes to sandbox_network".
-    A gate downstream of the one that asked can then read the approval instead
-    of inferring, from the shape of the call path, that an approval was
-    probably sought. Serialized with the rest of the state, so it survives the
-    delegation boundary the way the sources do.
+    the same content and handoff: "someone was shown this and said yes to the
+    coder profile's sandbox_network gate". A gate downstream of the one that
+    asked can then read the approval without granting the same sink class to a
+    different profile or named action. Serialized with the rest of the state,
+    so it survives the delegation boundary the way the sources do.
     """
 
     @classmethod
@@ -199,13 +200,26 @@ class TurnTaintState:
             sequence=0,
         )
 
-    def approve_sink(self, sink_class: SinkClass) -> TurnTaintState:
-        """Record that this turn's taint was cleared for one sink class."""
-        return replace(self, approved_sinks=self.approved_sinks | {sink_class.value})
+    @staticmethod
+    def _profile_sink_approval_key(profile_id: str, sink_class: SinkClass) -> str:
+        """Return an unambiguous persisted key for one profile handoff."""
+        return f"profile:{len(profile_id)}:{profile_id}:{sink_class.value}"
 
-    def is_sink_approved(self, sink_class: SinkClass) -> bool:
-        """Whether an approval for this sink travelled with the taint."""
-        return sink_class.value in self.approved_sinks
+    def approve_sink(
+        self,
+        sink_class: SinkClass,
+        *,
+        profile_id: str,
+    ) -> TurnTaintState:
+        """Record approval for this turn entering one exact sink profile."""
+        key = self._profile_sink_approval_key(profile_id, sink_class)
+        return replace(self, approved_sinks=self.approved_sinks | {key})
+
+    def is_sink_approved(self, sink_class: SinkClass, *, profile_id: str) -> bool:
+        """Whether exact-profile approval travelled with this turn's taint."""
+        return self._profile_sink_approval_key(profile_id, sink_class) in (
+            self.approved_sinks
+        )
 
     def add_source(
         self,
@@ -443,6 +457,31 @@ def merge_taint_state_into_tracker(
     return merged
 
 
+class TaintAdjudicateCell(BaseModel):
+    """Structured runtime-taint matrix cell delegated to the reviewer."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    outcome: Literal[TaintPolicyOutcome.ADJUDICATE]
+    verdict_floor: (
+        Literal[TaintPolicyOutcome.CONFIRM, TaintPolicyOutcome.DENY] | None
+    ) = None
+    fallback: Literal[TaintPolicyOutcome.CONFIRM, TaintPolicyOutcome.DENY] | None = None
+
+    @model_validator(mode="after")
+    def _fallback_cannot_relax_floor(self) -> TaintAdjudicateCell:
+        if (
+            self.verdict_floor is TaintPolicyOutcome.DENY
+            and self.fallback is TaintPolicyOutcome.CONFIRM
+        ):
+            msg = "An adjudicate fallback cannot be weaker than its verdict_floor"
+            raise ValueError(msg)
+        return self
+
+
+type TaintPolicyCell = TaintPolicyOutcome | TaintAdjudicateCell
+
+
 class TaintPolicyConfig(BaseModel):
     """Top-level and profile runtime taint policy configuration."""
 
@@ -457,11 +496,11 @@ class TaintPolicyConfig(BaseModel):
     operator_minimum: dict[SourceTrustTier, dict[SinkClass, TaintPolicyOutcome]] = (
         Field(default_factory=dict)
     )
-    matrix: dict[SourceTrustTier, dict[SinkClass, TaintPolicyOutcome]] = Field(
+    matrix: dict[SourceTrustTier, dict[SinkClass, TaintPolicyCell]] = Field(
         default_factory=dict
     )
-    matrix_overrides: dict[SourceTrustTier, dict[SinkClass, TaintPolicyOutcome]] = (
-        Field(default_factory=dict)
+    matrix_overrides: dict[SourceTrustTier, dict[SinkClass, TaintPolicyCell]] = Field(
+        default_factory=dict
     )
     artifact_labels: dict[SourceTrustTier, list[str]] = Field(
         default_factory=lambda: {
@@ -523,6 +562,52 @@ class TaintPolicyConfig(BaseModel):
             parsed[SourceTrustTier.from_value(raw_key)] = raw_value
         return parsed
 
+    @model_validator(mode="after")
+    def _validate_adjudication_cells(self) -> TaintPolicyConfig:
+        for matrix_name, matrix in (
+            ("matrix", self.matrix),
+            ("matrix_overrides", self.matrix_overrides),
+        ):
+            for tier, sink_map in matrix.items():
+                for sink_class, cell in sink_map.items():
+                    if _cell_outcome(cell) is not TaintPolicyOutcome.ADJUDICATE:
+                        continue
+                    if (
+                        _resolved_adjudicate_fallback(
+                            cell, tier=tier, sink_class=sink_class
+                        )
+                        is None
+                    ):
+                        msg = (
+                            f"taint_policy.{matrix_name}."
+                            f"{tier.config_value}.{sink_class.value} uses adjudicate "
+                            "without a non-allow fallback; configure fallback as "
+                            "confirm or deny"
+                        )
+                        raise ValueError(msg)
+
+        for tier, sink_map in self.operator_minimum.items():
+            for sink_class, minimum in sink_map.items():
+                if minimum is TaintPolicyOutcome.ADJUDICATE:
+                    msg = "taint_policy.operator_minimum cannot be adjudicate"
+                    raise ValueError(msg)
+                if minimum is not TaintPolicyOutcome.REDACT:
+                    continue
+                resolved_matrix = _default_taint_matrix()
+                _merge_matrix(resolved_matrix, self.matrix)
+                _merge_matrix(resolved_matrix, self.matrix_overrides)
+                cell = resolved_matrix.get(tier, {}).get(sink_class)
+                if (
+                    cell is not None
+                    and _cell_outcome(cell) is TaintPolicyOutcome.ADJUDICATE
+                ):
+                    msg = (
+                        "taint_policy.operator_minimum cannot apply redact to an "
+                        f"adjudicate cell ({tier.config_value}.{sink_class.value})"
+                    )
+                    raise ValueError(msg)
+        return self
+
 
 @dataclass(frozen=True, slots=True)
 class TaintPolicyEvaluation:
@@ -533,6 +618,8 @@ class TaintPolicyEvaluation:
     effective_outcome: TaintPolicyOutcome
     mode: TaintPolicyMode
     reason: str
+    verdict_floor: TaintPolicyOutcome | None = None
+    fallback_outcome: TaintPolicyOutcome | None = None
 
 
 class TaintPolicyEvaluator:
@@ -556,12 +643,36 @@ class TaintPolicyEvaluator:
         sink_class: SinkClass,
     ) -> TaintPolicyEvaluation:
         """Evaluate a sink request for the supplied taint state."""
-        requested = self._configured_outcome(state.max_tier, sink_class)
-        requested = self._apply_operator_minimum(
-            tier=state.max_tier,
-            sink_class=sink_class,
-            outcome=requested,
-        )
+        cell = self._configured_cell(state.max_tier, sink_class)
+        requested = _cell_outcome(cell)
+        verdict_floor: TaintPolicyOutcome | None = None
+        fallback_outcome: TaintPolicyOutcome | None = None
+        if requested is TaintPolicyOutcome.ADJUDICATE:
+            verdict_floor = _cell_verdict_floor(cell)
+            fallback_outcome = _resolved_adjudicate_fallback(
+                cell,
+                tier=state.max_tier,
+                sink_class=sink_class,
+            )
+            if fallback_outcome is None:
+                msg = (
+                    "Adjudicate cells require a non-allow fallback for "
+                    f"{state.max_tier.config_value}.{sink_class.value}"
+                )
+                raise ValueError(msg)
+            verdict_floor, fallback_outcome = self._apply_adjudicate_minimum(
+                tier=state.max_tier,
+                sink_class=sink_class,
+                verdict_floor=verdict_floor,
+                fallback_outcome=fallback_outcome,
+            )
+        else:
+            requested = self._apply_operator_minimum(
+                tier=state.max_tier,
+                sink_class=sink_class,
+                outcome=requested,
+            )
+
         effective = (
             TaintPolicyOutcome.AUDIT
             if self._config.mode is TaintPolicyMode.OBSERVE
@@ -572,6 +683,14 @@ class TaintPolicyEvaluator:
             f"Runtime taint max tier {state.max_tier.config_value} maps "
             f"{sink_class.value} to {requested.value}."
         )
+        if requested is TaintPolicyOutcome.ADJUDICATE:
+            if fallback_outcome is None:
+                raise AssertionError("Adjudicate evaluation lost its fallback")
+            floor_text = verdict_floor.value if verdict_floor is not None else "allow"
+            reason += (
+                f" Reviewer verdict floor is {floor_text}; fallback is "
+                f"{fallback_outcome.value}."
+            )
         if effective != requested:
             reason += f" Observe mode records this as {effective.value}."
         return TaintPolicyEvaluation(
@@ -580,7 +699,40 @@ class TaintPolicyEvaluator:
             effective_outcome=effective,
             mode=self._config.mode,
             reason=reason,
+            verdict_floor=verdict_floor,
+            fallback_outcome=fallback_outcome,
         )
+
+    def _apply_adjudicate_minimum(
+        self,
+        *,
+        tier: SourceTrustTier,
+        sink_class: SinkClass,
+        verdict_floor: TaintPolicyOutcome | None,
+        fallback_outcome: TaintPolicyOutcome,
+    ) -> tuple[TaintPolicyOutcome | None, TaintPolicyOutcome]:
+        minimum = self._config.operator_minimum.get(tier, {}).get(sink_class)
+        if minimum is TaintPolicyOutcome.REDACT:
+            msg = (
+                "A redact operator minimum cannot be applied to adjudicate for "
+                f"{tier.config_value}.{sink_class.value}"
+            )
+            raise ValueError(msg)
+        if minimum is TaintPolicyOutcome.ADJUDICATE:
+            msg = "An operator minimum cannot itself be adjudicate"
+            raise ValueError(msg)
+        if minimum is TaintPolicyOutcome.CONFIRM or minimum is TaintPolicyOutcome.DENY:
+            if verdict_floor is None or _outcome_strictness(
+                minimum
+            ) > _outcome_strictness(verdict_floor):
+                verdict_floor = minimum
+            if not _outcome_satisfies_minimum(fallback_outcome, minimum):
+                fallback_outcome = minimum
+        if verdict_floor is not None and not _outcome_satisfies_minimum(
+            fallback_outcome, verdict_floor
+        ):
+            fallback_outcome = verdict_floor
+        return verdict_floor, fallback_outcome
 
     def evaluate_tool(
         self,
@@ -598,11 +750,11 @@ class TaintPolicyEvaluator:
             ),
         )
 
-    def _configured_outcome(
+    def _configured_cell(
         self,
         tier: SourceTrustTier,
         sink_class: SinkClass,
-    ) -> TaintPolicyOutcome:
+    ) -> TaintPolicyCell:
         return self._matrix.get(tier, {}).get(sink_class, TaintPolicyOutcome.ALLOW)
 
     def _apply_operator_minimum(
@@ -615,6 +767,9 @@ class TaintPolicyEvaluator:
         minimum = self._config.operator_minimum.get(tier, {}).get(sink_class)
         if minimum is None:
             return outcome
+        if minimum is TaintPolicyOutcome.ADJUDICATE:
+            msg = "An operator minimum cannot itself be adjudicate"
+            raise ValueError(msg)
         if _outcome_satisfies_minimum(outcome, minimum):
             return outcome
         return minimum
@@ -682,28 +837,38 @@ def merge_taint_policy_config(
 
 def _reject_relaxed_base_policy(
     *,
-    overrides: dict[SourceTrustTier, dict[SinkClass, TaintPolicyOutcome]],
+    overrides: dict[SourceTrustTier, dict[SinkClass, TaintPolicyCell]],
     base: TaintPolicyConfig,
 ) -> None:
     base_matrix = _default_taint_matrix()
     _merge_matrix(base_matrix, base.matrix)
     _merge_matrix(base_matrix, base.matrix_overrides)
     for tier, sink_map in overrides.items():
-        for sink_class, outcome in sink_map.items():
+        for sink_class, cell in sink_map.items():
             minimum = base_matrix.get(tier, {}).get(sink_class)
             operator_minimum = base.operator_minimum.get(tier, {}).get(sink_class)
-            if operator_minimum is not None and (
-                minimum is None
-                or _outcome_strictness(operator_minimum) > _outcome_strictness(minimum)
+            if minimum is not None and not _cell_satisfies_minimum(
+                cell,
+                minimum,
+                tier=tier,
+                sink_class=sink_class,
             ):
-                minimum = operator_minimum
-            if minimum is None:
-                continue
-            if not _outcome_satisfies_minimum(outcome, minimum):
                 msg = (
                     "Profile taint_policy cannot relax base policy for "
                     f"{tier.config_value}.{sink_class.value}: "
-                    f"{outcome.value} < {minimum.value}"
+                    f"{_cell_description(cell)} < {_cell_description(minimum)}"
+                )
+                raise ValueError(msg)
+            if operator_minimum is not None and not _cell_satisfies_outcome_minimum(
+                cell,
+                operator_minimum,
+                tier=tier,
+                sink_class=sink_class,
+            ):
+                msg = (
+                    "Profile taint_policy cannot relax base policy for "
+                    f"{tier.config_value}.{sink_class.value}: "
+                    f"{_cell_description(cell)} < {operator_minimum.value}"
                 )
                 raise ValueError(msg)
 
@@ -754,7 +919,11 @@ def resolve_tool_sink_class(
             declared = delegation_sink_classes.get(target)
             if declared is not None:
                 return declared
-    if "sensitive_data" in tag_values and "read_only" in tag_values:
+    if (
+        "sensitive_data" in tag_values
+        and "read_only" in tag_values
+        and not tag_values.intersection({"browser", "external_comm"})
+    ):
         return SinkClass.SENSITIVE_READ_BROADENING
     if "code_execution" in tag_values or "worker" in tag_values:
         return SinkClass.SANDBOX_NETWORK
@@ -812,7 +981,7 @@ def resolve_tool_sink_class(
     return SinkClass.ARBITRARY_EXTERNAL_MESSAGE
 
 
-def _default_taint_matrix() -> dict[
+def _legacy_taint_matrix() -> dict[
     SourceTrustTier, dict[SinkClass, TaintPolicyOutcome]
 ]:
     return {
@@ -859,12 +1028,145 @@ def _default_taint_matrix() -> dict[
     }
 
 
+def _default_taint_matrix() -> dict[SourceTrustTier, dict[SinkClass, TaintPolicyCell]]:
+    matrix: dict[SourceTrustTier, dict[SinkClass, TaintPolicyCell]] = {
+        tier: dict(sink_map) for tier, sink_map in _legacy_taint_matrix().items()
+    }
+    for tier in (SourceTrustTier.KNOWN_CONTACT, SourceTrustTier.RECOGNIZED_MACHINE):
+        matrix[tier].update({
+            SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.ADJUDICATE,
+            SinkClass.ATTACKER_ADDRESSABLE_EGRESS: TaintPolicyOutcome.ADJUDICATE,
+            SinkClass.SANDBOX_NETWORK: TaintPolicyOutcome.ADJUDICATE,
+        })
+    matrix[SourceTrustTier.UNKNOWN_EXTERNAL].update({
+        SinkClass.KNOWN_USER_MESSAGE: TaintPolicyOutcome.AUDIT,
+        SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.ADJUDICATE,
+        SinkClass.ATTACKER_ADDRESSABLE_EGRESS: TaintPolicyOutcome.ADJUDICATE,
+        SinkClass.SANDBOX_NETWORK: TaintPolicyOutcome.ADJUDICATE,
+        SinkClass.SENSITIVE_READ_BROADENING: TaintPolicyOutcome.AUDIT,
+    })
+    return matrix
+
+
 def _merge_matrix(
-    target: dict[SourceTrustTier, dict[SinkClass, TaintPolicyOutcome]],
-    overrides: dict[SourceTrustTier, dict[SinkClass, TaintPolicyOutcome]],
+    target: dict[SourceTrustTier, dict[SinkClass, TaintPolicyCell]],
+    overrides: dict[SourceTrustTier, dict[SinkClass, TaintPolicyCell]],
 ) -> None:
     for tier, sink_map in overrides.items():
         target.setdefault(tier, {}).update(sink_map)
+
+
+def _cell_outcome(cell: TaintPolicyCell) -> TaintPolicyOutcome:
+    if isinstance(cell, TaintAdjudicateCell):
+        return TaintPolicyOutcome.ADJUDICATE
+    return cell
+
+
+def _cell_verdict_floor(cell: TaintPolicyCell) -> TaintPolicyOutcome | None:
+    if isinstance(cell, TaintAdjudicateCell):
+        return cell.verdict_floor
+    return None
+
+
+def _resolved_adjudicate_fallback(
+    cell: TaintPolicyCell,
+    *,
+    tier: SourceTrustTier,
+    sink_class: SinkClass,
+) -> TaintPolicyOutcome | None:
+    if isinstance(cell, TaintAdjudicateCell) and cell.fallback is not None:
+        return cell.fallback
+    legacy = _legacy_taint_matrix().get(tier, {}).get(sink_class)
+    if legacy in {TaintPolicyOutcome.CONFIRM, TaintPolicyOutcome.DENY}:
+        return legacy
+    return None
+
+
+def _cell_main_outcome(cell: TaintPolicyCell) -> TaintPolicyOutcome:
+    outcome = _cell_outcome(cell)
+    if outcome is not TaintPolicyOutcome.ADJUDICATE:
+        return outcome
+    return _cell_verdict_floor(cell) or TaintPolicyOutcome.ADJUDICATE
+
+
+def _cell_fallback_outcome(
+    cell: TaintPolicyCell,
+    *,
+    tier: SourceTrustTier,
+    sink_class: SinkClass,
+) -> TaintPolicyOutcome:
+    if _cell_outcome(cell) is not TaintPolicyOutcome.ADJUDICATE:
+        return _cell_outcome(cell)
+    fallback = _resolved_adjudicate_fallback(
+        cell,
+        tier=tier,
+        sink_class=sink_class,
+    )
+    if fallback is None:
+        msg = (
+            "Adjudicate cells require a non-allow fallback for "
+            f"{tier.config_value}.{sink_class.value}"
+        )
+        raise ValueError(msg)
+    return fallback
+
+
+def _cell_satisfies_minimum(
+    cell: TaintPolicyCell,
+    minimum: TaintPolicyCell,
+    *,
+    tier: SourceTrustTier,
+    sink_class: SinkClass,
+) -> bool:
+    cell_main = _cell_main_outcome(cell)
+    minimum_main = _cell_main_outcome(minimum)
+    if not _outcome_satisfies_minimum(cell_main, minimum_main):
+        return False
+    cell_fallback = _cell_fallback_outcome(
+        cell,
+        tier=tier,
+        sink_class=sink_class,
+    )
+    minimum_fallback = _cell_fallback_outcome(
+        minimum,
+        tier=tier,
+        sink_class=sink_class,
+    )
+    return _outcome_satisfies_minimum(cell_fallback, minimum_fallback)
+
+
+def _cell_satisfies_outcome_minimum(
+    cell: TaintPolicyCell,
+    minimum: TaintPolicyOutcome,
+    *,
+    tier: SourceTrustTier,
+    sink_class: SinkClass,
+) -> bool:
+    if minimum is TaintPolicyOutcome.ADJUDICATE:
+        return False
+    if (
+        _cell_outcome(cell) is TaintPolicyOutcome.ADJUDICATE
+        and minimum is TaintPolicyOutcome.REDACT
+    ):
+        return False
+    return _outcome_satisfies_minimum(_cell_main_outcome(cell), minimum) and (
+        _outcome_satisfies_minimum(
+            _cell_fallback_outcome(
+                cell,
+                tier=tier,
+                sink_class=sink_class,
+            ),
+            minimum,
+        )
+    )
+
+
+def _cell_description(cell: TaintPolicyCell) -> str:
+    if not isinstance(cell, TaintAdjudicateCell):
+        return cell.value
+    floor = cell.verdict_floor.value if cell.verdict_floor is not None else "allow"
+    fallback = cell.fallback.value if cell.fallback is not None else "derived"
+    return f"adjudicate(floor={floor}, fallback={fallback})"
 
 
 def _outcome_strictness(outcome: TaintPolicyOutcome) -> int:
@@ -872,12 +1174,14 @@ def _outcome_strictness(outcome: TaintPolicyOutcome) -> int:
         return 0
     if outcome is TaintPolicyOutcome.AUDIT:
         return 1
+    if outcome is TaintPolicyOutcome.ADJUDICATE:
+        return 2
     if outcome is TaintPolicyOutcome.REDACT:
-        return 2
-    if outcome is TaintPolicyOutcome.CONFIRM:
-        return 2
-    if outcome is TaintPolicyOutcome.DENY:
         return 3
+    if outcome is TaintPolicyOutcome.CONFIRM:
+        return 3
+    if outcome is TaintPolicyOutcome.DENY:
+        return 4
     raise AssertionError(f"Unhandled taint policy outcome: {outcome}")
 
 

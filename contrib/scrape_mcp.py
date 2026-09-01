@@ -83,6 +83,109 @@ async def check_playwright_async_wrapper() -> bool:  # Renamed to avoid conflict
     return functional
 
 
+def _tool_content_for_result(
+    result: ScrapeResult, url: str
+) -> Sequence[TextContent | ImageContent]:
+    if result.type == "markdown":
+        logger.info(
+            f"Successfully converted content to Markdown for: {url} (Source: {result.source_description})"
+        )
+        if result.content is None:
+            raise McpError(
+                f"Scraper returned type markdown but content is None for {url}"
+            )
+        return [TextContent(type="text", text=result.content)]
+    if result.type == "text":
+        logger.info(
+            f"Successfully retrieved text content (MIME: {result.mime_type}, Source: {result.source_description}) for: {url}"
+        )
+        if result.content is None:
+            raise McpError(f"Scraper returned type text but content is None for {url}")
+        return [TextContent(type="text", text=result.content)]
+    if result.type == "image":
+        logger.info(
+            f"Successfully retrieved image content (MIME: {result.mime_type}, Source: {result.source_description}) for: {url}"
+        )
+        if result.content_bytes is None or result.mime_type is None:
+            raise McpError(
+                f"Scraper returned type image but content_bytes or mime_type is None for {url}"
+            )
+        return [
+            ImageContent(
+                type="image",
+                content=result.content_bytes,
+                media_type=result.mime_type,
+            )
+        ]
+    if result.type == "error":
+        error_message = result.message or "Unknown error during scraping."
+        logger.error(
+            f"Scraping/processing error for {url} (Source: {result.source_description}): {error_message}"
+        )
+        raise McpError(error_message)
+
+    unknown_error = f"Unknown result type '{result.type}' from scraper for {url}."
+    logger.error(unknown_error)
+    raise McpError(unknown_error)
+
+
+async def _standalone_scrape(
+    url: str, *, verify_ssl: bool, output_file: str | None
+) -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="STANDALONE_SCRAPER: %(levelname)s: %(message)s",
+    )
+    logger.info(f"Scraping URL: {url}")
+    scraper_instance = PlaywrightScraper(
+        verify_ssl=verify_ssl,
+        user_agent=DEFAULT_USER_AGENT,
+    )
+    await check_playwright_async_wrapper()
+    result: ScrapeResult = await scraper_instance.scrape(url)
+
+    if result.type in {"markdown", "text"}:
+        if result.content is None:
+            logger.error(
+                f"Error: Scraper returned type {result.type} but content is None."
+            )
+            sys.exit(1)
+        print(result.content, end="")
+        return
+
+    if result.type == "image":
+        if result.content_bytes is None or result.mime_type is None:
+            logger.error(
+                "Error: Scraper returned type image but content_bytes or mime_type is None."
+            )
+            sys.exit(1)
+        if output_file:
+            try:
+                async with aiofiles.open(output_file, "wb") as f:
+                    await f.write(result.content_bytes)
+                logger.info(
+                    f"Image content (MIME: {result.mime_type}, Source: {result.source_description}) saved to {output_file}"
+                )
+            except OSError as e:
+                logger.error(f"Error writing image to file {output_file}: {e}")
+                sys.exit(1)
+        else:
+            sys.stdout.buffer.write(result.content_bytes)
+            sys.stdout.flush()
+            logger.info(
+                f"Image content (MIME: {result.mime_type}, Source: {result.source_description}) written to stdout."
+            )
+        return
+
+    if result.type == "error":
+        logger.error(
+            f"Error (Source: {result.source_description}): {result.message or 'Unknown scraping error.'}"
+        )
+    else:
+        logger.error(f"Error: Unknown result type '{result.type}' from scraper.")
+    sys.exit(1)
+
+
 # --- MCP Server Implementation ---
 async def serve(verify_ssl: bool = True) -> None:
     """Sets up and runs the MCP server for web scraping using the Scraper utility."""
@@ -140,55 +243,7 @@ async def serve(verify_ssl: bool = True) -> None:
         try:
             # Use the imported Scraper instance
             result: ScrapeResult = await scraper_instance.scrape(url)
-
-            if result.type == "markdown":
-                logger.info(
-                    f"Successfully converted content to Markdown for: {url} (Source: {result.source_description})"
-                )
-                if result.content is None:  # Should not happen if type is markdown
-                    raise McpError(
-                        f"Scraper returned type markdown but content is None for {url}"
-                    )
-                return [TextContent(type="text", text=result.content)]
-            elif result.type == "text":
-                logger.info(
-                    f"Successfully retrieved text content (MIME: {result.mime_type}, Source: {result.source_description}) for: {url}"
-                )
-                if result.content is None:  # Should not happen if type is text
-                    raise McpError(
-                        f"Scraper returned type text but content is None for {url}"
-                    )
-                return [TextContent(type="text", text=result.content)]
-            elif result.type == "image":
-                logger.info(
-                    f"Successfully retrieved image content (MIME: {result.mime_type}, Source: {result.source_description}) for: {url}"
-                )
-                if (
-                    result.content_bytes is None or result.mime_type is None
-                ):  # Should not happen
-                    raise McpError(
-                        f"Scraper returned type image but content_bytes or mime_type is None for {url}"
-                    )
-                return [
-                    ImageContent(
-                        type="image",
-                        content=result.content_bytes,
-                        media_type=result.mime_type,
-                    )
-                ]
-            elif result.type == "error":
-                error_message = result.message or "Unknown error during scraping."
-                logger.error(
-                    f"Scraping/processing error for {url} (Source: {result.source_description}): {error_message}"
-                )
-                raise McpError(error_message)
-            else:
-                unknown_error = (
-                    f"Unknown result type '{result.type}' from scraper for {url}."
-                )
-                logger.error(unknown_error)
-                raise McpError(unknown_error)
-
+            return _tool_content_for_result(result, url)
         except Exception as e:
             logger.exception(f"Error during scraping/conversion for {url}: {e}")
             raise McpError(f"Error processing scrape request for {url}: {e!s}") from e
@@ -234,67 +289,13 @@ if __name__ == "__main__":
 
     try:
         if args.url:
-            # Standalone mode
-            async def standalone_scrape() -> None:
-                # Use basicConfig for standalone mode as well, or a more specific logger
-                logging.basicConfig(
-                    level=logging.INFO,
-                    format="STANDALONE_SCRAPER: %(levelname)s: %(message)s",
-                )
-                logger.info(f"Scraping URL: {args.url}")
-
-                # Use the imported PlaywrightScraper, providing its own default user agent
-                scraper_instance = PlaywrightScraper(
+            asyncio.run(
+                _standalone_scrape(
+                    args.url,
                     verify_ssl=args.verify_ssl,
-                    user_agent=DEFAULT_USER_AGENT,  # Or a specific one for standalone
+                    output_file=args.output_file,
                 )
-                # Perform playwright check for standalone mode as well
-                await check_playwright_async_wrapper()
-                result: ScrapeResult = await scraper_instance.scrape(args.url)
-
-                if result.type in {"markdown", "text"}:
-                    if result.content is None:
-                        logger.error(
-                            f"Error: Scraper returned type {result.type} but content is None."
-                        )
-                        sys.exit(1)
-                    print(result.content, end="")  # Print directly to stdout
-                elif result.type == "image":
-                    if result.content_bytes is None or result.mime_type is None:
-                        logger.error(
-                            "Error: Scraper returned type image but content_bytes or mime_type is None."
-                        )
-                        sys.exit(1)
-                    if args.output_file:
-                        try:
-                            async with aiofiles.open(args.output_file, "wb") as f:
-                                await f.write(result.content_bytes)
-                            logger.info(
-                                f"Image content (MIME: {result.mime_type}, Source: {result.source_description}) saved to {args.output_file}"
-                            )
-                        except OSError as e:
-                            logger.error(
-                                f"Error writing image to file {args.output_file}: {e}"
-                            )
-                            sys.exit(1)
-                    else:
-                        sys.stdout.buffer.write(result.content_bytes)
-                        sys.stdout.flush()
-                        logger.info(
-                            f"Image content (MIME: {result.mime_type}, Source: {result.source_description}) written to stdout."
-                        )
-                elif result.type == "error":
-                    logger.error(
-                        f"Error (Source: {result.source_description}): {result.message or 'Unknown scraping error.'}"
-                    )
-                    sys.exit(1)
-                else:
-                    logger.error(
-                        f"Error: Unknown result type '{result.type}' from scraper."
-                    )
-                    sys.exit(1)
-
-            asyncio.run(standalone_scrape())
+            )
         else:
             # MCP server mode
             # Logging for server mode is configured at the top of the script

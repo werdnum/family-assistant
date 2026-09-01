@@ -1128,7 +1128,12 @@ async def test_google_streaming_with_multiturns_and_tool_calls(
     error_occurred = False
     error_message = None
 
-    try:
+    async def consume_stream() -> None:
+        nonlocal accumulated_content
+        nonlocal done_event_received
+        nonlocal error_message
+        nonlocal error_occurred
+
         async for event in client.generate_response_stream(
             messages, tools=sample_tools, tool_choice="auto"
         ):
@@ -1139,6 +1144,9 @@ async def test_google_streaming_with_multiturns_and_tool_calls(
             elif event.type == "error":
                 error_occurred = True
                 error_message = event.error
+
+    try:
+        await consume_stream()
     except Exception as e:
         error_occurred = True
         error_message = str(e)
@@ -1227,7 +1235,10 @@ async def test_google_streaming_pydantic_validation_reproducer(
     accumulated_content = ""
     done_received = False
 
-    try:
+    async def consume_stream() -> None:
+        nonlocal accumulated_content
+        nonlocal done_received
+
         async for event in client.generate_response_stream(
             messages, tools=sample_tools, tool_choice="auto"
         ):
@@ -1236,11 +1247,13 @@ async def test_google_streaming_pydantic_validation_reproducer(
             elif event.type == "done":
                 done_received = True
             elif event.type == "error":
-                # If we get an error event, fail the test
                 pytest.fail(
                     f"Streaming error event received: {event.error}\n"
                     f"This is likely the Pydantic validation error due to camelCase keys"
                 )
+
+    try:
+        await consume_stream()
     except Exception as e:
         error_msg = str(e)
         # Check if this is the Pydantic validation error we expect

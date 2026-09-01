@@ -1,20 +1,20 @@
 # JWT-Based Edge Authentication for Native Clients
 
-Status: proposed (revised after review)
-Date: 2026-08-22
+Status: proposed (revised after review) Date: 2026-08-22
 
 ## Problem
 
-The iOS app reaches `assistant.andrewgarrett.dev` through two different front doors: on LAN/Tailscale,
-split-horizon DNS resolves directly to the local ingress; off-LAN, public DNS resolves to Cloudflare's
-edge, where a wildcard Cloudflare Access app (`*.andrewgarrett.dev`) intercepts every request.
+The iOS app reaches `assistant.andrewgarrett.dev` through two different front doors: on
+LAN/Tailscale, split-horizon DNS resolves directly to the local ingress; off-LAN, public DNS
+resolves to Cloudflare's edge, where a wildcard Cloudflare Access app (`*.andrewgarrett.dev`)
+intercepts every request.
 
 Cloudflare Access has no credential that a native app can hold: its non-browser options are service
-tokens (a static shared secret) and mTLS certificates, and it cannot accept an externally minted OIDC
-JWT as a session. So off-LAN requests get a 302 to the Access login page, `URLSession` transparently
-follows it, and the app receives `200 text/html` where it expected JSON. The decoder throws and the
-user sees Foundation's rendering of the `DecodingError` — "Data not in expected format" — which looks
-like a corrupt file rather than what it is: an authentication wall.
+tokens (a static shared secret) and mTLS certificates, and it cannot accept an externally minted
+OIDC JWT as a session. So off-LAN requests get a 302 to the Access login page, `URLSession`
+transparently follows it, and the app receives `200 text/html` where it expected JSON. The decoder
+throws and the user sees Foundation's rendering of the `DecodingError` — "Data not in expected
+format" — which looks like a corrupt file rather than what it is: an authentication wall.
 
 Meanwhile the app itself already performs real authentication: OIDC PKCE against the same identity
 provider Family Assistant uses for the web, exchanging the result for Bearer API tokens. That
@@ -24,8 +24,8 @@ credential chain is exactly what an edge should be able to verify — if the tok
 
 Make every authenticated client of `/api` speak **standard signed JWTs**, publish them via a **JWKS
 endpoint**, have the **Envoy Gateway** (already in the request path) require them unconditionally on
-`/api/*`, and give Cloudflare Access a bypass scoped strictly to `/api/*`. Nothing in Family Assistant
-or its clients becomes specific to this deployment's Cloudflare setup.
+`/api/*`, and give Cloudflare Access a bypass scoped strictly to `/api/*`. Nothing in Family
+Assistant or its clients becomes specific to this deployment's Cloudflare setup.
 
 ```
 any client ──Bearer JWT──▶ Cloudflare (bypass for /api/* only) ──▶ Envoy Gateway
@@ -42,19 +42,19 @@ The review of this design established two constraints that shape everything else
    bypassed — and several API routers declare no auth dependency today because `PUBLIC_PATHS`
    blanket-bypasses `/api` and Access was de facto the gate. The fix is a chokepoint, not routing:
    the backend itself must enforce authentication on every `/api/*` request.
- 2. **One credential shape past the gateway, two deliveries.** The gateway verifies signatures; it
-    cannot consult a database, so opaque bearer tokens cannot be honoured off-LAN. All remote
-    clients converge on JWTs; native clients and scripts send them as `Authorization: Bearer`,
-    browsers hold them in an HttpOnly cookie set by the session bridge — so browser-managed
-    requests that cannot carry headers (`<img>`, `EventSource`, full-page OAuth redirects)
-    authenticate automatically instead of each needing its own migration.
- 3. **Bootstrap endpoints carry their own auth or bounded impact.** The gateway cannot
-    signature-check requests whose whole purpose is obtaining the first credential, plus the
-    deliberately public error-intake receiver. Those paths form an explicit, enumerated no-JWT route
-    set at the edge; each is authenticated by something else (PKCE code, opaque token, session
-    cookie) or — for error intake — bounded server-side instead of access-controlled: per-client
-    rate limiting, hard payload bounds, and unauthenticated reports clamped into the in-memory
-    telemetry ring so an Internet attacker can never buy persistent storage or log pollution.
+2. **One credential shape past the gateway, two deliveries.** The gateway verifies signatures; it
+   cannot consult a database, so opaque bearer tokens cannot be honoured off-LAN. All remote clients
+   converge on JWTs; native clients and scripts send them as `Authorization: Bearer`, browsers hold
+   them in an HttpOnly cookie set by the session bridge — so browser-managed requests that cannot
+   carry headers (`<img>`, `EventSource`, full-page OAuth redirects) authenticate automatically
+   instead of each needing its own migration.
+3. **Bootstrap endpoints carry their own auth or bounded impact.** The gateway cannot
+   signature-check requests whose whole purpose is obtaining the first credential, plus the
+   deliberately public error-intake receiver. Those paths form an explicit, enumerated no-JWT route
+   set at the edge; each is authenticated by something else (PKCE code, opaque token, session
+   cookie) or — for error intake — bounded server-side instead of access-controlled: per-client rate
+   limiting, hard payload bounds, and unauthenticated reports clamped into the in-memory telemetry
+   ring so an Internet attacker can never buy persistent storage or log pollution.
 
 ### Backend
 
@@ -65,9 +65,9 @@ The review of this design established two constraints that shape everything else
    provider's consent page after arbitrarily long — longer than the JWT lifetime — so the callback
    must reach its own state + session validation), public-by-design error intake, and scoped-auth
    routes — paths whose access control lives outside default auth, whether a route dependency
-   granting narrower access (diagnostics readonly token) or a custom transport-level credential
-   (the Asterisk WebSocket's query-token handshake, which cannot carry headers or cookies). Every
-   other `/api/*` request requires authentication in `AuthMiddleware` — closing the LAN exposure of
+   granting narrower access (diagnostics readonly token) or a custom transport-level credential (the
+   Asterisk WebSocket's query-token handshake, which cannot carry headers or cookies). Every other
+   `/api/*` request requires authentication in `AuthMiddleware` — closing the LAN exposure of
    dependency-less routers as a side effect, and making the system safe under any edge
    configuration. Scoped routes stay scoped: passing a diagnostics readonly token grants nothing
    beyond diagnostics. Error intake stays reachable without a session (capture before login / with
@@ -85,19 +85,18 @@ The review of this design established two constraints that shape everything else
    expiry checks) and legacy opaque tokens (unchanged path). Opaque tokens remain valid wherever the
    gateway is not in the path (LAN/Tailscale); off-LAN they are rejected by design.
 4. **Session→JWT bridge**: `GET /api/auth/browser-token`, authenticated by the existing OIDC session
-   cookie, sets the short-lived JWT as an HttpOnly `Secure` `SameSite=Lax` cookie scoped to
-   `/api`; the credential travels exclusively via that cookie (an XSS reading the response body
-   must not be able to export a bearer token), and the response body carries only `expires_in`
-   for the frontend's refresh scheduling.
-   Lax is what lets browser-managed flows survive the gateway unchanged — including returns from
-   cross-site redirects such as the Google OAuth callback — while cross-site POSTs (the CSRF case
-   that matters) still never carry it.
+   cookie, sets the short-lived JWT as an HttpOnly `Secure` `SameSite=Lax` cookie scoped to `/api`;
+   the credential travels exclusively via that cookie (an XSS reading the response body must not be
+   able to export a bearer token), and the response body carries only `expires_in` for the
+   frontend's refresh scheduling. Lax is what lets browser-managed flows survive the gateway
+   unchanged — including returns from cross-site redirects such as the Google OAuth callback — while
+   cross-site POSTs (the CSRF case that matters) still never carry it.
 5. **Opaque→JWT exchange**: `POST /api/auth/token` upgrades a valid opaque API token to a JWT pair,
    so scripts using the documented token interface keep working remotely after a one-time upgrade;
    the opaque token stays valid on LAN.
 6. **JWKS endpoint**: `GET /.well-known/jwks.json`, unauthenticated, `Cache-Control` friendly to the
-   gateway's fetch interval. Public key derived from the configured private key; served as a key list
-   with a stable `kid` so rotation can be added without format change.
+   gateway's fetch interval. Public key derived from the configured private key; served as a key
+   list with a stable `kid` so rotation can be added without format change.
 7. **Configuration**: signing key supplied as a PEM private key via configuration/environment
    (documented in `CONFIGURATION_REFERENCE.md`). Unset ⇒ feature disabled: issuance stays opaque,
    middleware enforcement still applies (it is independent of signing), and the deployment simply
@@ -108,28 +107,27 @@ The review of this design established two constraints that shape everything else
 8. Mounting is gated on the initial bridge attempt: a startup gate renders a minimal placeholder
    until the first bridge call settles, and API consumers stay unmounted through transient failures
    (backoff retries) so their one-shot load effects never fire without the cookie. A 401 — an
-   expired OIDC session — triggers the central re-authentication transition instead of proceeding:
-   a full-page navigation to the current URL lets `AuthMiddleware` redirect to the OIDC login with
-   the intended destination preserved. After that, near-expiry re-runs keep the cookie fresh; the
-   cookie it sets authenticates every browser-managed API request — decorated `fetch`, native
-   `EventSource` subscriptions, `<img>` attachment previews, and full-page OAuth redirects alike —
-   with no per-request machinery changes. Page loads themselves remain behind Access SSO + session
-   cookies — only `/api` traffic changes credential shape.
+   expired OIDC session — triggers the central re-authentication transition instead of proceeding: a
+   full-page navigation to the current URL lets `AuthMiddleware` redirect to the OIDC login with the
+   intended destination preserved. After that, near-expiry re-runs keep the cookie fresh; the cookie
+   it sets authenticates every browser-managed API request — decorated `fetch`, native `EventSource`
+   subscriptions, `<img>` attachment previews, and full-page OAuth redirects alike — with no
+   per-request machinery changes. Page loads themselves remain behind Access SSO + session cookies —
+   only `/api` traffic changes credential shape.
 
 ### Edge (deployment repo)
 
-9. **Envoy Gateway `SecurityPolicy`** with a JWT provider whose `remoteJWKS` points at the in-cluster
-   Family Assistant service, extracting tokens from both the `Authorization: Bearer` header and the
-   browser cookie, attached unconditionally to the HTTPRoute section matching `/api/*`, except the
-   routes the backend classifies as not using default authentication: bootstrap receivers
-   (`exchange`, `refresh`, `token`, `browser-token`), public-by-design error intake, and scoped-auth
-   routes — diagnostics readonly-token dependencies and custom-auth transports (the Asterisk
-   WebSocket) alike. There is no
-   header-conditioned splitting and therefore no route an attacker can select by omitting anything;
-   every exempted path is authenticated by something else or public by design with its own abuse
-   controls. The backend is the single source of truth for that classification — it publishes it,
-   and the deployment consumes it (generated config or a contract test), so the two lists cannot
-   silently drift.
+09. **Envoy Gateway `SecurityPolicy`** with a JWT provider whose `remoteJWKS` points at the
+    in-cluster Family Assistant service, extracting tokens from both the `Authorization: Bearer`
+    header and the browser cookie, attached unconditionally to the HTTPRoute section matching
+    `/api/*`, except the routes the backend classifies as not using default authentication:
+    bootstrap receivers (`exchange`, `refresh`, `token`, `browser-token`), public-by-design error
+    intake, and scoped-auth routes — diagnostics readonly-token dependencies and custom-auth
+    transports (the Asterisk WebSocket) alike. There is no header-conditioned splitting and
+    therefore no route an attacker can select by omitting anything; every exempted path is
+    authenticated by something else or public by design with its own abuse controls. The backend is
+    the single source of truth for that classification — it publishes it, and the deployment
+    consumes it (generated config or a contract test), so the two lists cannot silently drift.
 10. **Cloudflare Access bypass** scoped strictly to `assistant.andrewgarrett.dev/api/*`, ordered
     ahead of the wildcard app. Nothing else changes: the web UI, static assets, and pages remain
     behind interactive Access SSO, and `/api/*` remains behind two layers anyway (Cloudflare
@@ -139,25 +137,25 @@ The review of this design established two constraints that shape everything else
 
 11. **Refresh cadence**: the client already stores `expires_in` and refreshes near expiry through a
     coalesced single-flight path; the freshness threshold becomes proportional to token lifetime
-    instead of the current fixed "more than an hour left" check, which would otherwise fire on nearly
-    every call once tokens live for an hour. No protocol change.
+    instead of the current fixed "more than an hour left" check, which would otherwise fire on
+    nearly every call once tokens live for an hour. No protocol change.
 12. **Error surfacing**: response validation rejects `text/html` responses and redirect-to-login
     chains before decoding, classified into the error model as an explicit condition ("server
     requires sign-in" / connectivity), never surfaced raw as a decode failure.
 
 ## Deliberate simplifications
 
-- **Edge revocation lag**: a revoked token is rejected immediately by the backend but admitted by the
-  gateway until `exp` (≤ TTL). Standard OAuth2 semantics; the gateway gate keeps unauthenticated
+- **Edge revocation lag**: a revoked token is rejected immediately by the backend but admitted by
+  the gateway until `exp` (≤ TTL). Standard OAuth2 semantics; the gateway gate keeps unauthenticated
   traffic out, while authorization and revocation stay with the backend.
 - **Off-LAN opaque tokens end**: scripts holding manually created tokens must call the upgrade
   exchange once to work remotely; LAN use is unaffected. Documented in the API README.
 - **Browser cookie JWT and CSRF**: the bridge cookie is `SameSite=Lax`, so it rides top-level GET
-  navigations (OAuth callback returns) but never cross-site POSTs — the CSRF case that matters.
-  A cross-site top-level GET to `/api` cannot leak data to the initiator (the response renders in
-  the victim's browser, unreadable cross-origin). Lax only helps while the cookie is unexpired,
-  which is why OAuth return targets are classified as no-JWT routes rather than relying on the
-  cookie surviving the round trip.
+  navigations (OAuth callback returns) but never cross-site POSTs — the CSRF case that matters. A
+  cross-site top-level GET to `/api` cannot leak data to the initiator (the response renders in the
+  victim's browser, unreadable cross-origin). Lax only helps while the cookie is unexpired, which is
+  why OAuth return targets are classified as no-JWT routes rather than relying on the cookie
+  surviving the round trip.
 - **Diagnostics scoped-auth pass-through**: the middleware allowlist names diagnostics paths so
   their readonly-token dependency keeps working; the pass-through grants nothing beyond those
   routes' own scoped checks. This is enumeration at a single chokepoint (the same list drives the
@@ -181,8 +179,8 @@ Each milestone is independently verifiable; M1–M4 land in this repo, M5 in the
    reject.
 2. **JWT tokens + bridges** — ES256 issuance, dual verification, JWKS endpoint, browser bridge
    (cookie + body), opaque→JWT exchange, configuration. Verify: unit tests (mint/verify,
-   bad-signature/expiry/audience rejection, JWKS shape, disabled-mode passthrough, cookie attributes)
-   and functional `app_auth` tests covering every bootstrap path.
+   bad-signature/expiry/audience rejection, JWKS shape, disabled-mode passthrough, cookie
+   attributes) and functional `app_auth` tests covering every bootstrap path.
 3. **Web frontend** — bridge call on load and near expiry. Verify: frontend test suite; Playwright
    flows (chat streaming, attachment images, activity stream, Google OAuth connect) with the cookie
    present and expired.
@@ -190,9 +188,9 @@ Each milestone is independently verifiable; M1–M4 land in this repo, M5 in the
    error classifier. Verify: unit tests; full suite green.
 5. **Deployment** — Envoy `SecurityPolicy` (header + cookie extraction) + route split generated or
    contract-tested against the backend's published classification, Access bypass rule in tofu.
-   Verify: `tofu plan` diff review; contract test fails when classification and policy diverge;
-   curl through the tunnel — no token ⇒ 401 from the gateway, valid token (header and cookie) ⇒
-   200, opaque token ⇒ 401 with clear pointer to the upgrade endpoint, each classified path
-   reachable per its class; web UI unaffected.
+   Verify: `tofu plan` diff review; contract test fails when classification and policy diverge; curl
+   through the tunnel — no token ⇒ 401 from the gateway, valid token (header and cookie) ⇒ 200,
+   opaque token ⇒ 401 with clear pointer to the upgrade endpoint, each classified path reachable per
+   its class; web UI unaffected.
 6. **End-to-end** — device off-Tailscale: sign-in once, uploads/chat/SSE all work; failure modes
    surface as readable errors.

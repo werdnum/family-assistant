@@ -64,6 +64,7 @@ def create_engine_with_sqlite_optimizations(
     *,
     instrument: bool = False,
     statement_timeout_ms: int | None = None,
+    apply_sqlite_pragmas: bool = True,
 ) -> AsyncEngine:
     """Create engine with SQLite optimizations if applicable.
 
@@ -76,6 +77,13 @@ def create_engine_with_sqlite_optimizations(
         statement_timeout_ms: Override the PostgreSQL per-statement ceiling for
             this engine. Defaults to ``POSTGRES_STATEMENT_TIMEOUT_MS``; ``0``
             disables it. Ignored on SQLite.
+        apply_sqlite_pragmas: Issue the SQLite tuning pragmas on connect.
+            Leave this on for anything that owns its database. Turn it off for
+            a tool that only reads a database it does not own: ``journal_mode``
+            is a persistent property of the file, so connecting alone would
+            convert a production database or an archival copy to WAL and leave
+            ``-wal``/``-shm`` sidecars behind. Ignored on PostgreSQL, where the
+            hook is a no-op.
     """
     # SQLAlchemy's async engine needs an async driver. A bare "postgresql://"
     # URL (e.g. Render's connectionString, or a standard libpq URL) resolves to
@@ -137,6 +145,11 @@ def create_engine_with_sqlite_optimizations(
         ),
     )
 
+    if not apply_sqlite_pragmas:
+        if instrument:
+            attach_instrumentation(engine)
+        return engine
+
     # Add SQLite-specific optimizations using dialect detection
     @event.listens_for(engine.sync_engine, "connect")
     def set_sqlite_pragma(
@@ -153,12 +166,15 @@ def create_engine_with_sqlite_optimizations(
                 cursor.fetchone()
 
                 # If we get here, it's SQLite
-                cursor.execute("PRAGMA journal_mode=WAL")  # Enable WAL mode
-                cursor.execute("PRAGMA busy_timeout=30000")  # 30 second timeout
-                cursor.execute("PRAGMA synchronous=NORMAL")  # Better performance
-                cursor.execute("PRAGMA cache_size=-64000")  # 64MB cache
-                cursor.execute("PRAGMA temp_store=MEMORY")  # Use memory for temp tables
-                cursor.execute("PRAGMA mmap_size=536870912")  # 512MB memory-mapped I/O
+                for pragma in (
+                    "PRAGMA journal_mode=WAL",
+                    "PRAGMA busy_timeout=30000",
+                    "PRAGMA synchronous=NORMAL",
+                    "PRAGMA cache_size=-64000",
+                    "PRAGMA temp_store=MEMORY",
+                    "PRAGMA mmap_size=536870912",
+                ):
+                    cursor.execute(pragma)
 
                 logger.debug("Applied SQLite optimizations")
             except Exception:

@@ -6,7 +6,7 @@ import base64
 import json
 import logging
 import os
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, TypedDict, TypeVar, cast
 
@@ -138,6 +138,10 @@ class OpenAIClient(BaseLLMClient):
             f"OpenAIClient initialized for model: {model} with default kwargs: {kwargs}, "
             f"model-specific parameters: {model_parameters}"
         )
+
+    async def close(self) -> None:
+        """Close the owned asynchronous OpenAI SDK client."""
+        await self.client.close()
 
     def _supports_multimodal_tools(self) -> bool:
         """OpenAI doesn't support multimodal tool responses"""
@@ -965,26 +969,28 @@ class OpenAIClient(BaseLLMClient):
         raw_response: str | None = None
         last_error: Exception | None = None
 
+        async def request_structured_output() -> T:
+            nonlocal raw_response
+            response = await self.client.beta.chat.completions.parse(
+                response_format=response_model,
+                **base_params,
+            )
+            if not response.choices:
+                raise ValueError("LLM returned empty response")
+
+            message = response.choices[0].message
+            raw_response = message.content
+            if message.parsed is not None:
+                return cast("T", message.parsed)
+            if raw_response:
+                return response_model.model_validate_json(
+                    self._extract_json_from_response(raw_response)
+                )
+            raise ValueError("LLM returned no parsed structured output")
+
         for attempt in range(max_retries + 1):
             try:
-                response = await self.client.beta.chat.completions.parse(
-                    response_format=response_model,
-                    **base_params,
-                )
-
-                if not response.choices:
-                    raise ValueError("LLM returned empty response")
-
-                message = response.choices[0].message
-                raw_response = message.content
-
-                if message.parsed is not None:
-                    return cast("T", message.parsed)
-                if raw_response:
-                    return response_model.model_validate_json(
-                        self._extract_json_from_response(raw_response)
-                    )
-                raise ValueError("LLM returned no parsed structured output")
+                return await request_structured_output()
 
             except (ValidationError, json.JSONDecodeError, ValueError, TypeError) as e:
                 last_error = e
@@ -1048,17 +1054,20 @@ class OpenAIClient(BaseLLMClient):
         raw_response: str | None = None
         last_error: Exception | None = None
 
+        async def request_json_output() -> JsonObject:
+            nonlocal raw_response
+            response = await self.client.chat.completions.create(**base_params)
+            if not response.choices:
+                raise ValueError("LLM returned empty response")
+
+            raw_response = response.choices[0].message.content
+            if not raw_response:
+                raise ValueError("LLM returned empty content")
+            return self._parse_json_object_response(raw_response)
+
         for attempt in range(max_retries + 1):
             try:
-                response = await self.client.chat.completions.create(**base_params)
-                if not response.choices:
-                    raise ValueError("LLM returned empty response")
-
-                message = response.choices[0].message
-                raw_response = message.content
-                if not raw_response:
-                    raise ValueError("LLM returned empty content")
-                return self._parse_json_object_response(raw_response)
+                return await request_json_output()
 
             except (json.JSONDecodeError, TypeError, ValueError) as e:
                 last_error = e
@@ -1175,7 +1184,7 @@ class OpenAIClient(BaseLLMClient):
             streaming=True,
         )
 
-        try:
+        async def stream_events() -> AsyncGenerator[LLMStreamEvent]:
             # Process tool attachments before sending
             processed_messages = self._process_tool_messages(list(messages))
 
@@ -1390,6 +1399,10 @@ class OpenAIClient(BaseLLMClient):
             # Signal completion
             yield LLMStreamEvent(type="done", metadata=metadata)
 
+        events = stream_events()
+        try:
+            async for stream_event in events:
+                yield stream_event
         except Exception as e:
             telemetry.finish_error(e)
 
@@ -1433,7 +1446,10 @@ class OpenAIClient(BaseLLMClient):
                 },
             )
         finally:
-            span.end()
+            try:
+                await events.aclose()
+            finally:
+                span.end()
 
     async def _generate_responses_stream(
         self,

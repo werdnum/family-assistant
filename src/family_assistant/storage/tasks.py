@@ -365,24 +365,21 @@ async def update_task_status(
         values_to_update["error"] = error
 
     try:
-        stmt = (
+        result = await db_context.execute(
             update(tasks_table)
             .where(tasks_table.c.task_id == task_id)
             .values(**values_to_update)
         )
-        # Use execute_with_retry as commit is handled by context manager
-        result = await db_context.execute(stmt)
-        if result.rowcount > 0:
-            logger.info(f"Updated task {task_id} status to {status}.")
-            return True
-        else:
-            logger.warning(
-                f"Task {task_id} not found or status unchanged when updating to {status}."
-            )
-            return False
     except SQLAlchemyError as e:
         logger.exception(f"Database error in update_task_status({task_id}): {e}")
         raise
+    if result.rowcount > 0:
+        logger.info(f"Updated task {task_id} status to {status}.")
+        return True
+    logger.warning(
+        f"Task {task_id} not found or status unchanged when updating to {status}."
+    )
+    return False
 
 
 async def reschedule_task_for_retry(
@@ -397,7 +394,7 @@ async def reschedule_task_for_retry(
         raise ValueError("next_scheduled_at must be timezone-aware")
 
     try:
-        stmt = (
+        result = await db_context.execute(
             update(tasks_table)
             .where(tasks_table.c.task_id == task_id)
             .values(
@@ -409,21 +406,18 @@ async def reschedule_task_for_retry(
                 locked_at=None,
             )
         )
-        # Use execute_with_retry as commit is handled by context manager
-        result = await db_context.execute(stmt)
-        if result.rowcount > 0:
-            logger.info(
-                f"Rescheduled task {task_id} for retry {new_retry_count} at {next_scheduled_at}."
-            )
-            return True
-        else:
-            logger.warning(f"Task {task_id} not found when rescheduling for retry.")
-            return False
     except ValueError:  # Re-raise specific errors
         raise
     except SQLAlchemyError as e:
         logger.exception(f"Database error in reschedule_task_for_retry({task_id}): {e}")
         raise
+    if result.rowcount > 0:
+        logger.info(
+            f"Rescheduled task {task_id} for retry {new_retry_count} at {next_scheduled_at}."
+        )
+        return True
+    logger.warning(f"Task {task_id} not found when rescheduling for retry.")
+    return False
 
 
 async def manually_retry_task(
@@ -434,75 +428,8 @@ async def manually_retry_task(
     Manually retries a task that has failed or exhausted its retries.
     Increments max_retries, sets status to pending, and schedules for immediate run.
     """
-    # For manual retry, using actual current time is acceptable as it's a user-triggered action
-    # not part of the automated time-sensitive worker loop.
-    current_real_time = datetime.now(UTC)
     try:
-        # Fetch the task by its internal ID
-        select_stmt = select(tasks_table).where(tasks_table.c.id == internal_task_id)
-        task_row = await db_context.fetch_one(select_stmt)
-
-        if not task_row:
-            logger.warning(
-                f"Manual retry requested for non-existent task with internal ID {internal_task_id}."
-            )
-            return False
-
-        # Check if task is eligible for manual retry
-        is_failed_status = task_row["status"] == "failed"
-        is_pending_exhausted = (
-            task_row["status"] == "pending"
-            and task_row["retry_count"] >= task_row["max_retries"]
-        )
-
-        if not (is_failed_status or is_pending_exhausted):
-            logger.warning(
-                f"Task with internal ID {internal_task_id} (status: {task_row['status']}, retries: {task_row['retry_count']}/{task_row['max_retries']}) "
-                "is not eligible for manual retry."
-            )
-            return False
-
-        update_values = {
-            "status": "pending",
-            "max_retries": task_row["max_retries"] + 1,
-            "scheduled_at": current_real_time,  # Use current real time for immediate retry
-            "error": None,  # Clear previous error
-            "locked_by": None,
-            "locked_at": None,
-            # retry_count remains as is, it will be compared against the new max_retries
-        }
-
-        update_stmt = (
-            update(tasks_table)
-            .where(tasks_table.c.id == internal_task_id)
-            .values(**update_values)
-        )
-
-        async def _retry(txn: DatabaseTransaction) -> bool:
-            """Reschedule the task and arm the worker wake, as one unit."""
-            result = await txn.execute(update_stmt)
-            if result.rowcount == 0:
-                logger.error(
-                    f"Failed to update task with internal ID {internal_task_id} for manual retry, though it was found and eligible. Rowcount: {result.rowcount}."
-                )
-                return False
-
-            logger.info(
-                f"Successfully set task with internal ID {internal_task_id} for manual retry. New max_retries: {task_row['max_retries'] + 1}."
-            )
-
-            # Notify workers about the retry; fan out to every registered worker.
-            def notify() -> None:
-                notify_workers()
-                logger.info(
-                    f"Notified workers about manual retry for task internal ID {internal_task_id}."
-                )
-
-            txn.on_commit(notify)
-            return True
-
-        return await db_context.atomic(_retry)
-
+        return await _manually_retry_task(db_context, internal_task_id)
     except SQLAlchemyError as e:
         logger.exception(
             f"Database error during manual retry for task internal ID {internal_task_id}: {e}"
@@ -513,6 +440,67 @@ async def manually_retry_task(
             f"Unexpected error during manual retry for task internal ID {internal_task_id}: {e}"
         )
         raise
+
+
+async def _manually_retry_task(
+    db_context: DatabaseExecutor, internal_task_id: int
+) -> bool:
+    current_real_time = datetime.now(UTC)
+    select_stmt = select(tasks_table).where(tasks_table.c.id == internal_task_id)
+    task_row = await db_context.fetch_one(select_stmt)
+    if not task_row:
+        logger.warning(
+            f"Manual retry requested for non-existent task with internal ID {internal_task_id}."
+        )
+        return False
+
+    is_failed_status = task_row["status"] == "failed"
+    is_pending_exhausted = (
+        task_row["status"] == "pending"
+        and task_row["retry_count"] >= task_row["max_retries"]
+    )
+    if not (is_failed_status or is_pending_exhausted):
+        logger.warning(
+            f"Task with internal ID {internal_task_id} (status: {task_row['status']}, retries: {task_row['retry_count']}/{task_row['max_retries']}) "
+            "is not eligible for manual retry."
+        )
+        return False
+
+    update_stmt = (
+        update(tasks_table)
+        .where(tasks_table.c.id == internal_task_id)
+        .values(
+            status="pending",
+            max_retries=task_row["max_retries"] + 1,
+            scheduled_at=current_real_time,
+            error=None,
+            locked_by=None,
+            locked_at=None,
+        )
+    )
+
+    async def _retry(txn: DatabaseTransaction) -> bool:
+        """Reschedule the task and arm the worker wake, as one unit."""
+        result = await txn.execute(update_stmt)
+        if result.rowcount == 0:
+            logger.error(
+                f"Failed to update task with internal ID {internal_task_id} for manual retry, though it was found and eligible. Rowcount: {result.rowcount}."
+            )
+            return False
+        logger.info(
+            f"Successfully set task with internal ID {internal_task_id} for manual retry. New max_retries: {task_row['max_retries'] + 1}."
+        )
+
+        def notify() -> None:
+            notify_workers()
+            logger.info(
+                f"Notified workers about manual retry for task internal ID {internal_task_id}."
+            )
+
+        txn.on_commit(notify)
+        return True
+
+    return await db_context.atomic(_retry)
 
 
 async def get_all_tasks(

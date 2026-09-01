@@ -145,3 +145,24 @@
 #       transport: "streamable_http"
 #       url: "${MCP_HTTP_ORIGIN}/mcp"
 #       token: "$MY_MCP_TOKEN"
+#
+# --- Omnigent delegation (optional) ---
+# Delegate self-contained tasks to Omnigent agents (Claude Code, ...) running
+# on an Omnigent server — including per-session Kubernetes sandboxes. Consumed
+# as an A2A service profile: the omnigent-bridge service (kube-config
+# containers/omnigent-bridge) fronts the Omnigent server. See
+# docs/design/omnigent-delegation.md for the full design. Delegation is gated
+# per-profile by the delegate_to_service tools_policy tag, so restricted
+# profiles keep their existing deny rules.
+# Add under the existing service_profiles list:
+#   - id: "omnigent"
+#     description: "Delegates self-contained tasks to Omnigent agents..."
+#     remote_a2a:
+#       # The discovered agent may advertise A2A protocol v1 or legacy v0.3.
+#       agent_url: "http://omnigent-bridge.omnigent.svc.cluster.local"
+#       auth:
+#         type: "bearer"
+#         token_env: "OMNIGENT_BRIDGE_TOKEN"   # set in the Deployment env
+#       timeout_seconds: 60
+#       poll_interval_seconds: 15
+#       max_async_seconds: 14400               # long coding turns

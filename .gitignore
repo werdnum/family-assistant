@@ -57,3 +57,6 @@ frontend/dev-dist
 
 # MonkeyType
 monkeytype.sqlite3
+
+# Tool-call review eval private local dataset and run outputs
+/.review-eval-local/

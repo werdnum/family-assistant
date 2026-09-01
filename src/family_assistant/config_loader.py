@@ -603,23 +603,24 @@ def load_prompts_yaml(
     try:
         with open(prompts_file_path, encoding="utf-8") as f:
             loaded_prompts = yaml.safe_load(f)
-            if isinstance(loaded_prompts, dict):
-                service_profiles = loaded_prompts.pop("service_profiles", {})
-                if service_profiles:
-                    logger.info(
-                        f"Found {len(service_profiles)} profile-specific prompt overrides in {prompts_file_path}"
-                    )
-                logger.info(f"Successfully loaded prompts from {prompts_file_path}")
-                return loaded_prompts, service_profiles
-            else:
-                logger.error(f"{prompts_file_path} is not a valid dictionary.")
-                return {}, {}
     except FileNotFoundError:
         logger.warning(f"{prompts_file_path} not found. Using default prompts.")
         return {}, {}
     except yaml.YAMLError as e:
         logger.error(f"Error parsing {prompts_file_path}: {e}")
         return {}, {}
+
+    if not isinstance(loaded_prompts, dict):
+        logger.error(f"{prompts_file_path} is not a valid dictionary.")
+        return {}, {}
+
+    service_profiles = loaded_prompts.pop("service_profiles", {})
+    if service_profiles:
+        logger.info(
+            f"Found {len(service_profiles)} profile-specific prompt overrides in {prompts_file_path}"
+        )
+    logger.info(f"Successfully loaded prompts from {prompts_file_path}")
+    return loaded_prompts, service_profiles
 
 
 def load_user_documentation(filenames: list[str]) -> str:
@@ -676,20 +677,23 @@ def load_user_documentation(filenames: list[str]) -> str:
         try:
             with open(file_path, encoding="utf-8") as f:
                 content = f.read().strip()
-                if content:
-                    header = f"\n\n# Included Documentation: {filename}\n\n"
-                    combined_content.append(header + content)
-                    logger.info(
-                        f"Loaded user documentation: '{filename}' ({len(content)} chars)"
-                    )
-                else:
-                    logger.warning(f"Documentation file is empty: '{filename}'")
         except FileNotFoundError:
             logger.warning(
                 f"Documentation file not found: '{filename}' in '{docs_user_dir}'"
             )
+            continue
         except Exception as e:
             logger.exception(f"Error reading documentation file '{filename}': {e}")
+            continue
+
+        if content:
+            header = f"\n\n# Included Documentation: {filename}\n\n"
+            combined_content.append(header + content)
+            logger.info(
+                f"Loaded user documentation: '{filename}' ({len(content)} chars)"
+            )
+        else:
+            logger.warning(f"Documentation file is empty: '{filename}'")
 
     return "\n".join(combined_content)
 
@@ -703,6 +707,7 @@ def load_user_documentation(filenames: list[str]) -> str:
 PROFILE_OVERRIDABLE_PROCESSING_KEYS: tuple[str, ...] = (
     "provider",
     "llm_model",
+    "review_guidance",
     "timezone",
     "max_history_messages",
     "history_max_age_hours",
@@ -975,17 +980,15 @@ def load_indexing_pipeline_config(
     if env_config:
         try:
             parsed = json.loads(env_config)
-            if isinstance(parsed, dict):
-                config_data["indexing_pipeline_config"] = parsed
-                logger.info(
-                    "Loaded indexing_pipeline_config from environment variable."
-                )
-            else:
-                logger.warning(
-                    "INDEXING_PIPELINE_CONFIG_JSON is not a valid dictionary."
-                )
         except json.JSONDecodeError as e:
             logger.error(f"Error parsing INDEXING_PIPELINE_CONFIG_JSON: {e}")
+            return
+
+        if isinstance(parsed, dict):
+            config_data["indexing_pipeline_config"] = parsed
+            logger.info("Loaded indexing_pipeline_config from environment variable.")
+        else:
+            logger.warning("INDEXING_PIPELINE_CONFIG_JSON is not a valid dictionary.")
 
 
 def _shipped_base_for_operator_override(

@@ -10,7 +10,7 @@ from __future__ import annotations
 import base64
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
 
 import aiofiles
 import aiofiles.os
@@ -23,6 +23,13 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 logger = logging.getLogger(__name__)
+
+
+class _WorkspaceMatch(TypedDict):
+    path: str
+    is_file: bool
+    size: NotRequired[int | None]
+    modified: NotRequired[str]
 
 
 # Tool Definitions
@@ -236,7 +243,7 @@ async def workspace_read_tool(
     if full_path.is_dir():
         return ToolResult(data={"error": f"Path is a directory, not a file: {path}"})
 
-    try:
+    async def read_text_file() -> ToolResult:
         async with aiofiles.open(full_path, encoding="utf-8") as f:
             if offset is not None or limit is not None:
                 # Read specific lines efficiently by iterating
@@ -270,6 +277,9 @@ async def workspace_read_tool(
             else:
                 content = await f.read()
                 return ToolResult(data={"path": path, "content": content})
+
+    try:
+        return await read_text_file()
     except UnicodeDecodeError:
         # Try reading as binary and return base64
         async with aiofiles.open(full_path, mode="rb") as f:
@@ -364,9 +374,8 @@ async def workspace_glob_tool(
     if not base_path.exists():
         return ToolResult(data={"error": f"Path not found: {path or '.'}"})
 
-    try:
-        # ast-grep-ignore: no-dict-any - Dynamic file metadata structure
-        matches: list[dict[str, Any]] = []
+    def collect_matches() -> tuple[list[_WorkspaceMatch], bool]:
+        matches: list[_WorkspaceMatch] = []
         truncated = False
 
         # pathlib.glob natively supports ** for recursive patterns
@@ -388,18 +397,23 @@ async def workspace_glob_tool(
             else:
                 matches.append({"path": rel_path, "is_file": match_path.is_file()})
 
-        return ToolResult(
-            data={
-                "pattern": pattern,
-                "base_path": path or ".",
-                "matches": matches,
-                "count": len(matches),
-                "truncated": truncated,
-            }
-        )
+        return matches, truncated
+
+    try:
+        matches, truncated = collect_matches()
     except Exception as e:
         logger.exception(f"Failed to search pattern {pattern}: {e}")
         return ToolResult(data={"error": f"Failed to search: {e}"})
+
+    return ToolResult(
+        data={
+            "pattern": pattern,
+            "base_path": path or ".",
+            "matches": matches,
+            "count": len(matches),
+            "truncated": truncated,
+        }
+    )
 
 
 async def workspace_delete_tool(
@@ -426,7 +440,7 @@ async def workspace_delete_tool(
     if not full_path.exists():
         return ToolResult(data={"error": f"Path not found: {path}"})
 
-    try:
+    async def delete_path() -> ToolResult:
         if full_path.is_file():
             await aiofiles.os.remove(full_path)
             logger.info(f"Deleted file: {path}")
@@ -458,6 +472,9 @@ async def workspace_delete_tool(
                 raise dir_err
         else:
             return ToolResult(data={"error": f"Unknown path type: {path}"})
+
+    try:
+        return await delete_path()
     except Exception as e:
         logger.exception(f"Failed to delete {path}: {e}")
         return ToolResult(data={"error": f"Failed to delete: {e}"})
@@ -622,7 +639,7 @@ async def workspace_export_notes_tool(
 
     db_context = exec_context.db_context
 
-    try:
+    async def export_notes() -> ToolResult:
         # Create destination directory if needed
         await aiofiles.os.makedirs(dest_path, exist_ok=True)
 
@@ -691,6 +708,9 @@ include_in_prompt: {str(include_in_prompt).lower()}
                 "count": len(exported),
             },
         )
+
+    try:
+        return await export_notes()
     except Exception as e:
         logger.exception(f"Failed to export notes: {e}")
         return ToolResult(data={"error": f"Failed to export notes: {e}"})
@@ -733,71 +753,71 @@ async def workspace_import_note_tool(
 
     db_context = exec_context.db_context
 
+    # Read file content
     try:
-        # Read file content
         async with aiofiles.open(full_path, encoding="utf-8") as f:
             file_content = await f.read()
+    except Exception as e:
+        logger.exception(f"Failed to import note from {path}: {e}")
+        return ToolResult(data={"error": f"Failed to import note: {e}"})
 
-        # Parse YAML frontmatter if present
-        note_title = title
-        note_include_in_prompt = include_in_prompt  # May be None
-        content = file_content
+    # Parse YAML frontmatter if present
+    note_title = title
+    note_include_in_prompt = include_in_prompt  # May be None
+    content = file_content
 
-        if file_content.startswith("---"):
-            # Try to parse frontmatter using proper YAML parsing
-            parts = file_content.split("---", 2)
-            if len(parts) >= 3:
-                frontmatter_text = parts[1].strip()
-                content = parts[2].strip()
+    if file_content.startswith("---"):
+        # Try to parse frontmatter using proper YAML parsing
+        parts = file_content.split("---", 2)
+        if len(parts) >= 3:
+            frontmatter_text = parts[1].strip()
+            content = parts[2].strip()
 
-                # Parse YAML frontmatter properly
-                try:
-                    frontmatter = yaml.safe_load(frontmatter_text)
-                    if isinstance(frontmatter, dict):
-                        # Only use frontmatter values if function args weren't specified
-                        if "title" in frontmatter and not title:
-                            note_title = str(frontmatter["title"])
-                        if (
-                            "include_in_prompt" in frontmatter
-                            and include_in_prompt is None
-                        ):
-                            note_include_in_prompt = bool(
-                                frontmatter["include_in_prompt"]
-                            )
-                except yaml.YAMLError:
-                    # If YAML parsing fails, just use the content as-is
-                    logger.warning(f"Failed to parse YAML frontmatter in {path}")
+            # Parse YAML frontmatter properly
+            try:
+                frontmatter = yaml.safe_load(frontmatter_text)
+            except yaml.YAMLError:
+                # If YAML parsing fails, just use the content as-is
+                logger.warning(f"Failed to parse YAML frontmatter in {path}")
+            else:
+                if isinstance(frontmatter, dict):
+                    # Only use frontmatter values if function args weren't specified
+                    if "title" in frontmatter and not title:
+                        note_title = str(frontmatter["title"])
+                    if "include_in_prompt" in frontmatter and include_in_prompt is None:
+                        note_include_in_prompt = bool(frontmatter["include_in_prompt"])
 
-        # Default to True if not specified anywhere
-        if note_include_in_prompt is None:
-            note_include_in_prompt = True
+    # Default to True if not specified anywhere
+    if note_include_in_prompt is None:
+        note_include_in_prompt = True
 
-        # Use filename as title if not specified
-        if not note_title:
-            note_title = full_path.stem  # filename without extension
+    # Use filename as title if not specified
+    if not note_title:
+        note_title = full_path.stem  # filename without extension
 
-        # Create/update the note. Honor the active profile's write policy so an
-        # imported note lands in the same confined labels as a tool-written one.
+    # Create/update the note. Honor the active profile's write policy so an
+    # imported note lands in the same confined labels as a tool-written one.
+    try:
         await db_context.notes.add_or_update(
             title=note_title,
             content=content,
             include_in_prompt=note_include_in_prompt,
             write_policy=exec_context.note_write_policy(),
         )
-
-        logger.info(f"Imported note '{note_title}' from {path}")
-        return ToolResult(
-            text=f"OK. Imported note '{note_title}' from {path}",
-            data={
-                "path": path,
-                "title": note_title,
-                "include_in_prompt": note_include_in_prompt,
-                "content_length": len(content),
-            },
-        )
     except Exception as e:
         logger.exception(f"Failed to import note from {path}: {e}")
         return ToolResult(data={"error": f"Failed to import note: {e}"})
+
+    logger.info(f"Imported note '{note_title}' from {path}")
+    return ToolResult(
+        text=f"OK. Imported note '{note_title}' from {path}",
+        data={
+            "path": path,
+            "title": note_title,
+            "include_in_prompt": note_include_in_prompt,
+            "content_length": len(content),
+        },
+    )
 
 
 # Combined tool definitions for export

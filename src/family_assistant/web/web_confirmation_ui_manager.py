@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from family_assistant.services.confirmation_waiters import (
         ConfirmationResultWaiterRegistry,
     )
+    from family_assistant.tools.types import ToolCallReviewAuthorization
     from family_assistant.web.conversation_stream_hub import ConversationStreamHub
 
 
@@ -72,6 +73,7 @@ class WebConfirmationUIManager:
         wait_for_durable_execution: bool = True,
         taint_state_json: TaintMetadata | None = None,
         processing_profile_id: str | None = None,
+        tool_call_review_authorization: ToolCallReviewAuthorization | None = None,
     ) -> ConfirmationOutcome:
         """Create, deliver and await a durable web confirmation."""
         if target_user_id is None:
@@ -95,6 +97,7 @@ class WebConfirmationUIManager:
             decision_only=not wait_for_durable_execution,
             processing_profile_id=processing_profile_id,
             taint_state_json=taint_state_json,
+            tool_call_review_authorization=tool_call_review_authorization,
         )
         request_id = durable_request["id"]
         if wait_for_durable_execution:

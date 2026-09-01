@@ -4,29 +4,54 @@ Validates protocol compliance against the official a2a-sdk types.
 """
 
 import asyncio
+import base64
 import contextlib
 import json
 import re
 import uuid
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
-from a2a.client import Client, ClientConfig
+from a2a.client import A2ACardResolver, Client, ClientConfig
 from a2a.client.client_factory import ClientFactory
-from a2a.client.errors import A2AClientJSONRPCError
-from a2a.types import AgentCard as SdkAgentCard
-from a2a.types import Message as SdkMessage
-from a2a.types import Part as SdkPart
-from a2a.types import Role as SdkRole
-from a2a.types import SendMessageResponse as SdkSendMessageResponse
-from a2a.types import SendStreamingMessageResponse as SdkStreamResponse
-from a2a.types import TaskIdParams, TaskQueryParams
-from a2a.types import TextPart as SdkTextPart
+from a2a.compat.v0_3.types import AgentCard as CompatAgentCard
+from a2a.compat.v0_3.types import SendMessageResponse as CompatSendMessageResponse
+from a2a.compat.v0_3.types import (
+    SendStreamingMessageResponse as CompatStreamResponse,
+)
+from a2a.types import (
+    CancelTaskRequest,
+    GetExtendedAgentCardRequest,
+    GetTaskRequest,
+    SendMessageRequest,
+    StreamResponse,
+)
+from a2a.types import (
+    Message as SdkMessage,
+)
+from a2a.types import (
+    Part as SdkPart,
+)
+from a2a.types import (
+    Role as SdkRole,
+)
+from a2a.types import (
+    Task as SdkTask,
+)
+from a2a.types import (
+    TaskState as SdkTaskState,
+)
+from a2a.utils.errors import TaskNotCancelableError
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncEngine
 
+from family_assistant.llm import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService
+from family_assistant.services.attachment_registry import AttachmentRegistry
+from family_assistant.storage.database import Database
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
 from tests.mocks.mock_llm import RuleBasedMockLLMClient
 
@@ -621,6 +646,260 @@ class TestStreamMessage:
         assert "text/event-stream" in resp.headers.get("content-type", "")
 
 
+def _attach_to_response_once(
+    mock_llm: RuleBasedMockLLMClient, attachment_id: str, text: str
+) -> None:
+    """Make the mock LLM queue an attachment on its first turn, then answer."""
+
+    def first_turn(args: dict) -> bool:
+        messages = args.get("messages", [])
+        return any(msg.role == "user" for msg in messages) and not any(
+            msg.role == "tool" for msg in messages
+        )
+
+    mock_llm.rules = [
+        (
+            first_turn,
+            MockLLMOutput(
+                content="Sending it over.",
+                tool_calls=[
+                    ToolCallItem(
+                        id="call_attach_a2a",
+                        type="function",
+                        function=ToolCallFunction(
+                            name="attach_to_response",
+                            arguments=json.dumps({"attachment_ids": [attachment_id]}),
+                        ),
+                    )
+                ],
+            ),
+        )
+    ]
+    mock_llm.default_response = MockLLMOutput(content=text)
+
+
+def _file_parts(parts: list[dict]) -> list[dict]:
+    return [part for part in parts if part.get("kind") == "file"]
+
+
+class TestResponseAttachments:
+    """Files a turn queues must reach the peer as bytes, not as an id or a URL."""
+
+    @pytest.mark.asyncio
+    async def test_send_returns_response_file_inline(
+        self,
+        a2a_client: AsyncClient,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+        attachment_registry_fixture: AttachmentRegistry,
+        db_engine: AsyncEngine,
+    ) -> None:
+        attachment = await attachment_registry_fixture.register_user_attachment(
+            db_context=Database(engine=db_engine),
+            content=b"report bytes",
+            filename="report.txt",
+            mime_type="text/plain",
+        )
+        _attach_to_response_once(
+            api_mock_llm_client, attachment.attachment_id, "Here is the report."
+        )
+
+        resp = await a2a_client.post(
+            "/api/a2a",
+            json=_jsonrpc(
+                "message/send", params={"message": _a2a_message("send me the report")}
+            ),
+        )
+
+        assert resp.status_code == 200
+        task = resp.json()["result"]
+        assert task["status"]["state"] == "completed"
+        files = _file_parts(task["artifacts"][0]["parts"])
+        assert len(files) == 1
+        assert base64.b64decode(files[0]["file"]["bytes"]) == b"report bytes"
+        assert files[0]["file"]["mimeType"] == "text/plain"
+        assert files[0]["file"]["name"] == "report.txt"
+
+    @pytest.mark.asyncio
+    async def test_stream_emits_response_file_in_final_artifact(
+        self,
+        a2a_client: AsyncClient,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+        attachment_registry_fixture: AttachmentRegistry,
+        db_engine: AsyncEngine,
+    ) -> None:
+        """The streamed text is not the whole response — files ride out too."""
+        attachment = await attachment_registry_fixture.register_user_attachment(
+            db_context=Database(engine=db_engine),
+            content=b"streamed bytes",
+            filename="streamed.txt",
+            mime_type="text/plain",
+        )
+        _attach_to_response_once(
+            api_mock_llm_client, attachment.attachment_id, "Streaming it over."
+        )
+
+        resp = await a2a_client.post(
+            "/api/a2a/stream",
+            json=_jsonrpc(
+                "message/stream",
+                params={
+                    "message": _a2a_message("stream me the file", task_id="stream-att")
+                },
+            ),
+        )
+
+        assert resp.status_code == 200
+        events = _parse_sse_events(resp.text)
+        streamed_files = [
+            part
+            for event in events
+            for part in _file_parts(
+                event["result"].get("artifact", {}).get("parts", [])
+            )
+        ]
+        assert len(streamed_files) == 1
+        assert base64.b64decode(streamed_files[0]["file"]["bytes"]) == b"streamed bytes"
+
+        get_resp = await a2a_client.post(
+            "/api/a2a", json=_jsonrpc("tasks/get", params={"id": "stream-att"})
+        )
+        persisted = get_resp.json()["result"]
+        assert len(_file_parts(persisted["artifacts"][0]["parts"])) == 1
+
+    @pytest.mark.asyncio
+    async def test_undeliverable_file_fails_the_task_with_the_reason(
+        self,
+        a2a_client: AsyncClient,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+        attachment_registry_fixture: AttachmentRegistry,
+        db_engine: AsyncEngine,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The peer must learn the file did not arrive, not read the reply as the error."""
+        monkeypatch.setattr(
+            "family_assistant.a2a.attachments.MAX_INLINE_ATTACHMENT_BYTES", 8
+        )
+        attachment = await attachment_registry_fixture.register_user_attachment(
+            db_context=Database(engine=db_engine),
+            content=b"more than eight bytes",
+            filename="big.txt",
+            mime_type="text/plain",
+        )
+        _attach_to_response_once(
+            api_mock_llm_client, attachment.attachment_id, "Here is the report."
+        )
+
+        resp = await a2a_client.post(
+            "/api/a2a",
+            json=_jsonrpc(
+                "message/send", params={"message": _a2a_message("send me the report")}
+            ),
+        )
+
+        assert resp.status_code == 200
+        task = resp.json()["result"]
+        assert task["status"]["state"] == "failed"
+        status_text = " ".join(
+            part["text"]
+            for part in task["status"]["message"]["parts"]
+            if part["kind"] == "text"
+        )
+        assert "exceeds the inline transfer limit" in status_text
+        assert "Here is the report." not in status_text
+
+
+class TestInboundFileIdempotency:
+    @pytest.mark.asyncio
+    async def test_retrying_a_task_id_does_not_re_store_its_files(
+        self,
+        a2a_client: AsyncClient,
+        api_mock_llm_client: RuleBasedMockLLMClient,
+        attachment_registry_fixture: AttachmentRegistry,
+        db_engine: AsyncEngine,
+    ) -> None:
+        """A retry gets the existing task, so its files must not be stored twice."""
+        api_mock_llm_client.default_response = MockLLMOutput(content="got it")
+        file_part = {
+            "kind": "file",
+            "file": {
+                "bytes": base64.b64encode(b"inbound bytes").decode(),
+                "mimeType": "text/plain",
+                "name": "inbound.txt",
+            },
+        }
+        body = _jsonrpc(
+            "message/send",
+            params={
+                "message": _a2a_message(
+                    "read this",
+                    task_id="retry-att-task",
+                    context_id="retry-att-ctx",
+                    extra_parts=[file_part],
+                )
+            },
+        )
+
+        first = await a2a_client.post("/api/a2a", json=body)
+        second = await a2a_client.post("/api/a2a", json=body)
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        stored = (
+            await attachment_registry_fixture.get_recent_attachments_for_conversation(
+                Database(engine=db_engine),
+                "a2a-retry-att-ctx",
+                datetime.now(UTC) - timedelta(minutes=5),
+                acting_user_id="test_user",
+            )
+        )
+        assert len(stored) == 1
+
+
+class TestClaimedTaskFinalization:
+    @pytest.mark.asyncio
+    async def test_storage_failure_finalizes_the_claimed_task(
+        self,
+        a2a_client: AsyncClient,
+        attachment_registry_fixture: AttachmentRegistry,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A claimed row must never be left 'working' — retries would never progress."""
+
+        async def _explode(*_args: object, **_kwargs: object) -> None:
+            raise OSError("disk on fire")
+
+        monkeypatch.setattr(
+            attachment_registry_fixture,
+            "store_and_register_tool_attachment",
+            _explode,
+        )
+        file_part = {
+            "kind": "file",
+            "file": {
+                "bytes": base64.b64encode(b"inbound bytes").decode(),
+                "mimeType": "text/plain",
+            },
+        }
+
+        resp = await a2a_client.post(
+            "/api/a2a",
+            json=_jsonrpc(
+                "message/send",
+                params={
+                    "message": _a2a_message(
+                        "read this", task_id="storage-fail", extra_parts=[file_part]
+                    )
+                },
+            ),
+        )
+
+        assert resp.json()["error"]["code"] == -32603
+        get_resp = await a2a_client.post(
+            "/api/a2a", json=_jsonrpc("tasks/get", params={"id": "storage-fail"})
+        )
+        assert get_resp.json()["result"]["status"]["state"] == "failed"
+
+
 def _parse_sse_events(raw: str) -> list[dict]:
     """Extract JSON data payloads from raw SSE text."""
     events: list[dict] = []
@@ -643,7 +922,7 @@ class TestSdkCompliance:
         """Agent card must be valid per the SDK's AgentCard model."""
         resp = await a2a_client.get("/.well-known/agent.json")
         assert resp.status_code == 200
-        SdkAgentCard.model_validate(resp.json())
+        CompatAgentCard.model_validate(resp.json())
 
     @pytest.mark.asyncio
     async def test_agent_card_v2_path_parses_with_sdk(
@@ -652,7 +931,7 @@ class TestSdkCompliance:
         """The spec v0.3.0 path /.well-known/agent-card.json must also work."""
         resp = await a2a_client.get("/.well-known/agent-card.json")
         assert resp.status_code == 200
-        SdkAgentCard.model_validate(resp.json())
+        CompatAgentCard.model_validate(resp.json())
 
     @pytest.mark.asyncio
     async def test_send_message_parses_with_sdk(
@@ -669,7 +948,7 @@ class TestSdkCompliance:
         )
         resp = await a2a_client.post("/api/a2a", json=body)
         assert resp.status_code == 200
-        parsed = SdkSendMessageResponse.model_validate(resp.json())
+        parsed = CompatSendMessageResponse.model_validate(resp.json())
         assert hasattr(parsed.root, "result"), (
             f"Expected success response, got error: {parsed.root}"
         )
@@ -694,7 +973,7 @@ class TestSdkCompliance:
         assert len(events) >= 2, f"Expected at least 2 SSE events, got {len(events)}"
 
         for i, event_data in enumerate(events):
-            parsed = SdkStreamResponse.model_validate(event_data)
+            parsed = CompatStreamResponse.model_validate(event_data)
             assert hasattr(parsed.root, "result"), (
                 f"SSE event {i} was an error, not a result: {event_data}"
             )
@@ -707,13 +986,39 @@ def _sdk_message(
     context_id: str | None = None,
 ) -> SdkMessage:
     """Build an SDK Message object for use with the SDK client."""
-    return SdkMessage(
-        role=SdkRole.user,
+    message = SdkMessage(
+        role=SdkRole.ROLE_USER,
         message_id=str(uuid.uuid4()),
-        parts=[SdkPart(root=SdkTextPart(text=text))],
-        task_id=task_id,
-        context_id=context_id,
+        parts=[SdkPart(text=text)],
     )
+    if task_id is not None:
+        message.task_id = task_id
+    if context_id is not None:
+        message.context_id = context_id
+    return message
+
+
+async def _sdk_send_to_terminal(client: Client, message: SdkMessage) -> SdkTask:
+    """Send through the v1 SDK and fetch the authoritative terminal task."""
+    task: SdkTask | None = None
+    task_id = message.task_id or None
+    async for response in client.send_message(SendMessageRequest(message=message)):
+        if response.HasField("task"):
+            task = response.task
+            task_id = task.id
+        elif response.HasField("status_update"):
+            task_id = response.status_update.task_id
+    if task is not None and task.status.state in {
+        SdkTaskState.TASK_STATE_COMPLETED,
+        SdkTaskState.TASK_STATE_FAILED,
+        SdkTaskState.TASK_STATE_CANCELED,
+        SdkTaskState.TASK_STATE_REJECTED,
+        SdkTaskState.TASK_STATE_AUTH_REQUIRED,
+        SdkTaskState.TASK_STATE_INPUT_REQUIRED,
+    }:
+        return task
+    assert task_id is not None
+    return await client.get_task(GetTaskRequest(id=task_id))
 
 
 @pytest_asyncio.fixture
@@ -731,11 +1036,10 @@ async def sdk_client(
     async with AsyncClient(
         transport=transport, base_url="http://testserver"
     ) as httpx_client:
-        card_resp = await httpx_client.get("/.well-known/agent.json")
-        card = SdkAgentCard.model_validate(card_resp.json())
-        client = await ClientFactory.connect(
-            card, client_config=ClientConfig(httpx_client=httpx_client)
-        )
+        card = await A2ACardResolver(
+            httpx_client=httpx_client, base_url="http://testserver"
+        ).get_agent_card()
+        client = ClientFactory(ClientConfig(httpx_client=httpx_client)).create(card)
         yield client
 
 
@@ -744,7 +1048,7 @@ class TestSdkClient:
 
     @pytest.mark.asyncio
     async def test_sdk_get_card(self, sdk_client: Client) -> None:
-        card = await sdk_client.get_card()
+        card = await sdk_client.get_extended_agent_card(GetExtendedAgentCardRequest())
         assert card.name.startswith("Family Assistant")
         assert len(card.skills) >= 1
 
@@ -759,18 +1063,11 @@ class TestSdkClient:
         )
 
         msg = _sdk_message("Hello")
-        task = None
-        async for item in sdk_client.send_message(msg):
-            if isinstance(item, tuple):
-                task = item[0]
+        task = await _sdk_send_to_terminal(sdk_client, msg)
 
-        assert task is not None, "Expected a Task from send_message"
-        assert task.status.state.value == "completed"
-        assert task.artifacts is not None
+        assert task.status.state == SdkTaskState.TASK_STATE_COMPLETED
         assert len(task.artifacts) >= 1
-        first_part = task.artifacts[0].parts[0].root
-        assert isinstance(first_part, SdkTextPart)
-        assert "Hello from SDK client!" in first_part.text
+        assert "Hello from SDK client!" in task.artifacts[0].parts[0].text
 
     @pytest.mark.asyncio
     async def test_sdk_send_message_with_task_id(
@@ -784,12 +1081,8 @@ class TestSdkClient:
         custom_context_id = f"sdk-ctx-{uuid.uuid4().hex[:8]}"
         msg = _sdk_message("test", task_id=custom_task_id, context_id=custom_context_id)
 
-        task = None
-        async for item in sdk_client.send_message(msg):
-            if isinstance(item, tuple):
-                task = item[0]
+        task = await _sdk_send_to_terminal(sdk_client, msg)
 
-        assert task is not None
         assert task.id == custom_task_id
         assert task.context_id == custom_context_id
 
@@ -804,12 +1097,11 @@ class TestSdkClient:
         task_id = f"sdk-get-{uuid.uuid4().hex[:8]}"
         msg = _sdk_message("hello", task_id=task_id)
 
-        async for _ in sdk_client.send_message(msg):
-            pass
+        await _sdk_send_to_terminal(sdk_client, msg)
 
-        retrieved = await sdk_client.get_task(TaskQueryParams(id=task_id))
+        retrieved = await sdk_client.get_task(GetTaskRequest(id=task_id))
         assert retrieved.id == task_id
-        assert retrieved.status.state.value == "completed"
+        assert retrieved.status.state == SdkTaskState.TASK_STATE_COMPLETED
 
     @pytest.mark.asyncio
     async def test_sdk_cancel_completed_task(
@@ -822,11 +1114,10 @@ class TestSdkClient:
         task_id = f"sdk-cancel-{uuid.uuid4().hex[:8]}"
         msg = _sdk_message("hello", task_id=task_id)
 
-        async for _ in sdk_client.send_message(msg):
-            pass
+        await _sdk_send_to_terminal(sdk_client, msg)
 
-        with pytest.raises(A2AClientJSONRPCError):
-            await sdk_client.cancel_task(TaskIdParams(id=task_id))
+        with pytest.raises(TaskNotCancelableError):
+            await sdk_client.cancel_task(CancelTaskRequest(id=task_id))
 
     @pytest.mark.asyncio
     async def test_sdk_streaming(
@@ -837,16 +1128,18 @@ class TestSdkClient:
         api_mock_llm_client.default_response = MockLLMOutput(content="Streamed via SDK")
 
         msg = _sdk_message("Hello stream")
-        events_received: list[tuple] = []
-        final_task = None
+        events_received: list[StreamResponse] = []
+        task_id: str | None = None
 
-        async for item in sdk_client.send_message(msg):
-            if isinstance(item, tuple):
-                final_task = item[0]
-                events_received.append(item)
+        async for response in sdk_client.send_message(SendMessageRequest(message=msg)):
+            events_received.append(response)
+            if response.HasField("task"):
+                task_id = response.task.id
+            elif response.HasField("status_update"):
+                task_id = response.status_update.task_id
 
         assert len(events_received) >= 1, "Expected at least one event"
-        assert final_task is not None
-        assert final_task.status.state.value == "completed"
-        assert final_task.artifacts is not None
+        assert task_id is not None
+        final_task = await sdk_client.get_task(GetTaskRequest(id=task_id))
+        assert final_task.status.state == SdkTaskState.TASK_STATE_COMPLETED
         assert len(final_task.artifacts) >= 1

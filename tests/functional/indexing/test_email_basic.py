@@ -4,13 +4,14 @@ Tests fundamental email ingestion, indexing, and vector query retrieval.
 """
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import re
 import tempfile
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
@@ -48,6 +49,21 @@ from family_assistant.web.app_creator import app as fastapi_app
 from tests.helpers import wait_for_tasks_to_complete
 
 logger = logging.getLogger(__name__)
+
+
+@contextlib.asynccontextmanager
+async def _cleanup_after_test(
+    cleanup: Callable[[bool], Awaitable[None]],
+) -> AsyncIterator[None]:
+    test_failed = False
+    try:
+        yield
+    except Exception as e:
+        test_failed = True
+        logger.exception(f"Test failed: {e}")
+        raise
+    finally:
+        await cleanup(test_failed)
 
 
 def _create_mock_processing_service() -> MagicMock:
@@ -90,50 +106,44 @@ TEST_QUERY_TEXT = "meeting about Project Alpha"  # Text relevant to the subject/
 
 
 # --- Debugging Helper ---
+async def _dump_table_contents(db: Database) -> None:
+    tasks_query = select(tasks_table)
+    all_tasks = await db.fetch_all(tasks_query)
+    logger.info("--- Tasks Table ---")
+    if all_tasks:
+        for task in all_tasks:
+            logger.info(f"  Task: {dict(task)}")
+    else:
+        logger.info("  (empty)")
+
+    docs_query = select(DocumentRecord)
+    all_docs = await db.fetch_all(docs_query)
+    logger.info("--- Documents Table ---")
+    if all_docs:
+        for doc in all_docs:
+            logger.info(f"  Document: {dict(doc)}")
+    else:
+        logger.info("  (empty)")
+
+    embeds_query = select(DocumentEmbeddingRecord)
+    all_embeds = await db.fetch_all(embeds_query)
+    logger.info("--- Document Embeddings Table ---")
+    if all_embeds:
+        for embed in all_embeds:
+            embed_dict = dict(embed)
+            if "embedding" in embed_dict and embed_dict["embedding"] is not None:
+                embed_dict["embedding"] = f"Vector[{len(embed_dict['embedding'])}]"
+            logger.info(f"  Embedding: {embed_dict}")
+    else:
+        logger.info("  (empty)")
+
+
 async def dump_tables_on_failure(engine: AsyncEngine) -> None:
     """Logs the content of relevant tables for debugging."""
     logger.info("--- Dumping table contents on failure ---")
     db = Database(engine=engine)
     try:
-        # Dump tasks table
-        tasks_query = select(tasks_table)
-        all_tasks = await db.fetch_all(tasks_query)
-        logger.info("--- Tasks Table ---")
-        if all_tasks:
-            for task in all_tasks:
-                logger.info(f"  Task: {dict(task)}")
-        else:
-            logger.info("  (empty)")
-
-        # Dump documents table
-        docs_query = select(DocumentRecord)
-        all_docs = await db.fetch_all(docs_query)
-        logger.info("--- Documents Table ---")
-        if all_docs:
-            for doc in all_docs:
-                # Access columns directly if it's a RowMapping, or adapt if it returns ORM objects
-                logger.info(
-                    f"  Document: {dict(doc)}"
-                )  # Assuming RowMapping for simplicity
-        else:
-            logger.info("  (empty)")
-
-        # Dump document_embeddings table
-        embeds_query = select(DocumentEmbeddingRecord)
-        all_embeds = await db.fetch_all(embeds_query)
-        logger.info("--- Document Embeddings Table ---")
-        if all_embeds:
-            for embed in all_embeds:
-                # Log relevant fields, potentially truncating the vector
-                embed_dict = dict(embed)
-                if "embedding" in embed_dict and embed_dict["embedding"] is not None:
-                    embed_dict["embedding"] = (
-                        f"Vector[{len(embed_dict['embedding'])}]"  # Avoid logging huge vectors
-                    )
-                logger.info(f"  Embedding: {embed_dict}")
-        else:
-            logger.info("  (empty)")
-
+        await _dump_table_contents(db)
     except Exception as dump_exc:
         logger.exception(f"Failed to dump tables on failure: {dump_exc}")
     logger.info("--- End table dump ---")
@@ -425,104 +435,8 @@ async def test_email_indexing_and_query_e2e(
     worker_task = asyncio.create_task(worker.run(test_new_task_event))
     logger.info(f"Started background task worker {worker_id}...")
     await asyncio.sleep(0.1)  # Give worker time to start
-    test_failed = False
 
-    try:
-        try:
-            # --- Act: Ingest Email via API and Wait for Indexing ---
-            # TEST_EMAIL_FORM_DATA is a dict of strings, suitable for `data` param of httpx.post
-            # No file attachments in this basic test case yet.
-            await _ingest_and_index_email(
-                http_client=http_client,
-                engine=pg_vector_db_engine,
-                form_data_dict=TEST_EMAIL_FORM_DATA,
-                files_to_upload=None,  # No attachments for this test
-                notify_event=test_new_task_event,
-            )
-
-            # --- Act: Query Vectors ---
-            query_results = None
-            db = Database(engine=pg_vector_db_engine)
-            logger.info(f"Querying vectors using text: '{TEST_QUERY_TEXT}'")
-            doc_row = await db.fetch_one(
-                select(
-                    DocumentRecord.doc_metadata,
-                    DocumentRecord.visibility_labels,
-                ).where(DocumentRecord.source_id == TEST_EMAIL_MESSAGE_ID)
-            )
-            assert doc_row is not None
-            doc_metadata = doc_row["doc_metadata"]
-            assert doc_metadata is not None
-            assert doc_metadata["source_trust_tier"] == "unknown_external"
-            assert doc_metadata["source_type"] == "email"
-            assert doc_metadata["provenance_labels"] == ["source_unknown_external"]
-            assert doc_metadata["taint_metadata"]["max_tier"] == ("unknown_external")
-            visibility_labels = doc_row["visibility_labels"]
-            if isinstance(visibility_labels, str):
-                visibility_labels = json.loads(visibility_labels)
-            assert visibility_labels == []
-            query_results = await query_vectors(
-                db,
-                query_embedding=query_embedding,  # Use the mock query embedding
-                embedding_model=TEST_EMBEDDING_MODEL,  # Must match the mock model name
-                limit=5,
-                filters={"source_type": "email"},  # Example filter
-            )
-
-            # --- Assert ---
-            assert_that(query_results).described_as(
-                "query_vectors returned None"
-            ).is_not_none()
-            assert_that(query_results).described_as(
-                "No results returned from vector query"
-            ).is_not_empty()
-            logger.info(f"Query returned {len(query_results)} result(s).")
-
-            # Find the result corresponding to our document
-            found_result = None
-            for result in query_results:
-                if result.get("source_id") == TEST_EMAIL_MESSAGE_ID:
-                    found_result = result
-                    break
-
-            assert_that(found_result).described_as(
-                f"Ingested email (Source ID: {TEST_EMAIL_MESSAGE_ID}) not found in query results: {query_results}"
-            ).is_not_none()
-            assert found_result is not None  # For type checker
-            logger.info(f"Found matching result: {found_result}")
-
-            # Check distance (should be small since query embedding was close to body)
-            assert_that(found_result).described_as(
-                f"Result missing 'distance' field: {found_result}"
-            ).contains_key("distance")
-            assert_that(found_result["distance"]).described_as(
-                "Distance should be small"
-            ).is_less_than(0.1)
-
-            # Check other fields in the result
-            assert_that(found_result.get("embedding_type")).is_in(
-                "raw_body_text_chunk", "title_chunk"
-            )
-            if found_result.get("embedding_type") == "raw_body_text_chunk":
-                assert_that(found_result.get("embedding_source_content")).is_equal_to(
-                    TEST_EMAIL_BODY
-                )
-            else:
-                assert_that(found_result.get("embedding_source_content")).is_equal_to(
-                    TEST_EMAIL_SUBJECT
-                )
-
-            assert_that(found_result.get("title")).is_equal_to(TEST_EMAIL_SUBJECT)
-            assert_that(found_result.get("source_type")).is_equal_to("email")
-
-            logger.info("--- Email Indexing E2E Test Passed ---")
-
-        except Exception as e:
-            test_failed = True
-            logger.exception(f"Test failed: {e}")
-            raise  # Re-raise the exception after logging
-    finally:
-        # Stop the worker
+    async def cleanup(test_failed: bool) -> None:
         logger.info(f"Stopping background task worker {worker_id}...")
         test_shutdown_event.set()
         try:
@@ -538,3 +452,89 @@ async def test_email_indexing_and_query_e2e(
             worker_task.cancel()
         except Exception as e:
             logger.exception(f"Error stopping worker task {worker_id}: {e}")
+
+    async with _cleanup_after_test(cleanup):
+        # --- Act: Ingest Email via API and Wait for Indexing ---
+        # TEST_EMAIL_FORM_DATA is a dict of strings, suitable for `data` param of httpx.post
+        # No file attachments in this basic test case yet.
+        await _ingest_and_index_email(
+            http_client=http_client,
+            engine=pg_vector_db_engine,
+            form_data_dict=TEST_EMAIL_FORM_DATA,
+            files_to_upload=None,  # No attachments for this test
+            notify_event=test_new_task_event,
+        )
+
+        # --- Act: Query Vectors ---
+        query_results = None
+        db = Database(engine=pg_vector_db_engine)
+        logger.info(f"Querying vectors using text: '{TEST_QUERY_TEXT}'")
+        doc_row = await db.fetch_one(
+            select(
+                DocumentRecord.doc_metadata,
+                DocumentRecord.visibility_labels,
+            ).where(DocumentRecord.source_id == TEST_EMAIL_MESSAGE_ID)
+        )
+        assert doc_row is not None
+        doc_metadata = doc_row["doc_metadata"]
+        assert doc_metadata is not None
+        assert doc_metadata["source_trust_tier"] == "unknown_external"
+        assert doc_metadata["source_type"] == "email"
+        assert doc_metadata["provenance_labels"] == ["source_unknown_external"]
+        assert doc_metadata["taint_metadata"]["max_tier"] == ("unknown_external")
+        visibility_labels = doc_row["visibility_labels"]
+        if isinstance(visibility_labels, str):
+            visibility_labels = json.loads(visibility_labels)
+        assert visibility_labels == []
+        query_results = await query_vectors(
+            db,
+            query_embedding=query_embedding,  # Use the mock query embedding
+            embedding_model=TEST_EMBEDDING_MODEL,  # Must match the mock model name
+            limit=5,
+            filters={"source_type": "email"},  # Example filter
+        )
+
+        # --- Assert ---
+        assert_that(query_results).described_as(
+            "query_vectors returned None"
+        ).is_not_none()
+        assert_that(query_results).described_as(
+            "No results returned from vector query"
+        ).is_not_empty()
+        logger.info(f"Query returned {len(query_results)} result(s).")
+
+        found_result = None
+        for result in query_results:
+            if result.get("source_id") == TEST_EMAIL_MESSAGE_ID:
+                found_result = result
+                break
+
+        assert_that(found_result).described_as(
+            f"Ingested email (Source ID: {TEST_EMAIL_MESSAGE_ID}) not found in query results: {query_results}"
+        ).is_not_none()
+        assert found_result is not None
+        logger.info(f"Found matching result: {found_result}")
+
+        assert_that(found_result).described_as(
+            f"Result missing 'distance' field: {found_result}"
+        ).contains_key("distance")
+        assert_that(found_result["distance"]).described_as(
+            "Distance should be small"
+        ).is_less_than(0.1)
+
+        assert_that(found_result.get("embedding_type")).is_in(
+            "raw_body_text_chunk", "title_chunk"
+        )
+        if found_result.get("embedding_type") == "raw_body_text_chunk":
+            assert_that(found_result.get("embedding_source_content")).is_equal_to(
+                TEST_EMAIL_BODY
+            )
+        else:
+            assert_that(found_result.get("embedding_source_content")).is_equal_to(
+                TEST_EMAIL_SUBJECT
+            )
+
+        assert_that(found_result.get("title")).is_equal_to(TEST_EMAIL_SUBJECT)
+        assert_that(found_result.get("source_type")).is_equal_to("email")
+
+        logger.info("--- Email Indexing E2E Test Passed ---")
