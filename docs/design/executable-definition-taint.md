@@ -292,10 +292,31 @@ runs at the creation write under `observe`; the chokepoint stores what it saw �
 applies the same resolution function `enforce` would: a firing of a definition holding a valid-hash
 shadow `allow` projects as cured (no gate), and one holding a shadow `confirm` or `deny` projects as
 a creation-time interruption rather than per-firing friction, since under `enforce` that definition
-would have been deferred, human-approved into a cure, or refused before it ever fired unvetted. The
-firing's trigger taint source already carries the automation id, so attribution is a join over
-`taint_audit_events` and the definition records — no new plumbing, and no second reported number:
-the projection *is* the counterfactual, which is what a dry run is for.
+would have been deferred, human-approved into a cure, or refused before it ever fired unvetted.
+There is no second reported number: the projection *is* the counterfactual, which is what a dry run
+is for.
+
+Attribution needs an event-time binding the audit rows do not carry today. The live trigger taint
+source holds `automation:<id>`, but the audit chokepoint deliberately omits `source_id` for every
+externally authored source — the tier unattended trigger sources carry — and the bare id is not even
+unique across the schedule and event-listener tables. So the audit row for definition-sourced
+trigger taint gains an explicit **audit-safe definition reference**: the artifact kind
+(closed-vocabulary), the server-assigned id, and the definition content hash in effect at the
+firing. All three are server-generated, closed-form values, so recording them is compatible with the
+audit rule that omits *externally authored* identifiers. The hash is the immutability anchor: the
+projection joins on kind, id, and hash-at-firing, so a definition mutated later — a new record, a
+new hash — never retro-applies its disposition to earlier events, and an event whose recorded hash
+matches no vetted record projects uncured. This is one structured field at the existing audit
+chokepoint, not a parallel pipeline.
+
+The projection is deliberately conservative in one respect: it covers firing-time events only. The
+second overstatement stream — later interactive turns re-tainted through history by a firing's
+persisted `unknown_external` rows — stays in the projected number, because discounting it would take
+descendant lineage tracking across history rows, disproportionate machinery for a second-order
+effect. Conservative is the safe direction for this decision: a projection within budget is
+sufficient to flip, and the residual bias can only delay the flip, never excuse it. If measurement
+ever shows the history component alone holding the projection over budget, that is the evidence that
+would justify the lineage extension — not before.
 
 The projection may pretend the gate was live; the resolver never does. Letting shadow verdicts
 actually cure would be wrong beyond the could-have-blocked rule itself: nothing blocks under
@@ -545,13 +566,17 @@ definitions when adding it — and the simplified enforce-migration note. *Verif
 automation makes its next firing resolve trusted; any content change invalidates the attestation;
 docs build.
 
-**M5 — Shadow friction projection.** The projection over `taint_audit_events` applies enforce
-resolution to shadow records — joining firing-time would-gate events to definition records via the
-trigger source's automation id — so projected friction reflects the cure; the flip guidance in
-`CONFIGURATION_REFERENCE.md` directs the decision at the projection and treats the flip transient
-(the uncured observe-era backlog) as the attestation surface's one-sitting review, not steady-state
-friction. *Verify:* a shadow-allowed definition's firings are excluded from projected friction; a
-legacy uncured definition's firings are included; a hash-mismatched shadow verdict excludes nothing.
+**M5 — Shadow friction projection.** The audit chokepoint records the audit-safe definition
+reference (artifact kind, server-assigned id, content hash in effect at firing) on
+definition-sourced trigger taint; the projection over `taint_audit_events` applies enforce
+resolution by joining that reference to the definition records on kind, id, and hash, so projected
+friction reflects the cure and a later mutation never retro-applies its disposition; the flip
+guidance in `CONFIGURATION_REFERENCE.md` directs the decision at the projection, states its
+conservative firing-time-only scope, and treats the flip transient (the uncured observe-era backlog)
+as the attestation surface's one-sitting review, not steady-state friction. *Verify:* a
+shadow-allowed definition's firings are excluded from projected friction; a legacy uncured
+definition's firings are included; events recorded under a hash that matches no vetted record are
+included; the audit reference carries no externally authored text.
 
 ## Review questions
 
