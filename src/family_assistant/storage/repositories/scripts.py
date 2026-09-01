@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -191,14 +190,9 @@ class ScriptsRepository(BaseRepository):
                 update(scripts_table)
                 .where(scripts_table.c.name == name)
                 .values(
-                    # ast-grep-ignore: no-unstamped-executable-definition-write - verdict attach: derived from the stored record by replace(), so the hash and stamp are unchanged
+                    # ast-grep-ignore: no-unstamped-executable-definition-write - verdict attach: with_verdict() derives from the stored record, leaving stamp and hash untouched
                     definition_record=json.dumps(
-                        replace(
-                            record,
-                            disposition=disposition,
-                            gate=gate,
-                            pending_write_id=None,
-                        ).to_dict()
+                        record.with_verdict(disposition, gate).to_dict()
                     )
                 )
             )

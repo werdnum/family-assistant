@@ -147,3 +147,72 @@ def test_an_unresolved_definition_reads_at_the_untrusted_floor() -> None:
     assert DefinitionResolution(taint_metadata=None).tier is (
         SourceTrustTier.UNKNOWN_EXTERNAL
     )
+
+
+def test_a_closure_claims_a_human_attestation_only_unanimously() -> None:
+    """A human-confirmed automation must not vouch for the script it names.
+
+    Both cure, so both resolve at the same tier and the weakest-tier rule alone
+    cannot tell them apart. The claim has to combine separately, or the script
+    body renders as human-attested -- and takes the destination echo that
+    attestation earns.
+    """
+    attested = resolve_definition_record(
+        _record_dict(
+            state=_tainted_state(), disposition=CreationDisposition.HUMAN_CONFIRMED
+        ),
+        CONTENT,
+    )
+    judge_cured = resolve_definition_record(
+        _record_dict(
+            state=_tainted_state(), disposition=CreationDisposition.JUDGE_ALLOWED
+        ),
+        CONTENT,
+    )
+
+    combined = attested.combine(judge_cured)
+
+    assert combined.resolved
+    assert combined.disposition is CreationDisposition.JUDGE_ALLOWED
+
+
+def test_a_closure_of_attestations_keeps_the_attestation() -> None:
+    attested = resolve_definition_record(
+        _record_dict(
+            state=_tainted_state(), disposition=CreationDisposition.HUMAN_CONFIRMED
+        ),
+        CONTENT,
+    )
+
+    assert attested.combine(attested).disposition is CreationDisposition.HUMAN_CONFIRMED
+
+
+def test_a_clean_member_does_not_inherit_a_siblings_attestation() -> None:
+    """The weaker claim wins: clean content was never approved by anyone."""
+    clean = resolve_definition_record(
+        _record_dict(state=TurnTaintState.empty()), CONTENT
+    )
+    attested = resolve_definition_record(
+        _record_dict(
+            state=_tainted_state(), disposition=CreationDisposition.HUMAN_CONFIRMED
+        ),
+        CONTENT,
+    )
+
+    combined = clean.combine(attested)
+
+    assert combined.resolved
+    assert combined.disposition is not CreationDisposition.HUMAN_CONFIRMED
+
+
+def test_an_unresolved_member_governs_the_whole_closure() -> None:
+    cured = resolve_definition_record(
+        _record_dict(
+            state=_tainted_state(), disposition=CreationDisposition.JUDGE_ALLOWED
+        ),
+        CONTENT,
+    )
+    uncured = resolve_definition_record(_record_dict(state=_tainted_state()), CONTENT)
+
+    assert not cured.combine(uncured).resolved
+    assert not uncured.combine(cured).resolved

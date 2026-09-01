@@ -3,7 +3,6 @@
 import json
 import time
 from collections.abc import Mapping
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -328,13 +327,8 @@ class EventsRepository(BaseRepository):
                 update(event_listeners_table)
                 .where(event_listeners_table.c.id == listener_id)
                 .values(
-                    # ast-grep-ignore: no-unstamped-executable-definition-write - verdict attach: derived from the stored record by replace(), so the hash and stamp are unchanged
-                    definition_record=replace(
-                        record,
-                        disposition=disposition,
-                        gate=gate,
-                        pending_write_id=None,
-                    ).to_dict()
+                    # ast-grep-ignore: no-unstamped-executable-definition-write - verdict attach: with_verdict() derives from the stored record, leaving stamp and hash untouched
+                    definition_record=record.with_verdict(disposition, gate).to_dict()
                 )
             )
             return True

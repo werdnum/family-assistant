@@ -25,7 +25,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
@@ -270,6 +270,7 @@ class DefinitionRecordDict(TypedDict):
     disposition: str | None
     gate: dict[str, str | None] | None
     pending_write_id: str | None
+    pending_cure_eligible: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -280,6 +281,16 @@ class DefinitionRecord:
     content_hash: str
     disposition: CreationDisposition | None
     gate: GateProvenance | None = None
+    pending_cure_eligible: bool = True
+    """Whether a verdict still to arrive may cure this write, or only be recorded.
+
+    A patch that retained uncured content is gated on the fields it changed and
+    on nothing the stored row supplied, so no verdict can vouch for the merged
+    definition. Under ``enforce`` the verdict is in hand at the write and lands
+    as ``judge_allowed_nonbinding`` directly; under ``observe`` it arrives later,
+    and this is what carries that same decision to it.
+    """
+
     pending_write_id: str | None = None
     """Identifies this write to a verdict still being computed for it.
 
@@ -309,6 +320,7 @@ class DefinitionRecord:
             ),
             "gate": self.gate.to_dict() if self.gate is not None else None,
             "pending_write_id": self.pending_write_id,
+            "pending_cure_eligible": self.pending_cure_eligible,
         }
 
     @classmethod
@@ -344,6 +356,28 @@ class DefinitionRecord:
             pending_write_id=(
                 pending_write_id if isinstance(pending_write_id, str) else None
             ),
+            pending_cure_eligible=raw.get("pending_cure_eligible") is not False,
+        )
+
+    def with_verdict(
+        self,
+        disposition: CreationDisposition,
+        gate: GateProvenance,
+    ) -> DefinitionRecord:
+        """This record with a late-arriving verdict recorded against it.
+
+        The authoring stamp and the content hash are untouched: a verdict is an
+        additive record beside the stamp, never a mutation of it. A write the
+        verdict could not vouch for records it non-curatively, the same decision
+        the write would have reached had the verdict been in hand.
+        """
+        if disposition.cures and not self.pending_cure_eligible:
+            disposition = CreationDisposition.JUDGE_ALLOWED_NONBINDING
+        return replace(
+            self,
+            disposition=disposition,
+            gate=gate,
+            pending_write_id=None,
         )
 
     def matches(self, content: Mapping[str, object]) -> bool:
@@ -430,20 +464,19 @@ def stamp_definition(
     disposition: CreationDisposition | None = None
     gate: GateProvenance | None = None
     pending_write_id: str | None = None
+    pending_cure_eligible = True
     if gate_outcome is not None:
         gate = gate_outcome.gate
         disposition = gate_outcome.effective_disposition
         if disposition is not None and retains_uncured_content and disposition.cures:
             disposition = CreationDisposition.JUDGE_ALLOWED_NONBINDING
-        if (
-            gate_outcome.pending is not None
-            and externally_authored
-            and not retains_uncured_content
-        ):
-            # Only a write that needs curing waits for a verdict. A clean stamp
-            # resolves on its own, and a write no cure could reach must not
-            # collect one later.
+        if gate_outcome.pending is not None and externally_authored:
+            # Only a write that needs curing waits for a verdict; a clean stamp
+            # resolves on its own. A write no verdict could cure still waits,
+            # so the verdict is recorded against it when it lands -- flagged
+            # here so it lands non-curatively.
             pending_write_id = gate_outcome.pending.write_id
+            pending_cure_eligible = not retains_uncured_content
     if disposition is None and not externally_authored:
         disposition = CreationDisposition.CLEAN
     return DefinitionRecord(
@@ -452,6 +485,7 @@ def stamp_definition(
         disposition=disposition,
         gate=gate,
         pending_write_id=pending_write_id,
+        pending_cure_eligible=pending_cure_eligible,
     )
 
 
@@ -656,8 +690,42 @@ class DefinitionResolution:
         weakest resolution therefore governs the whole firing: editing a shared
         script from a tainted turn un-cures every automation that references it
         until the script's own gate cures it again.
+
+        The disposition combines separately from the tier, because two cured
+        artifacts resolve to the same tier while making different claims. A
+        closure claims a human's attestation only when *every* artifact in it
+        carries one -- otherwise a human-confirmed automation naming a
+        judge-cured script would render that script's code as human-attested,
+        and hand it the destination echo the attestation earns.
         """
-        return other if other.tier > self.tier else self
+        weaker = other if other.tier > self.tier else self
+        if not weaker.resolved:
+            return weaker
+        return DefinitionResolution(
+            taint_metadata=weaker.taint_metadata,
+            disposition=_weakest_claim(self.disposition, other.disposition),
+        )
+
+
+def _weakest_claim(
+    first: CreationDisposition | None,
+    second: CreationDisposition | None,
+) -> CreationDisposition | None:
+    """The strongest claim a closure of two artifacts may make about itself.
+
+    ``human_confirmed`` is the only disposition that unlocks anything further
+    (the destination echo), so it survives only unanimously. ``judge_allowed``
+    otherwise surfaces, because a closure containing judge-cured content is not
+    describable as clean.
+    """
+    both = (first, second)
+    if all(item is CreationDisposition.HUMAN_CONFIRMED for item in both):
+        return CreationDisposition.HUMAN_CONFIRMED
+    if CreationDisposition.JUDGE_ALLOWED in both:
+        return CreationDisposition.JUDGE_ALLOWED
+    if all(item is None for item in both):
+        return None
+    return CreationDisposition.CLEAN
 
 
 UNRESOLVED_DEFINITION = DefinitionResolution(taint_metadata=None)

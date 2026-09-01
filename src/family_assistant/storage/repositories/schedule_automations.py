@@ -2,7 +2,6 @@
 
 import uuid
 from collections.abc import Mapping
-from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, cast
 from zoneinfo import ZoneInfo
@@ -200,13 +199,8 @@ class ScheduleAutomationsRepository(BaseRepository):
                 update(schedule_automations_table)
                 .where(schedule_automations_table.c.id == automation_id)
                 .values(
-                    # ast-grep-ignore: no-unstamped-executable-definition-write - verdict attach: derived from the stored record by replace(), so the hash and stamp are unchanged
-                    definition_record=replace(
-                        record,
-                        disposition=disposition,
-                        gate=gate,
-                        pending_write_id=None,
-                    ).to_dict()
+                    # ast-grep-ignore: no-unstamped-executable-definition-write - verdict attach: with_verdict() derives from the stored record, leaving stamp and hash untouched
+                    definition_record=record.with_verdict(disposition, gate).to_dict()
                 )
             )
             return True

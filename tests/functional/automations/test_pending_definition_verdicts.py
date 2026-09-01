@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.security.definition_records import (
@@ -38,6 +38,7 @@ from family_assistant.security.taint import (
     TurnTaintState,
 )
 from family_assistant.storage.database import Database
+from family_assistant.storage.schedule_automations import schedule_automations_table
 from family_assistant.storage.tasks import tasks_table
 
 if TYPE_CHECKING:
@@ -280,3 +281,44 @@ async def test_a_verdict_never_rewrites_the_authoring_stamp(
     assert cured.taint_metadata == stamp.taint_metadata
     assert cured.content_hash == stamp.content_hash
     assert cured.taint_metadata.get("max_tier") == "unknown_external"
+
+
+@pytest.mark.asyncio
+async def test_a_retained_uncured_patch_records_its_late_verdict_without_curing(
+    db_engine: AsyncEngine,
+) -> None:
+    """The observe path reaches the same decision enforce reaches at the write.
+
+    A patch of a legacy row keeps content no gate has examined, so no verdict can
+    vouch for the merged definition. Under enforce that lands as a non-binding
+    allow immediately; the verdict that arrives later must land the same way,
+    not vanish.
+    """
+    db = Database(engine=db_engine)
+    automation_id = await _create_automation(db, None)
+    await db.execute(
+        update(schedule_automations_table)
+        .where(schedule_automations_table.c.id == automation_id)
+        .values(definition_record=None)
+    )
+    pending, gate = _pending()
+    await db.schedule_automations.update(
+        automation_id=automation_id,
+        conversation_id="test_conv",
+        description="A renamed daily brief.",
+        timezone=ZoneInfo("UTC"),
+        definition_taint_state=TurnTaintState.empty(),
+        definition_gate=gate,
+    )
+
+    attached = await attach_pending_verdict(
+        db, pending, disposition=CreationDisposition.JUDGE_ALLOWED, gate=_GATE
+    )
+
+    row = await db.schedule_automations.get_by_id(automation_id)
+    assert row is not None
+    record = definition_record_from_row(row["definition_record"])
+    assert attached == 1
+    assert record is not None
+    assert record.disposition is CreationDisposition.JUDGE_ALLOWED_NONBINDING
+    assert not await _resolved(db, automation_id)

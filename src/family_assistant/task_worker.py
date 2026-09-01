@@ -5142,7 +5142,16 @@ async def handle_script_execution(
                 definition=script_code,
                 definition_taint_metadata=script_definition_resolution.taint_metadata,
                 definition_disposition=script_definition_resolution.disposition,
-                definition_creator=payload.get("created_by_user_id"),
+                # The payload's creator authored the *invocation*. That is the
+                # body's author too when the body is inline, but a stored script
+                # named by this automation is a separate artifact whose author
+                # this firing does not know -- and the rendered definition is
+                # that body, so claiming a creator for it would be a guess.
+                definition_creator=(
+                    None
+                    if stored_script is not None
+                    else payload.get("created_by_user_id")
+                ),
                 payload_present=bool(event_data),
             ),
         )

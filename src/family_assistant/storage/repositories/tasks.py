@@ -2,7 +2,6 @@
 
 import logging
 from collections.abc import Mapping
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
@@ -407,12 +406,9 @@ class TasksRepository(BaseRepository):
             if record is None or record.pending_write_id != write_id:
                 return False
             updated = dict(cast("Mapping[str, Any]", payload))
-            # ast-grep-ignore: no-unstamped-executable-definition-write - verdict attach: derived from the stored record by replace(), so the hash and stamp are unchanged
-            updated["tool_call_review_definition_record"] = replace(
-                record,
-                disposition=disposition,
-                gate=gate,
-                pending_write_id=None,
+            # ast-grep-ignore: no-unstamped-executable-definition-write - verdict attach: with_verdict() derives from the stored record, leaving stamp and hash untouched
+            updated["tool_call_review_definition_record"] = record.with_verdict(
+                disposition, gate
             ).to_dict()
             await txn.execute(
                 update(tasks_table)
