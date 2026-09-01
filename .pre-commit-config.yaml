@@ -35,7 +35,9 @@ repos:
     hooks:
       - id: mdformat
         name: mdformat
-        entry: uvx --from mdformat==0.7.22 --with mdformat-gfm==0.4.1 --with mdformat-frontmatter==2.0.8 --with mdformat-tables==1.0.0 mdformat --wrap 100
+        # Run through the locked project environment (uv.lock) so mdformat, its
+        # plugins and their transitive deps always match scripts/format-and-lint.sh.
+        entry: uv run --locked --extra dev mdformat --wrap 100
         language: system
         types: [markdown]
         exclude: "(?x)^( \n  docs/python-telegram-bot-abridged\\.md|\n  docs/python-telegram-bot-abridged-filtered\\.md\n)$\n"
