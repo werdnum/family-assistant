@@ -109,7 +109,7 @@ Each executable definition carries a **definition record** with three parts:
      audit anchor.
    - absent — legacy rows, hash mismatch, or a write that no real gate examined. A verdict from a
      gate that was *not* enforcement-live is stored too, flagged as such — it resolves exactly as
-     absent, and exists only for the shadow-counterfactual measurement below.
+     absent, and exists only for the shadow friction projection below.
 
    The disposition is written by the existing confirmation and adjudication chokepoints themselves,
    not by the automation tools — whichever layer gated the write records how it resolved, so a new
@@ -273,46 +273,38 @@ the enable call itself remains an executable-persistence action gated in its own
 document's activation rule. A definition mutated outside the write path resolves as hash-mismatch
 and fails closed.
 
-### Shadow measurement and the enforce counterfactual
+### The shadow projection simulates the cure
 
-The could-have-blocked rule has a measurement consequence. The rollout strategy flips
-`taint_policy.mode` to `enforce` only when shadow data projects friction within the budget — but
-under `observe`, tainted-authored definitions accumulate uncured, so a recurring automation authored
-in one mixed turn contributes would-gate events on *every firing, indefinitely*, and its
-`unknown_external` trigger rows keep re-tainting later interactive turns through history. Under
-`enforce`, the same definition pays a one-time creation cost — a judge `allow`, or one confirmation
-— and fires silently ever after. Raw shadow numbers therefore overstate steady-state enforce
-friction for exactly the unattended traffic this design exists to unblock, and an uncorrected
-friction gate trips late, delaying the transition the measurement exists to enable. (Clean-authored
-definitions are unaffected: they resolve trusted in every mode, so their firings drop out of the
-shadow numbers as soon as stamping and resolution land.)
+The could-have-blocked rule has a measurement consequence. Dry-run mode exists to predict what
+`enforce` would do — the flip decision reads its projected friction against the budget — and under
+`observe`, tainted-authored definitions accumulate uncured. A projection that simply counts
+would-gate events therefore charges a recurring automation authored in one mixed turn on *every
+firing, indefinitely* (plus the history re-tainting its `unknown_external` trigger rows cause),
+where `enforce` would have charged a one-time creation cost — a judge `allow`, or one confirmation —
+and then fired it silently. That is a simulation of the system without its cure: it overstates
+steady-state enforce friction for exactly the unattended traffic this design exists to unblock, and
+trips the flip gate late. (Clean-authored definitions are unaffected: they resolve trusted in every
+mode, so their firings drop out as soon as stamping and resolution land.)
 
-The correction is measurement-side; cure semantics are untouched. Letting shadow verdicts cure would
-be wrong beyond the could-have-blocked rule itself: nothing blocks under `observe`, so a
-shadow-*denied* creation still executed, and the observe-era population was never filtered by any
-gate — no verdict recorded against it authorizes anything. Instead:
+The fix is to make the dry run simulate the cure, not to let shadow verdicts perform it.
+Dispositions are recorded in every mode, flagged for enforcement liveness — the reviewer already
+runs at the creation write under `observe`; the chokepoint stores what it saw — and the projection
+applies the same resolution function `enforce` would: a firing of a definition holding a valid-hash
+shadow `allow` projects as cured (no gate), and one holding a shadow `confirm` or `deny` projects as
+a creation-time interruption rather than per-firing friction, since under `enforce` that definition
+would have been deferred, human-approved into a cure, or refused before it ever fired unvetted. The
+firing's trigger taint source already carries the automation id, so attribution is a join over
+`taint_audit_events` and the definition records — no new plumbing, and no second reported number:
+the projection *is* the counterfactual, which is what a dry run is for.
 
-- **Dispositions are recorded in every mode, flagged for liveness.** The reviewer already runs at
-  the creation write under `observe` (the shadow phase records verdicts; only their effect
-  downgrades), so the disposition chokepoint stores what it saw with an enforcement-liveness flag.
-  Resolution consults only live dispositions — firing behaviour is unchanged — but the record now
-  carries the counterfactual: a valid-hash shadow `allow` marks a definition that would have been
-  cured had enforcement been on.
-- **Friction aggregation reports two numbers: raw, and the enforce counterfactual.** In the
-  counterfactual, firing-time would-gate events attributable to a definition holding a valid-hash
-  shadow verdict are discounted — under `enforce` those firings would resolve trusted (shadow
-  `allow`), or the definition would not be firing unvetted at all (shadow `confirm` or `deny`:
-  deferred, human-approved into a cure, or refused). The firing's trigger taint source already
-  carries the automation id, so attribution is a join over `taint_audit_events` and the definition
-  records, not new plumbing. The flip decision compares the budget against the counterfactual
-  number.
-
-The flip decision should also name which of three regimes it is reading. **Shadow**: raw numbers
-overstate; use the counterfactual. **The flip transient**: the observe-era backlog of uncured
-tainted definitions starts gating for real until touched, re-gated, or attested — a one-time
-migration hump the attestation surface's disposition listing exists to burn down in one sitting,
-budgeted with the flip rather than counted against steady state. **Steady-state enforce**: the
-number the friction budget actually governs.
+The projection may pretend the gate was live; the resolver never does. Letting shadow verdicts
+actually cure would be wrong beyond the could-have-blocked rule itself: nothing blocks under
+`observe`, so a shadow-*denied* creation still executed, and the observe-era population was never
+filtered by any gate — no verdict recorded against it authorizes anything. One regime the projection
+also deliberately excludes: at the flip itself, the observe-era backlog of uncured tainted
+definitions starts gating for real until touched, re-gated, or attested — a one-time migration hump
+the attestation surface's disposition listing exists to burn down in one sitting, budgeted with the
+flip rather than read as steady-state friction.
 
 ### Stored scripts and the executable closure
 
@@ -422,8 +414,8 @@ close-vocabulary marking at every consultation, and the audit anchor to the crea
   same chokepoint (no versioned stamp history is kept or promised), no verdict ever touches a stamp,
   and the cure is an additive, hash-bound, auditable record consulted deterministically.
 - A disposition recorded without enforcement liveness never resolves trusted: shadow verdicts feed
-  only the counterfactual measurement, and no accumulation of them, nor the flip to `enforce`
-  itself, converts one into a cure.
+  only the friction projection, and no accumulation of them, nor the flip to `enforce` itself,
+  converts one into a cure.
 - The trigger payload never launders: no record state renders payload content or suppresses its
   taint source.
 - A cured firing gains only its baseline: every sink its turn reaches is still gated by the same
@@ -553,14 +545,13 @@ definitions when adding it — and the simplified enforce-migration note. *Verif
 automation makes its next firing resolve trusted; any content change invalidates the attestation;
 docs build.
 
-**M5 — Enforce-counterfactual measurement.** The friction aggregation over `taint_audit_events`
-joins firing-time would-gate events to definition records via the trigger source's automation id and
-reports raw and counterfactual projected friction side by side in the taint diagnostics; the flip
-guidance in `CONFIGURATION_REFERENCE.md` names the three regimes (shadow, flip transient, steady
-state) and directs the flip decision at the counterfactual number, with the flip transient handled
-as the attestation surface's one-sitting review. *Verify:* a fixture where a shadow-allowed
-definition's firings are discounted in the counterfactual and counted raw; a legacy uncured
-definition's firings count in both; a hash-mismatched shadow verdict discounts nothing.
+**M5 — Shadow friction projection.** The projection over `taint_audit_events` applies enforce
+resolution to shadow records — joining firing-time would-gate events to definition records via the
+trigger source's automation id — so projected friction reflects the cure; the flip guidance in
+`CONFIGURATION_REFERENCE.md` directs the decision at the projection and treats the flip transient
+(the uncured observe-era backlog) as the attestation surface's one-sitting review, not steady-state
+friction. *Verify:* a shadow-allowed definition's firings are excluded from projected friction; a
+legacy uncured definition's firings are included; a hash-mismatched shadow verdict excludes nothing.
 
 ## Review questions
 
