@@ -322,3 +322,65 @@ async def test_a_retained_uncured_patch_records_its_late_verdict_without_curing(
     assert record is not None
     assert record.disposition is CreationDisposition.JUDGE_ALLOWED_NONBINDING
     assert not await _resolved(db, automation_id)
+
+
+@pytest.mark.asyncio
+async def test_a_verdict_never_reverts_an_edit_it_did_not_read(
+    db_engine: AsyncEngine,
+) -> None:
+    """The attach writes the whole payload back, so it must read the current one.
+
+    An edit that re-stamps the callback's executable content gives the payload a
+    new record and a new write id. The stale verdict must find that and decline,
+    rather than restoring the payload it read.
+    """
+    db = Database(engine=db_engine)
+    pending, gate = _pending()
+    original = "Take the bins out"
+    await db.tasks.enqueue(
+        task_id="llm_callback_edited",
+        task_type="llm_callback",
+        payload={
+            "interface_type": "web",
+            "conversation_id": "test_conv",
+            "callback_context": original,
+            "tool_call_review_definition_record": stamp_callback_definition(
+                original, tracker=None, gate_outcome=gate
+            ),
+        },
+    )
+    pending.register(
+        DefinitionWriteRef(
+            artifact_kind=DefinitionArtifactKind.TASK_PAYLOAD,
+            artifact_id="llm_callback_edited",
+        ),
+        stamp_callback_definition(original, tracker=None, gate_outcome=gate),
+    )
+    edited = "Take the recycling out"
+    await db.execute(
+        update(tasks_table)
+        .where(tasks_table.c.task_id == "llm_callback_edited")
+        .values(
+            payload={
+                "interface_type": "web",
+                "conversation_id": "test_conv",
+                "callback_context": edited,
+                "tool_call_review_definition_record": stamp_callback_definition(
+                    edited, tracker=None
+                ),
+            }
+        )
+    )
+
+    attached = await attach_pending_verdict(
+        db, pending, disposition=CreationDisposition.JUDGE_ALLOWED, gate=_GATE
+    )
+
+    row = await db.fetch_one(
+        select(tasks_table.c.payload).where(
+            tasks_table.c.task_id == "llm_callback_edited"
+        )
+    )
+    assert attached == 0
+    assert row is not None
+    assert row["payload"]["callback_context"] == edited

@@ -394,8 +394,15 @@ class TasksRepository(BaseRepository):
         """
 
         async def body(txn: DatabaseTransaction) -> bool:
+            # Locked, not merely re-read: on PostgreSQL a concurrent write
+            # committing between the check and the update would otherwise be
+            # overwritten by the record this read returned -- reverting an edit
+            # while reporting the verdict attached. SQLite serializes writes on
+            # the engine lock and ignores the clause.
             row = await txn.fetch_one(
-                select(tasks_table.c.payload).where(tasks_table.c.task_id == task_id)
+                select(tasks_table.c.payload)
+                .where(tasks_table.c.task_id == task_id)
+                .with_for_update()
             )
             payload = row["payload"] if row is not None else None
             if not isinstance(payload, dict):

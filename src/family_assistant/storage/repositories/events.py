@@ -317,9 +317,18 @@ class EventsRepository(BaseRepository):
         """
 
         async def body(txn: DatabaseTransaction) -> bool:
-            existing = await txn.events.get_event_listener_by_id(listener_id)
+            # Locked, not merely re-read: on PostgreSQL a concurrent write
+            # committing between the check and the update would otherwise be
+            # overwritten by the record this read returned -- reverting an edit
+            # while reporting the verdict attached. SQLite serializes writes on
+            # the engine lock and ignores the clause.
+            row = await txn.fetch_one(
+                select(event_listeners_table.c.definition_record)
+                .where(event_listeners_table.c.id == listener_id)
+                .with_for_update()
+            )
             record = definition_record_from_row(
-                existing["definition_record"] if existing is not None else None
+                row["definition_record"] if row is not None else None
             )
             if record is None or record.pending_write_id != write_id:
                 return False

@@ -189,9 +189,18 @@ class ScheduleAutomationsRepository(BaseRepository):
         """
 
         async def body(txn: DatabaseTransaction) -> bool:
-            existing = await txn.schedule_automations.get_by_id(automation_id)
+            # Locked, not merely re-read: on PostgreSQL a concurrent write
+            # committing between the check and the update would otherwise be
+            # overwritten by the record this read returned -- reverting an edit
+            # while reporting the verdict attached. SQLite serializes writes on
+            # the engine lock and ignores the clause.
+            row = await txn.fetch_one(
+                select(schedule_automations_table.c.definition_record)
+                .where(schedule_automations_table.c.id == automation_id)
+                .with_for_update()
+            )
             record = definition_record_from_row(
-                existing["definition_record"] if existing is not None else None
+                row["definition_record"] if row is not None else None
             )
             if record is None or record.pending_write_id != write_id:
                 return False
