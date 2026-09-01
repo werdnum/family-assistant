@@ -10,8 +10,10 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from family_assistant.security.definition_records import (
+    DefinitionArtifactKind,
     DefinitionGateOutcome,
     authoring_taint_state,
+    register_definition_write,
     script_invocation_content,
     stamp_callback_definition,
     stamp_definition,
@@ -186,6 +188,12 @@ async def execute_action(
         if processing_profile_id is not None:
             payload["processing_profile_id"] = processing_profile_id
 
+        register_definition_write(
+            definition_gate,
+            payload["tool_call_review_definition_record"],
+            kind=DefinitionArtifactKind.TASK_PAYLOAD,
+            artifact_id=task_id,
+        )
         await enqueue_task(
             db_context=db_ctx,
             task_id=task_id,
@@ -228,6 +236,12 @@ async def execute_action(
         if created_by_user_id is not None:
             script_payload["created_by_user_id"] = created_by_user_id
 
+        register_definition_write(
+            definition_gate,
+            script_payload["tool_call_review_definition_record"],
+            kind=DefinitionArtifactKind.TASK_PAYLOAD,
+            artifact_id=task_id,
+        )
         await enqueue_task(
             db_context=db_ctx,
             task_id=task_id,

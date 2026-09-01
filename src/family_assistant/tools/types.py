@@ -235,7 +235,10 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface  # Import the new interface
     from family_assistant.llm.messages import LLMMessage
     from family_assistant.processing import ProcessingService
-    from family_assistant.security.definition_records import DefinitionGateOutcome
+    from family_assistant.security.definition_records import (
+        DefinitionGateOutcome,
+        PendingDefinitionReview,
+    )
     from family_assistant.security.taint import (
         TaintMetadata,
         TurnTaintState,
@@ -478,6 +481,13 @@ class ToolExecutionContext:
     tool_call_review_confirmation_reason: str | None = None
     tool_call_review_authorization: ToolCallReviewAuthorization | None = None
     tool_confirmation_authorization: ToolConfirmationAuthorization | None = None
+    pending_definition_review: PendingDefinitionReview | None = None
+    """An observe-mode review still running for the current call, if any.
+
+    Held here so the gating wrapper can tell it when the call finished, whether
+    the call ended at a dispatch, a confirmation, or an exception. The writes it
+    covers reach it through ``definition_gate_outcome``.
+    """
     definition_gate_outcome: DefinitionGateOutcome | None = None
     """How the gate that admitted the current tool call resolved.
 

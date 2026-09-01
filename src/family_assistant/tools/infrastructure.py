@@ -34,7 +34,9 @@ from family_assistant.security.definition_records import (
     DefinitionGateOutcome,
     GateLayer,
     GateProvenance,
+    PendingDefinitionReview,
 )
+from family_assistant.security.definition_resolution import attach_pending_verdict
 from family_assistant.security.taint import (
     SensitiveReadScope,
     SinkClass,
@@ -1947,6 +1949,42 @@ class TaintTrackingToolsProvider(ToolsProvider):
         static_evaluation: PolicyEvaluation | None,
         execute_authorized: AuthorizedToolExecutor,
     ) -> str | ToolResult:
+        """Gate one call, guaranteeing any shadow review learns when it finished.
+
+        A verdict computed off the critical path attaches to the definitions the
+        call wrote, so it must know when every write is registered -- including
+        when the call ends at a confirmation or an exception rather than at a
+        dispatch.
+        """
+        previous_pending = context.pending_definition_review
+        context.pending_definition_review = None
+        try:
+            return await self._gate_and_execute_tool(
+                name=name,
+                arguments=arguments,
+                context=context,
+                call_id=call_id,
+                descriptor=descriptor,
+                static_evaluation=static_evaluation,
+                execute_authorized=execute_authorized,
+            )
+        finally:
+            if context.pending_definition_review is not None:
+                context.pending_definition_review.settled.set()
+            context.pending_definition_review = previous_pending
+
+    async def _gate_and_execute_tool(
+        self,
+        *,
+        name: str,
+        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None,
+        descriptor: ToolDescriptor,
+        static_evaluation: PolicyEvaluation | None,
+        execute_authorized: AuthorizedToolExecutor,
+    ) -> str | ToolResult:
         """Merge static and taint decisions, then invoke authorized dispatch once."""
 
         state = TurnTaintState.empty()
@@ -2046,6 +2084,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
         # write it goes on to perform. The gates record it; the write consumes
         # it; no tool maps verdicts to dispositions itself.
         definition_gate: DefinitionGateOutcome | None = None
+        pending_definition_review: PendingDefinitionReview | None = None
         if confined_exemption and evaluation is not None:
             await self._record_confined_exemption_audit(
                 descriptor=descriptor,
@@ -2060,6 +2099,21 @@ class TaintTrackingToolsProvider(ToolsProvider):
             and evaluation is not None
             and (evaluation.mode is TaintPolicyMode.OBSERVE and not static_review)
         ):
+            # The verdict does not block the call, so any definition this call
+            # writes lands pending and resolves uncured until the review
+            # completes -- a latency-bounded window, seconds wide, in which a
+            # firing enters conservative.
+            pending_definition_review = PendingDefinitionReview(
+                write_id=str(uuid.uuid4())
+            )
+            context.pending_definition_review = pending_definition_review
+            definition_gate = DefinitionGateOutcome(
+                disposition=None,
+                gate=self._gate_provenance(
+                    layer=GateLayer.TAINT_CELL, taint_evaluation=evaluation
+                ),
+                pending=pending_definition_review,
+            )
             self._start_shadow_review(
                 descriptor=descriptor,
                 arguments=arguments,
@@ -2069,6 +2123,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 sink_class=sink_class,
                 taint_evaluation=evaluation,
                 static_evaluation=static_evaluation,
+                pending=pending_definition_review,
             )
         elif (static_review or taint_review) and _review_authorization_matches(
             context.tool_call_review_authorization,
@@ -2648,6 +2703,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
         sink_class: SinkClass,
         taint_evaluation: TaintPolicyEvaluation,
         static_evaluation: PolicyEvaluation | None,
+        pending: PendingDefinitionReview | None = None,
     ) -> None:
         config = self._review_config
         budget_exhausted = (
@@ -2657,24 +2713,70 @@ class TaintTrackingToolsProvider(ToolsProvider):
         )
         if not budget_exhausted:
             context.tool_call_review_state.review_count += 1
+        review = self._review_tool_call(
+            descriptor=descriptor,
+            arguments=dict(arguments),
+            context=context,
+            call_id=call_id,
+            state=state,
+            sink_class=sink_class,
+            taint_evaluation=taint_evaluation,
+            static_evaluation=static_evaluation,
+            include_observe_taint_constraints=True,
+            count_reserved=not budget_exhausted,
+            update_denial_counters=False,
+        )
         task = spawn_detached(
-            self._review_tool_call(
-                descriptor=descriptor,
-                arguments=dict(arguments),
+            review
+            if pending is None
+            else self._attach_shadow_verdict(
+                review,
                 context=context,
-                call_id=call_id,
-                state=state,
-                sink_class=sink_class,
+                pending=pending,
                 taint_evaluation=taint_evaluation,
-                static_evaluation=static_evaluation,
-                include_observe_taint_constraints=True,
-                count_reserved=not budget_exhausted,
-                update_denial_counters=False,
             ),
             name=f"shadow-tool-call-review:{descriptor.name}",
         )
         self._review_tasks.add(task)
         task.add_done_callback(self._finish_shadow_review)
+
+    async def _attach_shadow_verdict(
+        self,
+        review: Awaitable[ToolCallReviewResult],
+        *,
+        context: ToolExecutionContext,
+        pending: PendingDefinitionReview,
+        taint_evaluation: TaintPolicyEvaluation,
+    ) -> ToolCallReviewResult:
+        """Carry an off-critical-path verdict back to the definitions it judged.
+
+        The shadow review runs under the enforce-equivalent verdict space
+        already, so an ``allow`` here is one ``enforce`` would have issued. It
+        attaches once the gated call has settled, because only then is every
+        write it made registered; each store then checks the write id itself, so
+        a mutation racing the review keeps its own pending record.
+        """
+        result = await review
+        await pending.settled.wait()
+        if not pending.writes:
+            return result
+        await attach_pending_verdict(
+            context.db_context,
+            pending,
+            disposition={
+                ToolCallReviewVerdict.ALLOW: CreationDisposition.JUDGE_ALLOWED,
+                ToolCallReviewVerdict.CONFIRM: (
+                    CreationDisposition.JUDGE_CONFIRM_REQUIRED
+                ),
+                ToolCallReviewVerdict.DENY: CreationDisposition.JUDGE_DENIED,
+            }[result.verdict],
+            gate=self._gate_provenance(
+                layer=GateLayer.TAINT_CELL,
+                taint_evaluation=taint_evaluation,
+                verdict_id=result.audit_event_id,
+            ),
+        )
+        return result
 
     def _finish_shadow_review(self, task: asyncio.Task[object]) -> None:
         self._review_tasks.discard(task)

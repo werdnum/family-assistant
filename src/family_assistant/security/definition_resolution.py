@@ -23,7 +23,11 @@ from typing import TYPE_CHECKING
 
 from family_assistant.security.definition_records import (
     UNRESOLVED_DEFINITION,
+    CreationDisposition,
+    DefinitionArtifactKind,
     DefinitionResolution,
+    GateProvenance,
+    PendingDefinitionReview,
     automation_definition_content,
     listener_definition_content,
     resolve_definition_record,
@@ -145,3 +149,55 @@ async def resolve_definition_closure(
         current = await _resolve_one(db, ref)
         resolution = current if resolution is None else resolution.combine(current)
     return resolution if resolution is not None else UNRESOLVED_DEFINITION
+
+
+async def attach_pending_verdict(
+    db: Database,
+    pending: PendingDefinitionReview,
+    *,
+    disposition: CreationDisposition,
+    gate: GateProvenance,
+) -> int:
+    """Attach a verdict computed off the critical path to the writes it judged.
+
+    Under ``observe`` the reviewer deliberately does not block the call, so
+    every definition the call wrote is already stored, pending, by the time the
+    verdict exists. Each store checks the write id itself, inside its own
+    transaction, so a write the verdict no longer describes is skipped rather
+    than corrected: it is a different write, and it awaits a verdict of its own.
+
+    Returns how many writes the verdict reached.
+    """
+    attached = 0
+    for ref in pending.writes:
+        match ref.artifact_kind:
+            case DefinitionArtifactKind.SCHEDULE_AUTOMATION:
+                done = await db.schedule_automations.attach_definition_verdict(
+                    int(ref.artifact_id),
+                    write_id=pending.write_id,
+                    disposition=disposition,
+                    gate=gate,
+                )
+            case DefinitionArtifactKind.EVENT_LISTENER:
+                done = await db.events.attach_definition_verdict(
+                    int(ref.artifact_id),
+                    write_id=pending.write_id,
+                    disposition=disposition,
+                    gate=gate,
+                )
+            case DefinitionArtifactKind.SCRIPT:
+                done = await db.scripts.attach_definition_verdict(
+                    ref.artifact_id,
+                    write_id=pending.write_id,
+                    disposition=disposition,
+                    gate=gate,
+                )
+            case DefinitionArtifactKind.TASK_PAYLOAD:
+                done = await db.tasks.attach_definition_verdict(
+                    ref.artifact_id,
+                    write_id=pending.write_id,
+                    disposition=disposition,
+                    gate=gate,
+                )
+        attached += int(done)
+    return attached

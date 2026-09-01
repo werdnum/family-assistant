@@ -22,9 +22,10 @@ policy: resolution at firing time is a pure function of a stored record.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
@@ -176,6 +177,51 @@ class GateProvenance:
         )
 
 
+class DefinitionArtifactKind(StrEnum):
+    """Where an executable definition's record lives, for a late-arriving verdict."""
+
+    SCHEDULE_AUTOMATION = "schedule_automation"
+    EVENT_LISTENER = "event_listener"
+    SCRIPT = "script"
+    TASK_PAYLOAD = "task_payload"
+
+
+@dataclass(frozen=True, slots=True)
+class DefinitionWriteRef:
+    """One executable definition a gated call wrote, and where it lives.
+
+    Registered by the write itself, because only the write knows the identity
+    the store assigned it. A verdict that lands later uses this to find the row
+    it must attach to, and the write id to check the row still holds the write
+    the verdict judged.
+    """
+
+    artifact_kind: DefinitionArtifactKind
+    artifact_id: str
+
+
+@dataclass
+class PendingDefinitionReview:
+    """A verdict being computed off the critical path, and the writes awaiting it.
+
+    Under ``observe`` the reviewer deliberately does not block the call, so a
+    definition is written before its verdict exists and resolves uncured until
+    the verdict lands -- a latency-bounded window, seconds wide, in which a busy
+    listener may fire more than once, every such firing biased conservative.
+    """
+
+    write_id: str
+    writes: list[DefinitionWriteRef] = field(default_factory=list)
+    settled: asyncio.Event = field(default_factory=asyncio.Event)
+    """Set when the gated call has finished, so every write it made is registered."""
+
+    def register(self, ref: DefinitionWriteRef, stored_record: object) -> None:
+        """Record a write this review's verdict should attach to."""
+        record = definition_record_from_row(stored_record)
+        if record is not None and record.pending_write_id == self.write_id:
+            self.writes.append(ref)
+
+
 @dataclass(frozen=True, slots=True)
 class DefinitionGateOutcome:
     """How the gate that examined a write resolved, as the write path sees it.
@@ -186,7 +232,9 @@ class DefinitionGateOutcome:
     dispositions.
     """
 
-    disposition: CreationDisposition
+    disposition: CreationDisposition | None
+    """How the gate resolved, or ``None`` while an observe-mode review is still running."""
+
     gate: GateProvenance
     cure_permitted: bool = True
     """Whether an ``allow`` here was computed under the enforce-equivalent verdict space.
@@ -199,8 +247,11 @@ class DefinitionGateOutcome:
     but it does not cure.
     """
 
+    pending: PendingDefinitionReview | None = None
+    """The still-running review whose verdict this write awaits, under ``observe``."""
+
     @property
-    def effective_disposition(self) -> CreationDisposition:
+    def effective_disposition(self) -> CreationDisposition | None:
         """The disposition as stamping should record it."""
         if (
             self.disposition is CreationDisposition.JUDGE_ALLOWED
@@ -218,6 +269,7 @@ class DefinitionRecordDict(TypedDict):
     content_hash: str
     disposition: str | None
     gate: dict[str, str | None] | None
+    pending_write_id: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,6 +280,18 @@ class DefinitionRecord:
     content_hash: str
     disposition: CreationDisposition | None
     gate: GateProvenance | None = None
+    pending_write_id: str | None = None
+    """Identifies this write to a verdict still being computed for it.
+
+    Under ``observe`` the reviewer runs off the critical path, so the write
+    executes before its verdict exists and the verdict attaches afterwards.
+    It attaches to *this write*, not to this content: a same-content rewrite
+    from another turn is a different write, judged against different authoring
+    context, and must never inherit a verdict computed for someone else's
+    request. Any replacement of the record therefore leaves the new write
+    awaiting its own verdict, and until one lands the definition resolves
+    uncured.
+    """
 
     @property
     def cures(self) -> bool:
@@ -244,6 +308,7 @@ class DefinitionRecord:
                 self.disposition.value if self.disposition is not None else None
             ),
             "gate": self.gate.to_dict() if self.gate is not None else None,
+            "pending_write_id": self.pending_write_id,
         }
 
     @classmethod
@@ -270,11 +335,15 @@ class DefinitionRecord:
                 disposition = CreationDisposition(raw_disposition)
             except ValueError:
                 return None
+        pending_write_id = raw.get("pending_write_id")
         return cls(
             taint_metadata=taint_metadata,
             content_hash=content_hash,
             disposition=disposition,
             gate=GateProvenance.from_dict(raw.get("gate")),
+            pending_write_id=(
+                pending_write_id if isinstance(pending_write_id, str) else None
+            ),
         )
 
     def matches(self, content: Mapping[str, object]) -> bool:
@@ -341,7 +410,9 @@ def stamp_definition(
     definition never reads back as the human's own words.
 
     ``gate_outcome`` is how the gate that examined this write resolved, as
-    deposited by the confirmation and adjudication chokepoints. A curing
+    deposited by the confirmation and adjudication chokepoints -- or, under
+    ``observe``, that a verdict is still being computed for it, in which case
+    the record carries the write id the verdict will attach to. A curing
     outcome is honoured only when the gate saw everything the new record
     vouches for: ``retains_uncured_content`` says a patch kept content whose
     own record is absent, void, or uncured, which the gate never examined, so
@@ -355,11 +426,14 @@ def stamp_definition(
     )
     disposition: CreationDisposition | None = None
     gate: GateProvenance | None = None
+    pending_write_id: str | None = None
     if gate_outcome is not None:
         gate = gate_outcome.gate
         disposition = gate_outcome.effective_disposition
-        if retains_uncured_content and disposition.cures:
+        if disposition is not None and retains_uncured_content and disposition.cures:
             disposition = CreationDisposition.JUDGE_ALLOWED_NONBINDING
+        if gate_outcome.pending is not None and not retains_uncured_content:
+            pending_write_id = gate_outcome.pending.write_id
     if disposition is None and not is_externally_authored(
         TurnTaintState.from_metadata(metadata).max_tier
     ):
@@ -369,6 +443,29 @@ def stamp_definition(
         content_hash=definition_content_hash(content),
         disposition=disposition,
         gate=gate,
+        pending_write_id=pending_write_id,
+    )
+
+
+def register_definition_write(
+    gate_outcome: DefinitionGateOutcome | None,
+    definition_record: object,
+    *,
+    kind: DefinitionArtifactKind,
+    artifact_id: str | int,
+) -> None:
+    """Tell a still-running review where the write it is judging ended up.
+
+    Called by the write itself, because only the write knows the identity its
+    store assigned. A no-op for every gate that resolved before the call ran,
+    which is every gate under ``enforce``, and for a write the gate's verdict
+    could not vouch for anyway.
+    """
+    if gate_outcome is None or gate_outcome.pending is None:
+        return
+    gate_outcome.pending.register(
+        DefinitionWriteRef(artifact_kind=kind, artifact_id=str(artifact_id)),
+        definition_record,
     )
 
 

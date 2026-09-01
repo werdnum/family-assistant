@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -12,7 +13,12 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from family_assistant.security.definition_records import (
+    CreationDisposition,
+    DefinitionArtifactKind,
     DefinitionGateOutcome,
+    GateProvenance,
+    definition_record_from_row,
+    register_definition_write,
     script_definition_content,
     stamp_definition,
 )
@@ -21,6 +27,7 @@ from family_assistant.storage.scripts import scripts_table
 
 if TYPE_CHECKING:
     from family_assistant.security.taint import TurnTaintState
+    from family_assistant.storage.database import DatabaseTransaction
 
 
 class ScriptModel(BaseModel):
@@ -95,6 +102,12 @@ class ScriptsRepository(BaseRepository):
                 human_direct=definition_human_direct,
             ).to_dict()
         )
+        register_definition_write(
+            definition_gate,
+            definition_record,
+            kind=DefinitionArtifactKind.SCRIPT,
+            artifact_id=name,
+        )
 
         if self._db.dialect_name == "postgresql":
             stmt = pg_insert(scripts_table).values(
@@ -146,6 +159,52 @@ class ScriptsRepository(BaseRepository):
 
         # Fetch and return the saved script
         return await self.get_by_name(name)  # type: ignore[return-value] # After save, script always exists
+
+    async def attach_definition_verdict(
+        self,
+        name: str,
+        *,
+        write_id: str,
+        disposition: CreationDisposition,
+        gate: GateProvenance,
+    ) -> bool:
+        """Attach an asynchronously computed verdict to this definition's record.
+
+        Under ``observe`` the reviewer runs off the critical path, so the write
+        lands before its verdict exists and the verdict arrives here. The write
+        id guards the update, read and write in one transaction: the row must
+        still hold the exact write the verdict judged, so a mutation racing the
+        review -- an identical rewrite from another turn included -- leaves the
+        new content awaiting its own verdict rather than inheriting this one.
+
+        Returns whether the verdict was attached.
+        """
+
+        async def body(txn: DatabaseTransaction) -> bool:
+            existing = await txn.scripts.get_by_name(name)
+            record = definition_record_from_row(
+                existing.definition_record if existing is not None else None
+            )
+            if record is None or record.pending_write_id != write_id:
+                return False
+            await txn.execute(
+                update(scripts_table)
+                .where(scripts_table.c.name == name)
+                .values(
+                    # ast-grep-ignore: no-unstamped-executable-definition-write - verdict attach: derived from the stored record by replace(), so the hash and stamp are unchanged
+                    definition_record=json.dumps(
+                        replace(
+                            record,
+                            disposition=disposition,
+                            gate=gate,
+                            pending_write_id=None,
+                        ).to_dict()
+                    )
+                )
+            )
+            return True
+
+        return await self._db.atomic(body)
 
     async def get_by_name(self, name: str) -> ScriptRow | None:
         """Get a script by name.

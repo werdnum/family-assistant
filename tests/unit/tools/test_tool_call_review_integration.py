@@ -19,6 +19,7 @@ from family_assistant.security.definition_records import (
     CreationDisposition,
     DefinitionGateOutcome,
     GateLayer,
+    PendingDefinitionReview,
 )
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
@@ -2827,3 +2828,39 @@ async def test_the_outcome_does_not_outlive_the_call_that_earned_it(
     await provider.execute_tool("reviewed_tool", {}, context, "call-1")
 
     assert context.definition_gate_outcome is None
+
+
+async def test_an_observe_shadow_review_leaves_its_writes_pending_then_attaches(
+    db_engine: AsyncEngine,
+) -> None:
+    """The write does not wait for the verdict; the verdict comes back to it."""
+    recorder = _GateOutcomeRecorder()
+    context = _context(db_engine, _unknown_external_state())
+    pending_seen: list[PendingDefinitionReview] = []
+
+    async def execute(**_kwargs: object) -> ToolResult:
+        recorder.outcomes.append(context.definition_gate_outcome)
+        outcome = context.definition_gate_outcome
+        assert outcome is not None and outcome.pending is not None
+        # The verdict cannot have landed: the call is still running.
+        assert not outcome.pending.settled.is_set()
+        pending_seen.append(outcome.pending)
+        return ToolResult(text="executed before shadow verdict")
+
+    provider = _provider(
+        cast("ToolImplementation", execute),
+        reviewer_llm=_ReviewLLM(ToolCallReviewVerdict.ALLOW),
+        static_decision=ToolPolicyDecision.ALLOW,
+        taint_policy=_adjudicating_policy(TaintPolicyMode.OBSERVE),
+    )
+
+    await provider.execute_tool("reviewed_tool", {}, context, "shadow-write-call")
+    await provider.close()
+
+    outcome = recorder.only
+    assert outcome.disposition is None
+    assert outcome.effective_disposition is None
+    assert outcome.gate.mode == "observe"
+    assert len(pending_seen) == 1
+    assert pending_seen[0].settled.is_set()
+    assert context.pending_definition_review is None

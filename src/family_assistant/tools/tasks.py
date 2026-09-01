@@ -22,7 +22,11 @@ from family_assistant.actions import (
     assert_wake_llm_allowed,
     execute_action,
 )
-from family_assistant.security.definition_records import stamp_callback_definition
+from family_assistant.security.definition_records import (
+    DefinitionArtifactKind,
+    register_definition_write,
+    stamp_callback_definition,
+)
 from family_assistant.tools.automations import validate_action_scripts
 from family_assistant.tools.stored_scripts import validate_script_action_config
 from family_assistant.utils.clock import SystemClock
@@ -361,6 +365,13 @@ async def schedule_reminder_tool(
     if exec_context.user_id is not None:
         payload["created_by_user_id"] = exec_context.user_id
 
+    register_definition_write(
+        exec_context.definition_gate_outcome,
+        payload["tool_call_review_definition_record"],
+        kind=DefinitionArtifactKind.TASK_PAYLOAD,
+        artifact_id=task_id,
+    )
+
     try:
         await db_context.tasks.enqueue(
             task_id=task_id,
@@ -458,6 +469,13 @@ async def schedule_future_callback_tool(
     # under the originating profile rather than the worker default.
     if exec_context.processing_profile_id is not None:
         payload["processing_profile_id"] = exec_context.processing_profile_id
+
+    register_definition_write(
+        exec_context.definition_gate_outcome,
+        payload["tool_call_review_definition_record"],
+        kind=DefinitionArtifactKind.TASK_PAYLOAD,
+        artifact_id=task_id,
+    )
 
     try:
         await db_context.tasks.enqueue(
@@ -648,6 +666,12 @@ async def modify_pending_callback_tool(
             gate_outcome=exec_context.definition_gate_outcome,
         )
         updates["payload"] = new_payload
+        register_definition_write(
+            exec_context.definition_gate_outcome,
+            new_payload["tool_call_review_definition_record"],
+            kind=DefinitionArtifactKind.TASK_PAYLOAD,
+            artifact_id=task_id,
+        )
 
     if not updates:
         return "No valid modifications specified."
