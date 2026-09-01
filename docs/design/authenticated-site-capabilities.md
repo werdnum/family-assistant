@@ -375,15 +375,15 @@ the semantic worker's run — async handoff is disabled for that hop, since the 
 visual result to continue and the outer run is already backgroundable — so exactly one run owns the
 session for its whole lifetime and no backgrounded child can outlive its parent's cleanup. A run
 that completes within the inline window returns its result and the session closes; a run that hands
-off to the background takes the session with it, the caller receives the ordinary delegation
-reference, and the run closes the session when it reaches a terminal state. The background
-completion machinery persists only text and attachments and its notification is advisory, so the
-typed `AuthenticatedSiteTaskResult` — any resume handle included — is persisted durably on the
-delegation run's record at terminal state, wherever the run executed; the caller retrieves it by
-presenting the run's opaque handle back to the high-level tool, never by reconstructing it from
-notification text. Exactly one owner closes the session. An idle/maximum-lifetime backstop reclaims
-a session whose owning run dies without reaching a terminal state, and jar revocation still
-terminates the session immediately regardless of owner.
+off to the background takes the session with it, the caller receives a typed `running` result
+carrying the run's opaque handle, and the run closes the session when it reaches a terminal state.
+The background completion machinery persists only text and attachments and its notification is
+advisory, so the typed `AuthenticatedSiteTaskResult` — any resume handle included — is persisted
+durably on the delegation run's record at terminal state, wherever the run executed; the caller
+retrieves it by presenting the run's opaque handle back to the high-level tool, never by
+reconstructing it from notification text. Exactly one owner closes the session. An
+idle/maximum-lifetime backstop reclaims a session whose owning run dies without reaching a terminal
+state, and jar revocation still terminates the session immediately regardless of owner.
 
 Across a human handoff, the durable object is the session, not the run. A backgrounded run has no
 input channel, so the design does not pretend the worker can wait live for the handback token: when
@@ -476,14 +476,14 @@ run_authenticated_site_task(
 The tool does not accept a jar ID, arbitrary start URL, origin set, profile ID, adapter name,
 browser permissions, or credential name. Those come only from trusted configuration. The one
 additional input is `resume`, an opaque handle minted by a previous invocation's `handoff_pending`
-result or background delegation reference. Presenting a parked run's handle resumes it — the run
-continues its own objective, and a `site_id` that does not match the parked run's site fails closed;
-presenting a completed background run's handle returns its stored typed result. The handle names a
-prior run, is resolved and authorized server-side under the existing same-caller resume rules, and
-grants nothing the caller did not already hold — the model never assembles delegation IDs, session
-IDs, or handback tokens from free text. A handle is not a durable grant: every resume re-resolves
-the current site configuration and re-enforces `authorized_users` and `caller_profiles`, and
-withdrawn authorization closes the parked session rather than rebinding it.
+result or `running` result. Presenting a parked run's handle resumes it — the run continues its own
+objective, and a `site_id` that does not match the parked run's site fails closed; presenting a
+completed background run's handle returns its stored typed result. The handle names a prior run, is
+resolved and authorized server-side under the existing same-caller resume rules, and grants nothing
+the caller did not already hold — the model never assembles delegation IDs, session IDs, or handback
+tokens from free text. A handle is not a durable grant: every resume re-resolves the current site
+configuration and re-enforces `authorized_users` and `caller_profiles`, and withdrawn authorization
+closes the parked session rather than rebinding it.
 
 Available `site_id` values are filtered by the active caller processing profile and by the acting
 user against the site's configured `authorized_users`. The browser profiles themselves do not
@@ -738,6 +738,8 @@ unusual MFA remain human handoff paths.
 
 The high-level tool returns a small set of actionable outcomes:
 
+- `running`: the run handed off to the background; the result carries the opaque handle for later
+  retrieval of the typed result or resumption;
 - `completed`: the browser profile reported task completion;
 - `login_required`: the saved session is stale or missing;
 - `blocked_by_scope`: browser-server blocked an unconfigured origin transition;
