@@ -181,7 +181,9 @@ the tier.
 "Marked" means the review-status vocabulary (`clean` / `attested` / `judge-allowed at creation`,
 plus creator identity) renders as closed-vocabulary context alongside the definition, so the
 firing-time reviewer always knows whether it is weighing a human's sighted approval or a prior
-machine verdict. The definition renders in the *definition* field, never in `originating_request`:
+machine verdict. The two disposition rows resolve subject to the policy-revalidation rule below: a
+stored disposition counts only while it would still be a sufficient gate outcome under the current
+configuration. The definition renders in the *definition* field, never in `originating_request`:
 that field remains reserved for literal human-authored rows, per the delegation design's laundering
 rule — a definition is usually model-composed even in a clean turn, and must not occupy the slot
 that claims to be the human's own words.
@@ -235,6 +237,18 @@ floor on executable persistence at externally authored tiers, per the risk docum
 every cure human-backed, because tainted creations can then only pass through confirmation. "Who may
 make stored intent trusted" is exactly the question the creation cell's strictness already answers;
 a separate curing knob would be a second place to configure the same decision.
+
+And the inheritance holds through time, not only at write time: **a stored disposition is
+revalidated against current policy at every resolution.** A disposition cures only if it would still
+be a sufficient outcome of the definition's creation cell, at the definition's stored authoring
+tier, under the configuration in effect at the firing — `human_confirmed` satisfies any cell up to a
+`confirm` floor, while `judge_allowed` satisfies only a cell whose verdict space still includes
+`allow`. The moment an operator floors the cell at `confirm`, every machine-approved definition at
+that tier stops resolving trusted — hash unchanged, record intact — and drops to the un-cured path
+until a human attests or re-confirms it; that is the hardening applying to the stored estate rather
+than only to future writes, which is what tighten-only has to mean for a durable record. Loosening
+composes the same way in reverse: a `human_confirmed` disposition remains sufficient under any
+weaker cell, so removing a floor never invalidates a human's decision.
 
 Mutation re-enters the chokepoint. `update_automation`, script saves, and `modify_pending_callback`
 re-stamp, re-hash, and re-gate: a tainted update of a clean definition produces a new record whose
@@ -356,7 +370,10 @@ close-vocabulary marking at every consultation, and the audit anchor to the crea
 - A cured firing gains only its baseline: every sink its turn reaches is still gated by the same
   cells, against a reviewer that now has intent to judge with.
 - An operator floor on the creation cell simultaneously governs execution and cure eligibility —
-  tighten-only, with no second surface to misconfigure.
+  tighten-only, with no second surface to misconfigure — and cure validity is policy-current:
+  dispositions are revalidated against the configuration in effect at each firing, so tightening a
+  floor immediately un-cures every machine-approved definition it covers, while no configuration
+  change ever invalidates a human's sighted approval.
 - Definition text never occupies the originating-request field, and model-composed definition text
   never feeds the destination echo — only text stamped exactly `trusted_user` (human-direct) or
   sighted in full (`human_confirmed`) does, labeled with its definition provenance.
@@ -451,7 +468,9 @@ taint-cell path depends on the risk document's executable-persistence sink split
 tainted creation fires clean and renders marked attested; a judge-allowed creation through a static
 `review` rule cures with `taint_policy.mode` still `observe`, and through a taint cell only under
 `enforce`; a taint-cell `allow` verdict under `observe` does not cure; a floored cell yields only
-human-backed cures; no test path rewrites an authoring stamp.
+human-backed cures; adding a `confirm` floor after the fact stops a stored `judge_allowed`
+disposition from resolving trusted at the next firing while a `human_confirmed` one still resolves;
+no test path rewrites an authoring stamp.
 
 **M4 — Attestation surface and documentation.** The hash-bound review operation for the three
 artifact classes, in the web UI; user documentation for how automations become trusted;

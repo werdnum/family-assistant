@@ -137,7 +137,12 @@ The reviewer's context is a typed structure assembled deterministically:
   provenance stub ("tool result from `gmail_get_message`, tier unknown_external"). This rule is
   load-bearing: in email intake the sender-controlled body arrives represented as a `UserMessage`,
   so role-based selection would hand the judge the attacker's email verbatim. The per-row taint
-  metadata this selection needs is already persisted.
+  metadata this selection needs is already persisted. When the `trusted_internal` tier proposed in
+  [executable-definition-taint.md](executable-definition-taint.md) ships, this selection generalizes
+  to tiers at or below `trusted_internal`, so clean machine-authored rows — reclassified out of
+  `trusted_user` by that split — keep rendering; the fields that specifically claim the human's own
+  words (the originating request, and the trusted request text the destination echo matches against)
+  stay at exactly `trusted_user`.
 
 - **The tool call under review**: name, resolved sink class, and the tool description for local
   tools only (an MCP tool's description is remote-server content, so MCP tools render as server id
