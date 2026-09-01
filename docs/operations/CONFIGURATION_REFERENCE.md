@@ -1345,6 +1345,36 @@ taint_policy:
         fallback: "deny"         # required for a new cell: confirm or deny
 ```
 
+#### Source trust tiers
+
+Matrix and `operator_minimum` rows are keyed by source trust tier, least to most
+trusted-pole-distant:
+
+| Tier                 | Meaning                                                                                                   |
+| -------------------- | --------------------------------------------------------------------------------------------------------- |
+| `trusted_user`       | Content a human typed through an authenticated channel                                                    |
+| `trusted_internal`   | Content composed inside the trust boundary without a human hand — ordinary model output, system templates |
+| `known_contact`      | A vetted external sender                                                                                  |
+| `recognized_machine` | A recognized automated sender                                                                             |
+| `unknown_external`   | Anything else                                                                                             |
+
+`trusted_user` and `trusted_internal` are both the trusted pole and **no shipped cell distinguishes
+them**. The split exists so that the parts of the reviewer contract that need *the human's own
+words* — the originating-request slot and the destination-echo signal — can ask for them by tier
+instead of guessing from message structure; those two narrow to exactly `trusted_user`, while
+everything evidential (which conversation rows render, which provenance detail is shown) covers
+both.
+
+**You do not need to write `trusted_internal` rows.** A `matrix`, `matrix_overrides`, or
+`operator_minimum` entry written for `trusted_user` governs `trusted_internal` evaluations too,
+unless you write an explicit `trusted_internal` entry for that same sink class, which then wins.
+Inheritance is deliberate: a deployment that floored `trusted_user` keeps governing ordinary model
+output rather than silently exempting it when that output reclassifies.
+
+Almost every turn contains model output, so a turn's *maximum* tier is normally at least
+`trusted_internal`; the distinction is meaningful per row, per field, and per artifact, not per
+turn.
+
 A `confirm` floor limits the model to `confirm`/`deny`; a `deny` floor limits it to `deny`.
 `operator_minimum` is applied as a verdict floor and profiles cannot relax it. `redact` cannot be a
 minimum for an adjudicated cell. In `observe` mode, adjudication still runs but its effect is

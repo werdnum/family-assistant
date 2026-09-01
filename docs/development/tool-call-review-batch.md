@@ -39,9 +39,9 @@ Remote status responses must contain one of OpenRouter's documented lifecycle st
 without an inline `results` list, the manifest leaves the result artifact unset so the next `status`
 poll fetches and persists the completed result before harvest. Polling also fails immediately when
 any chunk is still `pending` without a provider batch ID; run `submit` (or retry a definitive
-rejected submission) before polling.
-Each polled response must also identify the exact provider batch recorded for that chunk; an absent
-or different batch ID fails closed before status, usage, or result artifacts are persisted.
+rejected submission) before polling. Each polled response must also identify the exact provider
+batch recorded for that chunk; an absent or different batch ID fails closed before status, usage, or
+result artifacts are persisted.
 
 Harvest refuses incomplete batches, item errors, missing IDs, duplicate IDs, extra IDs, malformed
 structured output, verdicts outside a case's allowed space, or a changed request artifact. A

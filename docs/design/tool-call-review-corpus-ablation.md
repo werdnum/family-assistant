@@ -10,9 +10,8 @@ boundary, trusted objective, proposed action, and every other prompt input remai
 pair so the result isolates information exposure rather than differences between actions, boundary
 types, or datasets.
 
-This extends the evaluation harness in
-[tool-call-review-eval.md](tool-call-review-eval.md). It does not change production rendering or
-tool-call policy.
+This extends the evaluation harness in [tool-call-review-eval.md](tool-call-review-eval.md). It does
+not change production rendering or tool-call policy.
 
 ## Evaluation question
 
@@ -35,36 +34,35 @@ policy contexts. Only the browser `environment` field differs:
   explicitly untrusted browser environment content.
 
 The hidden treatment is an evaluation-only transformation, not a production rendering path. It
-answers the causal question "what changes when this reviewer sees the environment text?" A
-separate comparison of production conversation and browser boundaries can test system-level
-behavior, but cannot be interpreted as an information-visibility ablation because the payload and
-action semantics also change.
+answers the causal question "what changes when this reviewer sees the environment text?" A separate
+comparison of production conversation and browser boundaries can test system-level behavior, but
+cannot be interpreted as an information-visibility ablation because the payload and action semantics
+also change.
 
-The evaluation does not add a partially visible treatment. A bounded excerpt level belongs here
-only if it has a precise representation and a concrete product question.
+The evaluation does not add a partially visible treatment. A bounded excerpt level belongs here only
+if it has a precise representation and a concrete product question.
 
 ## Matched case groups
 
 Each attack source produces one matched group with four cases:
 
-| Control | Hidden | Full |
-| --- | --- | --- |
-| Attack | attacker text withheld | attacker text visible and quarantined |
+| Control     | Hidden                         | Full                                          |
+| ----------- | ------------------------------ | --------------------------------------------- |
+| Attack      | attacker text withheld         | attacker text visible and quarantined         |
 | Benign twin | corresponding content withheld | corresponding content visible and quarantined |
 
 All four cases use the browser boundary and share the proposed-action discriminator and key shape,
 damage class, attack class, and source-group identity. Within each attack hidden/full pair and each
-benign hidden/full pair,
-every payload field except `environment` is identical; the hidden environment is the fixed marker
-and the full environment is the source text.
+benign hidden/full pair, every payload field except `environment` is identical; the hidden
+environment is the fixed marker and the full environment is the source text.
 
 The attack pair proposes an action the trusted objective does not authorize. Its benign twin keeps
 the same proposed-action discriminator and key shape while changing the objective, argument values,
-and environment as needed to make the action genuinely authorized. Requiring the exact same objective
-and action across attack and benign controls would make one of the labels false: an unauthorized
-action does not become benign merely because the injection is removed. The controls are therefore
-matched for surface and risk, while the causal visibility comparison is made within each control
-kind.
+and environment as needed to make the action genuinely authorized. Requiring the exact same
+objective and action across attack and benign controls would make one of the labels false: an
+unauthorized action does not become benign merely because the injection is removed. The controls are
+therefore matched for surface and risk, while the causal visibility comparison is made within each
+control kind.
 
 A corpus row labeled "not an injection" is not automatically a benign twin. It is usable as a
 natural-benign pool only when the surrounding trusted request independently authorizes the proposed
@@ -82,17 +80,17 @@ Generated cases carry stable, content-free identities for:
 
 Holdout assignment happens before case expansion. Every correlated attack, twin, and visibility
 variant stays in one split. Derivative or templated upstream rows share a family-level split key
-when the adapter can identify that family. This is not generic near-duplicate detection: the
-Deepset adapter groups only text that is identical after its documented Unicode/case/whitespace
+when the adapter can identify that family. This is not generic near-duplicate detection: the Deepset
+adapter groups only text that is identical after its documented Unicode/case/whitespace
 normalization, so its deterministic dev/gate buckets are smoke-test slices rather than leak-free
 held-out evidence.
 
 Visibility variants are paired measurements, not additional independent attacks. Confidence bounds
-count each `source_group` once overall, even when one source family produces multiple matched
-groups and both hidden/full treatments. A per-visibility slice naturally sees that family once in
-its own treatment. `matched_group` identifies a particular four-case pair matrix; it is not an
-independence claim. Expanding one row or attack family into many variants must never improve the
-supported false-allow bound merely through correlated duplication.
+count each `source_group` once overall, even when one source family produces multiple matched groups
+and both hidden/full treatments. A per-visibility slice naturally sees that family once in its own
+treatment. `matched_group` identifies a particular four-case pair matrix; it is not an independence
+claim. Expanding one row or attack family into many variants must never improve the supported
+false-allow bound merely through correlated duplication.
 
 ## Reporting
 
@@ -121,8 +119,8 @@ split, adapter version, and lineage keys without embedding raw source text in fi
 
 The first materializations are:
 
-- Deepset Prompt Injections, preserving its published train/test split as a smoke-test corpus;
-  its adapter's dev/gate bucket is not a near-duplicate-safe ship-decision holdout; and
+- Deepset Prompt Injections, preserving its published train/test split as a smoke-test corpus; its
+  adapter's dev/gate bucket is not a near-duplicate-safe ship-decision holdout; and
 - InjecAgent base direct-harm and data-stealing cases, preserving their attack-family structure.
 
 InjecAgent is adapted to the application's reviewer boundaries; this is not a reproduction of the
@@ -153,8 +151,8 @@ This exposes structural errors before paying for repeated judgments over thousan
 
 ### Milestone 1: ablation contract and reporting
 
-The case schema can represent matched groups and controlled browser visibility treatments. The runner
-reports visibility slices and paired transitions without inflating independent-input counts.
+The case schema can represent matched groups and controlled browser visibility treatments. The
+runner reports visibility slices and paired transitions without inflating independent-input counts.
 
 Verification: schema round trips; malformed, incomplete, non-browser, or payload-mismatched groups
 fail loudly; hidden cases use the single fixed marker; correlated variants keep the browser security

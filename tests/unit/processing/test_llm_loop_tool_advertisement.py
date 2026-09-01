@@ -281,7 +281,9 @@ async def test_llm_loop_executes_activate_tools_call_end_to_end(
         if isinstance(message, ToolMessage) and message.name == "activate_tools"
     )
     assert activate_message.taint_metadata is not None
-    assert activate_message.taint_metadata.get("max_tier") == "trusted_user"
+    # Machine-composed row in a clean turn: the trusted pole, but not the
+    # human's own words.
+    assert activate_message.taint_metadata.get("max_tier") == "trusted_internal"
 
     # The second LLM call must see lazy_b as an activated regular tool, not just
     # the activate_tools meta-tool, proving activation actually took effect.

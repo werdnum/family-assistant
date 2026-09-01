@@ -590,7 +590,7 @@ async def test_add_message_without_taint_metadata_logs_regression_guard(
         classified_id
     )
     assert classified_row is not None
-    assert classified_row["taint_metadata_version"] == "runtime_v1"
+    assert classified_row["taint_metadata_version"] == "runtime_v2"
 
 
 @pytest.mark.asyncio

@@ -16,6 +16,7 @@ from family_assistant.security.taint import (
     TaintSource,
     TaintSourceType,
     TurnTaintState,
+    is_externally_authored,
     merge_taint_state_into_tracker,
 )
 from family_assistant.tools.taint_helpers import merge_artifact_taint_into_context
@@ -355,7 +356,7 @@ async def get_note_tool(
     if exec_context.taint_tracker is not None and isinstance(provenance_metadata, dict):
         taint_metadata = provenance_metadata.get("taint_metadata")
         note_taint_state = TurnTaintState.from_metadata(taint_metadata)
-        if note_taint_state.max_tier > SourceTrustTier.TRUSTED_USER:
+        if is_externally_authored(note_taint_state.max_tier):
             merge_taint_state_into_tracker(
                 exec_context.taint_tracker,
                 note_taint_state.add_source(

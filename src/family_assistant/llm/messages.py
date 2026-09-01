@@ -21,7 +21,8 @@ if TYPE_CHECKING:
 
 from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.security.taint import (
-    TaintMetadata,  # noqa: TC001 - Pydantic resolves this TypedDict at runtime
+    TaintMetadata,
+    floor_machine_authored_metadata,
 )
 from family_assistant.tools.types import (  # noqa: TC001  # Pydantic needs runtime import for field validation
     ToolAttachment,
@@ -276,6 +277,22 @@ class AssistantMessage(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    @field_validator("taint_metadata", mode="after")
+    @classmethod
+    def _floor_machine_authorship(
+        cls,
+        taint_metadata: TaintMetadata | None,
+    ) -> TaintMetadata | None:
+        """Stamp this row at least ``trusted_internal``: no human typed it.
+
+        Applied here rather than at each construction site so that every path
+        that builds one of these rows -- the streaming loop, tool execution,
+        the task worker, a provider round-trip -- gets the authorship floor by
+        construction. Without it a model-composed row in a clean turn would
+        stamp ``trusted_user`` and read back as the human's own words.
+        """
+        return floor_machine_authored_metadata(taint_metadata)
+
     @field_validator("tool_calls", mode="after")
     @classmethod
     def check_has_content_or_tool_calls(
@@ -319,6 +336,22 @@ class ToolMessage(BaseModel):
 
     # Attachment metadata for database storage (serialized)
     attachments: list[ToolAttachmentMetadata] | None = None
+
+    @field_validator("taint_metadata", mode="after")
+    @classmethod
+    def _floor_machine_authorship(
+        cls,
+        taint_metadata: TaintMetadata | None,
+    ) -> TaintMetadata | None:
+        """Stamp this row at least ``trusted_internal``: no human typed it.
+
+        Applied here rather than at each construction site so that every path
+        that builds one of these rows -- the streaming loop, tool execution,
+        the task worker, a provider round-trip -- gets the authorship floor by
+        construction. Without it a model-composed row in a clean turn would
+        stamp ``trusted_user`` and read back as the human's own words.
+        """
+        return floor_machine_authored_metadata(taint_metadata)
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 

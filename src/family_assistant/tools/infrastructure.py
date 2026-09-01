@@ -31,7 +31,6 @@ from typing import (
 from family_assistant.security.taint import (
     SensitiveReadScope,
     SinkClass,
-    SourceTrustTier,
     TaintPolicyConfig,
     TaintPolicyEvaluation,
     TaintPolicyEvaluator,
@@ -40,6 +39,7 @@ from family_assistant.security.taint import (
     TaintSourceType,
     TurnTaintState,
     derive_tool_result_taint_source,
+    is_externally_authored,
     merge_taint_state_into_tracker,
     resolve_tool_sink_class,
 )
@@ -1220,7 +1220,7 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
 def _taint_audit_sources(state: TurnTaintState) -> list[TaintAuditSourceSummary]:
     summaries: list[TaintAuditSourceSummary] = []
     for source in state.sources:
-        trusted = source.tier is SourceTrustTier.TRUSTED_USER
+        trusted = not is_externally_authored(source.tier)
         summaries.append({
             # These are enum-backed, closed-vocabulary provenance fields.
             "source_type": source.source_type.value,

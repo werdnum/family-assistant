@@ -75,7 +75,7 @@ async def test_voice_session_persists_as_listable_conversation(
         interface_type="web", conversation_id=conversation_id
     )
     assert len(rows) == 3
-    assert all(row["taint_metadata_version"] == "runtime_v1" for row in rows)
+    assert all(row["taint_metadata_version"] == "runtime_v2" for row in rows)
     assert rows[0]["taint_metadata_json"] is not None
     assert rows[1]["taint_metadata_json"] is not None
     assert rows[2]["taint_metadata_json"] is not None

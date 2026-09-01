@@ -1,0 +1,83 @@
+id: no-unstamped-executable-definition-write
+language: python
+severity: error
+message: "Writing definition_record without stamp_definition() strands the authoring stamp and content hash"
+note: |
+  A definition record binds an executable definition's authoring stamp to a hash of the
+  content it describes. The two are only correct together: a record whose hash does not
+  cover the content actually written is void at firing time -- fail-closed, but silently
+  un-curing a legitimate write instead of re-gating it.
+
+  Every write of a definition_record MUST come from
+  family_assistant.security.definition_records.stamp_definition(), which produces the
+  stamp, the hash, and the disposition as one value over the *complete post-mutation*
+  definition. A patch-style caller merges omitted fields from the stored row first, so
+  what a gate saw and what the hash covers are identical by construction.
+
+  ❌ INCORRECT - a hand-assembled record can describe content nobody gated:
+    definition_record={"version": "definition_v1", "content_hash": some_hash, ...}
+    update_values["definition_record"] = existing["definition_record"]
+
+  ✅ CORRECT - obtain the record from the chokepoint:
+    definition_record=stamp_definition(
+        content=automation_definition_content(...),
+        taint_state=authoring_taint_state(exec_context.taint_tracker),
+    ).to_dict()
+
+  A one-shot callback has no definition table, so the same rule covers the payload field
+  ``tool_call_review_definition_record``: creating or editing a callback's executable
+  content obtains a fresh record from ``stamp_callback_definition()``. Carrying an
+  originating write's record forward unchanged -- a follow-up reminder repeats the same
+  content -- is the one legitimate exception, and takes an inline exemption saying so.
+
+  Hoisting the stamped record into a local named ``definition_record`` is fine -- several
+  write paths need it more than once -- and that local's own binding is checked by the same
+  rule, so the chain back to the chokepoint stays closed. A local under any other name is
+  not, so keep the conventional name.
+
+  Clearing a record deliberately (a test building the pre-design legacy shape, a
+  migration) is the one legitimate literal, and reads as ``definition_record=None``.
+  For any other approved site, add an inline exemption with a reason:
+    # ast-grep-ignore: no-unstamped-executable-definition-write - <why>
+rule:
+  all:
+    - any:
+        # A keyword argument, as every SQLAlchemy insert/update values() call spells it.
+        - all:
+            - kind: keyword_argument
+              has:
+                field: name
+                regex: "^definition_record$"
+            # Only inside a SQLAlchemy values() call: reading the column back
+            # into a row TypedDict is not a mutation and must not be flagged.
+            - inside:
+                kind: argument_list
+                inside:
+                  pattern: $STMT.values($$$VALUES)
+            - not:
+                has:
+                  field: value
+                  any:
+                    - kind: none
+                    # A hoisted record, whose own binding this rule also checks.
+                    - regex: "^definition_record$"
+        # An entry assigned into an update-values mapping.
+        - all:
+            - pattern: $X["definition_record"] = $VALUE
+            - not:
+                any:
+                  - pattern: $X["definition_record"] = None
+                  - pattern: $X["definition_record"] = definition_record
+        # The one-shot callback payload's record, edited in place.
+        - pattern: $X["tool_call_review_definition_record"] = $VALUE
+        # The hoisted local itself: this is what keeps the hoist honest.
+        - all:
+            - pattern: definition_record = $VALUE
+            - not:
+                pattern: definition_record = None
+    - not:
+        has:
+          any:
+            - pattern: stamp_definition($$$ARGS)
+            - pattern: stamp_callback_definition($$$CB_ARGS)
+          stopBy: end

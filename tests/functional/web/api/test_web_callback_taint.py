@@ -223,7 +223,7 @@ async def test_web_callback_delivery_copy_inherits_turn_taint(
     # Both must carry runtime taint metadata; crucially the delivery copy is NOT
     # downgraded to the trusted-empty baseline.
     assert canonical_row["taint_metadata_json"]["max_tier"] == "unknown_external"
-    assert delivery_row["taint_metadata_version"] == "runtime_v1"
+    assert delivery_row["taint_metadata_version"] == "runtime_v2"
     assert delivery_row["taint_metadata_json"] is not None
     assert delivery_row["taint_metadata_json"]["max_tier"] == "unknown_external"
 
@@ -353,7 +353,7 @@ async def test_external_callback_payload_is_tainted_user_role(
         row for row in trigger_rows if "external" in (row["content"] or "")
     ]
     assert len(matching_rows) == 1
-    assert matching_rows[0]["taint_metadata_version"] == "runtime_v1"
+    assert matching_rows[0]["taint_metadata_version"] == "runtime_v2"
     assert matching_rows[0]["taint_metadata_json"] is not None
     assert matching_rows[0]["taint_metadata_json"]["max_tier"] == "unknown_external"
 
@@ -477,7 +477,7 @@ async def test_callback_treats_a_failed_delivery_as_a_failed_send(
     trigger_row = user_rows[0]
     assert trigger_row["is_internal"] is True
     assert trigger_row["processing_profile_id"] == "callback_profile"
-    assert trigger_row["taint_metadata_version"] == "runtime_v1"
+    assert trigger_row["taint_metadata_version"] == "runtime_v2"
     assert trigger_row["taint_metadata_json"] is not None
     assert trigger_row["taint_metadata_json"]["max_tier"] == "unknown_external"
 

@@ -136,3 +136,26 @@ exemptions:
       one place allowed to call engine.begin(). storage/__init__.py runs schema
       creation before any application code exists to hold a transaction.
     ticket: null
+
+  # ===========================================================================
+  # Definition-record chokepoint exemptions - rule test fixtures
+  # ===========================================================================
+  - rule: no-unstamped-executable-definition-write
+    files:
+      - .ast-grep/tests/conformance/no-unstamped-executable-definition-write-positive.py
+    reason: |
+      The positive fixture exists to violate the rule. It is what proves the rule
+      still fires; exempting it keeps the conformance run clean without weakening
+      the rule.
+    ticket: null
+
+  - rule: no-dict-any
+    files:
+      - .ast-grep/tests/conformance/no-unstamped-executable-definition-write-positive.py
+      - .ast-grep/tests/conformance/no-unstamped-executable-definition-write-negative.py
+    reason: |
+      The fixtures stand in for SQLAlchemy values() mappings, whose contents are
+      genuinely heterogeneous column values. Naming a real typed structure here
+      would obscure the shape the rule is matching on.
+    ticket: null
+

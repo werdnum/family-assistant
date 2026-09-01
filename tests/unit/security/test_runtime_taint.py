@@ -910,7 +910,7 @@ def test_amnestied_metadata_is_none_for_missing_or_malformed_metadata() -> None:
 
 def test_amnestied_metadata_drops_legacy_and_anonymous_artifacts() -> None:
     metadata = {
-        "version": "runtime_v1",
+        "version": "runtime_v2",
         "max_tier": "unknown_external",
         "history_high_taint_present": True,
         "sources": [
@@ -924,7 +924,7 @@ def test_amnestied_metadata_drops_legacy_and_anonymous_artifacts() -> None:
 
 def test_amnestied_metadata_keeps_attributed_sources_and_recomputes_tier() -> None:
     metadata = {
-        "version": "runtime_v1",
+        "version": "runtime_v2",
         "max_tier": "unknown_external",
         "history_high_taint_present": True,
         "sources": [
@@ -946,7 +946,7 @@ def test_amnestied_metadata_keeps_attributed_sources_and_recomputes_tier() -> No
 
 def test_amnestied_metadata_does_not_honor_persisted_max_tier() -> None:
     metadata = {
-        "version": "runtime_v1",
+        "version": "runtime_v2",
         "max_tier": "unknown_external",
         "sources": [
             {
@@ -970,7 +970,7 @@ def test_amnestied_metadata_does_not_honor_persisted_max_tier() -> None:
 
 def test_strip_legacy_echoes_returns_metadata_unchanged_without_echoes() -> None:
     metadata: TaintMetadata = {
-        "version": "runtime_v1",
+        "version": "runtime_v2",
         "max_tier": "unknown_external",
         "history_high_taint_present": True,
         "sources": [
@@ -989,7 +989,7 @@ def test_strip_legacy_echoes_none_for_non_mapping() -> None:
 
 def test_strip_legacy_echoes_drops_echo_keeps_genuine_and_recomputes() -> None:
     metadata: TaintMetadata = {
-        "version": "runtime_v1",
+        "version": "runtime_v2",
         "max_tier": "unknown_external",
         "history_high_taint_present": True,
         "sources": [
@@ -1011,7 +1011,7 @@ def test_strip_legacy_echoes_drops_echo_keeps_genuine_and_recomputes() -> None:
 
 def test_strip_legacy_echoes_only_echoes_contributes_nothing() -> None:
     metadata: TaintMetadata = {
-        "version": "runtime_v1",
+        "version": "runtime_v2",
         "max_tier": "unknown_external",
         "history_high_taint_present": True,
         "sources": [_legacy_fallback_source_summary()],
@@ -1022,7 +1022,7 @@ def test_strip_legacy_echoes_only_echoes_contributes_nothing() -> None:
 
 def test_strip_legacy_echoes_keeps_anonymous_escalation_artifact() -> None:
     metadata: TaintMetadata = {
-        "version": "runtime_v1",
+        "version": "runtime_v2",
         "max_tier": "unknown_external",
         "history_high_taint_present": True,
         "sources": [
@@ -1041,7 +1041,7 @@ def test_strip_legacy_echoes_keeps_anonymous_escalation_artifact() -> None:
 
 def test_strip_legacy_echoes_preserves_hidden_persisted_max_tier() -> None:
     metadata: TaintMetadata = {
-        "version": "runtime_v1",
+        "version": "runtime_v2",
         "max_tier": "unknown_external",
         "history_high_taint_present": True,
         "sources": [
@@ -1121,7 +1121,7 @@ async def _seed_history_row(
         .values(
             taint_metadata_json=taint_metadata_json,
             taint_metadata_version=(
-                "runtime_v1" if taint_metadata_json is not None else None
+                "runtime_v2" if taint_metadata_json is not None else None
             ),
         )
     )
@@ -1175,7 +1175,7 @@ async def test_epoch_disabled_preserves_legacy_echo_fallback(
         conversation_id="epoch-disabled-echo",
         timestamp=_HISTORY_TAINT_EPOCH + timedelta(days=1),
         taint_metadata_json={
-            "version": "runtime_v1",
+            "version": "runtime_v2",
             "max_tier": "unknown_external",
             "history_high_taint_present": True,
             "sources": [_legacy_fallback_source_summary()],
@@ -1198,7 +1198,7 @@ async def test_pre_epoch_row_with_only_legacy_artifacts_contributes_no_taint(
         conversation_id="epoch-pre-poison",
         timestamp=_HISTORY_TAINT_EPOCH - timedelta(days=1),
         taint_metadata_json={
-            "version": "runtime_v1",
+            "version": "runtime_v2",
             "max_tier": "unknown_external",
             "history_high_taint_present": True,
             "sources": [
@@ -1225,7 +1225,7 @@ async def test_pre_epoch_row_keeps_genuine_email_source(
         conversation_id="epoch-pre-email",
         timestamp=_HISTORY_TAINT_EPOCH - timedelta(days=1),
         taint_metadata_json={
-            "version": "runtime_v1",
+            "version": "runtime_v2",
             "max_tier": "unknown_external",
             "history_high_taint_present": True,
             "sources": [
@@ -1312,7 +1312,7 @@ async def test_post_epoch_row_drops_legacy_echo_keeps_genuine_source(
         conversation_id="epoch-post-echo-plus-genuine",
         timestamp=_HISTORY_TAINT_EPOCH + timedelta(days=1),
         taint_metadata_json={
-            "version": "runtime_v1",
+            "version": "runtime_v2",
             "max_tier": "unknown_external",
             "history_high_taint_present": True,
             "sources": [
@@ -1339,7 +1339,7 @@ async def test_post_epoch_row_preserves_hidden_max_tier_after_echo_stripping(
         conversation_id="epoch-post-echo-hidden-tier",
         timestamp=_HISTORY_TAINT_EPOCH + timedelta(days=1),
         taint_metadata_json={
-            "version": "runtime_v1",
+            "version": "runtime_v2",
             "max_tier": "unknown_external",
             "history_high_taint_present": True,
             "sources": [
@@ -1375,7 +1375,7 @@ async def test_post_epoch_row_with_only_legacy_echo_contributes_no_taint(
         conversation_id="epoch-post-echo-only",
         timestamp=_HISTORY_TAINT_EPOCH + timedelta(days=1),
         taint_metadata_json={
-            "version": "runtime_v1",
+            "version": "runtime_v2",
             "max_tier": "unknown_external",
             "history_high_taint_present": True,
             "sources": [_legacy_fallback_source_summary()],
@@ -1399,7 +1399,7 @@ async def test_post_epoch_row_keeps_anonymous_manual_artifact(
         conversation_id="epoch-post-anonymous",
         timestamp=_HISTORY_TAINT_EPOCH + timedelta(days=1),
         taint_metadata_json={
-            "version": "runtime_v1",
+            "version": "runtime_v2",
             "max_tier": "unknown_external",
             "history_high_taint_present": True,
             "sources": [_anonymous_escalation_source_summary()],

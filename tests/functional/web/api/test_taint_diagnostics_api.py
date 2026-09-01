@@ -138,7 +138,7 @@ async def test_taint_diagnostics_reports_audits_and_distinct_history_rows(
             "processing_profile_id": "default_assistant",
             "tool_name": None,
             "taint_metadata_json": {"max_tier": "trusted_user", "sources": []},
-            "taint_metadata_version": "runtime_v1",
+            "taint_metadata_version": "runtime_v2",
         },
         {
             "interface_type": "web",
@@ -174,7 +174,7 @@ async def test_taint_diagnostics_reports_audits_and_distinct_history_rows(
             "processing_profile_id": "default_assistant",
             "tool_name": None,
             "taint_metadata_json": {"sources": []},
-            "taint_metadata_version": "runtime_v1",
+            "taint_metadata_version": "runtime_v2",
         },
         {
             "interface_type": "web",
@@ -225,7 +225,7 @@ async def test_taint_diagnostics_reports_audits_and_distinct_history_rows(
     assert _counts_by_key(history["by_metadata_version"]) == {
         None: 2,
         "legacy_inferred": 1,
-        "runtime_v1": 2,
+        "runtime_v2": 2,
     }
     assert _counts_by_key(history["by_tool_name"])["browser_open"] == 1
     serialized = response.text
@@ -266,7 +266,7 @@ async def test_taint_diagnostics_splits_history_rows_by_epoch(
             "processing_profile_id": "default_assistant",
             "tool_name": None,
             "taint_metadata_json": {"max_tier": "unknown_external", "sources": []},
-            "taint_metadata_version": "runtime_v1",
+            "taint_metadata_version": "runtime_v2",
         },
         {
             "interface_type": "telegram",
@@ -288,7 +288,7 @@ async def test_taint_diagnostics_splits_history_rows_by_epoch(
             "processing_profile_id": "default_assistant",
             "tool_name": None,
             "taint_metadata_json": {"max_tier": "trusted_user", "sources": []},
-            "taint_metadata_version": "runtime_v1",
+            "taint_metadata_version": "runtime_v2",
         },
     ]
     await api_db_context.execute(insert(message_history_table).values(rows))

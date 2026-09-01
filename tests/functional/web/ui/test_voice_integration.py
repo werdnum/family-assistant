@@ -424,7 +424,7 @@ async def test_voice_tool_call_integration(web_test_fixture: WebTestFixture) -> 
                 "success": True,
                 "result": {"notes": []},
                 "taint_metadata": {
-                    "version": "runtime_v1",
+                    "version": "runtime_v2",
                     "max_tier": "unknown_external",
                     "sources": [],
                 },
