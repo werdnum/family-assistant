@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from family_assistant.security.definition_records import (
-    CreationDisposition,
+    DefinitionGateOutcome,
     script_definition_content,
     stamp_definition,
 )
@@ -59,7 +59,7 @@ class ScriptsRepository(BaseRepository):
         parameters_schema: dict[str, Any] | None = None,
         *,
         definition_taint_state: TurnTaintState | None = None,
-        definition_disposition: CreationDisposition | None = None,
+        definition_gate: DefinitionGateOutcome | None = None,
         definition_human_direct: bool = False,
     ) -> ScriptRow:
         """Save or update a script (upsert by name).
@@ -91,7 +91,7 @@ class ScriptsRepository(BaseRepository):
                     parameters_schema=parameters_schema,
                 ),
                 taint_state=definition_taint_state,
-                disposition=definition_disposition,
+                gate_outcome=definition_gate,
                 human_direct=definition_human_direct,
             ).to_dict()
         )

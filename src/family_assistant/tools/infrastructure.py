@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import inspect
 import json
 import logging
@@ -28,6 +29,12 @@ from typing import (
     runtime_checkable,
 )
 
+from family_assistant.security.definition_records import (
+    CreationDisposition,
+    DefinitionGateOutcome,
+    GateLayer,
+    GateProvenance,
+)
 from family_assistant.security.taint import (
     SensitiveReadScope,
     SinkClass,
@@ -101,6 +108,8 @@ logger = logging.getLogger(__name__)
 
 _TOOL_CALL_REVIEW_AUDIT_REASON = "Automatic reviewer decision recorded; reviewer rationale omitted from durable audit."
 _NAMED_SINK_CONFIRMATION_MAX_CHARS = 3800
+_NO_TAINT_GATE_MODE = "none"
+"""Recorded mode for a gate no runtime taint policy participated in."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -2033,6 +2042,10 @@ class TaintTrackingToolsProvider(ToolsProvider):
 
         review_result: ToolCallReviewResult | None = None
         inline_confirmation_authorization: ToolConfirmationAuthorization | None = None
+        # How this call left its gates, for whichever executable-persistence
+        # write it goes on to perform. The gates record it; the write consumes
+        # it; no tool maps verdicts to dispositions itself.
+        definition_gate: DefinitionGateOutcome | None = None
         if confined_exemption and evaluation is not None:
             await self._record_confined_exemption_audit(
                 descriptor=descriptor,
@@ -2071,6 +2084,12 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 name,
                 call_id,
             )
+            definition_gate = DefinitionGateOutcome(
+                disposition=CreationDisposition.HUMAN_CONFIRMED,
+                gate=self._gate_provenance(
+                    layer=GateLayer.CONFIRMATION, taint_evaluation=evaluation
+                ),
+            )
         elif static_review or taint_review:
             review_result = await self._review_tool_call(
                 descriptor=descriptor,
@@ -2085,6 +2104,12 @@ class TaintTrackingToolsProvider(ToolsProvider):
             )
 
         if review_result is not None:
+            definition_gate = self._judge_gate_outcome(
+                review_result=review_result,
+                taint_review=taint_review,
+                taint_evaluation=evaluation,
+                static_evaluation=static_evaluation,
+            )
             if review_result.verdict is ToolCallReviewVerdict.DENY:
                 state_before_confirmation = (
                     context.taint_tracker.snapshot()
@@ -2137,6 +2162,17 @@ class TaintTrackingToolsProvider(ToolsProvider):
                             call_id or descriptor.name
                         ] = context.taint_tracker.snapshot().to_metadata()
                     return result
+                # The denial was escalated and a human approved the call anyway,
+                # rendering it in full. That is a sighted approval; the recorded
+                # denial it overrode is not what the write carries forward.
+                definition_gate = DefinitionGateOutcome(
+                    disposition=CreationDisposition.HUMAN_CONFIRMED,
+                    gate=self._gate_provenance(
+                        layer=GateLayer.CONFIRMATION,
+                        taint_evaluation=evaluation,
+                        verdict_id=review_result.audit_event_id,
+                    ),
+                )
                 self._record_sink_approval(context, descriptor, sink_class, arguments)
             elif review_result.verdict is ToolCallReviewVerdict.CONFIRM:
                 state_before_confirmation = (
@@ -2176,6 +2212,18 @@ class TaintTrackingToolsProvider(ToolsProvider):
                             call_id or descriptor.name
                         ] = context.taint_tracker.snapshot().to_metadata()
                     return confirmation_result.result
+                # The escalation or confirmation prompt rendered the complete
+                # call and a human approved it, which is a sighted approval of
+                # the definition it writes -- the one thing a recorded
+                # ``confirm`` never was.
+                definition_gate = DefinitionGateOutcome(
+                    disposition=CreationDisposition.HUMAN_CONFIRMED,
+                    gate=self._gate_provenance(
+                        layer=GateLayer.CONFIRMATION,
+                        taint_evaluation=evaluation,
+                        verdict_id=review_result.audit_event_id,
+                    ),
+                )
                 # A live human approval has already confirmed this exact reviewed
                 # call. Scope a consumed generic authorization to its immediate
                 # execution so an inner gate (notably delegate_to_service's own
@@ -2238,6 +2286,12 @@ class TaintTrackingToolsProvider(ToolsProvider):
                         context.taint_tracker.snapshot().to_metadata()
                     )
                 return confirmation_result.result
+            definition_gate = DefinitionGateOutcome(
+                disposition=CreationDisposition.HUMAN_CONFIRMED,
+                gate=self._gate_provenance(
+                    layer=GateLayer.CONFIRMATION, taint_evaluation=evaluation
+                ),
+            )
             self._record_sink_approval(context, descriptor, sink_class, arguments)
 
         state_before_execution = (
@@ -2246,8 +2300,10 @@ class TaintTrackingToolsProvider(ToolsProvider):
             else None
         )
         previous_confirmation_authorization = context.tool_confirmation_authorization
+        previous_definition_gate = context.definition_gate_outcome
         if inline_confirmation_authorization is not None:
             context.tool_confirmation_authorization = inline_confirmation_authorization
+        context.definition_gate_outcome = definition_gate
         try:
             result = await execute_authorized()
         except Exception:
@@ -2260,6 +2316,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 )
             raise
         finally:
+            context.definition_gate_outcome = previous_definition_gate
             if inline_confirmation_authorization is not None:
                 context.tool_confirmation_authorization = (
                     previous_confirmation_authorization
@@ -2387,6 +2444,92 @@ class TaintTrackingToolsProvider(ToolsProvider):
             fallback_verdict=fallback,
         )
 
+    def _reviewer_revision(self) -> str:
+        """Identify the reviewer that produced a verdict, for a later filterable review.
+
+        A recorded ``judge_allowed`` stands until the content changes, so
+        recalibrating the reviewer -- a new model, or new guidance -- must be
+        visible when an operator comes to review the judge-cured estate. Model
+        and guidance are what change the verdict, so both feed the identifier.
+        """
+        config = self._review_config
+        model = f"{config.provider or 'default'}/{config.model}" if config else "none"
+        guidance = "\n".join((
+            config.guidance if config is not None else "",
+            self._deployment_review_guidance,
+            self._profile_review_guidance,
+        ))
+        digest = hashlib.sha256(guidance.encode("utf-8")).hexdigest()[:12]
+        return f"{model}@{digest}"
+
+    def _allow_is_enforce_equivalent(
+        self,
+        *,
+        taint_evaluation: TaintPolicyEvaluation | None,
+        static_evaluation: PolicyEvaluation | None,
+    ) -> bool:
+        """Whether ``enforce`` would have offered ``allow`` at this cell.
+
+        A merged review under ``observe`` deliberately omits the taint cell's
+        constraints, so a floored cell whose space is ``{confirm, deny}`` gets
+        ``allow`` back through the static layer's presence -- a verdict
+        ``enforce`` could never have issued, and therefore one that cannot cure.
+        Recomputing the constraints with those constraints applied is what tells
+        the two apart, and it is only ever consulted for curing: the verdict the
+        call actually ran under is unchanged.
+        """
+        enforce_equivalent = self._review_constraints(
+            taint_evaluation=taint_evaluation,
+            static_evaluation=static_evaluation,
+            include_observe_taint_constraints=True,
+        )
+        return ToolCallReviewVerdict.ALLOW in enforce_equivalent.available_verdicts
+
+    def _judge_gate_outcome(
+        self,
+        *,
+        review_result: ToolCallReviewResult,
+        taint_review: bool,
+        taint_evaluation: TaintPolicyEvaluation | None,
+        static_evaluation: PolicyEvaluation | None,
+    ) -> DefinitionGateOutcome:
+        """Record how a reviewer verdict left the gate, for any definition the call writes."""
+        disposition = {
+            ToolCallReviewVerdict.ALLOW: CreationDisposition.JUDGE_ALLOWED,
+            ToolCallReviewVerdict.CONFIRM: CreationDisposition.JUDGE_CONFIRM_REQUIRED,
+            ToolCallReviewVerdict.DENY: CreationDisposition.JUDGE_DENIED,
+        }[review_result.verdict]
+        return DefinitionGateOutcome(
+            disposition=disposition,
+            gate=self._gate_provenance(
+                layer=GateLayer.TAINT_CELL if taint_review else GateLayer.STATIC_RULE,
+                taint_evaluation=taint_evaluation,
+                verdict_id=review_result.audit_event_id,
+            ),
+            cure_permitted=self._allow_is_enforce_equivalent(
+                taint_evaluation=taint_evaluation,
+                static_evaluation=static_evaluation,
+            ),
+        )
+
+    def _gate_provenance(
+        self,
+        *,
+        layer: GateLayer,
+        taint_evaluation: TaintPolicyEvaluation | None,
+        verdict_id: str | None = None,
+    ) -> GateProvenance:
+        return GateProvenance(
+            layer=layer,
+            mode=(
+                taint_evaluation.mode.value
+                if taint_evaluation is not None
+                else _NO_TAINT_GATE_MODE
+            ),
+            reviewer_revision=self._reviewer_revision(),
+            verdict_id=verdict_id,
+        )
+
     async def _review_tool_call(
         self,
         *,
@@ -2466,7 +2609,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 constraints,
                 budget_exhausted=budget_exhausted,
             )
-        await self._record_tool_call_review_audit(
+        audit_event_id = await self._record_tool_call_review_audit(
             descriptor=descriptor,
             arguments=arguments,
             context=context,
@@ -2481,6 +2624,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             result=result,
             mode=taint_evaluation.mode if taint_evaluation is not None else None,
         )
+        result = result.model_copy(update={"audit_event_id": audit_event_id})
         if update_denial_counters:
             if _is_escalatable_review_denial(result, constraints):
                 context.tool_call_review_state.consecutive_denials += 1
@@ -2555,7 +2699,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
         destination_echo: bool | None,
         result: ToolCallReviewResult,
         mode: TaintPolicyMode | None,
-    ) -> None:
+    ) -> str:
         review_context: TaintAuditReviewContext = {
             "delegating_contexts": [
                 f"{item.kind}:{item.identifier}" for item in policy_contexts
@@ -2593,6 +2737,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             review_latency_ms=result.latency_ms,
             review_context=review_context,
         )
+        return event_id
 
     async def _record_confined_exemption_audit(
         self,

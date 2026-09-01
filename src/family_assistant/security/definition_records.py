@@ -86,6 +86,22 @@ class CreationDisposition(StrEnum):
     about what an ``allow`` means.
     """
 
+    JUDGE_ALLOWED_NONBINDING = "judge_allowed_nonbinding"
+    """The reviewer returned ``allow``, but not about this exact content under this policy.
+
+    Two writes land here. One is an ``allow`` computed under a **wider verdict
+    space than ``enforce`` would offer**: a static ``review`` rule co-gating a
+    call under ``observe`` omits the taint cell's constraints from the merged
+    review, so a floored cell whose space is ``{confirm, deny}`` is widened back
+    to include ``allow`` by the static layer's presence. The other is a
+    **patch-style update that retained uncured content** -- the gate saw the
+    fields the call changed, never the fields the stored row supplied, so the
+    verdict cannot vouch for the merged definition the new record hashes.
+
+    Recorded either way, so both populations stay filterable at the flip, and
+    curative neither way.
+    """
+
     JUDGE_CONFIRM_REQUIRED = "judge_confirm_required"
     """The reviewer returned ``confirm`` and no human approved it.
 
@@ -158,6 +174,40 @@ class GateProvenance:
             ),
             verdict_id=verdict_id if isinstance(verdict_id, str) else None,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class DefinitionGateOutcome:
+    """How the gate that examined a write resolved, as the write path sees it.
+
+    Deposited by the confirmation and adjudication chokepoints themselves, so a
+    new scheduling or editing tool inherits the behaviour by forwarding one
+    field rather than by reimplementing the mapping from verdicts to
+    dispositions.
+    """
+
+    disposition: CreationDisposition
+    gate: GateProvenance
+    cure_permitted: bool = True
+    """Whether an ``allow`` here was computed under the enforce-equivalent verdict space.
+
+    A static ``review`` rule co-gating a call under ``observe`` omits the taint
+    cell's constraints from the merged review, so a floored cell whose space is
+    ``{confirm, deny}`` can be widened back to include ``allow`` by the static
+    layer's presence -- an ``allow`` ``enforce`` could never have issued. Such a
+    verdict is still recorded, for audit and for the flip-time backlog listing,
+    but it does not cure.
+    """
+
+    @property
+    def effective_disposition(self) -> CreationDisposition:
+        """The disposition as stamping should record it."""
+        if (
+            self.disposition is CreationDisposition.JUDGE_ALLOWED
+            and not self.cure_permitted
+        ):
+            return CreationDisposition.JUDGE_ALLOWED_NONBINDING
+        return self.disposition
 
 
 class DefinitionRecordDict(TypedDict):
@@ -273,8 +323,8 @@ def stamp_definition(
     *,
     content: Mapping[str, object],
     taint_state: TurnTaintState | None,
-    disposition: CreationDisposition | None = None,
-    gate: GateProvenance | None = None,
+    gate_outcome: DefinitionGateOutcome | None = None,
+    retains_uncured_content: bool = False,
     human_direct: bool = False,
 ) -> DefinitionRecord:
     """Obtain a fresh record for an executable-persistence write.
@@ -289,11 +339,31 @@ def stamp_definition(
     web UI), which stamps ``trusted_user`` by construction. Everything else is
     machine-composed and floors at ``trusted_internal``, so a model-composed
     definition never reads back as the human's own words.
+
+    ``gate_outcome`` is how the gate that examined this write resolved, as
+    deposited by the confirmation and adjudication chokepoints. A curing
+    outcome is honoured only when the gate saw everything the new record
+    vouches for: ``retains_uncured_content`` says a patch kept content whose
+    own record is absent, void, or uncured, which the gate never examined, so
+    the verdict is recorded and the cure withheld. A clean stamp needs no cure
+    and records ``CLEAN`` when no gate engaged, so that "no gate was needed"
+    stays distinguishable from "no gate ran".
     """
     state = taint_state if taint_state is not None else TurnTaintState.empty()
     metadata = (
         state.to_metadata() if human_direct else machine_authored_taint_metadata(state)
     )
+    disposition: CreationDisposition | None = None
+    gate: GateProvenance | None = None
+    if gate_outcome is not None:
+        gate = gate_outcome.gate
+        disposition = gate_outcome.effective_disposition
+        if retains_uncured_content and disposition.cures:
+            disposition = CreationDisposition.JUDGE_ALLOWED_NONBINDING
+    if disposition is None and not is_externally_authored(
+        TurnTaintState.from_metadata(metadata).max_tier
+    ):
+        disposition = CreationDisposition.CLEAN
     return DefinitionRecord(
         taint_metadata=metadata,
         content_hash=definition_content_hash(content),
@@ -428,15 +498,13 @@ def stamp_callback_definition(
     definition: str | None,
     *,
     tracker: TurnTaintTracker | None,
-    disposition: CreationDisposition | None = None,
-    gate: GateProvenance | None = None,
+    gate_outcome: DefinitionGateOutcome | None = None,
 ) -> DefinitionRecordDict:
     """Stamp a one-shot callback's definition at enqueue, for its payload."""
     return stamp_definition(
         content=callback_definition_content(definition),
         taint_state=authoring_taint_state(tracker),
-        disposition=disposition,
-        gate=gate,
+        gate_outcome=gate_outcome,
     ).to_dict()
 
 
@@ -521,12 +589,29 @@ def resolve_definition_record(
     return UNRESOLVED_DEFINITION
 
 
+@dataclass(frozen=True, slots=True)
+class RetainedDefinition:
+    """What a partial update kept, and what that costs the updating turn."""
+
+    state: TurnTaintState
+    """The updating turn's taint, with the retained content merged in."""
+
+    uncured: bool
+    """Whether the retained content's own record was absent, void, or uncured.
+
+    Uncured retained content is content **no gate examined this turn**: the call
+    named the fields it changed, and the stored row supplied the rest. So the
+    verdict that admitted the call cannot vouch for the merged definition, and
+    the write records it without curing.
+    """
+
+
 def merge_retained_definition(
     state: TurnTaintState,
     *,
     stored_record: object,
     retained_content: Mapping[str, object],
-) -> TurnTaintState:
+) -> RetainedDefinition:
     """Merge what a partial update *retains* into the updating turn.
 
     A patch-style update keeps the fields it does not mention, so the prior
@@ -540,18 +625,21 @@ def merge_retained_definition(
     longer matches is void, and voids resolve as uncured.
     """
     if resolve_definition_record(stored_record, retained_content).resolved:
-        return state
-    return state.add_source(
-        TaintSource(
-            source_type=TaintSourceType.MANUAL,
-            source_id=None,
-            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
-            labels=frozenset({"retained_definition_content"}),
-            reason=(
-                "Updated definition retains content whose stored record is "
-                "absent, void, or uncured."
-            ),
-        )
+        return RetainedDefinition(state=state, uncured=False)
+    return RetainedDefinition(
+        state=state.add_source(
+            TaintSource(
+                source_type=TaintSourceType.MANUAL,
+                source_id=None,
+                tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                labels=frozenset({"retained_definition_content"}),
+                reason=(
+                    "Updated definition retains content whose stored record is "
+                    "absent, void, or uncured."
+                ),
+            )
+        ),
+        uncured=True,
     )
 
 

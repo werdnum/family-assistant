@@ -235,6 +235,7 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface  # Import the new interface
     from family_assistant.llm.messages import LLMMessage
     from family_assistant.processing import ProcessingService
+    from family_assistant.security.definition_records import DefinitionGateOutcome
     from family_assistant.security.taint import (
         TaintMetadata,
         TurnTaintState,
@@ -477,6 +478,14 @@ class ToolExecutionContext:
     tool_call_review_confirmation_reason: str | None = None
     tool_call_review_authorization: ToolCallReviewAuthorization | None = None
     tool_confirmation_authorization: ToolConfirmationAuthorization | None = None
+    definition_gate_outcome: DefinitionGateOutcome | None = None
+    """How the gate that admitted the current tool call resolved.
+
+    Deposited by the confirmation and adjudication chokepoints before the call
+    executes, and consumed by whichever executable-persistence write the call
+    performs. A call no gate examined leaves it ``None``, which resolves as an
+    absent disposition -- the fail-closed state.
+    """
 
     def note_write_policy(self) -> NoteWritePolicy:
         """Derive the note write policy for the active profile from this context.

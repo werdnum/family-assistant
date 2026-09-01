@@ -11,7 +11,10 @@ import json
 from family_assistant.security.definition_records import (
     UNRESOLVED_DEFINITION,
     CreationDisposition,
+    DefinitionGateOutcome,
     DefinitionResolution,
+    GateLayer,
+    GateProvenance,
     resolve_definition_record,
     stamp_definition,
 )
@@ -46,7 +49,14 @@ def _record_dict(
     return stamp_definition(
         content=CONTENT,
         taint_state=state,
-        disposition=disposition,
+        gate_outcome=(
+            None
+            if disposition is None
+            else DefinitionGateOutcome(
+                disposition=disposition,
+                gate=GateProvenance(layer=GateLayer.TAINT_CELL, mode="enforce"),
+            )
+        ),
         human_direct=human_direct,
     ).to_dict()
 

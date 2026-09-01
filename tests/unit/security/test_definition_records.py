@@ -8,6 +8,7 @@ import pytest
 
 from family_assistant.security.definition_records import (
     CreationDisposition,
+    DefinitionGateOutcome,
     DefinitionRecord,
     GateLayer,
     GateProvenance,
@@ -37,6 +38,19 @@ def _tainted_state() -> TurnTaintState:
     )
 
 
+def _gate_outcome(
+    disposition: CreationDisposition,
+    *,
+    mode: str = "observe",
+    cure_permitted: bool = True,
+) -> DefinitionGateOutcome:
+    return DefinitionGateOutcome(
+        disposition=disposition,
+        gate=GateProvenance(layer=GateLayer.TAINT_CELL, mode=mode),
+        cure_permitted=cure_permitted,
+    )
+
+
 def test_content_hash_is_stable_across_key_order() -> None:
     assert definition_content_hash({"a": 1, "b": [2, 3]}) == definition_content_hash({
         "b": [2, 3],
@@ -54,7 +68,6 @@ def test_web_ui_writes_stamp_trusted_user() -> None:
     record = stamp_definition(
         content={"code": "x"},
         taint_state=TurnTaintState.empty(),
-        disposition=CreationDisposition.CLEAN,
         human_direct=True,
     )
 
@@ -78,7 +91,7 @@ def test_record_round_trips_through_storage() -> None:
     record = stamp_definition(
         content={"code": "x"},
         taint_state=_tainted_state(),
-        disposition=CreationDisposition.HUMAN_CONFIRMED,
+        gate_outcome=_gate_outcome(CreationDisposition.HUMAN_CONFIRMED),
     )
 
     restored = definition_record_from_row(record.to_dict())
@@ -172,8 +185,7 @@ def test_a_judge_allow_cures_in_every_mode(mode: str) -> None:
     record = stamp_definition(
         content={"code": "x"},
         taint_state=_tainted_state(),
-        disposition=CreationDisposition.JUDGE_ALLOWED,
-        gate=GateProvenance(layer=GateLayer.TAINT_CELL, mode=mode),
+        gate_outcome=_gate_outcome(CreationDisposition.JUDGE_ALLOWED, mode=mode),
     )
 
     assert record.cures
@@ -187,8 +199,7 @@ def test_an_unapproved_escalation_and_a_denial_resolve_as_absent() -> None:
         record = stamp_definition(
             content={"code": "x"},
             taint_state=_tainted_state(),
-            disposition=disposition,
-            gate=GateProvenance(layer=GateLayer.TAINT_CELL, mode="observe"),
+            gate_outcome=_gate_outcome(disposition),
         )
 
         assert not record.cures
@@ -204,8 +215,9 @@ def test_gate_provenance_round_trips_for_audit() -> None:
     record = stamp_definition(
         content={"code": "x"},
         taint_state=_tainted_state(),
-        disposition=CreationDisposition.JUDGE_ALLOWED,
-        gate=gate,
+        gate_outcome=DefinitionGateOutcome(
+            disposition=CreationDisposition.JUDGE_ALLOWED, gate=gate
+        ),
     )
 
     restored = definition_record_from_row(record.to_dict())

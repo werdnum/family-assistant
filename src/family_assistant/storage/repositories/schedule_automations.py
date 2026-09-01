@@ -12,7 +12,7 @@ from sqlalchemy import delete, insert, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from family_assistant.security.definition_records import (
-    CreationDisposition,
+    DefinitionGateOutcome,
     automation_definition_content,
     merge_retained_definition,
     stamp_definition,
@@ -178,7 +178,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         processing_profile_id: str | None = None,
         created_by_user_id: str | None = None,
         definition_taint_state: TurnTaintState | None = None,
-        definition_disposition: CreationDisposition | None = None,
+        definition_gate: DefinitionGateOutcome | None = None,
         definition_human_direct: bool = False,
     ) -> int:
         """
@@ -215,7 +215,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                 action_config=action_config,
             ),
             taint_state=definition_taint_state,
-            disposition=definition_disposition,
+            gate_outcome=definition_gate,
             human_direct=definition_human_direct,
         ).to_dict()
 
@@ -615,7 +615,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         processing_profile_id: str | None | object = _UNSET,
         created_by_user_id: str | None | object = _UNSET,
         definition_taint_state: TurnTaintState | None = None,
-        definition_disposition: CreationDisposition | None = None,
+        definition_gate: DefinitionGateOutcome | None = None,
         definition_human_direct: bool = False,
     ) -> bool:
         """
@@ -724,7 +724,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         # A partial update retains the fields it does not mention, so reading
         # the prior definition back is an artifact read: a clean-turn patch to
         # a legacy or uncured automation gates instead of laundering it.
-        stamp_state = merge_retained_definition(
+        retained = merge_retained_definition(
             definition_taint_state
             if definition_taint_state is not None
             else TurnTaintState.empty(),
@@ -754,8 +754,9 @@ class ScheduleAutomationsRepository(BaseRepository):
                     update_values.get("action_config", existing["action_config"]),
                 ),
             ),
-            taint_state=stamp_state,
-            disposition=definition_disposition,
+            taint_state=retained.state,
+            gate_outcome=definition_gate,
+            retains_uncured_content=retained.uncured,
             human_direct=definition_human_direct,
         ).to_dict()
 

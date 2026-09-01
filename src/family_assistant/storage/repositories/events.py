@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.sql import functions as func
 
 from family_assistant.security.definition_records import (
-    CreationDisposition,
+    DefinitionGateOutcome,
     listener_definition_content,
     merge_retained_definition,
     stamp_definition,
@@ -162,7 +162,7 @@ class EventsRepository(BaseRepository):
         processing_profile_id: str | None = None,
         created_by_user_id: str | None = None,
         definition_taint_state: TurnTaintState | None = None,
-        definition_disposition: CreationDisposition | None = None,
+        definition_gate: DefinitionGateOutcome | None = None,
         definition_human_direct: bool = False,
     ) -> int:
         """
@@ -214,7 +214,7 @@ class EventsRepository(BaseRepository):
                             condition_script=condition_script,
                         ),
                         taint_state=definition_taint_state,
-                        disposition=definition_disposition,
+                        gate_outcome=definition_gate,
                         human_direct=definition_human_direct,
                     ).to_dict(),
                 )
@@ -410,7 +410,7 @@ class EventsRepository(BaseRepository):
         processing_profile_id: str | None = None,
         created_by_user_id: str | None = None,
         definition_taint_state: TurnTaintState | None = None,
-        definition_disposition: CreationDisposition | None = None,
+        definition_gate: DefinitionGateOutcome | None = None,
         definition_human_direct: bool = False,
     ) -> bool:
         """
@@ -471,7 +471,7 @@ class EventsRepository(BaseRepository):
         # Hash the complete post-mutation definition: ``action_config`` is
         # retained from the stored row when the caller omits it, so a record
         # built from the arguments alone would describe content no gate saw.
-        stamp_state = merge_retained_definition(
+        retained = merge_retained_definition(
             definition_taint_state
             if definition_taint_state is not None
             else TurnTaintState.empty(),
@@ -496,8 +496,9 @@ class EventsRepository(BaseRepository):
                 action_config=merged_action_config,
                 condition_script=condition_script,
             ),
-            taint_state=stamp_state,
-            disposition=definition_disposition,
+            taint_state=retained.state,
+            gate_outcome=definition_gate,
+            retains_uncured_content=retained.uncured,
             human_direct=definition_human_direct,
         ).to_dict()
 

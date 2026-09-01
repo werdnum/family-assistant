@@ -390,7 +390,6 @@ def test_the_stamping_helper_is_the_only_source_of_a_record() -> None:
     record = stamp_definition(
         content={"code": "x"},
         taint_state=TurnTaintState.empty(),
-        disposition=CreationDisposition.CLEAN,
         human_direct=True,
     )
 
@@ -534,7 +533,6 @@ async def test_a_web_ui_write_stamps_trusted_user(db_engine: AsyncEngine) -> Non
         conversation_id="test_conv",
         timezone=ZoneInfo("UTC"),
         definition_taint_state=TurnTaintState.empty(),
-        definition_disposition=CreationDisposition.CLEAN,
         definition_human_direct=True,
     )
 
@@ -557,7 +555,6 @@ async def test_a_web_ui_listener_write_stamps_trusted_user(
         conversation_id="test_conv",
         action_config=cast("ActionConfig", {"instruction": "Tell me about it"}),
         definition_taint_state=TurnTaintState.empty(),
-        definition_disposition=CreationDisposition.CLEAN,
         definition_human_direct=True,
     )
 

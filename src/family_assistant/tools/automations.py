@@ -579,6 +579,7 @@ async def create_automation_tool(
                 definition_taint_state=authoring_taint_state(
                     exec_context.taint_tracker
                 ),
+                definition_gate=exec_context.definition_gate_outcome,
             )
 
             # Return structured data with human-readable text
@@ -613,6 +614,7 @@ async def create_automation_tool(
                 definition_taint_state=authoring_taint_state(
                     exec_context.taint_tracker
                 ),
+                definition_gate=exec_context.definition_gate_outcome,
             )
 
             # Get the automation to show next scheduled time
@@ -987,6 +989,7 @@ async def update_automation_tool(
                 definition_taint_state=authoring_taint_state(
                     exec_context.taint_tracker
                 ),
+                definition_gate=exec_context.definition_gate_outcome,
                 condition_script=condition_script,
                 processing_profile_id=restamp_profile_id,
                 created_by_user_id=restamp_user_id,
@@ -1018,6 +1021,7 @@ async def update_automation_tool(
             update_kwargs["definition_taint_state"] = authoring_taint_state(
                 exec_context.taint_tracker
             )
+            update_kwargs["definition_gate"] = exec_context.definition_gate_outcome
 
             success = await exec_context.db_context.schedule_automations.update(
                 **update_kwargs

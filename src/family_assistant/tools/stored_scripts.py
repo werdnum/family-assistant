@@ -200,6 +200,7 @@ async def save_script_tool(
         script_code=code,
         parameters_schema=parameters_schema,
         definition_taint_state=authoring_taint_state(exec_context.taint_tracker),
+        definition_gate=exec_context.definition_gate_outcome,
     )
     return ToolResult(
         data={

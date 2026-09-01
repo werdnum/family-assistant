@@ -8,7 +8,6 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from family_assistant.processing import ProcessingService
-from family_assistant.security.definition_records import CreationDisposition
 from family_assistant.security.taint import TurnTaintState
 from family_assistant.storage.database import Database
 from family_assistant.storage.models import Automation
@@ -237,7 +236,6 @@ async def _update_automation_record(
             # Edited through the authenticated web UI: human-direct, and the
             # repository hashes the complete post-mutation definition.
             definition_taint_state=TurnTaintState.empty(),
-            definition_disposition=CreationDisposition.CLEAN,
             definition_human_direct=True,
         )
     else:
@@ -269,7 +267,6 @@ async def _update_automation_record(
             # Edited through the authenticated web UI: human-direct, and the
             # repository hashes the complete post-mutation definition.
             definition_taint_state=TurnTaintState.empty(),
-            definition_disposition=CreationDisposition.CLEAN,
             definition_human_direct=True,
         )
 
@@ -423,7 +420,6 @@ async def create_event_automation(
             # loop, so the definition is human-direct by construction and needs
             # no gate: the zero-friction path, as for notes.
             definition_taint_state=TurnTaintState.empty(),
-            definition_disposition=CreationDisposition.CLEAN,
             definition_human_direct=True,
         )
 
@@ -510,7 +506,6 @@ async def create_schedule_automation(
             # loop, so the definition is human-direct by construction and needs
             # no gate: the zero-friction path, as for notes.
             definition_taint_state=TurnTaintState.empty(),
-            definition_disposition=CreationDisposition.CLEAN,
             definition_human_direct=True,
         )
 

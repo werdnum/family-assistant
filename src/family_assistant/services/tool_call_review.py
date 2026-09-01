@@ -167,6 +167,12 @@ class ToolCallReviewResult(BaseModel):
     status: ToolCallReviewStatus
     latency_ms: float = Field(ge=0)
     used_fallback: bool
+    audit_event_id: str | None = None
+    """Audit anchor for this verdict, attached once the audit row is written.
+
+    A creation disposition records the verdict that produced it, and this is
+    what a later review of the judge-cured estate joins on.
+    """
 
     @property
     def browser_decision(self) -> BrowserActionReviewDecision:
