@@ -391,16 +391,19 @@ the worker requests takeover it shares the one-time link and ends in a resumable
 the session parks under exclusive human control — still origin-confined, still fail-closed for agent
 commands, still subject to revocation and the lifetime backstop. Delegation already supports
 resuming a terminal run for the same caller; after handback, a follow-up invocation resumes that run
-and rebinds the parked session, continuing from both the worker's context and the live browser state
-(URL, login, form progress) rather than restarting from the objective. The handback token that
-reclaims the lease is minted by browser-server only when the human finishes, so it cannot ride in
-the resume handle and must not ride in the conversation: it is exchanged server-side between
-browser-server and Family Assistant's trusted orchestration, bound to the parked session's record —
-whether by callback or by polling the session's handover state is construction detail for the
-implementing PR — so that consuming the resume handle finds the lease already reclaimable.
-`needs_human` remains the fully terminal outcome for steps a human cannot unblock mid-session
-(unsupported MFA or SSO at login, hard bot blocks), where the human path is refreshing the jar and
-retrying from the original objective.
+and rebinds the parked session. Resumption follows the existing sanitized-recovery semantics: the
+human-controlled page is closed and a fresh page opens at the approved origin after redaction
+checks, so the authenticated session and the worker's context survive the handoff while exact page
+and in-progress form state do not. Losing mid-form progress to a challenge is accepted as reasonable
+behaviour for reversible household sites; a workflow that needs same-page resumption is a future
+explicit policy, not the default. The handback token that reclaims the lease is minted by
+browser-server only when the human finishes, so it cannot ride in the resume handle and must not
+ride in the conversation: it is exchanged server-side between browser-server and Family Assistant's
+trusted orchestration, bound to the parked session's record — whether by callback or by polling the
+session's handover state is construction detail for the implementing PR — so that consuming the
+resume handle finds the lease already reclaimable. `needs_human` remains the fully terminal outcome
+for steps a human cannot unblock mid-session (unsupported MFA or SSO at login, hard bot blocks),
+where the human path is refreshing the jar and retrying from the original objective.
 
 The browser session closes when its owning run ends, unless the user has taken human control. The
 saved jar remains the only durable browser capability.
@@ -478,7 +481,9 @@ continues its own objective, and a `site_id` that does not match the parked run'
 presenting a completed background run's handle returns its stored typed result. The handle names a
 prior run, is resolved and authorized server-side under the existing same-caller resume rules, and
 grants nothing the caller did not already hold — the model never assembles delegation IDs, session
-IDs, or handback tokens from free text.
+IDs, or handback tokens from free text. A handle is not a durable grant: every resume re-resolves
+the current site configuration and re-enforces `authorized_users` and `caller_profiles`, and
+withdrawn authorization closes the parked session rather than rebinding it.
 
 Available `site_id` values are filtered by the active caller processing profile and by the acting
 user against the site's configured `authorized_users`. The browser profiles themselves do not
@@ -599,7 +604,16 @@ The output can be `allow`, `ask`, or `block`, using a provenance-shielded judge 
 risk-adjudication design. It should escalate to confirmation for obvious plan changes, purchases,
 subscription changes, address changes, credential changes, or task-unrelated actions.
 
-This judge is not a hard policy boundary. It can misunderstand the UI, miss autosave, or be
+This judge is no longer purely hypothetical. The shipped tool-call reviewer prompt and structured
+verdict contract were evaluated on Gemini 3.7 Flash over 2,654 adapted public browser-injection
+cases ([2026-08-31 report](../development/eval-results/2026-08-31-gemini-3.7-flash/README.md)): all
+1,312 attack trials denied, all 1,342 benign trials allowed with zero friction, and verdicts
+invariant to exposing the quarantined attack text. The honest bound is weaker than the raw counts:
+the attacks collapse to 62 independent evidence units, supporting only a ~4.84% 95% upper bound on
+false allows — inconclusive against a 1% target. That is measured, promising defence in depth with
+no observed workflow cost, not a proven barrier.
+
+The judge is still not a hard policy boundary. It can misunderstand the UI, miss autosave, or be
 attacked. It exists to catch obvious misuse cheaply, not to replace the operator's damage-envelope
 decision.
 
@@ -858,8 +872,12 @@ HelloFresh adapter or keep the task human-operated.
 ### M5 — Optional semantic review
 
 - Evaluate whether Gemini's native computer-use safety decisions cover the useful visual path.
-- If needed, prototype an action-review judge modelled on risk adjudication.
-- Run it in observe mode first and measure false positives before enabling confirmation or blocking.
+- Prototype the action-review judge on the evaluated tool-call reviewer prompt and verdict contract
+  rather than from scratch; the 2026-08-31 Gemini 3.7 Flash run measured zero benign friction, so
+  observe mode is the confirmation step, not a feasibility question.
+- Run it in observe mode first and measure false positives before enabling confirmation or blocking;
+  expanding independent attack units toward the 1% false-allow target (at least 300 clean units) is
+  the measurement path.
 - Do not introduce per-site endpoint or selector allowlists as a prerequisite.
 
 ### M6 — Measured follow-ups
@@ -1003,5 +1021,5 @@ This is a design-only change. Before implementation:
 - add end-to-end tests for jar opacity, origin confinement, human-control exclusivity, stale login,
   session cleanup, revocation, result provenance, inability of browser profiles to acquire a second
   authenticated session, and the complete handoff-and-resume cycle: takeover-link delivery,
-  server-side receipt of the handback token, and resumption with the parked session's browser state
-  preserved.
+  server-side receipt of the handback token, and resumption after sanitized fresh-page recovery with
+  the authenticated session and worker context preserved.
