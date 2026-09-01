@@ -144,11 +144,17 @@ Everything else about the firing is unchanged:
   baseline the definition would have had if authored clean; it exempts nothing after that.
 - **Capability provenance is unchanged.** Profile resolution, `allow_wake_llm`, and the fail-loud
   rules of automation_provenance.md are untouched.
-- **The destination echo** extends to firings only through human-backed dispositions: a definition
-  whose record resolves via a `trusted_user` stamp or `human_confirmed` supplies echo-eligible text
-  in place of the (absent) current trusted request; a `judge_allowed` definition does not — its text
-  is model-composed and machine-vetted, strong enough to render, not strong enough to count as the
-  user's own words. The echo remains a signal, never a bypass, either way.
+- **The destination echo** extends to firings only through text a human actually authored or
+  sighted. A `trusted_user` stamp is not enough: it describes the authoring *turn*, while the
+  definition text is usually model-composed even in a clean turn, and a model-introduced destination
+  must not read back as strong evidence that it appeared in the user's words. Echo-eligible text is
+  therefore a definition written human-direct (the web UI, no model in the loop — the record carries
+  an authoring-channel bit for exactly this distinction) or one whose disposition is
+  `human_confirmed`, where the human approved the exact rendered text, destinations included.
+  Model-composed definitions — clean-turn and judge-cured alike — render as trusted intent but never
+  feed the echo, and a definition-sourced match names its provenance ("appears in the attested
+  definition", never "in the trusted request"). The echo remains a signal, never a bypass, either
+  way.
 
 ### What cures, and what deliberately does not
 
@@ -170,12 +176,13 @@ every cure human-backed, because tainted creations can then only pass through co
 make stored intent trusted" is exactly the question the creation cell's strictness already answers;
 a separate curing knob would be a second place to configure the same decision.
 
-Mutation re-enters the chokepoint. `update_automation` and script saves re-stamp, re-hash, and
-re-gate: a tainted update of a clean automation produces a new record whose disposition reflects the
-new gate, and the old record cannot survive it (the hash changed). `enable_automation` /
-`disable_automation` change no content, so a valid record survives them — but the enable call itself
-remains an executable-persistence action gated in its own turn, per the risk document's activation
-rule. A definition mutated outside the write path resolves as hash-mismatch and fails closed.
+Mutation re-enters the chokepoint. `update_automation`, script saves, and `modify_pending_callback`
+re-stamp, re-hash, and re-gate: a tainted update of a clean definition produces a new record whose
+disposition reflects the new gate, and the old record cannot survive it (the hash changed).
+`enable_automation` / `disable_automation` change no content, so a valid record survives them — but
+the enable call itself remains an executable-persistence action gated in its own turn, per the risk
+document's activation rule. A definition mutated outside the write path resolves as hash-mismatch
+and fails closed.
 
 ### Stored scripts and the executable closure
 
@@ -194,17 +201,27 @@ re-validation rule automation_provenance.md already applies to stored-script cap
 table; their definition is the enqueued payload. The stamp, hash, and disposition ride the task
 payload alongside the existing `tool_call_review_trigger_definition` fields, snapshotted at enqueue
 from the live tracker and the gate that admitted the call. Follow-up reminders re-enqueued by the
-task worker carry the original record forward unchanged — the content is the same content.
+task worker carry the original record forward unchanged — the content is the same content. Editing a
+pending callback is a mutation like any other: `modify_pending_callback` today replaces
+`callback_context` in place without touching the review-definition fields, which under this design
+would strand a stale record against new content — so it, too, obtains a fresh record from the
+stamping helper in the editing turn, and the payload's definition field is updated with the content
+it describes.
 
 ### The stamping chokepoint
 
 All executable-persistence writes route through one shared stamping helper, and a conformance rule
-makes it a chokepoint rather than an enumeration: any code path that sets
-`tool_call_review_trigger_definition` on a task payload, or writes a definition table's executable
-fields, must obtain the record from the helper — checked by the ast-grep conformance machinery,
-alongside the risk document's planned `EXECUTABLE_PERSISTENCE` tag rule. A future scheduling tool
-that forgets fails lint, degrading availability (visible failure) rather than safety (a stampless
-definition would merely stay `unknown_external`, but silently, and the gap would re-open unnoticed).
+makes it a chokepoint rather than an enumeration. The rule keys on **mutation of executable
+content**, not on the review-definition field: any code path that writes a definition table's
+executable fields, or that creates or edits the executable content of a task payload
+(`callback_context` and its kin), must obtain a fresh record from the helper — checked by the
+ast-grep conformance machinery, alongside the risk document's planned `EXECUTABLE_PERSISTENCE` tag
+rule. Keying on `tool_call_review_trigger_definition` alone would miss in-place payload edits like
+`modify_pending_callback`'s, leaving a stale record to fail its hash check at firing time —
+fail-closed, but silently un-curing legitimate edits instead of re-gating them. A future scheduling
+or editing tool that forgets fails lint, degrading availability (visible failure) rather than safety
+(a stampless definition would merely stay `unknown_external`, but silently, and the gap would
+re-open unnoticed).
 
 ## The amended invariant
 
@@ -271,8 +288,9 @@ close-vocabulary marking at every consultation, and the audit anchor to the crea
   cells, against a reviewer that now has intent to judge with.
 - An operator floor on the creation cell simultaneously governs execution and cure eligibility —
   tighten-only, with no second surface to misconfigure.
-- Definition text never occupies the originating-request field, and judge-cured text never feeds the
-  destination echo.
+- Definition text never occupies the originating-request field, and model-composed definition text
+  never feeds the destination echo — only text a human typed (a human-direct write) or sighted in
+  full (`human_confirmed`) does, labeled with its definition provenance.
 
 ## Accepted residuals
 
@@ -317,12 +335,14 @@ paragraph can be retired for deployments that adopt this design before flipping 
 Each milestone is a PR-sized, independently shippable unit; construction detail (column names, hash
 canonicalization, payload field names) belongs to the PRs.
 
-**M1 — Definition records at rest.** Stamping helper; provenance-plus-hash storage on
-`schedule_automations`, `event_listeners`, and `scripts`; payload fields for one-shot callbacks;
-web-UI trusted-by-construction stamps; the conformance rule. No behaviour change at firing time.
-*Verify:* round-trip tests per artifact; a clean-turn creation stamps `trusted_user` and a mixed
-turn stamps the turn maximum; the conformance rule fails on a fixture write path that skips the
-helper.
+**M1 — Definition records at rest.** Stamping helper; provenance-plus-hash storage (including the
+authoring-channel bit) on `schedule_automations`, `event_listeners`, and `scripts`; payload fields
+for one-shot callbacks; re-stamping on every executable-content mutation, `modify_pending_callback`
+included; web-UI trusted-by-construction stamps; the conformance rule keyed on executable-content
+mutation. No behaviour change at firing time. *Verify:* round-trip tests per artifact; a clean-turn
+creation stamps `trusted_user` and a mixed turn stamps the turn maximum; a `modify_pending_callback`
+edit replaces the record and the payload definition together; the conformance rule fails on a
+fixture write path that mutates executable content without the helper.
 
 **M2 — Firing-time resolution for deterministic stamps.** `_llm_callback_review_trigger` and the
 script-execution seeding resolve records; `trusted_user`-stamped, hash-valid definitions render and
