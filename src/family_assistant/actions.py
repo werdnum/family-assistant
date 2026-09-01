@@ -10,7 +10,10 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from family_assistant.security.definition_records import (
+    DefinitionArtifactKind,
+    DefinitionGateOutcome,
     authoring_taint_state,
+    register_definition_write,
     script_invocation_content,
     stamp_callback_definition,
     stamp_definition,
@@ -90,6 +93,7 @@ async def execute_action(
     tool_call_review_trigger_definition: str | None = None,
     tool_call_review_trigger_payload_present: bool | None = None,
     definition_taint_tracker: TurnTaintTracker | None = None,
+    definition_gate: DefinitionGateOutcome | None = None,
 ) -> None:
     """
     Execute an action. Used by both event listeners and scheduled tasks.
@@ -116,6 +120,9 @@ async def execute_action(
             onto the enqueued definition record. Absent means the write cannot
             prove its turn was clean, so the definition stamps unknown_external
             and its firings stay fail-closed.
+        definition_gate: How the gate that admitted the enqueuing call resolved,
+            recorded on the enqueued definition record. Absent means no gate
+            examined the write, which cures nothing.
         allow_wake_llm: Whether the acting profile may wake the LLM. When False,
             a wake_llm action is refused loudly (see assert_wake_llm_allowed)
             rather than being enqueued for a turn that would escape the profile's
@@ -170,6 +177,7 @@ async def execute_action(
         payload["tool_call_review_definition_record"] = stamp_callback_definition(
             payload["tool_call_review_trigger_definition"],
             tracker=definition_taint_tracker,
+            gate_outcome=definition_gate,
         )
         if user_name:
             payload["user_name"] = user_name
@@ -180,6 +188,12 @@ async def execute_action(
         if processing_profile_id is not None:
             payload["processing_profile_id"] = processing_profile_id
 
+        register_definition_write(
+            definition_gate,
+            payload["tool_call_review_definition_record"],
+            kind=DefinitionArtifactKind.TASK_PAYLOAD,
+            artifact_id=task_id,
+        )
         await enqueue_task(
             db_context=db_ctx,
             task_id=task_id,
@@ -213,6 +227,7 @@ async def execute_action(
         script_payload["tool_call_review_definition_record"] = stamp_definition(
             content=script_invocation_content(action_config),
             taint_state=authoring_taint_state(definition_taint_tracker),
+            gate_outcome=definition_gate,
         ).to_dict()
         if user_name:
             script_payload["user_name"] = user_name
@@ -221,6 +236,12 @@ async def execute_action(
         if created_by_user_id is not None:
             script_payload["created_by_user_id"] = created_by_user_id
 
+        register_definition_write(
+            definition_gate,
+            script_payload["tool_call_review_definition_record"],
+            kind=DefinitionArtifactKind.TASK_PAYLOAD,
+            artifact_id=task_id,
+        )
         await enqueue_task(
             db_context=db_ctx,
             task_id=task_id,

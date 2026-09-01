@@ -13,11 +13,17 @@ from sqlalchemy.sql import functions as func
 
 from family_assistant.security.definition_records import (
     CreationDisposition,
+    DefinitionArtifactKind,
+    DefinitionGateOutcome,
+    GateProvenance,
+    definition_record_from_row,
     listener_definition_content,
     merge_retained_definition,
+    register_definition_write,
     stamp_definition,
 )
 from family_assistant.security.taint import TurnTaintState
+from family_assistant.storage.database import DatabaseTransaction
 from family_assistant.storage.datetime_utils import normalize_datetime
 from family_assistant.storage.events import (
     EventActionType,
@@ -162,7 +168,7 @@ class EventsRepository(BaseRepository):
         processing_profile_id: str | None = None,
         created_by_user_id: str | None = None,
         definition_taint_state: TurnTaintState | None = None,
-        definition_disposition: CreationDisposition | None = None,
+        definition_gate: DefinitionGateOutcome | None = None,
         definition_human_direct: bool = False,
     ) -> int:
         """
@@ -184,6 +190,20 @@ class EventsRepository(BaseRepository):
         Returns:
             ID of the created listener
         """
+        definition_record = stamp_definition(
+            content=listener_definition_content(
+                name=name,
+                description=description,
+                source_id=source_id,
+                match_conditions=match_conditions,
+                action_type=str(getattr(action_type, "value", action_type)),
+                action_config=action_config,
+                condition_script=condition_script,
+            ),
+            taint_state=definition_taint_state,
+            gate_outcome=definition_gate,
+            human_direct=definition_human_direct,
+        ).to_dict()
         try:
             stmt = (
                 insert(event_listeners_table)
@@ -203,26 +223,19 @@ class EventsRepository(BaseRepository):
                     created_by_user_id=created_by_user_id,
                     created_at=datetime.now(UTC),
                     daily_executions=0,
-                    definition_record=stamp_definition(
-                        content=listener_definition_content(
-                            name=name,
-                            description=description,
-                            source_id=source_id,
-                            match_conditions=match_conditions,
-                            action_type=str(getattr(action_type, "value", action_type)),
-                            action_config=action_config,
-                            condition_script=condition_script,
-                        ),
-                        taint_state=definition_taint_state,
-                        disposition=definition_disposition,
-                        human_direct=definition_human_direct,
-                    ).to_dict(),
+                    definition_record=definition_record,
                 )
                 .returning(event_listeners_table.c.id)
             )
 
             result = await self._db.execute(stmt)
             listener_id = result.scalar_one()
+            register_definition_write(
+                definition_gate,
+                definition_record,
+                kind=DefinitionArtifactKind.EVENT_LISTENER,
+                artifact_id=listener_id,
+            )
 
             self._logger.info(
                 f"Created event listener '{name}' (ID: {listener_id}) for conversation {conversation_id}"
@@ -282,6 +295,54 @@ class EventsRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
 
         return [self._normalize_event_listener(dict(row)) for row in rows]
+
+    async def attach_definition_verdict(
+        self,
+        listener_id: int,
+        *,
+        write_id: str,
+        disposition: CreationDisposition,
+        gate: GateProvenance,
+    ) -> bool:
+        """Attach an asynchronously computed verdict to this definition's record.
+
+        Under ``observe`` the reviewer runs off the critical path, so the write
+        lands before its verdict exists and the verdict arrives here. The write
+        id guards the update, read and write in one transaction: the row must
+        still hold the exact write the verdict judged, so a mutation racing the
+        review -- an identical rewrite from another turn included -- leaves the
+        new content awaiting its own verdict rather than inheriting this one.
+
+        Returns whether the verdict was attached.
+        """
+
+        async def body(txn: DatabaseTransaction) -> bool:
+            # Locked, not merely re-read: on PostgreSQL a concurrent write
+            # committing between the check and the update would otherwise be
+            # overwritten by the record this read returned -- reverting an edit
+            # while reporting the verdict attached. SQLite serializes writes on
+            # the engine lock and ignores the clause.
+            row = await txn.fetch_one(
+                select(event_listeners_table.c.definition_record)
+                .where(event_listeners_table.c.id == listener_id)
+                .with_for_update()
+            )
+            record = definition_record_from_row(
+                row["definition_record"] if row is not None else None
+            )
+            if record is None or record.pending_write_id != write_id:
+                return False
+            await txn.execute(
+                update(event_listeners_table)
+                .where(event_listeners_table.c.id == listener_id)
+                .values(
+                    # ast-grep-ignore: no-unstamped-executable-definition-write - verdict attach: with_verdict() derives from the stored record, leaving stamp and hash untouched
+                    definition_record=record.with_verdict(disposition, gate).to_dict()
+                )
+            )
+            return True
+
+        return await self._db.atomic(body)
 
     async def get_event_listener_by_id(
         self, listener_id: int, conversation_id: str | None = None
@@ -410,7 +471,7 @@ class EventsRepository(BaseRepository):
         processing_profile_id: str | None = None,
         created_by_user_id: str | None = None,
         definition_taint_state: TurnTaintState | None = None,
-        definition_disposition: CreationDisposition | None = None,
+        definition_gate: DefinitionGateOutcome | None = None,
         definition_human_direct: bool = False,
     ) -> bool:
         """
@@ -471,7 +532,7 @@ class EventsRepository(BaseRepository):
         # Hash the complete post-mutation definition: ``action_config`` is
         # retained from the stored row when the caller omits it, so a record
         # built from the arguments alone would describe content no gate saw.
-        stamp_state = merge_retained_definition(
+        retained = merge_retained_definition(
             definition_taint_state
             if definition_taint_state is not None
             else TurnTaintState.empty(),
@@ -486,7 +547,7 @@ class EventsRepository(BaseRepository):
                 condition_script=existing["condition_script"],
             ),
         )
-        update_values["definition_record"] = stamp_definition(
+        definition_record = stamp_definition(
             content=listener_definition_content(
                 name=name,
                 description=description,
@@ -496,10 +557,18 @@ class EventsRepository(BaseRepository):
                 action_config=merged_action_config,
                 condition_script=condition_script,
             ),
-            taint_state=stamp_state,
-            disposition=definition_disposition,
+            taint_state=retained.state,
+            gate_outcome=definition_gate,
+            retains_uncured_content=retained.uncured,
             human_direct=definition_human_direct,
         ).to_dict()
+        update_values["definition_record"] = definition_record
+        register_definition_write(
+            definition_gate,
+            definition_record,
+            kind=DefinitionArtifactKind.EVENT_LISTENER,
+            artifact_id=listener_id,
+        )
 
         # Update the listener
         stmt = (

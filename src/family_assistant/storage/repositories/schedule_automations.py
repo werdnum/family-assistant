@@ -13,8 +13,13 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from family_assistant.security.definition_records import (
     CreationDisposition,
+    DefinitionArtifactKind,
+    DefinitionGateOutcome,
+    GateProvenance,
     automation_definition_content,
+    definition_record_from_row,
     merge_retained_definition,
+    register_definition_write,
     stamp_definition,
 )
 from family_assistant.security.taint import TurnTaintState
@@ -163,6 +168,54 @@ class ScheduleAutomationsRepository(BaseRepository):
             return None
         return next_occurrence.astimezone(UTC)
 
+    async def attach_definition_verdict(
+        self,
+        automation_id: int,
+        *,
+        write_id: str,
+        disposition: CreationDisposition,
+        gate: GateProvenance,
+    ) -> bool:
+        """Attach an asynchronously computed verdict to this definition's record.
+
+        Under ``observe`` the reviewer runs off the critical path, so the write
+        lands before its verdict exists and the verdict arrives here. The write
+        id guards the update, read and write in one transaction: the row must
+        still hold the exact write the verdict judged, so a mutation racing the
+        review -- an identical rewrite from another turn included -- leaves the
+        new content awaiting its own verdict rather than inheriting this one.
+
+        Returns whether the verdict was attached.
+        """
+
+        async def body(txn: DatabaseTransaction) -> bool:
+            # Locked, not merely re-read: on PostgreSQL a concurrent write
+            # committing between the check and the update would otherwise be
+            # overwritten by the record this read returned -- reverting an edit
+            # while reporting the verdict attached. SQLite serializes writes on
+            # the engine lock and ignores the clause.
+            row = await txn.fetch_one(
+                select(schedule_automations_table.c.definition_record)
+                .where(schedule_automations_table.c.id == automation_id)
+                .with_for_update()
+            )
+            record = definition_record_from_row(
+                row["definition_record"] if row is not None else None
+            )
+            if record is None or record.pending_write_id != write_id:
+                return False
+            await txn.execute(
+                update(schedule_automations_table)
+                .where(schedule_automations_table.c.id == automation_id)
+                .values(
+                    # ast-grep-ignore: no-unstamped-executable-definition-write - verdict attach: with_verdict() derives from the stored record, leaving stamp and hash untouched
+                    definition_record=record.with_verdict(disposition, gate).to_dict()
+                )
+            )
+            return True
+
+        return await self._db.atomic(body)
+
     async def create(
         self,
         name: str,
@@ -178,7 +231,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         processing_profile_id: str | None = None,
         created_by_user_id: str | None = None,
         definition_taint_state: TurnTaintState | None = None,
-        definition_disposition: CreationDisposition | None = None,
+        definition_gate: DefinitionGateOutcome | None = None,
         definition_human_direct: bool = False,
     ) -> int:
         """
@@ -215,7 +268,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                 action_config=action_config,
             ),
             taint_state=definition_taint_state,
-            disposition=definition_disposition,
+            gate_outcome=definition_gate,
             human_direct=definition_human_direct,
         ).to_dict()
 
@@ -249,6 +302,12 @@ class ScheduleAutomationsRepository(BaseRepository):
 
             result = await txn.execute(stmt)
             automation_id = result.scalar_one()
+            register_definition_write(
+                definition_gate,
+                definition_record,
+                kind=DefinitionArtifactKind.SCHEDULE_AUTOMATION,
+                artifact_id=automation_id,
+            )
 
             self._logger.info(
                 f"Created schedule automation '{name}' (ID: {automation_id}) "
@@ -615,7 +674,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         processing_profile_id: str | None | object = _UNSET,
         created_by_user_id: str | None | object = _UNSET,
         definition_taint_state: TurnTaintState | None = None,
-        definition_disposition: CreationDisposition | None = None,
+        definition_gate: DefinitionGateOutcome | None = None,
         definition_human_direct: bool = False,
     ) -> bool:
         """
@@ -724,7 +783,7 @@ class ScheduleAutomationsRepository(BaseRepository):
         # A partial update retains the fields it does not mention, so reading
         # the prior definition back is an artifact read: a clean-turn patch to
         # a legacy or uncured automation gates instead of laundering it.
-        stamp_state = merge_retained_definition(
+        retained = merge_retained_definition(
             definition_taint_state
             if definition_taint_state is not None
             else TurnTaintState.empty(),
@@ -737,7 +796,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                 action_config=cast("ActionConfig | None", existing["action_config"]),
             ),
         )
-        update_values["definition_record"] = stamp_definition(
+        definition_record = stamp_definition(
             content=automation_definition_content(
                 name=cast("str | None", update_values.get("name", existing["name"])),
                 description=cast(
@@ -754,10 +813,18 @@ class ScheduleAutomationsRepository(BaseRepository):
                     update_values.get("action_config", existing["action_config"]),
                 ),
             ),
-            taint_state=stamp_state,
-            disposition=definition_disposition,
+            taint_state=retained.state,
+            gate_outcome=definition_gate,
+            retains_uncured_content=retained.uncured,
             human_direct=definition_human_direct,
         ).to_dict()
+        update_values["definition_record"] = definition_record
+        register_definition_write(
+            definition_gate,
+            definition_record,
+            kind=DefinitionArtifactKind.SCHEDULE_AUTOMATION,
+            artifact_id=automation_id,
+        )
 
         async def _apply(txn: DatabaseTransaction) -> bool:
             """Re-sync the task queue and write the new state as one unit.

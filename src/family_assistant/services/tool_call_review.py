@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from family_assistant.security.definition_records import CreationDisposition
 from family_assistant.security.taint import (
     SinkClass,
     SourceTrustTier,
@@ -61,6 +62,7 @@ _REVIEW_BOUNDARY_NAMES = (
     "delegating_policy",
     "trusted_trigger_definition",
     "trigger_definition_stub",
+    "trigger_definition_review_status",
     "trigger_payload_stub",
     "trusted_originating_request",
     "originating_request_stub",
@@ -167,6 +169,12 @@ class ToolCallReviewResult(BaseModel):
     status: ToolCallReviewStatus
     latency_ms: float = Field(ge=0)
     used_fallback: bool
+    audit_event_id: str | None = None
+    """Audit anchor for this verdict, attached once the audit row is written.
+
+    A creation disposition records the verdict that produced it, and this is
+    what a later review of the judge-cured estate joins on.
+    """
 
     @property
     def browser_decision(self) -> BrowserActionReviewDecision:
@@ -189,18 +197,32 @@ class DelegatingPolicyContext(BaseModel):
 
 
 class DestinationEchoSignal(BaseModel):
-    """Whether a complete destination value occurs in the trusted request."""
+    """Whether a complete destination value occurs in text a human authored or sighted.
+
+    A match names where it came from. A destination the human typed in the
+    current request is stronger evidence than one that appears in a stored
+    definition they approved at creation, and neither is a bypass -- negated
+    text ("never send to X") matches too, so the signal informs the reviewer
+    rather than deciding for it.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     matched: bool
+    source: Literal["request", "definition"] | None = None
+    """Where the match was found; ``None`` when nothing matched."""
 
     @property
     def reviewer_text(self) -> str:
         """Render the signal without disclosing the destination a second time."""
-        if self.matched:
-            return "Destination appears verbatim in the current trusted request."
-        return "Destination appears nowhere in the current trusted request."
+        if not self.matched:
+            return (
+                "Destination appears nowhere in the current trusted request or "
+                "in an attested trigger definition."
+            )
+        if self.source == "definition":
+            return "Destination appears verbatim in the attested trigger definition."
+        return "Destination appears verbatim in the current trusted request."
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,6 +242,8 @@ class TriggerReviewInput:
     active_request_role: Literal["user", "system"]
     definition: str | None = None
     definition_taint_metadata: TaintMetadata | None = None
+    definition_disposition: CreationDisposition | None = None
+    definition_creator: str | None = None
     payload_present: bool = True
     originating_request: str | None = None
     originating_request_taint_metadata: TaintMetadata | None = None
@@ -230,6 +254,43 @@ class TriggerReviewInput:
         if not is_human_direct_metadata(self.originating_request_taint_metadata):
             return None
         return self.originating_request
+
+    @property
+    def definition_review_status(self) -> str:
+        """How this definition came to be trusted, in a closed vocabulary.
+
+        A firing-time reviewer weighing a stored definition needs to know
+        whether it is reading a human's sighted approval or a prior machine
+        verdict, so every rendered definition says which. The vocabulary is
+        closed and the values are ours, never the definition's, so nothing the
+        definition contains can dress itself up as a stronger status.
+
+        Only a *resolved* definition renders, and the non-curative dispositions
+        do not resolve, so the remaining cases all mean the same thing: the
+        stamp itself was trusted and no cure was needed.
+        """
+        if self.definition_disposition is CreationDisposition.HUMAN_CONFIRMED:
+            return "attested by a human at creation"
+        if self.definition_disposition is CreationDisposition.JUDGE_ALLOWED:
+            return "judge-allowed at creation"
+        return "clean at creation"
+
+    @property
+    def definition_echo_eligible_text(self) -> str | None:
+        """The definition text a destination echo may match against, if any.
+
+        Only text a human actually authored or sighted: a definition stamped
+        exactly ``trusted_user`` (human-direct, as through the web UI) or one a
+        human approved in full. Model-composed definitions -- ``trusted_internal``
+        and judge-cured alike -- render as trusted intent and never feed the
+        echo, so a destination the model introduced cannot read back as
+        evidence that it appeared in the user's own words.
+        """
+        if is_human_direct_metadata(self.definition_taint_metadata) or (
+            self.definition_disposition is CreationDisposition.HUMAN_CONFIRMED
+        ):
+            return self.definition
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -451,13 +512,31 @@ def _render_originating_request(trigger: TriggerReviewInput) -> str:
     )
 
 
+def _render_definition_review_status(trigger: TriggerReviewInput) -> str:
+    """Render how the definition came to be trusted, and whose it is."""
+    creator = (
+        _neutralize_review_boundaries(trigger.definition_creator)
+        if trigger.definition_creator
+        else "unrecorded"
+    )
+    return (
+        "<trigger_definition_review_status>"
+        f"{trigger.definition_review_status}; created by {creator}"
+        "</trigger_definition_review_status>"
+    )
+
+
 def _render_trigger(trigger: TriggerReviewInput | None) -> str:
     if trigger is None:
         return "[No unattended trigger definition was supplied.]"
     definition_tier = _metadata_tier(trigger.definition_taint_metadata)
     if trigger.definition is not None and not is_externally_authored(definition_tier):
-        definition = _render_fenced_data(
-            "trusted_trigger_definition", trigger.definition, language="text"
+        definition = (
+            _render_fenced_data(
+                "trusted_trigger_definition", trigger.definition, language="text"
+            )
+            + "\n"
+            + _render_definition_review_status(trigger)
         )
     else:
         tier_text = (
@@ -851,22 +930,26 @@ def compute_trusted_destination_echo(
             _textual_message_content(request),
         )
 
-    trigger_matches = False
+    # The originating request is a human's own words carried down from the
+    # delegating turn -- it renders only when its stored provenance proves that
+    # -- so a match there is request evidence, not a stored definition's.
+    definition_matches = False
+    originating_matches = False
     if trigger is not None:
-        # Model-composed definition text renders as trusted intent but never
-        # feeds the echo: a destination the model introduced must not read back
-        # as evidence that it appeared in the user's own words.
-        trusted_definition = (
-            trigger.definition
-            if is_human_direct_metadata(trigger.definition_taint_metadata)
-            else None
+        definition_matches = trigger.definition_echo_eligible_text is not None and (
+            _destination_echo_matches(
+                destination, trigger.definition_echo_eligible_text
+            )
         )
-        trigger_matches = any(
-            text is not None and _destination_echo_matches(destination, text)
-            for text in (trusted_definition, trigger.trusted_originating_request)
+        originating_matches = trigger.trusted_originating_request is not None and (
+            _destination_echo_matches(destination, trigger.trusted_originating_request)
         )
 
-    return DestinationEchoSignal(matched=request_matches or trigger_matches)
+    if request_matches or originating_matches:
+        return DestinationEchoSignal(matched=True, source="request")
+    if definition_matches:
+        return DestinationEchoSignal(matched=True, source="definition")
+    return DestinationEchoSignal(matched=False)
 
 
 class ToolCallReviewer:

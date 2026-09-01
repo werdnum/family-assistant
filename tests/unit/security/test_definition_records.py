@@ -8,6 +8,7 @@ import pytest
 
 from family_assistant.security.definition_records import (
     CreationDisposition,
+    DefinitionGateOutcome,
     DefinitionRecord,
     GateLayer,
     GateProvenance,
@@ -37,6 +38,19 @@ def _tainted_state() -> TurnTaintState:
     )
 
 
+def _gate_outcome(
+    disposition: CreationDisposition,
+    *,
+    mode: str = "observe",
+    cure_permitted: bool = True,
+) -> DefinitionGateOutcome:
+    return DefinitionGateOutcome(
+        disposition=disposition,
+        gate=GateProvenance(layer=GateLayer.TAINT_CELL, mode=mode),
+        cure_permitted=cure_permitted,
+    )
+
+
 def test_content_hash_is_stable_across_key_order() -> None:
     assert definition_content_hash({"a": 1, "b": [2, 3]}) == definition_content_hash({
         "b": [2, 3],
@@ -54,7 +68,6 @@ def test_web_ui_writes_stamp_trusted_user() -> None:
     record = stamp_definition(
         content={"code": "x"},
         taint_state=TurnTaintState.empty(),
-        disposition=CreationDisposition.CLEAN,
         human_direct=True,
     )
 
@@ -78,7 +91,7 @@ def test_record_round_trips_through_storage() -> None:
     record = stamp_definition(
         content={"code": "x"},
         taint_state=_tainted_state(),
-        disposition=CreationDisposition.HUMAN_CONFIRMED,
+        gate_outcome=_gate_outcome(CreationDisposition.HUMAN_CONFIRMED),
     )
 
     restored = definition_record_from_row(record.to_dict())
@@ -172,8 +185,7 @@ def test_a_judge_allow_cures_in_every_mode(mode: str) -> None:
     record = stamp_definition(
         content={"code": "x"},
         taint_state=_tainted_state(),
-        disposition=CreationDisposition.JUDGE_ALLOWED,
-        gate=GateProvenance(layer=GateLayer.TAINT_CELL, mode=mode),
+        gate_outcome=_gate_outcome(CreationDisposition.JUDGE_ALLOWED, mode=mode),
     )
 
     assert record.cures
@@ -187,8 +199,7 @@ def test_an_unapproved_escalation_and_a_denial_resolve_as_absent() -> None:
         record = stamp_definition(
             content={"code": "x"},
             taint_state=_tainted_state(),
-            disposition=disposition,
-            gate=GateProvenance(layer=GateLayer.TAINT_CELL, mode="observe"),
+            gate_outcome=_gate_outcome(disposition),
         )
 
         assert not record.cures
@@ -204,8 +215,9 @@ def test_gate_provenance_round_trips_for_audit() -> None:
     record = stamp_definition(
         content={"code": "x"},
         taint_state=_tainted_state(),
-        disposition=CreationDisposition.JUDGE_ALLOWED,
-        gate=gate,
+        gate_outcome=DefinitionGateOutcome(
+            disposition=CreationDisposition.JUDGE_ALLOWED, gate=gate
+        ),
     )
 
     restored = definition_record_from_row(record.to_dict())
@@ -219,3 +231,56 @@ def test_a_record_without_gate_provenance_is_readable() -> None:
 
     assert definition_record_from_row(record.to_dict()) == record
     assert record.gate is None
+
+
+def test_withholding_a_cure_does_not_rewrite_who_decided() -> None:
+    """A human who approved a patch really did approve; the record must say so.
+
+    The confirmation showed them the fields the call changed and never the ones
+    the stored row supplied, so their approval cannot vouch for the merged
+    definition. That withholds the cure -- it does not turn their approval into
+    a machine verdict, which is what a disposition-based attestation review
+    would then read back.
+    """
+    record = stamp_definition(
+        content={"code": "x"},
+        taint_state=_tainted_state(),
+        gate_outcome=_gate_outcome(CreationDisposition.HUMAN_CONFIRMED),
+        retains_uncured_content=True,
+    )
+
+    assert record.disposition is CreationDisposition.HUMAN_CONFIRMED
+    assert not record.cure_eligible
+    assert not record.cures
+
+
+def test_a_verdict_space_wider_than_enforce_withholds_only_the_cure() -> None:
+    record = stamp_definition(
+        content={"code": "x"},
+        taint_state=_tainted_state(),
+        gate_outcome=_gate_outcome(
+            CreationDisposition.JUDGE_ALLOWED, cure_permitted=False
+        ),
+    )
+
+    assert record.disposition is CreationDisposition.JUDGE_ALLOWED
+    assert not record.cures
+
+
+def test_an_ineligible_write_keeps_its_ineligibility_when_a_verdict_lands() -> None:
+    """The write decided whether a verdict could bind it; arrival does not revisit that."""
+    record = stamp_definition(
+        content={"code": "x"},
+        taint_state=_tainted_state(),
+        gate_outcome=_gate_outcome(CreationDisposition.JUDGE_ALLOWED),
+        retains_uncured_content=True,
+    )
+
+    cured = record.with_verdict(
+        CreationDisposition.JUDGE_ALLOWED,
+        GateProvenance(layer=GateLayer.TAINT_CELL, mode="observe"),
+    )
+
+    assert cured.disposition is CreationDisposition.JUDGE_ALLOWED
+    assert not cured.cures
+    assert cured.taint_metadata == record.taint_metadata

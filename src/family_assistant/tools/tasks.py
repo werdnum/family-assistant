@@ -22,7 +22,11 @@ from family_assistant.actions import (
     assert_wake_llm_allowed,
     execute_action,
 )
-from family_assistant.security.definition_records import stamp_callback_definition
+from family_assistant.security.definition_records import (
+    DefinitionArtifactKind,
+    register_definition_write,
+    stamp_callback_definition,
+)
 from family_assistant.tools.automations import validate_action_scripts
 from family_assistant.tools.stored_scripts import validate_script_action_config
 from family_assistant.utils.clock import SystemClock
@@ -346,7 +350,9 @@ async def schedule_reminder_tool(
         "tool_call_review_trigger_definition": message,
         "tool_call_review_trigger_payload_present": False,
         "tool_call_review_definition_record": stamp_callback_definition(
-            message, tracker=exec_context.taint_tracker
+            message,
+            tracker=exec_context.taint_tracker,
+            gate_outcome=exec_context.definition_gate_outcome,
         ),
         "reminder_config": {
             "is_reminder": True,
@@ -358,6 +364,13 @@ async def schedule_reminder_tool(
     }
     if exec_context.user_id is not None:
         payload["created_by_user_id"] = exec_context.user_id
+
+    register_definition_write(
+        exec_context.definition_gate_outcome,
+        payload["tool_call_review_definition_record"],
+        kind=DefinitionArtifactKind.TASK_PAYLOAD,
+        artifact_id=task_id,
+    )
 
     try:
         await db_context.tasks.enqueue(
@@ -445,7 +458,9 @@ async def schedule_future_callback_tool(
         "tool_call_review_trigger_definition": context,
         "tool_call_review_trigger_payload_present": False,
         "tool_call_review_definition_record": stamp_callback_definition(
-            context, tracker=exec_context.taint_tracker
+            context,
+            tracker=exec_context.taint_tracker,
+            gate_outcome=exec_context.definition_gate_outcome,
         ),
     }
     if exec_context.user_id is not None:
@@ -454,6 +469,13 @@ async def schedule_future_callback_tool(
     # under the originating profile rather than the worker default.
     if exec_context.processing_profile_id is not None:
         payload["processing_profile_id"] = exec_context.processing_profile_id
+
+    register_definition_write(
+        exec_context.definition_gate_outcome,
+        payload["tool_call_review_definition_record"],
+        kind=DefinitionArtifactKind.TASK_PAYLOAD,
+        artifact_id=task_id,
+    )
 
     try:
         await db_context.tasks.enqueue(
@@ -639,9 +661,17 @@ async def modify_pending_callback_tool(
         new_payload["callback_context"] = new_context
         new_payload["tool_call_review_trigger_definition"] = new_context
         new_payload["tool_call_review_definition_record"] = stamp_callback_definition(
-            new_context, tracker=exec_context.taint_tracker
+            new_context,
+            tracker=exec_context.taint_tracker,
+            gate_outcome=exec_context.definition_gate_outcome,
         )
         updates["payload"] = new_payload
+        register_definition_write(
+            exec_context.definition_gate_outcome,
+            new_payload["tool_call_review_definition_record"],
+            kind=DefinitionArtifactKind.TASK_PAYLOAD,
+            artifact_id=task_id,
+        )
 
     if not updates:
         return "No valid modifications specified."
@@ -803,6 +833,7 @@ async def schedule_action_tool(
             created_by_user_id=exec_context.user_id,
             allow_wake_llm=exec_context.allow_wake_llm,
             definition_taint_tracker=exec_context.taint_tracker,
+            definition_gate=exec_context.definition_gate_outcome,
         )
 
         return f"OK. {action_type} action scheduled for {schedule_time}"

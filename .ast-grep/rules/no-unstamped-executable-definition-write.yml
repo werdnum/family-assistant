@@ -35,6 +35,12 @@ note: |
   rule, so the chain back to the chokepoint stays closed. A local under any other name is
   not, so keep the conventional name.
 
+  Attaching a verdict computed off the critical path is the other recognised exception:
+  under ``observe`` the reviewer does not block the call, so the write lands pending and
+  the verdict arrives afterwards. Those writes derive the new record from the stored one
+  with ``replace()``, leaving stamp and hash untouched, and are guarded by the write id
+  inside the repository's own transaction. They too take an inline exemption saying so.
+
   Clearing a record deliberately (a test building the pre-design legacy shape, a
   migration) is the one legitimate literal, and reads as ``definition_record=None``.
   For any other approved site, add an inline exemption with a reason:

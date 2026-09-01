@@ -13,6 +13,11 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from family_assistant.security.definition_records import (
     CreationDisposition,
+    DefinitionArtifactKind,
+    DefinitionGateOutcome,
+    GateProvenance,
+    definition_record_from_row,
+    register_definition_write,
     script_definition_content,
     stamp_definition,
 )
@@ -21,6 +26,7 @@ from family_assistant.storage.scripts import scripts_table
 
 if TYPE_CHECKING:
     from family_assistant.security.taint import TurnTaintState
+    from family_assistant.storage.database import DatabaseTransaction
 
 
 class ScriptModel(BaseModel):
@@ -59,7 +65,7 @@ class ScriptsRepository(BaseRepository):
         parameters_schema: dict[str, Any] | None = None,
         *,
         definition_taint_state: TurnTaintState | None = None,
-        definition_disposition: CreationDisposition | None = None,
+        definition_gate: DefinitionGateOutcome | None = None,
         definition_human_direct: bool = False,
     ) -> ScriptRow:
         """Save or update a script (upsert by name).
@@ -91,9 +97,15 @@ class ScriptsRepository(BaseRepository):
                     parameters_schema=parameters_schema,
                 ),
                 taint_state=definition_taint_state,
-                disposition=definition_disposition,
+                gate_outcome=definition_gate,
                 human_direct=definition_human_direct,
             ).to_dict()
+        )
+        register_definition_write(
+            definition_gate,
+            definition_record,
+            kind=DefinitionArtifactKind.SCRIPT,
+            artifact_id=name,
         )
 
         if self._db.dialect_name == "postgresql":
@@ -146,6 +158,56 @@ class ScriptsRepository(BaseRepository):
 
         # Fetch and return the saved script
         return await self.get_by_name(name)  # type: ignore[return-value] # After save, script always exists
+
+    async def attach_definition_verdict(
+        self,
+        name: str,
+        *,
+        write_id: str,
+        disposition: CreationDisposition,
+        gate: GateProvenance,
+    ) -> bool:
+        """Attach an asynchronously computed verdict to this definition's record.
+
+        Under ``observe`` the reviewer runs off the critical path, so the write
+        lands before its verdict exists and the verdict arrives here. The write
+        id guards the update, read and write in one transaction: the row must
+        still hold the exact write the verdict judged, so a mutation racing the
+        review -- an identical rewrite from another turn included -- leaves the
+        new content awaiting its own verdict rather than inheriting this one.
+
+        Returns whether the verdict was attached.
+        """
+
+        async def body(txn: DatabaseTransaction) -> bool:
+            # Locked, not merely re-read: on PostgreSQL a concurrent write
+            # committing between the check and the update would otherwise be
+            # overwritten by the record this read returned -- reverting an edit
+            # while reporting the verdict attached. SQLite serializes writes on
+            # the engine lock and ignores the clause.
+            row = await txn.fetch_one(
+                select(scripts_table.c.definition_record)
+                .where(scripts_table.c.name == name)
+                .with_for_update()
+            )
+            record = definition_record_from_row(
+                row["definition_record"] if row is not None else None
+            )
+            if record is None or record.pending_write_id != write_id:
+                return False
+            await txn.execute(
+                update(scripts_table)
+                .where(scripts_table.c.name == name)
+                .values(
+                    # ast-grep-ignore: no-unstamped-executable-definition-write - verdict attach: with_verdict() derives from the stored record, leaving stamp and hash untouched
+                    definition_record=json.dumps(
+                        record.with_verdict(disposition, gate).to_dict()
+                    )
+                )
+            )
+            return True
+
+        return await self._db.atomic(body)
 
     async def get_by_name(self, name: str) -> ScriptRow | None:
         """Get a script by name.

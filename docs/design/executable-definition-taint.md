@@ -2,13 +2,14 @@
 
 ## Status
 
-Proposed. This design closes the remaining gap named in
-[auto-tool-call-review.md](auto-tool-call-review.md)'s input contract and unattended-callback
-sections: automation and script definitions persist no taint provenance, so every unattended
-callback — schedule automations, event listeners, reminders, `schedule_future_callback`, script
-wakes, script failures — enters its turn at `unknown_external` and renders to the tool-call reviewer
-as a stub. It supplies the "artifact-provenance work [that] stamps automation definitions at their
-authoring chokepoint" which that document defers to, and amends one invariant of
+M0–M3 implemented; M4 (attestation surface and documentation) outstanding. This design closes the
+remaining gap named in [auto-tool-call-review.md](auto-tool-call-review.md)'s input contract and
+unattended-callback sections: automation and script definitions persist no taint provenance, so
+every unattended callback — schedule automations, event listeners, reminders,
+`schedule_future_callback`, script wakes, script failures — enters its turn at `unknown_external`
+and renders to the tool-call reviewer as a stub. It supplies the "artifact-provenance work [that]
+stamps automation definitions at their authoring chokepoint" which that document defers to, and
+amends one invariant of
 [risk-adjudicated-taint-enforcement.md](risk-adjudicated-taint-enforcement.md) — scoped, argued, and
 bounded below.
 
@@ -227,20 +228,22 @@ space**. Today, a static `review` rule co-gating a call under `observe` delibera
 cell's constraints from the merged review (`include_observe_taint_constraints=False`), so a floored
 taint cell whose space is `{confirm, deny}` could be widened back to include `allow` by the static
 layer's presence — an `allow` that `enforce` could never have issued. A review that can record a
-curative disposition therefore applies the observe-mode taint constraints, and an `allow` issued
-under a wider verdict space than `enforce` would offer never cures. This is what keeps "a floored
-cell yields only human-backed cures" true in every mode, and keeps the shadow numbers free of a
-low-biased term. An earlier revision additionally required the gate to have been enforcement-live
-for `allow`; that is withdrawn as protecting nothing at real cost. Withholding the cure in `observe`
-filters no one — the write executed regardless — while it makes the dry run measure a system that
-will never exist, and in practice pushes the operator toward blunter instruments: the realistic
-disposal of an accumulated observe-era backlog is an epoch-style bulk amnesty resting on the
-operator's presumption that few real injections are latent in the store, which blesses
-shadow-*denied* and never-reviewed definitions indiscriminately. A per-definition `allow`, recorded
-with the layer and mode that produced it, is strictly more discriminating than the amnesty it
-replaces. (Clean-authored and web-UI definitions — the overwhelming majority — resolve trusted
-regardless, which is where most of this design's value lands: reminders, clean-turn schedules, and
-dashboard-created listeners stop entering as `unknown_external` immediately.)
+curative disposition therefore compares its verdict against the observe-mode taint constraints, and
+an `allow` issued under a wider verdict space than `enforce` would offer is recorded as the `allow`
+it was but does not bind. The comparison governs curing only: the verdict the call actually ran
+under is unchanged, so `observe` still blocks nothing. This is what keeps "a floored cell yields
+only human-backed cures" true in every mode, and keeps the shadow numbers free of a low-biased term.
+An earlier revision additionally required the gate to have been enforcement-live for `allow`; that
+is withdrawn as protecting nothing at real cost. Withholding the cure in `observe` filters no one —
+the write executed regardless — while it makes the dry run measure a system that will never exist,
+and in practice pushes the operator toward blunter instruments: the realistic disposal of an
+accumulated observe-era backlog is an epoch-style bulk amnesty resting on the operator's presumption
+that few real injections are latent in the store, which blesses shadow-*denied* and never-reviewed
+definitions indiscriminately. A per-definition `allow`, recorded with the layer and mode that
+produced it, is strictly more discriminating than the amnesty it replaces. (Clean-authored and
+web-UI definitions — the overwhelming majority — resolve trusted regardless, which is where most of
+this design's value lands: reminders, clean-turn schedules, and dashboard-created listeners stop
+entering as `unknown_external` immediately.)
 
 The strength of the cure inherits the creation cell's configuration, with no new dial. Under this
 repository's shipped judge-forward defaults, a tainted-turn creation adjudicates with a full verdict
@@ -264,13 +267,18 @@ disposition reflects the new gate, and the old record cannot survive it (the has
 rules make partial updates honest, and both are existing mechanisms applied here rather than new
 ones:
 
-- **The gate evaluates the complete post-mutation definition.** Patch-style tools merge omitted
-  fields from the stored row (`update_automation` fills `action_config`, `match_conditions`, and
-  `condition_script` from `existing` when the call omits them), so a gate shown only the patch
-  arguments would approve an innocuous recurrence change while the record cures a merged definition
-  whose action it never saw. The chokepoint therefore resolves the merged result *before* the gate
-  runs, and that is what the reviewer sees fenced and a confirmation must render — the same content
-  the hash covers, so what was gated and what was recorded are identical by construction.
+- **A cure covers only content the gate saw.** Patch-style tools merge omitted fields from the
+  stored row (`update_automation` fills `action_config`, `match_conditions`, and `condition_script`
+  from `existing` when the call omits them), so a gate shown only the patch arguments would approve
+  an innocuous recurrence change while the record cures a merged definition whose action it never
+  saw. The gate does see every field the call *changed* — those are its arguments — so the gap is
+  exactly the fields the stored row supplied, and the retention rule below already resolves those. A
+  patch whose retained content resolves trusted therefore cures normally: everything the new record
+  vouches for was either gated now or gated when it was written. A patch that retains uncured
+  content — a legacy row, a hash mismatch, an unapproved escalation — records its decision and cures
+  nothing, because no gate has ever examined the content it keeps. That is fail-closed by
+  construction rather than by remembering, and it needs no pre-gate merge: the same resolution that
+  decides the retained content's tier decides whether the cure may attach.
 - **A mutation reads what it retains.** The prior definition's effective resolution — trusted for a
   clean or cured hash-valid record, `unknown_external` otherwise — merges into the updating turn as
   an artifact read, exactly as note read-back already merges stored provenance. A clean-turn patch
@@ -573,8 +581,8 @@ and a same-content rewrite from another turn does not inherit the earlier write'
 recorded `confirm` verdict without an approval, and a recorded `deny`, resolve as absent; a floored
 cell yields only human-backed cures for writes made under it, including under `observe` when a
 static `review` rule co-gates the write (the merged review's static-layer `allow` does not cure past
-the floor); a patch-style update presents the complete merged definition to the gate, and the gated
-payload is identical to the content the new record's hash covers; no test path rewrites an authoring
+the floor); a patch-style update that retains uncured content records its verdict without curing,
+while one whose retained content resolves trusted cures normally; no path rewrites an authoring
 stamp.
 
 **M4 — Attestation surface and documentation.** The hash-bound review operation for the three

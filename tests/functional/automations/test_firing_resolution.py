@@ -15,6 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.actions import ActionType, execute_action
 from family_assistant.security.definition_records import (
+    CreationDisposition,
+    DefinitionGateOutcome,
+    GateLayer,
+    GateProvenance,
     callback_definition_content,
     stamp_callback_definition,
 )
@@ -56,10 +60,28 @@ if TYPE_CHECKING:
     from family_assistant.security.definition_records import DefinitionResolution
 
 
+def _gate_outcome(
+    disposition: CreationDisposition,
+    *,
+    layer: GateLayer = GateLayer.TAINT_CELL,
+    mode: str = "observe",
+) -> DefinitionGateOutcome:
+    return DefinitionGateOutcome(
+        disposition=disposition,
+        gate=GateProvenance(
+            layer=layer,
+            mode=mode,
+            reviewer_revision="google/gemini-3.7-flash@abc123",
+            verdict_id="verdict-1",
+        ),
+    )
+
+
 def _exec_context(
     db_ctx: Database,
     *,
     tracker: InMemoryTurnTaintTracker | None,
+    gate_outcome: DefinitionGateOutcome | None = None,
 ) -> ToolExecutionContext:
     return ToolExecutionContext(
         interface_type="web",
@@ -77,6 +99,7 @@ def _exec_context(
         credential_resolvers=None,
         api_backend=None,
         taint_tracker=tracker,
+        definition_gate_outcome=gate_outcome,
     )
 
 
@@ -114,10 +137,11 @@ async def _create_schedule(
     action_type: str = "wake_llm",
     # ast-grep-ignore: no-dict-any - action config shape varies by action type
     action_config: dict[str, object] | None = None,
+    gate_outcome: DefinitionGateOutcome | None = None,
 ) -> int:
     db_ctx = Database(engine=db_engine)
     result = await create_automation_tool(
-        exec_context=_exec_context(db_ctx, tracker=tracker),
+        exec_context=_exec_context(db_ctx, tracker=tracker, gate_outcome=gate_outcome),
         name="Daily Brief",
         automation_type="schedule",
         trigger_config={"recurrence_rule": "FREQ=DAILY"},
@@ -650,3 +674,214 @@ async def test_a_clean_edit_does_not_cure_a_tainted_definition_at_firing(
     assert isinstance(data, dict) and data.get("success") is True, result.get_text()
 
     assert not (await _resolve(db_engine, payload)).resolved
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["observe", "enforce"])
+async def test_a_judge_allowed_creation_fires_cured(
+    db_engine: AsyncEngine, mode: str
+) -> None:
+    """The reviewer computes the same verdict whether or not it could have blocked."""
+    automation_id = await _create_schedule(
+        db_engine,
+        tracker=_tainted_tracker(),
+        gate_outcome=_gate_outcome(CreationDisposition.JUDGE_ALLOWED, mode=mode),
+    )
+    payload: LlmCallbackPayload = {
+        "interface_type": "web",
+        "conversation_id": "test_conv",
+        "callback_context": "Summarize my day",
+        "scheduling_timestamp": "2026-01-01T00:00:00+00:00",
+        "automation_id": str(automation_id),
+        "automation_type": "schedule",
+    }
+
+    resolution = await _resolve(db_engine, payload)
+
+    assert resolution.resolved
+    assert resolution.disposition is CreationDisposition.JUDGE_ALLOWED
+    # The cure restores the baseline a clean authoring would have had, never the
+    # human-direct tier: the definition is still model-composed.
+    assert resolution.tier is SourceTrustTier.TRUSTED_INTERNAL
+
+
+@pytest.mark.asyncio
+async def test_a_static_layer_allow_cures_through_its_own_layer(
+    db_engine: AsyncEngine,
+) -> None:
+    """The cure follows the decision, not the layer that delegated it."""
+    automation_id = await _create_schedule(
+        db_engine,
+        tracker=_tainted_tracker(),
+        gate_outcome=_gate_outcome(
+            CreationDisposition.JUDGE_ALLOWED, layer=GateLayer.STATIC_RULE
+        ),
+    )
+    payload: LlmCallbackPayload = {
+        "interface_type": "web",
+        "conversation_id": "test_conv",
+        "callback_context": "Summarize my day",
+        "scheduling_timestamp": "2026-01-01T00:00:00+00:00",
+        "automation_id": str(automation_id),
+        "automation_type": "schedule",
+    }
+
+    assert (await _resolve(db_engine, payload)).resolved
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "disposition",
+    [
+        CreationDisposition.JUDGE_CONFIRM_REQUIRED,
+        CreationDisposition.JUDGE_DENIED,
+    ],
+)
+async def test_a_recorded_non_decision_fires_uncured(
+    db_engine: AsyncEngine, disposition: CreationDisposition
+) -> None:
+    """An unapproved escalation, a denial, and a non-binding allow decided nothing."""
+    automation_id = await _create_schedule(
+        db_engine,
+        tracker=_tainted_tracker(),
+        gate_outcome=_gate_outcome(disposition),
+    )
+    payload: LlmCallbackPayload = {
+        "interface_type": "web",
+        "conversation_id": "test_conv",
+        "callback_context": "Summarize my day",
+        "scheduling_timestamp": "2026-01-01T00:00:00+00:00",
+        "automation_id": str(automation_id),
+        "automation_type": "schedule",
+    }
+
+    assert not (await _resolve(db_engine, payload)).resolved
+
+
+@pytest.mark.asyncio
+async def test_a_human_confirmed_creation_fires_cured(db_engine: AsyncEngine) -> None:
+    automation_id = await _create_schedule(
+        db_engine,
+        tracker=_tainted_tracker(),
+        gate_outcome=_gate_outcome(
+            CreationDisposition.HUMAN_CONFIRMED, layer=GateLayer.CONFIRMATION
+        ),
+    )
+    payload: LlmCallbackPayload = {
+        "interface_type": "web",
+        "conversation_id": "test_conv",
+        "callback_context": "Summarize my day",
+        "scheduling_timestamp": "2026-01-01T00:00:00+00:00",
+        "automation_id": str(automation_id),
+        "automation_type": "schedule",
+    }
+
+    resolution = await _resolve(db_engine, payload)
+
+    assert resolution.resolved
+    assert resolution.disposition is CreationDisposition.HUMAN_CONFIRMED
+
+
+@pytest.mark.asyncio
+async def test_a_cure_does_not_survive_the_content_it_was_granted_for(
+    db_engine: AsyncEngine,
+) -> None:
+    """A disposition is bound to the hash it was granted against."""
+    automation_id = await _create_schedule(
+        db_engine,
+        tracker=_tainted_tracker(),
+        gate_outcome=_gate_outcome(CreationDisposition.JUDGE_ALLOWED),
+    )
+    payload: LlmCallbackPayload = {
+        "interface_type": "web",
+        "conversation_id": "test_conv",
+        "callback_context": "Summarize my day",
+        "scheduling_timestamp": "2026-01-01T00:00:00+00:00",
+        "automation_id": str(automation_id),
+        "automation_type": "schedule",
+    }
+    assert (await _resolve(db_engine, payload)).resolved
+
+    await Database(engine=db_engine).execute(
+        update(schedule_automations_table)
+        .where(schedule_automations_table.c.id == automation_id)
+        .values(recurrence_rule="FREQ=HOURLY")
+    )
+
+    assert not (await _resolve(db_engine, payload)).resolved
+
+
+@pytest.mark.asyncio
+async def test_a_patch_that_retains_uncured_content_records_without_curing(
+    db_engine: AsyncEngine,
+) -> None:
+    """The gate saw the fields the call changed, never the ones the row supplied.
+
+    A legacy automation carries no record, so a patch keeps content no gate has
+    ever examined. The verdict that admitted the patch is recorded, and it
+    cannot vouch for the merged definition the new record hashes.
+    """
+    automation_id = await _create_schedule(db_engine, tracker=None)
+    await Database(engine=db_engine).execute(
+        update(schedule_automations_table)
+        .where(schedule_automations_table.c.id == automation_id)
+        .values(definition_record=None)
+    )
+
+    db_ctx = Database(engine=db_engine)
+    result = await update_automation_tool(
+        exec_context=_exec_context(
+            db_ctx,
+            tracker=_tainted_tracker(),
+            gate_outcome=_gate_outcome(CreationDisposition.JUDGE_ALLOWED),
+        ),
+        automation_id=automation_id,
+        automation_type="schedule",
+        description="A renamed daily brief.",
+    )
+    data = result.get_data()
+    assert isinstance(data, dict) and data.get("success") is True, result.get_text()
+
+    payload: LlmCallbackPayload = {
+        "interface_type": "web",
+        "conversation_id": "test_conv",
+        "callback_context": "Summarize my day",
+        "scheduling_timestamp": "2026-01-01T00:00:00+00:00",
+        "automation_id": str(automation_id),
+        "automation_type": "schedule",
+    }
+    assert not (await _resolve(db_engine, payload)).resolved
+
+
+@pytest.mark.asyncio
+async def test_a_judge_allowed_reminder_delivers_without_an_external_source(
+    db_engine: AsyncEngine,
+) -> None:
+    """A one-shot's record rides its payload, and cures there like any other."""
+    message = "Take the bins out"
+    payload: LlmCallbackPayload = {
+        "interface_type": "web",
+        "conversation_id": "test_conv",
+        "callback_context": message,
+        "scheduling_timestamp": "2026-01-01T00:00:00+00:00",
+        "tool_call_review_trigger_type": "reminder",
+        "tool_call_review_trigger_definition": message,
+        "tool_call_review_trigger_payload_present": False,
+        "tool_call_review_definition_record": stamp_callback_definition(
+            message,
+            tracker=_tainted_tracker(),
+            gate_outcome=_gate_outcome(CreationDisposition.JUDGE_ALLOWED),
+        ),
+    }
+
+    resolution = await _resolve(db_engine, payload)
+    trigger = _llm_callback_review_trigger(
+        payload,
+        payload["callback_context"],
+        is_reminder=True,
+        definition_resolution=resolution,
+    )
+
+    assert resolution.resolved
+    assert trigger.definition_taint_metadata is not None
+    assert _llm_callback_trigger_taint_sources(payload, trigger) == ()

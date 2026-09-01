@@ -11,6 +11,11 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.sql import functions as func
 from sqlalchemy.sql.elements import ColumnElement
 
+from family_assistant.security.definition_records import (
+    CreationDisposition,
+    GateProvenance,
+    definition_record_from_row,
+)
 from family_assistant.storage.database import DatabaseTransaction
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.tasks import notify_workers, tasks_table
@@ -362,6 +367,64 @@ class TasksRepository(BaseRepository):
                 return None
 
         return await self._db.atomic(_claim)
+
+    async def attach_definition_verdict(
+        self,
+        task_id: str,
+        *,
+        write_id: str,
+        disposition: CreationDisposition,
+        gate: GateProvenance,
+    ) -> bool:
+        """Attach an asynchronously computed verdict to a payload-carried definition.
+
+        A reminder, future callback or one-shot script action has no definition
+        table -- its definition is the enqueued payload -- so an observe-mode
+        verdict lands here. The write id guards the update, read and write in
+        one transaction: the payload must still hold the exact write the verdict
+        judged, so an edit racing the review leaves the new content awaiting its
+        own verdict.
+
+        A follow-up re-enqueued before the verdict lands copies the still-pending
+        record into a task of its own, and the verdict does not chase that
+        descendant chain -- bounded to the same seconds-wide window, conservative,
+        and accepted rather than solved with descendant tracking.
+
+        Returns whether the verdict was attached.
+        """
+
+        async def body(txn: DatabaseTransaction) -> bool:
+            # Locked, not merely re-read: on PostgreSQL a concurrent write
+            # committing between the check and the update would otherwise be
+            # overwritten by the record this read returned -- reverting an edit
+            # while reporting the verdict attached. SQLite serializes writes on
+            # the engine lock and ignores the clause.
+            row = await txn.fetch_one(
+                select(tasks_table.c.payload)
+                .where(tasks_table.c.task_id == task_id)
+                .with_for_update()
+            )
+            payload = row["payload"] if row is not None else None
+            if not isinstance(payload, dict):
+                return False
+            record = definition_record_from_row(
+                payload.get("tool_call_review_definition_record")
+            )
+            if record is None or record.pending_write_id != write_id:
+                return False
+            updated = dict(cast("Mapping[str, Any]", payload))
+            # ast-grep-ignore: no-unstamped-executable-definition-write - verdict attach: with_verdict() derives from the stored record, leaving stamp and hash untouched
+            updated["tool_call_review_definition_record"] = record.with_verdict(
+                disposition, gate
+            ).to_dict()
+            await txn.execute(
+                update(tasks_table)
+                .where(tasks_table.c.task_id == task_id)
+                .values(payload=updated)
+            )
+            return True
+
+        return await self._db.atomic(body)
 
     async def update_status(
         self,

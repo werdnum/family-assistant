@@ -15,11 +15,18 @@ from family_assistant.config_models import (
     ToolCallReviewEscalationConfig,
 )
 from family_assistant.llm.messages import AssistantMessage, SystemMessage, UserMessage
+from family_assistant.security.definition_records import (
+    CreationDisposition,
+    DefinitionGateOutcome,
+    GateLayer,
+    PendingDefinitionReview,
+)
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
     SensitiveReadScope,
     SinkClass,
     SourceTrustTier,
+    TaintPolicyCell,
     TaintPolicyConfig,
     TaintPolicyMode,
     TaintPolicyOutcome,
@@ -475,7 +482,10 @@ async def test_unattended_trigger_reaches_reviewer_as_provenance_stub(
     assert "Earlier interactive request mentioned friend@example.test." not in prompt
     assert "Current callback payload mentions friend@example.test." not in prompt
     assert "<trigger_payload_stub>" in prompt
-    assert "Destination appears nowhere in the current trusted request." in prompt
+    assert (
+        "Destination appears nowhere in the current trusted request or in an "
+        "attested trigger definition." in prompt
+    )
     reviews = await _review_events(context)
     assert len(reviews) == 1
     review_context = reviews[0]["review_context_json"]
@@ -2564,3 +2574,290 @@ async def test_static_review_still_reviews_confined_browser_action(
     assert executions == 0
     assert isinstance(result, ToolResult)
     assert "Action blocked by automatic review" in result.get_text()
+
+
+# --- What each gate records for a definition the call goes on to write ---------
+#
+# The cure is written by the gates themselves, so these read what a tool sees on
+# its execution context rather than what any automation tool does with it: a
+# verdict maps to a disposition in exactly one place, and every write path
+# inherits that mapping by forwarding one field.
+
+
+class _GateOutcomeRecorder:
+    """Records the gate outcome each executing call was admitted under."""
+
+    def __init__(self) -> None:
+        self.outcomes: list[DefinitionGateOutcome | None] = []
+
+    @property
+    def only(self) -> DefinitionGateOutcome:
+        assert len(self.outcomes) == 1
+        outcome = self.outcomes[0]
+        assert outcome is not None
+        return outcome
+
+
+def _recording_provider(
+    db_engine: AsyncEngine,
+    *,
+    state: TurnTaintState,
+    reviewer_verdict: ToolCallReviewVerdict | None,
+    static_decision: ToolPolicyDecision,
+    taint_policy: TaintPolicyConfig,
+    confirmation: RequestConfirmationCallback | None = None,
+) -> tuple[_GateOutcomeRecorder, TaintTrackingToolsProvider, ToolExecutionContext]:
+    recorder = _GateOutcomeRecorder()
+    context = _context(db_engine, state, confirmation=confirmation)
+
+    async def execute(**_kwargs: object) -> ToolResult:
+        recorder.outcomes.append(context.definition_gate_outcome)
+        return ToolResult(text="executed")
+
+    provider = _provider(
+        cast("ToolImplementation", execute),
+        reviewer_llm=(
+            None if reviewer_verdict is None else _ReviewLLM(reviewer_verdict)
+        ),
+        static_decision=static_decision,
+        taint_policy=taint_policy,
+    )
+    return recorder, provider, context
+
+
+def _adjudicating_policy(
+    mode: TaintPolicyMode,
+    *,
+    verdict_floor: TaintPolicyOutcome | None = None,
+) -> TaintPolicyConfig:
+    overrides: dict[SourceTrustTier, dict[SinkClass, TaintPolicyCell]] = {
+        SourceTrustTier.UNKNOWN_EXTERNAL: {
+            SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.ADJUDICATE
+        }
+    }
+    if verdict_floor is None:
+        return TaintPolicyConfig(mode=mode, matrix_overrides=overrides)
+    return TaintPolicyConfig(
+        mode=mode,
+        matrix_overrides=overrides,
+        operator_minimum={
+            SourceTrustTier.UNKNOWN_EXTERNAL: {
+                SinkClass.ARBITRARY_EXTERNAL_MESSAGE: verdict_floor
+            }
+        },
+    )
+
+
+async def test_an_allow_records_the_taint_cell_that_delegated_it(
+    db_engine: AsyncEngine,
+) -> None:
+    recorder, provider, context = _recording_provider(
+        db_engine,
+        state=_unknown_external_state(),
+        reviewer_verdict=ToolCallReviewVerdict.ALLOW,
+        static_decision=ToolPolicyDecision.ALLOW,
+        taint_policy=_adjudicating_policy(TaintPolicyMode.ENFORCE),
+    )
+
+    await provider.execute_tool("reviewed_tool", {}, context, "call-1")
+
+    outcome = recorder.only
+    assert outcome.disposition is CreationDisposition.JUDGE_ALLOWED
+    assert outcome.cure_permitted
+    assert outcome.gate.layer is GateLayer.TAINT_CELL
+    assert outcome.gate.mode == "enforce"
+    assert outcome.gate.verdict_id is not None
+    assert outcome.gate.reviewer_revision is not None
+
+
+async def test_a_static_rule_allow_records_the_static_layer(
+    db_engine: AsyncEngine,
+) -> None:
+    """A clean turn reaches no taint cell, so the static rule is the gate."""
+    recorder, provider, context = _recording_provider(
+        db_engine,
+        state=TurnTaintState.empty(),
+        reviewer_verdict=ToolCallReviewVerdict.ALLOW,
+        static_decision=ToolPolicyDecision.REVIEW,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+    )
+
+    await provider.execute_tool("reviewed_tool", {}, context, "call-1")
+
+    assert recorder.only.gate.layer is GateLayer.STATIC_RULE
+
+
+async def test_an_approved_escalation_records_the_human_not_the_judge(
+    db_engine: AsyncEngine,
+) -> None:
+    """The prompt rendered the whole call and a human approved it."""
+    recorder, provider, context = _recording_provider(
+        db_engine,
+        state=_unknown_external_state(),
+        reviewer_verdict=ToolCallReviewVerdict.CONFIRM,
+        static_decision=ToolPolicyDecision.ALLOW,
+        taint_policy=_adjudicating_policy(TaintPolicyMode.ENFORCE),
+        confirmation=_ConfirmationRecorder(),
+    )
+
+    await provider.execute_tool("reviewed_tool", {}, context, "call-1")
+
+    outcome = recorder.only
+    assert outcome.disposition is CreationDisposition.HUMAN_CONFIRMED
+    assert outcome.gate.layer is GateLayer.CONFIRMATION
+
+
+async def test_an_unapproved_confirmation_never_reaches_a_write(
+    db_engine: AsyncEngine,
+) -> None:
+    """A rejected escalation stops the call, so there is no definition to cure."""
+    recorder, provider, context = _recording_provider(
+        db_engine,
+        state=_unknown_external_state(),
+        reviewer_verdict=ToolCallReviewVerdict.CONFIRM,
+        static_decision=ToolPolicyDecision.ALLOW,
+        taint_policy=_adjudicating_policy(TaintPolicyMode.ENFORCE),
+        confirmation=_ConfirmationRecorder(ConfirmationOutcome(kind="rejected")),
+    )
+
+    await provider.execute_tool("reviewed_tool", {}, context, "call-1")
+
+    assert recorder.outcomes == []
+
+
+async def test_a_confirm_floored_cell_records_a_human_backed_cure_only(
+    db_engine: AsyncEngine,
+) -> None:
+    """A floor that excludes allow leaves the judge no way to cure."""
+    recorder, provider, context = _recording_provider(
+        db_engine,
+        state=_unknown_external_state(),
+        reviewer_verdict=ToolCallReviewVerdict.ALLOW,
+        static_decision=ToolPolicyDecision.ALLOW,
+        taint_policy=_adjudicating_policy(
+            TaintPolicyMode.ENFORCE, verdict_floor=TaintPolicyOutcome.CONFIRM
+        ),
+        confirmation=_ConfirmationRecorder(),
+    )
+
+    await provider.execute_tool("reviewed_tool", {}, context, "call-1")
+
+    outcome = recorder.only
+    assert outcome.disposition is CreationDisposition.HUMAN_CONFIRMED
+
+
+async def test_a_static_layer_cannot_widen_a_floored_cell_into_a_cure(
+    db_engine: AsyncEngine,
+) -> None:
+    """The merged review under observe omits the floor; the cure does not follow it.
+
+    A co-gating static ``review`` rule hands the reviewer a verdict space that
+    still contains ``allow``, because observe must not let a taint floor block
+    the call. That ``allow`` is recorded, and it does not cure: ``enforce``
+    could never have issued it.
+    """
+    recorder, provider, context = _recording_provider(
+        db_engine,
+        state=_unknown_external_state(),
+        reviewer_verdict=ToolCallReviewVerdict.ALLOW,
+        static_decision=ToolPolicyDecision.REVIEW,
+        taint_policy=_adjudicating_policy(
+            TaintPolicyMode.OBSERVE, verdict_floor=TaintPolicyOutcome.CONFIRM
+        ),
+    )
+
+    await provider.execute_tool("reviewed_tool", {}, context, "call-1")
+
+    outcome = recorder.only
+    assert outcome.disposition is CreationDisposition.JUDGE_ALLOWED
+    assert not outcome.cure_permitted
+
+
+async def test_a_hard_confirm_approval_records_the_human(
+    db_engine: AsyncEngine,
+) -> None:
+    recorder, provider, context = _recording_provider(
+        db_engine,
+        state=TurnTaintState.empty(),
+        reviewer_verdict=None,
+        static_decision=ToolPolicyDecision.CONFIRM,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+        confirmation=_ConfirmationRecorder(),
+    )
+
+    await provider.execute_tool("reviewed_tool", {}, context, "call-1")
+
+    outcome = recorder.only
+    assert outcome.disposition is CreationDisposition.HUMAN_CONFIRMED
+    assert outcome.gate.layer is GateLayer.CONFIRMATION
+
+
+async def test_a_call_no_gate_examined_records_nothing(
+    db_engine: AsyncEngine,
+) -> None:
+    """No gate, no decision: the write stays on its authoring stamp alone."""
+    _recorder, provider, context = _recording_provider(
+        db_engine,
+        state=TurnTaintState.empty(),
+        reviewer_verdict=None,
+        static_decision=ToolPolicyDecision.ALLOW,
+        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+    )
+
+    await provider.execute_tool("reviewed_tool", {}, context, "call-1")
+
+    assert _recorder.outcomes == [None]
+
+
+@pytest.mark.parametrize("mode", [TaintPolicyMode.OBSERVE, TaintPolicyMode.ENFORCE])
+async def test_the_outcome_does_not_outlive_the_call_that_earned_it(
+    db_engine: AsyncEngine,
+    mode: TaintPolicyMode,
+) -> None:
+    """A later ungated call in the same turn must not inherit an earlier verdict."""
+    _recorder, provider, context = _recording_provider(
+        db_engine,
+        state=TurnTaintState.empty(),
+        reviewer_verdict=ToolCallReviewVerdict.ALLOW,
+        static_decision=ToolPolicyDecision.REVIEW,
+        taint_policy=TaintPolicyConfig(mode=mode),
+    )
+
+    await provider.execute_tool("reviewed_tool", {}, context, "call-1")
+
+    assert context.definition_gate_outcome is None
+
+
+async def test_an_observe_shadow_review_leaves_its_writes_pending_then_attaches(
+    db_engine: AsyncEngine,
+) -> None:
+    """The write does not wait for the verdict; the verdict comes back to it."""
+    recorder = _GateOutcomeRecorder()
+    context = _context(db_engine, _unknown_external_state())
+    pending_seen: list[PendingDefinitionReview] = []
+
+    async def execute(**_kwargs: object) -> ToolResult:
+        recorder.outcomes.append(context.definition_gate_outcome)
+        outcome = context.definition_gate_outcome
+        assert outcome is not None and outcome.pending is not None
+        # The verdict cannot have landed: the call is still running.
+        assert not outcome.pending.settled.is_set()
+        pending_seen.append(outcome.pending)
+        return ToolResult(text="executed before shadow verdict")
+
+    provider = _provider(
+        cast("ToolImplementation", execute),
+        reviewer_llm=_ReviewLLM(ToolCallReviewVerdict.ALLOW),
+        static_decision=ToolPolicyDecision.ALLOW,
+        taint_policy=_adjudicating_policy(TaintPolicyMode.OBSERVE),
+    )
+
+    await provider.execute_tool("reviewed_tool", {}, context, "shadow-write-call")
+    await provider.close()
+
+    outcome = recorder.only
+    assert outcome.disposition is None
+    assert outcome.gate.mode == "observe"
+    assert len(pending_seen) == 1
+    assert pending_seen[0].settled.is_set()
+    assert context.pending_definition_review is None
