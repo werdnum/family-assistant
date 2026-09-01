@@ -168,13 +168,15 @@ The reviewer's context is a typed structure assembled deterministically:
   **absent provenance fails closed to a stub**, per the taint design's standing missing-tier rule.
   The absent case is currently every case — the listener and schedule-automation tables persist only
   creator identity (`processing_profile_id`, `created_by_user_id`), not taint provenance — so until
-  the risk document's artifact-provenance work stamps automation definitions at their authoring
-  chokepoint, trigger definitions render only as stubs and the reviewer for unattended runs works
-  from operator guidance and the delegating rule's context, with ambiguity taking the deferral path.
-  That is weaker signal, never a laundering path: an automation authored from a tainted turn (the
-  executable-persistence concern the risk document covers) cannot render as trusted intent, because
-  no definition can until stored provenance proves it. The trigger *payload* — the event data,
-  deliberately untrusted — is always represented as a provenance stub, never rendered.
+  automation definitions are stamped at their authoring chokepoint (designed in
+  [executable-definition-taint.md](executable-definition-taint.md), which also defines how a
+  creation-time gate can cure a tainted authoring turn for future firings), trigger definitions
+  render only as stubs and the reviewer for unattended runs works from operator guidance and the
+  delegating rule's context, with ambiguity taking the deferral path. That is weaker signal, never a
+  laundering path: an automation authored from a tainted turn (the executable-persistence concern
+  the risk document covers) cannot render as trusted intent, because no definition can until stored
+  provenance proves it. The trigger *payload* — the event data, deliberately untrusted — is always
+  represented as a provenance stub, never rendered.
 
 - **The originating request, for delegated runs.** A delegated subconversation is unattended in the
   same mechanical sense — no trusted user row of its own — but unlike an event or a schedule, a
@@ -213,6 +215,11 @@ The reviewer's context is a typed structure assembled deterministically:
   incur adjudication, confirmation, or denial friction. This is the conservative interim behavior
   until automation-definition provenance is stored at authoring time and threaded into callbacks;
   creator identity alone is not enough to suppress it.
+  [executable-definition-taint.md](executable-definition-taint.md) is the design that closes this:
+  definitions are stamped and hash-bound at the executable-persistence write, and the disposition of
+  the gate that admitted the write — a sighted human confirmation, or an enforce-mode `allow`
+  verdict — cures the authoring taint for the definition's firings instead of propagating it through
+  time, with everything uncured keeping exactly this fail-closed behavior.
 
 ### On rendering arguments: the auto-mode position, not the stub position
 
@@ -346,11 +353,13 @@ Absent authoring provenance now puts every unattended callback at `unknown_exter
 literal pin also makes reminder delivery through `send_message_to_user` defer for confirmation
 instead of delivering. A deployment that relies on automatic reminders may deliberately omit only
 the `known_user_message` minimum, accepting a reminder-compatible exception to the old posture
-rather than calling it a cell-for-cell pin. Verdict floors and `operator_minimum` remain
-tighten-only against the judge just as against profiles. No known deployment runs `enforce` today —
-the maintainer's is the only known deployment, and it runs `observe` — so this is defence in depth
-for third-party deployments of a public codebase: a documented pin and a config test, not migration
-machinery.
+rather than calling it a cell-for-cell pin — an exception
+[executable-definition-taint.md](executable-definition-taint.md) retires once clean-turn reminders
+carry trusted definition provenance into their delivery turns. Verdict floors and `operator_minimum`
+remain tighten-only against the judge just as against profiles. No known deployment runs `enforce`
+today — the maintainer's is the only known deployment, and it runs `observe` — so this is defence in
+depth for third-party deployments of a public codebase: a documented pin and a config test, not
+migration machinery.
 
 ### Default matrix changes
 
