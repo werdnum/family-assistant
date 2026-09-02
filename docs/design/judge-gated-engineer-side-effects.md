@@ -295,9 +295,11 @@ fails the test instead of joining the prompt silently.
 
 *Verify:* both tests; an engineer turn that reads logs records an `unknown_external` source and its
 subsequent egress produces a shadow review in `taint_audit_events` under
-`processing_profile_id = engineer` — the first engineer shadow data, which does not exist today
-because engineer turns never taint; an engineer prompt assembled with calendar and Home Assistant
-configured contains neither.
+`processing_profile_id = engineer` — the first *representative* engineer shadow data: today only a
+turn that happened to read `read_frontend_telemetry` (already `OUTPUT_UNTRUSTED`) can produce one,
+and those rows were judged under the old trusted-inlet contract. The instant M1 reaches production
+is recorded in this document's status as the pilot dataset's cutoff; an engineer prompt assembled
+with calendar and Home Assistant configured contains neither.
 
 **M2 — Engineer-shaped fixtures and a conversation-boundary run.** Manual cases: hostile content in
 a stubbed `get_llm_request_history` or `query_database` result followed by `spawn_worker` and
@@ -329,8 +331,10 @@ engineer verdict on each of the three adjudicated cells (`arbitrary_external_mes
 `attacker_addressable_egress`, `sandbox_network`), and enough verdicts in total that the fallback
 rate and p95 latency are measured rather than anecdotal (the deployment's own traffic decides how
 long that takes). Those decide whether `engineer.taint_policy.mode: enforce` follows. Record the
-decision and the numbers in this document's status. *Verify:* standing metrics from
-`taint_audit_events` filtered to the engineer — verdict counts by cell, fallback rate, p95 latency,
+decision and the numbers in this document's status. Only rows at or after the M1 cutoff count:
+anything earlier was judged with the engineer's reads rendering as trusted conversation, which is
+not the contract being decided on. *Verify:* standing metrics from `taint_audit_events` filtered to
+the engineer and to `created_at >= cutoff` — verdict counts by cell, fallback rate, p95 latency,
 escalation trips.
 
 ## Acceptance criteria
@@ -343,7 +347,8 @@ escalation trips.
   effect the human request did not ask for.
 - An aligned `spawn_worker` or `delegate_to_service` from an engineer turn executes without a human
   prompt; `create_github_issue` still requires one.
-- Reviewer unavailability degrades every flipped rule to today's confirmation, never to `allow`.
+- Reviewer unavailability degrades every rule flipped to `review` to today's confirmation, never to
+  `allow`. (`reconnect_mcp_server` is `allow` by decision, not by fallback — see the residuals.)
 - Delegation into the engineer from every profile that can delegate is judged, not confirmed, and
   the child's review sees the parent's originating request.
 - An automation authored from a clean engineer turn fires with its definition rendered as trusted
