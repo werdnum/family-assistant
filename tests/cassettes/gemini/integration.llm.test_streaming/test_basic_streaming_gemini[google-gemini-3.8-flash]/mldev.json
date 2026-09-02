@@ -1,5 +1,5 @@
 {
-  "replay_id": "integration.llm.test_streaming/test_google_streaming_pydantic_validation_reproducer/mldev",
+  "replay_id": "integration.llm.test_streaming/test_basic_streaming_gemini[google-gemini-3.8-flash]/mldev",
   "interactions": [
     {
       "request": {
@@ -17,81 +17,10 @@
               {
                 "parts": [
                   {
-                    "text": "Calculate 5 + 3"
+                    "text": "Count from 1 to 5, with each number on a new line."
                   }
                 ],
                 "role": "user"
-              },
-              {
-                "parts": [
-                  {
-                    "functionCall": {
-                      "id": "call_test_123",
-                      "args": {
-                        "expression": "5 + 3"
-                      },
-                      "name": "calculate"
-                    },
-                    "thoughtSignature": "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="
-                  }
-                ],
-                "role": "model"
-              },
-              {
-                "parts": [
-                  {
-                    "functionResponse": {
-                      "id": "call_test_123",
-                      "name": "calculate",
-                      "response": {
-                        "result": 8
-                      }
-                    }
-                  }
-                ],
-                "role": "user"
-              }
-            ],
-            "tools": [
-              {
-                "functionDeclarations": [
-                  {
-                    "description": "Get current weather for a location",
-                    "name": "get_weather",
-                    "parameters": {
-                      "properties": {
-                        "location": {
-                          "description": "The city and country",
-                          "type": "STRING"
-                        },
-                        "unit": {
-                          "description": "Temperature unit",
-                          "type": "STRING"
-                        }
-                      },
-                      "required": [
-                        "location"
-                      ],
-                      "type": "OBJECT"
-                    }
-                  },
-                  {
-                    "description": "Perform mathematical calculations",
-                    "name": "calculate",
-                    "parameters": {
-                      "properties": {
-                        "expression": {
-                          "description": "Mathematical expression to evaluate",
-                          "type": "STRING"
-                        }
-                      },
-                      "required": [
-                        "expression"
-                      ],
-                      "type": "OBJECT"
-                    }
-                  }
-                ]
               }
             ],
             "generationConfig": {
@@ -120,7 +49,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "5 + 3"
+                      "text": "1\n2\n3\n4\n"
                     }
                   ],
                   "role": "model"
@@ -129,19 +58,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 148,
-              "candidatesTokenCount": 4,
-              "totalTokenCount": 152,
+              "promptTokenCount": 17,
+              "candidatesTokenCount": 8,
+              "totalTokenCount": 122,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 148
+                  "tokenCount": 17
                 }
               ],
+              "thoughtsTokenCount": 97,
               "serviceTier": "standard"
             },
             "modelVersion": "gemini-3.8-flash",
-            "responseId": "2DyYauzzF56qg8UP08CcwQU"
+            "responseId": "zTyYaqutNrelqfkPrpGxyQM"
           },
           {
             "candidates": [
@@ -149,7 +79,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": " = 8"
+                      "text": "5"
                     }
                   ],
                   "role": "model"
@@ -158,19 +88,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 148,
-              "candidatesTokenCount": 7,
-              "totalTokenCount": 155,
+              "promptTokenCount": 17,
+              "candidatesTokenCount": 9,
+              "totalTokenCount": 123,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 148
+                  "tokenCount": 17
                 }
               ],
+              "thoughtsTokenCount": 97,
               "serviceTier": "standard"
             },
             "modelVersion": "gemini-3.8-flash",
-            "responseId": "2DyYauzzF56qg8UP08CcwQU"
+            "responseId": "zTyYaqutNrelqfkPrpGxyQM"
           },
           {
             "candidates": [
@@ -179,7 +110,7 @@
                   "parts": [
                     {
                       "text": "",
-                      "thoughtSignature": "El4KXAERTTIPMXtkdn+Oyko97RPE5kxDvVyXxK2mXERyYzt78dcrQYIaboJHDxyoNllvhruYte/Hq8dxKql6qeBecRqjz+/HaX4/y4pFC/A7+/sc2YrzW8wv8vOh7qJS"
+                      "thoughtSignature": "Er0DCroDARFNMg8xqbLWUQlK6zYnWB92CY927nS2wU0V6sNyHXakNjcK4Bi1mVBVeVGy5LjYDth10lmhXvuwSJdsO/qjm+laA7ySN3ZzHTca16aDC1dqvqpqwhfFSjouNP7eUqpBpSC6od+XWES3yl7biJ/qr92/eKt1H+pYiWY0xtqRS1oPu/adGfbCpWiZ31Oua2TcpiT45RnLb1/IoWZJ6dSocj3gJGd7YRD0iBeDWGWhtQLMgGNgmfVR3c+MgNKha73GUJ1lFh6w2Zbi5CmEgMMCJrwwMeM5FTUle2ImEsTLnw5d6eqfUztlxj45lo4CpAybV0VbTB8e0aKcmHa11Db41MNSIasL+nW22V10SoHVPRt1rVMAj2b2bvbbjEYxBsEMiktZEgqwTdZOedjPcN5we9CoEEz8EtkkIUILiUMXJxca94mhSWN1iO76HfwVjILv9lBfmnanlkw0zee+ybSIPGy+NvEXoFRMt0S49+HMv2WAQNwteFqWvizGten8WhObHLjkg2tYWsDG06DUXySs6XGHuO1ipI2/Ms8uncw1uexCdQp9bpbXs4qA3KhkmWnIUwTR7+a9b2sSmg=="
                     }
                   ],
                   "role": "model"
@@ -189,19 +120,20 @@
               }
             ],
             "usageMetadata": {
-              "promptTokenCount": 148,
-              "candidatesTokenCount": 7,
-              "totalTokenCount": 155,
+              "promptTokenCount": 17,
+              "candidatesTokenCount": 9,
+              "totalTokenCount": 123,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
-                  "tokenCount": 148
+                  "tokenCount": 17
                 }
               ],
+              "thoughtsTokenCount": 97,
               "serviceTier": "standard"
             },
             "modelVersion": "gemini-3.8-flash",
-            "responseId": "2DyYauzzF56qg8UP08CcwQU"
+            "responseId": "zTyYaqutNrelqfkPrpGxyQM"
           }
         ],
         "byte_segments": [],
@@ -225,7 +157,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "5 + 3"
+                      "text": "1\n2\n3\n4\n"
                     }
                   ],
                   "role": "model"
@@ -234,17 +166,18 @@
               }
             ],
             "model_version": "gemini-3.8-flash",
-            "response_id": "2DyYauzzF56qg8UP08CcwQU",
+            "response_id": "zTyYaqutNrelqfkPrpGxyQM",
             "usage_metadata": {
-              "candidates_token_count": 4,
-              "prompt_token_count": 148,
+              "candidates_token_count": 8,
+              "prompt_token_count": 17,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 148
+                  "token_count": 17
                 }
               ],
-              "total_token_count": 152
+              "thoughts_token_count": 97,
+              "total_token_count": 122
             }
           },
           {
@@ -266,7 +199,7 @@
                 "content": {
                   "parts": [
                     {
-                      "text": " = 8"
+                      "text": "5"
                     }
                   ],
                   "role": "model"
@@ -275,17 +208,18 @@
               }
             ],
             "model_version": "gemini-3.8-flash",
-            "response_id": "2DyYauzzF56qg8UP08CcwQU",
+            "response_id": "zTyYaqutNrelqfkPrpGxyQM",
             "usage_metadata": {
-              "candidates_token_count": 7,
-              "prompt_token_count": 148,
+              "candidates_token_count": 9,
+              "prompt_token_count": 17,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 148
+                  "token_count": 17
                 }
               ],
-              "total_token_count": 155
+              "thoughts_token_count": 97,
+              "total_token_count": 123
             }
           },
           {
@@ -308,7 +242,7 @@
                   "parts": [
                     {
                       "text": "",
-                      "thought_signature": "El4KXAERTTIPMXtkdn-Oyko97RPE5kxDvVyXxK2mXERyYzt78dcrQYIaboJHDxyoNllvhruYte_Hq8dxKql6qeBecRqjz-_HaX4_y4pFC_A7-_sc2YrzW8wv8vOh7qJS"
+                      "thought_signature": "Er0DCroDARFNMg8xqbLWUQlK6zYnWB92CY927nS2wU0V6sNyHXakNjcK4Bi1mVBVeVGy5LjYDth10lmhXvuwSJdsO_qjm-laA7ySN3ZzHTca16aDC1dqvqpqwhfFSjouNP7eUqpBpSC6od-XWES3yl7biJ_qr92_eKt1H-pYiWY0xtqRS1oPu_adGfbCpWiZ31Oua2TcpiT45RnLb1_IoWZJ6dSocj3gJGd7YRD0iBeDWGWhtQLMgGNgmfVR3c-MgNKha73GUJ1lFh6w2Zbi5CmEgMMCJrwwMeM5FTUle2ImEsTLnw5d6eqfUztlxj45lo4CpAybV0VbTB8e0aKcmHa11Db41MNSIasL-nW22V10SoHVPRt1rVMAj2b2bvbbjEYxBsEMiktZEgqwTdZOedjPcN5we9CoEEz8EtkkIUILiUMXJxca94mhSWN1iO76HfwVjILv9lBfmnanlkw0zee-ybSIPGy-NvEXoFRMt0S49-HMv2WAQNwteFqWvizGten8WhObHLjkg2tYWsDG06DUXySs6XGHuO1ipI2_Ms8uncw1uexCdQp9bpbXs4qA3KhkmWnIUwTR7-a9b2sSmg=="
                     }
                   ],
                   "role": "model"
@@ -318,17 +252,18 @@
               }
             ],
             "model_version": "gemini-3.8-flash",
-            "response_id": "2DyYauzzF56qg8UP08CcwQU",
+            "response_id": "zTyYaqutNrelqfkPrpGxyQM",
             "usage_metadata": {
-              "candidates_token_count": 7,
-              "prompt_token_count": 148,
+              "candidates_token_count": 9,
+              "prompt_token_count": 17,
               "prompt_tokens_details": [
                 {
                   "modality": "TEXT",
-                  "token_count": 148
+                  "token_count": 17
                 }
               ],
-              "total_token_count": 155
+              "thoughts_token_count": 97,
+              "total_token_count": 123
             }
           }
         ]

@@ -1,10 +1,10 @@
 {
-  "replay_id": "integration.llm.test_streaming/test_streaming_with_tool_calls_gemini[google-gemini-3.7-flash]/mldev",
+  "replay_id": "integration.llm.test_streaming/test_streaming_with_tool_calls_gemini[google-gemini-3.8-flash]/mldev",
   "interactions": [
     {
       "request": {
         "method": "post",
-        "url": "{MLDEV_URL_PREFIX}/models/gemini-3.7-flash:streamGenerateContent?alt=sse",
+        "url": "{MLDEV_URL_PREFIX}/models/gemini-3.8-flash:streamGenerateContent?alt=sse",
         "headers": {
           "Content-Type": "application/json",
           "x-goog-api-key": "{REDACTED}",
@@ -81,7 +81,8 @@
           "Server": "scaffolding on HTTPServer2",
           "X-XSS-Protection": "0",
           "X-Frame-Options": "SAMEORIGIN",
-          "X-Content-Type-Options": "nosniff"
+          "X-Content-Type-Options": "nosniff",
+          "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
         },
         "body_segments": [
           {
@@ -95,9 +96,9 @@
                         "args": {
                           "location": "Paris, France"
                         },
-                        "id": "call_99922"
+                        "id": "call_1948136"
                       },
-                      "thoughtSignature": "EsQCCsECARFNMg9in6PNI2KcWEzZkWRKYD8f0/bm1l701aySg7zzWXJmSrI7mlCCozCP+SrC+K7Rz14hXrf+NXZzQGZRnFd4jw1UIUHxPw3Vrs9YF4ejKfuvqR5gpjWnR+D75JJMuJJc3WwRCYyLnjAEk8s9drLxgkzVfxsX6BKgRGuPdcZ3yf59cy2ruXENO5nhI5EKzlIjvyrloSi35VGT0TsGrBeJZapNu7I3XoBu4P1P9XE6b1jMEk8AeMIAITdpLONm/fviQFkWVtBZkBwtub09IyDa9xHnZ4Cyr/3nSPD3JvZQTeqe2V/L8XKqkEDvFKCJOJ4GFTRFXgvl3MosbACLvXcLtdXFe2IbauAzcrmuD6o26bPiYz1beu78dN24N9fqTort/ZUW/UszqgNAe5pFJLcPaZMcbAchLHr/Kz7YGOXq"
+                      "thoughtSignature": "EvwCCvkCARFNMg98Hpepc4gvl0hRUFu0afuu5OryMnKrhrdCnncQrmH9wjrA/op6w4Ex06xpTZ3ORQG0Q9wthbN4+B2ogIi55xVyXZHlyfNnOJcgNYPAzCut9TDTi2kAeFhGHIiE+cwFEazKlBPktN/1X41mKy3kLxeWxNlUoK+5Eatq9x5KBxshNnI+ShK8cRRZPEOfvnQskWbOT53vO4oIKqR0DuIBzr9VP6RVPQW0B4GvgBRy4d0v3hA2zkTZ1FGjpY3AbAdtLX1T9XngvpwLDNv//Rcn4OMb93OrqMUbLdlqdaXA2Uh1XCjvUqQXSPupEYJMl3r23RVlcear1Zbcdamfu3yQyqHq6RwGGbNhAw6BWonLQJfKJ7htPKJcQ0SMe+xtVSlh36vWsExUlf+ngTi3it/Zp5yBVcDlZLN3Pizw1qf2MZV690dbta/GN1uQ9x1B9j1tDFaECjqm2I0xabgwYnYyCFnz5yjBPH2pjsUfR0Y3BDBvvN5v5nA="
                     }
                   ],
                   "role": "model"
@@ -108,18 +109,18 @@
             "usageMetadata": {
               "promptTokenCount": 135,
               "candidatesTokenCount": 18,
-              "totalTokenCount": 206,
+              "totalTokenCount": 226,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
                   "tokenCount": 135
                 }
               ],
-              "thoughtsTokenCount": 53,
+              "thoughtsTokenCount": 73,
               "serviceTier": "standard"
             },
-            "modelVersion": "gemini-3.7-flash",
-            "responseId": "ZCd-arSXEJ7ajrEPgN_D6As"
+            "modelVersion": "gemini-3.8-flash",
+            "responseId": "0jyYarGWJ_KkjuMP29S5uQ0"
           },
           {
             "candidates": [
@@ -132,7 +133,7 @@
                         "args": {
                           "expression": "42 * 17"
                         },
-                        "id": "call_99923"
+                        "id": "call_1948140"
                       }
                     }
                   ],
@@ -144,18 +145,18 @@
             "usageMetadata": {
               "promptTokenCount": 135,
               "candidatesTokenCount": 37,
-              "totalTokenCount": 225,
+              "totalTokenCount": 245,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
                   "tokenCount": 135
                 }
               ],
-              "thoughtsTokenCount": 53,
+              "thoughtsTokenCount": 73,
               "serviceTier": "standard"
             },
-            "modelVersion": "gemini-3.7-flash",
-            "responseId": "ZCd-arSXEJ7ajrEPgN_D6As"
+            "modelVersion": "gemini-3.8-flash",
+            "responseId": "0jyYarGWJ_KkjuMP29S5uQ0"
           },
           {
             "candidates": [
@@ -175,18 +176,18 @@
             "usageMetadata": {
               "promptTokenCount": 135,
               "candidatesTokenCount": 37,
-              "totalTokenCount": 225,
+              "totalTokenCount": 245,
               "promptTokensDetails": [
                 {
                   "modality": "TEXT",
                   "tokenCount": 135
                 }
               ],
-              "thoughtsTokenCount": 53,
+              "thoughtsTokenCount": 73,
               "serviceTier": "standard"
             },
-            "modelVersion": "gemini-3.7-flash",
-            "responseId": "ZCd-arSXEJ7ajrEPgN_D6As"
+            "modelVersion": "gemini-3.8-flash",
+            "responseId": "0jyYarGWJ_KkjuMP29S5uQ0"
           }
         ],
         "byte_segments": [],
@@ -201,7 +202,8 @@
                 "Server": "scaffolding on HTTPServer2",
                 "X-XSS-Protection": "0",
                 "X-Frame-Options": "SAMEORIGIN",
-                "X-Content-Type-Options": "nosniff"
+                "X-Content-Type-Options": "nosniff",
+                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
               }
             },
             "candidates": [
@@ -210,13 +212,13 @@
                   "parts": [
                     {
                       "function_call": {
-                        "id": "call_99922",
+                        "id": "call_1948136",
                         "args": {
                           "location": "Paris, France"
                         },
                         "name": "get_weather"
                       },
-                      "thought_signature": "EsQCCsECARFNMg9in6PNI2KcWEzZkWRKYD8f0_bm1l701aySg7zzWXJmSrI7mlCCozCP-SrC-K7Rz14hXrf-NXZzQGZRnFd4jw1UIUHxPw3Vrs9YF4ejKfuvqR5gpjWnR-D75JJMuJJc3WwRCYyLnjAEk8s9drLxgkzVfxsX6BKgRGuPdcZ3yf59cy2ruXENO5nhI5EKzlIjvyrloSi35VGT0TsGrBeJZapNu7I3XoBu4P1P9XE6b1jMEk8AeMIAITdpLONm_fviQFkWVtBZkBwtub09IyDa9xHnZ4Cyr_3nSPD3JvZQTeqe2V_L8XKqkEDvFKCJOJ4GFTRFXgvl3MosbACLvXcLtdXFe2IbauAzcrmuD6o26bPiYz1beu78dN24N9fqTort_ZUW_UszqgNAe5pFJLcPaZMcbAchLHr_Kz7YGOXq"
+                      "thought_signature": "EvwCCvkCARFNMg98Hpepc4gvl0hRUFu0afuu5OryMnKrhrdCnncQrmH9wjrA_op6w4Ex06xpTZ3ORQG0Q9wthbN4-B2ogIi55xVyXZHlyfNnOJcgNYPAzCut9TDTi2kAeFhGHIiE-cwFEazKlBPktN_1X41mKy3kLxeWxNlUoK-5Eatq9x5KBxshNnI-ShK8cRRZPEOfvnQskWbOT53vO4oIKqR0DuIBzr9VP6RVPQW0B4GvgBRy4d0v3hA2zkTZ1FGjpY3AbAdtLX1T9XngvpwLDNv__Rcn4OMb93OrqMUbLdlqdaXA2Uh1XCjvUqQXSPupEYJMl3r23RVlcear1Zbcdamfu3yQyqHq6RwGGbNhAw6BWonLQJfKJ7htPKJcQ0SMe-xtVSlh36vWsExUlf-ngTi3it_Zp5yBVcDlZLN3Pizw1qf2MZV690dbta_GN1uQ9x1B9j1tDFaECjqm2I0xabgwYnYyCFnz5yjBPH2pjsUfR0Y3BDBvvN5v5nA="
                     }
                   ],
                   "role": "model"
@@ -224,8 +226,8 @@
                 "index": 0
               }
             ],
-            "model_version": "gemini-3.7-flash",
-            "response_id": "ZCd-arSXEJ7ajrEPgN_D6As",
+            "model_version": "gemini-3.8-flash",
+            "response_id": "0jyYarGWJ_KkjuMP29S5uQ0",
             "usage_metadata": {
               "candidates_token_count": 18,
               "prompt_token_count": 135,
@@ -235,8 +237,8 @@
                   "token_count": 135
                 }
               ],
-              "thoughts_token_count": 53,
-              "total_token_count": 206
+              "thoughts_token_count": 73,
+              "total_token_count": 226
             }
           },
           {
@@ -249,7 +251,8 @@
                 "Server": "scaffolding on HTTPServer2",
                 "X-XSS-Protection": "0",
                 "X-Frame-Options": "SAMEORIGIN",
-                "X-Content-Type-Options": "nosniff"
+                "X-Content-Type-Options": "nosniff",
+                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
               }
             },
             "candidates": [
@@ -258,7 +261,7 @@
                   "parts": [
                     {
                       "function_call": {
-                        "id": "call_99923",
+                        "id": "call_1948140",
                         "args": {
                           "expression": "42 * 17"
                         },
@@ -271,8 +274,8 @@
                 "index": 0
               }
             ],
-            "model_version": "gemini-3.7-flash",
-            "response_id": "ZCd-arSXEJ7ajrEPgN_D6As",
+            "model_version": "gemini-3.8-flash",
+            "response_id": "0jyYarGWJ_KkjuMP29S5uQ0",
             "usage_metadata": {
               "candidates_token_count": 37,
               "prompt_token_count": 135,
@@ -282,8 +285,8 @@
                   "token_count": 135
                 }
               ],
-              "thoughts_token_count": 53,
-              "total_token_count": 225
+              "thoughts_token_count": 73,
+              "total_token_count": 245
             }
           },
           {
@@ -296,7 +299,8 @@
                 "Server": "scaffolding on HTTPServer2",
                 "X-XSS-Protection": "0",
                 "X-Frame-Options": "SAMEORIGIN",
-                "X-Content-Type-Options": "nosniff"
+                "X-Content-Type-Options": "nosniff",
+                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000"
               }
             },
             "candidates": [
@@ -313,8 +317,8 @@
                 "index": 0
               }
             ],
-            "model_version": "gemini-3.7-flash",
-            "response_id": "ZCd-arSXEJ7ajrEPgN_D6As",
+            "model_version": "gemini-3.8-flash",
+            "response_id": "0jyYarGWJ_KkjuMP29S5uQ0",
             "usage_metadata": {
               "candidates_token_count": 37,
               "prompt_token_count": 135,
@@ -324,8 +328,8 @@
                   "token_count": 135
                 }
               ],
-              "thoughts_token_count": 53,
-              "total_token_count": 225
+              "thoughts_token_count": 73,
+              "total_token_count": 245
             }
           }
         ]
