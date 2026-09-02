@@ -1468,16 +1468,12 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     "get_mcp_server_status": _metadata(
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
-        # OUTPUT_UNTRUSTED: the per-server payload lists tool names published by the
-        # remote server, which the deployment does not author.
-        ToolTag.OUTPUT_UNTRUSTED,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     "reconnect_mcp_server": _metadata(
         ToolTag.STATE_CHANGING,
         ToolTag.SENSITIVE_DATA,
-        # OUTPUT_UNTRUSTED: the result embeds the same remote-authored server status
-        # payload as get_mcp_server_status.
-        ToolTag.OUTPUT_UNTRUSTED,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     "get_resolved_config": _metadata(
         ToolTag.READ_ONLY,
@@ -1492,9 +1488,7 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     "get_profile_tool_inventory": _metadata(
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
-        # OUTPUT_UNTRUSTED: the on-demand catalog breakdown renders MCP tool names
-        # and summaries, which remote servers author.
-        ToolTag.OUTPUT_UNTRUSTED,
+        ToolTag.OUTPUT_TRUSTED,
     ),
     "resolve_tool_policy": _metadata(
         ToolTag.READ_ONLY,

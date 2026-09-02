@@ -437,8 +437,19 @@ ENGINEER_TRUSTED_OUTPUT_ALLOWLIST = {
     "get_user_documentation_content": "documentation packaged with the app",
     "get_resolved_config": "the deployment's own configuration, redacted",
     "get_profile_config": "one profile's configuration, redacted",
-    "resolve_tool_policy": "a policy decision and the rule that produced it",
     "get_system_info": "interpreter, platform and dialect facts",
+    # The MCP-registry diagnostics report on servers the operator configured
+    # and has therefore already approved: the names and descriptions those
+    # servers publish sit on the trusted side of the same boundary as the rest
+    # of the deployment's configuration, and their tool definitions are already
+    # injected into every profile that reaches them, on every turn. If that
+    # approval is ever withdrawn, the fix is admission control on MCP tool
+    # definitions -- one chokepoint at the prompt -- not taint on the
+    # diagnostics that echo them back.
+    "get_mcp_server_status": "connection state for operator-configured servers",
+    "reconnect_mcp_server": "the same operator-configured server status payload",
+    "get_profile_tool_inventory": "size accounting over configured tool sources",
+    "resolve_tool_policy": "a policy decision and the rule that produced it",
     "get_automation_stats": "execution counts, timestamps and statuses only",
     "get_note": "merges the note's stored provenance onto the turn on read",
     "list_notes": "merges each listed note's stored provenance on read",
@@ -535,7 +546,6 @@ def test_engineer_reads_that_return_external_content_are_untrusted() -> None:
         "list_delegations",
         "list_worker_tasks",
         "list_pending_callbacks",
-        "get_mcp_server_status",
         "list_automations",
         "get_automation",
     ):
