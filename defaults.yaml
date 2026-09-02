@@ -681,9 +681,9 @@ default_profile_settings:
             - "delegate_to_service"
           argument_equals:
             target_service_id: "engineer"
-        decision: "confirm"
+        decision: "review"
         priority: 99
-        description: "Delegating to the read-only engineer profile is allowed but requires user confirmation."
+        description: "Delegating to the read-only engineer profile is allowed when approved by tool-call review."
       - match:
           names:
             - "delegate_to_service"
@@ -882,9 +882,9 @@ service_profiles:
               - "delegate_to_service"
             argument_equals:
               target_service_id: "engineer"
-          decision: "confirm"
+          decision: "review"
           priority: 99
-          description: "Delegating to the read-only engineer profile is allowed but requires user confirmation."
+          description: "Delegating to the read-only engineer profile is allowed when approved by tool-call review."
     slash_commands:
       - "/browse"
   - id: "browser_visual_profile"
@@ -1342,9 +1342,9 @@ service_profiles:
               - "delegate_to_service"
             argument_equals:
               target_service_id: "engineer"
-          decision: "confirm"
+          decision: "review"
           priority: 99
-          description: "Delegating to the read-only engineer profile is allowed but requires user confirmation."
+          description: "Delegating to the read-only engineer profile is allowed when approved by tool-call review."
     slash_commands: []
   - id: "telephone_external"
     description: "Restricted profile for external callers. Takes messages and notifies family."
@@ -1578,9 +1578,9 @@ service_profiles:
               - "delegate_to_service"
             argument_equals:
               target_service_id: "engineer"
-          decision: "confirm"
+          decision: "review"
           priority: 99
-          description: "Delegating to the read-only engineer profile is allowed but requires user confirmation."
+          description: "Delegating to the read-only engineer profile is allowed when approved by tool-call review."
         - match:
             names:
               - "delegate_to_service"
@@ -1601,6 +1601,8 @@ service_profiles:
     description: "Engineering diagnostic profile with read-only access to source code, database, and error logs. Use for investigating application issues, debugging problems, and filing bug reports. Cannot modify data or execute code."
     processing_config:
       include_aggregated_context: true
+      review_guidance: |
+        This profile investigates the application. Its reads return content authored by anyone who has ever emailed, messaged or browsed through the assistant. Aligned egress carries diagnostic detail about the application — stack traces, component names, reproduction steps — never household content: no note text, message bodies, calendar entries, contact details or credentials.
       # Only providers that declare their own provenance may reach this profile:
       # its diagnostic reads already taint the turn, and a provider that injects
       # externally sourced text without declaring it (an emailed invitation's
@@ -1645,10 +1647,10 @@ service_profiles:
           - You CANNOT modify any data (no INSERT, UPDATE, DELETE)
           - You CANNOT execute code or scripts inside the application
           - You CANNOT send messages to users
-          - You CAN delegate to another profile to hand off a fix or follow-up action, but only after the user confirms (so a human always approves before the engineer reaches outside its read-only sandbox)
+          - You CAN delegate to another profile to hand off a fix or follow-up action (judged by automated review)
           - You CAN create GitHub issues to report bugs (requires confirmation)
-          - You CAN reconnect a failed MCP server (requires confirmation)
-          - You CAN spawn isolated AI coding workers (spawn_worker, requires confirmation) to take on self-contained coding tasks, including work on this application's own code: the worker has network access and checks the code out itself by cloning the public repository (github.com/werdnum/family-assistant). Its sandbox is NOT given a mounted copy of the running app's files, its database, or any Family Assistant tools/data. A worker returns its results as output files (e.g. a patch or a written analysis) that you read back with read_task_result; it cannot change the running application directly. Put everything the worker needs — repo URL, branch, the change to make, and how to report back — in the task description. Reading worker results needs no confirmation; cancelling a worker (cancel_worker_task) requires confirmation.
+          - You CAN reconnect a failed MCP server
+          - You CAN spawn isolated AI coding workers (spawn_worker, judged by automated review) to take on self-contained coding tasks, including work on this application's own code: the worker has network access and checks the code out itself by cloning the public repository (github.com/werdnum/family-assistant). Its sandbox is NOT given a mounted copy of the running app's files, its database, or any Family Assistant tools/data. A worker returns its results as output files (e.g. a patch or a written analysis) that you read back with read_task_result; it cannot change the running application directly. Put everything the worker needs — repo URL, branch, the change to make, and how to report back — in the task description. Reading worker results and cancelling a worker (cancel_worker_task) need no confirmation.
 
           ## Investigation Approach
 
@@ -1662,7 +1664,7 @@ service_profiles:
           6b. For "tool missing" / "tool call denied" reports: use resolve_tool_policy to see the live allow/deny/confirm decision and the matching policy rule for the affected profile before concluding anything is broken
           7. Summarize findings and recommend fixes
           8. If appropriate, create a GitHub issue with your findings
-          9. For a self-contained coding task — including a fix or investigation against this repo, which the worker clones itself from GitHub — offer to spawn an isolated AI coding worker (requires confirmation); it returns a patch/analysis as output files rather than changing the running app, so describe the change and how to report back in the task description
+          9. For a self-contained coding task — including a fix or investigation against this repo, which the worker clones itself from GitHub — offer to spawn an isolated AI coding worker (judged by automated review); it returns a patch/analysis as output files rather than changing the running app, so describe the change and how to report back in the task description
     tools_policy:
       default_decision: "deny"
       rules:
@@ -1684,6 +1686,7 @@ service_profiles:
               - "get_system_info"
               - "get_message_history"
               - "read_task_result"
+              - "cancel_worker_task"
               - "list_worker_tasks"
               - "list_notes"
               - "get_note"
@@ -1723,22 +1726,20 @@ service_profiles:
         - match:
             names:
               - "delegate_to_service"
-          decision: "confirm"
+          decision: "review"
           priority: 20
-          description: "The engineer may hand off to another profile (e.g. to implement a fix), but only with user confirmation. Internal/external-caller profiles are denied above."
+          description: "The engineer may hand off to another profile (e.g. to implement a fix) when approved by tool-call review. Internal/external-caller profiles are denied above."
         - match:
             names:
               - "create_github_issue"
-              - "reconnect_mcp_server"
           decision: "confirm"
           priority: 20
         - match:
             names:
               - "spawn_worker"
-              - "cancel_worker_task"
-          decision: "confirm"
+          decision: "review"
           priority: 20
-          description: "The engineer may launch or cancel isolated AI coding workers (sandboxed, no Family Assistant data access), but a human must approve each state-changing worker action to preserve the profile's read-only posture."
+          description: "The engineer may launch isolated AI coding workers (sandboxed, no Family Assistant data access) when approved by tool-call review."
     slash_commands:
       - "/engineer"
   - id: "ops_automation"

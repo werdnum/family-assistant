@@ -47,9 +47,10 @@ Source code tools validate all file paths using `PROJECT_ROOT` from `family_assi
 
 ### Delegation Security
 
-Delegation to and from the engineer profile is gated by confirmation rather than blocked outright:
+Delegation to and from the engineer profile is gated by tool-call review rather than blocked
+outright:
 
-- **Into the engineer** (`delegate_to_service` with `target_service_id: "engineer"`): a `confirm`
+- **Into the engineer** (`delegate_to_service` with `target_service_id: "engineer"`): a `review`
   rule (priority 99) is present in every profile that can delegate at all. Profiles that inherit
   `default_profile_settings` (e.g. `default_assistant`) get it from there; profiles that replace
   `tools_policy` wholesale and still permit `delegate_to_service` — `browser_profile`, `telephone`,
@@ -58,25 +59,25 @@ Delegation to and from the engineer profile is gated by confirmation rather than
   on every source that can reach the engineer; otherwise a wholesale-replacing profile would allow
   the engineer unconditionally.
 - **Out of the engineer**: the engineer's `tools_policy` allows `delegate_to_service` with a
-  `confirm` decision, so the engineer can hand a fix or follow-up action to another profile — but
-  only after the user confirms. Higher-priority (99) `deny` rules block hand-offs to the internal /
-  external-caller profiles that the ordinary delegating policies also deny (`reminder`,
-  `event_handler`, `telephone_external`), so confirmation cannot be used to start those reserved
-  profiles.
+  `review` decision, so the engineer can hand a fix or follow-up action to another profile when
+  approved by tool-call review (falling back to user confirmation if review is unavailable or
+  uncertain). Higher-priority (99) `deny` rules block hand-offs to the internal / external-caller
+  profiles that the ordinary delegating policies also deny (`reminder`, `event_handler`,
+  `telephone_external`), so review/confirmation cannot be used to start those reserved profiles.
 
-The confirmation requirement preserves the engineer's read-only posture in practice: a human always
-approves before the engineer hands work to a *different* profile (the engineer diagnoses and
-reports; a human or another profile implements fixes), while still letting investigation and
-hand-off flow without a hard block. The `delegate_to_service` confirmation prompt shows the full
-target, the **complete** request text, and any attachment ids. So the approver can never
-rubber-stamp a silently-cut request, `delegate_to_service` refuses any request longer than
-`MAX_DELEGATION_REQUEST_CHARS` (3000 — well above the generic 1200-char field bound, and sized to
-keep the whole prompt within Telegram's single-message confirmation budget): the tool returns an
-error instead of delegating, and the confirmation prompt for such a request states plainly that the
+The review requirement preserves the engineer's read-only posture in practice: an automated judge
+verifies the handoff alignment before the engineer hands work to a *different* profile (the engineer
+diagnoses and reports; a human or another profile implements fixes), while still letting
+investigation and hand-off flow without friction for benign tasks. The `delegate_to_service` payload
+shows the full target, the **complete** request text, and any attachment ids. So the reviewer /
+approver can never evaluate a silently-cut request, `delegate_to_service` refuses any request longer
+than `MAX_DELEGATION_REQUEST_CHARS` (3000 — well above the generic 1200-char field bound, and sized
+to keep the whole prompt within Telegram's single-message confirmation budget): the tool returns an
+error instead of delegating, and any confirmation prompt for such a request states plainly that the
 hand-off will be refused rather than displaying a partial body. Bulk content therefore belongs in an
 attachment (referenced via `attachment_ids`), not the request string. Read-only delegation status
-tools (`get_delegation_status`, `list_delegations`) are allowed without confirmation so the engineer
-can track an async hand-off.
+tools (`get_delegation_status`, `list_delegations`) are allowed without review so the engineer can
+track an async hand-off.
 
 **Self-delegation.** `engineer → engineer` is *not* confirm-gated: the runtime injects a synthetic
 self-delegation `ALLOW` rule (in `_build_profile_policy_engine`) that, by design, lets every profile
@@ -86,20 +87,23 @@ consistent with the project-wide invariant that self-delegation is never a privi
 capability. The confirmation gate therefore applies to delegation *between distinct* profiles, which
 is where the trust boundary is actually crossed.
 
-### Confirmation for Side Effects
+### Confirmation and Judged Review for Side Effects
 
-Every engineer tool with side effects is gated behind user confirmation rather than allowed
-outright: `create_github_issue` (creates an issue on GitHub), `reconnect_mcp_server` (tears down and
-re-establishes an MCP session), and the state-changing worker actions `spawn_worker` /
-`cancel_worker_task` (launch or stop an isolated AI coding worker). This keeps the profile's
-effective posture read-only: a human approves before anything outside the sandbox changes.
+Engineer tools with external side effects are gated to protect the profile's read-only posture:
 
-The worker actions carry custom confirmation renderers so the approver reviews the actual payload,
-not a bare tool name: `spawn_worker` shows the agent, the **complete** task description (refusing,
-like delegation, any description over `MAX_WORKER_TASK_DESCRIPTION_CHARS` = 3000 or a
-`context_paths` rendering over the generic 1200-char bound, rather than truncating what the approver
-sees), the context paths, and the timeout; `cancel_worker_task` looks the task up and shows its
-status and description alongside the id.
+- `create_github_issue` requires user confirmation because it posts publicly to a shared repository.
+- `cancel_worker_task` and `reconnect_mcp_server` are allowed outright because they carry no
+  model-chosen egress content and only affect scoped background jobs or configured connections.
+- `spawn_worker` and `delegate_to_service` are gated by tool-call review: aligned actions proceed
+  without prompting the user, while suspicious or unaligned calls require confirmation or are
+  denied.
+
+The worker actions carry custom confirmation renderers so when human review is needed, the approver
+reviews the actual payload, not a bare tool name: `spawn_worker` shows the agent, the **complete**
+task description (refusing, like delegation, any description over
+`MAX_WORKER_TASK_DESCRIPTION_CHARS` = 3000 or a `context_paths` rendering over the generic 1200-char
+bound, rather than truncating what the approver sees), the context paths, and the timeout;
+`cancel_worker_task` looks the task up and shows its status and description alongside the id.
 
 ### Self-Awareness of Restrictions
 
@@ -126,9 +130,9 @@ engineer itself.
 | `read_task_result`     | Read the result of an AI worker task                   | None                                  |
 | `list_worker_tasks`    | List AI worker tasks and their statuses                | None                                  |
 | `create_github_issue`  | File bug reports on GitHub                             | Creates issue (requires confirmation) |
-| `reconnect_mcp_server` | Re-establish a failed MCP server session               | Reconnects (requires confirmation)    |
-| `spawn_worker`         | Launch an isolated AI coding worker to implement a fix | Starts worker (requires confirmation) |
-| `cancel_worker_task`   | Cancel a running AI worker task                        | Stops worker (requires confirmation)  |
+| `reconnect_mcp_server` | Re-establish a failed MCP server session               | Reconnects (allowed)                  |
+| `spawn_worker`         | Launch an isolated AI coding worker to implement a fix | Starts worker (requires review)       |
+| `cancel_worker_task`   | Cancel a running AI worker task                        | Stops worker (allowed)                |
 
 The profile also includes existing read-only tools: `list_notes`, `get_note`, `search_documents`,
 `get_full_document_content`, `get_user_documentation_content`, `list_pending_callbacks`,
@@ -146,21 +150,21 @@ The engineer profile and `spawn_worker` serve complementary but distinct purpose
 
 They do not overlap in capability: workers cannot access the database, error logs, or any Family
 Assistant tools or data; the engineer cannot execute code or modify files itself. The engineer
-profile *can* invoke `spawn_worker` directly (behind user confirmation) so an investigation can hand
-a self-contained coding task to a sandboxed worker without leaving the engineer conversation. The
-worker sandbox is given only the task's own directory, but it has network access and can clone the
-public repository itself, so it *can* work on this application's code — it just receives no mounted
-local checkout and no `context_paths` mounts (both backends document that parameter as unused), and
-returns its work as output files (e.g. a patch) rather than modifying the running application.
-Everything the worker needs therefore goes in the task description, and the engineer's system prompt
-says so. Because the worker sandbox has no access to Family Assistant data, this crosses no
-Rule-of-Two boundary beyond the state change of launching the worker, which is what the confirmation
-covers.
+profile *can* invoke `spawn_worker` directly (gated by tool-call review) so an investigation can
+hand a self-contained coding task to a sandboxed worker without leaving the engineer conversation.
+The worker sandbox is given only the task's own directory, but it has network access and can clone
+the public repository itself, so it *can* work on this application's code — it just receives no
+mounted local checkout and no `context_paths` mounts (both backends document that parameter as
+unused), and returns its work as output files (e.g. a patch) rather than modifying the running
+application. Everything the worker needs therefore goes in the task description, and the engineer's
+system prompt says so. Because the worker sandbox has no access to Family Assistant data, this
+crosses no Rule-of-Two boundary beyond the state change of launching the worker, which is what the
+review covers.
 
 ## Usage
 
 Activate via the `/engineer` slash command or by delegating to the `engineer` profile (delegation
-into the engineer requires user confirmation).
+into the engineer is gated by tool-call review).
 
 ## History
 
