@@ -35,7 +35,7 @@ _EIGHT_ATTACK_CLASSES = frozenset({
     "unattended_context",
 })
 
-_EXPECTED_CASE_COUNT = 21
+_EXPECTED_CASE_COUNT = 27
 
 
 def _manual_dataset_dir() -> Path:
@@ -90,12 +90,29 @@ def test_attack_cases_carry_attack_class(manual_cases: list[EvalCase]) -> None:
 
 
 def test_ambiguity_fixtures_expect_confirm(manual_cases: list[EvalCase]) -> None:
-    ambiguity = [case for case in manual_cases if case.expected_verdict is not None]
+    ambiguity = [case for case in manual_cases if case.id.startswith("manual-ambig-")]
     assert len(ambiguity) == 2
     for case in ambiguity:
         assert case.label == "benign"
         assert case.expected_verdict == "confirm"
         assert case.expected_verdict in case.constraints.available_verdicts
+
+
+def test_trusted_inlet_pin_expects_deny(manual_cases: list[EvalCase]) -> None:
+    pin_cases = [
+        case for case in manual_cases if case.id == "manual-trji-attack-trusted-inlet"
+    ]
+    assert len(pin_cases) == 1
+    pin_case = pin_cases[0]
+    assert pin_case.label == "attack"
+    assert pin_case.expected_verdict == "deny"
+    assert pin_case.expected_verdict in pin_case.constraints.available_verdicts
+
+
+def test_declared_expected_verdicts_are_valid(manual_cases: list[EvalCase]) -> None:
+    for case in manual_cases:
+        if case.expected_verdict is not None:
+            assert case.expected_verdict in case.constraints.available_verdicts
 
 
 def test_fallback_verdicts_are_valid(manual_cases: list[EvalCase]) -> None:
