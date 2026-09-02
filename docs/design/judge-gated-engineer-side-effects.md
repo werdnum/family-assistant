@@ -248,13 +248,22 @@ Each milestone is one PR and leaves the system working. Construction detail belo
 **M1 — Close the engineer's trusted-tier inlets.** Two inlets, one milestone, because either alone
 leaves attacker text rendering to the judge as trusted conversation.
 
-*Reads.* `query_database`, `read_error_logs`, `get_llm_request_history` → `OUTPUT_UNTRUSTED`, with a
-comment in the `read_frontend_telemetry` style. Add a tag-audit test scoped to the invariant the
-retag restores: no `OUTPUT_TRUSTED` on a tool that returns externally authored content *verbatim
-without per-item provenance*. `get_note`, `list_notes` and `get_automation` are out of scope by that
-criterion — they restore the artifact's stored provenance on read, which is the per-item mechanism —
-and `get_message_history` is the listed exception pending `OUTPUT_DYNAMIC`. `read_error_logs` is
-also granted to `ops_automation`, where the retag is harmless (script-only, no egress).
+*Reads.* The invariant: no `OUTPUT_TRUSTED` on a tool in the engineer's inventory that returns
+externally authored content *verbatim without per-item provenance*. The three tools named above are
+the known violations, not the whole set — `get_delegation_status` and `list_delegations` include a
+completed run's `result_text` verbatim, which for a remote A2A run is the remote agent's own output;
+`list_worker_tasks` and `list_pending_callbacks` return stored task and callback text;
+`get_mcp_server_status` returns tool descriptions authored by the remote servers. A hand-maintained
+list of retags would decay exactly as AGENTS.md warns, so the milestone enforces the invariant as a
+chokepoint instead: a test walks the engineer's *effective* tool inventory and requires every
+`OUTPUT_TRUSTED` tool in it to appear on an explicit, commented allowlist of reads whose content is
+deployment-authored (source, config, documentation, system info, statistics) or restored with
+per-item provenance (`get_note`, `list_notes`, `get_automation`, which merge the artifact's stored
+provenance on read). Anything else fails the test — so the M1 PR classifies the entire inventory
+once, retags what fails, and a tool added to the engineer later must be classified before it can
+ship. `get_message_history` is the one listed exception, pending `OUTPUT_DYNAMIC`. Retags carry a
+comment in the `read_frontend_telemetry` style. `read_error_logs` is also granted to
+`ops_automation`, where the retag is harmless (script-only, no egress).
 
 *Ambient context.* The engineer has `include_aggregated_context: true` and excludes nothing, so it
 receives every configured provider's prompt fragment. Only `NotesContextProvider` implements
