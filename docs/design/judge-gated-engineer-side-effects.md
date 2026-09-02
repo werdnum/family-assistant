@@ -2,11 +2,16 @@
 
 ## Status
 
-Proposed. A pilot of the shipped tool-call reviewer as the *gate* rather than the *shadow* on one
-profile, before the deployment-wide `enforce` decision that
+Proposed; **M1 implemented**. A pilot of the shipped tool-call reviewer as the *gate* rather than
+the *shadow* on one profile, before the deployment-wide `enforce` decision that
 [auto-tool-call-review.md](auto-tool-call-review.md) leaves as M5. Nothing here adds mechanism to
 the reviewer; it corrects one input the engineer profile feeds it, then moves the engineer's
 side-effect gates from human confirmation to judged review, one static rule at a time.
+
+M1 has landed: the engineer's trusted-tier inlets are closed on both sides, enforced by the two
+invariant tests the milestone specifies rather than by a maintained list. The pilot dataset's cutoff
+— the instant M1 reaches production — is recorded here once it deploys; only `taint_audit_events`
+rows at or after it count toward M5's decision.
 
 ## Summary
 

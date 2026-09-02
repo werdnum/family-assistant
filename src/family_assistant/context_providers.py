@@ -1038,3 +1038,14 @@ class KnownUsersContextProvider(ContextProvider):
             f"[{self.name}] Formatted {len(self._chat_id_to_name_map)} known users into {len(fragments)} fragment(s)."
         )
         return fragments
+
+    async def get_context_taint_sources(self) -> tuple[TaintSource, ...]:
+        """Return no taint: the known-users map is deployment-authored config.
+
+        Names and chat ids come from the operator's ``users`` configuration,
+        never from a message, so this fragment introduces no external content.
+        Declared explicitly rather than omitted so the provider satisfies
+        :class:`TaintedContextProvider` and a profile that admits only
+        provenance-declaring providers can admit it.
+        """
+        return ()
