@@ -5,3 +5,4 @@ model reasons, provider envelopes, registry snapshots, and private corpus materi
 the local `.review-eval-local` tree.
 
 - [Gemini 3.7 Flash public browser-visibility gate, 2026-08-31](2026-08-31-gemini-3.7-flash/README.md)
+- [Gemini 3.7 Flash history-derived message review gate, 2026-09-02](2026-09-02-gemini-3.7-flash-history/README.md)
