@@ -272,12 +272,15 @@ list of retags would decay exactly as AGENTS.md warns, so the milestone enforces
 chokepoint instead: a test walks the engineer's *effective* tool inventory and requires every
 `OUTPUT_TRUSTED` tool in it to appear on an explicit, commented allowlist of reads whose content is
 deployment-authored (source, config, documentation, system info, statistics) or restored with
-per-item provenance (`get_note`, `list_notes`, `get_automation`, which merge the artifact's stored
-provenance on read). Anything else fails the test — so the M1 PR classifies the entire inventory
-once, retags what fails, and a tool added to the engineer later must be classified before it can
-ship. `get_message_history` is the one listed exception, pending `OUTPUT_DYNAMIC`. Retags carry a
-comment in the `read_frontend_telemetry` style. `read_error_logs` is also granted to
-`ops_automation`, where the retag is harmless (script-only, no egress).
+per-item provenance (`get_note` and `list_notes`, which merge the artifact's stored provenance on
+read; `get_automation` and `list_automations` do *not* today, and qualify only once they merge the
+definition-record resolution that [executable-definition-taint.md](executable-definition-taint.md)
+already computes at firing time — otherwise they are retagged). Anything else fails the test — so
+the M1 PR classifies the entire inventory once, retags what fails, and a tool added to the engineer
+later must be classified before it can ship. `get_message_history` is the one listed exception,
+pending `OUTPUT_DYNAMIC`. Retags carry a comment in the `read_frontend_telemetry` style.
+`read_error_logs` is also granted to `ops_automation`, where the retag is harmless (script-only, no
+egress).
 
 *Ambient context.* The engineer has `include_aggregated_context: true` and excludes nothing, so it
 receives every configured provider's prompt fragment. Only `NotesContextProvider` implements
