@@ -76,6 +76,8 @@ class ToolCallReviewConfig(BaseModel):
 
     enabled: bool = True
     provider: str | None = "google"
+    # See defaults.yaml: 3.8 roughly sextuples benign friction on real household
+    # tool calls without allowing fewer attacks, so the judge stays on 3.7.
     model: str = "gemini-3.7-flash"
     retry_config: RetryConfig | None = None
     timeout_seconds: float = Field(default=30.0, gt=0)
@@ -229,7 +231,7 @@ class AntigravityConfig(BaseModel):
     # The agent's reasoning model. Pinned rather than left to the API default
     # so an upstream default change is a config change here, not a silent
     # behaviour change in a profile users have calibrated their prompts to.
-    model: str = "gemini-3.7-flash"
+    model: str = "gemini-3.8-flash"
     # Ceiling on the tokens one agent run may consume. Unset means the API's
     # own default; the agent plans and executes autonomously in a sandbox, so
     # this is the only bound on how long it iterates other than wall clock.
@@ -1520,7 +1522,7 @@ class AppConfig(BaseSettings):
     )
 
     # Model configuration
-    model: str = "gemini/gemini-3.7-flash"
+    model: str = "gemini/gemini-3.8-flash"
     embedding_model: str = "gemini/gemini-embedding-001"
     embedding_dimensions: int = 1536
     # Optional explicit embedding provider selection. When None, the provider is

@@ -55,7 +55,7 @@ def test_shipped_coder_profile_runs_gemini_37_flash_on_the_agent() -> None:
     assert processing_config.provider == "google"
     assert is_interactions_agent_model(processing_config.llm_model or "") is True
     assert processing_config.antigravity_config is not None
-    assert processing_config.antigravity_config.model == "gemini-3.7-flash"
+    assert processing_config.antigravity_config.model == "gemini-3.8-flash"
     assert "/coder" in profile.slash_commands
 
 
@@ -167,7 +167,7 @@ def test_shipped_coder_config_reaches_the_agent_config_payload() -> None:
     assert kwargs["agent"] == processing_config.llm_model
     assert kwargs["agent_config"] == {
         "type": "antigravity",
-        "model": "gemini-3.7-flash",
+        "model": "gemini-3.8-flash",
     }
 
 
@@ -185,10 +185,10 @@ def test_antigravity_config_on_a_non_agent_profile_is_rejected() -> None:
         validate_antigravity_agent_config(
             "misconfigured",
             ProcessingConfig(
-                llm_model="gemini-3.7-flash",
-                antigravity_config={"model": "gemini-3.7-flash"},  # pyright: ignore[reportArgumentType]
+                llm_model="gemini-3.8-flash",
+                antigravity_config={"model": "gemini-3.8-flash"},  # pyright: ignore[reportArgumentType]
             ),
-            "gemini-3.7-flash",
+            "gemini-3.8-flash",
         )
 
 
@@ -202,7 +202,7 @@ def test_antigravity_profile_with_retry_config_is_rejected() -> None:
                 provider="google",
                 retry_config=RetryConfig(
                     primary=RetryModelConfig(model="antigravity-preview-05-2026"),
-                    fallback=RetryModelConfig(model="gemini-3.7-flash"),
+                    fallback=RetryModelConfig(model="gemini-3.8-flash"),
                 ),
             ),
             "antigravity-preview-05-2026",
@@ -223,10 +223,10 @@ def test_antigravity_named_only_inside_a_retry_chain_is_rejected() -> None:
                 provider="google",
                 retry_config=RetryConfig(
                     primary=RetryModelConfig(model="antigravity-preview-05-2026"),
-                    fallback=RetryModelConfig(model="gemini-3.7-flash"),
+                    fallback=RetryModelConfig(model="gemini-3.8-flash"),
                 ),
             ),
-            "gemini-3.7-flash",  # the application default, not the agent
+            "gemini-3.8-flash",  # the application default, not the agent
         )
 
 

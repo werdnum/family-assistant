@@ -61,7 +61,7 @@ from google import genai
 
 client = genai.Client()
 response = client.models.generate_content(
-    model="gemini-3.7-flash",
+    model="gemini-3.8-flash",
     contents="Explain quantum computing"
 )
 print(response.text)
@@ -74,7 +74,7 @@ import { GoogleGenAI } from "@google/genai";
 
 const ai = new GoogleGenAI({});
 const response = await ai.models.generateContent({
-  model: "gemini-3.7-flash",
+  model: "gemini-3.8-flash",
   contents: "Explain quantum computing"
 });
 console.log(response.text);
@@ -99,7 +99,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	resp, err := client.Models.GenerateContent(ctx, "gemini-3.7-flash", genai.Text("Explain quantum computing"), nil)
+	resp, err := client.Models.GenerateContent(ctx, "gemini-3.8-flash", genai.Text("Explain quantum computing"), nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -119,7 +119,7 @@ public class GenerateTextFromTextInput {
     Client client = new Client();
     GenerateContentResponse response =
         client.models.generateContent(
-            "gemini-3.7-flash",
+            "gemini-3.8-flash",
             "Explain quantum computing",
             null);
 

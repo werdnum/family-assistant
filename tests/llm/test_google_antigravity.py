@@ -95,7 +95,7 @@ def test_antigravity_model_ids_route_to_the_agent_path(model_id: str) -> None:
 
 def test_gemini_chat_model_is_not_an_interactions_agent() -> None:
     """The agent's own reasoning model, used directly, is an ordinary chat model."""
-    assert is_interactions_agent_model("gemini-3.7-flash") is False
+    assert is_interactions_agent_model("gemini-3.8-flash") is False
 
 
 @pytest.mark.asyncio
@@ -106,7 +106,7 @@ async def test_antigravity_stream_sends_agent_config_and_system_instruction(
     client = GoogleGenAIClient(
         api_key="test",
         model=ANTIGRAVITY_AGENT_ID,
-        antigravity_model="gemini-3.7-flash",
+        antigravity_model="gemini-3.8-flash",
     )
     mock_genai_client.aio.interactions.create = AsyncMock(
         return_value=_completing_stream("inter_ag_1", "Done.")
@@ -124,7 +124,7 @@ async def test_antigravity_stream_sends_agent_config_and_system_instruction(
     assert call_kwargs["agent"] == ANTIGRAVITY_AGENT_ID
     assert call_kwargs["agent_config"] == {
         "type": "antigravity",
-        "model": "gemini-3.7-flash",
+        "model": "gemini-3.8-flash",
     }
     assert call_kwargs["background"] is True
     assert call_kwargs["stream"] is True
@@ -162,7 +162,7 @@ async def test_antigravity_agent_config_carries_max_total_tokens(
     client = GoogleGenAIClient(
         api_key="test",
         model=ANTIGRAVITY_AGENT_ID,
-        antigravity_model="gemini-3.7-flash",
+        antigravity_model="gemini-3.8-flash",
         antigravity_max_total_tokens=250_000,
     )
     mock_genai_client.aio.interactions.create = AsyncMock(
@@ -174,7 +174,7 @@ async def test_antigravity_agent_config_carries_max_total_tokens(
     call_kwargs = mock_genai_client.aio.interactions.create.call_args.kwargs
     assert call_kwargs["agent_config"] == {
         "type": "antigravity",
-        "model": "gemini-3.7-flash",
+        "model": "gemini-3.8-flash",
         "max_total_tokens": 250_000,
     }
 
@@ -184,7 +184,7 @@ def test_antigravity_create_kwargs_validate_against_the_sdk_request_model() -> N
     client = GoogleGenAIClient(
         api_key="test",
         model=ANTIGRAVITY_AGENT_ID,
-        antigravity_model="gemini-3.7-flash",
+        antigravity_model="gemini-3.8-flash",
         antigravity_max_total_tokens=250_000,
     )
 
@@ -196,7 +196,7 @@ def test_antigravity_create_kwargs_validate_against_the_sdk_request_model() -> N
     body = _CREATE_INTERACTION_ADAPTER.validate_python({**kwargs, "stream": False})
     assert body.agent == ANTIGRAVITY_AGENT_ID
     assert body.agent_config.type == "antigravity"
-    assert body.agent_config.model == "gemini-3.7-flash"
+    assert body.agent_config.model == "gemini-3.8-flash"
     assert body.agent_config.max_total_tokens == 250_000
     assert body.system_instruction is not None
 
@@ -217,7 +217,7 @@ async def test_start_agent_interaction_submits_antigravity_without_streaming(
     client = GoogleGenAIClient(
         api_key="test",
         model=ANTIGRAVITY_AGENT_ID,
-        antigravity_model="gemini-3.7-flash",
+        antigravity_model="gemini-3.8-flash",
     )
     mock_interaction = MagicMock()
     mock_interaction.id = "inter_ag_submit"
@@ -232,7 +232,7 @@ async def test_start_agent_interaction_submits_antigravity_without_streaming(
     call_kwargs = mock_genai_client.aio.interactions.create.call_args.kwargs
     assert call_kwargs["stream"] is False
     assert call_kwargs["agent"] == ANTIGRAVITY_AGENT_ID
-    assert call_kwargs["agent_config"]["model"] == "gemini-3.7-flash"
+    assert call_kwargs["agent_config"]["model"] == "gemini-3.8-flash"
     assert call_kwargs["previous_interaction_id"] == "inter_ag_prev"
 
 
@@ -294,7 +294,7 @@ def _egress_client(network: EgressNetworkPayload) -> GoogleGenAIClient:
     return GoogleGenAIClient(
         api_key="test",
         model=ANTIGRAVITY_AGENT_ID,
-        antigravity_model="gemini-3.7-flash",
+        antigravity_model="gemini-3.8-flash",
         antigravity_egress_resolver=_FixedResolver(),
     )
 
@@ -389,7 +389,7 @@ async def test_default_sandbox_is_stated_rather_than_omitted(
     client = GoogleGenAIClient(
         api_key="test",
         model=ANTIGRAVITY_AGENT_ID,
-        antigravity_model="gemini-3.7-flash",
+        antigravity_model="gemini-3.8-flash",
     )
     mock_interaction = MagicMock()
     mock_interaction.id = "inter_ag_plain"
@@ -409,7 +409,7 @@ async def test_interactive_path_also_states_the_default_sandbox(
     client = GoogleGenAIClient(
         api_key="test",
         model=ANTIGRAVITY_AGENT_ID,
-        antigravity_model="gemini-3.7-flash",
+        antigravity_model="gemini-3.8-flash",
     )
     mock_genai_client.aio.interactions.create = AsyncMock(
         return_value=_completing_stream("inter_ag_plain_stream", "Done.")

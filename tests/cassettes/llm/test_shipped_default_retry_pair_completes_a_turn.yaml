@@ -1,44 +1,55 @@
 interactions:
-  - request:
-      body: '{"contents": [{"parts": [{"text": "Reply with exactly: ''Primary response received''"}], "role": "user"}], "generationConfig": {"mediaResolution": "MEDIA_RESOLUTION_HIGH"}}'
-      headers:
-        Content-Type:
-          - application/json
-        user-agent:
-          - google-genai-sdk/2.10.0 gl-python/3.13.12
-        x-goog-api-client:
-          - google-genai-sdk/2.10.0 gl-python/3.13.12
-      method: post
-      uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent
-    response:
-      body:
-        string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\": [\n          {\n            \"text\": \"Primary response received\",\n            \"thoughtSignature\": \"EuUECuIEARFNMg82ePDBynAYReL8O+hJr/0QYHZiqFOr0oekLlR+ZG+3H5JJWCWnW8TPSDUmC+2uftZ02MI9gRi5l+4e3UHseuQqQk1YfYnEyY31f4XUWPbTLnLOaFcY0cQbcWb2OPs4Ux6QUyXIOCVNE7VDfUXdA5KjW7Db5YNvHoUBMKG2Gye1+vxgi6ZIsus2zKpmsJWGLQY+f/B4qj3GyJEWeerghFjLWtRSOOe7enunAuRDVAkoaiAFC58MmZ9SEdGK5egB5SpMIrfZTOlTJ60pjUqRuK0HzglqY5EEqWv02SyV+RSnqWfHC/W3OuteF3McTUiS8RvviZB8KduqYwmn8hLajPvD3wN+yQgiAIER3YUmvqpqVLgFlzJNyau3VHCszbMrDrkMX3pyWorg9CJujsR8TwOuebTxy+YMP0LWGPAn9JxuuNrnZXd8EUZBB5oISXq+usq/byCE1bE+6oeqIMpxqs4xVTQDfjv/prSAv1Yxg6CmjxEu35BUsFn+Y/fFrC2HQr53Fcpk8RxoBcU2uiZc+u+bl4PjMuyVUZcI/axWeMvb7rhW8h2R6Y5VRbHeeZZqwqsohQcoLaZlR5KQe7u+/zXtTHvo8S7TLrX0JtxG8f3liz5H5RRP8wvRnmmq+YMaSsw28KULs8+ct4Hp4th/nPq8Z7E+0IHK0aVZqLqk4qFqdXF3rYQvq0tEvmicCTsGCrSQXBi+BUkrVP2pQUNeX6TUEbOlWcRRa6jS99yXzqjs2jGDbg25HJzg/zOKUfEQrRJ1JCFp+D8RGkFaEiha2Ossra3KC9C5OcAggqCEVg==\"\n          }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\": \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\": 10,\n    \"candidatesTokenCount\": 3,\n    \"totalTokenCount\": 116,\n    \"promptTokensDetails\": [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 10\n      }\n    ],\n    \"thoughtsTokenCount\": 103,\n    \"serviceTier\": \"standard\"\n  },\n  \"modelVersion\": \"gemini-3.7-flash\",\n  \"responseId\": \"NSaEar-7Hq2MjrEPk4fwiQI\"\n}\n"
-      headers:
-        Content-Encoding:
-          - gzip
-        Content-Type:
-          - application/json; charset=UTF-8
-        Date:
-          - Tue, 18 Aug 2026 09:30:30 GMT
-        Server:
-          - scaffolding on HTTPServer2
-        Server-Timing:
-          - gfet4t7; dur=1367
-        Transfer-Encoding:
-          - chunked
-        Vary:
-          - Origin
-          - X-Origin
-          - Referer
-        X-Content-Type-Options:
-          - nosniff
-        X-Frame-Options:
-          - SAMEORIGIN
-        X-Gemini-Service-Tier:
-          - standard
-        X-XSS-Protection:
-          - '0'
-      status:
-        code: 200
-        message: OK
+- request:
+    body: '{"contents": [{"parts": [{"text": "Reply with exactly: ''Primary response
+      received''"}], "role": "user"}], "generationConfig": {"mediaResolution": "MEDIA_RESOLUTION_HIGH"}}'
+    headers:
+      Content-Type:
+      - application/json
+      user-agent:
+      - google-genai-sdk/2.18.1 gl-python/3.13.13
+      x-goog-api-client:
+      - google-genai-sdk/2.18.1 gl-python/3.13.13
+    method: post
+    uri: https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent
+  response:
+    body:
+      string: "{\n  \"candidates\": [\n    {\n      \"content\": {\n        \"parts\":
+        [\n          {\n            \"text\": \"Primary response received\",\n            \"thoughtSignature\":
+        \"EusFCugFARFNMg/1OkxVeAfBqPjcdB1AqF2PAIInFpG2HX3VSYXJ5vXidhiB0t/qjrxiTe8vIi0hWOOBy9/0bW2M6etOKgegn0zGmc+e3MfP5a52LHPJiY+ssop1tjX3z1asTJO2rhAzeDQ//ePdOjmAlMjlmZtqhPrVcOaIaxnOLYn2Rf7pK6P5TC+rBYRB8qWOEPBnjjzsha/nbsa/OAq2K7U6yW1rytZKZUsF6OdQfMgs6ZuQukQFp9puU55ZEq1jIlEfEbVCnJjOZeaGe2ebsjit0Z3/NLsw/8b5P9VDxBvtlkR8oknx564W8eHpuL2fCpigyTxVthfCtxBNLXWXxB5cqU3xDAfZHWFLkhCA2/ymV3GytYnXQZYRZR+xCsfcyccpqC3SiHZzlJSvrxb8JciLraudLpf5VvTgGNIYtq1hoIOrP9Wj+xGkXltFvtNZQSyoEKtb7bakDMg9ZTaGts3zTEq7R3tRxxL/jBGHe0/DYSSLtou6LgGGrpqYunPqAx6/QWLiidQi54h84LqJfBZcAozB2G15rzdhXdsve31f+qokDu5v26P3JzaK/tjD0UYiDc7s1STRtm55n9HbMlxhmvEMSiV2un8SFKkEwdfevmEMF4MeMEVkx42FkSHfpok20rXL2pFBLGsjMshX5UTkoWdoNeTaTZhj5Hr6FUablvGeZfhE7pW47GwFo+vsSnPyAw8vxBmMIh1XHi5aMQV4huB51QPdWR+k/yIOLTpJSEO7y1myIn0JGvBOCDuZ+M0PNkS0HWagTrfuoChlx8Ocxqp4dTCUhvzYnLQK/rFQMIV71NjJrmC5zNHedu/DPrMmDB+7hlvn1cZ77I3hplLGQWZrKfHbooEU3adOMGM8c4BiQbrp2HcNOERdH3eewh5am7xyVO+I4v+lU1VvzhTWZ25Xq8jo/LVHykAPdmfZC1mytL+CE7sjJngvQdjGufv2MY7IWbTTvlXY1BM3XvLIBE3MbA5sTxON\"\n
+        \         }\n        ],\n        \"role\": \"model\"\n      },\n      \"finishReason\":
+        \"STOP\",\n      \"index\": 0\n    }\n  ],\n  \"usageMetadata\": {\n    \"promptTokenCount\":
+        10,\n    \"candidatesTokenCount\": 3,\n    \"totalTokenCount\": 160,\n    \"promptTokensDetails\":
+        [\n      {\n        \"modality\": \"TEXT\",\n        \"tokenCount\": 10\n
+        \     }\n    ],\n    \"thoughtsTokenCount\": 147,\n    \"serviceTier\": \"standard\"\n
+        \ },\n  \"modelVersion\": \"gemini-3.8-flash\",\n  \"responseId\": \"iT6YaqDhKPCxjuMP9KXtwAk\"\n}\n"
+    headers:
+      Alt-Svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      Content-Encoding:
+      - gzip
+      Content-Type:
+      - application/json; charset=UTF-8
+      Date:
+      - Wed, 02 Sep 2026 15:19:39 GMT
+      Server:
+      - scaffolding on HTTPServer2
+      Server-Timing:
+      - gfet4t7; dur=1915
+      Transfer-Encoding:
+      - chunked
+      Vary:
+      - Origin
+      - X-Origin
+      - Referer
+      X-Content-Type-Options:
+      - nosniff
+      X-Frame-Options:
+      - SAMEORIGIN
+      X-Gemini-Service-Tier:
+      - standard
+      X-XSS-Protection:
+      - '0'
+    status:
+      code: 200
+      message: OK
 version: 1

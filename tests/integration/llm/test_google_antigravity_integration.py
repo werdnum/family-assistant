@@ -34,6 +34,11 @@ from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from .vcr_helpers import sanitize_response
 
 ANTIGRAVITY_AGENT_ID = "antigravity-preview-05-2026"
+# Pinned to 3.7 rather than tracking the shipped default: these cases assert
+# the *shape* of the submit request, and re-recording
+# test_submit_accepted_with_an_egress_allowlist_and_credential needs a key
+# entitled to credential-attached sandbox egress, which returns 403
+# permission_denied otherwise. The reasoning model is incidental here.
 REASONING_MODEL = "gemini-3.7-flash"
 
 # Rendered into the request body as an Authorization header for the sandbox's

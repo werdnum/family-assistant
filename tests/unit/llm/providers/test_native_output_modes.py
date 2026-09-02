@@ -146,7 +146,7 @@ async def test_anthropic_generate_json_uses_forced_object_tool() -> None:
 @pytest.mark.asyncio
 async def test_google_generate_structured_uses_response_schema() -> None:
     """Gemini structured output should use response_schema and JSON MIME type."""
-    client = GoogleGenAIClient(api_key="test", model="gemini-3.7-flash")
+    client = GoogleGenAIClient(api_key="test", model="gemini-3.8-flash")
     response = MagicMock()
     response.text = '{"answer":"ok"}'
 
@@ -177,7 +177,7 @@ async def test_google_generate_structured_sends_strict_schema_unaltered() -> Non
     the ``response_schema`` proto refuses outright. The JSON Schema path accepts it,
     so the schema is passed through rather than sanitized.
     """
-    client = GoogleGenAIClient(api_key="test", model="gemini-3.7-flash")
+    client = GoogleGenAIClient(api_key="test", model="gemini-3.8-flash")
     response = MagicMock()
     response.text = '{"answer":"ok","values":{"a":"b"}}'
 
@@ -202,7 +202,7 @@ async def test_google_generate_structured_sends_strict_schema_unaltered() -> Non
 @pytest.mark.asyncio
 async def test_google_generate_structured_retry_adds_feedback() -> None:
     """Gemini structured retries should mutate the conversation with feedback."""
-    client = GoogleGenAIClient(api_key="test", model="gemini-3.7-flash")
+    client = GoogleGenAIClient(api_key="test", model="gemini-3.8-flash")
     invalid_response = MagicMock()
     invalid_response.text = "not-json"
     valid_response = MagicMock()
@@ -229,7 +229,7 @@ async def test_google_generate_structured_retry_adds_feedback() -> None:
 @pytest.mark.asyncio
 async def test_google_generate_json_uses_object_schema() -> None:
     """Gemini JSON output should use an object response schema."""
-    client = GoogleGenAIClient(api_key="test", model="gemini-3.7-flash")
+    client = GoogleGenAIClient(api_key="test", model="gemini-3.8-flash")
     response = MagicMock()
     response.text = '{"answer":"ok"}'
 
@@ -253,7 +253,7 @@ async def test_google_generate_json_uses_object_schema() -> None:
 @pytest.mark.asyncio
 async def test_google_generate_json_retry_adds_feedback() -> None:
     """Gemini JSON retries should mutate the conversation with feedback."""
-    client = GoogleGenAIClient(api_key="test", model="gemini-3.7-flash")
+    client = GoogleGenAIClient(api_key="test", model="gemini-3.8-flash")
     invalid_response = MagicMock()
     invalid_response.text = '["wrong"]'
     valid_response = MagicMock()

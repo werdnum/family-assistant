@@ -274,8 +274,8 @@ supervision requirements based on input trust level:
    delegations are judged by tool-call review. Example: "Why isn't my daily brief firing?"
 5. **Complex Tasks Profile [BC]**: full tool access via OpenAI GPT-5.6-sol (`gpt-5.6-sol`) at
    `reasoning_effort: high`, with a higher iteration limit (100) for deep multi-step reasoning. Used
-   via `/complex` or delegation from the default assistant, which runs Gemini 3.7 Flash
-   (`gemini-3.7-flash`, with GPT-5.6-terra as its fallback) with 50 iterations. **Not to be confused
+   via `/complex` or delegation from the default assistant, which runs Gemini 3.8 Flash
+   (`gemini-3.8-flash`, with GPT-5.6-terra as its fallback) with 50 iterations. **Not to be confused
    with `spawn_worker`**, which launches isolated coding agents (Claude Code / Gemini CLI) in
    sandboxed containers with NO access to Family Assistant tools or data. Use `complex_tasks` when
    the task needs FA context (notes, calendar, documents, Home Assistant, etc.); use `spawn_worker`
@@ -296,7 +296,7 @@ supervision requirements based on input trust level:
    to a provider that cannot read the media would return a confident description of nothing.
 7. **Coder Profile [C]**: a coding agent — writes and runs code, works with files, reads the web —
    on Google's Antigravity managed agent (`antigravity-preview-05-2026` reasoning with
-   `gemini-3.7-flash`), in a Google-hosted throwaway sandbox. Used via `/coder` or delegation. It
+   `gemini-3.8-flash`), in a Google-hosted throwaway sandbox. Used via `/coder` or delegation. It
    acts but reads nothing of the household's: no aggregated context, and the agent runs server-side
    with no FA tool surface, so it works only from the request text. As with `media_analyst`, a
    deny-by-default `tools_policy` does not achieve that alone -- the three globally granted tools

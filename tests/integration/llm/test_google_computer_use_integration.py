@@ -51,10 +51,10 @@ _skip_no_internet = pytest.mark.skipif(
 async def gemini_client() -> AsyncGenerator[GoogleGenAIClient]:
     """Create a GoogleGenAIClient instance for testing."""
     api_key = os.getenv("GEMINI_API_KEY", "dummy_key")
-    # Use gemini-3.7-flash with explicit enable_computer_use flag
+    # Use gemini-3.8-flash with explicit enable_computer_use flag
     client = GoogleGenAIClient(
         api_key=api_key,
-        model="gemini-3.7-flash",
+        model="gemini-3.8-flash",
         enable_url_context=False,
         enable_google_search=False,
         enable_computer_use=True,
@@ -232,7 +232,7 @@ async def test_real_gemini_computer_use_protocol() -> None:
     api_key = os.environ["GEMINI_API_KEY"]
     client = GoogleGenAIClient(
         api_key=api_key,
-        model="gemini-3.7-flash",
+        model="gemini-3.8-flash",
         enable_computer_use=True,
     )
 
@@ -395,7 +395,7 @@ async def test_computer_use_browser_navigation_e2e(db_engine: AsyncEngine) -> No
                 "description": "Browser test profile with computer use",
                 "processing_config": {
                     "provider": "google",
-                    "llm_model": "gemini-3.7-flash",
+                    "llm_model": "gemini-3.8-flash",
                     "enable_computer_use": True,
                     "max_iterations": 15,
                     "prompts": {
@@ -451,7 +451,7 @@ async def test_computer_use_browser_navigation_e2e(db_engine: AsyncEngine) -> No
         "telegram_token": None,
         "allowed_user_ids": [],
         "developer_chat_id": None,
-        "model": "gemini-3.7-flash",
+        "model": "gemini-3.8-flash",
         "embedding_model": "mock-deterministic-embedder",
         "embedding_dimensions": 10,
         "server_url": "http://localhost:8000",
@@ -560,7 +560,7 @@ async def test_grab_screenshot_of_website(db_engine: AsyncEngine) -> None:
                 "description": "Screenshot test profile with computer use",
                 "processing_config": {
                     "provider": "google",
-                    "llm_model": "gemini-3.7-flash",
+                    "llm_model": "gemini-3.8-flash",
                     "enable_computer_use": True,
                     "max_iterations": 10,
                     "prompts": {
@@ -615,7 +615,7 @@ async def test_grab_screenshot_of_website(db_engine: AsyncEngine) -> None:
         "telegram_token": None,
         "allowed_user_ids": [],
         "developer_chat_id": None,
-        "model": "gemini-3.7-flash",
+        "model": "gemini-3.8-flash",
         "embedding_model": "mock-deterministic-embedder",
         "embedding_dimensions": 10,
         "server_url": "http://localhost:8000",

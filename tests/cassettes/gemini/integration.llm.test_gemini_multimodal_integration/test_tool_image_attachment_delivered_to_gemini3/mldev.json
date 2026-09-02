@@ -4,7 +4,7 @@
     {
       "request": {
         "method": "post",
-        "url": "{MLDEV_URL_PREFIX}/models/gemini-3.7-flash:generateContent",
+        "url": "{MLDEV_URL_PREFIX}/models/gemini-3.8-flash:generateContent",
         "headers": {
           "Content-Type": "application/json",
           "x-goog-api-key": "{REDACTED}",
@@ -81,6 +81,7 @@
           "X-XSS-Protection": "0",
           "X-Frame-Options": "SAMEORIGIN",
           "X-Content-Type-Options": "nosniff",
+          "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
           "Transfer-Encoding": "chunked"
         },
         "body_segments": [
@@ -90,8 +91,8 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "Red.",
-                      "thoughtSignature": "EuABCt0BARFNMg9aK4u6d/twRB0irByRfi6+Hc7iulJ3TTGInYJSU3t6MC9QS5gqpMejCE4dbU9Xo3ge+wF6LGd7wWsCzaQGKQXf8cE262krFjrx1jJJMmvSEnNhwGh5mk+S5vHIwgTvLKeRdLCZKUqMjUPw9pW1IHOjDnG7ilMseEWBzBToCoc87WQy60c6wIye0KB6XPFo1V4TZDBOZyMDa+6BpWEdi9bgnH6AVUWFaVmdO8K+q01tMwNF4Qo6Yuur7mZnz7Hrmt48UMpRrX1Ojur+PIAm1U28o2y//i2ev4c="
+                      "text": "Red",
+                      "thoughtSignature": "EuYBCuMBARFNMg+0NTUeQoTt08ag0qrpBZbQ4FVAEjRDGZt2EnPsDtaC3vsaNGhBoFmB+410C/Hrcp64YkNjIUR1wXOLpY1Y8Dn1TrMuWUOyKIIGFovRbVHdGjE0PimjFj8ny1aBcngoVxKnuAqQpCtaHGKVPPtMJuJIuwdzLLR3suGXVFc8So2cvl1DQ7bCiTp0T+XhaPVUb1meQljwSnxtrimT6wfgeWDxXqN4Tf8aU8IbUQyUlJznLQrhPmVHQ6kVI8LOPfMg1INVucFLIBohF45sEsYQLtyrxzgLmHtoUj6qt8FpJps="
                     }
                   ],
                   "role": "model"
@@ -102,7 +103,7 @@
             ],
             "usageMetadata": {
               "promptTokenCount": 1146,
-              "candidatesTokenCount": 2,
+              "candidatesTokenCount": 1,
               "totalTokenCount": 1177,
               "promptTokensDetails": [
                 {
@@ -114,11 +115,11 @@
                   "tokenCount": 1089
                 }
               ],
-              "thoughtsTokenCount": 29,
+              "thoughtsTokenCount": 30,
               "serviceTier": "standard"
             },
-            "modelVersion": "gemini-3.7-flash",
-            "responseId": "NSd-aoGkM8HJ-8YP9NXQkA0"
+            "modelVersion": "gemini-3.8-flash",
+            "responseId": "KD2YaoXgB83yg8UPjPmDoQ0"
           }
         ],
         "byte_segments": [],
@@ -134,6 +135,7 @@
                 "X-XSS-Protection": "0",
                 "X-Frame-Options": "SAMEORIGIN",
                 "X-Content-Type-Options": "nosniff",
+                "Alt-Svc": "h3=\":443\"; ma=2592000,h3-29=\":443\"; ma=2592000",
                 "Transfer-Encoding": "chunked"
               }
             },
@@ -142,8 +144,8 @@
                 "content": {
                   "parts": [
                     {
-                      "text": "Red.",
-                      "thought_signature": "EuABCt0BARFNMg9aK4u6d_twRB0irByRfi6-Hc7iulJ3TTGInYJSU3t6MC9QS5gqpMejCE4dbU9Xo3ge-wF6LGd7wWsCzaQGKQXf8cE262krFjrx1jJJMmvSEnNhwGh5mk-S5vHIwgTvLKeRdLCZKUqMjUPw9pW1IHOjDnG7ilMseEWBzBToCoc87WQy60c6wIye0KB6XPFo1V4TZDBOZyMDa-6BpWEdi9bgnH6AVUWFaVmdO8K-q01tMwNF4Qo6Yuur7mZnz7Hrmt48UMpRrX1Ojur-PIAm1U28o2y__i2ev4c="
+                      "text": "Red",
+                      "thought_signature": "EuYBCuMBARFNMg-0NTUeQoTt08ag0qrpBZbQ4FVAEjRDGZt2EnPsDtaC3vsaNGhBoFmB-410C_Hrcp64YkNjIUR1wXOLpY1Y8Dn1TrMuWUOyKIIGFovRbVHdGjE0PimjFj8ny1aBcngoVxKnuAqQpCtaHGKVPPtMJuJIuwdzLLR3suGXVFc8So2cvl1DQ7bCiTp0T-XhaPVUb1meQljwSnxtrimT6wfgeWDxXqN4Tf8aU8IbUQyUlJznLQrhPmVHQ6kVI8LOPfMg1INVucFLIBohF45sEsYQLtyrxzgLmHtoUj6qt8FpJps="
                     }
                   ],
                   "role": "model"
@@ -152,10 +154,10 @@
                 "index": 0
               }
             ],
-            "model_version": "gemini-3.7-flash",
-            "response_id": "NSd-aoGkM8HJ-8YP9NXQkA0",
+            "model_version": "gemini-3.8-flash",
+            "response_id": "KD2YaoXgB83yg8UPjPmDoQ0",
             "usage_metadata": {
-              "candidates_token_count": 2,
+              "candidates_token_count": 1,
               "prompt_token_count": 1146,
               "prompt_tokens_details": [
                 {
@@ -167,7 +169,7 @@
                   "token_count": 1089
                 }
               ],
-              "thoughts_token_count": 29,
+              "thoughts_token_count": 30,
               "total_token_count": 1177
             }
           }

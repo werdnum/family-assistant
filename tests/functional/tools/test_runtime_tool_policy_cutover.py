@@ -158,7 +158,7 @@ async def test_enabled_reviewer_does_not_construct_provider_during_startup(
     config.tool_call_review = ToolCallReviewConfig(
         enabled=True,
         provider="google",
-        model="gemini-3.7-flash",
+        model="gemini-3.8-flash",
     )
     profile_client = RuleBasedMockLLMClient(rules=[])
     created_configs: list[dict[str, object]] = []

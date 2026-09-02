@@ -35,7 +35,7 @@ _RED_PNG = base64.b64decode(
 async def google_client_gemini3_flash(
     request: pytest.FixtureRequest, llm_record_mode: str
 ) -> "AsyncGenerator[GoogleGenAIClient]":
-    """A gemini-3.7-flash client wired for SDK record/replay."""
+    """A gemini-3.8-flash client wired for SDK record/replay."""
     api_key = os.getenv("GEMINI_API_KEY", "test-gemini-key")
     test_name = request.node.name
     module_name = request.node.module.__name__.replace("tests.", "")
@@ -46,7 +46,7 @@ async def google_client_gemini3_flash(
     }
     client = GoogleGenAIClient(
         api_key=api_key,
-        model="gemini-3.7-flash",
+        model="gemini-3.8-flash",
         debug_config=debug_config,
     )
     try:
@@ -61,7 +61,7 @@ async def google_client_gemini3_flash(
 async def test_tool_image_attachment_delivered_to_gemini3(
     google_client_gemini3_flash: GoogleGenAIClient,
 ) -> None:
-    """A tool image attachment must reach gemini-3.7-flash without a 400.
+    """A tool image attachment must reach gemini-3.8-flash without a 400.
 
     Sends a conversation where a tool returns a red image as an attachment. The
     colour is not stated in any text, so a correct "red" answer proves the image
