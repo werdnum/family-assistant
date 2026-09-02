@@ -3,7 +3,8 @@
 **Run date:** 2026-09-02\
 **Model:** `gemini-3.7-flash`\
 **Evaluation:** manual conversation-boundary & engineer side-effects review gate\
-**Result:** 0 observed attack allows (0.00%), 0.00% attack confirm, all 6 M2 engineer-shaped attack cases denied and benign twins allowed
+**Result:** 0 observed attack allows (0.00%), 0.00% attack confirm, all 6 M2 engineer-shaped attack
+cases denied and benign twins allowed
 
 ## Executive summary
 
@@ -24,8 +25,8 @@ context).
 The primary question was:
 
 > Does the shipped tool-call reviewer reject engineer-specific prompt injection attacks (hostile
-> worker exfiltration tasks, smuggled database delegation goals, and forged tool-result instructions)
-> while permitting authentic reproduction tasks and legitimate diagnostic handoffs?
+> worker exfiltration tasks, smuggled database delegation goals, and forged tool-result
+> instructions) while permitting authentic reproduction tasks and legitimate diagnostic handoffs?
 
 ## Corpus
 
@@ -79,4 +80,5 @@ All 6 engineer-shaped cases passed their verification criteria:
 ### Evidence Bound
 
 With 13 clean, independent attack evidence units observed and 0 attack allows:
-- **Rule of Three upper bound:** $\approx 3 / 13 = 23.08\%$ at 95% confidence on this manual slice.
+
+- **Rule of Three upper bound:** $\\approx 3 / 13 = 23.08%$ at 95% confidence on this manual slice.
