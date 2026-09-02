@@ -20,7 +20,7 @@ users: []
 #       model: "gpt-5.6-terra"
 #     fallback:
 #       provider: "google"
-#       model: "gemini-3.7-flash"
+#       model: "gemini-3.8-flash"
 # The system will retry once on the primary model for transient errors,
 # then fall back to the fallback model if needed.
 # Event system configuration
@@ -377,7 +377,7 @@ email_intake:
 tool_call_review:
   enabled: true
   provider: "google"
-  model: "gemini-3.7-flash"
+  model: "gemini-3.8-flash"
   timeout_seconds: 30.0
   max_reviews_per_turn: 25
   escalation:
@@ -506,7 +506,7 @@ default_profile_settings:
     retry_config:
       primary:
         provider: "google"
-        model: "gemini-3.7-flash"
+        model: "gemini-3.8-flash"
       fallback:
         provider: "openai"
         model: "gpt-5.6-terra"
@@ -745,7 +745,7 @@ service_profiles:
       retry_config:
         primary:
           provider: "google"
-          model: "gemini-3.7-flash"
+          model: "gemini-3.8-flash"
         fallback:
           provider: "openai"
           model: "gpt-5.6-terra"
@@ -815,7 +815,7 @@ service_profiles:
   - id: "reminder"
     description: "Assistant profile for handling system reminders. Its sole purpose is to formulate the reminder message to be sent to the user."
     # Writing a reminder sentence is a small text-only task run at volume, which
-    # is what Luna is for -- a fraction of gemini-3.7-flash per token.
+    # is what Luna is for -- a fraction of gemini-3.8-flash per token.
     # Gemini stays as the fallback because a reminder that never fires is
     # user-visible.
     processing_config:
@@ -825,7 +825,7 @@ service_profiles:
           model: "gpt-5.6-luna"
         fallback:
           provider: "google"
-          model: "gemini-3.7-flash"
+          model: "gemini-3.8-flash"
       prompts:
         system_prompt: "You are a reminder delivery system. Your goal is to write the text of the reminder message that will be sent to the user.\n\nInstructions:\n1. Read the reminder context provided.\n2. You may use read-only tools (calendar, notes, docs) to gather context if the reminder is vague or refers to stored information.\n3. Write a clear, friendly reminder message addressed to {user_name}.\n4. Your final response must be ONLY the message content. Do NOT describe your actions.\n5. If the reminder context contains a task, simply state the task.\n\nExample:\nContext: 'Pick up milk'\nResponse: 'Hi {user_name}, this is your reminder to pick up milk.'"
     tools_policy:
@@ -892,7 +892,7 @@ service_profiles:
     processing_config:
       # Using simple format (no retry/fallback for browser tasks)
       provider: "google"
-      llm_model: "gemini-3.7-flash"
+      llm_model: "gemini-3.8-flash"
       # Attach the native Gemini computer-use tool (prompt-injection detection
       # over screenshots is always enabled with it). Actions the model flags
       # with a safety decision require user confirmation before they run.
@@ -959,12 +959,12 @@ service_profiles:
     slash_commands:
       - "/research_max"
   - id: "coder"
-    description: "Coding agent. Writes and runs code, works with files, and reads the web to get a self-contained programming or computation task DONE — write and test a script, transform or analyse data, debug a snippet, work out a result — returning the finished output rather than instructions. Runs on the Google Antigravity managed agent (Gemini 3.7 Flash) in a throwaway Google-hosted Linux sandbox, so it sees nothing but the text of the request: no notes, calendar, documents, Home Assistant or other Family Assistant tools, and no shared workspace. Attachments you pass are mounted as files in its sandbox under /workspace, so hand it the file rather than pasting the contents. Choose it over spawn_worker when the task needs no files from the shared workspace and you want the result back in the conversation; choose spawn_worker when the agent must read or write shared workspace files, and complex_tasks when the task needs the family's own data."
+    description: "Coding agent. Writes and runs code, works with files, and reads the web to get a self-contained programming or computation task DONE — write and test a script, transform or analyse data, debug a snippet, work out a result — returning the finished output rather than instructions. Runs on the Google Antigravity managed agent (Gemini 3.8 Flash) in a throwaway Google-hosted Linux sandbox, so it sees nothing but the text of the request: no notes, calendar, documents, Home Assistant or other Family Assistant tools, and no shared workspace. Attachments you pass are mounted as files in its sandbox under /workspace, so hand it the file rather than pasting the contents. Choose it over spawn_worker when the task needs no files from the shared workspace and you want the result back in the conversation; choose spawn_worker when the agent must read or write shared workspace files, and complex_tasks when the task needs the family's own data."
     processing_config:
       provider: "google"
       llm_model: "antigravity-preview-05-2026"
       antigravity_config:
-        model: "gemini-3.7-flash"
+        model: "gemini-3.8-flash"
       # A whole turn here runs code in a sandbox with network access, which is
       # the same privilege spawn_worker holds -- so it is gated the same way,
       # by the runtime taint matrix rather than by trusting the caller. The
@@ -1066,7 +1066,7 @@ service_profiles:
     # 'event_logs' is granted so the handler can read back its own notes.
     visibility_grants: ["default", "event_logs"]
     # Event wakes are high-volume and text-shaped, so Luna carries them at a
-    # fraction of gemini-3.7-flash's cost, with Gemini as the fallback.
+    # fraction of gemini-3.8-flash's cost, with Gemini as the fallback.
     processing_config:
       include_aggregated_context: true
       retry_config:
@@ -1075,7 +1075,7 @@ service_profiles:
           model: "gpt-5.6-luna"
         fallback:
           provider: "google"
-          model: "gemini-3.7-flash"
+          model: "gemini-3.8-flash"
       # Notes written while handling an untrusted event are confined to the
       # event_logs label (floor and ceiling), enforced in the repository.
       default_note_visibility_labels: ["event_logs"]
@@ -1142,7 +1142,7 @@ service_profiles:
     # Left in place, a profile advertised as [A]-only would hold all three.
     processing_config:
       provider: "google"
-      llm_model: "gemini-3.7-flash"
+      llm_model: "gemini-3.8-flash"
       excluded_context_providers:
         - "notes"
         - "calendar"
@@ -1176,7 +1176,7 @@ service_profiles:
     description: "Creative assistant specialized in generating and manipulating images and videos using advanced AI models."
     processing_config:
       provider: "google"
-      llm_model: "gemini-3.7-flash"
+      llm_model: "gemini-3.8-flash"
       prompts:
         system_prompt: |
           You are an expert digital artist and video producer specialized in using advanced AI models (Gemini Nano Banana/Pro and Veo) to create stunning visuals.
@@ -1384,7 +1384,7 @@ service_profiles:
       retry_config:
         primary:
           provider: "google"
-          model: "gemini-3.7-flash"
+          model: "gemini-3.8-flash"
         fallback:
           provider: "openai"
           model: "gpt-5.6-terra"

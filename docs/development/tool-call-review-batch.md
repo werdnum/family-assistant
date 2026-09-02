@@ -8,7 +8,7 @@ python scripts/tool_call_review_batch.py prepare \
     --dataset .review-eval-local/public/deepset-browser-ablation-gate \
     --dataset .review-eval-local/public/injecagent-browser-ablation-both-gate \
     --tool-registry .review-eval-local/registry/deployment.json \
-    --model google/gemini-3.7-flash \
+    --model google/gemini-3.8-flash \
     --seeds 1 --batch-size 500 --max-tokens 512 \
     --run-dir .review-eval-local/runs/batch-gate-2026-08-31
 ```

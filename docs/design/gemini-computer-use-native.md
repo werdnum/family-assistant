@@ -3,7 +3,7 @@
 ## Motivation
 
 The `browser_visual_profile` drives a browser with coordinate-based actions against screenshots. It
-runs `gemini-3.7-flash` with the Gemini API's native computer-use capability, which brings:
+runs `gemini-3.8-flash` with the Gemini API's native computer-use capability, which brings:
 
 - A model actually trained for the action loop (better grounding/reliability).
 - Built-in **prompt-injection detection** over screenshot content.
@@ -45,7 +45,7 @@ machinery the API expects.
    Interactions API keeps history server-side via `previous_interaction_id`, which conflicts with
    all of that. Native computer use is fully supported on `generate_content`.
 
-2. **Explicit opt-in flag, not model-name sniffing.** Plain `gemini-3.7-flash` is also the default
+2. **Explicit opt-in flag, not model-name sniffing.** Plain `gemini-3.8-flash` is also the default
    assistant model, so the computer-use tool must not be attached based on model name. A new
    `enable_computer_use: true` key on a profile's `processing_config` is plumbed through to
    `GoogleGenAIClient` and is the only thing that attaches the tool (the old

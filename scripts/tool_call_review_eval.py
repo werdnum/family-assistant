@@ -43,7 +43,7 @@ Usage:
     python scripts/tool_call_review_eval.py \
         --dataset src/family_assistant/eval/tool_call_review/datasets/manual \
         --dataset .review-eval-local/public/deepset \
-        --provider google --model gemini-3.7-flash --seeds 5
+        --provider google --model gemini-3.8-flash --seeds 5
 
     # Record what the deployed judge scored today:
     python scripts/tool_call_review_eval.py \
@@ -132,9 +132,9 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        default="gemini-3.7-flash",
+        default="gemini-3.8-flash",
         help=(
-            "Judge model (default: gemini-3.7-flash). Ignored when --config-file "
+            "Judge model (default: gemini-3.8-flash). Ignored when --config-file "
             "is given."
         ),
     )
@@ -163,7 +163,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "JSON object of model parameters for the judge client, mirroring the "
             "deployment's llm_parameters pattern map (e.g. "
-            '\'{"gemini-3.7-flash": {"temperature": 0}}\'). Recorded in the '
+            '\'{"gemini-3.8-flash": {"temperature": 0}}\'). Recorded in the '
             "result so a stamp states the configuration it measured."
         ),
     )

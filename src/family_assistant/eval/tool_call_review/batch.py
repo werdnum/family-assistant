@@ -322,7 +322,7 @@ def prepare_batch(
     datasets: Sequence[str | Path],
     run_dir: str | Path,
     *,
-    model: str = "google/gemini-3.7-flash",
+    model: str = "google/gemini-3.8-flash",
     seeds: int = 1,
     batch_size: int = DEFAULT_BATCH_SIZE,
     max_tokens: int = DEFAULT_MAX_TOKENS,
@@ -426,7 +426,7 @@ def _collect_prepared_requests(
 def validate_prepare_inputs(
     datasets: Sequence[str | Path],
     *,
-    model: str = "google/gemini-3.7-flash",
+    model: str = "google/gemini-3.8-flash",
     seeds: int = 1,
     batch_size: int = DEFAULT_BATCH_SIZE,
     max_tokens: int = DEFAULT_MAX_TOKENS,

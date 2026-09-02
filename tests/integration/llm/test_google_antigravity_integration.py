@@ -34,7 +34,7 @@ from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from .vcr_helpers import sanitize_response
 
 ANTIGRAVITY_AGENT_ID = "antigravity-preview-05-2026"
-REASONING_MODEL = "gemini-3.7-flash"
+REASONING_MODEL = "gemini-3.8-flash"
 
 # Rendered into the request body as an Authorization header for the sandbox's
 # egress proxy, so it is recorded into the cassette. Deliberately not a real

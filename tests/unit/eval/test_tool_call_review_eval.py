@@ -1227,7 +1227,7 @@ def test_report_records_model_parameters() -> None:
         trials=[_trial()],
         seeds=1,
         provider="google",
-        model="gemini-3.7-flash",
+        model="gemini-3.8-flash",
         model_parameters={"temperature": 0.0, "thinking_budget": 1024},
     )
     reloaded = EvalReport.model_validate(json.loads(json.dumps(report.to_json_dict())))
@@ -1249,7 +1249,7 @@ def test_build_reviewer_threads_model_parameters_to_the_client(
         _create_client,
     )
     reviewer = build_reviewer(
-        "google", "gemini-3.7-flash", model_parameters={"temperature": 0.0}
+        "google", "gemini-3.8-flash", model_parameters={"temperature": 0.0}
     )
     factory = reviewer._llm_client_factory
     assert factory is not None
@@ -1340,10 +1340,10 @@ def test_retry_config_builds_a_retrying_judge_client(
         "family_assistant.llm.factory.LLMClientFactory._create_single_client",
         staticmethod(_create_single),
     )
-    parameters = {"gemini-3.7-flash": {"temperature": 0.0}}
+    parameters = {"gemini-3.8-flash": {"temperature": 0.0}}
     reviewer = build_reviewer(
         "google",
-        "gemini-3.7-flash",
+        "gemini-3.8-flash",
         model_parameters=parameters,
         retry_config={"fallback": {"provider": "openai", "model": "gpt-5.6-terra"}},
     )
@@ -1352,7 +1352,7 @@ def test_retry_config_builds_a_retrying_judge_client(
     client = factory()
 
     assert isinstance(client, RetryingLLMClient)
-    assert client.primary_model == "gemini-3.7-flash"
+    assert client.primary_model == "gemini-3.8-flash"
     assert client.fallback_model == "gpt-5.6-terra"
     # Both legs inherit the run's parameters; a fallback judged at a different
     # temperature would not be the deployed fallback.
@@ -1364,13 +1364,13 @@ async def test_a_stamp_digests_free_form_model_parameters() -> None:
     # there, which may be private endpoints or account identifiers — and a stamp
     # is committable and may be written anywhere. A digest still answers the
     # question a stamp exists to answer: were two runs configured the same.
-    parameters = {"gemini-3.7-flash": {"api_base": "https://internal.example/v1"}}
+    parameters = {"gemini-3.8-flash": {"api_base": "https://internal.example/v1"}}
     report = await run_eval(
         [_attack_conversation_case()],
         _denying_reviewer(),
         seeds=1,
         provider="google",
-        model="gemini-3.7-flash",
+        model="gemini-3.8-flash",
         model_parameters=parameters,
     )
     record = report.to_stamp_record()
@@ -1392,7 +1392,7 @@ async def test_report_records_the_retry_config_it_measured_under() -> None:
         _denying_reviewer(),
         seeds=1,
         provider="google",
-        model="gemini-3.7-flash",
+        model="gemini-3.8-flash",
         retry_config=retry_config,
     )
     assert report.retry_config == retry_config
@@ -1401,7 +1401,7 @@ async def test_report_records_the_retry_config_it_measured_under() -> None:
     # prints it: it is bounded, and which fallback leg served is worth reading.
     assert report.to_stamp_record()["judge"] == {
         "provider": "google",
-        "model": "gemini-3.7-flash",
+        "model": "gemini-3.8-flash",
         "model_parameters_digest": None,
         "retry_config": retry_config,
         "timeout_seconds": None,

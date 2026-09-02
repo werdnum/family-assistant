@@ -1301,7 +1301,7 @@ tool-policy `review` rules.
 tool_call_review:
   enabled: true
   provider: "google"
-  model: "gemini-3.7-flash"
+  model: "gemini-3.8-flash"
   timeout_seconds: 30.0
   max_reviews_per_turn: 25
   escalation:
@@ -1313,7 +1313,7 @@ tool_call_review:
 
 `timeout_seconds` bounds a single review, which runs inline: the gated tool call waits on it, so the
 value trades a stalled turn against a fail-closed fallback. The default of 30 s suits a reasoning
-model on a long prompt — reviews on `gemini-3.7-flash` commonly take 4-10 s with a tail past 15 s,
+model on a long prompt — reviews on `gemini-3.8-flash` commonly take 4-10 s with a tail past 15 s,
 and a budget near that range turns ordinary reviews into fallbacks rather than judgements. Lower it
 only with evidence from `taint_audit_events` that the configured model returns sooner, and read it
 alongside `max_reviews_per_turn`, which bounds how many such waits one turn can incur.
@@ -2030,11 +2030,11 @@ setting it on any other profile is a startup error rather than a silently discar
 | Property  | Value                                                                   |
 | --------- | ----------------------------------------------------------------------- |
 | Required  | No                                                                      |
-| Default   | `model: gemini-3.7-flash`, no token cap, no environment                 |
+| Default   | `model: gemini-3.8-flash`, no token cap, no environment                 |
 | Sensitive | No (credentials are named by env var, never written here)               |
 | Values    | `model` (string), `max_total_tokens` (int > 0), `environment` (mapping) |
 
-`model` is the model the agent reasons with — the Gemini 3.x Flash family, `gemini-3.7-flash` being
+`model` is the model the agent reasons with — the Gemini 3.x Flash family, `gemini-3.8-flash` being
 the current default. It is pinned in `defaults.yaml` rather than left to the API, so an upstream
 default change shows up as a config change. `max_total_tokens` caps what a single run may spend;
 unset leaves the API's own default, which together with `max_async_seconds` is the only bound on how
@@ -2126,7 +2126,7 @@ service_profiles:
       provider: "google"
       llm_model: "antigravity-preview-05-2026"
       antigravity_config:
-        model: "gemini-3.7-flash"
+        model: "gemini-3.8-flash"
         max_total_tokens: 250000
         environment:
           network: "allowlist"

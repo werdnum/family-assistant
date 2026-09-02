@@ -38,7 +38,7 @@ credential type that resolves to an injected header at submit time.
 
 ```yaml
 antigravity_config:
-  model: "gemini-3.7-flash"
+  model: "gemini-3.8-flash"
   environment:
     network: "allowlist"
     allowlist:

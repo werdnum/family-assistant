@@ -1122,7 +1122,7 @@ def test_config_models_are_strict_and_profile_guidance_is_available() -> None:
 
     assert config.tool_call_review is not None
     assert config.tool_call_review.enabled is True
-    assert config.tool_call_review.model == "gemini-3.7-flash"
+    assert config.tool_call_review.model == "gemini-3.8-flash"
     assert ProcessingConfig(review_guidance="Profile-specific guidance").review_guidance
     with pytest.raises(ValidationError):
         ToolCallReviewConfig(timeout_seconds=0)

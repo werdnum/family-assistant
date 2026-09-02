@@ -429,7 +429,7 @@ def test_a_replayed_media_part_anthropic_cannot_read_is_named(mime_type: str) ->
 
 
 def _google_injected(mime_type: str) -> UserMessage:
-    client = GoogleGenAIClient(api_key="test-key", model="gemini-3.7-flash")
+    client = GoogleGenAIClient(api_key="test-key", model="gemini-3.8-flash")
     return client.create_attachment_injection(
         ToolAttachment(
             mime_type=mime_type,

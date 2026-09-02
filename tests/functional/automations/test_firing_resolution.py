@@ -71,7 +71,7 @@ def _gate_outcome(
         gate=GateProvenance(
             layer=layer,
             mode=mode,
-            reviewer_revision="google/gemini-3.7-flash@abc123",
+            reviewer_revision="google/gemini-3.8-flash@abc123",
             verdict_id="verdict-1",
         ),
     )

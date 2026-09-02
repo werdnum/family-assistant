@@ -10,7 +10,7 @@ from family_assistant.llm import JsonObject
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.llm.messages import LLMMessage, SystemMessage, UserMessage
 
-DEFAULT_MODEL = "gemini-3.7-flash"
+DEFAULT_MODEL = "gemini-3.8-flash"
 
 
 async def one_shot(
@@ -24,7 +24,7 @@ async def one_shot(
     Args:
         prompt: The user prompt to send.
         system: Optional system message.
-        model: Model identifier (default: gemini-3.7-flash).
+        model: Model identifier (default: gemini-3.8-flash).
 
     Returns:
         The text content of the LLM response.
@@ -60,7 +60,7 @@ async def one_shot_structured[T: BaseModel](
         prompt: The user prompt to send.
         response_model: Pydantic model class for the response.
         system: Optional system message.
-        model: Model identifier (default: gemini-3.7-flash).
+        model: Model identifier (default: gemini-3.8-flash).
 
     Returns:
         An instance of response_model populated from the LLM response.
@@ -89,7 +89,7 @@ async def one_shot_json(
     Args:
         prompt: The user prompt to send.
         system: Optional system message.
-        model: Model identifier (default: gemini-3.7-flash).
+        model: Model identifier (default: gemini-3.8-flash).
 
     Returns:
         Parsed JSON object (dict).
