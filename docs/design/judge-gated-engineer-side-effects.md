@@ -136,8 +136,9 @@ three wholesale-replacing copies in `browser_profile`, `telephone` and `complex_
 `review` in all four places, for the reason [engineer_profile.md](engineer_profile.md) gives for
 copying the gate: the delegation tool checks only the source profile's policy.
 
-Every flip has today's behaviour as its worst case: a static `review` falls back to `confirm` on
-reviewer error, timeout, budget exhaustion or a disabled reviewer.
+Every flip to `review` has today's behaviour as its worst case: a static `review` falls back to
+`confirm` on reviewer error, timeout, budget exhaustion or a disabled reviewer. The one flip to
+`allow` is a decision, not a fallback, and is argued in the residuals.
 
 ### Profile guidance
 
