@@ -1301,7 +1301,7 @@ tool-policy `review` rules.
 tool_call_review:
   enabled: true
   provider: "google"
-  model: "gemini-3.8-flash"
+  model: "gemini-3.7-flash"
   timeout_seconds: 30.0
   max_reviews_per_turn: 25
   escalation:
@@ -1313,7 +1313,7 @@ tool_call_review:
 
 `timeout_seconds` bounds a single review, which runs inline: the gated tool call waits on it, so the
 value trades a stalled turn against a fail-closed fallback. The default of 30 s suits a reasoning
-model on a long prompt — reviews on `gemini-3.8-flash` commonly take 4-10 s with a tail past 15 s,
+model on a long prompt — reviews on `gemini-3.7-flash` commonly take 4-10 s with a tail past 15 s,
 and a budget near that range turns ordinary reviews into fallbacks rather than judgements. Lower it
 only with evidence from `taint_audit_events` that the configured model returns sooner, and read it
 alongside `max_reviews_per_turn`, which bounds how many such waits one turn can incur.

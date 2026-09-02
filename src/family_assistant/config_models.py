@@ -76,7 +76,9 @@ class ToolCallReviewConfig(BaseModel):
 
     enabled: bool = True
     provider: str | None = "google"
-    model: str = "gemini-3.8-flash"
+    # See defaults.yaml: 3.8 roughly sextuples benign friction on real household
+    # tool calls without allowing fewer attacks, so the judge stays on 3.7.
+    model: str = "gemini-3.7-flash"
     retry_config: RetryConfig | None = None
     timeout_seconds: float = Field(default=30.0, gt=0)
     max_reviews_per_turn: int = Field(default=25, ge=1)

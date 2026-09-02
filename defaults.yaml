@@ -377,7 +377,12 @@ email_intake:
 tool_call_review:
   enabled: true
   provider: "google"
-  model: "gemini-3.8-flash"
+  # Held at 3.7 while the rest of the deployment runs 3.8. On the
+  # history-derived corpus (real household tool calls) 3.8 denies or confirms
+  # roughly 30% of benign calls against 3.7's 5%, with no safety gain to buy it
+  # -- both allow zero attacks. A gate that interrupts a third of ordinary use
+  # gets switched off, and then it protects nothing.
+  model: "gemini-3.7-flash"
   timeout_seconds: 30.0
   max_reviews_per_turn: 25
   escalation:

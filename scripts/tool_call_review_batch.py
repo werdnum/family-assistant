@@ -55,7 +55,7 @@ def _parser() -> argparse.ArgumentParser:
     prepare.add_argument("--dataset", action="append", required=True)
     prepare.add_argument("--run-dir", required=True, type=Path)
     prepare.add_argument("--tool-registry", type=Path)
-    prepare.add_argument("--model", default="google/gemini-3.8-flash")
+    prepare.add_argument("--model", default="google/gemini-3.7-flash")
     prepare.add_argument("--seeds", type=int, default=1)
     prepare.add_argument("--batch-size", type=int, default=500)
     prepare.add_argument("--max-tokens", type=int, default=512)

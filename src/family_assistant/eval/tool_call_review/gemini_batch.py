@@ -386,7 +386,7 @@ def prepare_gemini_batch(
     datasets: Sequence[str | Path],
     run_dir: str | Path,
     *,
-    model: str = "gemini-3.8-flash",
+    model: str = "gemini-3.7-flash",
     seeds: int = 1,
     batch_size: int = DEFAULT_BATCH_SIZE,
     max_tokens: int = DEFAULT_MAX_TOKENS,
@@ -448,7 +448,7 @@ def prepare_gemini_batch(
 def validate_gemini_prepare_inputs(
     datasets: Sequence[str | Path],
     *,
-    model: str = "gemini-3.8-flash",
+    model: str = "gemini-3.7-flash",
     seeds: int = 1,
     batch_size: int = DEFAULT_BATCH_SIZE,
     max_tokens: int = DEFAULT_MAX_TOKENS,

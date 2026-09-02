@@ -313,7 +313,7 @@ def test_config_file_resolves_the_judge_through_the_layered_loader(
     config_path = _write_config(
         tmp_path,
         {
-            "model": "gemini-3.8-flash",
+            "model": "gemini-3.7-flash",
             "retry_config": {
                 "fallback": {"provider": "openai", "model": "gpt-5.6-terra"}
             },
@@ -328,7 +328,7 @@ def test_config_file_resolves_the_judge_through_the_layered_loader(
     ])
     judge = cli._resolve_judge_config(args)
 
-    assert judge.model == "gemini-3.8-flash"
+    assert judge.model == "gemini-3.7-flash"
     assert judge.retry_config is not None
     assert judge.retry_config["fallback"]["model"] == "gpt-5.6-terra"
     assert judge.model_parameters is not None
