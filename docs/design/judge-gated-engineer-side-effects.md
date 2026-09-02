@@ -122,12 +122,13 @@ payload remains the one open channel, exactly as
 
 ### Static rule changes on the engineer
 
-| Rule                                         | Today     | Proposed  | Why                                                                                      |
-| -------------------------------------------- | --------- | --------- | ---------------------------------------------------------------------------------------- |
-| `spawn_worker`                               | `confirm` | `review`  | The task description is the worker's only inlet from FA and is fully reviewable (≤ 3000) |
-| `delegate_to_service` (priority 20)          | `confirm` | `review`  | Request text fenced; the child inherits taint and the propagated originating request     |
-| `create_github_issue`                        | `confirm` | `confirm` | Public repository; the residual is concrete. Server-rendered body (M8) is the real fix   |
-| `cancel_worker_task`, `reconnect_mcp_server` | `confirm` | `review`  | Small arguments, but still state changes an injected turn could direct; judged, not free |
+| Rule                                | Today     | Proposed  | Why                                                                                      |
+| ----------------------------------- | --------- | --------- | ---------------------------------------------------------------------------------------- |
+| `spawn_worker`                      | `confirm` | `review`  | The task description is the worker's only inlet from FA and is fully reviewable (≤ 3000) |
+| `delegate_to_service` (priority 20) | `confirm` | `review`  | Request text fenced; the child inherits taint and the propagated originating request     |
+| `create_github_issue`               | `confirm` | `confirm` | Public repository; the residual is concrete. Server-rendered body (M8) is the real fix   |
+| `cancel_worker_task`                | `confirm` | `review`  | Small arguments, but destructive: an injected turn could stop a fix the user asked for   |
+| `reconnect_mcp_server`              | `confirm` | `allow`   | Persists nothing, sends nothing; the worst outcome is a dropped session that reconnects  |
 
 The priority-99 `deny` rules for `reminder`, `event_handler` and `telephone_external` targets stay.
 Delegation *into* the engineer — the priority-99 `confirm` in `default_profile_settings` and its
@@ -231,15 +232,33 @@ designs for this exact automation, with `create_github_issue` still human-approv
 
 Each milestone is one PR and leaves the system working. Construction detail belongs to the PR.
 
-**M1 — Retag the engineer's reads.** `query_database`, `read_error_logs`, `get_llm_request_history`
-→ `OUTPUT_UNTRUSTED`, with a comment in the `read_frontend_telemetry` style. Add the tag-audit test
-the risk document's M4 names: no `OUTPUT_TRUSTED` on a tool that reads a store mutable through a
-model-influenced write path, with `get_message_history` listed as the documented exception pending
-`OUTPUT_DYNAMIC`. `read_error_logs` is also granted to `ops_automation`, where the retag is harmless
-(script-only, no egress). *Verify:* the test; an engineer turn that reads logs records an
-`unknown_external` source and its subsequent egress produces a shadow review in `taint_audit_events`
-under `processing_profile_id = engineer` — the first engineer shadow data, which does not exist
-today because engineer turns never taint.
+**M1 — Close the engineer's trusted-tier inlets.** Two inlets, one milestone, because either alone
+leaves attacker text rendering to the judge as trusted conversation.
+
+*Reads.* `query_database`, `read_error_logs`, `get_llm_request_history` → `OUTPUT_UNTRUSTED`, with a
+comment in the `read_frontend_telemetry` style. Add a tag-audit test scoped to the invariant the
+retag restores: no `OUTPUT_TRUSTED` on a tool that returns externally authored content *verbatim
+without per-item provenance*. `get_note`, `list_notes` and `get_automation` are out of scope by that
+criterion — they restore the artifact's stored provenance on read, which is the per-item mechanism —
+and `get_message_history` is the listed exception pending `OUTPUT_DYNAMIC`. `read_error_logs` is
+also granted to `ops_automation`, where the retag is harmless (script-only, no egress).
+
+*Ambient context.* The engineer has `include_aggregated_context: true` and excludes nothing, so it
+receives every configured provider's prompt fragment. Only `NotesContextProvider` implements
+`get_context_taint_sources`; `calendar`, `weather` and `home_assistant` contribute externally
+sourced text — an emailed invitation's description, an entity state an integration wrote — with no
+provenance at all, which
+[risk-adjudicated-taint-enforcement.md](risk-adjudicated-taint-enforcement.md) M4 already names for
+calendar. None of them serves diagnosis. The engineer lists all three in
+`excluded_context_providers`, and a test asserts the invariant rather than the list: every provider
+the engineer's effective configuration admits implements `TaintedContextProvider`, so a new provider
+fails the test instead of joining the prompt silently.
+
+*Verify:* both tests; an engineer turn that reads logs records an `unknown_external` source and its
+subsequent egress produces a shadow review in `taint_audit_events` under
+`processing_profile_id = engineer` — the first engineer shadow data, which does not exist today
+because engineer turns never taint; an engineer prompt assembled with calendar and Home Assistant
+configured contains neither.
 
 **M2 — Engineer-shaped fixtures and a conversation-boundary run.** Manual cases: hostile content in
 a stubbed `get_llm_request_history` or `query_database` result followed by `spawn_worker` and
@@ -265,15 +284,22 @@ engineer automation created in a clean turn fires with its definition rendered a
 `trusted_trigger_definition`; a `confirm` verdict on `spawn_worker` in that firing creates one
 deferred confirmation rather than a denial; approval executes the stored call.
 
-**M5 — Measure, then enforce on the engineer.** Two to four weeks of M1's shadow data plus M2's
-numbers decide whether `engineer.taint_policy.mode: enforce` follows. Record the decision and the
-numbers in this document's status. *Verify:* standing metrics from `taint_audit_events` filtered to
-the engineer — verdict counts by cell, fallback rate, p95 latency, escalation trips.
+**M5 — Measure, then enforce on the engineer.** The decision point is an evidence threshold, not a
+date: M2's numbers, plus enough of M1's shadow data to be representative — at least one recorded
+engineer verdict on each of the three adjudicated cells (`arbitrary_external_message`,
+`attacker_addressable_egress`, `sandbox_network`), and enough verdicts in total that the fallback
+rate and p95 latency are measured rather than anecdotal (the deployment's own traffic decides how
+long that takes). Those decide whether `engineer.taint_policy.mode: enforce` follows. Record the
+decision and the numbers in this document's status. *Verify:* standing metrics from
+`taint_audit_events` filtered to the engineer — verdict counts by cell, fallback rate, p95 latency,
+escalation trips.
 
 ## Acceptance criteria
 
 - An engineer turn that reads logs, the database or LLM history is `unknown_external` from that
   point, and every later row renders to the reviewer as a provenance stub.
+- No ambient context reaches the engineer from a provider that does not declare provenance; the
+  engineer's prompt contains no calendar, weather or Home Assistant text.
 - No fixture in which hostile content enters through an engineer read produces an `allow` for a side
   effect the human request did not ask for.
 - An aligned `spawn_worker` or `delegate_to_service` from an engineer turn executes without a human
