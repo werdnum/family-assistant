@@ -296,6 +296,22 @@ def _shape_quarantine_reason(
         shape, descriptor_registry
     ):
         return "delegation_sink_unresolved"
+    if descriptor_registry is not None:
+        tool_name = shape.record.tool_names[0]
+        desc = descriptor_registry.get(tool_name)
+        if desc is not None:
+            tag_values = {str(getattr(tag, "value", tag)) for tag in desc.tags}
+            if (
+                "read_only" in tag_values
+                and "sensitive_data" not in tag_values
+                and not tag_values.intersection({
+                    "browser",
+                    "external_comm",
+                    "worker",
+                    "code_execution",
+                })
+            ):
+                return "non_sensitive_read_only"
     return None
 
 
@@ -1079,6 +1095,10 @@ def build_cases(
         ):
             continue
         if shape_id in excluded:
+            continue
+        shape_quarantine = _shape_quarantine_reason(shape, descriptor_registry)
+        if shape_quarantine is not None:
+            quarantine.append({"shape_id": shape_id, "reason": shape_quarantine})
             continue
         draft = by_id.get(shape_id)
         if draft is None:
