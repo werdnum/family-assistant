@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 _GATE = GateProvenance(
     layer=GateLayer.TAINT_CELL,
     mode="observe",
-    reviewer_revision="google/gemini-3.8-flash@abc123",
+    reviewer_revision="google/gemini-3.7-flash@abc123",
     verdict_id="verdict-1",
 )
 
