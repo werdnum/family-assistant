@@ -241,6 +241,20 @@ designs for this exact automation, with `create_github_issue` still human-approv
   unauthorized-action chain, and not worth a reviewer round-trip or a prompt. Recorded here so the
   question is settled rather than re-raised each review round.
 
+- **The delegating profiles keep their provenance-less ambient context.** `default_assistant` and
+  `complex_tasks` admit calendar, weather and Home Assistant context, none of which declares taint,
+  so an emailed invitation can steer a clean-stamped turn into a delegation whose request the child
+  then treats as the human's. M1 closes that inlet on the engineer, where the diagnostic reads make
+  it acute, and deliberately not on the delegating profiles, where those providers are the product.
+  The route is not new and this design narrows it: today the same clean-stamped turn may delegate to
+  `coder` — a networked sandbox, `taint_sink_class: sandbox_network` — with **no gate at all**,
+  because `delegate_to_service` is plain `allow` in the default baseline and an absent
+  `trusted_user × sandbox_network` cell resolves to `allow`. Judged delegation into a read-only
+  profile whose own side effects are judged again is strictly narrower than that. The fix belongs
+  where [risk-adjudicated-taint-enforcement.md](risk-adjudicated-taint-enforcement.md) M4 already
+  puts it — calendar de-trusting with per-event provenance, and prompt-admission for
+  `CalendarContextProvider` — and closes this residual for every delegation at once when it lands.
+
 ## Work plan
 
 Each milestone is one PR and leaves the system working. Construction detail belongs to the PR.
