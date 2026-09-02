@@ -122,13 +122,13 @@ payload remains the one open channel, exactly as
 
 ### Static rule changes on the engineer
 
-| Rule                                | Today     | Proposed  | Why                                                                                      |
-| ----------------------------------- | --------- | --------- | ---------------------------------------------------------------------------------------- |
-| `spawn_worker`                      | `confirm` | `review`  | The task description is the worker's only inlet from FA and is fully reviewable (≤ 3000) |
-| `delegate_to_service` (priority 20) | `confirm` | `review`  | Request text fenced; the child inherits taint and the propagated originating request     |
-| `create_github_issue`               | `confirm` | `confirm` | Public repository; the residual is concrete. Server-rendered body (M8) is the real fix   |
-| `cancel_worker_task`                | `confirm` | `review`  | Small arguments, but destructive: an injected turn could stop a fix the user asked for   |
-| `reconnect_mcp_server`              | `confirm` | `allow`   | Persists nothing, sends nothing; the worst outcome is a dropped session that reconnects  |
+| Rule                                | Today     | Proposed  | Why                                                                                                                                                                                        |
+| ----------------------------------- | --------- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `spawn_worker`                      | `confirm` | `review`  | The task description is the worker's only inlet from FA and is fully reviewable (≤ 3000)                                                                                                   |
+| `delegate_to_service` (priority 20) | `confirm` | `review`  | Request text fenced; the child inherits taint and the propagated originating request                                                                                                       |
+| `create_github_issue`               | `confirm` | `confirm` | Public repository; the residual is concrete. Server-rendered body (M8) is the real fix                                                                                                     |
+| `cancel_worker_task`                | `confirm` | `confirm` | Rare, destructive, and opaque to the judge: post-M1 the task listing is stubbed, so the call shows only a `task_id`. The human renderer resolves it; a blind review is worse than a prompt |
+| `reconnect_mcp_server`              | `confirm` | `allow`   | Persists nothing, sends nothing; the worst outcome is a dropped session that reconnects                                                                                                    |
 
 The priority-99 `deny` rules for `reminder`, `event_handler` and `telephone_external` targets stay.
 Delegation *into* the engineer — the priority-99 `confirm` in `default_profile_settings` and its
