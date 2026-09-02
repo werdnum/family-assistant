@@ -1601,6 +1601,17 @@ service_profiles:
     description: "Engineering diagnostic profile with read-only access to source code, database, and error logs. Use for investigating application issues, debugging problems, and filing bug reports. Cannot modify data or execute code."
     processing_config:
       include_aggregated_context: true
+      # Only providers that declare their own provenance may reach this profile:
+      # its diagnostic reads already taint the turn, and a provider that injects
+      # externally sourced text without declaring it (an emailed invitation's
+      # description, an entity state an integration wrote) would render to the
+      # tool-call reviewer as the household's own words. None of the three
+      # serves diagnosis. Enforced by
+      # test_engineer_admits_only_tainted_context_providers.
+      excluded_context_providers:
+        - "calendar"
+        - "weather"
+        - "home_assistant"
       provider: "anthropic"
       llm_model: "claude-sonnet-5"
       max_iterations: 100

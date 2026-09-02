@@ -2,11 +2,16 @@
 
 ## Status
 
-Proposed. A pilot of the shipped tool-call reviewer as the *gate* rather than the *shadow* on one
-profile, before the deployment-wide `enforce` decision that
+Proposed; **M1 implemented**. A pilot of the shipped tool-call reviewer as the *gate* rather than
+the *shadow* on one profile, before the deployment-wide `enforce` decision that
 [auto-tool-call-review.md](auto-tool-call-review.md) leaves as M5. Nothing here adds mechanism to
 the reviewer; it corrects one input the engineer profile feeds it, then moves the engineer's
 side-effect gates from human confirmation to judged review, one static rule at a time.
+
+M1 has landed: the engineer's trusted-tier inlets are closed on both sides, enforced by the two
+invariant tests the milestone specifies rather than by a maintained list. The pilot dataset's cutoff
+— the instant M1 reaches production — is recorded here once it deploys; only `taint_audit_events`
+rows at or after it count toward M5's decision.
 
 ## Summary
 
@@ -267,11 +272,16 @@ leaves attacker text rendering to the judge as trusted conversation.
 externally authored content *verbatim without per-item provenance*. The three tools named above are
 the known violations, not the whole set — `get_delegation_status` and `list_delegations` include a
 completed run's `result_text` verbatim, which for a remote A2A run is the remote agent's own output;
-`list_worker_tasks` and `list_pending_callbacks` return stored task and callback text;
-`get_mcp_server_status` returns tool descriptions authored by the remote servers. A hand-maintained
-list of retags would decay exactly as AGENTS.md warns, so the milestone enforces the invariant as a
-chokepoint instead: a test walks the engineer's *effective* tool inventory and requires every
-`OUTPUT_TRUSTED` tool in it to appear on an explicit, commented allowlist of reads whose content is
+`list_worker_tasks` and `list_pending_callbacks` return stored task and callback text. The
+MCP-registry diagnostics (`get_mcp_server_status`, `get_profile_tool_inventory`,
+`resolve_tool_policy`) are *not* among them, contrary to an earlier reading of this milestone: the
+names and descriptions a remote server publishes come from a server the operator configured and has
+therefore already approved, and those tool definitions are injected into every profile that reaches
+the server on every turn. Should that approval be withdrawn, the fix is admission control on MCP
+tool definitions, not taint on the diagnostics that echo them. A hand-maintained list of retags
+would decay exactly as AGENTS.md warns, so the milestone enforces the invariant as a chokepoint
+instead: a test walks the engineer's *effective* tool inventory and requires every `OUTPUT_TRUSTED`
+tool in it to appear on an explicit, commented allowlist of reads whose content is
 deployment-authored (source, config, documentation, system info, statistics) or restored with
 per-item provenance (`get_note` and `list_notes`, which merge the artifact's stored provenance on
 read; `get_automation` and `list_automations` do *not* today, and qualify only once they merge the

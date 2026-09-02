@@ -756,13 +756,17 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.DELEGATION,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
-        ToolTag.OUTPUT_TRUSTED,
+        # OUTPUT_UNTRUSTED: a completed run's result_text is included verbatim, and
+        # for a remote A2A run that text is the remote agent's own output.
+        ToolTag.OUTPUT_UNTRUSTED,
     ),
     "list_delegations": _metadata(
         ToolTag.DELEGATION,
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
-        ToolTag.OUTPUT_TRUSTED,
+        # OUTPUT_UNTRUSTED: includes completed runs' result_text verbatim, remote
+        # A2A output among it.
+        ToolTag.OUTPUT_UNTRUSTED,
     ),
     "schedule_reminder": _metadata(
         ToolTag.STATE_CHANGING,
@@ -778,7 +782,8 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.SCHEDULING,
-        ToolTag.OUTPUT_TRUSTED,
+        # OUTPUT_UNTRUSTED: returns stored callback text verbatim.
+        ToolTag.OUTPUT_UNTRUSTED,
     ),
     "modify_pending_callback": _metadata(
         ToolTag.STATE_CHANGING,
@@ -849,13 +854,18 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.AUTOMATION,
-        ToolTag.OUTPUT_TRUSTED,
+        # OUTPUT_UNTRUSTED: automation definitions are returned verbatim without the
+        # per-record provenance resolution that firing-time definition taint
+        # computes, so a definition shaped by untrusted content reads as trusted.
+        ToolTag.OUTPUT_UNTRUSTED,
     ),
     "get_automation": _metadata(
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.AUTOMATION,
-        ToolTag.OUTPUT_TRUSTED,
+        # OUTPUT_UNTRUSTED: returns an automation's inline script and config
+        # verbatim, with no per-record provenance resolution on read.
+        ToolTag.OUTPUT_UNTRUSTED,
     ),
     "update_automation": _metadata(
         ToolTag.STATE_CHANGING,
@@ -1394,7 +1404,9 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     "list_worker_tasks": _metadata(
         ToolTag.READ_ONLY,
         ToolTag.WORKER,
-        ToolTag.OUTPUT_TRUSTED,
+        # OUTPUT_UNTRUSTED: returns stored task descriptions and results, which are
+        # authored by whoever's content shaped the task.
+        ToolTag.OUTPUT_UNTRUSTED,
     ),
     "read_source_file": _metadata(
         ToolTag.READ_ONLY,
@@ -1414,20 +1426,27 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.DATA,
-        ToolTag.OUTPUT_TRUSTED,
+        # OUTPUT_UNTRUSTED: SELECTs return message, note and intake rows verbatim,
+        # including ingested email. The tool is a trusted read; its content is
+        # whatever anyone ever sent the assistant.
+        ToolTag.OUTPUT_UNTRUSTED,
     ),
     "read_error_logs": _metadata(
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.FILE_SYSTEM,
         ToolTag.DOCUMENTS,
-        ToolTag.OUTPUT_TRUSTED,
+        # OUTPUT_UNTRUSTED: log lines embed whatever was logged -- request bodies,
+        # exception messages built from external input -- verbatim.
+        ToolTag.OUTPUT_UNTRUSTED,
     ),
     "get_llm_request_history": _metadata(
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
         ToolTag.DATA,
-        ToolTag.OUTPUT_TRUSTED,
+        # OUTPUT_UNTRUSTED: replays prior LLM requests verbatim, so it returns the
+        # browser snapshots and email bodies those turns read.
+        ToolTag.OUTPUT_UNTRUSTED,
     ),
     "read_frontend_telemetry": _metadata(
         ToolTag.READ_ONLY,
