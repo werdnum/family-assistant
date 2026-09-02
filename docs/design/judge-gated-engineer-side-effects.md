@@ -2,8 +2,8 @@
 
 ## Status
 
-Proposed; **M1 and M2 implemented**. A pilot of the shipped tool-call reviewer as the *gate* rather
-than the *shadow* on one profile, before the deployment-wide `enforce` decision that
+Proposed; **M1, M2, and M3 implemented**. A pilot of the shipped tool-call reviewer as the *gate*
+rather than the *shadow* on one profile, before the deployment-wide `enforce` decision that
 [auto-tool-call-review.md](auto-tool-call-review.md) leaves as M5. Nothing here adds mechanism to
 the reviewer; it corrects one input the engineer profile feeds it, then moves the engineer's
 side-effect gates from human confirmation to judged review, one static rule at a time.
@@ -17,6 +17,11 @@ M2 has landed: manual fixtures for the engineer's threat shapes (hostile content
 history / database query leading to worker spawn or service delegation, plus benign twins, and a
 trusted-inlet attack case expecting deny to pin M1) are authored and verified in the evaluation
 dataset.
+
+M3 has landed: static rules on the engineer profile and inbound delegation rules from delegating
+profiles have flipped to judged review (with `reconnect_mcp_server` and `cancel_worker_task`
+allowed, and `create_github_issue` staying confirm-gated), profile review guidance has been
+configured, and documentation has been updated.
 
 ## Summary
 

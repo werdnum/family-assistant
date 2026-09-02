@@ -312,13 +312,13 @@ def _delegate_descriptor() -> ToolDescriptor:
     raise AssertionError("delegate_to_service descriptor not found")
 
 
-def test_delegation_to_engineer_is_confirm_gated_not_blocked() -> None:
+def test_delegation_to_engineer_is_review_gated_not_blocked() -> None:
     default_settings, profiles = _load_resolved_profiles()
     profile_by_id = {profile.id: profile for profile in profiles}
     delegate = _delegate_descriptor()
 
     # Every profile that can delegate at all must route the engineer through a
-    # confirmation gate (never an unconditional allow). browser_profile,
+    # review gate (never an unconditional allow or confirm). browser_profile,
     # telephone, and complex_tasks each replace tools_policy wholesale, so each
     # needs its own gate; default_assistant inherits default_profile_settings.
     source_engines = {
@@ -342,16 +342,7 @@ def test_delegation_to_engineer_is_confirm_gated_not_blocked() -> None:
             arguments={"target_service_id": "engineer"},
             can_confirm=True,
         )
-        assert to_engineer.decision is ToolPolicyDecision.CONFIRM, source_id
-
-        # Without a confirmation channel the confirm decision degrades to deny,
-        # so the engineer is never reached unattended.
-        to_engineer_unattended = engine.evaluate_for_execution(
-            delegate,
-            arguments={"target_service_id": "engineer"},
-            can_confirm=False,
-        )
-        assert to_engineer_unattended.decision is ToolPolicyDecision.DENY, source_id
+        assert to_engineer.decision is ToolPolicyDecision.REVIEW, source_id
 
     # Profiles that block specific internal targets outright keep blocking them.
     for source_id in ("default_profile_settings", "complex_tasks", "telephone"):
@@ -363,7 +354,7 @@ def test_delegation_to_engineer_is_confirm_gated_not_blocked() -> None:
         assert to_reminder.decision is ToolPolicyDecision.DENY, source_id
 
 
-def test_engineer_can_delegate_out_only_with_confirmation() -> None:
+def test_engineer_delegation_out_is_review_gated() -> None:
     _, profiles = _load_resolved_profiles()
     engineer = {profile.id: profile for profile in profiles}["engineer"]
     engine = PolicyEngine.from_policy_config(engineer.tools_policy)
@@ -374,14 +365,7 @@ def test_engineer_can_delegate_out_only_with_confirmation() -> None:
         arguments={"target_service_id": "default_assistant"},
         can_confirm=True,
     )
-    assert outbound.decision is ToolPolicyDecision.CONFIRM
-
-    outbound_unattended = engine.evaluate_for_execution(
-        delegate,
-        arguments={"target_service_id": "default_assistant"},
-        can_confirm=False,
-    )
-    assert outbound_unattended.decision is ToolPolicyDecision.DENY
+    assert outbound.decision is ToolPolicyDecision.REVIEW
 
     # The engineer must not reach internal/external-caller profiles that the
     # ordinary delegating policies deny outright, even with confirmation.
@@ -394,34 +378,55 @@ def test_engineer_can_delegate_out_only_with_confirmation() -> None:
         assert outbound_blocked.decision is ToolPolicyDecision.DENY, blocked_target
 
 
-def test_engineer_worker_tools_are_confirm_gated_and_reads_are_allowed() -> None:
-    """The engineer may use AI workers, but only with a human in the loop.
-
-    spawn_worker and cancel_worker_task change state (launch/stop a sandboxed
-    worker), so the engineer profile confirm-gates them; without a confirmation
-    channel they degrade to deny so no worker is ever launched unattended.
-    Reading worker results is side-effect free and allowed outright, as is
-    resolve_tool_policy (the engineer's policy-introspection tool).
-    """
+def test_engineer_side_effects_and_reads_policy() -> None:
+    """The engineer uses judged review for workers/delegation, confirm for issues, and allow for MCP reconnect/cancel."""
     _, profiles = _load_resolved_profiles()
     engineer = {profile.id: profile for profile in profiles}["engineer"]
     engine = PolicyEngine.from_policy_config(engineer.tools_policy)
 
-    for gated_name in ("spawn_worker", "cancel_worker_task"):
-        descriptor = _local_descriptor(gated_name)
-        attended = engine.evaluate_for_execution(descriptor, can_confirm=True)
-        assert attended.decision is ToolPolicyDecision.CONFIRM, gated_name
-        unattended = engine.evaluate_for_execution(descriptor, can_confirm=False)
-        assert unattended.decision is ToolPolicyDecision.DENY, gated_name
+    # spawn_worker is review-gated
+    spawn = _local_descriptor("spawn_worker")
+    assert (
+        engine.evaluate_for_execution(spawn, can_confirm=True).decision
+        is ToolPolicyDecision.REVIEW
+    )
 
+    # create_github_issue requires confirmation
+    issue_desc = _local_descriptor("create_github_issue")
+    attended = engine.evaluate_for_execution(issue_desc, can_confirm=True)
+    assert attended.decision is ToolPolicyDecision.CONFIRM
+    unattended = engine.evaluate_for_execution(issue_desc, can_confirm=False)
+    assert unattended.decision is ToolPolicyDecision.DENY
+
+    # reconnect_mcp_server and cancel_worker_task are allowed outright
+    for allowed_name in ("reconnect_mcp_server", "cancel_worker_task"):
+        descriptor = _local_descriptor(allowed_name)
+        assert (
+            engine.evaluate_for_execution(descriptor, can_confirm=False).decision
+            is ToolPolicyDecision.ALLOW
+        ), allowed_name
+
+    # Diagnostic reads and introspection are allowed outright
     for allowed_name in (
         "read_task_result",
         "list_worker_tasks",
         "resolve_tool_policy",
+        "read_source_file",
+        "query_database",
+        "read_error_logs",
     ):
         descriptor = _local_descriptor(allowed_name)
         decision = engine.evaluate_for_execution(descriptor, can_confirm=False).decision
         assert decision is ToolPolicyDecision.ALLOW, allowed_name
+
+
+def test_engineer_has_review_guidance() -> None:
+    """The engineer profile processing config declares review guidance for the reviewer."""
+    engineer = _engineer_profile()
+    guidance = engineer.processing_config.review_guidance
+    assert guidance
+    assert "This profile investigates the application" in guidance
+    assert "never household content" in guidance
 
 
 # Every tool the engineer can reach whose result is still rendered to the

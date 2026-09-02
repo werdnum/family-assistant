@@ -89,10 +89,10 @@ It can read the application's source code, query its database, inspect error log
 and explain which tools each mode may use — including why a particular tool call was allowed,
 denied, or required confirmation.
 
-It deliberately cannot change data or send messages. Every action with a side effect — filing a
-GitHub issue, reconnecting an MCP server, launching or cancelling an isolated coding worker, handing
-work to another mode — asks for your approval first. If it tells you a tool isn't available to it,
-that's the intended safety configuration, not a fault.
+It deliberately cannot change data or send messages. Aligned handoffs to other modes and coding
+worker launches are judged automatically by tool-call review without a prompt; filing a public
+GitHub issue and cancelling a worker still ask for your approval first. If it tells you a tool isn't
+available to it, that's the intended safety configuration, not a fault.
 
 ## Still stuck
 
