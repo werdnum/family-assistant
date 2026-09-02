@@ -127,7 +127,7 @@ payload remains the one open channel, exactly as
 | `spawn_worker`                               | `confirm` | `review`  | The task description is the worker's only inlet from FA and is fully reviewable (≤ 3000) |
 | `delegate_to_service` (priority 20)          | `confirm` | `review`  | Request text fenced; the child inherits taint and the propagated originating request     |
 | `create_github_issue`                        | `confirm` | `confirm` | Public repository; the residual is concrete. Server-rendered body (M8) is the real fix   |
-| `cancel_worker_task`, `reconnect_mcp_server` | `confirm` | `allow`   | Nothing in the arguments to judge; a review here is friction of a different kind         |
+| `cancel_worker_task`, `reconnect_mcp_server` | `confirm` | `review`  | Small arguments, but still state changes an injected turn could direct; judged, not free |
 
 The priority-99 `deny` rules for `reminder`, `event_handler` and `telephone_external` targets stay.
 Delegation *into* the engineer — the priority-99 `confirm` in `default_profile_settings` and its
@@ -181,10 +181,12 @@ nil, and its own prompt-injection exposure is its own harness's.
 **Unattended log triage that acts.** `ops_automation` was built before the reviewer and confines
 itself accordingly; it stays as it is. The acting version runs **under the engineer**: automations
 execute under their creating profile, so the engineer gains `create_automation` and
-`update_automation` in its allowlist, and an automation authored in a clean engineer turn (or
-through the web UI) carries trusted definition provenance. At firing, the judge sees that definition
-as the originating intent — "nightly: triage errors in this repository, launch a worker for
-reproducible defects, file issues" — followed by stubbed log reads and the fenced `spawn_worker`
+`update_automation` — at static `review`, not `allow`: persisting a definition is itself the state
+change, the shipped `artifact_write` cell is `audit` at every tier, and the firing-time review
+cannot undo what an injected turn already stored. An automation authored in a clean engineer turn
+(or through the web UI) carries trusted definition provenance. At firing, the judge sees that
+definition as the originating intent — "nightly: triage errors in this repository, launch a worker
+for reproducible defects, file issues" — followed by stubbed log reads and the fenced `spawn_worker`
 call. An ambiguous `confirm` in an unattended turn lands in the deferred tray, which requires the
 tool to opt in: today only `send_message_to_user` is `deferred_confirmation_eligible`.
 `spawn_worker` and `create_github_issue` opt in — both are complete without consuming their result
@@ -256,7 +258,7 @@ turn executes on an `allow` verdict without a confirmation and that a `confirm` 
 prompts; `resolve_tool_policy` reports `review` for the flipped rules.
 
 **M4 — Unattended triage under the engineer.** `create_automation` and `update_automation` join the
-engineer allowlist; `spawn_worker` and `create_github_issue` become
+engineer's policy at `review`; `spawn_worker` and `create_github_issue` become
 `deferred_confirmation_eligible`; `CONFIGURATION_REFERENCE.md` documents the remote-A2A profile
 shape for a read-only diagnostic agent with `allowed_delegation_sources`. *Verify:* a scheduled
 engineer automation created in a clean turn fires with its definition rendered as
