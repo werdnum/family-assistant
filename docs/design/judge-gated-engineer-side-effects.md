@@ -216,17 +216,30 @@ designs for this exact automation, with `create_github_issue` still human-approv
   before history is consulted, and the snapshot stamp then stubs the history row too) and by the
   static `review` fallback. Recorded so it is not re-litigated; closed by the per-row mode when it
   lands.
+
 - **Reviewer false-negative on an unfloored egress cell.** The headline residual of the
   judge-forward design, accepted there; this document narrows it by keeping the one public channel
   human-gated.
+
 - **Payload-channel persuasion** until argument provenance matching lands. Measured invariant on the
   browser boundary; M2 measures it on the shapes this pilot introduces.
+
 - **No originating request over A2A.** Owned by the A2A contract, per the auto-review design.
+
 - **Worker actions after launch** are outside FA's review. The handoff is the chokepoint; credential
   scope bounds the rest.
+
 - **The unattended path relies on definition provenance**, which stamps definitions created from now
   on. A pre-existing automation resolves as a stub and its firings review as unattended-without-
   intent, which is today's behaviour.
+
+- **`reconnect_mcp_server` is `allow`, by maintainer decision.** Its only argument selects among
+  servers the deployment configured; the destination, transport and credentials come from config,
+  never from the call. It closes a session, re-runs discovery and refreshes the in-memory registry —
+  nothing persists, nothing leaves carrying model-chosen content. The attacker's best outcome is a
+  dropped in-flight session that the next call repairs, which is a nuisance rather than an
+  unauthorized-action chain, and not worth a reviewer round-trip or a prompt. Recorded here so the
+  question is settled rather than re-raised each review round.
 
 ## Work plan
 
