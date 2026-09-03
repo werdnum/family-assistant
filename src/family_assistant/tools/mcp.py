@@ -5,6 +5,7 @@ import contextlib
 import logging
 import os  # Import os for environment variable resolution
 import random
+import re  # Added for rate-limit error classification
 import time
 from dataclasses import dataclass
 from typing import (
@@ -122,6 +123,83 @@ def _is_connection_error(error: Exception, *, include_timeouts: bool = False) ->
     return any(phrase in error_str for phrase in phrases)
 
 
+# Tool-call-level rate limiting. Unlike the connection backoff above, this covers
+# application errors reported inside an otherwise healthy MCP response — usually a
+# server's upstream quota (e.g. an HTTP 429 surfaced as an isError result). Pacing is
+# deliberately short: the goal is to keep an LLM's immediate retries from burning the
+# remaining quota, not to hide a persistent outage behind sleeps.
+DEFAULT_RATE_LIMIT_BACKOFF_BASE_SECONDS = 1.0
+DEFAULT_RATE_LIMIT_BACKOFF_MAX_SECONDS = 30.0
+# Retries after the initial call before the server enters its fast-fail window.
+_DEFAULT_RATE_LIMIT_MAX_RETRIES = 2
+
+# Phrase matching is the whole game here for the same reason as
+# _CONNECTION_ERROR_PHRASES: MCP errors are free-form text with no structured type.
+# Kept conservative (rate/quota/throttling language, and 429 only in error context)
+# because a false positive retries an unrelated failure and delays its error
+# reaching the LLM.
+_RATE_LIMIT_ERROR_PHRASES = (
+    "rate lim",  # covers "rate limit", "rate limited", "rate limiter", ...
+    "too many requests",
+    "quota",
+    "throttl",
+)
+
+# A bare "429" is too loose — error text quoting a search query or amount can contain
+# it — so it only counts alongside error-ish context words in the same message.
+_429_ERROR_RE = re.compile(r"\b429\b")
+_429_CONTEXT_WORDS = (
+    "http",
+    "status",
+    "code",
+    "error",
+    "limit",
+    "rate",
+    "exceeded",
+    "too many",
+)
+
+
+def _is_rate_limit_error(error_text: str) -> bool:
+    """Whether an MCP error result (or exception message) is rate-limit shaped.
+
+    Server-agnostic by design: it matches client-side limiters inside MCP servers
+    ("Rate limit exceeded"), raw upstream 429s ("HTTP 429 Too Many Requests"), and
+    quota exhaustion messages alike. Only error text is ever scanned, so a false
+    positive costs one paced retry — never a masked success.
+    """
+    text = error_text.lower()
+    if any(phrase in text for phrase in _RATE_LIMIT_ERROR_PHRASES):
+        return True
+    return bool(
+        _429_ERROR_RE.search(text) and any(word in text for word in _429_CONTEXT_WORDS)
+    )
+
+
+class _RateLimitedToolError(Exception):
+    """An MCP tool returned an application-level rate-limit error.
+
+    Raised from the result-processing path in ``execute_tool`` so the retry loop can
+    pace and retry it like a connection failure, instead of handing the raw error
+    string straight back to the calling LLM.
+    """
+
+
+@dataclass
+class _RateLimitBackoff:
+    """Per-server pacing for application-level rate-limit errors.
+
+    Distinct from ``_ReconnectBackoff``: that paces reconnection after the transport
+    drops; this paces tool calls against a server's upstream quota while its
+    connection stays healthy. ``attempts`` is reset by any clean tool result, and
+    ``blocked_until`` is a monotonic deadline during which new calls fail fast
+    instead of being sent to the server.
+    """
+
+    attempts: int = 0
+    blocked_until: float = 0.0
+
+
 @dataclass
 class _ReconnectBackoff:
     """Per-server retry pacing for the health check loop.
@@ -170,14 +248,23 @@ class MCPToolsProvider:
         health_check_interval_seconds: int = 30,  # Default 30 seconds
         reconnect_backoff_base_seconds: float = DEFAULT_RECONNECT_BACKOFF_BASE_SECONDS,
         reconnect_backoff_max_seconds: float = DEFAULT_RECONNECT_BACKOFF_MAX_SECONDS,
+        rate_limit_backoff_base_seconds: float = DEFAULT_RATE_LIMIT_BACKOFF_BASE_SECONDS,
+        rate_limit_backoff_max_seconds: float = DEFAULT_RATE_LIMIT_BACKOFF_MAX_SECONDS,
+        rate_limit_max_retries: int = _DEFAULT_RATE_LIMIT_MAX_RETRIES,
     ) -> None:
         self._mcp_server_configs = dict(mcp_server_configs)
         self._initialization_timeout_seconds = initialization_timeout_seconds
         self._health_check_interval_seconds = health_check_interval_seconds
         self._reconnect_backoff_base_seconds = reconnect_backoff_base_seconds
         self._reconnect_backoff_max_seconds = reconnect_backoff_max_seconds
+        self._rate_limit_backoff_base_seconds = rate_limit_backoff_base_seconds
+        self._rate_limit_backoff_max_seconds = rate_limit_backoff_max_seconds
+        self._rate_limit_max_retries = rate_limit_max_retries
         self._reconnect_backoff: dict[str, _ReconnectBackoff] = {
             server_id: _ReconnectBackoff() for server_id in self._mcp_server_configs
+        }
+        self._rate_limit_backoff: dict[str, _RateLimitBackoff] = {
+            server_id: _RateLimitBackoff() for server_id in self._mcp_server_configs
         }
         self._sessions: dict[str, ClientSession] = {}
         self._tool_map: dict[str, str] = {}  # Map tool name -> server_id
@@ -198,6 +285,9 @@ class MCPToolsProvider:
             f"Health check interval: {self._health_check_interval_seconds}s. "
             f"Reconnect backoff: {self._reconnect_backoff_base_seconds}s base, "
             f"{self._reconnect_backoff_max_seconds}s max. "
+            f"Rate-limit backoff: {self._rate_limit_backoff_base_seconds}s base, "
+            f"{self._rate_limit_backoff_max_seconds}s max, "
+            f"{self._rate_limit_max_retries} retries. "
             f"Initialization pending."
         )
 
@@ -983,6 +1073,64 @@ class MCPToolsProvider:
         backoff.attempts = 0
         backoff.next_attempt_at = 0.0
 
+    def _reset_rate_limit_backoff(self, server_id: str) -> None:
+        """Clear rate-limit penalty state after a clean tool result."""
+        backoff = self._rate_limit_backoff[server_id]
+        if backoff.attempts or backoff.blocked_until:
+            logger.info(
+                "MCP server '%s' is serving tool calls again; clearing rate-limit "
+                "backoff after %d error(s)",
+                server_id,
+                backoff.attempts,
+            )
+        backoff.attempts = 0
+        backoff.blocked_until = 0.0
+
+    async def _pace_rate_limit_retry(
+        self, server_id: str, tool_name: str
+    ) -> str | None:
+        """Record a rate-limit error and either sleep for a paced retry or finalize.
+
+        Returns ``None`` when the caller should retry the call (the backoff sleep has
+        already happened), or the LLM-facing error string once retries are exhausted
+        and the server has been put into its fast-fail penalty window. A clean tool
+        result, a passing health check, or a manual reconnect are the ways out.
+        """
+        backoff = self._rate_limit_backoff[server_id]
+        backoff.attempts += 1
+        delay = reconnect_backoff_delay(
+            backoff.attempts,
+            base_seconds=self._rate_limit_backoff_base_seconds,
+            max_seconds=self._rate_limit_backoff_max_seconds,
+        )
+        if backoff.attempts > self._rate_limit_max_retries:
+            # Exhausted. Block this server for one more backoff window so the rest of
+            # a parallel burst fails fast instead of repeating the same retry
+            # sequence; the window doubles if the next attempt also fails.
+            backoff.blocked_until = time.monotonic() + delay
+            logger.error(
+                "MCP tool '%s' on server '%s' is still rate-limited after %d "
+                "paced retry(ies); blocking further calls for ~%.1fs",
+                tool_name,
+                server_id,
+                self._rate_limit_max_retries,
+                delay,
+            )
+            return (
+                f"Rate limited: tool '{tool_name}' on server '{server_id}' kept "
+                "returning rate limit errors even after paced retries. Try again "
+                "in about a minute, and avoid issuing parallel searches until then."
+            )
+        logger.warning(
+            "Rate limit for MCP tool '%s' on server '%s' (error %d); retrying in %.1fs",
+            tool_name,
+            server_id,
+            backoff.attempts,
+            delay,
+        )
+        await asyncio.sleep(delay)
+        return None
+
     async def reconnect_server(self, server_id: str) -> bool:
         """Public wrapper around the internal reconnect routine.
 
@@ -1179,7 +1327,13 @@ class MCPToolsProvider:
         context: ToolExecutionContext,
         call_id: str | None = None,
     ) -> str:
-        """Executes an MCP tool on the appropriate server with automatic reconnection on failure."""
+        """Executes an MCP tool on the appropriate server.
+
+        Handles two failure classes with distinct machinery: transport drops trigger
+        one reconnection attempt, while application-level rate-limit errors inside
+        an otherwise healthy response get short paced retries and, once those are
+        exhausted, a fast-fail window that deflects the rest of an LLM burst.
+        """
         if not self._initialized:
             await self.initialize()  # Ensure connections and mapping are ready
 
@@ -1199,8 +1353,33 @@ class MCPToolsProvider:
             f"Executing MCP tool '{name}' on server '{server_id}' with args: {arguments}"
         )
 
-        # Try to execute the tool, with one reconnection attempt on failure
-        for attempt in range(2):
+        # Fast-fail while this server is inside its rate-limit penalty window. A busy
+        # turn issues search calls in parallel, so once a server has told us to slow
+        # down, returning an immediate guidance string beats re-queuing load against
+        # the limit for every queued call in the burst.
+        rate_limit_backoff = self._rate_limit_backoff[server_id]
+        now = time.monotonic()
+        if now < rate_limit_backoff.blocked_until:
+            remaining_seconds = int(rate_limit_backoff.blocked_until - now) + 1
+            logger.warning(
+                "Deferring MCP tool '%s' on server '%s': rate-limited, blocked for "
+                "another %ds after %d error(s)",
+                name,
+                server_id,
+                remaining_seconds,
+                rate_limit_backoff.attempts,
+            )
+            return (
+                f"Rate limited: tool '{name}' on server '{server_id}' has returned "
+                f"rate limit errors {rate_limit_backoff.attempts} time(s). Retry in "
+                f"about {remaining_seconds} seconds, and avoid issuing parallel "
+                "search calls until then."
+            )
+
+        # Try to execute the tool, with rate-limit retries paced by backoff and one
+        # reconnection attempt on connection-shaped failures.
+        reconnect_attempted = False
+        for _ in range(self._rate_limit_max_retries + 1):
 
             async def call_tool_result(active_session: ClientSession) -> str:
                 mcp_result = await active_session.call_tool(
@@ -1225,6 +1404,11 @@ class MCPToolsProvider:
                     logger.error(
                         f"MCP tool '{name}' on server '{server_id}' returned an error: {result_str}"
                     )
+                    if _is_rate_limit_error(result_str):
+                        # Application-level rate limit inside a healthy response:
+                        # surface it to the retry loop instead of handing the raw
+                        # string to the LLM, which would retry immediately.
+                        raise _RateLimitedToolError(result_str)
                     return f"Error executing tool '{name}': {result_str}"  # Prepend error indication
                 else:
                     logger.info(
@@ -1233,10 +1417,31 @@ class MCPToolsProvider:
                     return result_str
 
             try:
-                return await call_tool_result(session)
+                result_str = await call_tool_result(session)
+                # A clean result is the only thing that clears the rate-limit
+                # backoff, mirroring how a passing health check clears the
+                # connection backoff.
+                self._reset_rate_limit_backoff(server_id)
+                return result_str
+            except _RateLimitedToolError:
+                final_error = await self._pace_rate_limit_retry(server_id, name)
+                if final_error is not None:
+                    return final_error
+                continue
             except Exception as e:
-                if attempt == 0:
-                    # First attempt failed, try to reconnect
+                if _is_rate_limit_error(str(e)):
+                    # A 429 raised as a transport exception (HTTP servers can do
+                    # this) rather than returned as an isError result. It doesn't
+                    # touch the connection, so it doesn't spend the reconnect
+                    # budget — just pace and retry.
+                    final_error = await self._pace_rate_limit_retry(server_id, name)
+                    if final_error is not None:
+                        return final_error
+                    continue
+
+                if not reconnect_attempted:
+                    # First connection-shaped failure: one reconnection attempt.
+                    reconnect_attempted = True
                     logger.warning(
                         f"Error calling MCP tool '{name}' on server '{server_id}': {e}. "
                         f"Attempting to reconnect..."
@@ -1266,13 +1471,14 @@ class MCPToolsProvider:
                         )
                         return f"Error calling MCP tool '{name}': {e}"
 
-                # If we get here, either it's the second attempt or reconnection failed
+                # If we get here, the reconnection budget is spent (or didn't apply)
                 logger.exception(
                     f"Error calling MCP tool '{name}' on server '{server_id}': {e}"
                 )
                 return f"Error calling MCP tool '{name}': {e}"
 
-        # This should never be reached, but needed for type checking
+        # The loop always returns on its final iteration; this line exists so the
+        # type checker can rely on every path returning a string.
         return f"Error: Unexpected execution path for tool '{name}'"
 
     async def _close_server_connections(self, server_id: str) -> None:
