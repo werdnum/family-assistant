@@ -297,14 +297,15 @@ mcp_config:
       command: "mcp-server-time"
       args: ["--local-timezone=Australia/Sydney"]
     brave:
-      command: "deno"
-      args:
-        - "run"
-        - "--allow-net"
-        - "--allow-env"
-        - "npm:@modelcontextprotocol/server-brave-search"
+      # Invoke the globally installed, pinned entry point (see Dockerfile) rather than
+      # resolving the package at MCP startup, which would pick up whatever version is
+      # current on npm inside the MCP initialization timeout.
+      command: "brave-search-mcp-server"
       env:
         BRAVE_API_KEY: "$BRAVE_API_KEY"
+        # Whitelist to keep the tool surface small; expand deliberately (see
+        # brave-search-mcp-server's README for the full tool list).
+        BRAVE_MCP_ENABLED_TOOLS: "brave_web_search brave_news_search"
     scrape:
       command: "python"
       args:
