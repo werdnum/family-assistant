@@ -27,6 +27,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     # Clean up apt cache to reduce image size
     rm -rf /var/lib/apt/lists/*
 
+# Install the first-party Brave Search MCP server, pinned for a reproducible build. This
+# replaces @modelcontextprotocol/server-brave-search, which came from the archived MCP
+# reference-server collection and has a monthly rate-limit counter that never resets,
+# permanently failing "Rate limit exceeded" after ~15,000 calls until the process restarts.
+ARG BRAVE_SEARCH_MCP_VERSION=2.1.3
+RUN npm install --global "@brave/brave-search-mcp-server@${BRAVE_SEARCH_MCP_VERSION}"
+
 # Set working directory and prepare directories with proper permissions
 WORKDIR /app
 
@@ -86,9 +93,6 @@ ENV UV_TOOL_DIR=/uv/tools
 # regresses.
 RUN uv tool install mcp-server-time --with "mcp<2"
 RUN uv tool install mcp-server-fetch --with "mcp<2"
-
-# Install Node.js MCP tools globally using Deno, providing explicit names
-RUN deno install --global -A --name brave-search-mcp-server npm:@modelcontextprotocol/server-brave-search
 
 # Switch back to root for remaining system-level operations
 USER root
