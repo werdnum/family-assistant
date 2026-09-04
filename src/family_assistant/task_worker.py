@@ -1887,6 +1887,7 @@ class TaskWorker:
         target_service: object,
         remote_task_id: str,
         *,
+        outcome: str = "success",
         cancelled: bool = False,
     ) -> Callable[[], Awaitable[None]] | None:
         """The accounting hook for a remote target, or None if it has none.
@@ -1902,7 +1903,7 @@ class TaskWorker:
             return None
 
         async def run() -> None:
-            await record(remote_task_id, cancelled=cancelled)
+            await record(remote_task_id, outcome=outcome, cancelled=cancelled)
 
         return run
 
@@ -2392,8 +2393,12 @@ class TaskWorker:
             exec_context,
             delegation_id,
             result,
+            # The outcome is the one just committed, so it does not depend on
+            # the enrichment read the recorder makes.
             on_committed=self._terminal_metrics_recorder(
-                target_service, remote_task_id
+                target_service,
+                remote_task_id,
+                outcome="error" if result.error_traceback else "success",
             ),
         )
 

@@ -558,9 +558,17 @@ class InteractionsAgentProcessingService(ProcessingService):
         return PENDING
 
     async def record_terminal_metrics(
-        self, remote_task_id: str, *, cancelled: bool = False
+        self,
+        remote_task_id: str,
+        *,
+        outcome: str = "success",
+        cancelled: bool = False,
     ) -> None:
         """Count the finished run, called once the terminal CAS has committed.
+
+        ``outcome`` comes from the caller, which learned it from the result it
+        just committed, rather than from the interaction read below: the read
+        is enrichment and may fail, while the outcome is already known.
 
         ``cancelled`` is the timeout path, which cancels the remote run and
         never polls it again: the run has an outcome but no terminal poll to
@@ -576,29 +584,27 @@ class InteractionsAgentProcessingService(ProcessingService):
         if cancelled:
             await self._record_cancelled_run(remote_task_id)
             return
+        interaction: Interaction | None = None
         try:
             interaction = await self._google_client().get_agent_interaction(
                 remote_task_id
             )
         except Exception:
+            # The read is for the tokens and the duration, not for whether the
+            # run happened -- and the caller has already committed the terminal
+            # transition, so no later poll will reach this hook again. Dropping
+            # the call here would lose the whole run rather than its detail.
             logger.warning(
-                "Could not read interaction %s to count its usage.",
+                "Could not read interaction %s to count its usage; recording the "
+                "run without it.",
                 remote_task_id,
                 exc_info=True,
             )
-            return
-        self._record_run_metrics(
-            interaction,
-            outcome=(
-                "error"
-                if is_interaction_terminal_error_status(interaction.status)
-                else "success"
-            ),
-        )
+        self._record_run_metrics(interaction, outcome=outcome)
 
     def _record_run_metrics(
         self,
-        interaction: Interaction,
+        interaction: Interaction | None,
         *,
         outcome: str,
     ) -> None:
@@ -618,13 +624,23 @@ class InteractionsAgentProcessingService(ProcessingService):
             profile=self.service_config.id,
             provider="google",
             model=client.model_name,
-            resolved_model=interaction.model,
+            resolved_model=interaction.model if interaction else None,
             operation=client.agent_operation_name,
             outcome=outcome,
-            error_type=interaction.status if outcome == "error" else None,
-            duration_seconds=_interaction_duration_seconds(interaction),
+            error_type=(
+                (interaction.status if interaction else "unknown")
+                if outcome == "error"
+                else None
+            ),
+            duration_seconds=(
+                _interaction_duration_seconds(interaction) if interaction else 0.0
+            ),
             time_to_first_output_seconds=None,
-            reasoning_info=client.reasoning_info_from_interaction(interaction),
+            reasoning_info=(
+                client.reasoning_info_from_interaction(interaction)
+                if interaction
+                else None
+            ),
         )
 
     async def cancel_async(self, remote_task_id: str) -> None:

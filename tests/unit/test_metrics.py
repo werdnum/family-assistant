@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import urllib.request
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
 
@@ -27,6 +28,9 @@ from family_assistant.observability.metrics import (
     instrumented_llm_request,
     normalized_token_buckets,
     record_tool_call,
+)
+from family_assistant.processing.interactions_agent_service import (
+    InteractionsAgentProcessingService,
 )
 from family_assistant.tools import ToolNotFoundError
 from family_assistant.tools.infrastructure import (
@@ -569,6 +573,43 @@ def test_an_agent_run_reports_its_token_modalities() -> None:
     assert buckets["input_uncached"] == 500
     assert buckets["output_image"] == 8000
     assert buckets["output"] == 1000
+
+
+def test_a_committed_run_is_counted_even_if_its_usage_cannot_be_read() -> None:
+    """The enrichment read may fail; the run still happened and was still billed.
+
+    The caller has already committed the terminal transition, so no later poll
+    reaches this hook again -- dropping the call here would lose the whole run
+    rather than its token detail.
+    """
+    client = GoogleGenAIClient(api_key="test", model="deep-research-preview-04-2026")
+    # Bound to a stand-in rather than a whole ProcessingService: the two
+    # attributes below are all this method reads, and constructing the service
+    # would pull in the entire processing stack for one call.
+    service = SimpleNamespace(
+        service_config=SimpleNamespace(id="p_unreadable"),
+        _google_client=lambda: client,
+    )
+
+    InteractionsAgentProcessingService._record_run_metrics(
+        cast("InteractionsAgentProcessingService", service), None, outcome="success"
+    )
+
+    assert (
+        _sample(
+            "family_assistant_llm_calls_total",
+            {
+                "profile": "p_unreadable",
+                "provider": "google",
+                "model": "models/deep-research-preview-04-2026",
+                "resolved_model": "models/deep-research-preview-04-2026",
+                "operation": "deep_research",
+                "outcome": "success",
+                "error_type": "",
+            },
+        )
+        == 1
+    )
 
 
 def test_an_agent_run_with_no_usage_reports_none() -> None:

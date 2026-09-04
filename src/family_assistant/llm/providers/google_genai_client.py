@@ -2046,6 +2046,17 @@ class GoogleGenAIClient(BaseLLMClient):
         rendered, so the interactive transcript stays the agent's prose.
         """
         agent_label = self._agent_label
+        # Built before the span, and so before the metrics lifecycle: shaping
+        # the request and resolving the sandbox's egress credential both happen
+        # entirely in this process, and a failure there is not a provider
+        # error. Counted inside, it would put a Google call that never left the
+        # process into the provider error rate.
+        create_kwargs = self._build_agent_create_kwargs(messages)
+        environment = await self._build_agent_environment()
+        if environment is not None:
+            create_kwargs["environment"] = environment
+        create_kwargs["stream"] = True
+
         span = tracer.start_span("llm.provider.agent_interaction")
         telemetry = LLMCallTelemetry(
             span,
@@ -2071,12 +2082,6 @@ class GoogleGenAIClient(BaseLLMClient):
         async def stream_events() -> AsyncGenerator[LLMStreamEvent]:
             nonlocal content_yielded, interaction_id, last_event_id
             nonlocal interaction_usage, interaction_model
-            create_kwargs = self._build_agent_create_kwargs(messages)
-            environment = await self._build_agent_environment()
-            if environment is not None:
-                create_kwargs["environment"] = environment
-            create_kwargs["stream"] = True
-
             stream = cast(
                 "AsyncIterator[Any]",
                 await self.client.aio.interactions.create(**create_kwargs),
@@ -2095,6 +2100,11 @@ class GoogleGenAIClient(BaseLLMClient):
                     getattr(chunk, "interaction", None), "model", None
                 ):
                     interaction_model = served
+                    # Recorded as it arrives, for the same reason the usage is:
+                    # a terminal error status or an error frame raises straight
+                    # past the finalization block, and a failure series that
+                    # substitutes the alias cannot be analysed by model.
+                    telemetry.record_response_metadata(resolved_model=served)
 
                 if usage := getattr(getattr(chunk, "interaction", None), "usage", None):
                     interaction_usage = usage
