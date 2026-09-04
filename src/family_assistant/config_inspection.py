@@ -28,6 +28,9 @@ import re
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote_plus, urlsplit, urlunsplit
 
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
+
 if TYPE_CHECKING:
     from family_assistant.config_models import (
         DefaultProfileSettings,
@@ -140,6 +143,25 @@ def _parses_as_url(value: str) -> bool:
     return True
 
 
+def _redact_database_url_password(value: str) -> str:
+    """Redact a password that only SQLAlchemy's URL grammar can locate.
+
+    ``urlsplit`` ends the authority at the first ``/``, ``?`` or ``#``, while
+    SQLAlchemy reads the password as everything up to the ``@``. A DSN like
+    ``postgresql://user:pa/ss@db/family`` is therefore a valid runtime URL whose
+    password the RFC parser never sees. Ask SQLAlchemy where the password is and
+    replace that exact substring, leaving the rest of the string untouched.
+    """
+    try:
+        parsed = make_url(value)
+    except (ArgumentError, ValueError):
+        return value
+    password = parsed.password
+    if not password:
+        return value
+    return value.replace(f":{password}@", f":{REDACTED}@", 1)
+
+
 def redact_sensitive_text(value: str) -> str:
     """Redact credential material embedded inside a string value.
 
@@ -151,7 +173,12 @@ def redact_sensitive_text(value: str) -> str:
         return REDACTED
     if "://" not in value:
         return value
-    return _URL_PATTERN.sub(_redact_url_match, value)
+    # The URL pass first: it preserves host and path. The database-grammar pass
+    # then catches a password the RFC parser could not see. Doing it the other
+    # way round feeds "[REDACTED]" back into urlsplit, which reads the bracket
+    # as a broken IPv6 literal and fails the whole value closed.
+    value = _URL_PATTERN.sub(_redact_url_match, value)
+    return _redact_database_url_password(value)
 
 
 def _is_environment_mapping(key: object, value: object) -> bool:

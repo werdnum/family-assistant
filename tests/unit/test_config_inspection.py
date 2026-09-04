@@ -93,6 +93,24 @@ def test_database_url_password_is_redacted_but_host_survives() -> None:
     )
 
 
+def test_dsn_passwords_outside_the_rfc_grammar_are_redacted() -> None:
+    """SQLAlchemy reads a password up to the "@"; urlsplit stops at "/?#".
+
+    Each of these is a valid runtime database URL whose password the RFC parser
+    never sees, so it has to be located with the grammar that accepts it.
+    """
+    for dsn, password in (
+        ("postgresql+asyncpg://user:pa/ss@db/family", "pa/ss"),
+        ("postgresql://user:pa?ss@db/family", "pa?ss"),
+        ("postgresql://user:pa ss@db/family", "pa ss"),
+        ("postgresql://user:pa#ss@db/family", "pa#ss"),
+    ):
+        redacted = redact_sensitive_text(dsn)
+        assert password not in redacted, dsn
+        assert REDACTED in redacted, dsn
+        assert redacted.endswith("@db/family"), dsn
+
+
 def test_url_without_credentials_is_untouched() -> None:
     for url in (
         "sqlite+aiosqlite:///family_assistant.db",
