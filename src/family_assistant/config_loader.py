@@ -25,7 +25,7 @@ from typing import Any
 
 import yaml
 from dotenv import find_dotenv, load_dotenv
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from .config_models import AppConfig
 from .config_sources import deep_merge_dicts, load_yaml_file
@@ -354,6 +354,11 @@ def expand_env_vars_in_dict(
         return {key: expand_env_vars_in_dict(value) for key, value in data.items()}
     elif isinstance(data, list):
         return [expand_env_vars_in_dict(item) for item in data]
+    elif isinstance(data, SecretStr):
+        # A credential field carries a placeholder like any other string, but
+        # the mask hides it from the isinstance(str) branch below. Expand the
+        # value it holds and re-wrap, so the secret never becomes a bare str.
+        return SecretStr(expand_env_vars_in_dict(data.get_secret_value()))
     elif isinstance(data, str):
         template = string.Template(data)
         try:

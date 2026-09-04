@@ -9,6 +9,7 @@ larger value, and dynamically-structured config -- are still handled.
 from __future__ import annotations
 
 import json
+import os
 
 from pydantic import SecretStr
 
@@ -17,6 +18,7 @@ from family_assistant.config_inspection import (
     redact_sensitive_config,
     redact_sensitive_text,
 )
+from family_assistant.config_loader import expand_env_vars_in_dict
 from family_assistant.config_models import (
     ApnsConfig,
     AppConfig,
@@ -261,3 +263,35 @@ def test_cli_override_produces_a_usable_secret() -> None:
     )
     assert config.telegram_token is not None
     assert config.telegram_token.get_secret_value() == "cli-token"
+
+
+def test_env_placeholders_expand_inside_secret_fields() -> None:
+    """A masked field still carries a $VAR placeholder that must be expanded.
+
+    ``expand_env_vars_in_dict`` walks strings; a SecretStr is not one, so
+    without explicit handling the placeholder survives into the runtime config
+    and the server is contacted with a literal "${VAR}" as its token.
+    """
+    os.environ["FA_TEST_MCP_TOKEN"] = "real-token-value"
+    try:
+        for placeholder in ("$FA_TEST_MCP_TOKEN", "${FA_TEST_MCP_TOKEN}"):
+            config = MCPConfig(
+                mcpServers={
+                    "remote": MCPServerConfig.model_validate({
+                        "url": "https://mcp.example.com/",
+                        "token": placeholder,
+                    })
+                }
+            )
+            expanded = MCPConfig.model_validate(
+                expand_env_vars_in_dict({
+                    "mcpServers": {
+                        name: server.model_dump()
+                        for name, server in config.mcpServers.items()
+                    }
+                })
+            )
+            runtime = mcp_servers_for_runtime(expanded)["remote"]
+            assert runtime["token"] == "real-token-value", placeholder
+    finally:
+        del os.environ["FA_TEST_MCP_TOKEN"]
