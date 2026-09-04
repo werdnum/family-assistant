@@ -203,67 +203,127 @@ This enables debug logging for LLM API calls to OpenAI, Anthropic, Google, and o
 
 ______________________________________________________________________
 
-## Metrics (Recommendations)
+## Metrics
 
-Family Assistant does not currently expose a `/metrics` endpoint, but the following metrics are
-recommended for comprehensive monitoring.
+Family Assistant exports Prometheus metrics on a port of its own — **9090** by default, not the
+application port. The application port is typically published by an Ingress in its entirety, and
+token spend, model line-up and error rates are not public information; a separate port keeps the
+exporter reachable from inside the cluster and nowhere else.
 
-### Key Metrics to Track
-
-| Metric                     | Type      | Description                      |
-| -------------------------- | --------- | -------------------------------- |
-| `http_requests_total`      | Counter   | Total HTTP requests by path/code |
-| `http_request_duration_ms` | Histogram | Request latency distribution     |
-| `llm_requests_total`       | Counter   | LLM API calls by model/status    |
-| `llm_request_duration_ms`  | Histogram | LLM response time                |
-| `llm_tokens_total`         | Counter   | Token usage by model             |
-| `telegram_messages_total`  | Counter   | Telegram messages processed      |
-| `tool_calls_total`         | Counter   | Tool invocations by name/status  |
-| `db_query_duration_ms`     | Histogram | Database query latency           |
-| `active_conversations`     | Gauge     | Currently active conversations   |
-| `background_tasks_queued`  | Gauge     | Pending background tasks         |
-
-### Example Prometheus Configuration
-
-If implementing Prometheus metrics, add middleware using `starlette-exporter` or
-`prometheus-fastapi-instrumentator`:
-
-```python
-# Example integration (not currently implemented)
-from prometheus_fastapi_instrumentator import Instrumentator
-
-Instrumentator().instrument(app).expose(app)
+```
+curl http://family-assistant:9090/metrics
 ```
 
-Then configure Prometheus scraping:
+Set `METRICS_PORT` to move it, or `METRICS_ENABLED=false` to turn it off. The rationale and the
+chokepoints the numbers come from are in
+[docs/design/prometheus-metrics.md](../design/prometheus-metrics.md).
 
-```yaml
-scrape_configs:
-  - job_name: "family-assistant"
-    static_configs:
-      - targets: ["family-assistant:8000"]
-    metrics_path: /metrics
-    scrape_interval: 15s
+Standard process and Python runtime metrics (`process_resident_memory_bytes`, `python_gc_*`, …) are
+exported alongside the application ones.
+
+### LLM
+
+Every LLM metric carries the same five labels:
+
+| Label            | Meaning                                                                  |
+| ---------------- | ------------------------------------------------------------------------ |
+| `profile`        | The processing profile whose turn made the call; `none` outside a turn   |
+| `provider`       | `anthropic`, `openai`, `google`, …                                       |
+| `model`          | The model as configured                                                  |
+| `resolved_model` | The model the provider reports serving (an alias resolves to a snapshot) |
+| `operation`      | `chat`, or the named operation for a non-chat call                       |
+
+| Metric                                              | Type      | Extra labels            |
+| --------------------------------------------------- | --------- | ----------------------- |
+| `family_assistant_llm_tokens_total`                 | Counter   | `kind`                  |
+| `family_assistant_llm_calls_total`                  | Counter   | `outcome`, `error_type` |
+| `family_assistant_llm_call_duration_seconds`        | Histogram | `outcome`               |
+| `family_assistant_llm_time_to_first_output_seconds` | Histogram | —                       |
+
+`kind` splits tokens into five **disjoint** buckets, normalised so that they mean the same thing on
+every provider — providers disagree about whether their own cache and reasoning counts are separate
+buckets or subsets, and that correction is applied before export rather than in every query:
+
+| `kind`           | Meaning                                                         |
+| ---------------- | --------------------------------------------------------------- |
+| `input_uncached` | Prompt tokens neither read from nor written to the prompt cache |
+| `cache_read`     | Prompt tokens served from the prompt cache                      |
+| `cache_write`    | Prompt tokens written into the prompt cache                     |
+| `output`         | Generated tokens, excluding reasoning                           |
+| `reasoning`      | Reasoning / thinking tokens                                     |
+
+A bucket a provider does not report is absent rather than zero, so no `cache_read` series means
+"this provider or model does not report caching", not "nothing was cached".
+
+`family_assistant_llm_time_to_first_output_seconds` is only observed for streamed calls, where it is
+the latency the user actually feels.
+
+### Tools and turns
+
+| Metric                                   | Type      | Labels                       |
+| ---------------------------------------- | --------- | ---------------------------- |
+| `family_assistant_tool_calls_total`      | Counter   | `profile`, `tool`, `outcome` |
+| `family_assistant_tool_duration_seconds` | Histogram | `profile`, `tool`            |
+| `family_assistant_turns_total`           | Counter   | `profile`, `outcome`         |
+| `family_assistant_turn_duration_seconds` | Histogram | `profile`, `outcome`         |
+| `family_assistant_turns_in_progress`     | Gauge     | `profile`                    |
+
+Tool `outcome` is `success`, `denied` (refused by tool policy), `not_found`, or `error`. Turn
+`outcome` is `success`, `error`, or `cancelled` — a browser that navigated away mid-turn is not a
+failure.
+
+### Useful queries
+
+Token spend per profile, in tokens per second:
+
+```promql
+sum by (profile) (rate(family_assistant_llm_tokens_total[1h]))
 ```
 
-### Custom Metrics for LLM
+Which profile is spending on reasoning rather than answers:
 
-Track LLM-specific metrics by instrumenting the LLM client:
+```promql
+sum by (profile) (rate(family_assistant_llm_tokens_total{kind="reasoning"}[1h]))
+  / sum by (profile) (rate(family_assistant_llm_tokens_total{kind=~"output|reasoning"}[1h]))
+```
 
-```python
-# Conceptual example for custom metrics
-from prometheus_client import Counter, Histogram
+Prompt-cache hit rate — the denominator is the reconstructed full prompt, which is what makes this
+comparable across providers:
 
-llm_requests = Counter(
-    'llm_requests_total',
-    'Total LLM API requests',
-    ['model', 'status']
-)
+```promql
+sum by (model) (rate(family_assistant_llm_tokens_total{kind="cache_read"}[1h]))
+  / sum by (model) (
+      rate(family_assistant_llm_tokens_total{kind=~"input_uncached|cache_read|cache_write"}[1h])
+    )
+```
 
-llm_latency = Histogram(
-    'llm_request_duration_seconds',
-    'LLM request duration',
-    ['model']
+Whether a profile is being served by its configured model or by a fallback:
+
+```promql
+sum by (profile, model, resolved_model) (rate(family_assistant_llm_calls_total[1h]))
+```
+
+LLM calls per turn, which is where a runaway tool loop shows up:
+
+```promql
+sum by (profile) (rate(family_assistant_llm_calls_total[1h]))
+  / sum by (profile) (rate(family_assistant_turns_total[1h]))
+```
+
+Error rate by provider:
+
+```promql
+sum by (provider) (rate(family_assistant_llm_calls_total{outcome="error"}[15m]))
+  / sum by (provider) (rate(family_assistant_llm_calls_total[15m]))
+```
+
+Estimated cost, if you keep a price table in a recording rule — prices are deliberately not compiled
+into the binary, where they would go stale silently:
+
+```promql
+sum by (profile) (
+  rate(family_assistant_llm_tokens_total[1h]) * on (model, kind) group_left
+    llm_price_per_token
 )
 ```
 
@@ -310,12 +370,28 @@ groups:
           summary: "Family Assistant health check failing"
 
       - alert: HighLLMLatency
-        expr: histogram_quantile(0.95, llm_request_duration_seconds_bucket) > 30
+        expr: >-
+          histogram_quantile(
+            0.95,
+            sum by (le, profile) (
+              rate(family_assistant_llm_call_duration_seconds_bucket[15m])
+            )
+          ) > 30
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "High LLM response latency (p95 > 30s)"
+          summary: "High LLM response latency (p95 > 30s) on {{ $labels.profile }}"
+
+      - alert: LLMCallsFailing
+        expr: >-
+          sum by (provider) (rate(family_assistant_llm_calls_total{outcome="error"}[15m]))
+            / sum by (provider) (rate(family_assistant_llm_calls_total[15m])) > 0.1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Over 10% of {{ $labels.provider }} LLM calls are failing"
 
       - alert: HighErrorRate
         expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
@@ -479,7 +555,15 @@ data:
 
 ### Prometheus/Grafana Stack
 
-If adding Prometheus metrics support:
+Point Prometheus at the metrics port (9090 by default), not the application port:
+
+```yaml
+scrape_configs:
+  - job_name: "family-assistant"
+    static_configs:
+      - targets: ["family-assistant:9090"]
+    scrape_interval: 30s
+```
 
 ```yaml
 version: "3.8"
@@ -489,7 +573,7 @@ services:
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
     ports:
-      - "9090:9090"
+      - "9091:9090"
 
   grafana:
     image: grafana/grafana:latest

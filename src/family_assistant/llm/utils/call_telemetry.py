@@ -25,12 +25,17 @@ from typing import TYPE_CHECKING, Any
 
 from opentelemetry.trace import Span, StatusCode
 
+from family_assistant.llm.call_context import current_processing_profile
 from family_assistant.llm.messages import (
     MessageReasoningInfo,
     message_to_json_dict,
 )
 from family_assistant.llm.request_buffer import LLMRequestRecord, get_request_buffer
 from family_assistant.llm.utils.usage_telemetry import set_usage_span_attributes
+from family_assistant.observability.metrics import (
+    UNATTRIBUTED_PROFILE,
+    record_llm_call,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -120,6 +125,11 @@ class LLMCallTelemetry:
         self.provider = provider
         self.requested_model = requested_model
         self.streaming = streaming
+        self.operation = operation
+        # Read at construction rather than at completion: a streamed call ends
+        # inside an async generator's finally, which can run after the caller
+        # has already left the profile's block.
+        self.profile = current_processing_profile() or UNATTRIBUTED_PROFILE
         self.request_timestamp = datetime.now(UTC)
         self.request_id = "_".join(
             part
@@ -276,6 +286,7 @@ class LLMCallTelemetry:
     def finish_success(self, response: dict[str, Any] | None) -> None:
         """Close out a successful call: span attributes plus a buffer record."""
         self._set_completion_attributes()
+        self._record_metrics(outcome="success", error_type=None)
         self._add_record(response=response, error=None)
 
     def finish_error(self, error: BaseException) -> None:
@@ -294,7 +305,32 @@ class LLMCallTelemetry:
         self._set_completion_attributes()
         self.span.set_status(StatusCode.ERROR, message)
         self.span.set_attribute("llm.error.type", error_type)
+        self._record_metrics(outcome="error", error_type=error_type)
         self._add_record(response=None, error=message)
+
+    def _record_metrics(self, *, outcome: str, error_type: str | None) -> None:
+        """Fold this call into the Prometheus counters.
+
+        Both terminal paths call it, so a call that failed still contributes
+        its latency and whatever usage the provider managed to report -- a
+        turn that burned a large prompt and then hit a rate limit cost exactly
+        as much as one that succeeded.
+        """
+        first_output_ms = self.time_to_first_output_ms
+        record_llm_call(
+            profile=self.profile,
+            provider=self.provider,
+            model=self.requested_model,
+            resolved_model=self.resolved_model,
+            operation=self.operation,
+            outcome=outcome,
+            error_type=error_type,
+            duration_seconds=self.elapsed_ms / 1000,
+            time_to_first_output_seconds=(
+                first_output_ms / 1000 if first_output_ms is not None else None
+            ),
+            reasoning_info=self._reasoning_info,
+        )
 
     def _set_completion_attributes(self) -> None:
         attributes: dict[str, str | int | float] = {

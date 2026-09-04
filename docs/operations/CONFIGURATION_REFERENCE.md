@@ -70,6 +70,35 @@ Base URL of the running server, used for generating links and webhooks.
 
 ______________________________________________________________________
 
+### METRICS_ENABLED
+
+Whether to serve Prometheus metrics. See [MONITORING.md](MONITORING.md#metrics) for the metric
+reference.
+
+| Property  | Value   |
+| --------- | ------- |
+| Required  | No      |
+| Default   | `true`  |
+| Sensitive | No      |
+| Example   | `false` |
+
+______________________________________________________________________
+
+### METRICS_PORT
+
+Port the metrics endpoint listens on. Deliberately separate from the application port: the
+application port is normally published by an Ingress in its entirety, and token spend, model line-up
+and error rates should not be public. Do not route this port from an Ingress.
+
+| Property  | Value  |
+| --------- | ------ |
+| Required  | No     |
+| Default   | `9090` |
+| Sensitive | No     |
+| Example   | `9100` |
+
+______________________________________________________________________
+
 ### TIMEZONE
 
 Default timezone for date/time operations.

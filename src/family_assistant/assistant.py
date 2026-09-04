@@ -70,6 +70,7 @@ from family_assistant.llm.providers.google_genai_client import (
     is_antigravity_model,
     is_interactions_agent_model,
 )
+from family_assistant.observability.exporter import start_metrics_exporter
 from family_assistant.paths import PACKAGE_ROOT
 from family_assistant.processing import (
     DelegatableService,
@@ -157,6 +158,7 @@ from .telegram.service import TelegramService
 if TYPE_CHECKING:
     import socket
     from collections.abc import Sequence
+    from wsgiref.simple_server import WSGIServer
 
     from fastapi import FastAPI
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -461,6 +463,7 @@ class Assistant:
         self.task_workers: list[TaskWorker] = []
         self.task_worker_tasks: list[asyncio.Task] = []
         self.uvicorn_server_task: asyncio.Task | None = None
+        self.metrics_server: WSGIServer | None = None
         self.health_monitor_task: asyncio.Task | None = None  # Track health monitor
         self.event_processor_task: asyncio.Task | None = None  # Track event processor
         self._tool_call_reviewer: ToolCallReviewer | None = None
@@ -1886,6 +1889,9 @@ class Assistant:
         server = uvicorn.Server(uvicorn_config)
         self.uvicorn_server_task = asyncio.create_task(server.serve())
 
+        if self.config.metrics_enabled:
+            self.metrics_server = start_metrics_exporter(self.config.metrics_port)
+
         logger.info(
             "In development, run 'poe dev' and access the app at http://localhost:5173"
         )
@@ -2329,6 +2335,14 @@ class Assistant:
         # Ensure shutdown_event is set, in case stop_services is called directly
         if not self.shutdown_event.is_set():
             self.shutdown_event.set()
+
+        # Closed before anything else waits: the exporter owns a listening
+        # socket on its own thread, and a test that starts two Assistants in a
+        # row would otherwise fail to bind the second.
+        if self.metrics_server is not None:
+            self.metrics_server.shutdown()
+            self.metrics_server.server_close()
+            self.metrics_server = None
 
         # Cancel only the background tasks we own (not all tasks in the event loop)
         # This prevents interfering with pytest-xdist workers and other infrastructure

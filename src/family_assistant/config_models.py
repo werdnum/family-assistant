@@ -1612,6 +1612,12 @@ class AppConfig(BaseSettings):
     # Server port (optional, defaults to 8000)
     server_port: int = 8000
 
+    # Prometheus metrics exporter. Served on a port of its own rather than as a
+    # route on the main app, which an Ingress publishes to the internet in its
+    # entirety -- see docs/design/prometheus-metrics.md.
+    metrics_enabled: bool = True
+    metrics_port: int = 9090
+
     # Number of in-process TaskWorker instances to run concurrently.
     # Multiple workers are required so a handler that parks waiting on an
     # in-process future (e.g. a confirmation-gated delegated profile run) can be

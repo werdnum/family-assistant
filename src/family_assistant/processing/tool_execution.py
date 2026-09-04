@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import traceback
 import uuid
 from dataclasses import dataclass, replace
@@ -16,6 +17,7 @@ from family_assistant.llm.messages import (
     ToolMessage,
     tool_result_to_llm_message,
 )
+from family_assistant.observability.metrics import record_tool_call
 from family_assistant.security.taint import (
     TurnTaintState,
     merge_taint_state_into_tracker,
@@ -461,13 +463,17 @@ class ToolExecutor:
         span: Span,
     ) -> ToolResult | object | ToolExecutionResult:
         """Execute a tool and map tool runtime failures to tool_result errors."""
+        started = time.monotonic()
+        outcome = "error"
         try:
             result = await self.tools_provider.execute_tool(
                 function_name, arguments, tool_execution_context, call_id
             )
             logger.info("Tool '%s' executed successfully.", function_name)
+            outcome = "success"
             return result
         except ToolPolicyDeniedError as e:
+            outcome = "denied"
             logger.warning("Tool '%s' denied by policy: %s", function_name, e.reason)
             error_content = f"Error: Tool '{function_name}' is not allowed. {e.reason}"
             error_traceback = traceback.format_exc()
@@ -485,6 +491,7 @@ class ToolExecutor:
                 ),
             )
         except ToolNotFoundError:
+            outcome = "not_found"
             logger.error("Tool '%s' not found.", function_name)
             error_content = f"Error: Tool '{function_name}' not found."
             error_traceback = traceback.format_exc()
@@ -523,6 +530,13 @@ class ToolExecutor:
                     if tool_execution_context.taint_tracker is not None
                     else TurnTaintState.empty().to_metadata()
                 ),
+            )
+        finally:
+            record_tool_call(
+                profile=self.config.id,
+                tool=function_name,
+                outcome=outcome,
+                duration_seconds=time.monotonic() - started,
             )
 
     @staticmethod
