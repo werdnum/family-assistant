@@ -9,7 +9,6 @@ the ``confirmation_tool_execution`` task once the user approves.
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -23,6 +22,7 @@ from family_assistant.services.user_identity import UserIdentityResolver
 from family_assistant.tools.confirmation import (
     TOOL_CONFIRMATION_RENDERERS,
     append_review_reason_to_confirmation,
+    render_generic_tool_confirmation,
 )
 from family_assistant.tools.types import ConfirmationOutcome
 
@@ -38,16 +38,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-MAX_CONFIRMATION_ARGS_CHARS = 6000
-
-
-def _markdown_code_block(text: str, *, language: str = "") -> str:
-    """Render a markdown code block with a fence longer than any content fence."""
-    fence = "```"
-    while fence in text:
-        fence += "`"
-    return f"{fence}{language}\n{text}\n{fence}"
-
 
 async def render_tool_confirmation_prompt(
     *,
@@ -61,14 +51,7 @@ async def render_tool_confirmation_prompt(
     if renderer is not None:
         rendered = await renderer(tool_args, context)
     else:
-        args_json = json.dumps(tool_args, indent=2, sort_keys=True, default=str)
-        if len(args_json) > MAX_CONFIRMATION_ARGS_CHARS:
-            args_json = args_json[:MAX_CONFIRMATION_ARGS_CHARS] + "\n... [truncated]"
-        rendered = (
-            f"Tool: {tool_name}\n\n"
-            "Arguments:\n"
-            f"{_markdown_code_block(args_json, language='json')}"
-        )
+        rendered = render_generic_tool_confirmation(tool_name, tool_args)
     return append_review_reason_to_confirmation(
         f"{source_prefix}\n\n{rendered}", context
     )

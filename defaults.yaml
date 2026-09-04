@@ -1607,7 +1607,7 @@ service_profiles:
     slash_commands:
       - "/complex"
   - id: "engineer"
-    description: "Engineering diagnostic profile with read-only access to source code, database, and error logs. Use for investigating application issues, debugging problems, and filing bug reports. Cannot modify data or execute code."
+    description: "Engineering diagnostic profile with read-only access to source code, database, and error logs, plus sandboxed code execution for reproducing problems. Use for investigating application issues, debugging problems, and filing bug reports. Cannot modify application data or run code inside the application."
     processing_config:
       include_aggregated_context: true
       review_guidance: |
@@ -1649,12 +1649,14 @@ service_profiles:
             to distinguish distinct legacy rows from repeated warning-log accesses
           - **Worker tasks**: List AI worker tasks and read their results (read_task_result, list_worker_tasks)
 
+          You can also run code in a sandbox when the deployment provides a code-execution server (tools tagged for sandboxed execution, e.g. `execute_shell`/`execute_python`): use it to reproduce a failure, clone and read a repository, or crunch data you exported from a diagnostic read. Each call is judged by automated review. The sandbox is a throwaway container outside this application: it cannot reach Family Assistant data or tools, and nothing you run there changes the running app. It does hold whatever YOU put in the command, so treat data you pass in as leaving the application: pass the minimum the task needs, and never credentials or household content.
+
           ## Your Limitations (deliberate, not bugs)
 
           Your tool set is intentionally restricted to keep this profile read-only: you handle trusted requests and read sensitive data (source code, database, logs), so you must not change state or communicate externally without a human approving. Tools that other profiles have — editing notes, calendar changes, sending messages, browsing, Home Assistant control, scripts, image generation, and so on — are deliberately NOT available here. A missing tool or a policy-denied tool call is therefore expected configuration, not an application bug: do not report it as an error or tell the user something is broken. When in doubt, use resolve_tool_policy to see the exact policy decision and matching rule for your profile (or any other profile).
 
           - You CANNOT modify any data (no INSERT, UPDATE, DELETE)
-          - You CANNOT execute code or scripts inside the application
+          - You CANNOT execute code or scripts inside the application, or touch the shared workspace -- sandboxed execution runs in a throwaway container instead
           - You CANNOT send messages to users
           - You CAN delegate to another profile to hand off a fix or follow-up action (judged by automated review)
           - You CAN create GitHub issues to report bugs (requires confirmation)
@@ -1749,6 +1751,20 @@ service_profiles:
           decision: "review"
           priority: 20
           description: "The engineer may launch isolated AI coding workers (sandboxed, no Family Assistant data access) when approved by tool-call review."
+        # Both tags together mean "execution that happens outside this
+        # application": a deployment's code-execution MCP server tags its
+        # runners that way, as does spawn_worker. code_execution alone would
+        # also match the in-app script tools (execute_script, save_script),
+        # which stay denied -- this profile runs code in a sandbox, not in the
+        # application. Sandboxed execution resolves to the sandbox_network
+        # taint sink, so an untrusted turn is gated there as well.
+        - match:
+            tags_all:
+              - "code_execution"
+              - "worker"
+          decision: "review"
+          priority: 20
+          description: "The engineer may run code in a sandbox (e.g. a deployment's code-execution MCP server) to reproduce a bug or inspect a repository, when approved by tool-call review."
     slash_commands:
       - "/engineer"
   - id: "ops_automation"

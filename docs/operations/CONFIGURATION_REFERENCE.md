@@ -1333,7 +1333,8 @@ Profiles can add trusted, additive instructions with `processing_config.review_g
 request data, trigger payloads, browser content, or secrets in either guidance field.
 
 Runtime-taint matrix cells accept either the short form `adjudicate` (whose fallback is derived from
-the pre-review default) or an explicit cell:
+the pre-review default — `confirm` for every gated cell, so an unavailable reviewer asks the human
+and an unattended context still fails closed) or an explicit cell:
 
 ```yaml
 taint_policy:
@@ -2196,9 +2197,10 @@ on this profile counts as.
 
 Runtime taint normally gates individual **tools**: `spawn_worker` is classified `sandbox_network`,
 and the shipped `unknown_external × sandbox_network` cell is bare `adjudicate`. Its reviewer may
-return `allow`, `confirm`, or `deny`; `deny` is the fail-closed fallback when review is unavailable,
-not a deterministic verdict floor. Deployments that need the earlier hard denial must set the
-`operator_minimum` shown in the
+return `allow`, `confirm`, or `deny`; `confirm` is the fail-closed fallback when review is
+unavailable, not a deterministic verdict floor, and a context with no confirmation channel is
+refused by the absent human rather than by the cell. Deployments that need a hard denial must set
+the `operator_minimum` shown in the
 [enforcement migration pin](#migration-for-deployments-already-enforcing-taint-policy). A profile
 whose entire turn is the privileged operation — an agent that runs code in a sandbox — has no such
 tool to gate, and delegating to it would otherwise be classified as an ordinary delegation.

@@ -62,6 +62,7 @@ from family_assistant.telegram.types import AttachmentData, TriggerAttachment
 from family_assistant.tools.confirmation import (
     TOOL_CONFIRMATION_RENDERERS,
     append_review_reason_to_confirmation,
+    render_generic_tool_confirmation,
 )
 
 if TYPE_CHECKING:
@@ -714,7 +715,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                             # Async renderer that fetches its own data from context
                             prompt_text = await renderer(tool_args, context)
                         else:
-                            prompt_text = f"Confirm execution of tool: {tool_name}"
+                            prompt_text = render_generic_tool_confirmation(
+                                tool_name, tool_args
+                            )
                         prompt_text = append_review_reason_to_confirmation(
                             prompt_text, context
                         )
@@ -1302,7 +1305,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     # Async renderer that fetches its own data from context
                     prompt_text = await renderer(tool_args, context)
                 else:
-                    prompt_text = f"Confirm execution of tool: {tool_name}"
+                    prompt_text = render_generic_tool_confirmation(tool_name, tool_args)
                 prompt_text = append_review_reason_to_confirmation(prompt_text, context)
 
                 source_message_internal_id = None

@@ -804,12 +804,12 @@ taint_policy:
   default_unspecified_tool_output_tier: unknown_external
   operator_minimum:
     unknown_external:
-      sandbox_network: deny
+      sandbox_network: confirm
       attacker_addressable_egress: confirm
   matrix:
     unknown_external:
       attacker_addressable_egress: confirm
-      sandbox_network: deny
+      sandbox_network: confirm
       sensitive_read_broadening: confirm
       arbitrary_external_message: confirm
       known_user_message: confirm
@@ -860,8 +860,14 @@ select an outcome below the minimum is rejected during config load rather than s
 satisfy a `confirm` minimum by selecting `redact`; it must use `confirm` plus redaction, or a
 stricter `deny`.
 
-The example minimum intentionally makes `sandbox_network: deny` an unrelaxable deployment rule while
-leaving attacker-addressable egress at `confirm` for interactive profiles.
+The example minimum makes `sandbox_network: confirm` an unrelaxable deployment floor: an interactive
+profile must ask a human, and a restricted or unattended profile may strengthen that to `deny`. A
+hard denial is not the shipped default because it removes the safer in-band choice rather than the
+capability -- an authenticated operator can run the same request through a coding agent out of band,
+without this deployment's provenance, audit trail or result-taint propagation. A context with no
+confirmation channel still fails closed, so an unattended profile is denied by the absence of a
+human, not by the matrix cell. A deployment that wants the denial regardless writes
+`sandbox_network: deny` here.
 
 ## Audit and Observability
 

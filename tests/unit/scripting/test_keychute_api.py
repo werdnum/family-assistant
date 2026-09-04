@@ -50,6 +50,7 @@ def _taint_execution_context(
     execution_context.tools_provider = provider
     execution_context.processing_service = None
     execution_context.request_confirmation_callback = None
+    execution_context.confirmation_ui_managers = None
     execution_context.tool_call_review_state = ToolCallReviewTurnState()
     execution_context.tool_call_review_messages = ()
     execution_context.tool_call_review_trigger = None
@@ -171,6 +172,7 @@ async def test_request_uses_direct_api_and_preserves_response(
 
 @pytest.mark.asyncio
 async def test_request_denies_high_taint_before_contacting_keychute() -> None:
+    """A script with no confirmation channel is refused without reaching Keychute."""
     tracker = InMemoryTurnTaintTracker()
     tracker.add_source(
         TaintSource(
@@ -221,7 +223,7 @@ async def test_request_denies_high_taint_before_contacting_keychute() -> None:
     assert len(review_calls) == 1
     assert policy_calls[0].kwargs["sink_class"] == SinkClass.SANDBOX_NETWORK.value
     assert policy_calls[0].kwargs["effective_outcome"] == "adjudicate"
-    assert review_calls[0].kwargs["review_verdict"] == "deny"
+    assert review_calls[0].kwargs["review_verdict"] == "confirm"
 
 
 @pytest.mark.asyncio
