@@ -61,19 +61,26 @@ time, misses fail loudly and cheaply, and nobody keeps a separate client-side al
 
 ## Design
 
-### Refs are stable per element and unique per session
+### A ref names one DOM node, for the life of the conversation
 
-The snapshot script stops stripping and renumbering. An element that already carries a `data-fa-ref`
-keeps it when its role and accessible name are unchanged; otherwise it is stamped with a fresh
-number. Fresh numbers come from a per-session counter that the browser backend passes into the
-script and reads back from the result, so numbers never restart at `e1` and a ref can never silently
-resolve to a different element after navigation or a re-render. The counter is owned by whichever
-component runs the walker: browser-server for the remote backend, the local Playwright session
-otherwise.
+The snapshot script stops stripping and renumbering. Identity is recorded in the page as a property
+on the node object itself, mapping the node to its ref, role and accessible name. Cloning and
+serialising a node copy attributes but not properties, so a copied element is a new element. The
+`data-fa-ref` attribute remains as the lookup index that selectors use; it does not establish
+identity. An element whose recorded role and name are unchanged keeps its ref; anything else is
+stamped with a fresh one.
+
+Fresh refs come from an allocator scoped to the conversation, not to the browser session: the
+conversation-keyed backend object owns it and passes it into the walker on every snapshot. A browser
+session can be replaced underneath a conversation (browser-server evicts or expires it and
+`browser_open` transparently starts another), and a process restart replaces the backend object
+itself, so a ref must also carry a generation that changes whenever the allocator is created. A ref
+issued by an earlier allocator therefore never matches anything a later one issues. The wire shape
+of the generation is the implementing PR's to choose.
 
 Consequences the model can rely on, and that the tool descriptions and the `/browse` system prompt
 will state: an unchanged element keeps its ref across any number of snapshots and actions; a ref
-either targets the element it was issued for or nothing.
+either targets the node it was issued for or nothing.
 
 ### Staleness is decided by the page
 
@@ -82,11 +89,14 @@ resolution becomes a syntactic check that the ref is well-formed and a string tr
 selector. `browser_exec` and the visual profile stop touching ref state; there is nothing for them
 to invalidate.
 
-Before acting, the backend checks that the selector matches exactly one element and fails
-immediately with a specific message ("ref e35 no longer exists on the page; it has changed since the
-last snapshot") rather than waiting out Playwright's actionability timeout. For the remote backend
-this check lives in browser-server's click, type and select handlers; the local backend does the
-same with a locator count.
+Before acting, the backend resolves the ref in the page: the node found through the attribute index
+must be connected and must be the node whose recorded identity carries that ref. Anything else,
+including a copy that inherited the attribute, fails immediately with a specific message ("ref e35
+no longer exists on the page; it has changed since the last snapshot") rather than waiting out
+Playwright's actionability timeout or acting on a look-alike. Navigation discards the page's
+identity records with the page, so refs from before it cannot resolve. For the remote backend this
+check lives in browser-server's click, type and select handlers; the local backend does the same in
+its own evaluate step.
 
 ### A miss returns the snapshot it would otherwise force
 
@@ -110,19 +120,21 @@ inference the model should make with the page in front of it.
 
 ## Work plan
 
-1. **browser-server: identity-stable refs and pre-action existence check.** Outcome: the snapshot
-   command reuses refs for unchanged elements, allocates new ones from a session counter, and click,
-   type_text and select return a distinct error for a ref that no longer matches. Verified by the
-   service's own tests: two snapshots of an unchanged page yield identical refs, a re-rendered
-   element gets a new ref, refs after navigation do not reuse earlier numbers, and an action on a
-   removed ref fails fast with the specific error.
+1. **browser-server: identity-stable refs and pre-action identity check.** Outcome: the snapshot
+   command reuses refs for unchanged elements, allocates new ones from the allocator the client
+   passes in, and click, type_text and select return a distinct error for a ref that no longer
+   resolves to its node. Verified by the service's own tests: two snapshots of an unchanged page
+   yield identical refs, a re-rendered element gets a new ref, an action on a removed ref fails fast
+   with the specific error, and a node cloned or re-serialised with its attribute intact is rejected
+   as a different node.
 2. **Family Assistant: delete the ref cache; mirror the walker; attach snapshots to misses.**
    Outcome: `ref_cache` and `clear_refs` are gone from the backend protocol, the local session and
    the computer-use tools; the local walker matches browser-server's; a miss returns error plus
    snapshot; tool descriptions and the `/browse` prompt describe the new contract; the browser
    automation user guide is updated. Verified by the existing functional tests rewritten for the new
-   contract, including click-after-`browser_exec` succeeding and click-after-removal returning the
-   error with a snapshot.
+   contract, including click-after-`browser_exec` succeeding, click-after-removal returning the
+   error with a snapshot, and a ref issued before a replaced browser session or a recreated backend
+   never resolving afterwards.
 
 Milestone 1 merges before milestone 2 starts, because the remote backend's behaviour is what the
 functional tests in milestone 2 assert against.
