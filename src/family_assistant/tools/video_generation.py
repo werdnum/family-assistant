@@ -142,8 +142,11 @@ def _create_video_backend(
 
     app_config = _resolve_app_config(exec_context)
     backend_choice = app_config.video_generation_backend if app_config else None
-    api_key = (app_config.gemini_api_key if app_config else None) or os.getenv(
-        "GEMINI_API_KEY"
+    configured_key = app_config.gemini_api_key if app_config else None
+    api_key = (
+        configured_key.get_secret_value()
+        if configured_key
+        else os.getenv("GEMINI_API_KEY")
     )
 
     if backend_choice == "mock":

@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 import pytest
+from pydantic import SecretStr
 
 from family_assistant.config_loader import resolve_all_service_profiles
 from family_assistant.config_models import (
@@ -47,7 +48,9 @@ def _make_sample_config() -> AppConfig:
             llm_model="gemini/gemini-3.1-pro-preview",
             provider="google",
             max_iterations=7,
-            home_assistant_token="super-secret-ha-token",  # should be redacted
+            home_assistant_token=SecretStr(
+                "super-secret-ha-token"
+            ),  # should be redacted
             prompts={
                 "system_prompt": "You are a helpful assistant for {user_name}.",
             },

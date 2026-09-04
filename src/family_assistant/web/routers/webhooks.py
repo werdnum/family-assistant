@@ -597,7 +597,7 @@ async def handle_generic_webhook(
             # Compute expected signature
             raw_body = await request.body()
             expected = hmac.new(
-                source_secret.encode(),
+                source_secret.get_secret_value().encode(),
                 raw_body,
                 hashlib.sha256,
             ).hexdigest()

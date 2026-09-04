@@ -9,6 +9,7 @@ import httpx
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+from pydantic import SecretStr
 
 from family_assistant.config_models import AppConfig, UCPConfig
 from family_assistant.tools import shopping
@@ -490,7 +491,7 @@ async def test_ucp_transfer_checkout_to_human_returns_signed_continue_url(
         server_url="https://assistant.example",
         ucp_config=UCPConfig(
             signing_key_id="platform-2026",
-            signing_private_key=_private_key_pem(),
+            signing_private_key=SecretStr(_private_key_pem()),
         ),
     )
 
@@ -553,7 +554,9 @@ async def test_ucp_transfer_checkout_to_human_rejects_malformed_signing_key(
         server_url="https://assistant.example",
         ucp_config=UCPConfig(
             signing_key_id="platform-2026",
-            signing_private_key="-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----",
+            signing_private_key=SecretStr(
+                "-----BEGIN PRIVATE KEY-----\nnot-a-real-key\n-----END PRIVATE KEY-----"
+            ),
         ),
     )
 
@@ -603,7 +606,7 @@ async def test_ucp_transfer_checkout_to_human_rejects_cart_error_outcome(
         server_url="https://assistant.example",
         ucp_config=UCPConfig(
             signing_key_id="platform-2026",
-            signing_private_key=_private_key_pem(),
+            signing_private_key=SecretStr(_private_key_pem()),
         ),
     )
 
@@ -643,7 +646,7 @@ async def test_ucp_transfer_checkout_to_human_requires_checkout_id(
         server_url="https://assistant.example",
         ucp_config=UCPConfig(
             signing_key_id="platform-2026",
-            signing_private_key=_private_key_pem(),
+            signing_private_key=SecretStr(_private_key_pem()),
         ),
     )
 
@@ -787,7 +790,7 @@ async def test_ucp_add_to_cart_checkout_only_merchant_skips_cart(
         server_url="https://assistant.example",
         ucp_config=UCPConfig(
             signing_key_id="platform-2026",
-            signing_private_key=_private_key_pem(),
+            signing_private_key=SecretStr(_private_key_pem()),
         ),
     )
 
@@ -830,7 +833,7 @@ async def test_ucp_add_to_cart_checkout_only_rejects_cart_id(
         server_url="https://assistant.example",
         ucp_config=UCPConfig(
             signing_key_id="platform-2026",
-            signing_private_key=_private_key_pem(),
+            signing_private_key=SecretStr(_private_key_pem()),
         ),
     )
 

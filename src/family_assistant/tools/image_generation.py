@@ -102,8 +102,16 @@ def _create_image_backend(
         app_config = exec_context.processing_service.app_config
 
     backend_choice = app_config.image_generation_backend if app_config else None
-    openai_key = app_config.openai_api_key if app_config else None
-    gemini_key = app_config.gemini_api_key if app_config else None
+    openai_key = (
+        app_config.openai_api_key.get_secret_value()
+        if app_config and app_config.openai_api_key
+        else None
+    )
+    gemini_key = (
+        app_config.gemini_api_key.get_secret_value()
+        if app_config and app_config.gemini_api_key
+        else None
+    )
 
     if backend_choice == "openai":
         if not openai_key:

@@ -474,7 +474,9 @@ def _real_resolver(e2e: _E2EApp) -> OAuthCredentialResolver:
     return OAuthCredentialResolver(
         provider=GOOGLE_PROVIDER,
         config=e2e.integration,
-        encryption=CredentialEncryption(e2e.integration.credential_encryption_key),
+        encryption=CredentialEncryption(
+            e2e.integration.credential_encryption_key.get_secret_value()
+        ),
         http_client=e2e.google_server.client(),
         notifier=e2e.notifier,
         token_endpoint=e2e.app.state.oauth_url_overrides["google"]["token"],
@@ -545,9 +547,9 @@ async def test_two_users_connect_and_read_only_own_mailbox(
     assert alice_row is not None
     assert alice_row.refresh_token_encrypted != REFRESH_ALICE
     assert (
-        CredentialEncryption(e2e.integration.credential_encryption_key).decrypt(
-            alice_row.refresh_token_encrypted
-        )
+        CredentialEncryption(
+            e2e.integration.credential_encryption_key.get_secret_value()
+        ).decrypt(alice_row.refresh_token_encrypted)
         == REFRESH_ALICE
     )
 

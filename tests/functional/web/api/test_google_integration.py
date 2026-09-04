@@ -353,7 +353,7 @@ async def test_full_connect_happy_path(
     assert connection is not None
     assert connection.refresh_token_encrypted != PLAINTEXT_REFRESH_TOKEN
     decrypted = CredentialEncryption(
-        google_app.integration.credential_encryption_key
+        google_app.integration.credential_encryption_key.get_secret_value()
     ).decrypt(connection.refresh_token_encrypted)
     assert decrypted == PLAINTEXT_REFRESH_TOKEN
 

@@ -7,7 +7,7 @@ import httpx
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from family_assistant.config_models import AppConfig, UCPConfig
 from family_assistant.services.ucp import (
@@ -63,7 +63,7 @@ def test_build_ucp_profile_publishes_public_jwk_for_signing_key() -> None:
         server_url="https://assistant.example",
         ucp_config=UCPConfig(
             signing_key_id="platform-2026",
-            signing_private_key=_private_key_pem(),
+            signing_private_key=SecretStr(_private_key_pem()),
         ),
     )
 
@@ -88,7 +88,7 @@ def test_sign_ucp_request_adds_required_headers_for_json_post() -> None:
         server_url="https://assistant.example",
         ucp_config=UCPConfig(
             signing_key_id="platform-2026",
-            signing_private_key=_private_key_pem(),
+            signing_private_key=SecretStr(_private_key_pem()),
         ),
     )
 
@@ -124,7 +124,7 @@ def test_sign_ucp_get_request_omits_body_headers_and_idempotency_key() -> None:
         server_url="https://assistant.example",
         ucp_config=UCPConfig(
             signing_key_id="platform-2026",
-            signing_private_key=_private_key_pem(),
+            signing_private_key=SecretStr(_private_key_pem()),
         ),
     )
 
@@ -145,7 +145,7 @@ def test_sign_ucp_request_rejects_non_https_profile_url() -> None:
         server_url="http://localhost:8000",
         ucp_config=UCPConfig(
             signing_key_id="platform-2026",
-            signing_private_key=_private_key_pem(),
+            signing_private_key=SecretStr(_private_key_pem()),
         ),
     )
 

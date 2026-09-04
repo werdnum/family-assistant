@@ -251,7 +251,10 @@ class KeychuteScriptHttpClient:
         return url
 
     async def _bearer(self) -> str:
-        token = self._config.token or os.getenv("KEYCHUTE_TOKEN")
+        configured = self._config.token
+        token = (
+            configured.get_secret_value() if configured else os.getenv("KEYCHUTE_TOKEN")
+        )
         if token:
             return token
         token_file = self._config.token_file or os.getenv("KEYCHUTE_TOKEN_FILE")

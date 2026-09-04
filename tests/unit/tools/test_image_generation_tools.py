@@ -9,6 +9,7 @@ import httpx
 import openai
 import pytest
 from PIL import Image
+from pydantic import SecretStr
 
 from family_assistant.config_models import (
     AppConfig,
@@ -446,8 +447,8 @@ def _make_app_config(
 ) -> AppConfig:
     return AppConfig(
         image_generation_backend=image_generation_backend,
-        openai_api_key=openai_api_key,
-        gemini_api_key=gemini_api_key,
+        openai_api_key=SecretStr(openai_api_key) if openai_api_key else None,
+        gemini_api_key=SecretStr(gemini_api_key) if gemini_api_key else None,
         openai_image=openai_image or OpenAIImageConfig(),
     )
 

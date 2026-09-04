@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
+from pydantic import SecretStr
+
 from family_assistant.assistant import (
     _root_provider_for_profile,  # noqa: PLC2701 - the selection under test; there is no public seam for it
 )
@@ -33,7 +35,7 @@ def _calendar_config(url: str) -> CalendarConfig:
     return CalendarConfig(
         caldav=CalDAVConfig(
             username="user",
-            password="secret",
+            password=SecretStr("secret"),
             base_url="https://calendar.example/dav/",
             calendar_urls=[url],
         )

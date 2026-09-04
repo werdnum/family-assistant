@@ -5,6 +5,7 @@ from unittest.mock import Mock
 from zoneinfo import ZoneInfo
 
 import pytest
+from pydantic import SecretStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -476,7 +477,7 @@ async def test_create_automation_accepts_configured_keychute_api(
         keychute_config=KeychuteConfig(
             enabled=True,
             url="https://keychute.test",
-            token="client-token",
+            token=SecretStr("client-token"),
         )
     )
     exec_context = ToolExecutionContext(

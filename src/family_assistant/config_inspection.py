@@ -1,17 +1,25 @@
 """Shared helpers for serializing and redacting application config.
 
 These utilities are used by both the debug API endpoints and the engineer
-profile diagnostic tools so they share a single source of truth for which
-fields are sensitive and how profile dumps are produced.
+profile diagnostic tools so they share a single source of truth for how
+diagnostic dumps are produced.
 
-Redaction works on two independent axes, because neither alone is sufficient:
+**Declared credential fields redact themselves.** A config field holding a
+credential is typed :class:`pydantic.SecretStr`, so ``model_dump`` masks it and
+nothing here has to recognize it. That is the mechanism to reach for when
+adding a field: it is enforced by the type, not by this module guessing from a
+name.
 
-* **Field names** catch values that are opaque on their own (an API key is
-  indistinguishable from any other random string).
-* **Value shapes** catch credentials embedded inside otherwise-useful values —
-  the password in a database DSN, a ``token=`` query parameter in a service
-  URL, an inline PEM private key — where redacting the whole field would
-  destroy the diagnostic value of the host, database or endpoint around it.
+What remains here handles the two places a type cannot reach:
+
+* **Credentials embedded inside a larger value** — the password in a database
+  DSN, a ``token=`` query parameter in a service URL, an inline PEM block.
+  These fields are not wholly secret, and redacting them entirely would destroy
+  the host, database and endpoint an operator opens the dump to read.
+* **Dynamically-structured config** — ``mcp_config.mcpServers`` entries come
+  from operator-written JSON with ``extra="allow"``, so their shape is not
+  declared and cannot be annotated. An ``env`` block in particular maps
+  operator-chosen variable names to values, which no declared type covers.
 """
 
 from __future__ import annotations
@@ -28,97 +36,41 @@ if TYPE_CHECKING:
 
 REDACTED = "[REDACTED]"
 
-
-# Fields whose values may leak secrets or per-user credentials. When a key with
-# one of these names appears anywhere in the serialized config (including nested
-# dicts under e.g. ``camera_config`` or ``home_assistant_*``), its value is
-# replaced with "[REDACTED]" in the response.
-SENSITIVE_FIELD_NAMES: frozenset[str] = frozenset({
-    "home_assistant_token",
-    "password",
-    "client_secret",
-    "mailgun_webhook_signing_key",
-    "gemini_api_key",
-    "openai_api_key",
-    "openrouter_api_key",
-    "telegram_token",
-    "vapid_private_key",
-    "session_secret_key",
-    "credential_encryption_key",
-    "auth_key",
-})
-
-# Substring patterns used as a defense-in-depth fallback so config fields added
-# in the future with secret-looking names (e.g. ``*_api_key``, ``*_secret``,
-# ``*_token``, ``*_password``) are redacted even if not explicitly allowlisted.
-_SENSITIVE_SUBSTRINGS: tuple[str, ...] = (
+# Query parameter names that carry credentials. A URL parameter has no declared
+# type to consult, so this is matched by name -- but only within a parsed URL,
+# never against config field names.
+_CREDENTIAL_PARAM_NAMES: frozenset[str] = frozenset({
+    "access_token",
     "api_key",
     "apikey",
-    "secret",
-    "token",
+    "auth",
+    "auth_token",
+    "client_secret",
+    "key",
     "password",
     "passwd",
-    "private_key",
-)
-
-# Suffixes that name *where a secret lives* rather than holding one: a
-# filesystem path, a filename, an environment variable name, a directory. Their
-# values are operator-facing metadata and redacting them hides which knob is
-# wired up without protecting anything. A secret misfiled under such a name is
-# still caught by the value-shape checks below.
-_INDIRECTION_SUFFIXES: tuple[str, ...] = (
-    "_path",
-    "_paths",
-    "_file",
-    "_dir",
-    "_env",
-    "_env_var",
-)
-
-# Credential parameter names that the field-name axis does not already catch:
-# they carry no secret-looking substring of their own.
-_BARE_CREDENTIAL_PARAM_NAMES: frozenset[str] = frozenset({
-    "auth",
-    "key",
+    "refresh_token",
+    "secret",
     "sig",
     "signature",
+    "token",
 })
 
 _PEM_HEADER_PATTERN = re.compile(r"-----BEGIN [A-Z0-9][A-Z0-9 ]*-----")
 
 # A URL anywhere inside a string value, not only as the whole value: MCP stdio
-# arguments and command lines embed endpoints as ``--endpoint=https://...``.
+# arguments embed endpoints as ``--endpoint=https://...``.
 _URL_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*://[^\s\"'<>`]+")
 _URL_TRAILING_PUNCTUATION = ".,;:!?)]}>'\""
 
 
-def is_sensitive_field_name(key: object) -> bool:
-    """Return True if the given dict key looks like it carries a secret."""
-    if not isinstance(key, str):
-        return False
-    lowered = key.lower()
-    if lowered.endswith(_INDIRECTION_SUFFIXES):
-        return False
-    if key in SENSITIVE_FIELD_NAMES:
-        return True
-    return any(substring in lowered for substring in _SENSITIVE_SUBSTRINGS)
-
-
 def _is_credential_parameter_name(name: str) -> bool:
-    """Return True for a URL query parameter or command-line option holding a secret.
-
-    Reuses the field-name axis rather than keeping a second list beside it, so a
-    name it already knows (``client_secret``, ``access_token``, ``*_api_key``)
-    is recognized here too, and its indirection suffixes still apply.
-    """
+    """Return True for a URL query parameter that carries a credential."""
     normalized = unquote_plus(name).lower().replace("-", "_")
-    if normalized in _BARE_CREDENTIAL_PARAM_NAMES or is_sensitive_field_name(
-        normalized
-    ):
+    if normalized in _CREDENTIAL_PARAM_NAMES:
         return True
-    # Vendor-namespaced spellings of the same names: "X-Amz-Signature" and
-    # "X-Goog-Signature" both normalize to something ending in "_signature".
-    return any(normalized.endswith(f"_{name}") for name in _BARE_CREDENTIAL_PARAM_NAMES)
+    # Vendor-namespaced spellings: "X-Amz-Signature" -> "x_amz_signature".
+    return any(normalized.endswith(f"_{known}") for known in _CREDENTIAL_PARAM_NAMES)
 
 
 def _redact_query_pair(pair: str) -> str:
@@ -134,8 +86,8 @@ def _redact_query_pair(pair: str) -> str:
 def _redact_url(value: str) -> str:
     """Strip userinfo passwords and credential query parameters from a URL.
 
-    The rest of the URL — scheme, user, host, port, path and non-credential
-    parameters — is preserved, since that is what makes a DSN or endpoint
+    The rest of the URL -- scheme, user, host, port, path and non-credential
+    parameters -- is preserved, since that is what makes a DSN or endpoint
     useful in a diagnostic dump in the first place.
     """
     try:
@@ -165,15 +117,6 @@ def _redact_url(value: str) -> str:
     return urlunsplit((split.scheme, netloc, split.path, query, split.fragment))
 
 
-def _parses_as_url(value: str) -> bool:
-    """Return True if urlsplit accepts the value (it rejects a broken authority)."""
-    try:
-        urlsplit(value)
-    except ValueError:
-        return False
-    return True
-
-
 def _redact_url_match(match: re.Match[str]) -> str:
     """Redact one URL found inside a larger string, keeping trailing punctuation."""
     url = match.group(0)
@@ -188,11 +131,19 @@ def _redact_url_match(match: re.Match[str]) -> str:
     return _redact_url(url)
 
 
+def _parses_as_url(value: str) -> bool:
+    """Return True if urlsplit accepts the value (it rejects a broken authority)."""
+    try:
+        urlsplit(value)
+    except ValueError:
+        return False
+    return True
+
+
 def redact_sensitive_text(value: str) -> str:
     """Redact credential material embedded inside a string value.
 
-    Applies regardless of the field name the string was found under, because
-    these shapes are self-identifying: an inline PEM block is a private key
+    These shapes are self-identifying: an inline PEM block is a private key
     wherever it appears, and a URL's userinfo password or ``token=`` parameter
     is a credential whether the field is called ``database_url`` or ``url``.
     """
@@ -207,81 +158,37 @@ def _is_environment_mapping(key: object, value: object) -> bool:
     """Return True for an ``env`` block mapping variable names to their values.
 
     Its keys are environment variable names chosen by whoever wrote the server
-    entry, not config field names, so the name axis cannot judge them:
-    ``BRAVE_API_KEY`` happens to match and ``AUTHORIZATION`` does not, though
-    both hold a credential. Treat the whole mapping as opaque and redact its
-    values; the variable names stay visible, which is what an operator needs to
-    see that the block is wired up.
+    entry, not config fields, so no declared type covers them and their names
+    say nothing reliable: ``BRAVE_API_KEY`` looks like a credential and
+    ``AUTHORIZATION`` does not, though both hold one. Treat the whole mapping as
+    opaque and redact its values; the variable names stay visible, which is what
+    shows an operator that the block is wired up.
     """
     return key == "env" and isinstance(value, dict)
 
 
-# Words that make a field a measurement of something rather than the thing
-# itself, so a number under it is a quantity and not a credential. This is what
-# separates ``max_tokens: 8192`` from ``pin_token: 654321``.
-_QUANTITY_NAME_MARKERS: tuple[str, ...] = (
-    "max_",
-    "min_",
-    "num_",
-    "_count",
-    "_limit",
-    "_size",
-    "_length",
-    "_seconds",
-    "_ms",
-    "_bytes",
-)
-
-
-def _is_quantity_field_name(key: object) -> bool:
-    """Return True if the field name describes an amount rather than a value."""
-    if not isinstance(key, str):
-        return False
-    lowered = key.lower()
-    return any(
-        lowered.startswith(marker) if marker.endswith("_") else lowered.endswith(marker)
-        for marker in _QUANTITY_NAME_MARKERS
-    )
-
-
-# ast-grep-ignore: no-dict-any - Recursive config redaction handles arbitrary nested structures
-def _redact_secret_container(obj: Any, *, redact_numbers: bool) -> Any:  # noqa: ANN401 - recursive over arbitrary JSON-like data
-    """Redact everything reachable from a value held under a sensitive name.
-
-    Numbers are redacted too unless the name reads as a quantity: models using
-    ``extra="allow"`` accept whatever an operator writes, so a numeric
-    ``password`` or ``pin_token`` survives validation and is a credential like
-    any other. Booleans never are, and a quantity name keeps ``max_tokens``
-    readable.
-    """
+def _redact_all_values(obj: Any) -> Any:  # noqa: ANN401 - recursive over arbitrary JSON-like data
+    """Redact every scalar reachable from an opaque mapping."""
     if isinstance(obj, str):
         return REDACTED if obj else obj
     if isinstance(obj, bool):
         return obj
     if isinstance(obj, (int, float)):
-        return REDACTED if redact_numbers else obj
+        return REDACTED
     if isinstance(obj, dict):
-        return {
-            key: _redact_secret_container(value, redact_numbers=redact_numbers)
-            for key, value in obj.items()
-        }
+        return {key: _redact_all_values(value) for key, value in obj.items()}
     if isinstance(obj, list):
-        return [
-            _redact_secret_container(item, redact_numbers=redact_numbers)
-            for item in obj
-        ]
+        return [_redact_all_values(item) for item in obj]
     return obj
 
 
 # ast-grep-ignore: no-dict-any - Recursive config redaction handles arbitrary nested structures
 def redact_sensitive_config(obj: Any) -> Any:  # noqa: ANN401 - recursive over arbitrary JSON-like data
-    """Recursively redact sensitive fields in a serialized config structure."""
+    """Redact what a declared ``SecretStr`` cannot: embedded and dynamic values."""
     if isinstance(obj, dict):
         return {
-            key: _redact_secret_container(
-                value, redact_numbers=not _is_quantity_field_name(key)
-            )
-            if is_sensitive_field_name(key) or _is_environment_mapping(key, value)
+            key: _redact_all_values(value)
+            if _is_environment_mapping(key, value)
             else redact_sensitive_config(value)
             for key, value in obj.items()
         }

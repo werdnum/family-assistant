@@ -20,7 +20,7 @@ from unittest import mock
 
 import pytest
 import yaml
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from family_assistant.config_loader import (
     ENV_VAR_MAPPINGS,
@@ -497,8 +497,9 @@ class TestAppConfigBackwardCompat:
 
     def test_init_override(self) -> None:
         """AppConfig(field=value) overrides field defaults."""
-        config = AppConfig(telegram_token="test-token")
-        assert config.telegram_token == "test-token"
+        config = AppConfig(telegram_token=SecretStr("test-token"))
+        assert config.telegram_token is not None
+        assert config.telegram_token.get_secret_value() == "test-token"
         assert config.model == "gemini/gemini-3.8-flash"
 
     def test_model_validate(self) -> None:

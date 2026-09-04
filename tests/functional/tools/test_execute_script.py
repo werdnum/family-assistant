@@ -5,6 +5,7 @@ from unittest.mock import Mock
 from zoneinfo import ZoneInfo
 
 import pytest
+from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.config_models import AppConfig, KeychuteConfig
@@ -137,7 +138,7 @@ async def test_execute_script_exposes_configured_keychute(
         keychute_config=KeychuteConfig(
             enabled=True,
             url="https://keychute.test",
-            token="client-token",
+            token=SecretStr("client-token"),
         )
     )
     ctx = ToolExecutionContext(

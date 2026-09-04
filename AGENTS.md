@@ -159,13 +159,14 @@ the message-history taint epoch, the read-only diagnostics token, embedding prov
 global tool policy. Look there before adding or changing anything that reads configuration, and
 update it when you add a new setting.
 
-Diagnostic config dumps are redacted by `config_inspection.py` from the field's *name* and the
-value's *shape*, not from a per-field annotation, so **the name of a config field decides whether it
-leaks**. Name a credential-bearing field `*_api_key` / `*_secret` / `*_token` / `*_password` /
-`*_private_key`, and name a field that only points at a secret (a path, a filename, an
-environment-variable name) `*_path` / `*_file` / `*_dir` / `*_env` / `*_env_var` so it stays
-readable. The module docstring in `src/family_assistant/config_models.py` has the details; add a
-case to `tests/unit/test_config_inspection.py` when you add a credential field.
+Config fields that hold credentials must be typed `SecretStr` (pydantic). That masks them in
+`model_dump`, so they cannot reach a diagnostic dump or a config log line, and the guarantee comes
+from the type rather than from anything matching on field names — read the value with
+`.get_secret_value()` at the point of use. `config_inspection.py` handles only what a type cannot
+express: a credential embedded inside a larger value (the password in `database_url`, a `token=`
+parameter in an endpoint URL), and config whose shape is not declared (`mcp_config.mcpServers` is
+`extra="allow"`, and its `env` blocks are keyed by operator-chosen variable names). Add a case to
+`tests/unit/test_config_inspection.py` when you add a credential field.
 
 ### Gemini Computer Use (visual browser profile)
 

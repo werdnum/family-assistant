@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
+from pydantic import SecretStr
 from sqlalchemy import insert, select
 from sqlalchemy import text as sa_text
 
@@ -91,7 +92,7 @@ def _configure_app(
             attachment_storage_path=str(tmp_path / "mailbox"),
             mailbox_raw_dir=str(tmp_path / "raw"),
             email_intake=EmailIntakeConfig(
-                mailgun_webhook_signing_key=SIGNING_KEY,
+                mailgun_webhook_signing_key=SecretStr(SIGNING_KEY),
                 allowed_sender_addresses=[SENDER],
                 allowed_recipient_addresses=[RECIPIENT],
                 require_authenticated_sender=False,
@@ -1236,7 +1237,7 @@ async def test_webhook_accepts_email_when_mailbox_raw_dir_is_unset(
             attachment_storage_path=str(tmp_path / "mailbox"),
             mailbox_raw_dir=None,
             email_intake=EmailIntakeConfig(
-                mailgun_webhook_signing_key=SIGNING_KEY,
+                mailgun_webhook_signing_key=SecretStr(SIGNING_KEY),
                 allowed_sender_addresses=[SENDER],
                 allowed_recipient_addresses=[RECIPIENT],
                 require_authenticated_sender=False,
@@ -1369,7 +1370,7 @@ async def test_webhook_accepts_attachment_free_email_without_attachment_storage_
             attachment_storage_path="",
             mailbox_raw_dir=str(tmp_path / "raw"),
             email_intake=EmailIntakeConfig(
-                mailgun_webhook_signing_key=SIGNING_KEY,
+                mailgun_webhook_signing_key=SecretStr(SIGNING_KEY),
                 allowed_sender_addresses=[SENDER],
                 allowed_recipient_addresses=[RECIPIENT],
                 require_authenticated_sender=False,

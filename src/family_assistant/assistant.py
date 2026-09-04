@@ -24,6 +24,7 @@ from family_assistant.config_models import (
     AppConfig,  # Used at runtime
     ProcessingConfig,  # Used at runtime
     RetryConfig,  # Used at runtime
+    mcp_servers_for_runtime,
 )
 from family_assistant.config_models import (  # Used at runtime
     CalendarConfig as PydanticCalendarConfig,
@@ -566,13 +567,19 @@ class Assistant:
         """Initialize Web Push and iOS APNs services and the fan-out dispatcher."""
         assert self.fastapi_app is not None
         self.push_notification_service = PushNotificationService(
-            vapid_private_key=self.config.pwa_config.vapid_private_key,
+            vapid_private_key=(
+                self.config.pwa_config.vapid_private_key.get_secret_value()
+                if self.config.pwa_config.vapid_private_key
+                else None
+            ),
             vapid_contact_email=self.config.pwa_config.vapid_contact_email,
         )
 
         apns_conf = self.config.apns
         apns_auth_key = load_apns_auth_key(
-            auth_key=apns_conf.auth_key,
+            auth_key=(
+                apns_conf.auth_key.get_secret_value() if apns_conf.auth_key else None
+            ),
             auth_key_path=apns_conf.auth_key_path,
         )
         self.apns_service = APNsService(
@@ -696,7 +703,9 @@ class Assistant:
         elif selected_model.startswith("openrouter/"):
             if not self.config.openrouter_api_key:
                 raise ValueError("OpenRouter API Key is missing.")
-            os.environ["OPENROUTER_API_KEY"] = self.config.openrouter_api_key
+            os.environ["OPENROUTER_API_KEY"] = (
+                self.config.openrouter_api_key.get_secret_value()
+            )
             logger.info("OpenRouter model selected. OPENROUTER_API_KEY set.")
         else:
             logger.warning(
@@ -742,10 +751,11 @@ class Assistant:
         self.fastapi_app.state.embedding_generator = self.embedding_generator
 
     def _create_openai_embedding_generator(self) -> OpenAIEmbeddingGenerator:
+        configured_key = self.config.embedding_api_key or self.config.openai_api_key
         api_key = (
-            self.config.embedding_api_key
-            or self.config.openai_api_key
-            or os.getenv("OPENAI_API_KEY")
+            configured_key.get_secret_value()
+            if configured_key
+            else os.getenv("OPENAI_API_KEY")
         )
         if not api_key and not self.config.embedding_base_url:
             raise ValueError(
@@ -866,7 +876,7 @@ class Assistant:
             and self.shared_httpx_client is not None
         ):
             outbound_email_client = MailgunOutboundEmailClient(
-                api_key=email_config.outbound_mailgun_api_key,
+                api_key=email_config.outbound_mailgun_api_key.get_secret_value(),
                 domain=email_config.outbound_mailgun_domain,
                 http_client=self.shared_httpx_client,
                 timeout_seconds=email_config.outbound_timeout_seconds,
@@ -957,8 +967,10 @@ class Assistant:
         )
 
         all_mcp_servers_config: dict[str, MCPServerConfig] = {
-            server_id: cast("MCPServerConfig", server_config.model_dump())
-            for server_id, server_config in self.config.mcp_config.mcpServers.items()
+            server_id: cast("MCPServerConfig", dumped)
+            for server_id, dumped in mcp_servers_for_runtime(
+                self.config.mcp_config
+            ).items()
         }
         root_mcp_provider = MCPToolsProvider(
             mcp_server_configs=all_mcp_servers_config,
@@ -994,7 +1006,7 @@ class Assistant:
         self._log_google_integration_state(google_integration_state)
         if google_integration_state.enabled:
             encryption = CredentialEncryption(
-                self.config.google_integration.credential_encryption_key
+                self.config.google_integration.credential_encryption_key.get_secret_value()
             )
             self.credential_resolvers[GOOGLE_PROVIDER.name] = OAuthCredentialResolver(
                 GOOGLE_PROVIDER,
@@ -1337,7 +1349,7 @@ class Assistant:
         profile_config = profile_conf.processing_config
         return WeatherContextProvider(
             location_id=location_id,
-            api_key=api_key,
+            api_key=api_key.get_secret_value(),
             prompts=profile_config.prompts,
             timezone=ZoneInfo(profile_config.timezone),
             httpx_client=self.shared_httpx_client,
@@ -1348,10 +1360,11 @@ class Assistant:
     ) -> HomeAssistantContextProvider | None:
         profile_config = profile_conf.processing_config
         api_url = profile_config.home_assistant_api_url
-        token = profile_config.home_assistant_token
+        secret_token = profile_config.home_assistant_token
         template = profile_config.home_assistant_context_template
-        if not api_url or not token:
+        if not api_url or not secret_token:
             return None
+        token = secret_token.get_secret_value()
 
         client = self._get_home_assistant_client(profile_conf, api_url, token)
         if not client or not template:
@@ -1673,7 +1686,7 @@ class Assistant:
             # telegram_token is verified earlier when telegram_enabled is True
             assert self.config.telegram_token is not None
             self.telegram_service = TelegramService(
-                telegram_token=self.config.telegram_token,
+                telegram_token=self.config.telegram_token.get_secret_value(),
                 processing_service=self.default_processing_service,
                 processing_services_registry=self.processing_services_registry,
                 app_config=self.config,

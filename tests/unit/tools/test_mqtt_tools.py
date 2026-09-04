@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 import aiomqtt
 import pytest
+from pydantic import SecretStr
 
 from family_assistant.config_models import AppConfig, MQTTConfig
 from family_assistant.storage.database import Database
@@ -44,7 +45,7 @@ def exec_context() -> ToolExecutionContext:
             broker_host="mqtt.local",
             broker_port=1883,
             username="testuser",
-            password="testpass",
+            password=SecretStr("testpass"),
         )
     )
 

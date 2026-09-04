@@ -79,6 +79,8 @@ if TYPE_CHECKING:
     from family_assistant.config_models import AppConfig
     from family_assistant.tools.metadata import ToolDescriptor
 
+from family_assistant.config_models import mcp_servers_for_runtime
+
 logger = logging.getLogger("dump_tool_registry")
 
 
@@ -176,8 +178,8 @@ def _load_deployment_config(config_file: str | None) -> AppConfig:
 def _configured_servers(config: AppConfig) -> dict[str, MCPServerConfig]:
     """Return the deployment's configured MCP servers."""
     return {
-        server_id: cast("MCPServerConfig", server_config.model_dump())
-        for server_id, server_config in config.mcp_config.mcpServers.items()
+        server_id: cast("MCPServerConfig", dumped)
+        for server_id, dumped in mcp_servers_for_runtime(config.mcp_config).items()
     }
 
 

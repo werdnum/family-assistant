@@ -466,7 +466,9 @@ def create_oauth_integration_router(spec: OAuthProviderSpec) -> APIRouter:
 
         # f. Encrypt the refresh token and upsert the connection.
         try:
-            encryption = CredentialEncryption(integration.credential_encryption_key)
+            encryption = CredentialEncryption(
+                integration.credential_encryption_key.get_secret_value()
+            )
         except CredentialEncryptionError:
             logger.exception("Invalid CREDENTIAL_ENCRYPTION_KEY")
             return _settings_redirect({
@@ -535,7 +537,9 @@ def create_oauth_integration_router(spec: OAuthProviderSpec) -> APIRouter:
             # Best-effort revocation: a decryption failure or a failed revoke
             # still deletes the row below.
             try:
-                encryption = CredentialEncryption(integration.credential_encryption_key)
+                encryption = CredentialEncryption(
+                    integration.credential_encryption_key.get_secret_value()
+                )
                 refresh_token = encryption.decrypt(connection.refresh_token_encrypted)
                 await http_client.post(
                     _oauth_urls(request, spec)["revoke"],
