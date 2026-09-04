@@ -524,6 +524,18 @@ class TestApplyEnvVarOverrides:
             apply_env_var_overrides(config)
         assert config["model"] == "new-model"
 
+    def test_applies_metrics_env_vars(self) -> None:
+        """The metrics exporter is configured entirely from the environment."""
+        config: dict[str, Any] = {}
+        with mock.patch.dict(
+            os.environ,
+            {"METRICS_ENABLED": "false", "METRICS_PORT": "9191"},
+            clear=False,
+        ):
+            apply_env_var_overrides(config)
+        assert config["metrics_enabled"] is False
+        assert config["metrics_port"] == 9191
+
     def test_applies_nested_env_var(self) -> None:
         """Test applying a nested environment variable."""
         config: dict[str, Any] = {"pwa_config": {}}
