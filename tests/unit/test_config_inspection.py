@@ -196,6 +196,30 @@ def test_numeric_fields_matching_secret_substrings_are_not_redacted() -> None:
     assert params["temperature"] == 0.2
 
 
+def test_numeric_credentials_under_sensitive_names_are_redacted() -> None:
+    """extra="allow" models accept whatever an operator writes, including a number."""
+    redacted = redact_sensitive_config({
+        "mcp_config": {
+            "mcpServers": {
+                "legacy": {"command": "srv", "password": 123456, "pin_token": 654321}
+            }
+        }
+    })
+    server = redacted["mcp_config"]["mcpServers"]["legacy"]
+    assert server["password"] == REDACTED
+    assert server["pin_token"] == REDACTED
+    assert server["command"] == "srv"
+
+
+def test_booleans_under_sensitive_names_stay_readable() -> None:
+    redacted = redact_sensitive_config({
+        "token_enabled": True,
+        "api_key_present": False,
+    })
+    assert redacted["token_enabled"] is True
+    assert redacted["api_key_present"] is False
+
+
 def test_indirection_field_names_are_not_redacted() -> None:
     """Fields naming where a secret lives hold metadata, not the secret."""
     for name in (

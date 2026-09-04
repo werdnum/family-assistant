@@ -216,21 +216,60 @@ def _is_environment_mapping(key: object, value: object) -> bool:
     return key == "env" and isinstance(value, dict)
 
 
-# ast-grep-ignore: no-dict-any - Recursive config redaction handles arbitrary nested structures
-def _redact_secret_container(obj: Any) -> Any:  # noqa: ANN401 - recursive over arbitrary JSON-like data
-    """Redact every string reachable from a value held under a sensitive name.
+# Words that make a field a measurement of something rather than the thing
+# itself, so a number under it is a quantity and not a credential. This is what
+# separates ``max_tokens: 8192`` from ``pin_token: 654321``.
+_QUANTITY_NAME_MARKERS: tuple[str, ...] = (
+    "max_",
+    "min_",
+    "num_",
+    "_count",
+    "_limit",
+    "_size",
+    "_length",
+    "_seconds",
+    "_ms",
+    "_bytes",
+)
 
-    Numbers and booleans are passed through: config fields are validated
-    against their declared types, so a credential is always a string (or a
-    container of strings). This is what keeps ``max_tokens: 4096`` — which
-    matches the ``token`` substring — readable.
+
+def _is_quantity_field_name(key: object) -> bool:
+    """Return True if the field name describes an amount rather than a value."""
+    if not isinstance(key, str):
+        return False
+    lowered = key.lower()
+    return any(
+        lowered.startswith(marker) if marker.endswith("_") else lowered.endswith(marker)
+        for marker in _QUANTITY_NAME_MARKERS
+    )
+
+
+# ast-grep-ignore: no-dict-any - Recursive config redaction handles arbitrary nested structures
+def _redact_secret_container(obj: Any, *, redact_numbers: bool) -> Any:  # noqa: ANN401 - recursive over arbitrary JSON-like data
+    """Redact everything reachable from a value held under a sensitive name.
+
+    Numbers are redacted too unless the name reads as a quantity: models using
+    ``extra="allow"`` accept whatever an operator writes, so a numeric
+    ``password`` or ``pin_token`` survives validation and is a credential like
+    any other. Booleans never are, and a quantity name keeps ``max_tokens``
+    readable.
     """
     if isinstance(obj, str):
         return REDACTED if obj else obj
+    if isinstance(obj, bool):
+        return obj
+    if isinstance(obj, (int, float)):
+        return REDACTED if redact_numbers else obj
     if isinstance(obj, dict):
-        return {key: _redact_secret_container(value) for key, value in obj.items()}
+        return {
+            key: _redact_secret_container(value, redact_numbers=redact_numbers)
+            for key, value in obj.items()
+        }
     if isinstance(obj, list):
-        return [_redact_secret_container(item) for item in obj]
+        return [
+            _redact_secret_container(item, redact_numbers=redact_numbers)
+            for item in obj
+        ]
     return obj
 
 
@@ -239,7 +278,9 @@ def redact_sensitive_config(obj: Any) -> Any:  # noqa: ANN401 - recursive over a
     """Recursively redact sensitive fields in a serialized config structure."""
     if isinstance(obj, dict):
         return {
-            key: _redact_secret_container(value)
+            key: _redact_secret_container(
+                value, redact_numbers=not _is_quantity_field_name(key)
+            )
             if is_sensitive_field_name(key) or _is_environment_mapping(key, value)
             else redact_sensitive_config(value)
             for key, value in obj.items()
