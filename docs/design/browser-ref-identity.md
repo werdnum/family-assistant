@@ -73,12 +73,13 @@ No state leaves the page: the client holds nothing, and a new document simply st
 
 ### Actions run against the document the model last saw
 
-Every ref-consuming action passes through one chokepoint in the conversation's persistent browser
-state, which does two things. It serialises browser actions, so two actions from one response run in
-order, each against the page as the previous one left it. And it remembers the identity of the
-document in the last snapshot the model has received, and refuses an action when the page now
-reports a different document, returning the stale-ref error with the current snapshot instead of
-resolving the ref.
+Every browser operation for a conversation, whether or not it consumes a ref, passes through one
+chokepoint in the conversation's persistent browser state, which does two things. It serialises the
+operations in the order the model issued them, so a script that navigates and a click placed after
+it in the same response run in that order, each against the page as the previous one left it. And
+for ref-consuming actions it remembers the identity of the document in the last snapshot the model
+has received, and refuses an action when the page now reports a different document, returning the
+stale-ref error with the current snapshot instead of resolving the ref.
 
 "Received" is judged at the model's boundary, not the tool's. A response's tool calls all run before
 any result is shown to the model, so the remembered identity advances when the batch's results are
@@ -155,17 +156,18 @@ inference the model should make with the page in front of it.
 2. **Family Assistant: delete the ref cache; mirror the walker; add the chokepoint; attach snapshots
    to misses.** Outcome: `ref_cache` and `clear_refs` are gone from the backend protocol, the local
    session and the computer-use tools; the local walker matches browser-server's and the local
-   backend performs the same pre-action check; ref actions for one conversation run one at a time
-   through a chokepoint that refuses them when the document differs from the last snapshot the model
-   received; a miss returns error plus snapshot; tool descriptions and the `/browse` prompt state
-   the contract; the browser automation user guide is updated. Verified by the existing functional
-   tests rewritten for the new contract, including click-after-`browser_exec` succeeding when the
-   script did not navigate, click-after-removal returning the error with a snapshot, two ref actions
-   issued from one snapshot both landing on their own nodes when run as a batch, three batched
-   actions whose first navigates having both later ones refused, and a ref action being refused with
-   the new document's snapshot after each of: a batched sibling that navigated or reloaded the same
-   URL, a `browser_exec` that navigated, a visual-profile action that navigated, and a replaced
-   browser session.
+   backend performs the same pre-action check; every browser operation for one conversation runs one
+   at a time, in issue order, through a chokepoint that refuses ref actions when the document
+   differs from the last snapshot the model received; a miss returns error plus snapshot; tool
+   descriptions and the `/browse` prompt state the contract; the browser automation user guide is
+   updated. Verified by the existing functional tests rewritten for the new contract, including
+   click-after-`browser_exec` succeeding when the script did not navigate, click-after-removal
+   returning the error with a snapshot, two ref actions issued from one snapshot both landing on
+   their own nodes when run as a batch, three batched actions whose first navigates having both
+   later ones refused, and a ref action being refused with the new document's snapshot after each
+   of: a batched sibling that navigated or reloaded the same URL, a `browser_exec` navigation placed
+   before the click in the same response, a `browser_exec` that navigated, a visual-profile action
+   that navigated, and a replaced browser session.
 
 Milestone 1 merges before milestone 2 starts, because the remote backend's behaviour is what the
 functional tests in milestone 2 assert against.
