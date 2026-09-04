@@ -266,6 +266,7 @@ buckets or subsets, and that correction is applied before export rather than in 
 | `kind`           | Meaning                                                         |
 | ---------------- | --------------------------------------------------------------- |
 | `input_uncached` | Prompt tokens neither read from nor written to the prompt cache |
+| `input_image`    | Prompt tokens that were image rather than text, where reported  |
 | `cache_read`     | Prompt tokens served from the prompt cache                      |
 | `cache_write`    | Prompt tokens written into the prompt cache                     |
 | `output`         | Generated tokens, excluding reasoning                           |
@@ -276,8 +277,8 @@ A bucket a provider does not report is absent rather than zero, so no `cache_rea
 "this provider or model does not report caching", not "nothing was cached".
 
 The buckets are **billing tiers**, which is what makes cost a single join against a price table on
-`(model, kind)`. A price table that omits `tool_use` will silently drop that spend from the join, so
-give every bucket a price — including the ones a given model never emits.
+`(model, kind)`. A price table that omits `tool_use` or `input_image` will silently drop that spend
+from the join, so give every bucket a price — including the ones a given model never emits.
 
 `family_assistant_llm_time_to_first_output_seconds` is only observed for streamed calls, where it is
 the latency the user actually feels.
@@ -326,7 +327,7 @@ comparable across providers:
 ```promql
 sum by (model) (rate(family_assistant_llm_tokens_total{kind="cache_read"}[1h]))
   / sum by (model) (
-      rate(family_assistant_llm_tokens_total{kind=~"input_uncached|cache_read|cache_write"}[1h])
+      rate(family_assistant_llm_tokens_total{kind=~"input_uncached|input_image|cache_read|cache_write"}[1h])
     )
 ```
 
@@ -336,10 +337,14 @@ Whether a profile is being served by its configured model or by a fallback:
 sum by (profile, model, resolved_model) (rate(family_assistant_llm_calls_total[1h]))
 ```
 
-LLM calls per turn, which is where a runaway tool loop shows up:
+LLM calls per turn, which is where a runaway tool loop shows up. Scoped to `operation="chat"`,
+because the iteration cap counts model turns: structured output adds a call per reviewed tool call,
+and a delegated `coder` or Deep Research run increments the numerator without ever entering the
+streaming loop that produces a turn, so an unscoped ratio is inflated for profiles that delegate and
+undefined for those that only delegate.
 
 ```promql
-sum by (profile) (rate(family_assistant_llm_calls_total[1h]))
+sum by (profile) (rate(family_assistant_llm_calls_total{operation="chat"}[1h]))
   / sum by (profile) (rate(family_assistant_turns_total[1h]))
 ```
 

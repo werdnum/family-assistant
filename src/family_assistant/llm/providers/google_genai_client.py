@@ -8,6 +8,7 @@ import logging
 import mimetypes
 import os
 import re
+import time
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
 from dataclasses import asdict
@@ -43,6 +44,7 @@ from family_assistant.llm.antigravity_egress import (
     AntigravityEgressResolver,
     EgressNetworkResolver,
 )
+from family_assistant.llm.call_context import current_processing_profile
 from family_assistant.llm.google_types import (
     GeminiProviderMetadata,
     GeminiThoughtSignature,
@@ -58,6 +60,7 @@ from family_assistant.llm.messages import (
     is_turn_scaffolding,
 )
 from family_assistant.llm.utils.call_telemetry import LLMCallTelemetry
+from family_assistant.observability.metrics import UNATTRIBUTED_PROFILE, record_llm_call
 from family_assistant.processing.protocol import (
     DelegationPermanentError,
     DelegationTaskNotFoundError,
@@ -1897,15 +1900,53 @@ class GoogleGenAIClient(BaseLLMClient):
         environment = await self._build_agent_environment(environment_sources)
         if environment is not None:
             create_kwargs["environment"] = environment
+        # Accounting starts here, not above: building the kwargs and resolving
+        # the sandbox's credentials can fail without any request reaching
+        # Google, and a failure that never left the process is not a provider
+        # error. A submission that does reach the API is counted here because
+        # it is the last place it can be -- a run that never gets an id
+        # reaches no terminal poll.
+        started = time.monotonic()
         try:
-            return cast(
+            interaction = cast(
                 "Interaction",
                 await self.client.aio.interactions.create(
                     **create_kwargs, stream=False
                 ),
             )
         except Exception as e:
-            raise self._classify_agent_delegation_error(e) from e
+            error = self._classify_agent_delegation_error(e)
+            self._record_failed_submission(error, time.monotonic() - started)
+            raise error from e
+        if not interaction.id:
+            error = DelegationTransientError(
+                "Interactions API create response carried no interaction id"
+            )
+            self._record_failed_submission(error, time.monotonic() - started)
+            raise error
+        return interaction
+
+    def _record_failed_submission(
+        self, error: BaseException, duration_seconds: float
+    ) -> None:
+        """Count a submission that reached the API but started no run.
+
+        Recorded on failure only: a submission that succeeds is counted when
+        the run reaches a terminal state, and counting it here too would
+        double every run.
+        """
+        record_llm_call(
+            profile=current_processing_profile() or UNATTRIBUTED_PROFILE,
+            provider="google",
+            model=self.model_name,
+            resolved_model=None,
+            operation=self.agent_operation_name,
+            outcome="error",
+            error_type=type(error).__name__,
+            duration_seconds=duration_seconds,
+            time_to_first_output_seconds=None,
+            reasoning_info=None,
+        )
 
     def reasoning_info_from_interaction(
         self,

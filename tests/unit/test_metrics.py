@@ -153,6 +153,36 @@ def test_google_reasoning_is_kept_alongside_an_output_that_excludes_it() -> None
     assert buckets["reasoning"] == 300
 
 
+def test_image_input_is_its_own_tier_carved_out_of_the_text_input() -> None:
+    """GPT Image bills image input above text, so an aggregate cannot be costed."""
+    usage: MessageReasoningInfo = {
+        "prompt_tokens": 1000,
+        "completion_tokens": 400,
+        "total_tokens": 1400,
+        "image_input_tokens": 900,
+    }
+
+    buckets = normalized_token_buckets(usage, "openai")
+
+    assert buckets["input_image"] == 900
+    assert buckets["input_uncached"] == 100
+    assert buckets["input_uncached"] + buckets["input_image"] == 1000
+
+
+def test_a_provider_that_reports_no_modality_split_emits_no_image_bucket() -> None:
+    """Absent means "not reported", so a text-only price join stays correct."""
+    usage: MessageReasoningInfo = {
+        "prompt_tokens": 1000,
+        "completion_tokens": 400,
+        "total_tokens": 1400,
+    }
+
+    buckets = normalized_token_buckets(usage, "openai")
+
+    assert "input_image" not in buckets
+    assert buckets["input_uncached"] == 1000
+
+
 def test_unreported_buckets_are_absent_rather_than_zero() -> None:
     """A provider that does not cache must be distinguishable from a cache miss."""
     usage: MessageReasoningInfo = {"prompt_tokens": 100, "completion_tokens": 20}

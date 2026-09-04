@@ -19,10 +19,13 @@ from __future__ import annotations
 import base64
 import logging
 import re
-import time
 from datetime import datetime
 from typing import TYPE_CHECKING, TypedDict
 
+from family_assistant.llm.call_context import (
+    reset_processing_profile,
+    set_processing_profile,
+)
 from family_assistant.llm.messages import UserMessage
 from family_assistant.llm.providers.google_genai_client import (
     GoogleGenAIClient,
@@ -491,28 +494,25 @@ class InteractionsAgentProcessingService(ProcessingService):
             if prior_run is not None:
                 previous_interaction_id = prior_run["remote_task_id"]
 
-        # A submission that never returns an interaction id -- auth, rate
-        # limit, provider 5xx -- reaches no terminal poll and no cancellation,
-        # so this is the only place it can be counted. Recorded on failure
-        # only: a successful submission is counted when the run ends, and
-        # counting it here too would double every run.
-        submit_started = time.monotonic()
+        # The client counts the submission itself, at the point the request
+        # actually reaches Google. This path never enters the streaming loop,
+        # so the profile it should be attributed to is established here.
+        token = set_processing_profile(self.service_config.id)
         try:
             interaction = await self._google_client().start_agent_interaction(
                 messages,
                 previous_interaction_id=previous_interaction_id,
                 environment_sources=environment_sources or None,
             )
-            # Inside the try: the create request happened and is billable, but
-            # a response with no id reaches no terminal poll, so this is the
-            # last place it can be counted.
-            if not interaction.id:
-                raise DelegationTransientError(
-                    "Interactions API create response carried no interaction id"
-                )
-        except Exception as exc:
-            self._record_failed_submission(exc, time.monotonic() - submit_started)
-            raise
+        finally:
+            reset_processing_profile(token)
+        # The client raises rather than returning an interaction without an id,
+        # having counted the failed submission; this narrows the SDK's Optional
+        # so the invariant is checked rather than assumed.
+        if not interaction.id:
+            raise DelegationTransientError(
+                "Interactions API create response carried no interaction id"
+            )
         return RemoteSubmission(
             remote_task_id=interaction.id,
             remote_context_id=None,
@@ -603,26 +603,6 @@ class InteractionsAgentProcessingService(ProcessingService):
             )
         finally:
             await self._record_cancelled_run(remote_task_id)
-
-    def _record_failed_submission(
-        self,
-        error: BaseException,
-        duration_seconds: float,
-    ) -> None:
-        """Count a run that never started, so a failing agent is visible."""
-        client = self._google_client()
-        record_llm_call(
-            profile=self.service_config.id,
-            provider="google",
-            model=client.model_name,
-            resolved_model=None,
-            operation=client.agent_operation_name,
-            outcome="error",
-            error_type=type(error).__name__,
-            duration_seconds=duration_seconds,
-            time_to_first_output_seconds=None,
-            reasoning_info=None,
-        )
 
     async def _record_cancelled_run(self, remote_task_id: str) -> None:
         """Account for a run that was cancelled rather than polled to an end.

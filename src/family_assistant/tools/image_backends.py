@@ -182,11 +182,19 @@ def _openai_image_usage(
     usage = getattr(response, "usage", None)
     if usage is None:
         return None
-    return MessageReasoningInfo(
+    info = MessageReasoningInfo(
         prompt_tokens=getattr(usage, "input_tokens", 0) or 0,
         completion_tokens=getattr(usage, "output_tokens", 0) or 0,
         total_tokens=getattr(usage, "total_tokens", 0) or 0,
     )
+    # Editing sends the source image as input, and GPT Image bills those
+    # tokens above text ones, so the split has to survive into the buckets:
+    # a large source image costed at the text price understates the edit.
+    details = getattr(usage, "input_tokens_details", None)
+    image_tokens = getattr(details, "image_tokens", None) if details else None
+    if image_tokens is not None:
+        info["image_input_tokens"] = image_tokens
+    return info
 
 
 @runtime_checkable

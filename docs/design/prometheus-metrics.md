@@ -76,6 +76,7 @@ every provider maps onto:
 | `kind`           | Meaning                                                        |
 | ---------------- | -------------------------------------------------------------- |
 | `input_uncached` | Prompt tokens that were neither read from nor written to cache |
+| `input_image`    | Prompt tokens that were image rather than text, where reported |
 | `cache_read`     | Prompt tokens served from the prompt cache                     |
 | `cache_write`    | Prompt tokens written into the prompt cache                    |
 | `output`         | Generated tokens excluding reasoning                           |

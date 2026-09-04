@@ -12,11 +12,11 @@ by construction rather than by remembering to count it.
 
 **Token accounting is normalised here, once.** Providers disagree about what
 their own prompt and completion counts include, so the exported buckets are
-defined to be disjoint on every provider: ``input_uncached``, ``cache_read``
-and ``cache_write`` sum to the full prompt, ``output`` and ``reasoning`` sum to
-everything generated, and ``tool_use`` is what the provider spent running its
-own server-side tools. A dashboard can therefore sum over ``kind`` without
-knowing which provider served the call.
+defined to be disjoint on every provider: ``input_uncached``, ``input_image``,
+``cache_read`` and ``cache_write`` sum to the full prompt, ``output`` and
+``reasoning`` sum to everything generated, and ``tool_use`` is what the provider
+spent running its own server-side tools. A dashboard can therefore sum over
+``kind`` without knowing which provider served the call.
 """
 
 from __future__ import annotations
@@ -203,10 +203,10 @@ def normalized_token_buckets(
     than zero -- the distinction that separates a provider that does not cache
     from one that cached nothing this call.
 
-    The kinds are disjoint by construction: ``input_uncached + cache_read +
-    cache_write`` is the full prompt, ``output + reasoning`` is everything
-    generated, and ``tool_use`` is what the provider spent on its own
-    server-side tools -- whichever provider served the call.
+    The kinds are disjoint by construction: ``input_uncached + input_image +
+    cache_read + cache_write`` is the full prompt, ``output + reasoning`` is
+    everything generated, and ``tool_use`` is what the provider spent on its
+    own server-side tools -- whichever provider served the call.
     """
     if not reasoning_info:
         return {}
@@ -221,11 +221,19 @@ def normalized_token_buckets(
     if cache_write is not None:
         buckets["cache_write"] = max(0, cache_write)
 
+    # Image input is priced above text input wherever a provider reports the
+    # split, so it is a tier of its own and comes out of the text bucket
+    # rather than being averaged into it.
+    image_input = reasoning_info.get("image_input_tokens")
+    if image_input is not None:
+        buckets["input_image"] = max(0, image_input)
+
     prompt = reasoning_info.get("prompt_tokens")
     if prompt is not None:
         uncached = prompt
         if key not in _DISJOINT_PROMPT_PROVIDERS:
             uncached -= (cache_read or 0) + (cache_write or 0)
+        uncached -= image_input or 0
         buckets["input_uncached"] = max(0, uncached)
 
     reasoning = reasoning_info.get("reasoning_tokens")
