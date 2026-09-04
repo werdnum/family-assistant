@@ -70,13 +70,15 @@ serialising a node copy attributes but not properties, so a copied element is a 
 identity. An element whose recorded role and name are unchanged keeps its ref; anything else is
 stamped with a fresh one.
 
-Fresh refs come from an allocator scoped to the conversation, not to the browser session: the
-conversation-keyed backend object owns it and passes it into the walker on every snapshot. A browser
-session can be replaced underneath a conversation (browser-server evicts or expires it and
-`browser_open` transparently starts another), and a process restart replaces the backend object
-itself, so a ref must also carry a generation that changes whenever the allocator is created. A ref
-issued by an earlier allocator therefore never matches anything a later one issues. The wire shape
-of the generation is the implementing PR's to choose.
+Fresh refs come from an allocator that lives in the conversation's persistent browser state, the
+object keyed by conversation that already outlives individual tool calls (the local Playwright
+session, or the cached remote backend), and is passed into the walker on every snapshot. It is not
+owned by anything constructed per call, and not by the browser session, which can be replaced
+underneath a conversation (browser-server evicts or expires it and `browser_open` transparently
+starts another). A process restart does replace that persistent state, so a ref also carries a
+generation that changes whenever the allocator is created; a ref issued by an earlier allocator
+never matches anything a later one issues. The wire shape of the generation is the implementing PR's
+to choose.
 
 Consequences the model can rely on, and that the tool descriptions and the `/browse` system prompt
 will state: an unchanged element keeps its ref across any number of snapshots and actions; a ref
