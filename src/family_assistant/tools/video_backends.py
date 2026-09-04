@@ -323,9 +323,16 @@ class OmniVideoRunFailedError(VideoGenerationError):
     is still billed for it and the raise is the only path out.
     """
 
-    def __init__(self, message: str, *, usage: MessageReasoningInfo | None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        usage: MessageReasoningInfo | None,
+        served_model: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.usage = usage
+        self.served_model = served_model
 
 
 def _omni_video_usage(
@@ -409,13 +416,14 @@ class GeminiOmniVideoBackend:
         series.
         """
         self._reject_unsupported(request)
-        result, usage = await instrumented_llm_request(
+        result, _usage, _served = await instrumented_llm_request(
             provider="google",
             model=self.model,
             operation="video",
             request=lambda: self._generate_video(request),
-            usage=lambda pair: pair[1],
+            usage=lambda triple: triple[1],
             error_usage=lambda error: getattr(error, "usage", None),
+            served_model=lambda triple: triple[2],
         )
         return result
 
@@ -435,7 +443,7 @@ class GeminiOmniVideoBackend:
 
     async def _generate_video(
         self, request: VideoGenerationRequest
-    ) -> tuple[VideoGenerationResult, MessageReasoningInfo | None]:
+    ) -> tuple[VideoGenerationResult, MessageReasoningInfo | None, str | None]:
         """Generate a video with Gemini Omni Flash via the Interactions API."""
         async with _create_genai_client(self.api_key).aio as client:
             # URI delivery avoids the Interactions API's 4 MB inline limit.
@@ -474,6 +482,7 @@ class GeminiOmniVideoBackend:
                     f"Omni Flash video generation ended with status "
                     f"'{interaction.status}'.",
                     usage=_omni_video_usage(interaction),
+                    served_model=interaction.model,
                 )
 
             video_bytes = await self._extract_video_bytes(client, interaction)
@@ -482,6 +491,7 @@ class GeminiOmniVideoBackend:
                     content=video_bytes, mime_type="video/mp4", model=self.model
                 ),
                 _omni_video_usage(interaction),
+                interaction.model,
             )
 
     async def _await_completion(

@@ -1388,6 +1388,13 @@ class OpenAIClient(BaseLLMClient):
                 # list, so it has to be captured before the guards below skip it.
                 if chunk is not None and getattr(chunk, "usage", None):
                     last_chunk_with_usage = chunk
+                    # Recorded as it arrives, not only once the stream ends
+                    # cleanly: a stream that dies after the usage chunk still
+                    # spent what was reported, and the failure finalizer reads
+                    # whatever telemetry already holds.
+                    telemetry.record_usage(
+                        self._reasoning_info_from_chat_usage(chunk.usage)
+                    )
                 if chunk is not None:
                     telemetry.record_response_metadata(
                         resolved_model=getattr(chunk, "model", None),

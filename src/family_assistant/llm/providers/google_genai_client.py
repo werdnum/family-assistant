@@ -2406,6 +2406,16 @@ class GoogleGenAIClient(BaseLLMClient):
                 async for chunk in stream_response:  # type: ignore[misc]
                     if getattr(chunk, "usage_metadata", None):
                         latest_usage_metadata = chunk.usage_metadata
+                        # Recorded as it arrives, not only once the stream ends
+                        # cleanly: a stream that dies mid-flight still spent
+                        # what the provider has already reported, and the
+                        # failure finalizer reads whatever telemetry holds.
+                        # Gemini's counts are cumulative, so the latest wins.
+                        telemetry.record_usage(
+                            self._reasoning_info_from_usage_metadata(
+                                latest_usage_metadata
+                            )
+                        )
                     resolved_model = chunk.model_version or resolved_model
                     response_id = chunk.response_id or response_id
                     finish_reason = _first_finish_reason(chunk) or finish_reason
