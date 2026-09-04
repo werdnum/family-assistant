@@ -63,6 +63,22 @@ def test_credential_query_parameters_are_redacted_case_insensitively() -> None:
     assert redacted == f"https://api.example.com/v1?API_KEY={REDACTED}&page=2"
 
 
+def test_non_credential_query_parameters_keep_their_encoding() -> None:
+    """Rewriting the query must not decode escaped separators or nested URLs."""
+    redacted = redact_sensitive_text(
+        "https://api.example.com/v1?token=x&filter=a%26b&next=https%3A%2F%2Fother%2Fp"
+    )
+    assert redacted == (
+        f"https://api.example.com/v1?token={REDACTED}"
+        "&filter=a%26b&next=https%3A%2F%2Fother%2Fp"
+    )
+
+
+def test_percent_encoded_credential_parameter_name_is_matched() -> None:
+    redacted = redact_sensitive_text("https://api.example.com/v1?API%5FKEY=abc&page=2")
+    assert redacted == f"https://api.example.com/v1?API%5FKEY={REDACTED}&page=2"
+
+
 def test_inline_pem_private_key_is_redacted() -> None:
     """``apns.auth_key`` holds a PEM inline; its name matches no secret substring."""
     redacted = redact_sensitive_config({

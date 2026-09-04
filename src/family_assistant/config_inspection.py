@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 from typing import TYPE_CHECKING, Any
-from urllib.parse import parse_qsl, urlsplit, urlunsplit
+from urllib.parse import unquote_plus, urlsplit, urlunsplit
 
 if TYPE_CHECKING:
     from family_assistant.config_models import (
@@ -111,6 +111,16 @@ def is_sensitive_field_name(key: object) -> bool:
     return any(substring in lowered for substring in _SENSITIVE_SUBSTRINGS)
 
 
+def _redact_query_pair(pair: str) -> str:
+    """Redact one raw ``name=value`` query pair, leaving its encoding intact."""
+    name, separator, raw_value = pair.partition("=")
+    if not separator or not raw_value:
+        return pair
+    if unquote_plus(name).lower() not in _SENSITIVE_QUERY_PARAMS:
+        return pair
+    return f"{name}={REDACTED}"
+
+
 def _redact_url(value: str) -> str:
     """Strip userinfo passwords and credential query parameters from a URL.
 
@@ -132,16 +142,12 @@ def _redact_url(value: str) -> str:
             user, _, _password = userinfo.partition(":")
             netloc = f"{user}:{REDACTED}@{hostinfo}"
 
+    # Rewrite the raw query rather than parse_qsl output: decoding and
+    # re-joining would turn an escaped separator (``filter=a%26b``) into two
+    # parameters and expose percent-encoded nested URLs in decoded form.
     query = split.query
     if query:
-        params = parse_qsl(query, keep_blank_values=True)
-        if any(name.lower() in _SENSITIVE_QUERY_PARAMS for name, _ in params):
-            query = "&".join(
-                f"{name}={REDACTED}"
-                if name.lower() in _SENSITIVE_QUERY_PARAMS and param_value
-                else f"{name}={param_value}"
-                for name, param_value in params
-            )
+        query = "&".join(_redact_query_pair(pair) for pair in query.split("&"))
 
     if netloc == split.netloc and query == split.query:
         return value
