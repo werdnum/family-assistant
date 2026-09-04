@@ -35,6 +35,8 @@ from typing import (
     runtime_checkable,
 )
 
+from family_assistant.observability.metrics import instrumented_llm_request
+
 if TYPE_CHECKING:
     import types
 
@@ -42,6 +44,8 @@ if TYPE_CHECKING:
     from google.genai import types as genai_types
     from google.genai._gaos.types.interactions.interaction import Interaction
     from google.genai.client import AsyncClient
+
+    from family_assistant.llm.messages import MessageReasoningInfo
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +211,23 @@ class VeoVideoBackend:
     async def generate_video(
         self, request: VideoGenerationRequest
     ) -> VideoGenerationResult:
+        """Generate a video with Veo, counting the generation as one request.
+
+        The whole generate-and-poll sequence is one billable unit, so it is
+        counted as one call rather than one per poll. Veo bills per second of
+        video and reports no token usage, so the call counter is the meter --
+        the same treatment the per-image models get.
+        """
+        return await instrumented_llm_request(
+            provider="google",
+            model=self.model,
+            operation="video",
+            request=lambda: self._generate_video(request),
+        )
+
+    async def _generate_video(
+        self, request: VideoGenerationRequest
+    ) -> VideoGenerationResult:
         """Generate a video with Veo, polling the long-running operation."""
         types = _lazy_import_genai_types()
 
@@ -295,6 +316,28 @@ class VeoVideoBackend:
             )
 
 
+def _omni_video_usage(
+    interaction: Any,  # noqa: ANN401 - google.genai Interaction
+) -> MessageReasoningInfo | None:
+    """Token usage for an Omni Flash video interaction, when reported.
+
+    Omni Flash bills its video output in tokens and reports them on the
+    interaction, the same shape a managed-agent run uses, so the one canonical
+    mapping is reused rather than duplicated here.
+    """
+    usage = getattr(interaction, "usage", None)
+    if usage is None:
+        return None
+    # Imported here rather than at module scope: the provider client reaches
+    # config_models, which reaches back to this module through the tool
+    # registry. Same cycle-breaking local import as tools/camera.py.
+    from family_assistant.llm.providers.google_genai_client import (  # noqa: PLC0415
+        GoogleGenAIClient,
+    )
+
+    return GoogleGenAIClient._reasoning_info_from_interaction_usage(usage)
+
+
 class GeminiOmniVideoBackend:
     """Gemini Omni Flash backend using the Interactions API.
 
@@ -341,6 +384,25 @@ class GeminiOmniVideoBackend:
     async def generate_video(
         self, request: VideoGenerationRequest
     ) -> VideoGenerationResult:
+        """Generate a video with Omni Flash, counting it as one request.
+
+        Unlike Veo, Omni Flash runs through the Interactions API and reports
+        token usage on the interaction, so the tokens are recorded alongside
+        the call. The inner method returns that usage beside its result
+        because the result type carries no room for it.
+        """
+        result, usage = await instrumented_llm_request(
+            provider="google",
+            model=self.model,
+            operation="video",
+            request=lambda: self._generate_video(request),
+            usage=lambda pair: pair[1],
+        )
+        return result
+
+    async def _generate_video(
+        self, request: VideoGenerationRequest
+    ) -> tuple[VideoGenerationResult, MessageReasoningInfo | None]:
         """Generate a video with Gemini Omni Flash via the Interactions API."""
         unsupported_features: list[str] = []
         if request.last_frame is not None:
@@ -389,8 +451,11 @@ class GeminiOmniVideoBackend:
                 )
 
             video_bytes = await self._extract_video_bytes(client, interaction)
-            return VideoGenerationResult(
-                content=video_bytes, mime_type="video/mp4", model=self.model
+            return (
+                VideoGenerationResult(
+                    content=video_bytes, mime_type="video/mp4", model=self.model
+                ),
+                _omni_video_usage(interaction),
             )
 
     async def _await_completion(

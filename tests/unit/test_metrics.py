@@ -21,6 +21,7 @@ from family_assistant.llm.utils.call_telemetry import LLMCallTelemetry
 from family_assistant.observability.exporter import start_metrics_exporter
 from family_assistant.observability.metrics import (
     TurnMetrics,
+    instrumented_llm_request,
     normalized_token_buckets,
     record_tool_call,
 )
@@ -39,7 +40,7 @@ from family_assistant.tools.on_demand import OnDemandToolsView
 from family_assistant.tools.types import ToolExecutionContext
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Awaitable, Callable, Iterator, Mapping
 
     from family_assistant.llm.messages import MessageReasoningInfo
     from family_assistant.storage.database import Database
@@ -81,6 +82,15 @@ def _telemetry(
         tool_choice=None,
         streaming=streaming,
     )
+
+
+def _returns[T](value: T) -> Callable[[], Awaitable[T]]:
+    """A request callable that succeeds with *value*."""
+
+    async def request() -> T:
+        return value
+
+    return request
 
 
 # --- Token normalisation -------------------------------------------------
@@ -492,6 +502,40 @@ def test_a_cancelled_structured_call_still_records_an_outcome(profile: str) -> N
         _sample(
             "family_assistant_llm_calls_total",
             {**labels, "outcome": "cancelled", "error_type": ""},
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_video_generation_is_counted_like_any_other_provider_request(
+    profile: str,
+) -> None:
+    """Video is billable and reaches a provider, so it lands in the same counters.
+
+    Veo bills per second of video and reports no usage block, so the call
+    counter is its only meter -- the same treatment the per-image models get.
+    """
+    result = await instrumented_llm_request(
+        provider="google",
+        model="veo-test",
+        operation="video",
+        request=_returns("a video"),
+    )
+
+    assert result == "a video"
+    assert (
+        _sample(
+            "family_assistant_llm_calls_total",
+            {
+                "profile": profile,
+                "provider": "google",
+                "model": "veo-test",
+                "resolved_model": "veo-test",
+                "operation": "video",
+                "outcome": "success",
+                "error_type": "",
+            },
         )
         == 1
     )

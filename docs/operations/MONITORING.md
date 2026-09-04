@@ -225,10 +225,16 @@ the port. The rationale and the chokepoints the numbers come from are in
 Standard process and Python runtime metrics (`process_resident_memory_bytes`, `python_gc_*`, …) are
 exported alongside the application ones.
 
-**What is counted.** Every request that reaches an LLM provider — chat (streamed or not), structured
-output (tool-call review), embeddings, image generation, and managed-agent runs — plus every tool
-execution, including one run later from an approved durable confirmation. Successful, failed,
-cancelled and abandoned calls each record exactly one outcome.
+**What is counted.** Chat (streamed or not), structured output (tool-call review), embeddings, image
+generation, video generation, and managed-agent runs — plus every tool execution, including one run
+later from an approved durable confirmation. Successful, failed, cancelled and abandoned calls each
+record exactly one outcome.
+
+**What is not.** The Gemini Live audio session behind the Asterisk phone integration is billable and
+is not counted here. It is a bidirectional session rather than a request, so it does not fit the
+call-and-usage shape the rest of these metrics share, and its `usage_metadata` arrives per server
+message with semantics this deployment has not confirmed — a wrong token total would be worse than a
+missing one. Phone-call spend has to be read from the provider's own billing until that is settled.
 
 Not every provider reports tokens. Google's embedding API reports only billable characters, and the
 image models that bill per image report no usage block. Those emit no token buckets, and

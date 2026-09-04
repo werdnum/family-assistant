@@ -23,13 +23,13 @@ VictoriaMetrics `vmagent`.
 
 ### One chokepoint per concept
 
-| Concept                   | Chokepoint                                              |
-| ------------------------- | ------------------------------------------------------- |
-| Chat and structured calls | `LLMCallTelemetry` (`llm/utils/call_telemetry.py`)      |
-| Image and embedding calls | `instrumented_llm_request` (`observability/metrics.py`) |
-| Managed-agent runs        | `Interaction.usage`, on the stream and on the poll      |
-| Tool execution            | `ToolExecutor`, and the durable-confirmation worker     |
-| Processing turn           | `LLMStreamingLoop.run_stream`                           |
+| Concept                          | Chokepoint                                              |
+| -------------------------------- | ------------------------------------------------------- |
+| Chat and structured calls        | `LLMCallTelemetry` (`llm/utils/call_telemetry.py`)      |
+| Image, video and embedding calls | `instrumented_llm_request` (`observability/metrics.py`) |
+| Managed-agent runs               | `Interaction.usage`, on the stream and on the poll      |
+| Tool execution                   | `ToolExecutor`, and the durable-confirmation worker     |
+| Processing turn                  | `LLMStreamingLoop.run_stream`                           |
 
 Two request chokepoints rather than one because they answer different questions. `LLMCallTelemetry`
 also builds a span and a diagnostics ring-buffer record, worth having for anything conversational;
@@ -141,6 +141,15 @@ the Ingress's reachable surface for no gain.
 - **`resolved_model` is a label.** It multiplies the series count by the number of dated snapshots a
   configured alias resolves to, which is small and bounded, and it is the only way to see
   provider-side routing and fallback in the time series at all.
+
+- **The Gemini Live audio session is not counted.** The Asterisk phone integration opens a
+  bidirectional Live session rather than making requests, so it has no call to count and no single
+  point at which usage is final. Its `usage_metadata` arrives on server messages, but whether those
+  figures are per-message deltas or session-to-date totals decides whether they should be summed or
+  taken last, and getting that backwards would misstate phone-call spend by a large factor. A
+  missing number sends someone to the provider's billing page; a confidently wrong one does not. The
+  honest fix is to confirm the semantics against a real session and then record one call per session
+  at close, which is a change in its own right rather than a line in this one.
 
 - **Process-local state.** The exporter holds counters in the process, so a restart resets them.
   Every metric is a counter or a histogram, so `rate()`/`increase()` handle resets; nothing here
