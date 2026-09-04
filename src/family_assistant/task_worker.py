@@ -1882,11 +1882,36 @@ class TaskWorker:
 
         await self._finalize_delegation_run(exec_context, delegation_id, result)
 
+    @staticmethod
+    def _terminal_metrics_recorder(
+        target_service: object,
+        remote_task_id: str,
+        *,
+        cancelled: bool = False,
+    ) -> Callable[[], Awaitable[None]] | None:
+        """The accounting hook for a remote target, or None if it has none.
+
+        Probed rather than declared on ``PollableDelegationService``: that
+        Protocol is ``runtime_checkable`` and the worker uses it to decide
+        whether a target polls at all, so a new member would silently demote
+        every implementation lacking it -- including targets with no usage to
+        report -- back to the inline path.
+        """
+        record = getattr(target_service, "record_terminal_metrics", None)
+        if record is None:
+            return None
+
+        async def run() -> None:
+            await record(remote_task_id, cancelled=cancelled)
+
+        return run
+
     async def _finalize_delegation_run(
         self,
         exec_context: ToolExecutionContext,
         delegation_id: str,
         result: ChatInteractionResult,
+        on_committed: Callable[[], Awaitable[None]] | None = None,
     ) -> bool:
         """Persist a delegation run's terminal result and notify if needed.
 
@@ -1895,9 +1920,15 @@ class TaskWorker:
         that finishes after the cleanup reaper already failed the same run loses
         the race (``None``) and does not resurrect/overwrite it or double-notify.
 
-        Returns whether this caller won that CAS, which is what makes it the one
-        caller that may count the run: anything recorded by a loser would be
-        recorded again by whichever attempt eventually commits.
+        ``on_committed`` runs for the caller that wins that CAS -- the one
+        caller that may count the run, since anything recorded by a loser would
+        be recorded again by whichever attempt eventually commits. It runs
+        before the notification, which can raise (a transient
+        ``ChatDeliveryError`` is expected here): the run is terminal either
+        way, and the retry exits at the terminal-status guard without another
+        chance to record it, so accounting must not sit behind delivery.
+
+        Returns whether this caller won the CAS.
         """
         clock = exec_context.clock or self.clock
         completed_at = clock.now()
@@ -1922,6 +1953,8 @@ class TaskWorker:
                 delegation_id,
             )
             return False
+        if on_committed is not None:
+            await on_committed()
         await self._deliver_terminal_delegation(exec_context, terminal_run, force=False)
         return True
 
@@ -2331,18 +2364,17 @@ class TaskWorker:
             # task is cancelled and failed, never one that just finished above.
             if past_cap:
                 await target_service.cancel_async(remote_task_id)
-                committed = await self._fail_delegation_run(
+                await self._fail_delegation_run(
                     exec_context,
                     delegation_id=delegation_id,
                     error=(
                         "The remote profile did not finish within the allowed "
                         f"time ({max_async_seconds:.0f}s) and was cancelled."
                     ),
+                    on_committed=self._terminal_metrics_recorder(
+                        target_service, remote_task_id, cancelled=True
+                    ),
                 )
-                if committed:
-                    record = getattr(target_service, "record_terminal_metrics", None)
-                    if record is not None:
-                        await record(remote_task_id, cancelled=True)
                 return
             attempts = await exec_context.db_context.delegation_runs.bump_poll_attempt(
                 delegation_id, clock.now()
@@ -2356,18 +2388,14 @@ class TaskWorker:
             )
             return
 
-        committed = await self._finalize_delegation_run(
-            exec_context, delegation_id, result
+        await self._finalize_delegation_run(
+            exec_context,
+            delegation_id,
+            result,
+            on_committed=self._terminal_metrics_recorder(
+                target_service, remote_task_id
+            ),
         )
-        if committed:
-            # Probed rather than declared on PollableDelegationService: that
-            # Protocol is runtime_checkable and the worker uses it to decide
-            # whether a target polls at all, so a new member would silently
-            # demote every implementation that lacks it -- including services
-            # with no usage to report -- back to the inline path.
-            record = getattr(target_service, "record_terminal_metrics", None)
-            if record is not None:
-                await record(remote_task_id)
 
     async def handle_delegation_run_cleanup(
         self,
@@ -2521,6 +2549,14 @@ class TaskWorker:
             remote_task_id = run["remote_task_id"]
             if isinstance(target_service, PollableDelegationService) and remote_task_id:
                 await target_service.cancel_async(remote_task_id)
+                # This reaper won the CAS, so it owes the run's accounting for
+                # the same reason a poll does -- and before the notification,
+                # which can raise.
+                record = self._terminal_metrics_recorder(
+                    target_service, remote_task_id, cancelled=True
+                )
+                if record is not None:
+                    await record()
             await self._force_notify_delegation(exec_context, failed)
 
     async def _force_notify_delegation(
@@ -2771,11 +2807,16 @@ class TaskWorker:
         *,
         delegation_id: str,
         error: str,
+        on_committed: Callable[[], Awaitable[None]] | None = None,
     ) -> bool:
         """Mark a delegation run failed (committed immediately) and notify.
 
-        Returns whether this caller won the terminal CAS, which is what makes
-        it the one caller that may count the run.
+        ``on_committed`` runs for the caller that wins the terminal CAS, before
+        the notification, for the same reason it does in
+        :meth:`_finalize_delegation_run`: delivery can raise, and the run is
+        terminal either way.
+
+        Returns whether this caller won the CAS.
         """
         clock = exec_context.clock or self.clock
         run = await exec_context.db_context.delegation_runs.mark_failed(
@@ -2785,6 +2826,8 @@ class TaskWorker:
         )
         if run is None:
             return False
+        if on_committed is not None:
+            await on_committed()
         await self._deliver_terminal_delegation(exec_context, run, force=False)
         return True
 

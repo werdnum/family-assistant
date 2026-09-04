@@ -263,19 +263,24 @@ Every LLM metric carries the same five labels:
 provider — providers disagree about whether their own cache and reasoning counts are separate
 buckets or subsets, and that correction is applied before export rather than in every query:
 
-| `kind`           | Meaning                                                           |
-| ---------------- | ----------------------------------------------------------------- |
-| `input_uncached` | Prompt tokens neither read from nor written to the prompt cache   |
-| `input_image`    | Prompt tokens that were image rather than text, where reported    |
-| `cache_read`     | Prompt tokens served from the prompt cache                        |
-| `cache_write`    | Prompt tokens written into the prompt cache                       |
-| `output`         | Generated tokens, excluding reasoning                             |
-| `output_image`   | Generated tokens that were image rather than text, where reported |
-| `reasoning`      | Reasoning / thinking tokens                                       |
-| `tool_use`       | Tokens the provider spent running its own server-side tools       |
+| `kind`           | Meaning                                                                 |
+| ---------------- | ----------------------------------------------------------------------- |
+| `input_uncached` | Prompt tokens neither read from nor written to the prompt cache         |
+| `input_image`    | Uncached prompt tokens that were image rather than text, where reported |
+| `cache_read`     | Prompt tokens served from the prompt cache                              |
+| `cache_write`    | Prompt tokens written into the prompt cache                             |
+| `output`         | Generated tokens, excluding reasoning                                   |
+| `output_image`   | Generated tokens that were image rather than text, where reported       |
+| `reasoning`      | Reasoning / thinking tokens                                             |
+| `tool_use`       | Tokens the provider spent running its own server-side tools             |
 
 A bucket a provider does not report is absent rather than zero, so no `cache_read` series means
 "this provider or model does not report caching", not "nothing was cached".
+
+Where a provider reports both caching and a modality split, cached image tokens belong to
+`cache_read` alone — `input_image` carries only the uncached remainder, so the prompt tiers still
+sum to the prompt. Those tokens are therefore priced as cached rather than as cached *image* tokens;
+no provider here prices the two apart today.
 
 The buckets are **billing tiers**, which is what makes cost a single join against a price table on
 `(model, kind)`. A price table that omits `tool_use`, `input_image` or `output_image` will silently

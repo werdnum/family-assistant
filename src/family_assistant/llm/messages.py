@@ -123,6 +123,11 @@ class MessageReasoningInfo(TypedDict, total=False):
     reports the split. A subset of ``completion_tokens``, and priced well above
     text output on the models that emit both, so the two cannot share a
     price."""
+    cached_image_tokens: int
+    """Image prompt tokens that were served from the cache, where the provider
+    reports the split. The overlap between ``cached_prompt_tokens`` and
+    ``image_input_tokens``, recorded so the exported buckets can stay disjoint
+    rather than counting these tokens under both."""
     source_turn_id: str | None
     tool_name: str
     thought_summaries: list[dict[str, str | int]]

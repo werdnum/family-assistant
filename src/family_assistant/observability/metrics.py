@@ -234,17 +234,24 @@ def normalized_token_buckets(
 
     # Image input is priced above text input wherever a provider reports the
     # split, so it is a tier of its own and comes out of the text bucket
-    # rather than being averaged into it.
+    # rather than being averaged into it. Cached image tokens are the overlap
+    # between that split and the cache, and belong to `cache_read` alone --
+    # counting them here too would put the same tokens in two buckets and
+    # overstate the prompt.
     image_input = reasoning_info.get("image_input_tokens")
+    uncached_image = None
     if image_input is not None:
-        buckets["input_image"] = max(0, image_input)
+        uncached_image = max(
+            0, image_input - (reasoning_info.get("cached_image_tokens") or 0)
+        )
+        buckets["input_image"] = uncached_image
 
     prompt = reasoning_info.get("prompt_tokens")
     if prompt is not None:
         uncached = prompt
         if key not in _DISJOINT_PROMPT_PROVIDERS:
             uncached -= (cache_read or 0) + (cache_write or 0)
-        uncached -= image_input or 0
+        uncached -= uncached_image or 0
         buckets["input_uncached"] = max(0, uncached)
 
     reasoning = reasoning_info.get("reasoning_tokens")

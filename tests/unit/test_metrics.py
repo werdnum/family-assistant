@@ -217,6 +217,32 @@ def test_reasoning_and_image_output_are_both_removed_from_the_text_output() -> N
     assert buckets["output"] == 200
 
 
+def test_a_cached_image_is_counted_once_not_in_two_buckets() -> None:
+    """Cached image tokens are the overlap of the cache and the image split.
+
+    Counted in both, the prompt tiers stop summing to the prompt and the cost
+    join overstates the call -- which defeats the point of disjoint buckets.
+    """
+    usage: MessageReasoningInfo = {
+        "prompt_tokens": 10_000,
+        "cached_prompt_tokens": 6_000,
+        "image_input_tokens": 7_000,
+        "cached_image_tokens": 5_000,
+    }
+
+    buckets = normalized_token_buckets(usage, "google")
+
+    assert buckets["cache_read"] == 6_000
+    assert buckets["input_image"] == 2_000
+    assert buckets["input_uncached"] == 2_000
+    # The prompt tiers reconstruct the prompt exactly, which is the invariant
+    # every cost query depends on.
+    assert (
+        buckets["cache_read"] + buckets["input_image"] + buckets["input_uncached"]
+        == 10_000
+    )
+
+
 def test_unreported_buckets_are_absent_rather_than_zero() -> None:
     """A provider that does not cache must be distinguishable from a cache miss."""
     usage: MessageReasoningInfo = {"prompt_tokens": 100, "completion_tokens": 20}

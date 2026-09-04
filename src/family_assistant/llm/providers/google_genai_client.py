@@ -138,6 +138,8 @@ _INTERACTION_TERMINAL_ERROR_STATUSES = {
 
 def _image_modality_tokens(
     by_modality: Any,  # noqa: ANN401 - genai per-modality token list
+    *,
+    token_attr: str = "tokens",
 ) -> int | None:
     """Image-modality tokens from one Interactions per-modality breakdown.
 
@@ -149,7 +151,7 @@ def _image_modality_tokens(
     if not isinstance(by_modality, list) or not by_modality:
         return None
     return sum(
-        getattr(entry, "tokens", 0) or 0
+        getattr(entry, token_attr, 0) or 0
         for entry in by_modality
         if str(getattr(entry, "modality", "")).upper().endswith("IMAGE")
     )
@@ -1521,6 +1523,21 @@ class GoogleGenAIClient(BaseLLMClient):
         tool_use_tokens = getattr(usage, "tool_use_prompt_token_count", None)
         if tool_use_tokens is not None:
             reasoning_info["tool_use_tokens"] = tool_use_tokens
+        # An ordinary Gemini turn can carry images too -- an attachment on a
+        # chat message is the common case -- and they are not billed at the
+        # text rate, so the split belongs here rather than only on the image
+        # backends. The cached slice is recorded so the buckets can stay
+        # disjoint instead of counting cached images twice.
+        for field, key in (
+            ("prompt_tokens_details", "image_input_tokens"),
+            ("candidates_tokens_details", "image_output_tokens"),
+            ("cache_tokens_details", "cached_image_tokens"),
+        ):
+            image_tokens = _image_modality_tokens(
+                getattr(usage, field, None), token_attr="token_count"
+            )
+            if image_tokens is not None:
+                reasoning_info[key] = image_tokens  # pyright: ignore[reportGeneralTypeIssues] - key is a literal from the tuple above
         return reasoning_info
 
     @staticmethod
@@ -1556,6 +1573,7 @@ class GoogleGenAIClient(BaseLLMClient):
         for field, key in (
             ("input_tokens_by_modality", "image_input_tokens"),
             ("output_tokens_by_modality", "image_output_tokens"),
+            ("cached_tokens_by_modality", "cached_image_tokens"),
         ):
             image_tokens = _image_modality_tokens(getattr(usage, field, None))
             if image_tokens is not None:
@@ -2048,10 +2066,11 @@ class GoogleGenAIClient(BaseLLMClient):
         # so it has to be picked up off whichever events carry the interaction.
         # Last one wins: the totals are cumulative for the run.
         interaction_usage: Any | None = None
+        interaction_model: str | None = None
 
         async def stream_events() -> AsyncGenerator[LLMStreamEvent]:
             nonlocal content_yielded, interaction_id, last_event_id
-            nonlocal interaction_usage
+            nonlocal interaction_usage, interaction_model
             create_kwargs = self._build_agent_create_kwargs(messages)
             environment = await self._build_agent_environment()
             if environment is not None:
@@ -2071,6 +2090,11 @@ class GoogleGenAIClient(BaseLLMClient):
                 # Track event IDs for potential stream reconnection
                 if event_id := getattr(chunk, "event_id", None):
                     last_event_id = event_id
+
+                if served := getattr(
+                    getattr(chunk, "interaction", None), "model", None
+                ):
+                    interaction_model = served
 
                 if usage := getattr(getattr(chunk, "interaction", None), "usage", None):
                     interaction_usage = usage
@@ -2174,8 +2198,13 @@ class GoogleGenAIClient(BaseLLMClient):
             if run_usage is not None:
                 done_metadata["reasoning_info"] = run_usage
 
-            if interaction_id:
-                telemetry.record_response_metadata(response_id=interaction_id)
+            # The interaction reports the model it actually ran, which an alias
+            # can make different from the configured one -- the pollable path
+            # already records it, and this is its interactive equivalent.
+            if interaction_id or interaction_model:
+                telemetry.record_response_metadata(
+                    response_id=interaction_id, resolved_model=interaction_model
+                )
             done_metadata["reasoning_info"] = telemetry.finalize_usage(
                 done_metadata.get("reasoning_info")
             )

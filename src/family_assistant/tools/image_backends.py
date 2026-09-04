@@ -176,39 +176,8 @@ def _gemini_image_usage(
     )
 
     # One canonical Gemini usage mapping, reused rather than duplicated here.
-    info = GoogleGenAIClient._reasoning_info_from_usage_metadata(usage)
-    if info is None:
-        return None
-    # Gemini reports per-modality breakdowns on an image call, and bills image
-    # tokens well above text on both sides, so the split has to reach the
-    # buckets rather than being averaged into the text tiers.
-    image_in = _gemini_modality_tokens(getattr(usage, "prompt_tokens_details", None))
-    if image_in is not None:
-        info["image_input_tokens"] = image_in
-    image_out = _gemini_modality_tokens(
-        getattr(usage, "candidates_tokens_details", None)
-    )
-    if image_out is not None:
-        info["image_output_tokens"] = image_out
-    return info
-
-
-def _gemini_modality_tokens(details: Any) -> int | None:  # noqa: ANN401 - genai detail list
-    """Image-modality tokens from one Gemini per-modality breakdown.
-
-    Returns ``None`` when the breakdown is absent, so a response that does not
-    report modalities emits no image bucket at all rather than a zero that
-    would read as "no image tokens" when it means "not reported".
-    """
-    # The SDK types this Optional[list[ModalityTokenCount]]; anything else is
-    # not a breakdown to read, and this parameter is Any.
-    if not isinstance(details, list) or not details:
-        return None
-    return sum(
-        getattr(entry, "token_count", 0) or 0
-        for entry in details
-        if str(getattr(entry, "modality", "")).upper().endswith("IMAGE")
-    )
+    # It carries the per-modality split too, which an image call always has.
+    return GoogleGenAIClient._reasoning_info_from_usage_metadata(usage)
 
 
 def _openai_image_usage(
