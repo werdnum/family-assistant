@@ -136,6 +136,25 @@ _INTERACTION_TERMINAL_ERROR_STATUSES = {
 }
 
 
+def _image_modality_tokens(
+    by_modality: Any,  # noqa: ANN401 - genai per-modality token list
+) -> int | None:
+    """Image-modality tokens from one Interactions per-modality breakdown.
+
+    ``None`` when the breakdown is absent, so a run that reports no modalities
+    emits no image bucket rather than a zero that would read as "no image
+    tokens" when it means "not reported". The SDK types this a list; anything
+    else is not a breakdown to read.
+    """
+    if not isinstance(by_modality, list) or not by_modality:
+        return None
+    return sum(
+        getattr(entry, "tokens", 0) or 0
+        for entry in by_modality
+        if str(getattr(entry, "modality", "")).upper().endswith("IMAGE")
+    )
+
+
 def is_interaction_terminal_error_status(status: str) -> bool:
     """Check if an Interaction status is a terminal (non-success) end state.
 
@@ -1531,6 +1550,16 @@ class GoogleGenAIClient(BaseLLMClient):
             value = getattr(usage, field, None)
             if value is not None:
                 reasoning_info[key] = value  # pyright: ignore[reportGeneralTypeIssues] - key is a literal from the tuple above
+        # An Interactions run can be multimodal on both sides -- reference
+        # images in, generated video out -- and those tokens are not billed at
+        # the text rate, so the modality split has to reach the buckets.
+        for field, key in (
+            ("input_tokens_by_modality", "image_input_tokens"),
+            ("output_tokens_by_modality", "image_output_tokens"),
+        ):
+            image_tokens = _image_modality_tokens(getattr(usage, field, None))
+            if image_tokens is not None:
+                reasoning_info[key] = image_tokens  # pyright: ignore[reportGeneralTypeIssues] - key is a literal from the tuple above
         return reasoning_info
 
     @staticmethod
@@ -2045,6 +2074,14 @@ class GoogleGenAIClient(BaseLLMClient):
 
                 if usage := getattr(getattr(chunk, "interaction", None), "usage", None):
                     interaction_usage = usage
+                    # Recorded as it arrives rather than only at finalization: a
+                    # terminal error status or an error frame raises out of this
+                    # loop, and a run that failed still spent what it spent.
+                    # Interactions usage is cumulative, so the last one seen is
+                    # the total and later reports simply supersede earlier ones.
+                    telemetry.record_usage(
+                        self._reasoning_info_from_interaction_usage(usage)
+                    )
 
                 # Capture Interaction ID
                 if event_type in {"interaction.created", "interaction.start"}:

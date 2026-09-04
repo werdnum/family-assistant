@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import urllib.request
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
 
@@ -516,6 +517,32 @@ def test_an_agent_run_reports_the_tokens_it_spent() -> None:
     assert buckets["output"] == 3000
     assert buckets["reasoning"] == 800
     assert buckets["tool_use"] == 450
+
+
+def test_an_agent_run_reports_its_token_modalities() -> None:
+    """An Interactions run can be multimodal both ways -- images in, video out."""
+
+    @dataclass
+    class _Modality:
+        modality: str
+        tokens: int
+
+    class _Usage:
+        total_input_tokens = 5000
+        total_output_tokens = 9000
+        total_tokens = 14000
+        input_tokens_by_modality = [_Modality("TEXT", 500), _Modality("IMAGE", 4500)]
+        output_tokens_by_modality = [_Modality("IMAGE", 8000)]
+
+    usage = GoogleGenAIClient._reasoning_info_from_interaction_usage(_Usage())
+    assert usage is not None
+
+    buckets = normalized_token_buckets(usage, "google")
+
+    assert buckets["input_image"] == 4500
+    assert buckets["input_uncached"] == 500
+    assert buckets["output_image"] == 8000
+    assert buckets["output"] == 1000
 
 
 def test_an_agent_run_with_no_usage_reports_none() -> None:

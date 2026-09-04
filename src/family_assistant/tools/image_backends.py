@@ -228,13 +228,18 @@ def _openai_image_usage(
         completion_tokens=getattr(usage, "output_tokens", 0) or 0,
         total_tokens=getattr(usage, "total_tokens", 0) or 0,
     )
-    # Editing sends the source image as input, and GPT Image bills those
-    # tokens above text ones, so the split has to survive into the buckets:
-    # a large source image costed at the text price understates the edit.
-    details = getattr(usage, "input_tokens_details", None)
-    image_tokens = getattr(details, "image_tokens", None) if details else None
-    if image_tokens is not None:
-        info["image_input_tokens"] = image_tokens
+    # GPT Image bills image tokens above text on both sides -- the source
+    # image an edit sends in, and the image it generates -- so both splits have
+    # to survive into the buckets. Costed at the text price, a large source
+    # image understates the edit and a generated image understates every call.
+    for source, key in (
+        ("input_tokens_details", "image_input_tokens"),
+        ("output_tokens_details", "image_output_tokens"),
+    ):
+        details = getattr(usage, source, None)
+        image_tokens = getattr(details, "image_tokens", None) if details else None
+        if image_tokens is not None:
+            info[key] = image_tokens  # pyright: ignore[reportGeneralTypeIssues] - key is a literal from the tuple above
     return info
 
 
