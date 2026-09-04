@@ -1582,26 +1582,33 @@ names and sizes — no prompts and no policy bodies.
 ### Redaction in config dumps
 
 Every diagnostic dump of the resolved configuration — `GET /api/debug/profiles`, and the engineer
-profile's `get_resolved_config` / `get_profile_config` / `get_mcp_server_status` tools — passes
-through one shared redactor, on two axes:
+profile's `get_resolved_config` / `get_profile_config` / `get_mcp_server_status` tools — hides
+credentials in three ways, in descending order of how much you should rely on them:
 
-- **By field name.** A field whose name carries a secret-looking word (`*_api_key`, `*_secret`,
-  `*_token`, `*_password`, `*_private_key`, plus an explicit allowlist) is replaced with
-  `[REDACTED]`. Names that say *where* a secret lives rather than holding one — anything ending in
-  `_path`, `_file`, `_dir`, `_env` or `_env_var` — are left readable, since a path or an
-  environment-variable name is operator-facing metadata. Numbers and booleans are never redacted, so
-  `max_tokens` stays a number. An `env` block is the exception that proves the rule: its keys are
-  environment variable names chosen by whoever wrote the entry rather than config field names, so
-  the name axis cannot judge them and every value in it is redacted.
-- **By value shape.** Credentials embedded inside otherwise-useful values are redacted whatever the
-  field is called: the password in a URL's userinfo (`postgresql://user:[REDACTED]@host/db`),
-  credential query parameters (`token`, `api_key`, `key`, `secret`, `signature`, …) in any URL
-  including MCP server endpoints and stdio arguments, and inline PEM blocks such as an APNs
-  `auth_key`. The surrounding host, database and endpoint are preserved so the dump stays useful.
+- **Declared credential fields are typed `SecretStr`.** Pydantic masks them when the config is
+  serialized, so they cannot reach a dump or a config log line at all. This covers every credential
+  the application declares — API keys, tokens, signing keys, OAuth secrets, the APNs key, CalDAV and
+  MQTT passwords, and the `token` of an MCP server entry. An unset field shows as `null`, so a dump
+  still distinguishes "not configured" from "configured but hidden".
+- **Credentials embedded inside a larger value** are stripped by shape, whatever the field is
+  called: the password in a URL's userinfo (`postgresql://user:[REDACTED]@host/db`), credential
+  query parameters (`token`, `api_key`, `client_secret`, `signature`, …) in any URL including MCP
+  endpoints and stdio arguments, and inline PEM blocks. The surrounding host, database and endpoint
+  are preserved so the dump stays useful. This exists because such a field is not wholly secret —
+  masking `database_url` outright would throw away the host and database you opened the dump to
+  read.
+- **An MCP `env` block is redacted whole**, values only. Its keys are environment variable names you
+  chose rather than declared config fields, so nothing can judge them individually.
 
-Both axes are needed: an opaque API key is only identifiable by its field name, and a DSN password
-is only identifiable by its shape. When adding a config field that holds a credential, give it a
-name matching the first axis rather than relying on the second.
+**What is not covered.** `mcp_config.mcpServers` entries accept arbitrary extra keys, and an
+undeclared one — `custom_api_key`, say — is not a declared field and so is not masked. It is
+redacted only if its *value* has a recognizable shape (a URL or a PEM block). Keep MCP credentials
+in `env` or `token`, as described under
+[Passing credentials to an MCP server](#passing-credentials-to-an-mcp-server); a credential anywhere
+else in an entry may appear in full.
+
+When adding a config field that holds a credential, type it `SecretStr` — that is what makes the
+guarantee, not what you call the field.
 
 ______________________________________________________________________
 
