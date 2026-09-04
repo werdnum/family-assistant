@@ -390,7 +390,13 @@ class GeminiOmniVideoBackend:
         token usage on the interaction, so the tokens are recorded alongside
         the call. The inner method returns that usage beside its result
         because the result type carries no room for it.
+
+        Options this backend cannot honour are rejected before the metrics
+        lifecycle opens: such a request never reaches Google, so counting it
+        would put traffic that does not exist into the call and error-rate
+        series.
         """
+        self._reject_unsupported(request)
         result, usage = await instrumented_llm_request(
             provider="google",
             model=self.model,
@@ -400,10 +406,9 @@ class GeminiOmniVideoBackend:
         )
         return result
 
-    async def _generate_video(
-        self, request: VideoGenerationRequest
-    ) -> tuple[VideoGenerationResult, MessageReasoningInfo | None]:
-        """Generate a video with Gemini Omni Flash via the Interactions API."""
+    @staticmethod
+    def _reject_unsupported(request: VideoGenerationRequest) -> None:
+        """Raise if the request uses options Omni Flash cannot honour."""
         unsupported_features: list[str] = []
         if request.last_frame is not None:
             unsupported_features.append("last_frame")
@@ -415,6 +420,10 @@ class GeminiOmniVideoBackend:
                 f"{', '.join(unsupported_features)}; use a Veo model instead."
             )
 
+    async def _generate_video(
+        self, request: VideoGenerationRequest
+    ) -> tuple[VideoGenerationResult, MessageReasoningInfo | None]:
+        """Generate a video with Gemini Omni Flash via the Interactions API."""
         async with _create_genai_client(self.api_key).aio as client:
             # URI delivery avoids the Interactions API's 4 MB inline limit.
             response_format: _VideoResponseFormat = {

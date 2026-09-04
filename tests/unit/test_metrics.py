@@ -38,6 +38,11 @@ from family_assistant.tools.metadata import (
 )
 from family_assistant.tools.on_demand import OnDemandToolsView
 from family_assistant.tools.types import ToolExecutionContext
+from family_assistant.tools.video_backends import (
+    GeminiOmniVideoBackend,
+    VideoGenerationError,
+    VideoGenerationRequest,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterator, Mapping
@@ -539,6 +544,39 @@ async def test_video_generation_is_counted_like_any_other_provider_request(
         )
         == 1
     )
+
+
+@pytest.mark.asyncio
+async def test_a_request_rejected_before_the_provider_is_not_counted(
+    profile: str,
+) -> None:
+    """Options the backend cannot honour never reach Google, so they are no call.
+
+    Counting them would put traffic that does not exist into the error rate,
+    which is what the companion deployment alerts on.
+    """
+    backend = GeminiOmniVideoBackend(api_key="unused", model="omni-test")
+    request = VideoGenerationRequest(prompt="a cat", negative_prompt="dogs")
+
+    with pytest.raises(VideoGenerationError):
+        await backend.generate_video(request)
+
+    for outcome in ("success", "error"):
+        assert (
+            _sample(
+                "family_assistant_llm_calls_total",
+                {
+                    "profile": profile,
+                    "provider": "google",
+                    "model": "omni-test",
+                    "resolved_model": "omni-test",
+                    "operation": "video",
+                    "outcome": outcome,
+                    "error_type": "VideoGenerationError" if outcome == "error" else "",
+                },
+            )
+            == 0
+        )
 
 
 def test_the_exporter_binds_loopback_unless_told_otherwise() -> None:

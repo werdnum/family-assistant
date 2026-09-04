@@ -503,13 +503,16 @@ class InteractionsAgentProcessingService(ProcessingService):
                 previous_interaction_id=previous_interaction_id,
                 environment_sources=environment_sources or None,
             )
+            # Inside the try: the create request happened and is billable, but
+            # a response with no id reaches no terminal poll, so this is the
+            # last place it can be counted.
+            if not interaction.id:
+                raise DelegationTransientError(
+                    "Interactions API create response carried no interaction id"
+                )
         except Exception as exc:
             self._record_failed_submission(exc, time.monotonic() - submit_started)
             raise
-        if not interaction.id:
-            raise DelegationTransientError(
-                "Interactions API create response carried no interaction id"
-            )
         return RemoteSubmission(
             remote_task_id=interaction.id,
             remote_context_id=None,
