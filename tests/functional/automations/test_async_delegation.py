@@ -58,6 +58,7 @@ from family_assistant.task_worker import (
     DelegationNotificationError,
     TaskWorker,
 )
+from family_assistant.tools.confirmation import render_generic_tool_confirmation
 from family_assistant.tools.metadata import ToolDescriptor
 
 # The inline-delivery helpers are module-internal but are exercised directly here
@@ -590,7 +591,9 @@ async def test_delegate_to_service_background_reference_and_completion_notificat
             conversation_id=TEST_CONVERSATION_ID,
             interface_type=TEST_INTERFACE_TYPE,
             turn_id="turn_async_delegation",
-            prompt_text="Confirm execution of tool: confirmable_delegated_tool",
+            prompt_text=render_generic_tool_confirmation(
+                "confirmable_delegated_tool", {"action": "write"}
+            ),
             tool_name="confirmable_delegated_tool",
             tool_args={"action": "write"},
             timeout=42.0,
