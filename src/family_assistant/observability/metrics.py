@@ -389,6 +389,7 @@ async def instrumented_llm_request[R](
     operation: str,
     request: Callable[[], Awaitable[R]],
     usage: Callable[[R], MessageReasoningInfo | None] | None = None,
+    error_usage: Callable[[BaseException], MessageReasoningInfo | None] | None = None,
     served_model: Callable[[R], str | None] | None = None,
 ) -> R:
     """Count one provider request that is not a chat call.
@@ -404,6 +405,12 @@ async def instrumented_llm_request[R](
     providers and per output token on others, so the call counter is the meter
     that holds everywhere and tokens are recorded only where reported.
 
+    ``error_usage`` is the same reader for the failure path, where a provider
+    that ran and then failed still reports what it spent -- a video generation
+    that reaches a terminal ``failed`` status is billed for the work it did.
+    Without it those calls record tokens of zero, which understates exactly the
+    runs that got far enough to cost something.
+
     ``served_model`` reads back the model the provider says it actually used,
     where it says so. Without it the ``resolved_model`` label repeats the
     requested one, which makes provider-side routing and alias resolution
@@ -412,7 +419,12 @@ async def instrumented_llm_request[R](
     started = time.monotonic()
     profile = current_processing_profile() or UNATTRIBUTED_PROFILE
 
-    def record(outcome: str, error_type: str | None, response: R | None) -> None:
+    def record(
+        outcome: str,
+        error_type: str | None,
+        response: R | None,
+        error: BaseException | None = None,
+    ) -> None:
         record_llm_call(
             profile=profile,
             provider=provider,
@@ -427,15 +439,22 @@ async def instrumented_llm_request[R](
             error_type=error_type,
             duration_seconds=time.monotonic() - started,
             time_to_first_output_seconds=None,
-            reasoning_info=(
-                usage(response) if usage is not None and response is not None else None
-            ),
+            reasoning_info=_request_usage(response, error),
         )
+
+    def _request_usage(
+        response: R | None, error: BaseException | None
+    ) -> MessageReasoningInfo | None:
+        if response is not None and usage is not None:
+            return usage(response)
+        if error is not None and error_usage is not None:
+            return error_usage(error)
+        return None
 
     try:
         response = await request()
     except Exception as exc:
-        record("error", type(exc).__name__, None)
+        record("error", type(exc).__name__, None, exc)
         raise
     except BaseException:
         # Cancellation is not a provider failure, but the request still ran and

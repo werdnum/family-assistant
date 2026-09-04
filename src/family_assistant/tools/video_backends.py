@@ -316,6 +316,18 @@ class VeoVideoBackend:
             )
 
 
+class OmniVideoRunFailedError(VideoGenerationError):
+    """An Omni Flash run that reached a terminal non-completed status.
+
+    Carries the interaction's usage, because a run that failed after doing work
+    is still billed for it and the raise is the only path out.
+    """
+
+    def __init__(self, message: str, *, usage: MessageReasoningInfo | None) -> None:
+        super().__init__(message)
+        self.usage = usage
+
+
 def _omni_video_usage(
     interaction: Any,  # noqa: ANN401 - google.genai Interaction
 ) -> MessageReasoningInfo | None:
@@ -403,6 +415,7 @@ class GeminiOmniVideoBackend:
             operation="video",
             request=lambda: self._generate_video(request),
             usage=lambda pair: pair[1],
+            error_usage=lambda error: getattr(error, "usage", None),
         )
         return result
 
@@ -454,9 +467,13 @@ class GeminiOmniVideoBackend:
             interaction = await self._await_completion(client, interaction)
 
             if interaction.status != "completed":
-                raise VideoGenerationError(
+                # Carries its usage out: a run that reached a terminal failure
+                # still did the work it is billed for, and the metrics wrapper
+                # can only read tokens off the value or the exception.
+                raise OmniVideoRunFailedError(
                     f"Omni Flash video generation ended with status "
-                    f"'{interaction.status}'."
+                    f"'{interaction.status}'.",
+                    usage=_omni_video_usage(interaction),
                 )
 
             video_bytes = await self._extract_video_bytes(client, interaction)
