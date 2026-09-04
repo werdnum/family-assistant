@@ -87,6 +87,12 @@ handed back, not as each result is produced. Every action in a batch is therefor
 document the model saw when it issued the batch, however many actions precede it and whatever
 snapshots they returned; a refusal in the middle of a batch does not unfence the actions after it.
 
+The same boundary decides what the model is handed. A batch can pass through more than one document,
+so its results can carry snapshots of several. Only refs in a snapshot of the final document are
+actionable, and the chokepoint hands back the earlier results without refs and with a line saying
+the page has since moved on. The model is never shown a ref it cannot use, and the single remembered
+identity stays sufficient because nothing it was handed points anywhere else.
+
 That single rule covers every way a document can be replaced without the model seeing the result: a
 batched sibling whose predecessor navigated, `browser_exec` calling `location.assign`, the delegated
 visual profile clicking a link, and a browser session evicted and recreated underneath the
@@ -164,10 +170,11 @@ inference the model should make with the page in front of it.
    click-after-`browser_exec` succeeding when the script did not navigate, click-after-removal
    returning the error with a snapshot, two ref actions issued from one snapshot both landing on
    their own nodes when run as a batch, three batched actions whose first navigates having both
-   later ones refused, and a ref action being refused with the new document's snapshot after each
-   of: a batched sibling that navigated or reloaded the same URL, a `browser_exec` navigation placed
-   before the click in the same response, a `browser_exec` that navigated, a visual-profile action
-   that navigated, and a replaced browser session.
+   later ones refused, a batch that navigates twice handing back only the final document's refs, and
+   a ref action being refused with the new document's snapshot after each of: a batched sibling that
+   navigated or reloaded the same URL, a `browser_exec` navigation placed before the click in the
+   same response, a `browser_exec` that navigated, a visual-profile action that navigated, and a
+   replaced browser session.
 
 Milestone 1 merges before milestone 2 starts, because the remote backend's behaviour is what the
 functional tests in milestone 2 assert against.
