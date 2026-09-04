@@ -78,6 +78,13 @@ serialised at one chokepoint in the backend, so two actions from one response ru
 against the page as the previous one left it. With refs reused in the page, the second action's ref
 still names its node after the first action's snapshot.
 
+A queued action was issued against the document the batch started on, and the model has not seen any
+result yet. If an earlier action in the batch replaced that document, the queued action's ref is
+meaningless on the new one, so the serialiser refuses it with the stale-ref error and the current
+snapshot instead of resolving it. That is the same guard browser-use applies when a batched action
+changes the page. Serialisation and this refusal live in the same chokepoint, which is what keeps
+every batched action honest without the model or the page carrying anything extra.
+
 ### Staleness is decided by the page
 
 The client-side `ref_cache`, `clear_refs`, and every call to them are deleted. Client-side
@@ -105,10 +112,10 @@ inference the model should make with the page in front of it.
 
 - **Refs do not survive navigation, session replacement or a process restart.** A new document
   starts its counter again, so a ref from a previous document can name an unrelated node on the new
-  one. The model always holds a snapshot of the new document by then, since every navigating action
-  returns one. An earlier draft promised refs unique across those boundaries; that needed a
-  conversation-scoped allocator and a generation fence, and was withdrawn because nothing in the
-  observed failures needed it.
+  one. The model always holds a snapshot of the new document before it can issue such a ref, since
+  every navigating action returns one and a batched sibling is refused by the serialiser. An earlier
+  draft promised refs unique across those boundaries; that needed a conversation-scoped allocator
+  and a generation fence, and was withdrawn because nothing in the observed failures needed it.
 - **Identity is the stamped attribute plus role and name, not the node object.** A page that clones
   a stamped node with its attribute intact produces a look-alike the resolver cannot tell apart.
   Every surveyed harness except Playwright accepts this; it is rare enough for reasonable rather
@@ -134,11 +141,13 @@ inference the model should make with the page in front of it.
    snapshots to misses.** Outcome: `ref_cache` and `clear_refs` are gone from the backend protocol,
    the local session and the computer-use tools; the local walker matches browser-server's and the
    local backend performs the same pre-action check; browser actions for one conversation run one at
-   a time; a miss returns error plus snapshot; tool descriptions and the `/browse` prompt state the
-   contract; the browser automation user guide is updated. Verified by the existing functional tests
-   rewritten for the new contract, including click-after-`browser_exec` succeeding,
-   click-after-removal returning the error with a snapshot, and two ref actions issued from one
-   snapshot both landing on their own nodes when run as a batch.
+   a time and a queued action is refused once an earlier one has replaced the document; a miss
+   returns error plus snapshot; tool descriptions and the `/browse` prompt state the contract; the
+   browser automation user guide is updated. Verified by the existing functional tests rewritten for
+   the new contract, including click-after-`browser_exec` succeeding, click-after-removal returning
+   the error with a snapshot, and two ref actions issued from one snapshot both landing on their own
+   nodes when run as a batch, and a batched action after a navigating sibling being refused with the
+   new document's snapshot rather than acted on.
 
 Milestone 1 merges before milestone 2 starts, because the remote backend's behaviour is what the
 functional tests in milestone 2 assert against.
