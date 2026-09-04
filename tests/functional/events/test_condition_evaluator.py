@@ -11,8 +11,17 @@ from family_assistant.events.condition_evaluator import (
     EventConditionValidator,
 )
 from family_assistant.scripting import ScriptExecutionError, ScriptSyntaxError
+from family_assistant.storage.types import EventConditionEvaluatorConfig
 
 TEST_TZ = ZoneInfo("Australia/Sydney")
+
+# Production gives an event condition ~100ms, because conditions are evaluated on
+# every incoming event. Holding the tests to that budget makes them measure how
+# loaded the machine is rather than whether the API works, and they fail under a
+# parallel run. No test here covers timeout behaviour, so give execution room.
+TEST_SCRIPT_TIMEOUT: EventConditionEvaluatorConfig = {
+    "script_execution_timeout_ms": 5000
+}
 
 
 class TestEventConditionEvaluator:
@@ -21,7 +30,7 @@ class TestEventConditionEvaluator:
     @pytest.fixture
     def evaluator(self) -> EventConditionEvaluator:
         """Create evaluator instance."""
-        return EventConditionEvaluator(timezone=TEST_TZ)
+        return EventConditionEvaluator(config=TEST_SCRIPT_TIMEOUT, timezone=TEST_TZ)
 
     @pytest.mark.asyncio
     async def test_simple_boolean_condition(
@@ -193,7 +202,7 @@ class TestEventConditionEvaluator:
     @pytest.mark.asyncio
     async def test_no_timezone_raises_error(self) -> None:
         """Creating an evaluator without timezone raises when time API is used."""
-        evaluator = EventConditionEvaluator(timezone=None)
+        evaluator = EventConditionEvaluator(config=TEST_SCRIPT_TIMEOUT, timezone=None)
         with pytest.raises(ScriptExecutionError, match="no timezone was provided"):
             await evaluator.evaluate_condition("time_hour(time_now()) >= 0", {})
 
@@ -261,7 +270,7 @@ class TestEventConditionValidator:
     @pytest.fixture
     def validator(self) -> EventConditionValidator:
         """Create validator instance."""
-        return EventConditionValidator(timezone=TEST_TZ)
+        return EventConditionValidator(config=TEST_SCRIPT_TIMEOUT, timezone=TEST_TZ)
 
     @pytest.mark.asyncio
     async def test_valid_script(self, validator: EventConditionValidator) -> None:
