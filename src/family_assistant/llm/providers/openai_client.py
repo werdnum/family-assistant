@@ -763,6 +763,10 @@ class OpenAIClient(BaseLLMClient):
             telemetry.finish_error(e)
             raise
         finally:
+            # Cancellation during tool-call review or shutdown passes every
+            # `except Exception`; without this the billable request would reach
+            # no counter at all. A no-op once a terminal path has run.
+            telemetry.finish_abandoned()
             span.end()
         return response
 

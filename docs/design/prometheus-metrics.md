@@ -138,11 +138,6 @@ the Ingress's reachable surface for no gain.
   silently and be wrong for exactly the models that matter (previews, aliases). Prices belong in the
   dashboard's recording rules, where they are visible and editable, not compiled into the binary.
 
-- **Embeddings are not counted.** They do not flow through `LLMCallTelemetry`, and instrumenting a
-  second path to add a number three orders of magnitude smaller than chat is not worth a second
-  chokepoint. If embedding spend becomes interesting, the fix is to route embeddings through the
-  same telemetry object, not to add a parallel exporter.
-
 - **`resolved_model` is a label.** It multiplies the series count by the number of dated snapshots a
   configured alias resolves to, which is small and bounded, and it is the only way to see
   provider-side routing and fallback in the time series at all.

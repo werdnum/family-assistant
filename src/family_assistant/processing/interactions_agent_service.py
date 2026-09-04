@@ -57,7 +57,7 @@ if TYPE_CHECKING:
     from google.genai.interactions import Interaction
 
     from family_assistant.llm.content_parts import ContentPartDict
-    from family_assistant.llm.messages import LLMMessage
+    from family_assistant.llm.messages import LLMMessage, MessageReasoningInfo
     from family_assistant.services.attachment_registry import AttachmentMetadata
     from family_assistant.storage.database import Database
 
@@ -572,3 +572,47 @@ class InteractionsAgentProcessingService(ProcessingService):
                 self.service_config.id,
                 exc,
             )
+        finally:
+            await self._record_cancelled_run(remote_task_id)
+
+    async def _record_cancelled_run(self, remote_task_id: str) -> None:
+        """Account for a run that was cancelled rather than polled to an end.
+
+        The worker's timeout path cancels and never polls again, so without
+        this the longest runs -- the ones that reached the timeout, and so the
+        most expensive -- would be the only ones missing from the metrics.
+
+        Read after cancelling, when the provider's totals have settled, and
+        best-effort throughout: a run whose usage cannot be fetched is still
+        counted, because a call with no tokens beats no call at all.
+        """
+        usage: MessageReasoningInfo | None = None
+        resolved_model: str | None = None
+        duration_seconds = 0.0
+        try:
+            interaction = await self._google_client().get_agent_interaction(
+                remote_task_id
+            )
+        except Exception as exc:
+            logger.debug(
+                "Could not read usage for cancelled interaction %s: %s",
+                remote_task_id,
+                exc,
+            )
+        else:
+            usage = self._google_client().reasoning_info_from_interaction(interaction)
+            resolved_model = interaction.model
+            duration_seconds = _interaction_duration_seconds(interaction)
+
+        record_llm_call(
+            profile=self.service_config.id,
+            provider="google",
+            model=self._google_client().model_name,
+            resolved_model=resolved_model,
+            operation="agent",
+            outcome="cancelled",
+            error_type=None,
+            duration_seconds=duration_seconds,
+            time_to_first_output_seconds=None,
+            reasoning_info=usage,
+        )

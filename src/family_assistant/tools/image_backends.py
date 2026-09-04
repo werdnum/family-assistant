@@ -21,13 +21,13 @@ from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
+from family_assistant.llm.messages import MessageReasoningInfo
 from family_assistant.observability.metrics import instrumented_llm_request
 
 if TYPE_CHECKING:
     from google.genai.client import DebugConfig
 
     from family_assistant.config_models import OpenAIImageRequestConfig
-    from family_assistant.llm.messages import MessageReasoningInfo
 
 # Optional imports for production use
 try:
@@ -168,6 +168,25 @@ def _gemini_image_usage(
 
     # One canonical Gemini usage mapping, reused rather than duplicated here.
     return GoogleGenAIClient._reasoning_info_from_usage_metadata(usage)
+
+
+def _openai_image_usage(
+    response: Any,  # noqa: ANN401 - openai ImagesResponse
+) -> MessageReasoningInfo | None:
+    """Token usage for an OpenAI image request, when the model reports it.
+
+    The image models that bill per image report no usage block and yield
+    nothing here, leaving the call counter as their meter. GPT Image bills in
+    tokens and does report one, so those are real spend and are recorded.
+    """
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+    return MessageReasoningInfo(
+        prompt_tokens=getattr(usage, "input_tokens", 0) or 0,
+        completion_tokens=getattr(usage, "output_tokens", 0) or 0,
+        total_tokens=getattr(usage, "total_tokens", 0) or 0,
+    )
 
 
 @runtime_checkable
@@ -724,6 +743,7 @@ class OpenAIImageBackend:
                 output_format=cfg.output_format,
                 output_compression=cfg.output_compression,
             ),
+            usage=_openai_image_usage,
         )
 
         if not response.data:
@@ -811,6 +831,7 @@ class OpenAIImageBackend:
                 output_format=cfg.output_format,
                 output_compression=cfg.output_compression,
             ),
+            usage=_openai_image_usage,
         )
 
     @staticmethod

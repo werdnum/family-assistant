@@ -548,6 +548,13 @@ class GoogleGenAIClient(BaseLLMClient):
                 contents=contents,
                 config=generation_config,
             )
+            # Before finishing, so the resolved model reaches the metric: an
+            # alias resolves to a dated snapshot, and without this a
+            # structured call would always report the requested name.
+            telemetry.record_response_metadata(
+                resolved_model=getattr(response, "model_version", None),
+                response_id=getattr(response, "response_id", None),
+            )
             usage = getattr(response, "usage_metadata", None)
             telemetry.record_usage(
                 self._reasoning_info_from_usage_metadata(usage) if usage else None
@@ -557,6 +564,10 @@ class GoogleGenAIClient(BaseLLMClient):
             telemetry.finish_error(e)
             raise
         finally:
+            # Cancellation during tool-call review or shutdown passes every
+            # `except Exception`; without this the billable request would reach
+            # no counter at all. A no-op once a terminal path has run.
+            telemetry.finish_abandoned()
             span.end()
         return response
 

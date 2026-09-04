@@ -455,3 +455,26 @@ def test_a_returning_tool_is_not_recorded_as_a_success() -> None:
         )
         == 1
     )
+
+
+def test_a_cancelled_structured_call_still_records_an_outcome(profile: str) -> None:
+    """Cancellation during tool-call review passes every `except Exception`."""
+    telemetry = _telemetry(provider="anthropic", model="claude-structured")
+    telemetry.record_usage({"prompt_tokens": 300})
+
+    telemetry.finish_abandoned()
+
+    labels = {
+        "profile": profile,
+        "provider": "anthropic",
+        "model": "claude-structured",
+        "resolved_model": "claude-structured",
+        "operation": "chat",
+    }
+    assert (
+        _sample(
+            "family_assistant_llm_calls_total",
+            {**labels, "outcome": "cancelled", "error_type": ""},
+        )
+        == 1
+    )

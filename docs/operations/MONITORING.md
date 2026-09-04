@@ -221,10 +221,14 @@ chokepoints the numbers come from are in
 Standard process and Python runtime metrics (`process_resident_memory_bytes`, `python_gc_*`, …) are
 exported alongside the application ones.
 
-**What is counted.** Every LLM call on the chat path — streamed or not, successful, failed or
-abandoned. Structured-output calls (tool-call review), tools executed from an approved durable
-confirmation, and managed-agent runs (`coder`, Deep Research) are not counted; see the design doc's
-[deliberate simplifications](../design/prometheus-metrics.md#deliberate-simplifications).
+**What is counted.** Every request that reaches an LLM provider — chat (streamed or not),
+structured output (tool-call review), embeddings, image generation, and managed-agent runs — plus
+every tool execution, including one run later from an approved durable confirmation. Successful,
+failed, cancelled and abandoned calls each record exactly one outcome.
+
+Not every provider reports tokens. Google's embedding API reports only billable characters, and the
+image models that bill per image report no usage block. Those emit no token buckets, and
+`family_assistant_llm_calls_total` is the meter for them.
 
 ### LLM
 
