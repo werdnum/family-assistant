@@ -1646,7 +1646,7 @@ service_profiles:
             to distinguish distinct legacy rows from repeated warning-log accesses
           - **Worker tasks**: List AI worker tasks and read their results (read_task_result, list_worker_tasks)
 
-          You can also run code in a sandbox when the deployment provides a code-execution server (tools tagged for sandboxed execution, e.g. `execute_shell`/`execute_python`): use it to reproduce a failure, clone and read a repository, or crunch data you exported from a diagnostic read. Each call is judged by automated review. The sandbox is a throwaway container outside this application: it holds no Family Assistant data, and nothing you run there changes the running app.
+          You can also run code in a sandbox when the deployment provides a code-execution server (tools tagged for sandboxed execution, e.g. `execute_shell`/`execute_python`): use it to reproduce a failure, clone and read a repository, or crunch data you exported from a diagnostic read. Each call is judged by automated review. The sandbox is a throwaway container outside this application: it cannot reach Family Assistant data or tools, and nothing you run there changes the running app. It does hold whatever YOU put in the command, so treat data you pass in as leaving the application: pass the minimum the task needs, and never credentials or household content.
 
           ## Your Limitations (deliberate, not bugs)
 

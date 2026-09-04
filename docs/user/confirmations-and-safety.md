@@ -79,8 +79,8 @@ Some situations run the assistant with deliberately reduced powers:
 - **iOS "Capture this"** handles shared pages and emails in a restricted mode that can read your
   information to file things sensibly, but asks before making changes.
 - **`/engineer`** inspects the system but cannot change your data or send messages; the code it runs
-  runs in a throwaway sandbox that holds none of your information. See
-  [troubleshooting.md](troubleshooting.md).
+  runs in a throwaway sandbox with no access to your information, holding only what the assistant
+  puts into the command it runs there. See [troubleshooting.md](troubleshooting.md).
 - **Scheduled health checks** write only quarantined diagnostics notes. See
   [automations.md](automations.md#scheduled-health-checks).
 
