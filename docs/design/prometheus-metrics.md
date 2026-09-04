@@ -78,6 +78,19 @@ one function with tests.
 Buckets a provider does not report are not emitted at all, so absent means "not reported" rather
 than zero — the same distinction the span attributes already preserve.
 
+### Why not OpenTelemetry metrics
+
+The service is already wired for OTel and exports spans over OTLP, so emitting
+`gen_ai.*` metrics through the same SDK looks like the smaller change. It is the wrong one here:
+the cluster runs `OTEL_METRICS_EXPORTER=none` and collects no OTel metrics at all. Traces go to
+Jaeger; the metrics pipeline is VictoriaMetrics scraping Prometheus endpoints, and nothing on the
+OTLP side would be read.
+
+Emitting OTel metrics would therefore mean standing up an OTLP metrics receiver and a
+Prometheus-remote-write path to feed a store that is already there and already scraping — new
+infrastructure to reach the same rows. A `prometheus_client` registry on a scrape endpoint is what
+the existing pipeline consumes directly.
+
 ### Exposure
 
 Metrics are served on a **separate port** (default 9090, `METRICS_PORT`), not as a route on the main

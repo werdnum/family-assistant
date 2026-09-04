@@ -14,6 +14,7 @@ from family_assistant.llm.call_context import (
     reset_processing_profile,
     set_processing_profile,
 )
+from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.llm.utils.call_telemetry import LLMCallTelemetry
 from family_assistant.observability.exporter import start_metrics_exporter
 from family_assistant.observability.metrics import (
@@ -129,6 +130,21 @@ def test_unreported_buckets_are_absent_rather_than_zero() -> None:
     assert "cache_read" not in buckets
     assert "cache_write" not in buckets
     assert "reasoning" not in buckets
+
+
+def test_server_side_tool_tokens_are_their_own_bucket() -> None:
+    """Gemini bills code execution and grounding apart from prompt and output."""
+    usage: MessageReasoningInfo = {
+        "prompt_tokens": 100,
+        "completion_tokens": 20,
+        "tool_use_tokens": 400,
+    }
+
+    buckets = normalized_token_buckets(usage, "google")
+
+    assert buckets["tool_use"] == 400
+    assert buckets["input_uncached"] == 100
+    assert buckets["output"] == 20
 
 
 def test_no_usage_reported_yields_no_buckets() -> None:
@@ -377,3 +393,35 @@ def test_the_exporter_serves_the_metrics_it_has_collected() -> None:
 
     assert 'family_assistant_tool_calls_total{outcome="success"' in body
     assert 'profile="p_export"' in body
+
+
+# --- Managed-agent runs --------------------------------------------------
+
+
+class _FakeInteractionUsage:
+    total_input_tokens = 12000
+    total_output_tokens = 3000
+    total_cached_tokens = 9000
+    total_thought_tokens = 800
+    total_tool_use_tokens = 450
+    total_tokens = 15800
+
+
+def test_an_agent_run_reports_the_tokens_it_spent() -> None:
+    """A managed agent's spend is on the interaction, not in a chat response."""
+    usage = GoogleGenAIClient._reasoning_info_from_interaction_usage(
+        _FakeInteractionUsage()
+    )
+    assert usage is not None
+
+    buckets = normalized_token_buckets(usage, "google")
+
+    assert buckets["cache_read"] == 9000
+    assert buckets["input_uncached"] == 3000
+    assert buckets["output"] == 3000
+    assert buckets["reasoning"] == 800
+    assert buckets["tool_use"] == 450
+
+
+def test_an_agent_run_with_no_usage_reports_none() -> None:
+    assert GoogleGenAIClient._reasoning_info_from_interaction_usage(None) is None

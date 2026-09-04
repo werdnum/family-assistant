@@ -470,7 +470,12 @@ class AnthropicClient(BaseLLMClient):
         description: str,
         input_schema: dict[str, object],
     ) -> dict[str, object]:
-        """Request and extract one forced native-output tool call."""
+        """Request and extract one forced native-output tool call.
+
+        Instrumented per attempt rather than per ``generate_structured`` call:
+        a schema-validation retry is a second billed request, and rolling the
+        two together would report one call that cost twice what it looks like.
+        """
         processed_messages = self._process_tool_messages(attempt_messages)
         system_blocks, api_messages = self._convert_messages_to_anthropic_format(
             processed_messages
@@ -495,8 +500,49 @@ class AnthropicClient(BaseLLMClient):
         if system_blocks:
             params["system"] = system_blocks
 
-        response = await self.client.messages.create(**params)
+        span = tracer.start_span("llm.provider.structured")
+        telemetry = LLMCallTelemetry(
+            span,
+            provider="anthropic",
+            system="anthropic",
+            requested_model=self.model,
+            messages=attempt_messages,
+            tools=None,
+            tool_choice=tool_name,
+            streaming=False,
+            operation="structured",
+        )
+        try:
+            response = await self.client.messages.create(**params)
+            self._record_structured_response(telemetry, response)
+        except Exception as e:
+            telemetry.finish_error(e)
+            raise
+        finally:
+            span.end()
+
+        # Outside the instrumented block: the request itself succeeded and was
+        # billed, so a schema that fails to parse is the caller's retry to
+        # count, not this call's failure.
         return self._extract_forced_tool_input(response, tool_name)
+
+    @staticmethod
+    def _record_structured_response(
+        telemetry: LLMCallTelemetry,
+        response: Any,  # noqa: ANN401 - anthropic.types.Message, shape varies by SDK version
+    ) -> None:
+        """Stamp one structured-output response onto its telemetry."""
+        telemetry.record_response_metadata(
+            resolved_model=getattr(response, "model", None),
+            response_id=getattr(response, "id", None),
+            finish_reason=getattr(response, "stop_reason", None),
+        )
+        telemetry.record_usage(
+            AnthropicClient._reasoning_info_from_usage(response.usage)
+            if response.usage
+            else None
+        )
+        telemetry.finish_success(None)
 
     async def generate_structured(
         self,

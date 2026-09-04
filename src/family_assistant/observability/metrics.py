@@ -13,9 +13,10 @@ by construction rather than by remembering to count it.
 **Token accounting is normalised here, once.** Providers disagree about what
 their own prompt and completion counts include, so the exported buckets are
 defined to be disjoint on every provider: ``input_uncached``, ``cache_read``
-and ``cache_write`` sum to the full prompt, and ``output`` and ``reasoning``
-sum to everything generated. A dashboard can therefore sum over ``kind``
-without knowing which provider served the call.
+and ``cache_write`` sum to the full prompt, ``output`` and ``reasoning`` sum to
+everything generated, and ``tool_use`` is what the provider spent running its
+own server-side tools. A dashboard can therefore sum over ``kind`` without
+knowing which provider served the call.
 """
 
 from __future__ import annotations
@@ -192,9 +193,10 @@ def normalized_token_buckets(
     than zero -- the distinction that separates a provider that does not cache
     from one that cached nothing this call.
 
-    The five kinds are disjoint by construction: ``input_uncached +
-    cache_read + cache_write`` is the full prompt and ``output + reasoning``
-    is everything generated, whichever provider served the call.
+    The kinds are disjoint by construction: ``input_uncached + cache_read +
+    cache_write`` is the full prompt, ``output + reasoning`` is everything
+    generated, and ``tool_use`` is what the provider spent on its own
+    server-side tools -- whichever provider served the call.
     """
     if not reasoning_info:
         return {}
@@ -219,6 +221,12 @@ def normalized_token_buckets(
     reasoning = reasoning_info.get("reasoning_tokens")
     if reasoning is not None:
         buckets["reasoning"] = max(0, reasoning)
+
+    # Already its own bucket wherever it is reported: what the provider spent
+    # running a server-side tool, billed apart from prompt and candidates.
+    tool_use = reasoning_info.get("tool_use_tokens")
+    if tool_use is not None:
+        buckets["tool_use"] = max(0, tool_use)
 
     completion = reasoning_info.get("completion_tokens")
     if completion is not None:

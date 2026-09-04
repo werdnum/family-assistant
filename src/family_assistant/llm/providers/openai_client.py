@@ -6,7 +6,13 @@ import base64
 import json
 import logging
 import os
-from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Sequence,
+)
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, TypedDict, TypeVar, cast
 
@@ -690,6 +696,77 @@ class OpenAIClient(BaseLLMClient):
         return None
 
     @classmethod
+    def _reasoning_info_from_chat_usage(
+        cls,
+        usage: Any,  # noqa: ANN401 - CompletionUsage, shape varies by SDK version
+    ) -> MessageReasoningInfo | None:
+        """Build reasoning info from a Chat Completions usage object.
+
+        OpenAI reports the whole prompt in `prompt_tokens`, with the cache
+        numbers as subsets of it, and folds reasoning into `completion_tokens`.
+        """
+        if not usage:
+            return None
+        reasoning_info = MessageReasoningInfo(
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            total_tokens=usage.total_tokens,
+        )
+        details = getattr(usage, "completion_tokens_details", None)
+        if (
+            details is not None
+            and getattr(details, "reasoning_tokens", None) is not None
+        ):
+            reasoning_info["reasoning_tokens"] = details.reasoning_tokens
+        cached = cls._cached_prompt_tokens(usage)
+        if cached is not None:
+            reasoning_info["cached_prompt_tokens"] = cached
+        cache_write = cls._cache_write_tokens(usage)
+        if cache_write is not None:
+            reasoning_info["cache_write_tokens"] = cache_write
+        return reasoning_info
+
+    async def _instrumented_structured_request[R](
+        self,
+        messages: Sequence[LLMMessage],
+        request: Callable[[], Awaitable[R]],
+    ) -> R:
+        """Run one structured-output request under the shared telemetry.
+
+        Wraps the request rather than the whole `generate_structured` call: a
+        schema-validation retry is a second billed request, and rolling the two
+        together would report one call that cost twice what it looks like.
+        """
+        span = tracer.start_span("llm.provider.structured")
+        telemetry = LLMCallTelemetry(
+            span,
+            provider="openai",
+            system="openai",
+            requested_model=self.model,
+            messages=messages,
+            tools=None,
+            tool_choice=None,
+            streaming=False,
+            operation="structured",
+        )
+        try:
+            response = await request()
+            telemetry.record_response_metadata(
+                resolved_model=getattr(response, "model", None),
+                response_id=getattr(response, "id", None),
+            )
+            telemetry.record_usage(
+                self._reasoning_info_from_chat_usage(getattr(response, "usage", None))
+            )
+            telemetry.finish_success(None)
+        except Exception as e:
+            telemetry.finish_error(e)
+            raise
+        finally:
+            span.end()
+        return response
+
+    @classmethod
     def _cached_prompt_tokens(
         cls,
         usage: Any,  # noqa: ANN401 - usage arrives as an SDK object or a raw dict
@@ -907,26 +984,7 @@ class OpenAIClient(BaseLLMClient):
             ]
 
         # Extract usage information
-        reasoning_info: MessageReasoningInfo | None = None
-        if response.usage:
-            reasoning_info = MessageReasoningInfo(
-                prompt_tokens=response.usage.prompt_tokens,
-                completion_tokens=response.usage.completion_tokens,
-                total_tokens=response.usage.total_tokens,
-            )
-
-            # Add reasoning tokens if available (for o1 models)
-            if hasattr(response.usage, "completion_tokens_details"):
-                details = response.usage.completion_tokens_details
-                if details and hasattr(details, "reasoning_tokens"):
-                    reasoning_info["reasoning_tokens"] = details.reasoning_tokens
-
-            cached = self._cached_prompt_tokens(response.usage)
-            if cached is not None:
-                reasoning_info["cached_prompt_tokens"] = cached
-            cache_write = self._cache_write_tokens(response.usage)
-            if cache_write is not None:
-                reasoning_info["cache_write_tokens"] = cache_write
+        reasoning_info = self._reasoning_info_from_chat_usage(response.usage)
 
         telemetry.record_response_metadata(
             resolved_model=response.model,
@@ -971,9 +1029,12 @@ class OpenAIClient(BaseLLMClient):
 
         async def request_structured_output() -> T:
             nonlocal raw_response
-            response = await self.client.beta.chat.completions.parse(
-                response_format=response_model,
-                **base_params,
+            response = await self._instrumented_structured_request(
+                messages,
+                lambda: self.client.beta.chat.completions.parse(
+                    response_format=response_model,
+                    **base_params,
+                ),
             )
             if not response.choices:
                 raise ValueError("LLM returned empty response")
@@ -1056,7 +1117,9 @@ class OpenAIClient(BaseLLMClient):
 
         async def request_json_output() -> JsonObject:
             nonlocal raw_response
-            response = await self.client.chat.completions.create(**base_params)
+            response = await self._instrumented_structured_request(
+                messages, lambda: self.client.chat.completions.create(**base_params)
+            )
             if not response.choices:
                 raise ValueError("LLM returned empty response")
 

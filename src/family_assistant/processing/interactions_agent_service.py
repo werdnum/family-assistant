@@ -26,6 +26,7 @@ from family_assistant.llm.providers.google_genai_client import (
     GoogleGenAIClient,
     is_interaction_terminal_error_status,
 )
+from family_assistant.observability.metrics import record_llm_call
 from family_assistant.processing.protocol import (
     PENDING,
     DelegationPermanentError,
@@ -157,6 +158,23 @@ def _attachment_taint_sources(
             reason="Attachment routed into the sandbox.",
         ),
     )
+
+
+def _interaction_duration_seconds(interaction: Interaction) -> float:
+    """How long the provider ran the interaction for, in seconds.
+
+    Both timestamps are the provider's, so this measures the run rather than
+    the poll that observed it finishing. Zero when either is missing: a run
+    with no duration is better than a wrong one, and the call still counts.
+    """
+    created = getattr(interaction, "created", None)
+    updated = getattr(interaction, "updated", None)
+    if created is None or updated is None:
+        return 0.0
+    try:
+        return max(0.0, (updated - created).total_seconds())
+    except (TypeError, AttributeError):
+        return 0.0
 
 
 def _describe_interaction_errors(interaction: Interaction) -> str:
@@ -488,10 +506,12 @@ class InteractionsAgentProcessingService(ProcessingService):
         _ = remote_context_id
         interaction = await self._google_client().get_agent_interaction(remote_task_id)
         if interaction.status == "completed":
+            self._record_run_metrics(interaction, outcome="success")
             return ChatInteractionResult.success(
                 text_reply=interaction.output_text or ""
             )
         if is_interaction_terminal_error_status(interaction.status):
+            self._record_run_metrics(interaction, outcome="error")
             error_detail = _describe_interaction_errors(interaction)
             logger.warning(
                 "Interactions API run on '%s' ended with status %s (interaction %s)%s",
@@ -509,6 +529,37 @@ class InteractionsAgentProcessingService(ProcessingService):
                 ),
             )
         return PENDING
+
+    def _record_run_metrics(
+        self,
+        interaction: Interaction,
+        *,
+        outcome: str,
+    ) -> None:
+        """Count a finished agent run and the tokens it spent.
+
+        Recorded once, when the run reaches a terminal state, rather than on
+        every poll: a poll is a cheap status read, and counting one per poll
+        would report a long run as hundreds of calls it never made.
+
+        The duration is the provider's own -- the wall-clock between the
+        interaction being created and last updated -- because the run outlives
+        the task-worker invocation that submitted it, and no timer on this side
+        spans it.
+        """
+        client = self._google_client()
+        record_llm_call(
+            profile=self.service_config.id,
+            provider="google",
+            model=client.model_name,
+            resolved_model=interaction.model,
+            operation="agent",
+            outcome=outcome,
+            error_type=interaction.status if outcome == "error" else None,
+            duration_seconds=_interaction_duration_seconds(interaction),
+            time_to_first_output_seconds=None,
+            reasoning_info=client.reasoning_info_from_interaction(interaction),
+        )
 
     async def cancel_async(self, remote_task_id: str) -> None:
         """Best-effort cancellation; mirrors ``RemoteA2AService.cancel_async``."""

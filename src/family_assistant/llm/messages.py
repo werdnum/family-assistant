@@ -109,6 +109,10 @@ class MessageReasoningInfo(TypedDict, total=False):
     reasoning_tokens: int
     cached_prompt_tokens: int
     cache_write_tokens: int
+    tool_use_tokens: int
+    """Tokens the provider spent running a server-side tool on its own -- code
+    execution, search grounding. Reported by Gemini apart from the prompt and
+    the candidates, so it is a bucket of its own rather than a subset."""
     source_turn_id: str | None
     tool_name: str
     thought_summaries: list[dict[str, str | int]]

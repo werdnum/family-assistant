@@ -482,10 +482,8 @@ class GoogleGenAIClient(BaseLLMClient):
                 contents = self._convert_messages_to_genai_format(
                     self._process_tool_messages(attempt_messages)
                 )
-                response = await self.client.aio.models.generate_content(
-                    model=self.model_name,
-                    contents=contents,
-                    config=generation_config,
+                response = await self._instrumented_structured_request(
+                    messages, contents, generation_config
                 )
                 raw_response = self._extract_text_response(response)
                 if not raw_response:
@@ -520,6 +518,48 @@ class GoogleGenAIClient(BaseLLMClient):
             validation_error=last_error,
         )
 
+    async def _instrumented_structured_request(
+        self,
+        messages: Sequence[LLMMessage],
+        contents: Any,  # noqa: ANN401 - genai ContentListUnion
+        generation_config: Any,  # noqa: ANN401 - genai GenerateContentConfig
+    ) -> Any:  # noqa: ANN401 - genai GenerateContentResponse
+        """Run one structured-output request under the shared telemetry.
+
+        Wraps the request rather than the whole `generate_structured` call: a
+        schema-validation retry is a second billed request, and rolling the two
+        together would report one call that cost twice what it looks like.
+        """
+        span = tracer.start_span("llm.provider.structured")
+        telemetry = LLMCallTelemetry(
+            span,
+            provider="google",
+            system="google-genai",
+            requested_model=self.model_name,
+            messages=messages,
+            tools=None,
+            tool_choice=None,
+            streaming=False,
+            operation="structured",
+        )
+        try:
+            response = await self.client.aio.models.generate_content(
+                model=self.model_name,
+                contents=contents,
+                config=generation_config,
+            )
+            usage = getattr(response, "usage_metadata", None)
+            telemetry.record_usage(
+                self._reasoning_info_from_usage_metadata(usage) if usage else None
+            )
+            telemetry.finish_success(None)
+        except Exception as e:
+            telemetry.finish_error(e)
+            raise
+        finally:
+            span.end()
+        return response
+
     async def generate_json(
         self,
         messages: Sequence[LLMMessage],
@@ -547,10 +587,8 @@ class GoogleGenAIClient(BaseLLMClient):
                 contents = self._convert_messages_to_genai_format(
                     self._process_tool_messages(attempt_messages)
                 )
-                response = await self.client.aio.models.generate_content(
-                    model=self.model_name,
-                    contents=contents,
-                    config=generation_config,
+                response = await self._instrumented_structured_request(
+                    messages, contents, generation_config
                 )
                 raw_response = self._extract_text_response(response)
                 if not raw_response:
@@ -1428,6 +1466,40 @@ class GoogleGenAIClient(BaseLLMClient):
         thoughts_tokens = getattr(usage, "thoughts_token_count", None)
         if thoughts_tokens is not None:
             reasoning_info["reasoning_tokens"] = thoughts_tokens
+        # Billed apart from the prompt and the candidates: what the provider
+        # spent running code execution or search grounding on its own.
+        tool_use_tokens = getattr(usage, "tool_use_prompt_token_count", None)
+        if tool_use_tokens is not None:
+            reasoning_info["tool_use_tokens"] = tool_use_tokens
+        return reasoning_info
+
+    @staticmethod
+    def _reasoning_info_from_interaction_usage(
+        usage: Any,  # noqa: ANN401 - google.genai interactions Usage
+    ) -> MessageReasoningInfo | None:
+        """Build reasoning info from an Interactions API run's `usage`.
+
+        A managed agent's spend is reported on the interaction rather than as
+        chat usage, so it reaches no `generate_content` response and has to be
+        read from here. The buckets follow the same Gemini conventions the
+        chat path does: cached tokens are a subset of the input, while thought
+        and server-side tool tokens are billed apart from the output.
+        """
+        if not usage:
+            return None
+        reasoning_info = MessageReasoningInfo(
+            prompt_tokens=getattr(usage, "total_input_tokens", 0) or 0,
+            completion_tokens=getattr(usage, "total_output_tokens", 0) or 0,
+            total_tokens=getattr(usage, "total_tokens", 0) or 0,
+        )
+        for field, key in (
+            ("total_cached_tokens", "cached_prompt_tokens"),
+            ("total_thought_tokens", "reasoning_tokens"),
+            ("total_tool_use_tokens", "tool_use_tokens"),
+        ):
+            value = getattr(usage, field, None)
+            if value is not None:
+                reasoning_info[key] = value  # pyright: ignore[reportGeneralTypeIssues] - key is a literal from the tuple above
         return reasoning_info
 
     @staticmethod
@@ -1807,6 +1879,19 @@ class GoogleGenAIClient(BaseLLMClient):
         except Exception as e:
             raise self._classify_agent_delegation_error(e) from e
 
+    def reasoning_info_from_interaction(
+        self,
+        interaction: Interaction,
+    ) -> MessageReasoningInfo | None:
+        """Token usage for a finished agent run, for callers that poll.
+
+        The pollable delegation path never sees the stream that would otherwise
+        carry usage, so it reads the totals off the interaction it polled.
+        """
+        return self._reasoning_info_from_interaction_usage(
+            getattr(interaction, "usage", None)
+        )
+
     async def get_agent_interaction(self, interaction_id: str) -> Interaction:
         """Fetch the current state of any Interactions API agent run (one poll).
 
@@ -1861,9 +1946,14 @@ class GoogleGenAIClient(BaseLLMClient):
         content_yielded = False
         interaction_id: str | None = None
         last_event_id: str | None = None
+        # An agent run reports its spend on the interaction, not as chat usage,
+        # so it has to be picked up off whichever events carry the interaction.
+        # Last one wins: the totals are cumulative for the run.
+        interaction_usage: Any | None = None
 
         async def stream_events() -> AsyncGenerator[LLMStreamEvent]:
             nonlocal content_yielded, interaction_id, last_event_id
+            nonlocal interaction_usage
             create_kwargs = self._build_agent_create_kwargs(messages)
             environment = await self._build_agent_environment()
             if environment is not None:
@@ -1883,6 +1973,9 @@ class GoogleGenAIClient(BaseLLMClient):
                 # Track event IDs for potential stream reconnection
                 if event_id := getattr(chunk, "event_id", None):
                     last_event_id = event_id
+
+                if usage := getattr(getattr(chunk, "interaction", None), "usage", None):
+                    interaction_usage = usage
 
                 # Capture Interaction ID
                 if event_type in {"interaction.created", "interaction.start"}:
@@ -1966,10 +2059,14 @@ class GoogleGenAIClient(BaseLLMClient):
             if last_event_id:
                 done_metadata["last_event_id"] = last_event_id
 
+            run_usage = self._reasoning_info_from_interaction_usage(interaction_usage)
             if thought_summaries:
-                done_metadata["reasoning_info"] = MessageReasoningInfo(
-                    thought_summaries=[{"summary": t} for t in thought_summaries]
-                )
+                run_usage = run_usage or MessageReasoningInfo()
+                run_usage["thought_summaries"] = [
+                    {"summary": t} for t in thought_summaries
+                ]
+            if run_usage is not None:
+                done_metadata["reasoning_info"] = run_usage
 
             if interaction_id:
                 telemetry.record_response_metadata(response_id=interaction_id)
