@@ -20,6 +20,7 @@ from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.llm.utils.call_telemetry import LLMCallTelemetry
 from family_assistant.observability.exporter import start_metrics_exporter
 from family_assistant.observability.metrics import (
+    UNKNOWN_TOOL,
     TurnMetrics,
     instrumented_llm_request,
     normalized_token_buckets,
@@ -691,20 +692,34 @@ async def test_the_provider_counts_the_executions_that_reach_it() -> None:
 
 
 @pytest.mark.asyncio
-async def test_an_unknown_tool_is_counted_as_not_found() -> None:
+async def test_an_unknown_tool_is_counted_under_a_bounded_label() -> None:
+    """An unresolvable name is caller-supplied text, so it must not be a label.
+
+    Prometheus keeps every label tuple for the life of the process, so a typo
+    loop against /api/tools/execute/{tool_name} would otherwise grow the series
+    set without bound.
+    """
     provider = TaintTrackingToolsProvider(
         _one_tool_provider("done"), profile="p_missing"
     )
 
-    with pytest.raises(ToolNotFoundError):
-        await provider.execute_tool("no_such_tool", {}, _execution_context())
+    for name in ("no_such_tool", "another_typo", "../../etc/passwd"):
+        with pytest.raises(ToolNotFoundError):
+            await provider.execute_tool(name, {}, _execution_context())
+        assert (
+            _sample(
+                "family_assistant_tool_calls_total",
+                {"profile": "p_missing", "tool": name, "outcome": "not_found"},
+            )
+            == 0
+        )
 
     assert (
         _sample(
             "family_assistant_tool_calls_total",
-            {"profile": "p_missing", "tool": "no_such_tool", "outcome": "not_found"},
+            {"profile": "p_missing", "tool": UNKNOWN_TOOL, "outcome": "not_found"},
         )
-        == 1
+        == 3
     )
 
 

@@ -32,6 +32,7 @@ from typing import (
 
 from family_assistant.observability.metrics import (
     UNATTRIBUTED_PROFILE,
+    UNKNOWN_TOOL,
     record_tool_call,
 )
 from family_assistant.security.definition_records import (
@@ -1918,9 +1919,16 @@ class TaintTrackingToolsProvider(ToolsProvider):
             outcome = "cancelled"
             raise
         finally:
+            # A name that resolved to no tool never came from the registry: it
+            # came from an LLM or from /api/tools/execute/{tool_name}, so it is
+            # attacker-shaped free text. Prometheus keeps every distinct label
+            # tuple for the life of the process, so recording those verbatim
+            # would let a typo loop grow the series set without bound. The
+            # sentinel keeps "how often is a missing tool asked for" visible
+            # while making the label's range finite.
             record_tool_call(
                 profile=self._profile,
-                tool=name,
+                tool=UNKNOWN_TOOL if outcome == "not_found" else name,
                 outcome=outcome,
                 duration_seconds=time.monotonic() - started,
             )

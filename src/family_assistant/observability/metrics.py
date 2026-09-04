@@ -46,6 +46,8 @@ __all__ = [
     "TURNS",
     "TURNS_IN_PROGRESS",
     "TURN_DURATION",
+    "UNATTRIBUTED_PROFILE",
+    "UNKNOWN_TOOL",
     "TurnMetrics",
     "instrumented_llm_request",
     "normalized_token_buckets",
@@ -53,6 +55,15 @@ __all__ = [
     "record_tool_call",
 ]
 
+
+UNKNOWN_TOOL: Final = "<unknown>"
+"""Label for an execution whose tool name matched no registered tool.
+
+The name in that case is free text from an LLM or an API caller rather than a
+registry key, and Prometheus keeps every label tuple it has ever seen, so
+recording it verbatim would let unbounded series accumulate. Angle brackets
+because no real tool name can contain them.
+"""
 
 UNATTRIBUTED_PROFILE: Final = "none"
 """Label for an LLM call made outside any processing profile's turn.
