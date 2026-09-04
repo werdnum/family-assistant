@@ -89,14 +89,18 @@ resolution becomes a syntactic check that the ref is well-formed and a string tr
 selector. `browser_exec` and the visual profile stop touching ref state; there is nothing for them
 to invalidate.
 
-Before acting, the backend resolves the ref in the page: the node found through the attribute index
-must be connected and must be the node whose recorded identity carries that ref. Anything else,
-including a copy that inherited the attribute, fails immediately with a specific message ("ref e35
-no longer exists on the page; it has changed since the last snapshot") rather than waiting out
-Playwright's actionability timeout or acting on a look-alike. Navigation discards the page's
-identity records with the page, so refs from before it cannot resolve. For the remote backend this
-check lives in browser-server's click, type and select handlers; the local backend does the same in
-its own evaluate step.
+Before acting, the backend resolves the ref in the page under a single rule: a ref resolves to a
+node exactly when a snapshot taken at that moment would list that node under that ref. The node
+found through the attribute index must be the node whose recorded identity carries the ref, and it
+must still pass the walker's own eligibility predicate: connected, visible, and with the role and
+name it was issued for. A removed node, a copy that inherited the attribute, a node hidden in place,
+and a node relabelled since the snapshot all fail the same way, immediately and with a specific
+message ("ref e35 is no longer on the page as snapshotted; the page has changed since the last
+snapshot"), rather than waiting out Playwright's actionability timeout or acting on a look-alike.
+The walker and the resolver share that predicate as one function so they cannot drift. Navigation
+discards the page's identity records with the page, so refs from before it cannot resolve. For the
+remote backend this check lives in browser-server's click, type and select handlers; the local
+backend does the same in its own evaluate step.
 
 ### A miss returns the snapshot it would otherwise force
 
@@ -125,8 +129,9 @@ inference the model should make with the page in front of it.
    passes in, and click, type_text and select return a distinct error for a ref that no longer
    resolves to its node. Verified by the service's own tests: two snapshots of an unchanged page
    yield identical refs, a re-rendered element gets a new ref, an action on a removed ref fails fast
-   with the specific error, and a node cloned or re-serialised with its attribute intact is rejected
-   as a different node.
+   with the specific error, a node cloned or re-serialised with its attribute intact is rejected as
+   a different node, and a node hidden in place since the snapshot is rejected without waiting on
+   actionability.
 2. **Family Assistant: delete the ref cache; mirror the walker; attach snapshots to misses.**
    Outcome: `ref_cache` and `clear_refs` are gone from the backend protocol, the local session and
    the computer-use tools; the local walker matches browser-server's; a miss returns error plus
