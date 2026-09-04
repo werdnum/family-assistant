@@ -563,7 +563,7 @@ def test_bare_adjudicate_derives_legacy_fallback() -> None:
 
     assert evaluation.requested_outcome is TaintPolicyOutcome.ADJUDICATE
     assert evaluation.verdict_floor is None
-    assert evaluation.fallback_outcome is TaintPolicyOutcome.DENY
+    assert evaluation.fallback_outcome is TaintPolicyOutcome.CONFIRM
 
 
 def test_bare_adjudicate_without_legacy_gating_fallback_is_rejected() -> None:
@@ -702,6 +702,17 @@ def test_floored_adjudicate_ranks_equal_to_confirm() -> None:
 
 
 def test_profile_cannot_soften_adjudicate_deny_fallback() -> None:
+    base = TaintPolicyConfig.model_validate({
+        "matrix_overrides": {
+            "unknown_external": {
+                "sandbox_network": {
+                    "outcome": "adjudicate",
+                    "verdict_floor": None,
+                    "fallback": "deny",
+                }
+            }
+        }
+    })
     profile = TaintPolicyConfig.model_validate({
         "matrix_overrides": {
             "unknown_external": {
@@ -715,7 +726,7 @@ def test_profile_cannot_soften_adjudicate_deny_fallback() -> None:
     })
 
     with pytest.raises(ValueError, match="cannot relax base policy"):
-        merge_taint_policy_config(base=TaintPolicyConfig(), profile=profile)
+        merge_taint_policy_config(base=base, profile=profile)
 
 
 def test_documented_legacy_pin_reproduces_previous_matrix_cell_for_cell() -> None:
@@ -2221,7 +2232,7 @@ async def test_allowed_tool_does_not_emit_would_enforce_error(
 
 
 @pytest.mark.asyncio
-async def test_sandbox_network_after_unknown_external_returns_review_denial(
+async def test_sandbox_network_after_unknown_external_blocks_without_confirmation(
     db_engine: AsyncEngine,
 ) -> None:
     provider = TaintTrackingToolsProvider(
@@ -2236,7 +2247,8 @@ async def test_sandbox_network_after_unknown_external_returns_review_denial(
     audit_events = await db_context.taint_audit_events.list_for_turn("turn-direct")
 
     assert isinstance(result, ToolResult)
-    assert "fallback 'deny'" in result.get_text()
+    assert "human confirmation is required but unavailable" in result.get_text()
+    assert "fallback 'confirm'" in result.get_text()
     policy_events = [
         event for event in audit_events if event["event_type"] == "policy_evaluation"
     ]
@@ -2281,7 +2293,7 @@ tools_execute("worker_tool")
     assert policy_events[-1]["sink_class"] == "sandbox_network"
     assert policy_events[-1]["effective_outcome"] == "adjudicate"
     assert policy_events[-1]["max_tier"] == "unknown_external"
-    assert "fallback 'deny'" in str(result)
+    assert "fallback 'confirm'" in str(result)
 
 
 @pytest.mark.asyncio

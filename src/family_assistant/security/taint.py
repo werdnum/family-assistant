@@ -1088,6 +1088,12 @@ def resolve_tool_sink_class(
 def _legacy_taint_matrix() -> dict[
     SourceTrustTier, dict[SinkClass, TaintPolicyOutcome]
 ]:
+    """Return the pre-adjudication outcome for every cell.
+
+    Also the source of an adjudicate cell's derived fallback -- what a cell
+    resolves to when no reviewer verdict is available -- so a cell here is
+    the strictest outcome a deployment can reach without configuring one.
+    """
     return {
         SourceTrustTier.TRUSTED_USER: {
             SinkClass.USER_LOCAL: TaintPolicyOutcome.ALLOW,
@@ -1126,7 +1132,14 @@ def _legacy_taint_matrix() -> dict[
             SinkClass.KNOWN_USER_MESSAGE: TaintPolicyOutcome.CONFIRM,
             SinkClass.ARBITRARY_EXTERNAL_MESSAGE: TaintPolicyOutcome.CONFIRM,
             SinkClass.ATTACKER_ADDRESSABLE_EGRESS: TaintPolicyOutcome.CONFIRM,
-            SinkClass.SANDBOX_NETWORK: TaintPolicyOutcome.DENY,
+            # Confirm rather than deny: an authenticated operator can run the
+            # same request through a coding agent out of band, losing this
+            # deployment's provenance, audit trail and result-taint
+            # propagation, so a hard denial removes the safer in-band choice
+            # rather than the capability. A context with no confirmation
+            # channel still fails closed, and a restricted profile or an
+            # operator_minimum can strengthen this back to deny.
+            SinkClass.SANDBOX_NETWORK: TaintPolicyOutcome.CONFIRM,
             SinkClass.SENSITIVE_READ_BROADENING: TaintPolicyOutcome.CONFIRM,
         },
     }

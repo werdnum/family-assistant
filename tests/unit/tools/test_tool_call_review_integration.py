@@ -216,6 +216,23 @@ def _unknown_external_state() -> TurnTaintState:
     )
 
 
+def _sandbox_deny_fallback_policy(mode: TaintPolicyMode) -> TaintPolicyConfig:
+    """Pin the sandbox cell's reviewer fallback to deny.
+
+    The shipped fallback for ``unknown_external -> sandbox_network`` is confirm,
+    so a test about how a *deny* fallback behaves configures that deny itself
+    rather than inheriting one.
+    """
+    return TaintPolicyConfig.model_validate({
+        "mode": mode.value,
+        "matrix_overrides": {
+            "unknown_external": {
+                "sandbox_network": {"outcome": "adjudicate", "fallback": "deny"}
+            }
+        },
+    })
+
+
 def _nested_sink_arguments(
     *,
     url: str = "https://example.test/v1/items",
@@ -903,7 +920,7 @@ async def test_observe_taint_only_deny_floor_constrains_shadow_review(
     assert context.tool_call_review_state.total_denials == 0
 
 
-async def test_observe_taint_only_timeout_keeps_sandbox_deny_fallback(
+async def test_observe_taint_only_timeout_keeps_sandbox_confirm_fallback(
     db_engine: AsyncEngine,
 ) -> None:
     executions = 0
@@ -941,7 +958,7 @@ async def test_observe_taint_only_timeout_keeps_sandbox_deny_fallback(
     assert llm.calls == 1
     events = await _review_events(context)
     assert len(events) == 1
-    assert events[0]["review_verdict"] == ToolCallReviewVerdict.DENY.value
+    assert events[0]["review_verdict"] == ToolCallReviewVerdict.CONFIRM.value
     assert events[0]["review_status"] == ToolCallReviewStatus.TIMEOUT_FALLBACK.value
     assert events[0]["mode"] == TaintPolicyMode.OBSERVE.value
     review_context = events[0]["review_context_json"]
@@ -951,7 +968,7 @@ async def test_observe_taint_only_timeout_keeps_sandbox_deny_fallback(
         ToolCallReviewVerdict.CONFIRM.value,
         ToolCallReviewVerdict.DENY.value,
     ]
-    assert review_context["fallback_verdict"] == ToolCallReviewVerdict.DENY.value
+    assert review_context["fallback_verdict"] == ToolCallReviewVerdict.CONFIRM.value
     assert context.tool_call_review_state.consecutive_denials == 0
     assert context.tool_call_review_state.total_denials == 0
 
@@ -1171,9 +1188,10 @@ async def test_review_audit_omits_rationale_and_raw_evidence(
         assert secret not in serialized_event
 
 
-async def test_missing_reviewer_keeps_unknown_external_sandbox_fallback_deny(
+async def test_missing_reviewer_keeps_unknown_external_sandbox_fallback_confirm(
     db_engine: AsyncEngine,
 ) -> None:
+    """With no reviewer and no confirmation channel the sandbox call still fails closed."""
     executions = 0
 
     async def execute(**_kwargs: object) -> ToolResult:
@@ -1198,10 +1216,10 @@ async def test_missing_reviewer_keeps_unknown_external_sandbox_fallback_deny(
 
     assert executions == 0
     assert isinstance(result, ToolResult)
-    assert "Action blocked by automatic review" in result.get_text()
+    assert "human confirmation is required but unavailable" in result.get_text()
     events = await _review_events(context)
     assert len(events) == 1
-    assert events[0]["review_verdict"] == ToolCallReviewVerdict.DENY.value
+    assert events[0]["review_verdict"] == ToolCallReviewVerdict.CONFIRM.value
     assert events[0]["review_status"] == ToolCallReviewStatus.DISABLED_FALLBACK.value
 
 
@@ -1535,7 +1553,7 @@ async def test_deny_fallback_never_escalates_to_human_confirmation(
         cast("ToolImplementation", execute),
         reviewer_llm=llm,
         static_decision=ToolPolicyDecision.ALLOW,
-        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+        taint_policy=_sandbox_deny_fallback_policy(TaintPolicyMode.ENFORCE),
         sandbox=True,
         review_config=review_config,
     )
@@ -1646,7 +1664,7 @@ async def test_deny_fallback_does_not_break_model_denial_escalation_streak(
         cast("ToolImplementation", execute),
         reviewer_llm=llm,
         static_decision=ToolPolicyDecision.ALLOW,
-        taint_policy=TaintPolicyConfig(mode=TaintPolicyMode.ENFORCE),
+        taint_policy=_sandbox_deny_fallback_policy(TaintPolicyMode.ENFORCE),
         sandbox=True,
         review_config=ToolCallReviewConfig(
             timeout_seconds=1,
