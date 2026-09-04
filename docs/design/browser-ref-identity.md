@@ -71,25 +71,26 @@ its role and name are unchanged; anything else is stamped with a fresh number fr
 lives on the document, so numbers are never reused within a document and die with it on navigation.
 No state leaves the page: the client holds nothing, and a new document simply starts again.
 
-### Browser actions run one at a time per conversation
+### Actions run against the document the model last saw
 
-The tool loop runs a response's tool calls concurrently. Browser actions on a shared tab are
-serialised at one chokepoint in the backend, so two actions from one response run in order, each
-against the page as the previous one left it. With refs reused in the page, the second action's ref
-still names its node after the first action's snapshot.
+Every ref-consuming action passes through one chokepoint in the conversation's persistent browser
+state, which does two things. It serialises browser actions, so two actions from one response run in
+order, each against the page as the previous one left it. And it remembers the identity of the
+document in the last snapshot it returned to the model, and refuses an action when the page now
+reports a different document, returning the stale-ref error with the current snapshot instead of
+resolving the ref.
 
-A queued action was issued against the document the batch started on, and the model has not seen any
-result yet. If an earlier action in the batch replaced that document, the queued action's ref is
-meaningless on the new one, so the serialiser refuses it with the stale-ref error and the current
-snapshot instead of resolving it. That is the same guard browser-use applies when a batched action
-changes the page. Serialisation and this refusal live in the same chokepoint, which is what keeps
-every batched action honest without the model carrying anything extra.
+That single rule covers every way a document can be replaced without the model seeing the result: a
+batched sibling whose predecessor navigated, `browser_exec` calling `location.assign`, the delegated
+visual profile clicking a link, and a browser session evicted and recreated underneath the
+conversation. None of those paths has to return a semantic snapshot or invalidate anything; the next
+ref action notices for itself. It is the same guard browser-use applies when a batched action
+changes the page, generalised from "the batch" to "whatever the model has seen".
 
-"Replaced" means a different document, not a different URL: a reload or a same-URL navigation starts
-a new document with a fresh counter, so the check keys on document identity as the page reports it.
-The per-document state that holds the counter is that identity; every snapshot and action result
-reports it across the browser-server boundary, and the chokepoint compares it. The wire shape is the
-implementing PR's to choose.
+"Different document" means exactly that, not a different URL: a reload or a same-URL navigation
+starts a new document with a fresh counter. The per-document state that holds the counter is the
+identity; every snapshot and action result reports it across the browser-server boundary, and the
+chokepoint compares it. The wire shape is the implementing PR's to choose.
 
 ### Staleness is decided by the page
 
@@ -117,11 +118,12 @@ inference the model should make with the page in front of it.
 ## Deliberate simplifications
 
 - **Refs do not survive navigation, session replacement or a process restart.** A new document
-  starts its counter again, so a ref from a previous document can name an unrelated node on the new
-  one. The model always holds a snapshot of the new document before it can issue such a ref, since
-  every navigating action returns one and a batched sibling is refused by the serialiser. An earlier
-  draft promised refs unique across those boundaries; that needed a conversation-scoped allocator
-  and a generation fence, and was withdrawn because nothing in the observed failures needed it.
+  starts its counter again, so a ref from a previous document would name an unrelated node on the
+  new one; the document fence refuses it before that can happen. A process restart loses the
+  remembered document identity, and the first ref action afterwards is refused with a snapshot for
+  the same reason, which is the correct outcome. An earlier draft promised refs unique across those
+  boundaries; that needed a conversation-scoped allocator and a generation fence, and was withdrawn
+  because the fence gives reasonable behaviour with one remembered value.
 - **Identity is the stamped attribute plus role and name, not the node object.** A page that clones
   a stamped node with its attribute intact produces a look-alike the resolver cannot tell apart.
   Every surveyed harness except Playwright accepts this; it is rare enough for reasonable rather
@@ -144,17 +146,19 @@ inference the model should make with the page in front of it.
    refs, a node inserted before an existing one does not renumber it, a relabelled node gets a new
    ref, navigation restarts numbering, a same-URL reload reports a new document identity, and an
    action on a removed, hidden or relabelled ref fails fast with the specific error.
-2. **Family Assistant: delete the ref cache; mirror the walker; serialise browser actions; attach
-   snapshots to misses.** Outcome: `ref_cache` and `clear_refs` are gone from the backend protocol,
-   the local session and the computer-use tools; the local walker matches browser-server's and the
-   local backend performs the same pre-action check; browser actions for one conversation run one at
-   a time and a queued action is refused once an earlier one has replaced the document; a miss
-   returns error plus snapshot; tool descriptions and the `/browse` prompt state the contract; the
-   browser automation user guide is updated. Verified by the existing functional tests rewritten for
-   the new contract, including click-after-`browser_exec` succeeding, click-after-removal returning
-   the error with a snapshot, two ref actions issued from one snapshot both landing on their own
-   nodes when run as a batch, and a batched action after a sibling that navigated or reloaded the
-   same URL being refused with the new document's snapshot rather than acted on.
+2. **Family Assistant: delete the ref cache; mirror the walker; add the chokepoint; attach snapshots
+   to misses.** Outcome: `ref_cache` and `clear_refs` are gone from the backend protocol, the local
+   session and the computer-use tools; the local walker matches browser-server's and the local
+   backend performs the same pre-action check; ref actions for one conversation run one at a time
+   through a chokepoint that refuses them when the document differs from the last snapshot the model
+   received; a miss returns error plus snapshot; tool descriptions and the `/browse` prompt state
+   the contract; the browser automation user guide is updated. Verified by the existing functional
+   tests rewritten for the new contract, including click-after-`browser_exec` succeeding when the
+   script did not navigate, click-after-removal returning the error with a snapshot, two ref actions
+   issued from one snapshot both landing on their own nodes when run as a batch, and a ref action
+   being refused with the new document's snapshot after each of: a batched sibling that navigated or
+   reloaded the same URL, a `browser_exec` that navigated, a visual-profile action that navigated,
+   and a replaced browser session.
 
 Milestone 1 merges before milestone 2 starts, because the remote backend's behaviour is what the
 functional tests in milestone 2 assert against.
