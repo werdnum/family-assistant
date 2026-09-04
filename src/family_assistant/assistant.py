@@ -180,8 +180,19 @@ logger = logging.getLogger(__name__)
 def _calendar_config_to_dict(
     pydantic_config: PydanticCalendarConfig,
 ) -> CalendarConfigDict:
-    """Convert Pydantic CalendarConfig to TypedDict format for tool functions."""
-    return cast("CalendarConfigDict", pydantic_config.model_dump(exclude_none=True))
+    """Convert Pydantic CalendarConfig to TypedDict format for tool functions.
+
+    ``model_dump`` leaves the CalDAV password as a ``SecretStr``, which the
+    DAVClient would serialize as its mask rather than the password, so it is
+    unwrapped here on the way into the untyped dict.
+    """
+    dumped = pydantic_config.model_dump(exclude_none=True)
+    caldav = dumped.get("caldav")
+    if isinstance(caldav, dict) and pydantic_config.caldav is not None:
+        password = pydantic_config.caldav.password
+        if password is not None:
+            caldav["password"] = password.get_secret_value()
+    return cast("CalendarConfigDict", dumped)
 
 
 def _root_provider_for_profile(

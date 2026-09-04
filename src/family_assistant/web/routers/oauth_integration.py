@@ -401,7 +401,7 @@ def create_oauth_integration_router(spec: OAuthProviderSpec) -> APIRouter:
                 _oauth_urls(request, spec)["token"],
                 data={
                     "client_id": integration.oauth_client_id,
-                    "client_secret": integration.oauth_client_secret,
+                    "client_secret": integration.oauth_client_secret.get_secret_value(),
                     "code": code,
                     "grant_type": "authorization_code",
                     "redirect_uri": redirect_uri,

@@ -333,6 +333,11 @@ async def test_full_connect_happy_path(
     assert google_app.google_server.token_calls
     assert google_app.google_server.token_calls[0]["code_verifier"]
     assert google_app.google_server.token_calls[0]["grant_type"] == "authorization_code"
+    # The form is built as a plain dict, so a SecretStr reaching httpx would be
+    # sent as its mask and Google would reject the exchange.
+    assert google_app.google_server.token_calls[0]["client_secret"] == (
+        "test-client-secret"
+    )
 
     status_response = await google_client.get("/api/integrations/google")
     body = status_response.json()

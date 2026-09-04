@@ -245,3 +245,19 @@ def test_live_app_config_dump_contains_no_credential_material() -> None:
     assert "db.internal" in serialized
     assert "www.searchapi.io" in serialized
     assert "TEAM123" in serialized
+
+
+# --- SecretStr must not escape into untyped runtime paths ---
+#
+# These paths lose the declared type (a plain dict, an unvalidated model_copy),
+# so the type checker cannot see them: a SecretStr reaching one of them is
+# serialized as its mask and the credential silently stops working.
+
+
+def test_cli_override_produces_a_usable_secret() -> None:
+    """model_copy(update=...) does not validate, so the CLI must convert."""
+    config = AppConfig().model_copy(
+        update={"telegram_token": SecretStr("cli-token")},
+    )
+    assert config.telegram_token is not None
+    assert config.telegram_token.get_secret_value() == "cli-token"
