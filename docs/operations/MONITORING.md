@@ -211,7 +211,7 @@ token spend, model line-up and error rates are not public information; a separat
 exporter reachable from inside the cluster and nowhere else.
 
 ```
-curl http://family-assistant:9090/metrics
+curl http://localhost:9090/metrics    # from inside the container or pod
 ```
 
 The exporter is **off by default and binds loopback when enabled**, because the endpoint has no
