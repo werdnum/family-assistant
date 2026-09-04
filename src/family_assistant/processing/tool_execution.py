@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -490,6 +491,12 @@ class ToolExecutor:
                     else TurnTaintState.empty().to_metadata()
                 ),
             )
+        except asyncio.CancelledError:
+            # A turn the user abandoned, or a shutdown. Counting it as a tool
+            # error would put ordinary browser behaviour into the tool error
+            # rate, which is the one thing that number is watched for.
+            outcome = "cancelled"
+            raise
         except ToolNotFoundError:
             outcome = "not_found"
             logger.error("Tool '%s' not found.", function_name)

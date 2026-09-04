@@ -137,7 +137,9 @@ carries it, with `error_type` folded in as a label there.
 | `family_assistant_tool_calls_total`               | Counter   | `profile`, `tool`, `outcome` |
 | `family_assistant_tool_duration_seconds`          | Histogram | `profile`, `tool`            |
 
-`outcome` is `success`, `denied` (tool policy), `not_found`, or `error`.
+`outcome` is `success`, `denied` (tool policy), `not_found`, `cancelled`, or `error`. A turn the
+user abandoned is not a tool failure, and folding it into `error` would put ordinary browser
+behaviour into the number that error rate is watched on.
 
 ### Turns
 

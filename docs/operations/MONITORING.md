@@ -268,7 +268,8 @@ the latency the user actually feels.
 | `family_assistant_turn_duration_seconds` | Histogram | `profile`, `outcome`         |
 | `family_assistant_turns_in_progress`     | Gauge     | `profile`                    |
 
-Tool `outcome` is `success`, `denied` (refused by tool policy), `not_found`, or `error`. Turn
+Tool `outcome` is `success`, `denied` (refused by tool policy), `not_found`, `cancelled`, or
+`error`. Turn
 `outcome` is `success`, `error`, or `cancelled` — a browser that navigated away mid-turn is not a
 failure.
 
