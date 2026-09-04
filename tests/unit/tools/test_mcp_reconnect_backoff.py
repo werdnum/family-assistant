@@ -215,3 +215,29 @@ async def test_server_status_omits_backoff_for_healthy_servers() -> None:
 
     assert status["reconnect_attempts"] == 0
     assert status["next_reconnect_in_seconds"] is None
+
+
+def test_server_status_redacts_credentials_in_url_and_args() -> None:
+    """Diagnostics correlate against the deployment config without leaking tokens."""
+    configs: dict[str, MCPServerConfig] = {
+        "search": {
+            "transport": "http",
+            "url": "https://www.searchapi.io/api/v1/mcp?token=live-secret&engine=google",
+        },
+        "stdio": {
+            "transport": "stdio",
+            "command": "scraper",
+            "args": ["--endpoint=https://user:hunter2@scraper.internal/mcp"],
+        },
+    }
+    provider = MCPToolsProvider(configs)  # type: ignore[arg-type]
+
+    statuses = provider.get_server_statuses()
+
+    assert statuses["search"]["url"] == (
+        "https://www.searchapi.io/api/v1/mcp?token=[REDACTED]&engine=google"
+    )
+    assert statuses["stdio"]["args"] == [
+        "--endpoint=https://user:[REDACTED]@scraper.internal/mcp"
+    ]
+    assert statuses["stdio"]["command"] == "scraper"

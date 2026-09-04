@@ -24,6 +24,7 @@ from mcp.client.sse import sse_client  # Assuming sse_client is in mcp.client.ss
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.types import TextContent  # Import TextContent from mcp.types
 
+from family_assistant.config_inspection import redact_sensitive_text
 from family_assistant.tools.metadata import (
     ToolDescriptor,
     build_tool_descriptor,
@@ -140,7 +141,8 @@ class MCPServerStatus(TypedDict):
 
     Used by ``MCPToolsProvider.get_server_statuses`` and surfaced through
     the engineer-profile ``get_mcp_server_status`` tool. Token-bearing
-    config fields are intentionally omitted.
+    config fields are intentionally omitted, and credentials embedded in
+    ``url`` or ``args`` are redacted.
     """
 
     status: str
@@ -211,9 +213,10 @@ class MCPToolsProvider:
 
         Returns a mapping of ``server_id`` to an ``MCPServerStatus`` describing
         the current connection state, transport, configured connection
-        details (no tokens), session activity, the tools currently provided by
-        that server, and where the server sits in the reconnect backoff
-        schedule.
+        details (no tokens; credentials embedded in the URL or in stdio
+        arguments are redacted), session activity, the tools currently
+        provided by that server, and where the server sits in the reconnect
+        backoff schedule.
 
         Designed to be called by engineer-profile diagnostic tools without
         requiring any further reconnection or I/O.
@@ -231,12 +234,20 @@ class MCPToolsProvider:
         for server_id, config in self._mcp_server_configs.items():
             tools = sorted(tools_by_server.get(server_id, []))
             backoff = self._reconnect_backoff[server_id]
+            configured_url = config.get("url")
             snapshot[server_id] = MCPServerStatus(
                 status=self._server_statuses.get(server_id, MCP_SERVER_STATUS_PENDING),
                 transport=config.get("transport", "stdio"),
                 command=config.get("command"),
-                args=list(config.get("args", []) or []),
-                url=config.get("url"),
+                args=[
+                    redact_sensitive_text(arg) if isinstance(arg, str) else arg
+                    for arg in (config.get("args", []) or [])
+                ],
+                url=(
+                    redact_sensitive_text(configured_url)
+                    if isinstance(configured_url, str)
+                    else configured_url
+                ),
                 session_active=server_id in self._sessions,
                 tool_count=len(tools),
                 tools=tools,

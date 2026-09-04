@@ -1579,6 +1579,28 @@ instead uses its declared scoped policy or, for a deliberately public receiver s
 config dump) is **not** covered, while the tool-inventory endpoint that is covered exposes only tool
 names and sizes — no prompts and no policy bodies.
 
+### Redaction in config dumps
+
+Every diagnostic dump of the resolved configuration — `GET /api/debug/profiles`, and the engineer
+profile's `get_resolved_config` / `get_profile_config` / `get_mcp_server_status` tools — passes
+through one shared redactor, on two axes:
+
+- **By field name.** A field whose name carries a secret-looking word (`*_api_key`, `*_secret`,
+  `*_token`, `*_password`, `*_private_key`, plus an explicit allowlist) is replaced with
+  `[REDACTED]`. Names that say *where* a secret lives rather than holding one — anything ending in
+  `_path`, `_file`, `_dir`, `_env` or `_env_var` — are left readable, since a path or an
+  environment-variable name is operator-facing metadata. Numbers and booleans are never redacted, so
+  `max_tokens` stays a number.
+- **By value shape.** Credentials embedded inside otherwise-useful values are redacted whatever the
+  field is called: the password in a URL's userinfo (`postgresql://user:[REDACTED]@host/db`),
+  credential query parameters (`token`, `api_key`, `key`, `secret`, `signature`, …) in any URL
+  including MCP server endpoints and stdio arguments, and inline PEM blocks such as an APNs
+  `auth_key`. The surrounding host, database and endpoint are preserved so the dump stays useful.
+
+Both axes are needed: an opaque API key is only identifiable by its field name, and a DSN password
+is only identifiable by its shape. When adding a config field that holds a credential, give it a
+name matching the first axis rather than relying on the second.
+
 ______________________________________________________________________
 
 ## JWT Access Tokens (Edge Gateway Authentication)
