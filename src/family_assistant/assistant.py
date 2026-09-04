@@ -1890,7 +1890,9 @@ class Assistant:
         self.uvicorn_server_task = asyncio.create_task(server.serve())
 
         if self.config.metrics_enabled:
-            self.metrics_server = start_metrics_exporter(self.config.metrics_port)
+            self.metrics_server = start_metrics_exporter(
+                self.config.metrics_port, addr=self.config.metrics_bind_host
+            )
 
         logger.info(
             "In development, run 'poe dev' and access the app at http://localhost:5173"

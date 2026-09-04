@@ -6,6 +6,13 @@ so a ``/metrics`` route there would publish the household's token spend, model
 line-up and error rates to anyone who asked for them. A second port is routed
 by nothing, which leaves the exporter reachable from inside the cluster and
 nowhere else.
+
+The endpoint has no authentication of its own, so the bind address is the only
+thing standing between it and whoever can route to the host. It defaults to
+loopback for that reason: a deployment whose scraper lives elsewhere -- a
+Kubernetes pod scrape reaching the pod IP -- sets the bind address explicitly.
+Getting that wrong breaks scraping, which is visible and gets fixed; the
+opposite default publishes the data, which is not.
 """
 
 from __future__ import annotations
@@ -23,7 +30,7 @@ logger = logging.getLogger(__name__)
 __all__ = ["start_metrics_exporter"]
 
 
-def start_metrics_exporter(port: int, *, addr: str = "0.0.0.0") -> WSGIServer | None:
+def start_metrics_exporter(port: int, *, addr: str = "127.0.0.1") -> WSGIServer | None:
     """Start the metrics endpoint on *port*, returning the server it runs on.
 
     Returns ``None`` if the port could not be bound. A failure here is

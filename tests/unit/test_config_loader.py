@@ -529,12 +529,17 @@ class TestApplyEnvVarOverrides:
         config: dict[str, Any] = {}
         with mock.patch.dict(
             os.environ,
-            {"METRICS_ENABLED": "false", "METRICS_PORT": "9191"},
+            {
+                "METRICS_ENABLED": "true",
+                "METRICS_PORT": "9191",
+                "METRICS_BIND_HOST": "0.0.0.0",
+            },
             clear=False,
         ):
             apply_env_var_overrides(config)
-        assert config["metrics_enabled"] is False
+        assert config["metrics_enabled"] is True
         assert config["metrics_port"] == 9191
+        assert config["metrics_bind_host"] == "0.0.0.0"
 
     def test_applies_nested_env_var(self) -> None:
         """Test applying a nested environment variable."""

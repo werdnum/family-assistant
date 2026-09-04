@@ -9,6 +9,7 @@ import pytest
 from opentelemetry import trace as otel_trace
 from prometheus_client import REGISTRY
 
+from family_assistant.config_models import AppConfig
 from family_assistant.llm.call_context import (
     current_processing_profile,
     reset_processing_profile,
@@ -478,3 +479,9 @@ def test_a_cancelled_structured_call_still_records_an_outcome(profile: str) -> N
         )
         == 1
     )
+
+
+def test_the_exporter_binds_loopback_unless_told_otherwise() -> None:
+    """The endpoint has no auth of its own, so the bind address is the control."""
+    assert AppConfig().metrics_bind_host == "127.0.0.1"
+    assert AppConfig().metrics_enabled is False

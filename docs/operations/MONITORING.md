@@ -214,17 +214,21 @@ exporter reachable from inside the cluster and nowhere else.
 curl http://family-assistant:9090/metrics
 ```
 
-Set `METRICS_PORT` to move it, or `METRICS_ENABLED=false` to turn it off. The rationale and the
-chokepoints the numbers come from are in
+The exporter is **off by default and binds loopback when enabled**, because the endpoint has no
+authentication of its own and carries data that is not public. Turn it on with
+`METRICS_ENABLED=true`, and set `METRICS_BIND_HOST=0.0.0.0` when the scraper is not on the same host
+— a Kubernetes pod scrape reaching the pod IP, for instance. Getting that wrong breaks scraping,
+which is visible; the opposite default would publish the data, which is not. `METRICS_PORT` moves
+the port. The rationale and the chokepoints the numbers come from are in
 [docs/design/prometheus-metrics.md](../design/prometheus-metrics.md).
 
 Standard process and Python runtime metrics (`process_resident_memory_bytes`, `python_gc_*`, …) are
 exported alongside the application ones.
 
-**What is counted.** Every request that reaches an LLM provider — chat (streamed or not),
-structured output (tool-call review), embeddings, image generation, and managed-agent runs — plus
-every tool execution, including one run later from an approved durable confirmation. Successful,
-failed, cancelled and abandoned calls each record exactly one outcome.
+**What is counted.** Every request that reaches an LLM provider — chat (streamed or not), structured
+output (tool-call review), embeddings, image generation, and managed-agent runs — plus every tool
+execution, including one run later from an approved durable confirmation. Successful, failed,
+cancelled and abandoned calls each record exactly one outcome.
 
 Not every provider reports tokens. Google's embedding API reports only billable characters, and the
 image models that bill per image report no usage block. Those emit no token buckets, and
@@ -249,8 +253,8 @@ Every LLM metric carries the same five labels:
 | `family_assistant_llm_call_duration_seconds`        | Histogram | `outcome`               |
 | `family_assistant_llm_time_to_first_output_seconds` | Histogram | —                       |
 
-`kind` splits tokens into five **disjoint** buckets, normalised so that they mean the same thing on
-every provider — providers disagree about whether their own cache and reasoning counts are separate
+`kind` splits tokens into **disjoint** buckets, normalised so that they mean the same thing on every
+provider — providers disagree about whether their own cache and reasoning counts are separate
 buckets or subsets, and that correction is applied before export rather than in every query:
 
 | `kind`           | Meaning                                                         |
@@ -260,9 +264,14 @@ buckets or subsets, and that correction is applied before export rather than in 
 | `cache_write`    | Prompt tokens written into the prompt cache                     |
 | `output`         | Generated tokens, excluding reasoning                           |
 | `reasoning`      | Reasoning / thinking tokens                                     |
+| `tool_use`       | Tokens the provider spent running its own server-side tools     |
 
 A bucket a provider does not report is absent rather than zero, so no `cache_read` series means
 "this provider or model does not report caching", not "nothing was cached".
+
+The buckets are **billing tiers**, which is what makes cost a single join against a price table on
+`(model, kind)`. A price table that omits `tool_use` will silently drop that spend from the join, so
+give every bucket a price — including the ones a given model never emits.
 
 `family_assistant_llm_time_to_first_output_seconds` is only observed for streamed calls, where it is
 the latency the user actually feels.
@@ -281,8 +290,8 @@ Tool `outcome` is how the *execution* ended: `returned`, `denied` (refused by to
 `not_found`, `cancelled`, or `error`. `returned` is deliberately not called "success" — a tool
 reports an expected failure by returning a result, and that result carries no status field, so
 nothing can tell the two apart. Treat a tool error rate as counting executions that never completed,
-not tasks that went wrong. Turn `outcome` is `success`, `error`, or `cancelled` — a browser that navigated away
-mid-turn is not a failure.
+not tasks that went wrong. Turn `outcome` is `success`, `error`, or `cancelled` — a browser that
+navigated away mid-turn is not a failure.
 
 ### Useful queries
 
@@ -290,6 +299,12 @@ Token spend per profile, in tokens per second:
 
 ```promql
 sum by (profile) (rate(family_assistant_llm_tokens_total[1h]))
+```
+
+What is driving the spend — chat, tool-call review, agent runs, embeddings:
+
+```promql
+sum by (operation) (rate(family_assistant_llm_tokens_total[1h]))
 ```
 
 Which profile is spending on reasoning rather than answers:

@@ -1120,6 +1120,17 @@ class GoogleGenAIClient(BaseLLMClient):
         )
 
     @property
+    def agent_operation_name(self) -> str:
+        """The ``operation`` metric label for this agent's runs.
+
+        Public because the pollable delegation path records its own metrics and
+        has to use the same value: an agent that reported ``deep_research``
+        when run interactively and something else when delegated would split
+        one agent across two series.
+        """
+        return self._agent_label.lower().replace(" ", "_")
+
+    @property
     def _agent_name(self) -> str:
         """The bare agent id to send as ``agent=`` on an Interactions call."""
         return self.model_name.replace("models/", "")
@@ -1951,7 +1962,7 @@ class GoogleGenAIClient(BaseLLMClient):
             tools=None,
             tool_choice=None,
             streaming=True,
-            operation=agent_label.lower().replace(" ", "_"),
+            operation=self.agent_operation_name,
         )
 
         content_yielded = False

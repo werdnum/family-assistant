@@ -1615,8 +1615,15 @@ class AppConfig(BaseSettings):
     # Prometheus metrics exporter. Served on a port of its own rather than as a
     # route on the main app, which an Ingress publishes to the internet in its
     # entirety -- see docs/design/prometheus-metrics.md.
-    metrics_enabled: bool = True
+    #
+    # Off by default, and loopback-only when switched on. The endpoint carries
+    # token spend, model line-up and error rates and has no authentication of
+    # its own, so a deployment that wants it reachable from a scraper says so
+    # explicitly. Getting this wrong then breaks scraping, which is visible and
+    # gets fixed, rather than publishing the data, which is not.
+    metrics_enabled: bool = False
     metrics_port: int = 9090
+    metrics_bind_host: str = "127.0.0.1"
 
     # Number of in-process TaskWorker instances to run concurrently.
     # Multiple workers are required so a handler that parks waiting on an

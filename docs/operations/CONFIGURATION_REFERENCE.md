@@ -72,15 +72,32 @@ ______________________________________________________________________
 
 ### METRICS_ENABLED
 
-Whether to serve Prometheus metrics. See [MONITORING.md](MONITORING.md#metrics) for the metric
-reference.
+Whether to serve Prometheus metrics. Off by default: the endpoint has no authentication of its own
+and carries token spend, model line-up and error rates, so a deployment that wants it says so. See
+[MONITORING.md](MONITORING.md#metrics) for the metric reference.
 
 | Property  | Value   |
 | --------- | ------- |
 | Required  | No      |
-| Default   | `true`  |
+| Default   | `false` |
 | Sensitive | No      |
-| Example   | `false` |
+| Example   | `true`  |
+
+______________________________________________________________________
+
+### METRICS_BIND_HOST
+
+Address the metrics endpoint binds. Defaults to loopback, so enabling metrics does not by itself
+expose them to the network. Set to `0.0.0.0` when the scraper is not on the same host — a Kubernetes
+pod scrape reaching the pod IP, for instance. Getting this wrong breaks scraping, which is visible;
+the opposite default would publish the data, which is not.
+
+| Property  | Value       |
+| --------- | ----------- |
+| Required  | No          |
+| Default   | `127.0.0.1` |
+| Sensitive | No          |
+| Example   | `0.0.0.0`   |
 
 ______________________________________________________________________
 

@@ -19,6 +19,7 @@ from __future__ import annotations
 import base64
 import logging
 import re
+import time
 from typing import TYPE_CHECKING, TypedDict
 
 from family_assistant.llm.messages import UserMessage
@@ -475,11 +476,21 @@ class InteractionsAgentProcessingService(ProcessingService):
             if prior_run is not None:
                 previous_interaction_id = prior_run["remote_task_id"]
 
-        interaction = await self._google_client().start_agent_interaction(
-            messages,
-            previous_interaction_id=previous_interaction_id,
-            environment_sources=environment_sources or None,
-        )
+        # A submission that never returns an interaction id -- auth, rate
+        # limit, provider 5xx -- reaches no terminal poll and no cancellation,
+        # so this is the only place it can be counted. Recorded on failure
+        # only: a successful submission is counted when the run ends, and
+        # counting it here too would double every run.
+        submit_started = time.monotonic()
+        try:
+            interaction = await self._google_client().start_agent_interaction(
+                messages,
+                previous_interaction_id=previous_interaction_id,
+                environment_sources=environment_sources or None,
+            )
+        except Exception as exc:
+            self._record_failed_submission(exc, time.monotonic() - submit_started)
+            raise
         if not interaction.id:
             raise DelegationTransientError(
                 "Interactions API create response carried no interaction id"
@@ -553,7 +564,7 @@ class InteractionsAgentProcessingService(ProcessingService):
             provider="google",
             model=client.model_name,
             resolved_model=interaction.model,
-            operation="agent",
+            operation=client.agent_operation_name,
             outcome=outcome,
             error_type=interaction.status if outcome == "error" else None,
             duration_seconds=_interaction_duration_seconds(interaction),
@@ -574,6 +585,26 @@ class InteractionsAgentProcessingService(ProcessingService):
             )
         finally:
             await self._record_cancelled_run(remote_task_id)
+
+    def _record_failed_submission(
+        self,
+        error: BaseException,
+        duration_seconds: float,
+    ) -> None:
+        """Count a run that never started, so a failing agent is visible."""
+        client = self._google_client()
+        record_llm_call(
+            profile=self.service_config.id,
+            provider="google",
+            model=client.model_name,
+            resolved_model=None,
+            operation=client.agent_operation_name,
+            outcome="error",
+            error_type=type(error).__name__,
+            duration_seconds=duration_seconds,
+            time_to_first_output_seconds=None,
+            reasoning_info=None,
+        )
 
     async def _record_cancelled_run(self, remote_task_id: str) -> None:
         """Account for a run that was cancelled rather than polled to an end.
@@ -609,7 +640,7 @@ class InteractionsAgentProcessingService(ProcessingService):
             provider="google",
             model=self._google_client().model_name,
             resolved_model=resolved_model,
-            operation="agent",
+            operation=self._google_client().agent_operation_name,
             outcome="cancelled",
             error_type=None,
             duration_seconds=duration_seconds,
