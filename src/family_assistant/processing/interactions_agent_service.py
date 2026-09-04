@@ -20,6 +20,7 @@ import base64
 import logging
 import re
 import time
+from datetime import datetime
 from typing import TYPE_CHECKING, TypedDict
 
 from family_assistant.llm.messages import UserMessage
@@ -161,6 +162,23 @@ def _attachment_taint_sources(
     )
 
 
+def _interaction_timestamp(value: str | datetime | None) -> datetime | None:
+    """Parse one Interactions API timestamp.
+
+    The SDK types these as ISO-8601 strings, not datetimes, so they have to be
+    parsed rather than subtracted. Accepts a datetime too, in case a later SDK
+    starts returning one, and returns None for anything unparseable -- which
+    is logged rather than silently treated as zero.
+    """
+    if value is None or isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        logger.warning("Unparseable Interactions API timestamp: %r", value)
+        return None
+
+
 def _interaction_duration_seconds(interaction: Interaction) -> float:
     """How long the provider ran the interaction for, in seconds.
 
@@ -168,14 +186,11 @@ def _interaction_duration_seconds(interaction: Interaction) -> float:
     the poll that observed it finishing. Zero when either is missing: a run
     with no duration is better than a wrong one, and the call still counts.
     """
-    created = getattr(interaction, "created", None)
-    updated = getattr(interaction, "updated", None)
+    created = _interaction_timestamp(getattr(interaction, "created", None))
+    updated = _interaction_timestamp(getattr(interaction, "updated", None))
     if created is None or updated is None:
         return 0.0
-    try:
-        return max(0.0, (updated - created).total_seconds())
-    except (TypeError, AttributeError):
-        return 0.0
+    return max(0.0, (updated - created).total_seconds())
 
 
 def _describe_interaction_errors(interaction: Interaction) -> str:

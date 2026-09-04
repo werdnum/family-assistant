@@ -135,6 +135,7 @@ from family_assistant.tools import (
     LocalToolsProvider,
     MCPServerConfig,
     MCPToolsProvider,
+    MeteredToolsProvider,
     OnDemandToolsView,
     PolicyEnforcingToolsProvider,
     PolicyEngine,
@@ -1422,7 +1423,7 @@ class Assistant:
         profile_conf: ServiceProfile,
         delegation_sink_classes: dict[str, SinkClass],
         tool_call_reviewer: ToolCallReviewer | None,
-    ) -> tuple[TaintTrackingToolsProvider, OnDemandToolsView | None]:
+    ) -> tuple[ToolsProvider, OnDemandToolsView | None]:
         """Apply policy, taint tracking, and on-demand visibility for a profile."""
         assert self.root_tools_provider is not None
         profile_proc_conf = profile_conf.processing_config
@@ -1463,6 +1464,13 @@ class Assistant:
             ),
             profile_review_guidance=profile_proc_conf.review_guidance,
             include_aggregated_context=profile_proc_conf.include_aggregated_context,
+        )
+        # Outermost wrapper, so every caller that holds this provider is
+        # counted: the processing loop's executor, native voice, the tools
+        # API, Monty scripts and the durable-confirmation worker all reach
+        # execute_tool through it.
+        profile_tools_provider = MeteredToolsProvider(
+            profile_tools_provider, profile=profile_conf.id
         )
         on_demand_tool_names = profile_tools_conf.get_on_demand_tool_names()
         on_demand_mcp_ids = set(profile_tools_conf.get_on_demand_mcp_server_ids())

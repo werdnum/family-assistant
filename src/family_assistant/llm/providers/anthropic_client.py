@@ -1121,6 +1121,12 @@ class AnthropicClient(BaseLLMClient):
             except Exception as e:
                 telemetry.finish_error(e)
                 self._raise_mapped_error(e)
+            finally:
+                # Cancellation -- a task timeout, a shutdown, an abandoned
+                # indexing job -- passes every `except Exception`, and the
+                # request still ran and may still be billed. A no-op once a
+                # terminal path has recorded the call.
+                telemetry.finish_abandoned()
 
     async def _generate_response_success(
         self,

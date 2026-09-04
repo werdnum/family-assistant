@@ -895,6 +895,12 @@ class OpenAIClient(BaseLLMClient):
             except Exception as e:
                 telemetry.finish_error(e)
                 raise self._map_error_to_typed_exception(e) from e
+            finally:
+                # Cancellation -- a task timeout, a shutdown, an abandoned
+                # indexing job -- passes every `except Exception`, and the
+                # request still ran and may still be billed. A no-op once a
+                # terminal path has recorded the call.
+                telemetry.finish_abandoned()
 
     async def _generate_response_inner(
         self,

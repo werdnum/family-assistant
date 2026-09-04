@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import urllib.request
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import pytest
 from opentelemetry import trace as otel_trace
@@ -23,11 +24,14 @@ from family_assistant.observability.metrics import (
     normalized_token_buckets,
     record_tool_call,
 )
+from family_assistant.tools import MeteredToolsProvider, ToolNotFoundError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
 
     from family_assistant.llm.messages import MessageReasoningInfo
+    from family_assistant.tools import ToolsProvider
+    from family_assistant.tools.types import ToolExecutionContext
 
 
 def _sample(name: str, labels: Mapping[str, str]) -> float:
@@ -485,3 +489,74 @@ def test_the_exporter_binds_loopback_unless_told_otherwise() -> None:
     """The endpoint has no auth of its own, so the bind address is the control."""
     assert AppConfig().metrics_bind_host == "127.0.0.1"
     assert AppConfig().metrics_enabled is False
+
+
+# --- Tool accounting at the provider boundary ----------------------------
+
+
+class _RecordingProvider:
+    """Minimal ToolsProvider whose execute_tool does what the test needs."""
+
+    def __init__(self, outcome: Exception | str) -> None:
+        self._outcome = outcome
+
+    async def get_tool_definitions(self) -> list[object]:
+        return []
+
+    async def close(self) -> None:
+        return None
+
+    async def execute_tool(
+        self,
+        name: str,
+        arguments: object,
+        context: object,
+        call_id: str | None = None,
+    ) -> str:
+        if isinstance(self._outcome, Exception):
+            raise self._outcome
+        return self._outcome
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("behaviour", "expected"),
+    [
+        ("done", "returned"),
+        (ToolNotFoundError("nope"), "not_found"),
+        (RuntimeError("boom"), "error"),
+    ],
+)
+async def test_the_provider_counts_however_the_execution_ends(
+    behaviour: Exception | str,
+    expected: str,
+) -> None:
+    """Every entry path holds this provider, so counting here counts them all."""
+    profile = f"p_provider_{expected}"
+    provider = MeteredToolsProvider(
+        cast("ToolsProvider", _RecordingProvider(behaviour)), profile=profile
+    )
+
+    with contextlib.suppress(Exception):
+        await provider.execute_tool("some_tool", {}, cast("ToolExecutionContext", None))
+
+    assert (
+        _sample(
+            "family_assistant_tool_calls_total",
+            {"profile": profile, "tool": "some_tool", "outcome": expected},
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_provider_delegates_everything_it_does_not_meter() -> None:
+    """Callers inspect get_tool_definitions' signature; it must be the real one."""
+    inner = _RecordingProvider("done")
+    provider = MeteredToolsProvider(cast("ToolsProvider", inner), profile="p_delegate")
+
+    assert await provider.get_tool_definitions() == []
+    # Anything the wrapper does not define resolves to the wrapped provider,
+    # so a provider-specific attribute stays reachable through it.
+    inner.extra_capability = "present"  # pyright: ignore[reportAttributeAccessIssue] - note: set here precisely because the protocol has no such member
+    assert provider.extra_capability == "present"  # pyright: ignore[reportAttributeAccessIssue] - note: __getattr__ delegation is the behaviour under test

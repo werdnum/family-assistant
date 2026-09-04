@@ -13,6 +13,7 @@ import inspect
 import json
 import logging
 import re
+import time
 import unicodedata
 import uuid
 from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping
@@ -29,6 +30,7 @@ from typing import (
     runtime_checkable,
 )
 
+from family_assistant.observability.metrics import record_tool_call
 from family_assistant.security.definition_records import (
     CreationDisposition,
     DefinitionGateOutcome,
@@ -1504,6 +1506,77 @@ def _is_sensitive_read_descriptor(descriptor: ToolDescriptor) -> bool:
         ToolTag.READ_ONLY,
         ToolTag.SENSITIVE_DATA,
     }.issubset(descriptor.tags)
+
+
+class MeteredToolsProvider(ToolsProvider):
+    """Counts every tool execution, whichever entry path reached it.
+
+    Instrumenting the processing loop's executor was not enough: native voice,
+    the authenticated tools API, Monty scripts and the durable-confirmation
+    worker all call ``execute_tool`` on the profile's provider directly, and
+    none of them goes through that executor. Counting at each of those instead
+    would be a list to keep in step with, and a path added later would go
+    uncounted with nothing failing.
+
+    Wrapping the provider makes the accounting a property of the object every
+    caller already holds, so a new entry path is counted by construction.
+
+    Delegates everything but ``execute_tool`` to the wrapped provider rather
+    than re-declaring it, so callers that inspect a method's signature -- the
+    tool-advertisement helper reads ``get_tool_definitions`` for a
+    ``can_confirm`` parameter -- see the real one.
+    """
+
+    def __init__(self, wrapped_provider: ToolsProvider, *, profile: str) -> None:
+        self._wrapped = wrapped_provider
+        self._profile = profile
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._wrapped, name)
+
+    async def get_tool_definitions(self) -> list[ToolDefinition]:
+        return await self._wrapped.get_tool_definitions()
+
+    async def close(self) -> None:
+        """Close the wrapped provider; this one holds nothing of its own."""
+        await self._wrapped.close()
+
+    async def execute_tool(
+        self,
+        name: str,
+        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
+    ) -> str | ToolResult:
+        """Execute the tool and record how the execution ended.
+
+        ``returned`` rather than ``success``: a tool reports an expected
+        failure by returning a result, and ``ToolResult`` has no status field
+        to read, so nothing here can tell the two apart.
+        """
+        started = time.monotonic()
+        outcome = "error"
+        try:
+            result = await self._wrapped.execute_tool(name, arguments, context, call_id)
+            outcome = "returned"
+            return result
+        except ToolPolicyDeniedError:
+            outcome = "denied"
+            raise
+        except ToolNotFoundError:
+            outcome = "not_found"
+            raise
+        except asyncio.CancelledError:
+            outcome = "cancelled"
+            raise
+        finally:
+            record_tool_call(
+                profile=self._profile,
+                tool=name,
+                outcome=outcome,
+                duration_seconds=time.monotonic() - started,
+            )
 
 
 class TaintTrackingToolsProvider(ToolsProvider):
