@@ -76,9 +76,15 @@ No state leaves the page: the client holds nothing, and a new document simply st
 Every ref-consuming action passes through one chokepoint in the conversation's persistent browser
 state, which does two things. It serialises browser actions, so two actions from one response run in
 order, each against the page as the previous one left it. And it remembers the identity of the
-document in the last snapshot it returned to the model, and refuses an action when the page now
+document in the last snapshot the model has received, and refuses an action when the page now
 reports a different document, returning the stale-ref error with the current snapshot instead of
 resolving the ref.
+
+"Received" is judged at the model's boundary, not the tool's. A response's tool calls all run before
+any result is shown to the model, so the remembered identity advances when the batch's results are
+handed back, not as each result is produced. Every action in a batch is therefore judged against the
+document the model saw when it issued the batch, however many actions precede it and whatever
+snapshots they returned; a refusal in the middle of a batch does not unfence the actions after it.
 
 That single rule covers every way a document can be replaced without the model seeing the result: a
 batched sibling whose predecessor navigated, `browser_exec` calling `location.assign`, the delegated
@@ -155,10 +161,11 @@ inference the model should make with the page in front of it.
    the contract; the browser automation user guide is updated. Verified by the existing functional
    tests rewritten for the new contract, including click-after-`browser_exec` succeeding when the
    script did not navigate, click-after-removal returning the error with a snapshot, two ref actions
-   issued from one snapshot both landing on their own nodes when run as a batch, and a ref action
-   being refused with the new document's snapshot after each of: a batched sibling that navigated or
-   reloaded the same URL, a `browser_exec` that navigated, a visual-profile action that navigated,
-   and a replaced browser session.
+   issued from one snapshot both landing on their own nodes when run as a batch, three batched
+   actions whose first navigates having both later ones refused, and a ref action being refused with
+   the new document's snapshot after each of: a batched sibling that navigated or reloaded the same
+   URL, a `browser_exec` that navigated, a visual-profile action that navigated, and a replaced
+   browser session.
 
 Milestone 1 merges before milestone 2 starts, because the remote backend's behaviour is what the
 functional tests in milestone 2 assert against.
