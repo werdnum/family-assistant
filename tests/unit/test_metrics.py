@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 import pytest
 from opentelemetry import trace as otel_trace
 from prometheus_client import REGISTRY
+from pydantic import ValidationError
 
 from family_assistant.config_models import AppConfig
 from family_assistant.llm.call_context import (
@@ -182,6 +183,37 @@ def test_a_provider_that_reports_no_modality_split_emits_no_image_bucket() -> No
 
     assert "input_image" not in buckets
     assert buckets["input_uncached"] == 1000
+
+
+def test_generated_image_tokens_are_carved_out_of_the_text_output() -> None:
+    """Image output is priced well above text output on models that emit both."""
+    usage: MessageReasoningInfo = {
+        "prompt_tokens": 100,
+        "completion_tokens": 1300,
+        "total_tokens": 1400,
+        "image_output_tokens": 1200,
+    }
+
+    buckets = normalized_token_buckets(usage, "google")
+
+    assert buckets["output_image"] == 1200
+    assert buckets["output"] == 100
+    assert buckets["output"] + buckets["output_image"] == 1300
+
+
+def test_reasoning_and_image_output_are_both_removed_from_the_text_output() -> None:
+    """The generated tiers stay disjoint when a provider reports both."""
+    usage: MessageReasoningInfo = {
+        "completion_tokens": 1000,
+        "reasoning_tokens": 300,
+        "image_output_tokens": 500,
+    }
+
+    buckets = normalized_token_buckets(usage, "openai")
+
+    assert buckets["reasoning"] == 300
+    assert buckets["output_image"] == 500
+    assert buckets["output"] == 200
 
 
 def test_unreported_buckets_are_absent_rather_than_zero() -> None:
@@ -608,6 +640,49 @@ async def test_a_request_rejected_before_the_provider_is_not_counted(
             )
             == 0
         )
+
+
+@pytest.mark.asyncio
+async def test_the_served_model_is_recorded_where_the_provider_reports_it(
+    profile: str,
+) -> None:
+    """Otherwise resolved_model repeats the alias and hides provider routing."""
+
+    class _Response:
+        model = "gemini-3-pro-image-2026-01-01"
+
+    await instrumented_llm_request(
+        provider="google",
+        model="gemini-3-pro-image",
+        operation="image",
+        request=_returns(_Response()),
+        served_model=lambda response: response.model,
+    )
+
+    assert (
+        _sample(
+            "family_assistant_llm_calls_total",
+            {
+                "profile": profile,
+                "provider": "google",
+                "model": "gemini-3-pro-image",
+                "resolved_model": "gemini-3-pro-image-2026-01-01",
+                "operation": "image",
+                "outcome": "success",
+                "error_type": "",
+            },
+        )
+        == 1
+    )
+
+
+def test_the_metrics_port_may_not_be_the_application_port() -> None:
+    """The exporter binds first, so a collision takes out the API, not metrics."""
+    with pytest.raises(ValidationError, match="must differ from server_port"):
+        AppConfig(metrics_enabled=True, metrics_port=8000, server_port=8000)
+
+    # The same collision is harmless while the exporter is off, so it is allowed.
+    assert AppConfig(metrics_port=8000, server_port=8000).metrics_port == 8000
 
 
 def test_the_exporter_binds_loopback_unless_told_otherwise() -> None:

@@ -448,6 +448,14 @@ class OpenAIClient(BaseLLMClient):
         resolved_model = getattr(response, "model", None)
         if isinstance(resolved_model, str):
             metadata["resolved_model"] = resolved_model
+        # A run that stopped short was still billed for what it produced --
+        # `incomplete` on an output-token limit is the common case, and it is
+        # billed for a full output allowance. The usage rides on the failure
+        # frame, so it has to be carried out with it or the spend is lost.
+        if response is not None:
+            reasoning_info = self._responses_reasoning_info(cast("Response", response))
+            if reasoning_info:
+                metadata["reasoning_info"] = reasoning_info
         return LLMStreamEvent(type="error", error=error_message, metadata=metadata)
 
     @staticmethod
@@ -1274,6 +1282,13 @@ class OpenAIClient(BaseLLMClient):
                                     "resolved_model"
                                 ),
                                 response_id=(event.metadata or {}).get("response_id"),
+                            )
+                            # Before finish_failure: a stream that failed or
+                            # ran out of output tokens was still billed for
+                            # what it generated, and finish_failure is what
+                            # writes the token counters.
+                            telemetry.record_usage(
+                                (event.metadata or {}).get("reasoning_info")
                             )
                             # Recorded before the yield, not after the loop: the
                             # consumer raises on this event, which closes this

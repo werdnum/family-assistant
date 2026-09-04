@@ -13,9 +13,9 @@ by construction rather than by remembering to count it.
 **Token accounting is normalised here, once.** Providers disagree about what
 their own prompt and completion counts include, so the exported buckets are
 defined to be disjoint on every provider: ``input_uncached``, ``input_image``,
-``cache_read`` and ``cache_write`` sum to the full prompt, ``output`` and
-``reasoning`` sum to everything generated, and ``tool_use`` is what the provider
-spent running its own server-side tools. A dashboard can therefore sum over
+``cache_read`` and ``cache_write`` sum to the full prompt, ``output``,
+``output_image`` and ``reasoning`` sum to everything generated, and
+``tool_use`` is what the provider spent running its own server-side tools. A dashboard can therefore sum over
 ``kind`` without knowing which provider served the call.
 """
 
@@ -215,9 +215,9 @@ def normalized_token_buckets(
     from one that cached nothing this call.
 
     The kinds are disjoint by construction: ``input_uncached + input_image +
-    cache_read + cache_write`` is the full prompt, ``output + reasoning`` is
-    everything generated, and ``tool_use`` is what the provider spent on its
-    own server-side tools -- whichever provider served the call.
+    cache_read + cache_write`` is the full prompt, ``output + output_image +
+    reasoning`` is everything generated, and ``tool_use`` is what the provider
+    spent on its own server-side tools -- whichever provider served the call.
     """
     if not reasoning_info:
         return {}
@@ -257,11 +257,19 @@ def normalized_token_buckets(
     if tool_use is not None:
         buckets["tool_use"] = max(0, tool_use)
 
+    # Generated image tokens are priced well above generated text on the models
+    # that emit both, so they are their own tier, carved out of the text output
+    # exactly as image input is carved out of the text input.
+    image_output = reasoning_info.get("image_output_tokens")
+    if image_output is not None:
+        buckets["output_image"] = max(0, image_output)
+
     completion = reasoning_info.get("completion_tokens")
     if completion is not None:
         output = completion
         if key not in _REASONING_OUTSIDE_OUTPUT_PROVIDERS:
             output -= reasoning or 0
+        output -= image_output or 0
         buckets["output"] = max(0, output)
 
     return buckets
@@ -374,6 +382,7 @@ async def instrumented_llm_request[R](
     operation: str,
     request: Callable[[], Awaitable[R]],
     usage: Callable[[R], MessageReasoningInfo | None] | None = None,
+    served_model: Callable[[R], str | None] | None = None,
 ) -> R:
     """Count one provider request that is not a chat call.
 
@@ -387,6 +396,11 @@ async def instrumented_llm_request[R](
     not every one is billed in them: image models bill per image on some
     providers and per output token on others, so the call counter is the meter
     that holds everywhere and tokens are recorded only where reported.
+
+    ``served_model`` reads back the model the provider says it actually used,
+    where it says so. Without it the ``resolved_model`` label repeats the
+    requested one, which makes provider-side routing and alias resolution
+    invisible on exactly the calls where an alias is most common.
     """
     started = time.monotonic()
     profile = current_processing_profile() or UNATTRIBUTED_PROFILE
@@ -396,7 +410,11 @@ async def instrumented_llm_request[R](
             profile=profile,
             provider=provider,
             model=model,
-            resolved_model=None,
+            resolved_model=(
+                served_model(response)
+                if served_model is not None and response is not None
+                else None
+            ),
             operation=operation,
             outcome=outcome,
             error_type=error_type,

@@ -73,15 +73,16 @@ A dashboard that summed these raw would double-count on two providers and under-
 the metric boundary is where the accounting is normalised, once, into **disjoint** buckets that
 every provider maps onto:
 
-| `kind`           | Meaning                                                        |
-| ---------------- | -------------------------------------------------------------- |
-| `input_uncached` | Prompt tokens that were neither read from nor written to cache |
-| `input_image`    | Prompt tokens that were image rather than text, where reported |
-| `cache_read`     | Prompt tokens served from the prompt cache                     |
-| `cache_write`    | Prompt tokens written into the prompt cache                    |
-| `output`         | Generated tokens excluding reasoning                           |
-| `reasoning`      | Reasoning / thinking tokens                                    |
-| `tool_use`       | Tokens the provider spent running its own server-side tools    |
+| `kind`           | Meaning                                                           |
+| ---------------- | ----------------------------------------------------------------- |
+| `input_uncached` | Prompt tokens that were neither read from nor written to cache    |
+| `input_image`    | Prompt tokens that were image rather than text, where reported    |
+| `cache_read`     | Prompt tokens served from the prompt cache                        |
+| `cache_write`    | Prompt tokens written into the prompt cache                       |
+| `output`         | Generated tokens excluding reasoning                              |
+| `output_image`   | Generated tokens that were image rather than text, where reported |
+| `reasoning`      | Reasoning / thinking tokens                                       |
+| `tool_use`       | Tokens the provider spent running its own server-side tools       |
 
 **The buckets are billing tiers, not provider fields.** That is what makes normalising worth doing
 rather than merely tidy: each tier is priced differently by every provider, so cost is one join of

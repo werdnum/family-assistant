@@ -227,6 +227,7 @@ class OpenAIEmbeddingGenerator:
             operation="embedding",
             request=create,
             usage=_openai_embedding_usage,
+            served_model=lambda response: getattr(response, "model", None),
         )
 
         if not response.data:

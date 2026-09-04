@@ -1887,13 +1887,17 @@ class TaskWorker:
         exec_context: ToolExecutionContext,
         delegation_id: str,
         result: ChatInteractionResult,
-    ) -> None:
+    ) -> bool:
         """Persist a delegation run's terminal result and notify if needed.
 
         Shared by the inline (local) path and the poll (remote) path. The
         terminal transition is an atomic CAS on non-terminal status, so a poll
         that finishes after the cleanup reaper already failed the same run loses
         the race (``None``) and does not resurrect/overwrite it or double-notify.
+
+        Returns whether this caller won that CAS, which is what makes it the one
+        caller that may count the run: anything recorded by a loser would be
+        recorded again by whichever attempt eventually commits.
         """
         clock = exec_context.clock or self.clock
         completed_at = clock.now()
@@ -1917,8 +1921,9 @@ class TaskWorker:
                 "Delegation run %s was already terminal when finalizing; skipping.",
                 delegation_id,
             )
-            return
+            return False
         await self._deliver_terminal_delegation(exec_context, terminal_run, force=False)
+        return True
 
     async def _submit_pollable_delegation(
         self,
@@ -2347,7 +2352,18 @@ class TaskWorker:
             )
             return
 
-        await self._finalize_delegation_run(exec_context, delegation_id, result)
+        committed = await self._finalize_delegation_run(
+            exec_context, delegation_id, result
+        )
+        if committed:
+            # Probed rather than declared on PollableDelegationService: that
+            # Protocol is runtime_checkable and the worker uses it to decide
+            # whether a target polls at all, so a new member would silently
+            # demote every implementation that lacks it -- including services
+            # with no usage to report -- back to the inline path.
+            record = getattr(target_service, "record_terminal_metrics", None)
+            if record is not None:
+                await record(remote_task_id)
 
     async def handle_delegation_run_cleanup(
         self,

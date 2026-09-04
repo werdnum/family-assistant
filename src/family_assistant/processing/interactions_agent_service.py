@@ -535,12 +535,10 @@ class InteractionsAgentProcessingService(ProcessingService):
         _ = remote_context_id
         interaction = await self._google_client().get_agent_interaction(remote_task_id)
         if interaction.status == "completed":
-            self._record_run_metrics(interaction, outcome="success")
             return ChatInteractionResult.success(
                 text_reply=interaction.output_text or ""
             )
         if is_interaction_terminal_error_status(interaction.status):
-            self._record_run_metrics(interaction, outcome="error")
             error_detail = _describe_interaction_errors(interaction)
             logger.warning(
                 "Interactions API run on '%s' ended with status %s (interaction %s)%s",
@@ -558,6 +556,36 @@ class InteractionsAgentProcessingService(ProcessingService):
                 ),
             )
         return PENDING
+
+    async def record_terminal_metrics(self, remote_task_id: str) -> None:
+        """Count the finished run, called once the terminal CAS has committed.
+
+        Re-reads the interaction rather than carrying one out of the poll: the
+        poll that saw the terminal state is not necessarily the attempt that
+        commits it, and counting there would count a run again for every
+        retried poll. One extra read per run is not worth avoiding against a
+        run that took minutes to produce, and the provider's totals have
+        settled by now.
+        """
+        try:
+            interaction = await self._google_client().get_agent_interaction(
+                remote_task_id
+            )
+        except Exception:
+            logger.warning(
+                "Could not read interaction %s to count its usage.",
+                remote_task_id,
+                exc_info=True,
+            )
+            return
+        self._record_run_metrics(
+            interaction,
+            outcome=(
+                "error"
+                if is_interaction_terminal_error_status(interaction.status)
+                else "success"
+            ),
+        )
 
     def _record_run_metrics(
         self,

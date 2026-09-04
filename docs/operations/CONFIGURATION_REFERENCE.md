@@ -107,6 +107,10 @@ Port the metrics endpoint listens on. Deliberately separate from the application
 application port is normally published by an Ingress in its entirety, and token spend, model line-up
 and error rates should not be public. Do not route this port from an Ingress.
 
+Setting it equal to `SERVER_PORT` while metrics are enabled is a startup error. The exporter binds
+first, so on a collision it is the application that fails to bind — in a background task nobody
+observes, leaving a process that is up and serving metrics for an API that is gone.
+
 | Property  | Value  |
 | --------- | ------ |
 | Required  | No     |

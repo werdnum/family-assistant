@@ -1638,6 +1638,26 @@ class AppConfig(BaseSettings):
     max_response_attachments: int = 6  # Max attachments per response
 
     @model_validator(mode="after")
+    def validate_metrics_port_is_not_the_application_port(self) -> AppConfig:
+        """Reject a metrics port that collides with the application's.
+
+        The exporter binds synchronously during startup, before the Uvicorn
+        task scheduled just before it gets to run. On a collision Uvicorn is
+        the one that fails to bind, and it does so inside a background task
+        nobody observes, leaving a process that is up and serving metrics
+        while the API it exists to serve is gone. Failing here instead turns
+        a silent half-outage into a startup error naming the setting.
+        """
+        if self.metrics_enabled and self.metrics_port == self.server_port:
+            msg = (
+                f"metrics_port ({self.metrics_port}) must differ from server_port "
+                f"({self.server_port}): the exporter and the application cannot "
+                f"share a port, and the application is the one that loses."
+            )
+            raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
     def validate_excluded_global_tools_are_granted(self) -> AppConfig:
         """Reject an exclusion that withholds nothing.
 

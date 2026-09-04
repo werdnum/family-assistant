@@ -118,6 +118,11 @@ class MessageReasoningInfo(TypedDict, total=False):
     reports the split. A subset of ``prompt_tokens``, broken out because the
     two are priced differently -- OpenAI's image models bill image input above
     text input, so an aggregate cannot be costed from one price."""
+    image_output_tokens: int
+    """Generated tokens that were image rather than text, where the provider
+    reports the split. A subset of ``completion_tokens``, and priced well above
+    text output on the models that emit both, so the two cannot share a
+    price."""
     source_turn_id: str | None
     tool_name: str
     thought_summaries: list[dict[str, str | int]]
