@@ -78,8 +78,9 @@ Some situations run the assistant with deliberately reduced powers:
   main assistant's context. See [automations.md](automations.md).
 - **iOS "Capture this"** handles shared pages and emails in a restricted mode that can read your
   information to file things sensibly, but asks before making changes.
-- **`/engineer`** is read-only by design: it can inspect the system but not change data or send
-  messages. See [troubleshooting.md](troubleshooting.md).
+- **`/engineer`** inspects the system but cannot change your data or send messages; the code it runs
+  runs in a throwaway sandbox with no access to your information, holding only what the assistant
+  puts into the command it runs there. See [troubleshooting.md](troubleshooting.md).
 - **Scheduled health checks** write only quarantined diagnostics notes. See
   [automations.md](automations.md#scheduled-health-checks).
 

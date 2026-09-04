@@ -87,6 +87,7 @@ from family_assistant.tools.confirmation import (
     TOOL_CONFIRMATION_RENDERERS,
     _format_event_details_for_confirmation,
     render_delete_calendar_event_confirmation,
+    render_generic_tool_confirmation,
     render_modify_calendar_event_confirmation,
 )
 from family_assistant.tools.data_manipulation import (
@@ -468,6 +469,7 @@ __all__ = [
     "reconnect_mcp_server",
     "reindex_email_tool",
     "render_delete_calendar_event_confirmation",
+    "render_generic_tool_confirmation",
     "render_home_assistant_template_tool",
     "render_modify_calendar_event_confirmation",
     "report_technical_problem_tool",

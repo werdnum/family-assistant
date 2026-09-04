@@ -270,8 +270,14 @@ supervision requirements based on input trust level:
 4. **Engineer Profile [B]**: read-only diagnostic access (source code, database, error logs, notes)
    for debugging the application. Used via `/engineer` or by delegating to the `engineer` profile.
    It cannot change state or communicate externally on its own; side effects are gated — creating
-   GitHub issues requires user confirmation, while aligned handoffs, worker launches, and inbound
-   delegations are judged by tool-call review. Example: "Why isn't my daily brief firing?"
+   GitHub issues requires user confirmation, while aligned handoffs, worker launches, sandboxed code
+   execution, and inbound delegations are judged by tool-call review. Example: "Why isn't my daily
+   brief firing?" Code execution is granted by the tag pair `code_execution` + `worker`, which is
+   what execution *outside* the application carries (a deployment's code-execution MCP server,
+   `spawn_worker`); `code_execution` alone — the in-app script tools — stays denied, as does the
+   shared workspace. A sandbox run reproduces a failure or reads a repository without giving the
+   profile anything that writes back, and the `sandbox_network` taint sink gates it whenever the
+   turn carries untrusted content.
 5. **Complex Tasks Profile [BC]**: full tool access via OpenAI GPT-5.6-sol (`gpt-5.6-sol`) at
    `reasoning_effort: high`, with a higher iteration limit (100) for deep multi-step reasoning. Used
    via `/complex` or delegation from the default assistant, which runs Gemini 3.8 Flash

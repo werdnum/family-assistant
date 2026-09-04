@@ -609,8 +609,9 @@ async def test_submit_async_denies_a_sandbox_profile_untrusted_content(
 ) -> None:
     """Email-derived instructions cannot direct a code-execution agent.
 
-    The shipped matrix maps unknown_external -> sandbox_network to deny, so a
-    profile that declares that sink refuses the run rather than submitting it.
+    The shipped matrix gates unknown_external -> sandbox_network, and this
+    submission path has no confirmation channel, so a profile that declares
+    that sink refuses the run rather than submitting it.
     """
     llm_client = _google_client()
     llm_client.start_agent_interaction = AsyncMock()

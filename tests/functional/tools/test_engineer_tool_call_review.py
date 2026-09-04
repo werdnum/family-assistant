@@ -50,6 +50,8 @@ from family_assistant.tools import (
     TaintTrackingToolsProvider,
 )
 from family_assistant.tools.engineering import resolve_tool_policy
+from family_assistant.tools.metadata import ToolDescriptor, ToolTag
+from family_assistant.tools.policy import ToolPolicyDecision
 from family_assistant.tools.types import (
     ConfirmationOutcome,
     ToolExecutionContext,
@@ -64,7 +66,7 @@ if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface
     from family_assistant.llm.messages import LLMMessage
     from family_assistant.processing import ProcessingService
-    from family_assistant.tools.types import ToolArguments
+    from family_assistant.tools.types import ToolArguments, ToolDefinition
 
 
 DEFAULTS_PATH = Path("defaults.yaml")
@@ -229,6 +231,54 @@ def _make_exec_context(
         taint_tracker=tracker,
         taint_policy_snapshot=state,
     )
+
+
+def test_engineer_reaches_sandboxed_code_execution_but_not_in_app_execution() -> None:
+    """Sandboxed runners are reviewable; in-app scripts and the workspace are not."""
+    _, profiles = _load_resolved_profiles()
+    engineer = profiles["engineer"]
+    policy_engine = _build_profile_policy_engine(
+        engineer.id,
+        engineer.tools_policy,
+        None,
+        None,
+        engineer.excluded_global_tools,
+    )
+
+    sandbox_runner = ToolDescriptor(
+        name="execute_shell",
+        definition=cast(
+            "ToolDefinition",
+            {
+                "type": "function",
+                "function": {
+                    "name": "execute_shell",
+                    "description": "Run a shell command in a sandbox.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        ),
+        tags=frozenset({
+            ToolTag.CODE_EXECUTION,
+            ToolTag.WORKER,
+            ToolTag.OUTPUT_UNTRUSTED,
+        }),
+        origin="mcp",
+        mcp_server_id="code-execution",
+    )
+
+    assert policy_engine.evaluate(sandbox_runner).decision is ToolPolicyDecision.REVIEW
+    local_by_name = {
+        registration.name: registration for registration in LOCAL_TOOL_REGISTRATIONS
+    }
+    for in_app_tool in ("execute_script", "workspace_write"):
+        descriptor = ToolDescriptor(
+            name=in_app_tool,
+            definition=local_by_name[in_app_tool].definition,
+            tags=local_by_name[in_app_tool].metadata.tags,
+            origin="local",
+        )
+        assert policy_engine.evaluate(descriptor).decision is ToolPolicyDecision.DENY
 
 
 @pytest.mark.asyncio

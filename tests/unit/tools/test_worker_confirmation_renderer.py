@@ -41,8 +41,9 @@ def _context_with_task(task: dict[str, object] | None) -> ToolExecutionContext:
 
 
 def test_worker_tools_have_confirmation_renderers() -> None:
-    # The engineer profile confirm-gates these tools, so the fallback
-    # "Confirm execution of tool: <name>" prompt would hide the payload.
+    # The engineer profile confirm-gates these tools. The generic fallback would
+    # dump their raw arguments; a dedicated renderer says what approving means
+    # and enforces the per-field caps this module tests.
     assert "spawn_worker" in TOOL_CONFIRMATION_RENDERERS
     assert "cancel_worker_task" in TOOL_CONFIRMATION_RENDERERS
 

@@ -6,6 +6,7 @@ for tools that require user confirmation before execution.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING, Protocol, cast
 
@@ -52,6 +53,14 @@ MAX_WORKER_TASK_DESCRIPTION_CHARS = 3000
 # guard therefore also refuses on the total rendered prompt, with headroom
 # under 3800 for the interface's own additions (e.g. the source prefix).
 MAX_WORKER_CONFIRMATION_PROMPT_CHARS = 3400
+
+# A tool with no dedicated renderer is confirmed against its raw arguments, so
+# the same full-review contract applies: the approver sees every argument or the
+# call is refused. The cap is the spawn_worker one, for the same reason — it
+# keeps the whole prompt inside Telegram's single-message confirmation budget
+# (TELEGRAM_CONFIRMATION_MESSAGE_LIMIT = 3800 in telegram/ui.py) with headroom
+# for the interface's own additions.
+MAX_GENERIC_CONFIRMATION_PROMPT_CHARS = 3400
 
 
 def _markdown_code_block(text: str) -> str:
@@ -697,6 +706,45 @@ def over_length_delegation_block_reason(user_request: str) -> str | None:
     )
 
 
+def _generic_arguments_json(arguments: Mapping[str, object]) -> str:
+    """Serialize arbitrary tool arguments for a confirmation prompt."""
+    return json.dumps(dict(arguments), indent=2, sort_keys=True, default=str)
+
+
+def render_generic_tool_confirmation(
+    tool_name: str,
+    arguments: Mapping[str, object],
+) -> str:
+    """Render the confirmation prompt for a tool with no dedicated renderer.
+
+    Every interface falls back to this when ``TOOL_CONFIRMATION_RENDERERS`` has
+    no entry for the tool, which is every MCP tool: their names and schemas come
+    from the server, so no static renderer can exist for them. Naming the tool
+    alone would let an approver authorize arguments they never saw -- a shell
+    command, a request body -- so the arguments themselves are the prompt.
+
+    An over-length payload is announced rather than truncated, and
+    ``confirmation_payload_block_reason`` refuses the call, so there is no
+    partial body to rubber-stamp.
+    """
+    arguments_json = _generic_arguments_json(arguments)
+    if len(arguments_json) > MAX_GENERIC_CONFIRMATION_PROMPT_CHARS:
+        arguments_field = (
+            f"- Arguments: ⚠️ These arguments render to {len(arguments_json)} characters, "
+            f"longer than the {MAX_GENERIC_CONFIRMATION_PROMPT_CHARS}-character limit that "
+            "keeps them fully reviewable here. The call will be refused — ask for a "
+            "smaller payload."
+        )
+    else:
+        arguments_field = f"- Arguments:\n{_markdown_code_block(arguments_json)}"
+    return (
+        "Do you want to run this tool call? It runs with the arguments below, "
+        "exactly as shown:\n"
+        f"{_confirmation_field('Tool', tool_name)}\n"
+        f"{arguments_field}"
+    )
+
+
 def confirmation_payload_block_reason(
     tool_name: str,
     arguments: Mapping[str, object],
@@ -756,6 +804,18 @@ def confirmation_payload_block_reason(
                 f"{MAX_WORKER_CONFIRMATION_PROMPT_CHARS}-character limit that keeps the "
                 "whole prompt reviewable in a single confirmation message. Shorten the "
                 "task description or pass fewer context paths."
+            )
+    if tool_name not in TOOL_CONFIRMATION_RENDERERS:
+        # Every MCP tool lands here: no static renderer can exist for a name the
+        # server supplies, so the generic renderer shows the raw arguments and
+        # this refuses whatever it could not show in full.
+        arguments_json = _generic_arguments_json(arguments)
+        if len(arguments_json) > MAX_GENERIC_CONFIRMATION_PROMPT_CHARS:
+            return (
+                f"Error: the '{tool_name}' arguments render to {len(arguments_json)} "
+                f"characters, which exceeds the {MAX_GENERIC_CONFIRMATION_PROMPT_CHARS}-"
+                "character limit that keeps them fully reviewable in a confirmation "
+                "prompt. Call the tool with a smaller payload."
             )
     if tool_name == "gmail_create_draft":
         for field in ("to", "cc", "bcc", "subject", "body", "attachment_ids"):

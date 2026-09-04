@@ -145,6 +145,7 @@ from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAME
 from family_assistant.tools.confirmation import (
     TOOL_CONFIRMATION_RENDERERS,
     append_review_reason_to_confirmation,
+    render_generic_tool_confirmation,
 )
 from family_assistant.tools.stored_scripts import AUTOMATION_RUNTIME_GLOBALS
 from family_assistant.tools.types import (
@@ -2706,7 +2707,7 @@ class TaskWorker:
             if renderer:
                 prompt_text = await renderer(tool_args, context)
             else:
-                prompt_text = f"Confirm execution of tool: {tool_name}"
+                prompt_text = render_generic_tool_confirmation(tool_name, tool_args)
             prompt_text = append_review_reason_to_confirmation(prompt_text, context)
 
             display_turn_id = run["source_turn_id"] or turn_id
