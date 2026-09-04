@@ -154,13 +154,27 @@ def _redact_url(value: str) -> str:
     return urlunsplit((split.scheme, netloc, split.path, query, split.fragment))
 
 
+def _parses_as_url(value: str) -> bool:
+    """Return True if urlsplit accepts the value (it rejects a broken authority)."""
+    try:
+        urlsplit(value)
+    except ValueError:
+        return False
+    return True
+
+
 def _redact_url_match(match: re.Match[str]) -> str:
     """Redact one URL found inside a larger string, keeping trailing punctuation."""
     url = match.group(0)
-    trailing = ""
-    while url and url[-1] in _URL_TRAILING_PUNCTUATION:
-        url, trailing = url[:-1], url[-1] + trailing
-    return _redact_url(url) + trailing
+    stripped = url.rstrip(_URL_TRAILING_PUNCTUATION)
+    trailing = url[len(stripped) :]
+    # A trailing character is only prose punctuation if the URL still parses
+    # without it. It may instead close an IPv6 literal host
+    # ("https://user:pw@[::1]"), where stripping it would break parsing and
+    # leave the credential in place.
+    if trailing and stripped and _parses_as_url(stripped):
+        return _redact_url(stripped) + trailing
+    return _redact_url(url)
 
 
 def redact_sensitive_text(value: str) -> str:

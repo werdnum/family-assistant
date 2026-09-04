@@ -79,6 +79,25 @@ def test_percent_encoded_credential_parameter_name_is_matched() -> None:
     assert redacted == f"https://api.example.com/v1?API%5FKEY={REDACTED}&page=2"
 
 
+def test_ipv6_host_url_credentials_are_redacted() -> None:
+    """A closing bracket ending an IPv6 literal host is not prose punctuation."""
+    assert redact_sensitive_text("https://user:hunter2@[::1]") == (
+        f"https://user:{REDACTED}@[::1]"
+    )
+    assert redact_sensitive_text("https://user:hunter2@[::1]:8080/p") == (
+        f"https://user:{REDACTED}@[::1]:8080/p"
+    )
+
+
+def test_prose_punctuation_after_a_url_is_preserved() -> None:
+    assert redact_sensitive_text("see https://user:pw@example.com/p.") == (
+        f"see https://user:{REDACTED}@example.com/p."
+    )
+    assert redact_sensitive_text("endpoint (https://api.example.com/v1?token=abc)") == (
+        f"endpoint (https://api.example.com/v1?token={REDACTED})"
+    )
+
+
 def test_inline_pem_private_key_is_redacted() -> None:
     """``apns.auth_key`` holds a PEM inline; its name matches no secret substring."""
     redacted = redact_sensitive_config({
