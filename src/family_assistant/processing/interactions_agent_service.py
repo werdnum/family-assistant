@@ -557,8 +557,14 @@ class InteractionsAgentProcessingService(ProcessingService):
             )
         return PENDING
 
-    async def record_terminal_metrics(self, remote_task_id: str) -> None:
+    async def record_terminal_metrics(
+        self, remote_task_id: str, *, cancelled: bool = False
+    ) -> None:
         """Count the finished run, called once the terminal CAS has committed.
+
+        ``cancelled`` is the timeout path, which cancels the remote run and
+        never polls it again: the run has an outcome but no terminal poll to
+        read it from, and those are the longest runs, so the most expensive.
 
         Re-reads the interaction rather than carrying one out of the poll: the
         poll that saw the terminal state is not necessarily the attempt that
@@ -567,6 +573,9 @@ class InteractionsAgentProcessingService(ProcessingService):
         run that took minutes to produce, and the provider's totals have
         settled by now.
         """
+        if cancelled:
+            await self._record_cancelled_run(remote_task_id)
+            return
         try:
             interaction = await self._google_client().get_agent_interaction(
                 remote_task_id
@@ -629,8 +638,6 @@ class InteractionsAgentProcessingService(ProcessingService):
                 self.service_config.id,
                 exc,
             )
-        finally:
-            await self._record_cancelled_run(remote_task_id)
 
     async def _record_cancelled_run(self, remote_task_id: str) -> None:
         """Account for a run that was cancelled rather than polled to an end.

@@ -1358,8 +1358,19 @@ class AnthropicClient(BaseLLMClient):
                 # Check for VCR replay mode
                 vcr_events = await self._maybe_parse_vcr_stream(params)
                 if vcr_events is not None:
+                    # Replayed turns finish through the same telemetry path as
+                    # live ones. Returning without it leaves the call with no
+                    # terminal outcome, which the abandonment fallback then
+                    # records as a cancellation -- so every replayed stream
+                    # would read as a cancelled call that spent nothing.
                     for event in vcr_events:
+                        if event.type == "done" and event.metadata:
+                            event.metadata["reasoning_info"] = telemetry.finalize_usage(
+                                event.metadata.get("reasoning_info")
+                            )
+                        telemetry.observe_event(event)
                         yield event
+                    telemetry.finish_success({"streaming": True})
                     return
 
                 # Use Anthropic streaming

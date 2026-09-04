@@ -2331,7 +2331,7 @@ class TaskWorker:
             # task is cancelled and failed, never one that just finished above.
             if past_cap:
                 await target_service.cancel_async(remote_task_id)
-                await self._fail_delegation_run(
+                committed = await self._fail_delegation_run(
                     exec_context,
                     delegation_id=delegation_id,
                     error=(
@@ -2339,6 +2339,10 @@ class TaskWorker:
                         f"time ({max_async_seconds:.0f}s) and was cancelled."
                     ),
                 )
+                if committed:
+                    record = getattr(target_service, "record_terminal_metrics", None)
+                    if record is not None:
+                        await record(remote_task_id, cancelled=True)
                 return
             attempts = await exec_context.db_context.delegation_runs.bump_poll_attempt(
                 delegation_id, clock.now()
@@ -2767,16 +2771,22 @@ class TaskWorker:
         *,
         delegation_id: str,
         error: str,
-    ) -> None:
-        """Mark a delegation run failed (committed immediately) and notify."""
+    ) -> bool:
+        """Mark a delegation run failed (committed immediately) and notify.
+
+        Returns whether this caller won the terminal CAS, which is what makes
+        it the one caller that may count the run.
+        """
         clock = exec_context.clock or self.clock
         run = await exec_context.db_context.delegation_runs.mark_failed(
             delegation_id=delegation_id,
             error=error,
             completed_at=clock.now(),
         )
-        if run is not None:
-            await self._deliver_terminal_delegation(exec_context, run, force=False)
+        if run is None:
+            return False
+        await self._deliver_terminal_delegation(exec_context, run, force=False)
+        return True
 
     def _chat_interface_for_interface(
         self,

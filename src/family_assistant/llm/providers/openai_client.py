@@ -1358,8 +1358,24 @@ class OpenAIClient(BaseLLMClient):
             # manually parse and emit events when detected.
             vcr_chunks = await self._maybe_parse_vcr_stream(stream)
             if vcr_chunks is not None:
+                # Replayed turns finish through the same telemetry path as live
+                # ones. Returning without it leaves the call with no terminal
+                # outcome, which the abandonment fallback then records as a
+                # cancellation -- so every replayed stream would read as a
+                # cancelled call that spent nothing.
                 async for event in self._emit_events_from_chunk_dicts(vcr_chunks):
+                    if event.type == "done" and event.metadata:
+                        telemetry.record_response_metadata(
+                            resolved_model=event.metadata.get("resolved_model"),
+                            response_id=event.metadata.get("response_id"),
+                            finish_reason=event.metadata.get("finish_reason"),
+                        )
+                        event.metadata["reasoning_info"] = telemetry.finalize_usage(
+                            event.metadata.get("reasoning_info")
+                        )
+                    telemetry.observe_event(event)
                     yield event
+                telemetry.finish_success({"streaming": True})
                 return
 
             # Track current tool call being built
