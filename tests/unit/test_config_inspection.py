@@ -104,6 +104,10 @@ def test_dsn_passwords_outside_the_rfc_grammar_are_redacted() -> None:
         ("postgresql://user:pa?ss@db/family", "pa?ss"),
         ("postgresql://user:pa ss@db/family", "pa ss"),
         ("postgresql://user:pa#ss@db/family", "pa#ss"),
+        # Percent-encoded bytes mixed with an unescaped delimiter: the decoded
+        # password ("pa@/ss") never appears in the value, so the raw span is
+        # what has to be matched.
+        ("postgresql://user:pa%40/ss@db/family", "pa%40/ss"),
     ):
         redacted = redact_sensitive_text(dsn)
         assert password not in redacted, dsn

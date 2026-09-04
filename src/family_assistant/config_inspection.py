@@ -28,9 +28,6 @@ import re
 from typing import TYPE_CHECKING, Any
 from urllib.parse import unquote_plus, urlsplit, urlunsplit
 
-from sqlalchemy.engine import make_url
-from sqlalchemy.exc import ArgumentError
-
 if TYPE_CHECKING:
     from family_assistant.config_models import (
         DefaultProfileSettings,
@@ -143,23 +140,25 @@ def _parses_as_url(value: str) -> bool:
     return True
 
 
-def _redact_database_url_password(value: str) -> str:
-    """Redact a password that only SQLAlchemy's URL grammar can locate.
+# SQLAlchemy reads a DSN's password as everything between the userinfo's first
+# ":" and the "@". That span may hold "/", "?", "#", spaces or percent-encoded
+# bytes -- characters urlsplit either stops at or decodes. Matching the raw text
+# keeps the replacement on the characters actually present in the value: asking
+# SQLAlchemy for the password instead returns it decoded, which then fails to
+# match a percent-encoded original.
+_DSN_USERINFO_PASSWORD = re.compile(
+    r"(?P<prefix>[A-Za-z][A-Za-z0-9+.\-]*://)(?P<user>[^:@/]*):(?P<password>[^@]*)@"
+)
 
-    ``urlsplit`` ends the authority at the first ``/``, ``?`` or ``#``, while
-    SQLAlchemy reads the password as everything up to the ``@``. A DSN like
-    ``postgresql://user:pa/ss@db/family`` is therefore a valid runtime URL whose
-    password the RFC parser never sees. Ask SQLAlchemy where the password is and
-    replace that exact substring, leaving the rest of the string untouched.
-    """
-    try:
-        parsed = make_url(value)
-    except (ArgumentError, ValueError):
-        return value
-    password = parsed.password
-    if not password:
-        return value
-    return value.replace(f":{password}@", f":{REDACTED}@", 1)
+
+def _redact_dsn_password(match: re.Match[str]) -> str:
+    """Redact the raw password span of one database URL authority."""
+    return f"{match.group('prefix')}{match.group('user')}:{REDACTED}@"
+
+
+def _redact_database_url_password(value: str) -> str:
+    """Redact a password that only the database-URL grammar can locate."""
+    return _DSN_USERINFO_PASSWORD.sub(_redact_dsn_password, value)
 
 
 def redact_sensitive_text(value: str) -> str:
