@@ -147,12 +147,41 @@ def _parses_as_url(value: str) -> bool:
 # SQLAlchemy for the password instead returns it decoded, which then fails to
 # match a percent-encoded original.
 _DSN_USERINFO_PASSWORD = re.compile(
-    r"(?P<prefix>[A-Za-z][A-Za-z0-9+.\-]*://)(?P<user>[^:@/]*):(?P<password>[^@]*)@"
+    r"(?P<prefix>(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]*)://)"
+    r"(?P<user>[^:@/]*):(?P<password>[^@]*)@"
 )
+
+
+# The database-URL grammar is only correct once you know the string is a DSN.
+# SQLAlchemy reads "http://localhost:8000/notify?email=user@example.com" as user
+# "localhost" with password "8000/notify?email=user" -- so applying it to every
+# URL corrupts ordinary endpoints. Gate it on the scheme naming a dialect.
+#
+# A dialect missing from this set degrades to the RFC pass, which still redacts
+# an ordinary password; it does not leak one. Adding a dialect is a one-line
+# change, and the cost of a wrong guess falls on availability, not safety.
+_DATABASE_URL_SCHEMES: frozenset[str] = frozenset({
+    "clickhouse",
+    "cockroachdb",
+    "db2",
+    "duckdb",
+    "mariadb",
+    "mssql",
+    "mysql",
+    "oracle",
+    "postgres",
+    "postgresql",
+    "redshift",
+    "snowflake",
+    "sqlite",
+})
 
 
 def _redact_dsn_password(match: re.Match[str]) -> str:
     """Redact the raw password span of one database URL authority."""
+    scheme = match.group("scheme").partition("+")[0].lower()
+    if scheme not in _DATABASE_URL_SCHEMES:
+        return match.group(0)
     return f"{match.group('prefix')}{match.group('user')}:{REDACTED}@"
 
 

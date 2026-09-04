@@ -115,6 +115,17 @@ def test_dsn_passwords_outside_the_rfc_grammar_are_redacted() -> None:
         assert redacted.endswith("@db/family"), dsn
 
 
+def test_non_database_urls_are_not_read_with_the_dsn_grammar() -> None:
+    """The DSN grammar corrupts ordinary URLs, so only dialect schemes get it.
+
+    SQLAlchemy reads this callback URL as user "localhost" with password
+    "8000/notify?email=user" — applying that grammar to every URL would rewrite
+    a valid non-secret endpoint into nonsense in the diagnostics.
+    """
+    callback = "--callback=http://localhost:8000/notify?email=user@example.com"
+    assert redact_sensitive_text(callback) == callback
+
+
 def test_url_without_credentials_is_untouched() -> None:
     for url in (
         "sqlite+aiosqlite:///family_assistant.db",
