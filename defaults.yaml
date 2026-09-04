@@ -96,11 +96,14 @@ llm_parameters:
   # model's first tool call replayed a turn missing its thinking block and
   # signature, which the API rejects.
   #
-  # Sonnet 5 takes the `adaptive` shape and rejects `enabled` + `budget_tokens`
+  # Opus 5 takes the `adaptive` shape and rejects `enabled` + `budget_tokens`
   # with a 400, so this is not interchangeable with the claude-sonnet-4-6
-  # example below. Effort `high` is Sonnet 5's own default, set explicitly to
-  # make it a choice: `medium` is the cost-saving step down (roughly Sonnet 4.6
-  # at high), `xhigh` the step up for the hardest agentic work.
+  # example below. Effort `high` is Opus 5's own default, set explicitly to make
+  # it a choice: `medium` is the cost-saving step down, `xhigh` the step up for
+  # the hardest agentic work. Thinking is on by default on this generation, so
+  # the `adaptive` entry is a statement of intent rather than the switch that
+  # turns it on -- it is what keeps a later effort or display change from
+  # silently landing on a model running without thinking.
   #
   # Thinking shares the max_tokens budget with the response, which is why the
   # client's hard-coded 8192 is raised here; 16000 is the ceiling because two of
@@ -113,7 +116,7 @@ llm_parameters:
   # The client drops thinking from those requests rather than sending an explicit
   # disabled value, which is itself a 400 on some generations; see
   # _strip_thinking_for_forced_tool_choice. Nothing to configure here.
-  "claude-sonnet-5":
+  "claude-opus-5":
     thinking:
       type: "adaptive"
     output_config:
@@ -1621,7 +1624,7 @@ service_profiles:
         - "weather"
         - "home_assistant"
       provider: "anthropic"
-      llm_model: "claude-sonnet-5"
+      llm_model: "claude-opus-5"
       max_iterations: 100
       prompts:
         system_prompt: |

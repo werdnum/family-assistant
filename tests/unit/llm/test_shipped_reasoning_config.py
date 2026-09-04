@@ -74,27 +74,27 @@ def _anthropic_client_for(model: str) -> AnthropicClient:
     return client
 
 
-def test_shipped_defaults_enable_adaptive_thinking_for_sonnet_5() -> None:
+def test_shipped_defaults_enable_adaptive_thinking_for_opus_5() -> None:
     """The Anthropic profiles' model must get thinking, in its generation's shape.
 
     `enabled` + `budget_tokens` is what the previous generation took and is a 400
     on this one, so the type is asserted rather than merely the presence of a
     `thinking` key.
     """
-    params = _anthropic_client_for("claude-sonnet-5")._get_model_specific_params(
-        "claude-sonnet-5"
+    params = _anthropic_client_for("claude-opus-5")._get_model_specific_params(
+        "claude-opus-5"
     )
 
     assert params["thinking"] == {"type": "adaptive"}
 
 
-def test_shipped_sonnet_5_request_carries_thinking_and_survives_validation() -> None:
+def test_shipped_opus_5_request_carries_thinking_and_survives_validation() -> None:
     """End to end: shipped config -> factory -> a request the client will send.
 
     Covers the budget/`max_tokens` validation too, which otherwise only fails
     once a conversation is already underway.
     """
-    client = _anthropic_client_for("claude-sonnet-5")
+    client = _anthropic_client_for("claude-opus-5")
     system_blocks, api_messages = client._convert_messages_to_anthropic_format([
         UserMessage(content="hello")
     ])
