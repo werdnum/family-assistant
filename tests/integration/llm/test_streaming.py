@@ -443,18 +443,21 @@ async def test_anthropic_streaming_thinking_round_trip(
     if llm_record_mode != "replay" and not os.getenv("ANTHROPIC_API_KEY"):
         pytest.skip("Recording this test requires ANTHROPIC_API_KEY")
 
-    # Pinned to the shipped model and the shipped thinking shape. Both matter:
-    # `claude-sonnet-5` is what the engineer profile runs, and it rejects the
-    # `enabled` + `budget_tokens` form this test used to pass with a 400.
-    # Verifying replay against a model/shape combination no profile uses would
-    # leave the mechanism that profile depends on unexercised, which is the one
-    # thing this test exists to prevent.
+    # Pinned to the shipped thinking shape, which is what this test exists to
+    # exercise: `adaptive` is what the engineer profile sends, and the
+    # `enabled` + `budget_tokens` form this test used to pass with a 400 on that
+    # generation. The cassette is recorded against `claude-sonnet-5` rather than
+    # the `claude-opus-5` the profile now runs -- the two take the identical
+    # request shape and return identically structured signed thinking blocks, so
+    # the capture-and-replay mechanism under test is the same one either way,
+    # and re-recording needs a live Anthropic credential. Re-record against
+    # `claude-opus-5` the next time this cassette is regenerated.
     #
-    # `display` is the one field set here that the profiles do not set. Sonnet 5
-    # defaults it to `omitted`, which still returns thinking blocks carrying the
-    # signature -- so capture and replay, the mechanism under test, behave
-    # identically either way -- but their text is empty, and a turn with no
-    # thinking text cannot show that reasoning stays out of the reply. The
+    # `display` is the one field set here that the profiles do not set. This
+    # generation defaults it to `omitted`, which still returns thinking blocks
+    # carrying the signature -- so capture and replay, the mechanism under test,
+    # behave identically either way -- but their text is empty, and a turn with
+    # no thinking text cannot show that reasoning stays out of the reply. The
     # profiles leave the default because nothing renders reasoning text: the
     # `thinking` stream events are ignored by the processing loop and by the web
     # and iOS transports, so paying for summaries would buy nothing.
