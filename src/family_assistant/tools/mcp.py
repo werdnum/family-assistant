@@ -140,9 +140,16 @@ class MCPServerStatus(TypedDict):
     """Diagnostic snapshot describing one MCP server's connection state.
 
     Used by ``MCPToolsProvider.get_server_statuses`` and surfaced through
-    the engineer-profile ``get_mcp_server_status`` tool. Token-bearing
-    config fields are intentionally omitted, and credentials embedded in
-    ``url`` or ``args`` are redacted.
+    the engineer-profile ``get_mcp_server_status`` tool. The ``token`` config
+    field is intentionally omitted, and ``url`` and ``args`` are passed through
+    the shared value-shape redaction, which covers an endpoint's userinfo
+    password and credential query parameters.
+
+    Credentials belong in ``env`` (stdio) or the ``token`` field (remote), as a
+    ``$VAR`` reference; both are redacted by field name. A credential placed
+    outside that supported path — ``args: ["--token", "secret"]``, say — is not
+    guaranteed to be redacted here, and an operator who puts one there accepts
+    that. See the MCP section of ``docs/operations/CONFIGURATION_REFERENCE.md``.
     """
 
     status: str

@@ -230,7 +230,7 @@ def test_server_status_redacts_credentials_in_url_and_args() -> None:
             "args": ["--endpoint=https://user:hunter2@scraper.internal/mcp"],
         },
     }
-    provider = MCPToolsProvider(configs)  # type: ignore[arg-type]
+    provider = MCPToolsProvider(configs)
 
     statuses = provider.get_server_statuses()
 

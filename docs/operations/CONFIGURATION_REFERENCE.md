@@ -2327,6 +2327,19 @@ Expansion applies to every string value: stdio `command`, `args`, and `env` entr
 of a remote SSE or Streamable HTTP server. For example, `"url": "${MCP_HTTP_ORIGIN}/mcp"` keeps a
 deployment-specific origin out of `config.yaml`.
 
+#### Passing credentials to an MCP server
+
+Give a stdio server its credentials through `env`, and a remote SSE or Streamable HTTP server its
+credential through the `token` field — in both cases as a `$VAR` reference rather than a literal.
+That is the supported path: the stored config holds only the placeholder, the value is resolved from
+the environment at connection time, and diagnostic dumps redact the field by name.
+
+A credential put anywhere else in the entry is outside that path and may be shown in full by
+`get_mcp_server_status` and the config dump. Redaction still catches the shapes it can recognize — a
+userinfo password or a `token=`-style query parameter in a `url`, and the same inside an argument —
+but it does not, for instance, pair `args: ["--token", "secret"]` with its value. Keep credentials
+in `env` and `token`.
+
 #### The environment a stdio server actually receives
 
 A stdio server is spawned with a whitelisted environment — `HOME`, `LOGNAME`, `PATH`, `SHELL`,

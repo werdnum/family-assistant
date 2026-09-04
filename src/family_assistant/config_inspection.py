@@ -75,20 +75,13 @@ _INDIRECTION_SUFFIXES: tuple[str, ...] = (
     "_env_var",
 )
 
-# Query parameters that carry credentials in service URLs.
-_SENSITIVE_QUERY_PARAMS: frozenset[str] = frozenset({
-    "access_token",
-    "api_key",
-    "apikey",
+# Credential parameter names that the field-name axis does not already catch:
+# they carry no secret-looking substring of their own.
+_BARE_CREDENTIAL_PARAM_NAMES: frozenset[str] = frozenset({
     "auth",
-    "auth_token",
     "key",
-    "password",
-    "passwd",
-    "secret",
     "sig",
     "signature",
-    "token",
 })
 
 _PEM_HEADER_PATTERN = re.compile(r"-----BEGIN [A-Z0-9][A-Z0-9 ]*-----")
@@ -111,12 +104,25 @@ def is_sensitive_field_name(key: object) -> bool:
     return any(substring in lowered for substring in _SENSITIVE_SUBSTRINGS)
 
 
+def _is_credential_parameter_name(name: str) -> bool:
+    """Return True for a URL query parameter or command-line option holding a secret.
+
+    Reuses the field-name axis rather than keeping a second list beside it, so a
+    name it already knows (``client_secret``, ``access_token``, ``*_api_key``)
+    is recognized here too, and its indirection suffixes still apply.
+    """
+    normalized = unquote_plus(name).lower().replace("-", "_")
+    return normalized in _BARE_CREDENTIAL_PARAM_NAMES or is_sensitive_field_name(
+        normalized
+    )
+
+
 def _redact_query_pair(pair: str) -> str:
     """Redact one raw ``name=value`` query pair, leaving its encoding intact."""
     name, separator, raw_value = pair.partition("=")
     if not separator or not raw_value:
         return pair
-    if unquote_plus(name).lower() not in _SENSITIVE_QUERY_PARAMS:
+    if not _is_credential_parameter_name(name):
         return pair
     return f"{name}={REDACTED}"
 
@@ -131,9 +137,10 @@ def _redact_url(value: str) -> str:
     try:
         split = urlsplit(value)
     except ValueError:
-        # Unparseable as a URL despite containing "://"; nothing to strip
-        # selectively, so leave it to the caller's other checks.
-        return value
+        # Fail closed. A malformed endpoint is exactly what an operator reaches
+        # for the diagnostics to look at, and it may still carry a password we
+        # cannot locate without parsing it.
+        return REDACTED
 
     netloc = split.netloc
     if "@" in netloc:

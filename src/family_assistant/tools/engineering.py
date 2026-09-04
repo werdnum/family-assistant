@@ -597,7 +597,9 @@ async def get_mcp_server_status(
     embedded in a server's URL or stdio arguments (userinfo passwords,
     ``token=``-style query parameters) are redacted; the rest of the URL and
     the stdio command are included so the engineer can correlate against the
-    deployment config.
+    deployment config. Credentials configured outside the supported path
+    (``env`` for stdio servers, ``token`` for remote ones) are not guaranteed
+    to be redacted — see ``MCPServerStatus``.
 
     ``reconnect_attempts`` and ``next_reconnect_in_seconds`` describe the
     retry backoff: a server that has been down for a while is retried less

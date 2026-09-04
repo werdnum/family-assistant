@@ -98,6 +98,21 @@ def test_prose_punctuation_after_a_url_is_preserved() -> None:
     )
 
 
+def test_credential_parameter_names_reuse_the_field_name_axis() -> None:
+    """A name the field axis knows is a credential in a query string too."""
+    assert redact_sensitive_text(
+        "https://host/callback?client_secret=hunter2&state=x"
+    ) == (f"https://host/callback?client_secret={REDACTED}&state=x")
+    assert redact_sensitive_text(
+        "https://h/p?access_token=a&refresh_token=b&page=1"
+    ) == (f"https://h/p?access_token={REDACTED}&refresh_token={REDACTED}&page=1")
+
+
+def test_unparseable_url_fails_closed() -> None:
+    """A malformed endpoint is what an operator inspects; it may still hold a password."""
+    assert redact_sensitive_text("https://user:hunter2@[::1") == REDACTED
+
+
 def test_inline_pem_private_key_is_redacted() -> None:
     """``apns.auth_key`` holds a PEM inline; its name matches no secret substring."""
     redacted = redact_sensitive_config({
