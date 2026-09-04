@@ -10,6 +10,7 @@ import json
 import logging
 import random
 import shutil
+import time
 import traceback
 import uuid
 from dataclasses import dataclass, replace
@@ -116,6 +117,10 @@ if TYPE_CHECKING:
 
 # handle_index_email is now a method of EmailIndexer and registered in __main__.py
 from family_assistant.interfaces import ChatDeliveryError
+from family_assistant.observability.metrics import (
+    UNATTRIBUTED_PROFILE,
+    record_tool_call,
+)
 from family_assistant.processing.utils import get_file_extension_from_mime_type
 from family_assistant.services.deferred_tool_confirmation import (
     build_deferred_confirmation_callback,
@@ -5825,12 +5830,32 @@ async def handle_confirmation_tool_execution(
         executable_args = dict(request["tool_args_json"])
         if request["tool_name"] in COMPUTER_USE_FUNCTION_NAMES:
             executable_args.pop("safety_decision", None)
-        result = await tools_provider.execute_tool(
-            request["tool_name"],
-            executable_args,
-            execution_context,
-            call_id,
-        )
+
+        # Counted here as well as in ToolExecutor: an approved confirmation
+        # runs the tool from the worker rather than from the turn that asked
+        # for it, so without this a tool that ran because a human said yes --
+        # the ones most worth being able to account for -- would be missing
+        # from the tool counters entirely.
+        started = time.monotonic()
+        outcome = "error"
+        try:
+            result = await tools_provider.execute_tool(
+                request["tool_name"],
+                executable_args,
+                execution_context,
+                call_id,
+            )
+            outcome = "success"
+        except asyncio.CancelledError:
+            outcome = "cancelled"
+            raise
+        finally:
+            record_tool_call(
+                profile=(request.get("processing_profile_id") or UNATTRIBUTED_PROFILE),
+                tool=request["tool_name"],
+                outcome=outcome,
+                duration_seconds=time.monotonic() - started,
+            )
 
         return result
 

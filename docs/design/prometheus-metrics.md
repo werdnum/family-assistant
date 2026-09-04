@@ -23,11 +23,23 @@ VictoriaMetrics `vmagent`.
 
 ### One chokepoint per concept
 
-| Concept             | Chokepoint                                         |
-| ------------------- | -------------------------------------------------- |
-| LLM call and tokens | `LLMCallTelemetry` (`llm/utils/call_telemetry.py`) |
-| Tool execution      | `ToolExecutor._execute_tool_with_error_mapping`    |
-| Processing turn     | `LLMStreamingLoop.run_stream`                      |
+| Concept                   | Chokepoint                                              |
+| ------------------------- | ------------------------------------------------------- |
+| Chat and structured calls | `LLMCallTelemetry` (`llm/utils/call_telemetry.py`)      |
+| Image and embedding calls | `instrumented_llm_request` (`observability/metrics.py`) |
+| Managed-agent runs        | `Interaction.usage`, on the stream and on the poll      |
+| Tool execution            | `ToolExecutor`, and the durable-confirmation worker     |
+| Processing turn           | `LLMStreamingLoop.run_stream`                           |
+
+Two request chokepoints rather than one because they answer different questions. `LLMCallTelemetry`
+also builds a span and a diagnostics ring-buffer record, worth having for anything conversational;
+`instrumented_llm_request` only counts, which is all an embedding batch or an image request needs.
+
+**Every path that reaches a provider goes through one of them.** That is the property worth keeping,
+and the one that decays silently: a provider surface added later reaches no counter and nothing
+fails. The inventory is a grep over the SDK entry points — `messages.create`, `chat.completions`,
+`responses.create`, `generate_content`, `embed_content`, `images.generate`, `interactions.create` —
+which is how the image-generation and embedding paths were found.
 
 `LLMCallTelemetry` is already the one place where a provider call's span and its diagnostics record
 are assembled, precisely so a provider that reports a new detail reports it everywhere at once.
@@ -58,7 +70,7 @@ disagreement rather than resolving it:
   `thoughts_token_count` alongside a `candidates_token_count` that excludes it.
 
 A dashboard that summed these raw would double-count on two providers and under-count on a third. So
-the metric boundary is where the accounting is normalised, once, into five **disjoint** buckets that
+the metric boundary is where the accounting is normalised, once, into **disjoint** buckets that
 every provider maps onto:
 
 | `kind`           | Meaning                                                        |
@@ -68,6 +80,12 @@ every provider maps onto:
 | `cache_write`    | Prompt tokens written into the prompt cache                    |
 | `output`         | Generated tokens excluding reasoning                           |
 | `reasoning`      | Reasoning / thinking tokens                                    |
+| `tool_use`       | Tokens the provider spent running its own server-side tools    |
+
+**The buckets are billing tiers, not provider fields.** That is what makes normalising worth doing
+rather than merely tidy: each tier is priced differently by every provider, so cost is one join of
+`family_assistant_llm_tokens_total` against a price table on `(model, kind)`. A split along any
+other axis leaves that arithmetic to every query.
 
 Because the buckets are disjoint, `sum by (kind)` is the total,
 `input_uncached + cache_read + cache_write` is the full prompt, and a cache hit rate is
@@ -80,11 +98,11 @@ than zero — the same distinction the span attributes already preserve.
 
 ### Why not OpenTelemetry metrics
 
-The service is already wired for OTel and exports spans over OTLP, so emitting
-`gen_ai.*` metrics through the same SDK looks like the smaller change. It is the wrong one here:
-the cluster runs `OTEL_METRICS_EXPORTER=none` and collects no OTel metrics at all. Traces go to
-Jaeger; the metrics pipeline is VictoriaMetrics scraping Prometheus endpoints, and nothing on the
-OTLP side would be read.
+The service is already wired for OTel and exports spans over OTLP, so emitting `gen_ai.*` metrics
+through the same SDK looks like the smaller change. It is the wrong one here: the cluster runs
+`OTEL_METRICS_EXPORTER=none` and collects no OTel metrics at all. Traces go to Jaeger; the metrics
+pipeline is VictoriaMetrics scraping Prometheus endpoints, and nothing on the OTLP side would be
+read.
 
 Emitting OTel metrics would therefore mean standing up an OTLP metrics receiver and a
 Prometheus-remote-write path to feed a store that is already there and already scraping — new
@@ -110,23 +128,11 @@ the Ingress's reachable surface for no gain.
 
 ## Deliberate simplifications
 
-- **Coverage is the chat path, not literally every request.** Three known paths spend without being
-  counted, and each would cost more to instrument than the chokepoint principle gains here:
-
-  - `generate_structured()` calls its provider SDK directly and builds no telemetry, so tool-call
-    review is uncounted. This is the one worth revisiting first: on a profile with automatic review
-    it is a call per tool call.
-  - A tool executed from an approved durable confirmation runs through
-    `handle_confirmation_tool_execution()` in the task worker, not through the tool executor, so it
-    is absent from the tool metrics.
-  - A managed-agent profile (`coder`, Deep Research) submits and polls across separate task-worker
-    invocations. No turn object can span that without persisting one, and the agent's spend is
-    reported by the provider on the interaction rather than as chat usage, so neither the turn nor
-    the tokens are visible.
-
-  Naming them here rather than quietly under-reporting: a dashboard reading "token spend per
-  profile" is reading the chat path, and `profile="none"` is where anything spending outside a turn
-  shows up.
+- **Not every source reports tokens, and not every one is billed in them.** Google's embedding API
+  reports only `billable_character_count`; the OpenAI image endpoints bill per image. Where a
+  provider reports no tokens, no token bucket is emitted and
+  `family_assistant_llm_calls_total{operation=...}` is the meter — a zero-valued bucket would read
+  as "embedded nothing" rather than "not reported in tokens".
 
 - **No cost metric.** Turning tokens into dollars needs a per-model price table that would go stale
   silently and be wrong for exactly the models that matter (previews, aliases). Prices belong in the

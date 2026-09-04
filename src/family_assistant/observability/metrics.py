@@ -27,7 +27,11 @@ from typing import TYPE_CHECKING, Final
 
 from prometheus_client import Counter, Gauge, Histogram
 
+from family_assistant.llm.call_context import current_processing_profile
+
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from family_assistant.llm.messages import MessageReasoningInfo
 
 logger = logging.getLogger(__name__)
@@ -43,6 +47,7 @@ __all__ = [
     "TURNS_IN_PROGRESS",
     "TURN_DURATION",
     "TurnMetrics",
+    "instrumented_llm_request",
     "normalized_token_buckets",
     "record_llm_call",
     "record_tool_call",
@@ -328,3 +333,57 @@ class TurnMetrics:
             )
         except Exception:
             logger.debug("Failed to record turn metrics", exc_info=True)
+
+
+async def instrumented_llm_request[R](
+    *,
+    provider: str,
+    model: str,
+    operation: str,
+    request: Callable[[], Awaitable[R]],
+    usage: Callable[[R], MessageReasoningInfo | None] | None = None,
+) -> R:
+    """Count one provider request that is not a chat call.
+
+    For the surfaces that reach a provider without going through
+    :class:`~family_assistant.llm.utils.call_telemetry.LLMCallTelemetry` --
+    image generation and embeddings -- where a span and a diagnostics record
+    would say nothing the caller's own logging does not, but the spend is
+    real and has to land in the same counters as everything else.
+
+    ``usage`` is optional because not every such surface reports tokens, and
+    not every one is billed in them: image models bill per image on some
+    providers and per output token on others, so the call counter is the meter
+    that holds everywhere and tokens are recorded only where reported.
+    """
+    started = time.monotonic()
+    profile = current_processing_profile() or UNATTRIBUTED_PROFILE
+
+    def record(outcome: str, error_type: str | None, response: R | None) -> None:
+        record_llm_call(
+            profile=profile,
+            provider=provider,
+            model=model,
+            resolved_model=None,
+            operation=operation,
+            outcome=outcome,
+            error_type=error_type,
+            duration_seconds=time.monotonic() - started,
+            time_to_first_output_seconds=None,
+            reasoning_info=(
+                usage(response) if usage is not None and response is not None else None
+            ),
+        )
+
+    try:
+        response = await request()
+    except Exception as exc:
+        record("error", type(exc).__name__, None)
+        raise
+    except BaseException:
+        # Cancellation is not a provider failure, but the request still ran and
+        # may still be billed, so it is counted rather than dropped.
+        record("cancelled", None, None)
+        raise
+    record("success", None, response)
+    return response

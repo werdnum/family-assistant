@@ -17,14 +17,17 @@ from abc import abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
+
+from family_assistant.observability.metrics import instrumented_llm_request
 
 if TYPE_CHECKING:
     from google.genai.client import DebugConfig
 
     from family_assistant.config_models import OpenAIImageRequestConfig
+    from family_assistant.llm.messages import MessageReasoningInfo
 
 # Optional imports for production use
 try:
@@ -141,6 +144,30 @@ def _is_invalid_image_file_error(error: Exception) -> bool:
     if getattr(error, "code", None) == "invalid_image_file":
         return True
     return "invalid_image_file" in str(error)
+
+
+def _gemini_image_usage(
+    response: Any,  # noqa: ANN401 - genai GenerateContentResponse
+) -> MessageReasoningInfo | None:
+    """Token usage for a Gemini image request, when the API reports it.
+
+    Gemini bills image output in tokens, so these are real spend rather than a
+    proxy for it. The OpenAI image endpoints bill per image instead and report
+    no comparable block, which is why only this provider passes a usage reader
+    -- the call counter is what both have in common.
+    """
+    usage = getattr(response, "usage_metadata", None)
+    if usage is None:
+        return None
+    # Imported here rather than at module scope: the provider client reaches
+    # config_models, which reaches back to this module through the tool
+    # registry. Same cycle-breaking local import as tools/camera.py.
+    from family_assistant.llm.providers.google_genai_client import (  # noqa: PLC0415
+        GoogleGenAIClient,
+    )
+
+    # One canonical Gemini usage mapping, reused rather than duplicated here.
+    return GoogleGenAIClient._reasoning_info_from_usage_metadata(usage)
 
 
 @runtime_checkable
@@ -490,8 +517,14 @@ class GeminiImageBackend:
         self.logger.debug(f"Calling Gemini API with prompt: {full_prompt}")
 
         # Call Gemini image generation
-        response = await self.client.aio.models.generate_content(
-            model=self.model, contents=full_prompt
+        response = await instrumented_llm_request(
+            provider="google",
+            model=self.model,
+            operation="image",
+            request=lambda: self.client.aio.models.generate_content(
+                model=self.model, contents=full_prompt
+            ),
+            usage=_gemini_image_usage,
         )
 
         # Log response structure for debugging
@@ -609,12 +642,18 @@ class GeminiImageBackend:
         )
         contents = cast("genai_types.ContentListUnion", content_parts)
 
-        response = await self.client.aio.models.generate_content(
+        response = await instrumented_llm_request(
+            provider="google",
             model=self.model,
-            contents=contents,
-            config=genai_types.GenerateContentConfig(
-                response_modalities=["TEXT", "IMAGE"]
+            operation="image",
+            request=lambda: self.client.aio.models.generate_content(
+                model=self.model,
+                contents=contents,
+                config=genai_types.GenerateContentConfig(
+                    response_modalities=["TEXT", "IMAGE"]
+                ),
             ),
+            usage=_gemini_image_usage,
         )
 
         if hasattr(response, "parts") and response.parts:
@@ -672,14 +711,19 @@ class OpenAIImageBackend:
         self.logger.debug(f"Calling OpenAI image API with prompt: {full_prompt}")
 
         cfg = self.generate_config
-        response = await self.client.images.generate(
+        response = await instrumented_llm_request(
+            provider="openai",
             model=self.model,
-            prompt=full_prompt,
-            n=1,
-            size=cfg.size,
-            quality=cfg.quality,
-            output_format=cfg.output_format,
-            output_compression=cfg.output_compression,
+            operation="image",
+            request=lambda: self.client.images.generate(
+                model=self.model,
+                prompt=full_prompt,
+                n=1,
+                size=cfg.size,
+                quality=cfg.quality,
+                output_format=cfg.output_format,
+                output_compression=cfg.output_compression,
+            ),
         )
 
         if not response.data:
@@ -750,17 +794,23 @@ class OpenAIImageBackend:
             image_files[0] if len(image_files) == 1 else image_files
         )
         cfg = self.edit_config
-        return await self.client.images.edit(
+        return await instrumented_llm_request(
+            provider="openai",
             model=self.model,
-            image=cast(
-                "openai._types.FileTypes | list[openai._types.FileTypes]", image_request
+            operation="image",
+            request=lambda: self.client.images.edit(
+                model=self.model,
+                image=cast(
+                    "openai._types.FileTypes | list[openai._types.FileTypes]",
+                    image_request,
+                ),
+                prompt=instruction,
+                n=1,
+                size=cfg.size,
+                quality=cfg.quality,
+                output_format=cfg.output_format,
+                output_compression=cfg.output_compression,
             ),
-            prompt=instruction,
-            n=1,
-            size=cfg.size,
-            quality=cfg.quality,
-            output_format=cfg.output_format,
-            output_compression=cfg.output_compression,
         )
 
     @staticmethod

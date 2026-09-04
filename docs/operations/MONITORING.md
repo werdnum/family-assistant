@@ -236,7 +236,7 @@ Every LLM metric carries the same five labels:
 | `provider`       | `anthropic`, `openai`, `google`, …                                       |
 | `model`          | The model as configured                                                  |
 | `resolved_model` | The model the provider reports serving (an alias resolves to a snapshot) |
-| `operation`      | `chat`, or the named operation for a non-chat call                       |
+| `operation`      | `chat`, `structured`, `embedding`, `image`, or the managed agent's name  |
 
 | Metric                                              | Type      | Extra labels            |
 | --------------------------------------------------- | --------- | ----------------------- |
