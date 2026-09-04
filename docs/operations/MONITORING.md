@@ -273,8 +273,11 @@ the latency the user actually feels.
 | `family_assistant_turn_duration_seconds` | Histogram | `profile`, `outcome`         |
 | `family_assistant_turns_in_progress`     | Gauge     | `profile`                    |
 
-Tool `outcome` is `success`, `denied` (refused by tool policy), `not_found`, `cancelled`, or
-`error`. Turn `outcome` is `success`, `error`, or `cancelled` — a browser that navigated away
+Tool `outcome` is how the *execution* ended: `returned`, `denied` (refused by tool policy),
+`not_found`, `cancelled`, or `error`. `returned` is deliberately not called "success" — a tool
+reports an expected failure by returning a result, and that result carries no status field, so
+nothing can tell the two apart. Treat a tool error rate as counting executions that never completed,
+not tasks that went wrong. Turn `outcome` is `success`, `error`, or `cancelled` — a browser that navigated away
 mid-turn is not a failure.
 
 ### Useful queries
@@ -560,13 +563,47 @@ data:
 
 ### Prometheus/Grafana Stack
 
-Point Prometheus at the metrics port (9090 by default), not the application port:
+Scrape the metrics port (9090 by default), not the application port — and note that the metrics port
+is deliberately **not** on the Kubernetes Service. `deploy/service.yaml` publishes only port 80 to
+the application's 8000, because the Service backs a public Ingress; a static target of
+`family-assistant:9090` would never resolve.
+
+**Kubernetes** — discover pods rather than the Service. With the Prometheus Operator or
+VictoriaMetrics Operator, a pod scrape selecting the workload's labels:
+
+```yaml
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMPodScrape
+metadata:
+  name: family-assistant
+spec:
+  selector:
+    matchLabels:
+      app: family-assistant
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 30s
+```
+
+The container must declare the port for `port: metrics` to match:
+
+```yaml
+ports:
+  - name: metrics
+    containerPort: 9090
+```
+
+Plain Prometheus without an operator wants `kubernetes_sd_configs` with a `role: pod` job and the
+same label filter — again, not a static target.
+
+**Docker Compose** — use the compose service name, which is the DNS name on the shared network. In
+the devcontainer stack that service is `backend`, so:
 
 ```yaml
 scrape_configs:
   - job_name: "family-assistant"
     static_configs:
-      - targets: ["family-assistant:9090"]
+      - targets: ["backend:9090"]
     scrape_interval: 30s
 ```
 

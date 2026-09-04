@@ -177,9 +177,15 @@ carries it, with `error_type` folded in as a label there.
 | `family_assistant_tool_calls_total`      | Counter   | `profile`, `tool`, `outcome` |
 | `family_assistant_tool_duration_seconds` | Histogram | `profile`, `tool`            |
 
-`outcome` is `success`, `denied` (tool policy), `not_found`, `cancelled`, or `error`. A turn the
-user abandoned is not a tool failure, and folding it into `error` would put ordinary browser
-behaviour into the number that error rate is watched on.
+`outcome` is how the execution ended: `returned`, `denied` (tool policy), `not_found`, `cancelled`,
+or `error`. A turn the user abandoned is not a tool failure, and folding it into `error` would put
+ordinary browser behaviour into the number the error rate is watched on.
+
+The returning case is `returned` rather than `success` on purpose. A tool reports an expected
+failure by returning a `ToolResult`, which has no status field, so the executor cannot tell a
+refusal from a result. Calling it `success` would make a tool error rate read as healthy while real
+failures flowed through it. Giving tool results a failure status would fix that properly, and is a
+change to the tool protocol rather than to this metric — so the metric claims only what it knows.
 
 ### Turns
 

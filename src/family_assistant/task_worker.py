@@ -5845,7 +5845,7 @@ async def handle_confirmation_tool_execution(
                 execution_context,
                 call_id,
             )
-            outcome = "success"
+            outcome = "returned"
         except asyncio.CancelledError:
             outcome = "cancelled"
             raise

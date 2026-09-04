@@ -143,7 +143,12 @@ LLM_TIME_TO_FIRST_OUTPUT = Histogram(
 
 TOOL_CALLS = Counter(
     "family_assistant_tool_calls",
-    "Tool executions, by how they ended.",
+    (
+        "Tool executions, by how the execution ended -- returned, denied, "
+        "not_found, cancelled or error. `returned` does not mean the tool did "
+        "what was asked: a tool reports an expected failure by returning a "
+        "result, which carries no status field to read."
+    ),
     ("profile", "tool", "outcome"),
 )
 
@@ -288,7 +293,15 @@ def record_tool_call(
     outcome: str,
     duration_seconds: float,
 ) -> None:
-    """Count one tool execution. Never raises."""
+    """Count one tool execution. Never raises.
+
+    ``outcome`` is how the execution ended -- ``returned``, ``denied``,
+    ``not_found``, ``cancelled`` or ``error`` -- not whether the tool
+    succeeded at its job. Nothing here can tell the difference: a tool reports
+    an expected failure by returning a ``ToolResult``, and that type has no
+    status field. Calling the returning case ``success`` would let a tool error
+    rate read as healthy while real failures flowed through it.
+    """
     try:
         TOOL_CALLS.labels(profile, tool, outcome).inc()
         TOOL_DURATION.labels(profile, tool).observe(duration_seconds)

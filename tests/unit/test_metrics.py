@@ -377,7 +377,7 @@ def test_finishing_a_turn_twice_counts_it_once() -> None:
 def test_the_exporter_serves_the_metrics_it_has_collected() -> None:
     """The whole point of the module is what a scrape gets back."""
     record_tool_call(
-        profile="p_export", tool="get_note", outcome="success", duration_seconds=0.1
+        profile="p_export", tool="get_note", outcome="returned", duration_seconds=0.1
     )
     server = start_metrics_exporter(0, addr="127.0.0.1")
     assert server is not None
@@ -391,7 +391,7 @@ def test_the_exporter_serves_the_metrics_it_has_collected() -> None:
         server.shutdown()
         server.server_close()
 
-    assert 'family_assistant_tool_calls_total{outcome="success"' in body
+    assert 'family_assistant_tool_calls_total{outcome="returned"' in body
     assert 'profile="p_export"' in body
 
 
@@ -425,3 +425,33 @@ def test_an_agent_run_reports_the_tokens_it_spent() -> None:
 
 def test_an_agent_run_with_no_usage_reports_none() -> None:
     assert GoogleGenAIClient._reasoning_info_from_interaction_usage(None) is None
+
+
+def test_a_returning_tool_is_not_recorded_as_a_success() -> None:
+    """A tool reports an expected failure by returning; nothing can tell.
+
+    `ToolResult` carries no status field, so calling the returning case
+    "success" would let a tool error rate read as healthy while real failures
+    flowed through it.
+    """
+    record_tool_call(
+        profile="p_returned",
+        tool="generate_image",
+        outcome="returned",
+        duration_seconds=0.1,
+    )
+
+    assert (
+        _sample(
+            "family_assistant_tool_calls_total",
+            {"profile": "p_returned", "tool": "generate_image", "outcome": "success"},
+        )
+        == 0
+    )
+    assert (
+        _sample(
+            "family_assistant_tool_calls_total",
+            {"profile": "p_returned", "tool": "generate_image", "outcome": "returned"},
+        )
+        == 1
+    )

@@ -464,6 +464,12 @@ class ToolExecutor:
         span: Span,
     ) -> ToolResult | object | ToolExecutionResult:
         """Execute a tool and map tool runtime failures to tool_result errors."""
+        # `outcome` says how the execution ended, not whether the tool did what
+        # was asked. A tool that reports an expected failure does so by
+        # returning a ToolResult -- which carries no status field -- so a
+        # returned result is recorded as `returned` rather than `success`.
+        # Claiming success for it would make a tool error rate read as healthy
+        # while real failures flowed through.
         started = time.monotonic()
         outcome = "error"
         try:
@@ -471,7 +477,7 @@ class ToolExecutor:
                 function_name, arguments, tool_execution_context, call_id
             )
             logger.info("Tool '%s' executed successfully.", function_name)
-            outcome = "success"
+            outcome = "returned"
             return result
         except ToolPolicyDeniedError as e:
             outcome = "denied"
