@@ -159,6 +159,14 @@ the message-history taint epoch, the read-only diagnostics token, embedding prov
 global tool policy. Look there before adding or changing anything that reads configuration, and
 update it when you add a new setting.
 
+Diagnostic config dumps are redacted by `config_inspection.py` from the field's *name* and the
+value's *shape*, not from a per-field annotation, so **the name of a config field decides whether it
+leaks**. Name a credential-bearing field `*_api_key` / `*_secret` / `*_token` / `*_password` /
+`*_private_key`, and name a field that only points at a secret (a path, a filename, an
+environment-variable name) `*_path` / `*_file` / `*_dir` / `*_env` / `*_env_var` so it stays
+readable. The module docstring in `src/family_assistant/config_models.py` has the details; add a
+case to `tests/unit/test_config_inspection.py` when you add a credential field.
+
 ### Gemini Computer Use (visual browser profile)
 
 The `browser_visual_profile` drives a browser via Gemini's native computer-use capability, enabled

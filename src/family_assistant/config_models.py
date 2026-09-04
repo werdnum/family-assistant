@@ -11,6 +11,27 @@ Configuration priority (lowest to highest):
 1. Code defaults (defined in model Field defaults)
 2. config.yaml file
 3. Environment variables
+
+Naming fields that hold credentials
+-----------------------------------
+Diagnostic dumps of this config (``get_resolved_config``, ``get_profile_config``,
+``GET /api/debug/profiles``) are redacted by
+:mod:`family_assistant.config_inspection`, which decides what to hide from the
+field's *name* and the value's *shape* — there is no per-field secret
+annotation. So the name is load-bearing:
+
+* A field holding a credential must be named so the name axis catches it:
+  ``*_api_key``, ``*_secret``, ``*_token``, ``*_password``, ``*_private_key``.
+  A credential under a name outside that set (``auth_key``, ``dsn``) leaks
+  unless its value happens to be a URL or a PEM block, which is the only
+  reason ``database_url`` and ``apns.auth_key`` are safe today.
+* A field naming *where* a secret lives — a path, a filename, an environment
+  variable name — must end in ``_path``, ``_file``, ``_dir``, ``_env`` or
+  ``_env_var``, so it stays readable in a dump instead of being redacted as if
+  it were the secret itself.
+
+When adding a credential field, add a redaction test alongside it in
+``tests/unit/test_config_inspection.py``.
 """
 
 from __future__ import annotations
