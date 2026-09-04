@@ -154,6 +154,7 @@ class LLMCallTelemetry:
         self._content_chars = 0
         self._thinking_chars: int | None = None
         self._tool_call_count = 0
+        self._metrics_recorded = False
 
         # Tool schemas are part of the prompt the model has to process, and a
         # tool-heavy profile sends a lot of them, so they belong in the size
@@ -308,14 +309,33 @@ class LLMCallTelemetry:
         self._record_metrics(outcome="error", error_type=error_type)
         self._add_record(response=None, error=message)
 
+    def finish_abandoned(self) -> None:
+        """Close out a call nobody waited for.
+
+        A streamed turn the client disconnected from raises ``CancelledError``
+        or ``GeneratorExit`` inside the provider's generator, which its
+        ``except Exception`` handler does not catch -- so without this the call
+        would end having recorded no outcome at all, despite having run and
+        possibly having cost a full prompt. Called from the same ``finally``
+        that ends the span, and a no-op when a terminal path already ran, so
+        every constructed telemetry records exactly one outcome.
+        """
+        if self._metrics_recorded:
+            return
+        self.span.set_attribute("llm.cancelled", True)
+        self._record_metrics(outcome="cancelled", error_type=None)
+
     def _record_metrics(self, *, outcome: str, error_type: str | None) -> None:
         """Fold this call into the Prometheus counters.
 
-        Both terminal paths call it, so a call that failed still contributes
-        its latency and whatever usage the provider managed to report -- a
-        turn that burned a large prompt and then hit a rate limit cost exactly
-        as much as one that succeeded.
+        Every terminal path calls it, so a call that failed or was abandoned
+        still contributes its latency and whatever usage the provider managed
+        to report -- a turn that burned a large prompt and then hit a rate
+        limit cost exactly as much as one that succeeded.
         """
+        if self._metrics_recorded:
+            return
+        self._metrics_recorded = True
         first_output_ms = self.time_to_first_output_ms
         record_llm_call(
             profile=self.profile,

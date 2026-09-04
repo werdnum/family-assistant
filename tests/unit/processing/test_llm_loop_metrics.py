@@ -12,6 +12,7 @@ from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMOutput
 from family_assistant.llm.call_context import current_processing_profile
+from family_assistant.llm.messages import UserMessage
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
 from family_assistant.tools.infrastructure import LocalToolsProvider
@@ -113,5 +114,33 @@ async def test_the_attribution_does_not_outlive_the_turn(
         trigger_interface_message_id=None,
         user_name="Test User",
     )
+
+    assert current_processing_profile() is None
+
+
+@pytest.mark.asyncio
+async def test_abandoning_the_stream_does_not_strand_the_attribution(
+    db_engine: AsyncEngine,
+) -> None:
+    """A consumer that breaks out never closes us; the finalizer runs elsewhere.
+
+    Holding the ContextVar token across the yield made that finalization raise
+    (the token belongs to a Context it no longer runs in) and left the profile
+    set in the consumer's own context, where it would misattribute whatever
+    that task did next.
+    """
+    service = _make_service(ProfileRecordingLLMClient())
+
+    stream = service.process_message_stream(
+        db_context=Database(db_engine),
+        messages=[UserMessage(content="Hello")],
+        interface_type="web",
+        conversation_id="conversation-metrics-abandoned",
+        user_name="Test User",
+        turn_id="turn-abandoned",
+        chat_interface=None,
+    )
+    async for _event, _message in stream:
+        break
 
     assert current_processing_profile() is None

@@ -221,6 +221,11 @@ chokepoints the numbers come from are in
 Standard process and Python runtime metrics (`process_resident_memory_bytes`, `python_gc_*`, …) are
 exported alongside the application ones.
 
+**What is counted.** Every LLM call on the chat path — streamed or not, successful, failed or
+abandoned. Structured-output calls (tool-call review), tools executed from an approved durable
+confirmation, and managed-agent runs (`coder`, Deep Research) are not counted; see the design doc's
+[deliberate simplifications](../design/prometheus-metrics.md#deliberate-simplifications).
+
 ### LLM
 
 Every LLM metric carries the same five labels:
@@ -269,9 +274,8 @@ the latency the user actually feels.
 | `family_assistant_turns_in_progress`     | Gauge     | `profile`                    |
 
 Tool `outcome` is `success`, `denied` (refused by tool policy), `not_found`, `cancelled`, or
-`error`. Turn
-`outcome` is `success`, `error`, or `cancelled` — a browser that navigated away mid-turn is not a
-failure.
+`error`. Turn `outcome` is `success`, `error`, or `cancelled` — a browser that navigated away
+mid-turn is not a failure.
 
 ### Useful queries
 

@@ -7,10 +7,7 @@ from typing import TYPE_CHECKING
 
 from family_assistant.llm import LLMInterface, LLMStreamEvent, StreamEventMetadata
 from family_assistant.llm.base import ContextLengthError
-from family_assistant.llm.call_context import (
-    reset_processing_profile,
-    set_processing_profile,
-)
+from family_assistant.llm.call_context import attributed_to_profile
 from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.llm.messages import (
     AssistantMessage,
@@ -273,30 +270,30 @@ class LLMStreamingLoop:
         turn once here covers both the streaming and the non-streaming caller.
         """
         turn = TurnMetrics(self.config.id)
-        profile_token = set_processing_profile(self.config.id)
+        inner = self._run_stream(
+            db_context=db_context,
+            messages=messages,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            user_name=user_name,
+            turn_id=turn_id,
+            chat_interface=chat_interface,
+            user_id=user_id,
+            chat_interfaces=chat_interfaces,
+            confirmation_ui_managers=confirmation_ui_managers,
+            request_confirmation_callback=request_confirmation_callback,
+            subconversation_id=subconversation_id,
+            processing_service=processing_service,
+            home_assistant_client=home_assistant_client,
+            camera_backend=camera_backend,
+            event_sources=event_sources,
+            mid_turn_input_provider=mid_turn_input_provider,
+            initial_taint_sources=initial_taint_sources,
+            taint_tracker=taint_tracker,
+            tool_call_review_trigger=tool_call_review_trigger,
+        )
         try:
-            async for item in self._run_stream(
-                db_context=db_context,
-                messages=messages,
-                interface_type=interface_type,
-                conversation_id=conversation_id,
-                user_name=user_name,
-                turn_id=turn_id,
-                chat_interface=chat_interface,
-                user_id=user_id,
-                chat_interfaces=chat_interfaces,
-                confirmation_ui_managers=confirmation_ui_managers,
-                request_confirmation_callback=request_confirmation_callback,
-                subconversation_id=subconversation_id,
-                processing_service=processing_service,
-                home_assistant_client=home_assistant_client,
-                camera_backend=camera_backend,
-                event_sources=event_sources,
-                mid_turn_input_provider=mid_turn_input_provider,
-                initial_taint_sources=initial_taint_sources,
-                taint_tracker=taint_tracker,
-                tool_call_review_trigger=tool_call_review_trigger,
-            ):
+            async for item in attributed_to_profile(self.config.id, inner):
                 yield item
         except (asyncio.CancelledError, GeneratorExit):
             turn.finish("cancelled")
@@ -307,7 +304,7 @@ class LLMStreamingLoop:
         else:
             turn.finish("success")
         finally:
-            reset_processing_profile(profile_token)
+            await inner.aclose()
 
     async def _run_stream(
         self,
@@ -332,7 +329,9 @@ class LLMStreamingLoop:
         initial_taint_sources: Sequence[TaintSource] | None = None,
         taint_tracker: TurnTaintTracker | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
-    ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
+        # AsyncGenerator rather than AsyncIterator: run_stream closes this
+        # deterministically, and only the generator protocol offers aclose().
+    ) -> AsyncGenerator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """
         Streaming version of process_message that yields LLMStreamEvent objects as they are generated.
 

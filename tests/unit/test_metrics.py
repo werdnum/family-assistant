@@ -242,6 +242,65 @@ def test_the_profile_is_captured_when_the_call_starts(profile: str) -> None:
     assert telemetry.profile == profile
 
 
+def test_an_abandoned_streamed_call_still_records_an_outcome(profile: str) -> None:
+    """A client that disconnects mid-stream raises past every except Exception."""
+    telemetry = _telemetry(provider="google", model="gemini-abandoned", streaming=True)
+    telemetry.record_usage({"prompt_tokens": 700})
+
+    telemetry.finish_abandoned()
+
+    labels = {
+        "profile": profile,
+        "provider": "google",
+        "model": "gemini-abandoned",
+        "resolved_model": "gemini-abandoned",
+        "operation": "chat",
+    }
+    assert (
+        _sample(
+            "family_assistant_llm_calls_total",
+            {**labels, "outcome": "cancelled", "error_type": ""},
+        )
+        == 1
+    )
+    assert (
+        _sample(
+            "family_assistant_llm_tokens_total", {**labels, "kind": "input_uncached"}
+        )
+        == 700
+    )
+
+
+def test_abandoning_a_call_that_already_finished_counts_it_once(profile: str) -> None:
+    """The provider's finally runs after its own terminal path."""
+    telemetry = _telemetry(provider="openai", model="gpt-once")
+
+    telemetry.finish_success(response=None)
+    telemetry.finish_abandoned()
+
+    labels = {
+        "profile": profile,
+        "provider": "openai",
+        "model": "gpt-once",
+        "resolved_model": "gpt-once",
+        "operation": "chat",
+    }
+    assert (
+        _sample(
+            "family_assistant_llm_calls_total",
+            {**labels, "outcome": "cancelled", "error_type": ""},
+        )
+        == 0
+    )
+    assert (
+        _sample(
+            "family_assistant_llm_calls_total",
+            {**labels, "outcome": "success", "error_type": ""},
+        )
+        == 1
+    )
+
+
 # --- Tool and turn chokepoints -------------------------------------------
 
 

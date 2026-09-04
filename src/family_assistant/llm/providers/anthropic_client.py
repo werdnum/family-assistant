@@ -1436,6 +1436,11 @@ class AnthropicClient(BaseLLMClient):
             finally:
                 await events.aclose()
         finally:
+            # A no-op unless the stream ended without reaching a terminal path
+            # -- a client that disconnected mid-turn raises through the
+            # generator, and the call would otherwise be counted nowhere
+            # despite having run.
+            telemetry.finish_abandoned()
             span.end()
 
     async def _maybe_parse_vcr_stream(
