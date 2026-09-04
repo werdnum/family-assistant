@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import contextlib
 import urllib.request
 from typing import TYPE_CHECKING, cast
+from zoneinfo import ZoneInfo
 
 import pytest
 from opentelemetry import trace as otel_trace
@@ -24,14 +24,26 @@ from family_assistant.observability.metrics import (
     normalized_token_buckets,
     record_tool_call,
 )
-from family_assistant.tools import MeteredToolsProvider, ToolNotFoundError
+from family_assistant.tools import ToolNotFoundError
+from family_assistant.tools.infrastructure import (
+    LocalToolsProvider,
+    TaintTrackingToolsProvider,
+    ToolDescriptorProvider,
+)
+from family_assistant.tools.metadata import (
+    ToolRegistration,
+    ToolTag,
+    make_local_tool_metadata,
+)
+from family_assistant.tools.on_demand import OnDemandToolsView
+from family_assistant.tools.types import ToolExecutionContext
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
 
     from family_assistant.llm.messages import MessageReasoningInfo
-    from family_assistant.tools import ToolsProvider
-    from family_assistant.tools.types import ToolExecutionContext
+    from family_assistant.storage.database import Database
+    from family_assistant.tools.types import ToolDefinition
 
 
 def _sample(name: str, labels: Mapping[str, str]) -> float:
@@ -494,69 +506,139 @@ def test_the_exporter_binds_loopback_unless_told_otherwise() -> None:
 # --- Tool accounting at the provider boundary ----------------------------
 
 
-class _RecordingProvider:
-    """Minimal ToolsProvider whose execute_tool does what the test needs."""
+def _execution_context() -> ToolExecutionContext:
+    """The minimum a tool execution needs; no database is touched here."""
+    return ToolExecutionContext(
+        interface_type="test",
+        conversation_id="conversation",
+        user_name="Test User",
+        turn_id="turn",
+        db_context=cast("Database", None),
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
 
-    def __init__(self, outcome: Exception | str) -> None:
-        self._outcome = outcome
 
-    async def get_tool_definitions(self) -> list[object]:
-        return []
+def _one_tool_provider(behaviour: Exception | str) -> LocalToolsProvider:
+    """A real provider whose single tool does what the test needs.
 
-    async def close(self) -> None:
-        return None
+    Real rather than a fake: the accounting sits on the provider that wraps
+    this one, and the capability protocols it has to keep satisfying are the
+    real ones.
+    """
 
-    async def execute_tool(
-        self,
-        name: str,
-        arguments: object,
-        context: object,
-        call_id: str | None = None,
-    ) -> str:
-        if isinstance(self._outcome, Exception):
-            raise self._outcome
-        return self._outcome
+    async def some_tool(**_kwargs: object) -> str:
+        if isinstance(behaviour, Exception):
+            raise behaviour
+        return behaviour
+
+    return LocalToolsProvider(
+        registrations=[
+            ToolRegistration(
+                definition=cast(
+                    "ToolDefinition",
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "some_tool",
+                            "description": "A tool.",
+                            "parameters": {"type": "object", "properties": {}},
+                        },
+                    },
+                ),
+                implementation=some_tool,
+                metadata=make_local_tool_metadata([ToolTag.READ_ONLY]),
+            )
+        ]
+    )
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("behaviour", "expected"),
-    [
-        ("done", "returned"),
-        (ToolNotFoundError("nope"), "not_found"),
-        (RuntimeError("boom"), "error"),
-    ],
-)
-async def test_the_provider_counts_however_the_execution_ends(
-    behaviour: Exception | str,
-    expected: str,
-) -> None:
+async def test_the_provider_counts_the_executions_that_reach_it() -> None:
     """Every entry path holds this provider, so counting here counts them all."""
-    profile = f"p_provider_{expected}"
-    provider = MeteredToolsProvider(
-        cast("ToolsProvider", _RecordingProvider(behaviour)), profile=profile
+    provider = TaintTrackingToolsProvider(
+        _one_tool_provider("done"), profile="p_returned"
     )
 
-    with contextlib.suppress(Exception):
-        await provider.execute_tool("some_tool", {}, cast("ToolExecutionContext", None))
+    await provider.execute_tool("some_tool", {}, _execution_context())
 
     assert (
         _sample(
             "family_assistant_tool_calls_total",
-            {"profile": profile, "tool": "some_tool", "outcome": expected},
+            {"profile": "p_returned", "tool": "some_tool", "outcome": "returned"},
         )
         == 1
     )
 
 
 @pytest.mark.asyncio
-async def test_the_provider_delegates_everything_it_does_not_meter() -> None:
-    """Callers inspect get_tool_definitions' signature; it must be the real one."""
-    inner = _RecordingProvider("done")
-    provider = MeteredToolsProvider(cast("ToolsProvider", inner), profile="p_delegate")
+async def test_an_unknown_tool_is_counted_as_not_found() -> None:
+    provider = TaintTrackingToolsProvider(
+        _one_tool_provider("done"), profile="p_missing"
+    )
 
-    assert await provider.get_tool_definitions() == []
-    # Anything the wrapper does not define resolves to the wrapped provider,
-    # so a provider-specific attribute stays reachable through it.
-    inner.extra_capability = "present"  # pyright: ignore[reportAttributeAccessIssue] - note: set here precisely because the protocol has no such member
-    assert provider.extra_capability == "present"  # pyright: ignore[reportAttributeAccessIssue] - note: __getattr__ delegation is the behaviour under test
+    with pytest.raises(ToolNotFoundError):
+        await provider.execute_tool("no_such_tool", {}, _execution_context())
+
+    assert (
+        _sample(
+            "family_assistant_tool_calls_total",
+            {"profile": "p_missing", "tool": "no_such_tool", "outcome": "not_found"},
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_tool_that_raises_is_still_counted_as_returned() -> None:
+    """This is why the label is `returned` and not `success`.
+
+    A tool that blows up does not propagate: the provider converts it into an
+    error *result*, which comes back through the ordinary return path. Nothing
+    at this level can tell that from an answer, so calling it success would
+    make a tool error rate read as healthy while real failures flowed through.
+    """
+    provider = TaintTrackingToolsProvider(
+        _one_tool_provider(RuntimeError("boom")), profile="p_raised"
+    )
+
+    await provider.execute_tool("some_tool", {}, _execution_context())
+
+    assert (
+        _sample(
+            "family_assistant_tool_calls_total",
+            {"profile": "p_raised", "tool": "some_tool", "outcome": "returned"},
+        )
+        == 1
+    )
+    assert (
+        _sample(
+            "family_assistant_tool_calls_total",
+            {"profile": "p_raised", "tool": "some_tool", "outcome": "success"},
+        )
+        == 0
+    )
+
+
+def test_counting_tools_does_not_cost_the_provider_its_capabilities() -> None:
+    """Regression: the accounting must not change what the provider *is*.
+
+    Doing this in a wrapper broke startup. Providers are probed with
+    ``isinstance`` against capability protocols, and a wrapper delegating via
+    ``__getattr__`` satisfies ``hasattr`` but not ``isinstance`` -- so it
+    passed every unit test and then failed to boot, because OnDemandToolsView
+    refuses a provider that does not expose tool descriptors.
+    """
+    provider = TaintTrackingToolsProvider(
+        _one_tool_provider("done"), profile="p_capability"
+    )
+
+    assert isinstance(provider, ToolDescriptorProvider)
+    OnDemandToolsView(wrapped_provider=provider, on_demand_tool_names={"some_tool"})
