@@ -1590,7 +1590,9 @@ through one shared redactor, on two axes:
   `[REDACTED]`. Names that say *where* a secret lives rather than holding one — anything ending in
   `_path`, `_file`, `_dir`, `_env` or `_env_var` — are left readable, since a path or an
   environment-variable name is operator-facing metadata. Numbers and booleans are never redacted, so
-  `max_tokens` stays a number.
+  `max_tokens` stays a number. An `env` block is the exception that proves the rule: its keys are
+  environment variable names chosen by whoever wrote the entry rather than config field names, so
+  the name axis cannot judge them and every value in it is redacted.
 - **By value shape.** Credentials embedded inside otherwise-useful values are redacted whatever the
   field is called: the password in a URL's userinfo (`postgresql://user:[REDACTED]@host/db`),
   credential query parameters (`token`, `api_key`, `key`, `secret`, `signature`, …) in any URL
@@ -2330,9 +2332,13 @@ deployment-specific origin out of `config.yaml`.
 #### Passing credentials to an MCP server
 
 Give a stdio server its credentials through `env`, and a remote SSE or Streamable HTTP server its
-credential through the `token` field — in both cases as a `$VAR` reference rather than a literal.
-That is the supported path: the stored config holds only the placeholder, the value is resolved from
-the environment at connection time, and diagnostic dumps redact the field by name.
+credential through the `token` field. That is the supported path, and diagnostic dumps redact both:
+every value in an `env` block is redacted regardless of the variable's name, and `token` is redacted
+by field name.
+
+Note that `$VAR` references are expanded when the configuration is loaded, not when a server is
+contacted, so the resolved `AppConfig` holds the real value and a placeholder is not by itself
+protection. Redaction, not the placeholder, is what keeps a credential out of a dump.
 
 A credential put anywhere else in the entry is outside that path and may be shown in full by
 `get_mcp_server_status` and the config dump. Redaction still catches the shapes it can recognize — a

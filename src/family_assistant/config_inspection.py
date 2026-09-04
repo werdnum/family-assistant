@@ -112,9 +112,13 @@ def _is_credential_parameter_name(name: str) -> bool:
     is recognized here too, and its indirection suffixes still apply.
     """
     normalized = unquote_plus(name).lower().replace("-", "_")
-    return normalized in _BARE_CREDENTIAL_PARAM_NAMES or is_sensitive_field_name(
+    if normalized in _BARE_CREDENTIAL_PARAM_NAMES or is_sensitive_field_name(
         normalized
-    )
+    ):
+        return True
+    # Vendor-namespaced spellings of the same names: "X-Amz-Signature" and
+    # "X-Goog-Signature" both normalize to something ending in "_signature".
+    return any(normalized.endswith(f"_{name}") for name in _BARE_CREDENTIAL_PARAM_NAMES)
 
 
 def _redact_query_pair(pair: str) -> str:
@@ -199,6 +203,19 @@ def redact_sensitive_text(value: str) -> str:
     return _URL_PATTERN.sub(_redact_url_match, value)
 
 
+def _is_environment_mapping(key: object, value: object) -> bool:
+    """Return True for an ``env`` block mapping variable names to their values.
+
+    Its keys are environment variable names chosen by whoever wrote the server
+    entry, not config field names, so the name axis cannot judge them:
+    ``BRAVE_API_KEY`` happens to match and ``AUTHORIZATION`` does not, though
+    both hold a credential. Treat the whole mapping as opaque and redact its
+    values; the variable names stay visible, which is what an operator needs to
+    see that the block is wired up.
+    """
+    return key == "env" and isinstance(value, dict)
+
+
 # ast-grep-ignore: no-dict-any - Recursive config redaction handles arbitrary nested structures
 def _redact_secret_container(obj: Any) -> Any:  # noqa: ANN401 - recursive over arbitrary JSON-like data
     """Redact every string reachable from a value held under a sensitive name.
@@ -223,7 +240,7 @@ def redact_sensitive_config(obj: Any) -> Any:  # noqa: ANN401 - recursive over a
     if isinstance(obj, dict):
         return {
             key: _redact_secret_container(value)
-            if is_sensitive_field_name(key)
+            if is_sensitive_field_name(key) or _is_environment_mapping(key, value)
             else redact_sensitive_config(value)
             for key, value in obj.items()
         }

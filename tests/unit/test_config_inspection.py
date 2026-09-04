@@ -113,6 +113,38 @@ def test_unparseable_url_fails_closed() -> None:
     assert redact_sensitive_text("https://user:hunter2@[::1") == REDACTED
 
 
+def test_mcp_env_block_values_are_redacted_whatever_the_variable_is_called() -> None:
+    """$VAR references are expanded at load time, so the dump holds real values."""
+    redacted = redact_sensitive_config({
+        "mcp_config": {
+            "mcpServers": {
+                "brave": {
+                    "command": "brave-search-mcp-server",
+                    "env": {
+                        "AUTHORIZATION": "Bearer live-token",
+                        "BRAVE_API_KEY": "live-key",
+                    },
+                }
+            }
+        }
+    })
+    server = redacted["mcp_config"]["mcpServers"]["brave"]
+    assert server["env"] == {
+        "AUTHORIZATION": REDACTED,
+        "BRAVE_API_KEY": REDACTED,
+    }
+    assert server["command"] == "brave-search-mcp-server"
+
+
+def test_vendor_namespaced_signature_parameters_are_redacted() -> None:
+    redacted = redact_sensitive_text(
+        "https://bucket.s3.amazonaws.com/o?X-Amz-Signature=abc&X-Amz-Expires=60"
+    )
+    assert redacted == (
+        f"https://bucket.s3.amazonaws.com/o?X-Amz-Signature={REDACTED}&X-Amz-Expires=60"
+    )
+
+
 def test_inline_pem_private_key_is_redacted() -> None:
     """``apns.auth_key`` holds a PEM inline; its name matches no secret substring."""
     redacted = redact_sensitive_config({

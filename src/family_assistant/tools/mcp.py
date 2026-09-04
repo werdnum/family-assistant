@@ -145,8 +145,8 @@ class MCPServerStatus(TypedDict):
     the shared value-shape redaction, which covers an endpoint's userinfo
     password and credential query parameters.
 
-    Credentials belong in ``env`` (stdio) or the ``token`` field (remote), as a
-    ``$VAR`` reference; both are redacted by field name. A credential placed
+    Credentials belong in ``env`` (stdio) or the ``token`` field (remote); both
+    are redacted in dumps, ``env`` values whole. A credential placed
     outside that supported path — ``args: ["--token", "secret"]``, say — is not
     guaranteed to be redacted here, and an operator who puts one there accepts
     that. See the MCP section of ``docs/operations/CONFIGURATION_REFERENCE.md``.
