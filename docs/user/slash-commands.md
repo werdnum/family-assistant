@@ -27,7 +27,7 @@ Which commands exist depends on how your deployment is configured; these are the
 | `/visualize` or `/chart`    | Charts and graphs from data you provide or attach                                  |
 | `/artist`                   | Generating or editing images and video                                             |
 | `/camera` or `/investigate` | Searching and reviewing security camera footage                                    |
-| `/engineer`                 | Read-only diagnostics: "why did the assistant do that?"                            |
+| `/engineer`                 | Diagnostics: "why did the assistant do that?"                                      |
 | `/interrupt`                | (Telegram) stop the request currently being processed in that chat                 |
 
 If you type a command the assistant doesn't recognise, it replies saying so.
@@ -42,7 +42,8 @@ If you type a command the assistant doesn't recognise, it replies saying so.
   other assistant data.
 - **`/coder` when you want code written and run, not explained,** and everything it needs is in your
   request. It works in a sandbox described below.
-- **`/engineer` for diagnosing the assistant itself,** not for getting work done — it deliberately
+- **`/engineer` for diagnosing the assistant itself,** not for getting work done — it reads the
+  application and can run code in a throwaway sandbox to reproduce a problem, but deliberately
   cannot change data or send messages. See [troubleshooting.md](troubleshooting.md).
 
 ## Coding and computing (`/coder`)
