@@ -1220,6 +1220,59 @@ final class ChatAPIClientTests: XCTestCase {
         )
     }
 
+    /// Every SSE chunk the mock delivers is terminated with a blank line, even
+    /// when the fixture that produced it stops after its `data:` line.
+    ///
+    /// `SSEParser` dispatches an event on `\n\n` and otherwise only at the
+    /// end-of-stream `flush()`, which runs on a clean EOF and not on cancellation
+    /// or failure. An unframed fixture therefore made delivery depend on whether
+    /// the stream happened to close cleanly before anything cancelled it — and
+    /// the follow loop cancels and restarts streams constantly, so the same event
+    /// survived on a fast machine and vanished on a loaded CI runner. Framing at
+    /// the mock's byte boundary means no fixture can reintroduce that race by
+    /// being written a line short.
+    func testMockFramesUnterminatedSSEBodies() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .text(
+                """
+                event: turn_started
+                data: {"turn_id":"turn-unframed","seq":7}
+                """
+            )
+        }
+
+        let request = try await makeAuthManager().authorizedRequest(
+            url: URL(string: "\(serverURL)/api/v1/chat/conversations/web_conv_unframed/stream")!,
+            method: "GET"
+        )
+        let (data, _) = try await URLSession.shared.data(for: request)
+
+        XCTAssertEqual(
+            String(decoding: data, as: UTF8.self),
+            """
+            event: turn_started
+            data: {"turn_id":"turn-unframed","seq":7}
+
+
+            """
+        )
+    }
+
+    /// An empty SSE body stays empty: framing must not invent a stray blank line
+    /// for a response that carries no event at all (a held stream's opening
+    /// chunk, or one finished without a tail).
+    func testMockLeavesEmptySSEBodiesEmpty() async throws {
+        ChatMockBackendURLProtocol.respond { _ in .text("") }
+
+        let request = try await makeAuthManager().authorizedRequest(
+            url: URL(string: "\(serverURL)/api/v1/chat/conversations/web_conv_empty/stream")!,
+            method: "GET"
+        )
+        let (data, _) = try await URLSession.shared.data(for: request)
+
+        XCTAssertTrue(data.isEmpty)
+    }
+
     private func makeClient() -> ChatAPIClient {
         ChatAPIClient(authManager: makeAuthManager())
     }
@@ -1340,6 +1393,36 @@ final class ChatMockBackendURLProtocol: URLProtocol {
     private var stopped = false
     private var activeHangingStream: HangingStreamObservation?
 
+    /// Frame an SSE chunk the way a real server does: terminate its last event
+    /// with a blank line.
+    ///
+    /// `SSEParser` dispatches an event only when it sees `\n\n`. A chunk that
+    /// ends after its final `data:` line therefore sits in the parser's buffer
+    /// and reaches the client only through the end-of-stream `flush()` — which
+    /// runs on a *clean* EOF and not when the stream is cancelled or fails. The
+    /// follow loop cancels and restarts streams routinely, so an unframed mock
+    /// event is delivered or silently dropped depending on scheduling: fast
+    /// machines win the race, loaded CI runners lose it.
+    ///
+    /// Framing every SSE chunk here, at the one place mock bytes reach the URL
+    /// loading system, means a mock event is dispatched when it arrives. No test
+    /// can depend on the EOF-flush race by writing its fixture a line short.
+    private func framedSSE(_ data: Data, for response: ChatMockResponse) -> Data {
+        guard response.headers["Content-Type"] == "text/event-stream",
+              var body = String(data: data, encoding: .utf8),
+              !body.isEmpty
+        else {
+            return data
+        }
+        while body.hasSuffix("\n") {
+            body.removeLast()
+        }
+        guard !body.isEmpty else {
+            return Data()
+        }
+        return Data((body + "\n\n").utf8)
+    }
+
     override func startLoading() {
         guard let handler = Self.lock.withLock({ Self.handler }) else {
             client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
@@ -1353,8 +1436,9 @@ final class ChatMockBackendURLProtocol: URLProtocol {
                 // Hold the request open after the initial chunk so a turn can be
                 // observed mid-flight. Completion is callback-driven so held SSE
                 // requests do not occupy worker threads while they are idle.
-                if !response.data.isEmpty {
-                    client?.urlProtocol(self, didLoad: response.data)
+                let initial = framedSSE(response.data, for: response)
+                if !initial.isEmpty {
+                    client?.urlProtocol(self, didLoad: initial)
                 }
                 let observationID = controller.observeCompletion { [weak self] result in
                     guard let self else { return }
@@ -1362,8 +1446,9 @@ final class ChatMockBackendURLProtocol: URLProtocol {
                         return
                     }
                     if result.finished {
-                        if !result.data.isEmpty {
-                            self.client?.urlProtocol(self, didLoad: result.data)
+                        let tail = self.framedSSE(result.data, for: response)
+                        if !tail.isEmpty {
+                            self.client?.urlProtocol(self, didLoad: tail)
                         }
                         self.client?.urlProtocolDidFinishLoading(self)
                     } else {
@@ -1385,7 +1470,7 @@ final class ChatMockBackendURLProtocol: URLProtocol {
                 }
                 return
             }
-            client?.urlProtocol(self, didLoad: response.data)
+            client?.urlProtocol(self, didLoad: framedSSE(response.data, for: response))
             if response.dropsConnectionAfterData {
                 // Simulate a connection that streamed some bytes and then dropped
                 // mid-turn (backgrounding, network change, proxy idle timeout).
