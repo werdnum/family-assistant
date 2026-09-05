@@ -6796,10 +6796,15 @@ final class ChatViewModelTests: XCTestCase {
             cancelRequests: cancelRequests,
             spoolDirectory: spoolDirectory
         )
+        // The send loop applied `turn_started` (seq 0) while the subscription was
+        // live and writes that cursor back into the session as it unwinds, so the
+        // aftermath publishes 0 rather than the pre-suspend snapshot. What must
+        // hold is that the suspend hands the applied seq forward instead of
+        // clobbering it — a resume that lost it would refetch the whole turn.
         XCTAssertEqual(
             model.activeTurnSessionForTesting?.lastAppliedSeq,
-            cursorBefore,
-            "The resume cursor must survive the asynchronous suspend aftermath."
+            0,
+            "The resume cursor must carry the applied turn_started seq through the suspend aftermath."
         )
         XCTAssertTrue(
             model.turnControlStateForTesting.registeredTurnIDs.contains(postedTurnID.value ?? ""),
