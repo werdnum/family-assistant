@@ -117,6 +117,26 @@ class _StreamingToolAccumulator(TypedDict):
 _THINKING_BLOCK_TYPES = frozenset({"thinking", "redacted_thinking"})
 
 
+class _MergedAnthropicUsage:
+    """The prompt side of ``message_start`` with the output side of a delta.
+
+    Anthropic splits a streamed turn's usage across two frames: the prompt and
+    cache counts land on ``message_start``, while ``output_tokens`` is updated
+    on each ``message_delta``. Neither frame alone is the turn's usage, so this
+    presents the pair with the attribute names the usage mapper reads.
+    """
+
+    def __init__(self, started: Any, delta: Any) -> None:  # noqa: ANN401 - SDK usage objects
+        self.input_tokens = getattr(started, "input_tokens", 0) or 0
+        self.cache_read_input_tokens = getattr(started, "cache_read_input_tokens", None)
+        self.cache_creation_input_tokens = getattr(
+            started, "cache_creation_input_tokens", None
+        )
+        self.output_tokens = getattr(delta, "output_tokens", None) or (
+            getattr(started, "output_tokens", 0) or 0
+        )
+
+
 class AnthropicProviderMetadata(TypedDict):
     """Assistant-turn metadata persisted for the Anthropic provider.
 
@@ -1377,8 +1397,34 @@ class AnthropicClient(BaseLLMClient):
                 with trace.use_span(span, end_on_exit=False):
                     async with self.client.messages.stream(**params) as stream:
                         current_tool: _StreamingToolAccumulator | None = None
+                        started_usage: Any | None = None
 
                         async for event in stream:
+                            # Usage arrives in two frames -- the prompt side on
+                            # message_start, the output side on message_delta --
+                            # and is recorded as each lands rather than only at
+                            # the end, so a stream that is cancelled or dies
+                            # keeps the tokens the provider already reported.
+                            if event.type == "message_start":
+                                started_usage = getattr(event.message, "usage", None)
+                                if started_usage is not None:
+                                    telemetry.record_usage(
+                                        self._reasoning_info_from_usage(started_usage)
+                                    )
+                            elif event.type == "message_delta":
+                                delta_usage = getattr(event, "usage", None)
+                                if (
+                                    delta_usage is not None
+                                    and started_usage is not None
+                                ):
+                                    telemetry.record_usage(
+                                        self._reasoning_info_from_usage(
+                                            _MergedAnthropicUsage(
+                                                started_usage, delta_usage
+                                            )
+                                        )
+                                    )
+
                             if event.type == "content_block_start":
                                 block = event.content_block
                                 if block.type == "tool_use":
