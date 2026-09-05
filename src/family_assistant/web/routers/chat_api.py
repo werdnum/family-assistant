@@ -2255,6 +2255,13 @@ class ServiceProfile(BaseModel):
             "The tier used when the request names none. Null for a pinned profile."
         ),
     )
+    model_selection: Literal["explicit", "auto"] = Field(
+        default="explicit",
+        description=(
+            "Whether a request that names no tier runs on default_model_tier "
+            "('explicit') or has one chosen for it per request ('auto')."
+        ),
+    )
     available_tools: list[str] = Field(
         default_factory=list, description="Available tools for this profile"
     )
@@ -3427,6 +3434,7 @@ async def get_available_profiles(
                     for option in eligibility.selectable
                 ],
                 default_model_tier=eligibility.default_tier,
+                model_selection=service_config.model_selection,
             )
         )
 

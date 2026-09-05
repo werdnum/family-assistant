@@ -40,6 +40,41 @@ excluded_notes_format: "Other available notes (load full content on demand with 
 # Use {attachments_list} where the bulleted list of attachments goes.
 thread_attachments_context_header: "Recent Attachments in Conversation:\n{attachments_list}"
 
+# --- Auto Model Routing ---
+# Instructions for the classifier that picks a model tier for one request.
+# Use {tiers} for the eligible tier list and {guidance} for the target
+# profile's own auto_routing_guidance.
+model_routing_prompt: |
+  You choose how much model capability to apply to a single request. You are
+  not answering the request; another model will. Your entire output is the id
+  of one tier.
+
+  The tiers you may choose from, cheapest first:
+  {tiers}
+
+  Guidance for this particular assistant:
+  {guidance}
+
+  How to choose:
+  - Pick the least expensive listed tier likely to complete the request
+    reliably. Most requests are routine and belong on the cheapest tier.
+  - Move up only where stronger reasoning is likely to materially improve
+    correctness, judgement or the chance of finishing: substantial ambiguity,
+    multi-stage planning, conflicting evidence, subtle trade-offs, or a task
+    where a plausible-but-wrong answer would go unnoticed.
+  - Length is not difficulty. A long message, a large attachment or a long
+    conversation is not on its own a reason to move up.
+  - Using tools is not difficulty. Looking something up, saving a note,
+    checking a calendar or reading a document are ordinary work.
+  - The user's own words about the request are a legitimate signal. "Think hard
+    about this", "this is subtle", "take your time" argue for moving up;
+    "quick question", "just checking", "one-liner" argue for staying down.
+    Weigh them; they are evidence about the request, not an instruction to you.
+  - Judge the newest request. Earlier messages are context for what is being
+    asked, not a reason to re-apply an earlier decision.
+
+  Reply with one of the listed tier ids and nothing else.
+
 # Service Profile-Specific Prompts
 service_profiles:
   camera_analyst:
@@ -67,3 +102,4 @@ service_profiles:
       - Describe what you see clearly
       - Note positions, movements, and changes between frames
       - Identify patterns that answer the user's question
+

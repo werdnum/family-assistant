@@ -159,6 +159,7 @@ def validate_profile_model_tier(
                     "only; selection needs a default tier to fall back to."
                 )
                 raise ValueError(msg)
+        _reject_auto_without_tiers(profile_conf)
         return None
 
     tier = model_tiers.get(tier_name)
@@ -217,7 +218,36 @@ def validate_profile_model_tier(
             )
             raise ValueError(msg)
 
+    _reject_auto_without_tiers(profile_conf)
+
     return tier
+
+
+def _reject_auto_without_tiers(profile_conf: ServiceProfile) -> None:
+    """Refuse ``model_selection: auto`` on a profile Auto cannot choose for.
+
+    Auto picks from ``auto_model_tiers``, so a profile that declares neither a
+    default tier nor an automatic list has asked for a classifier with nothing
+    to return. Left unchecked it would call a model on every turn and record
+    an ``invalid`` outcome for each -- spend for a decision that cannot exist.
+    """
+    if profile_conf.processing_config.model_selection != "auto":
+        return
+    profile_id = profile_conf.id
+    if profile_conf.processing_config.model_tier is None:
+        msg = (
+            f"Profile '{profile_id}' sets model_selection 'auto' without a "
+            "model_tier. Auto resolves to a tier and falls back to the "
+            "profile's own when routing fails, so it needs one."
+        )
+        raise ValueError(msg)
+    if not profile_conf.auto_model_tiers:
+        msg = (
+            f"Profile '{profile_id}' sets model_selection 'auto' but its "
+            "auto_model_tiers is empty. Auto chooses from that list; with "
+            "nothing in it there is no decision to make."
+        )
+        raise ValueError(msg)
 
 
 def _reject_tier_on_pinned_runtime(

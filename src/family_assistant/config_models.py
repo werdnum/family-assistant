@@ -183,6 +183,29 @@ class ModelTierConfig(BaseModel):
         return v
 
 
+class ModelRoutingConfig(BaseModel):
+    """The Auto classifier: whether it runs, and what runs it.
+
+    Auto is a routing policy over tiers rather than a tier of its own. One
+    classifier serves every profile that opts in with
+    ``processing_config.model_selection: auto``; what differs per profile is
+    the tier list it chooses from and the profile's ``auto_routing_guidance``,
+    both of which travel with the request. A second classifier per profile
+    would be a second model to evaluate for no decision it could make better.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["off", "shadow", "active"] = "off"
+    """``shadow`` records what Auto would have chosen while the run executes on
+    the profile's configured tier; ``active`` lets the decision pick the tier.
+    ``off`` never calls the classifier at all."""
+    classifier: RetryModelConfig = Field(default_factory=RetryModelConfig)
+    timeout_seconds: float = Field(default=10.0, gt=0)
+    history_messages: int = Field(default=6, ge=0)
+    """How many recent messages of the conversation the classifier sees."""
+
+
 class ToolCallReviewEscalationConfig(BaseModel):
     """Turn-local thresholds used by tool-call review escalation."""
 
@@ -421,6 +444,11 @@ class ProcessingConfig(BaseModel):
     # never both -- the loader rejects a definition that does both, and a
     # declaration of either kind drops the other when inherited.
     model_tier: str | None = None
+    # Whether this profile's tier is fixed by whoever asked (`explicit`) or
+    # chosen per request by the Auto classifier (`auto`). Auto never reaches
+    # past `auto_model_tiers`, and `model_tier` remains the tier a run lands on
+    # when nothing selected one and when routing fails.
+    model_selection: Literal["explicit", "auto"] = "explicit"
     review_guidance: str = ""
     delegation_security_level: DelegationSecurityLevel = DelegationSecurityLevel.CONFIRM
     allowed_delegation_sources: list[str] | None = None
@@ -620,6 +648,12 @@ class ServiceProfile(BaseModel):
     # authorized by `allowed_model_tiers` instead: it is the user's own choice
     # to spend more, where this is authority handed to a model.
     auto_model_tiers: list[str] | None = None
+    # Where this profile's routing threshold sits, in the classifier's own
+    # words. Thresholds are contextual to the agent -- a diagnostic profile
+    # reaches for stronger reasoning more readily than a chat assistant -- so
+    # the guidance travels with the request rather than living in the shared
+    # classifier prompt.
+    auto_routing_guidance: str | None = None
 
 
 class DefaultProfileSettings(BaseModel):
@@ -637,6 +671,7 @@ class DefaultProfileSettings(BaseModel):
     visibility_grants: list[str] = Field(default_factory=list)
     allowed_model_tiers: list[str] | None = None
     auto_model_tiers: list[str] | None = None
+    auto_routing_guidance: str | None = None
 
 
 class NotesConfig(BaseModel):
@@ -1790,6 +1825,27 @@ class AppConfig(BaseSettings):
 
     # Named model recipes profiles select with `processing_config.model_tier`.
     model_tiers: dict[str, ModelTierConfig] = Field(default_factory=dict)
+
+    # The Auto classifier that picks a tier per request for profiles whose
+    # `processing_config.model_selection` is `auto`.
+    model_routing: ModelRoutingConfig = Field(default_factory=ModelRoutingConfig)
+
+    @model_validator(mode="after")
+    def validate_model_routing_names_a_classifier(self) -> AppConfig:
+        """A classifier that is switched on has to say what runs it.
+
+        Discovering the omission on the first routed turn would produce a run
+        of `error` outcomes that look like a provider problem rather than a
+        configuration one.
+        """
+        if self.model_routing.mode != "off" and not self.model_routing.classifier.model:
+            msg = (
+                f"model_routing.mode is '{self.model_routing.mode}' but "
+                "model_routing.classifier names no model. Set the classifier's "
+                "provider and model, or set mode to 'off'."
+            )
+            raise ValueError(msg)
+        return self
 
     @field_validator("model_tiers")
     @classmethod

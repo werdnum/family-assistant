@@ -728,6 +728,7 @@ PROFILE_OVERRIDABLE_PROCESSING_KEYS: tuple[str, ...] = (
     "allowed_delegation_sources",
     "retry_config",
     "model_tier",
+    "model_selection",
     "camera_config",
     "default_note_visibility_labels",
     "required_note_visibility_labels",
@@ -778,6 +779,11 @@ PROFILE_REPLACED_LIST_KEYS: tuple[str, ...] = (
     *PROFILE_TIER_ELIGIBILITY_KEYS,
     "excluded_global_tools",
 )
+
+# Top-level profile keys holding a single value a profile replaces outright.
+# `auto_routing_guidance` describes where one agent's routing threshold sits,
+# so merging it with another's would produce guidance describing neither.
+PROFILE_REPLACED_SCALAR_KEYS: tuple[str, ...] = ("auto_routing_guidance",)
 
 # The two mutually exclusive ways a profile says which model it runs on.
 MODEL_SELECTION_KEYS: tuple[str, ...] = ("provider", "llm_model", "retry_config")
@@ -967,6 +973,10 @@ def resolve_service_profile(
 
     for key in PROFILE_REPLACED_LIST_KEYS:
         if key in profile_def and isinstance(profile_def[key], list):
+            resolved[key] = profile_def[key]
+
+    for key in PROFILE_REPLACED_SCALAR_KEYS:
+        if profile_def.get(key) is not None:
             resolved[key] = profile_def[key]
 
     # An eligibility list the profile did not state for itself means nothing to

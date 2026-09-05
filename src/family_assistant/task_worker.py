@@ -1882,6 +1882,11 @@ class TaskWorker:
                     payload_present=False,
                 ),
                 model_selection=_model_selection_from_delegation_run(run),
+                # The envelope was frozen when the run was created. Routing it
+                # again here would decide the models of an already-authorized
+                # run from whatever the deployment looks like at execution
+                # time, which is the drift persisting the envelope prevents.
+                allow_auto_routing=False,
             )
         except Exception:
             # A timeout cancellation (CancelledError) is intentionally NOT caught

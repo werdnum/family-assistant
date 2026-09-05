@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Literal, Self
 if TYPE_CHECKING:
     from family_assistant.config_models import ModelTierConfig, ServiceProfile
     from family_assistant.llm.messages import MessageReasoningInfo
+    from family_assistant.llm.model_routing import RoutingOutcome
 
 __all__ = [
     "ModelSelectionRequest",
@@ -44,11 +45,27 @@ __all__ = [
     "stamp_model_selection",
 ]
 
-type SelectionSource = Literal["user", "model", "default"]
+type SelectionSource = Literal["user", "model", "default", "auto"]
 """Who chose the tier. ``"user"`` is an authenticated person's own selection,
-``"model"`` a selection composed by a model (a delegation argument), and
-``"default"`` no selection at all -- the profile's configured tier. Auto routing
-adds ``"auto"`` here."""
+``"model"`` a selection composed by a model (a delegation argument), ``"auto"``
+the routing classifier's, and ``"default"`` no selection at all -- the profile's
+configured tier.
+
+``"auto"`` and ``"model"`` are separate sources bounded by the same list: both
+are selections a model made rather than a person, but "the router chose Deep"
+and "another profile asked for Deep" are different things to see in a run
+record, and only one of them can be evaluated against a routing prompt."""
+
+_PERSISTABLE_SOURCES: frozenset[str] = frozenset({"user", "model", "default", "auto"})
+
+_ROUTING_OUTCOMES: frozenset[str] = frozenset({
+    "decided",
+    "timeout",
+    "invalid",
+    "error",
+})
+"""``RoutingOutcome``'s members, spelled again because a ``Literal`` alias has
+no runtime membership to check a persisted value against."""
 
 
 class ModelTierClientMissing(RuntimeError):
@@ -121,6 +138,18 @@ class ModelTierEligibility:
     def selectable_ids(self) -> tuple[str, ...]:
         return tuple(option.id for option in self.selectable)
 
+    @property
+    def auto_options(self) -> tuple[ModelTierOption, ...]:
+        """The tiers Auto may choose between, as the classifier is shown them.
+
+        Derived from ``selectable`` rather than from ``auto`` alone so that the
+        list the classifier is offered and the list the admission gate accepts
+        are the same list, in the same order. Two derivations would be two
+        places to disagree, and the disagreement would surface as a routing
+        decision refused after the model had already made it.
+        """
+        return tuple(option for option in self.selectable if option.id in self.auto)
+
     @classmethod
     def from_profile(
         cls,
@@ -181,6 +210,20 @@ class ResolvedModelSelection:
     requested: str | None
     source: SelectionSource
 
+    routing_outcome: RoutingOutcome | None = None
+    """How the Auto classifier's call went, where one was made. ``None`` means
+    the run was not routed at all, which is every run on a profile whose
+    ``model_selection`` is ``explicit`` and every run somebody selected a tier
+    for. Recorded apart from ``tier`` so that a classifier outage cannot
+    masquerade as a run of confident decisions."""
+    routing_would_choose: str | None = None
+    """What Auto would have run this turn at, while shadow mode runs it at the
+    profile's configured tier anyway. ``None`` in active mode, where the
+    decision is in ``tier``, and on any failed outcome, which chose nothing."""
+    classifier_model: str | None = None
+    """Which model made the routing call, so a change in decision quality can
+    be attributed to a change of classifier."""
+
     @classmethod
     def unselected(cls, default_tier: str | None) -> Self:
         """The profile's own tier, chosen by nobody."""
@@ -196,6 +239,9 @@ class ResolvedModelSelection:
             "tier": self.tier,
             "requested": self.requested,
             "source": self.source,
+            "routing_outcome": self.routing_outcome,
+            "routing_would_choose": self.routing_would_choose,
+            "classifier_model": self.classifier_model,
         }
 
     @classmethod
@@ -210,15 +256,15 @@ class ResolvedModelSelection:
         caller has already shaped into a mapping: shaping it is where a payload
         that is not an envelope quietly becomes an empty one.
 
-        Keys it does not know are ignored, so a row written by a deployment
-        that records more than this one -- an Auto routing outcome, say -- still
-        loads here.
+        Keys it does not know are ignored, and the routing fields are optional,
+        so a row written before Auto existed loads as a run that was not routed
+        -- which is what it was.
         """
         if not isinstance(data, Mapping):
             msg = f"Persisted model selection is {type(data).__name__}, not an object."
             raise ValueError(msg)
         source = data.get("source")
-        if source not in {"user", "model", "default"}:
+        if source not in _PERSISTABLE_SOURCES:
             msg = f"Persisted model selection has unknown source {source!r}."
             raise ValueError(msg)
         tier = data.get("tier")
@@ -228,7 +274,25 @@ class ResolvedModelSelection:
         ):
             msg = "Persisted model selection has a non-string tier."
             raise ValueError(msg)
-        return cls(tier=tier, requested=requested, source=source)
+        outcome = data.get("routing_outcome")
+        if outcome is not None and outcome not in _ROUTING_OUTCOMES:
+            msg = f"Persisted model selection has unknown routing outcome {outcome!r}."
+            raise ValueError(msg)
+        would_choose = data.get("routing_would_choose")
+        classifier_model = data.get("classifier_model")
+        if not (would_choose is None or isinstance(would_choose, str)) or not (
+            classifier_model is None or isinstance(classifier_model, str)
+        ):
+            msg = "Persisted model selection has a non-string routing field."
+            raise ValueError(msg)
+        return cls(
+            tier=tier,
+            requested=requested,
+            source=source,
+            routing_outcome=outcome,
+            routing_would_choose=would_choose,
+            classifier_model=classifier_model,
+        )
 
 
 def resolve_model_selection(
@@ -294,9 +358,10 @@ def stamp_model_selection(
     at -- an assertion above the LLM layer would then pass against a fake and
     mean nothing about production.
 
-    Auto's routing outcome is deliberately absent: while it can only say "not
-    requested" it is a constant on every row, and adding it when it can vary is
-    cheaper than removing it once history is full of it.
+    The routing fields are written only for a run that was actually routed. On
+    every other run they would carry one value on every row, which is noise in
+    history and in every query over it; absent means "not routed", which is
+    what the great majority of rows are.
     """
     if selection is None:
         return reasoning
@@ -305,6 +370,10 @@ def stamp_model_selection(
     if selection.requested is not None:
         reasoning["model_tier_requested"] = selection.requested
     reasoning["model_tier_source"] = selection.source
+    if selection.routing_outcome is not None:
+        reasoning["model_tier_routing_outcome"] = selection.routing_outcome
+    if selection.routing_would_choose is not None:
+        reasoning["model_tier_would_choose"] = selection.routing_would_choose
     return reasoning
 
 
@@ -315,12 +384,11 @@ def _eligible_tiers(
     """The tiers a request from *source* may name."""
     if source == "user":
         return eligibility.selectable_ids
-    if source == "model":
-        return tuple(
-            option.id
-            for option in eligibility.selectable
-            if option.id in eligibility.auto
-        )
+    if source in {"model", "auto"}:
+        # Auto and a delegation argument are both selections a model made, so
+        # both are bounded by the automatic list. Choosing Auto authorizes that
+        # range once; nothing inside it is confirmed again per turn.
+        return tuple(option.id for option in eligibility.auto_options)
     # A "default"-sourced request naming a tier is only coherent when it names
     # the default; anything else is a selection claiming to be no selection.
     return () if eligibility.default_tier is None else (eligibility.default_tier,)

@@ -5,6 +5,7 @@ import logging
 import re
 import traceback
 import uuid
+from dataclasses import replace
 from string import Formatter
 from typing import TYPE_CHECKING, Literal
 
@@ -30,6 +31,7 @@ from family_assistant.llm.model_selection import (
     ResolvedModelSelection,
     resolve_model_selection,
 )
+from family_assistant.observability.metrics import record_model_routing
 from family_assistant.processing.protocol import TaintedSinkRefusedError
 from family_assistant.security.taint import (
     TaintPolicyConfig,
@@ -72,6 +74,7 @@ if TYPE_CHECKING:
     from family_assistant.context_providers import ContextProvider
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface
+    from family_assistant.llm.model_routing import ModelRouter
     from family_assistant.processing.protocol import DelegatableService
     from family_assistant.processing.types import MidTurnInputProvider
     from family_assistant.security.taint import (
@@ -165,6 +168,23 @@ def _selectable_tier_lines(eligibility: ModelTierEligibility) -> list[str]:
     return lines
 
 
+def _attachment_summary(
+    attachments: Sequence[MessageAttachmentMetadata] | None,
+) -> list[str]:
+    """What the Auto classifier is told about a turn's attachments.
+
+    Names and types only. The classifier is deciding how much reasoning the
+    request deserves, and a file's contents cannot make that decision better --
+    while sending them would put a document the user uploaded through a second
+    model on every turn, for nothing.
+    """
+    return [
+        f"{attachment.get('filename') or 'attachment'} "
+        f"({attachment.get('mime_type') or 'unknown type'})"
+        for attachment in attachments or ()
+    ]
+
+
 def _response_attachment_references(
     response_attachment_ids: Sequence[str] | None,
     *,
@@ -226,6 +246,7 @@ class ProcessingService:
         api_backend: ApiBackend | None = None,
         taint_policy: TaintPolicyConfig | None = None,
         tier_llm_clients: Mapping[str, LLMInterface] | None = None,
+        model_router: ModelRouter | None = None,
     ) -> None:
         """Build a profile's service.
 
@@ -235,9 +256,15 @@ class ProcessingService:
         startup: a run binds to one of them for its whole duration rather than
         rebinding shared state, so two conversations at different tiers cannot
         take each other's models.
+
+        ``model_router`` is the deployment's single Auto classifier, shared by
+        every profile that opts into routing. ``None`` -- which is every
+        deployment with ``model_routing.mode: off``, and every service a test
+        builds directly -- means no turn here is ever routed.
         """
         self._llm_client = llm_client
         self._tier_llm_clients: dict[str, LLMInterface] = dict(tier_llm_clients or {})
+        self._model_router = model_router
         self.tools_provider = tools_provider
         self.on_demand_view = on_demand_view
         self._live_tools_provider: ToolsProvider | None = None
@@ -408,6 +435,138 @@ class ProcessingService:
             )
             raise ModelTierClientMissing(msg)
         return resolved, client
+
+    async def _bind_run(
+        self,
+        db_context: Database,
+        selection: ResolvedModelSelection | None,
+        *,
+        interface_type: str,
+        conversation_id: str,
+        subconversation_id: str | None,
+        trigger_content_parts: list[ContentPartDict],
+        trigger_attachments: list[MessageAttachmentMetadata] | None,
+        allow_auto_routing: bool,
+    ) -> tuple[ResolvedModelSelection, LLMInterface]:
+        """Settle which models this turn runs on, Auto routing included.
+
+        The one place a turn's tier is decided, and it is decided once: the
+        result is frozen for the run, so a tool loop's later iterations cannot
+        drift onto another model with different tool representation and
+        attachment handling.
+        """
+        routed = await self._auto_routed_selection(
+            db_context,
+            selection,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            subconversation_id=subconversation_id,
+            trigger_content_parts=trigger_content_parts,
+            trigger_attachments=trigger_attachments,
+            allow_auto_routing=allow_auto_routing,
+        )
+        return self._run_binding(routed if routed is not None else selection)
+
+    def _should_auto_route(
+        self,
+        selection: ResolvedModelSelection | None,
+        *,
+        allow_auto_routing: bool,
+    ) -> bool:
+        """Whether Auto gets to decide this turn's tier.
+
+        An explicit selection bypasses routing entirely -- a person or a
+        delegating model has already answered the question the classifier
+        exists to answer, and asking it again would be spending a model call to
+        second-guess an authorization. A delegation that named no tier is not
+        an explicit selection and *is* routed: the target profile decides its
+        own tier at each agent boundary.
+        """
+        return (
+            allow_auto_routing
+            and self._model_router is not None
+            and self.app_config.model_routing.mode != "off"
+            and self.service_config.model_selection == "auto"
+            and (selection is None or selection.source == "default")
+        )
+
+    async def _auto_routed_selection(
+        self,
+        db_context: Database,
+        selection: ResolvedModelSelection | None,
+        *,
+        interface_type: str,
+        conversation_id: str,
+        subconversation_id: str | None,
+        trigger_content_parts: list[ContentPartDict],
+        trigger_attachments: list[MessageAttachmentMetadata] | None,
+        allow_auto_routing: bool,
+    ) -> ResolvedModelSelection | None:
+        """The envelope Auto produced for this turn, or ``None`` if it did not run.
+
+        In ``shadow`` mode the resolved tier is unchanged and the decision is
+        recorded beside it as ``would_choose``: the point of shadow mode is to
+        collect what Auto would have done while the deployment keeps running on
+        what it already trusted. In ``active`` mode a decision resolves through
+        the same admission gate every other selection passes, and a failed
+        outcome resolves to the profile's configured tier with the outcome on
+        the envelope -- never silently.
+        """
+        router = self._model_router
+        if router is None or not self._should_auto_route(
+            selection, allow_auto_routing=allow_auto_routing
+        ):
+            return None
+
+        eligibility = self.service_config.tier_eligibility
+        history = await db_context.message_history.get_recent(
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            limit=router.history_messages,
+            processing_profile_id=self.service_config.id,
+            subconversation_id=subconversation_id,
+            current_time=self.clock.now(),
+        )
+        decision = await router.route(
+            eligibility=eligibility,
+            guidance=self.service_config.auto_routing_guidance,
+            history=history,
+            request_text=self._extract_user_content_for_history(trigger_content_parts),
+            attachment_summary=_attachment_summary(trigger_attachments),
+        )
+        mode = self.app_config.model_routing.mode
+        record_model_routing(
+            profile=self.service_config.id,
+            mode=mode,
+            outcome=decision.outcome,
+            tier=decision.tier,
+            latency_seconds=decision.latency_ms / 1000,
+        )
+
+        default = ResolvedModelSelection.unselected(eligibility.default_tier)
+        if mode == "shadow":
+            return replace(
+                default,
+                routing_outcome=decision.outcome,
+                routing_would_choose=decision.tier,
+                classifier_model=decision.classifier_model,
+            )
+        if decision.tier is None:
+            return replace(
+                default,
+                routing_outcome=decision.outcome,
+                classifier_model=decision.classifier_model,
+            )
+        chosen = resolve_model_selection(
+            eligibility,
+            ModelSelectionRequest(tier=decision.tier, source="auto"),
+            profile_id=self.service_config.id,
+        )
+        return replace(
+            chosen,
+            routing_outcome=decision.outcome,
+            classifier_model=decision.classifier_model,
+        )
 
     @property
     def attachment_registry(self) -> AttachmentRegistry | None:
@@ -1335,6 +1494,7 @@ class ProcessingService:
         initial_taint_sources: Sequence[TaintSource] | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
         model_selection: ResolvedModelSelection | None = None,
+        allow_auto_routing: bool = True,
     ) -> ChatInteractionResult:
         """
         Handles a complete chat interaction from user input to final response.
@@ -1364,6 +1524,10 @@ class ProcessingService:
             trigger_is_internal: Hide the trigger row from user-facing history.
             pinned_history_message_ids: Message rows that must be present even if
                 normal history limits would exclude them.
+            allow_auto_routing: Whether Auto may choose this turn's tier. False
+                for a queued run replaying an envelope frozen when the run was
+                created: routing it again would let a deployment change the
+                models of a run somebody already authorized.
 
         Returns:
             ChatInteractionResult containing:
@@ -1383,7 +1547,16 @@ class ProcessingService:
         # Bound before any model-dependent preparation: attachment injection is
         # built by the primary adapter, so the binding has to exist before the
         # turn's messages do.
-        resolved_selection, run_llm_client = self._run_binding(model_selection)
+        resolved_selection, run_llm_client = await self._bind_run(
+            db_context,
+            model_selection,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            subconversation_id=subconversation_id,
+            trigger_content_parts=trigger_content_parts,
+            trigger_attachments=trigger_attachments,
+            allow_auto_routing=allow_auto_routing,
+        )
 
         thread_root_id_for_turn: int | None = None
 
@@ -1582,6 +1755,7 @@ class ProcessingService:
         taint_tracker: TurnTaintTracker | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
         model_selection: ResolvedModelSelection | None = None,
+        allow_auto_routing: bool = True,
     ) -> AsyncIterator[LLMStreamEvent]:
         """
         Streaming version of handle_chat_interaction.
@@ -1600,7 +1774,16 @@ class ProcessingService:
 
         # Before the span, and before any model-dependent preparation: the
         # binding has to exist before the turn's messages do.
-        resolved_selection, run_llm_client = self._run_binding(model_selection)
+        resolved_selection, run_llm_client = await self._bind_run(
+            db_context,
+            model_selection,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            subconversation_id=subconversation_id,
+            trigger_content_parts=trigger_content_parts,
+            trigger_attachments=trigger_attachments,
+            allow_auto_routing=allow_auto_routing,
+        )
 
         span = tracer.start_span(
             "conversation.process",
