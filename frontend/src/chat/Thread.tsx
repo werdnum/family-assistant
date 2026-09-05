@@ -424,10 +424,15 @@ const AssistantMessage: React.FC = () => {
     message.content.length > 0 &&
     message.content[0]?.text === LOADING_MARKER;
 
-  // Get profile info for this message
-  const profileId = (message as { processing_profile_id?: string })?.processing_profile_id;
+  // Which profile answered and what served the turn. assistant-ui reconstructs
+  // each message from the fields it knows, so ours arrive in metadata.custom.
+  const custom = (message?.metadata?.custom ?? {}) as {
+    processing_profile_id?: string;
+    reasoning_info?: MessageReasoningInfo;
+  };
+  const profileId = custom.processing_profile_id;
   const profile = profileId ? profilesById[profileId] : null;
-  const reasoningInfo = (message as { reasoning_info?: MessageReasoningInfo })?.reasoning_info;
+  const reasoningInfo = custom.reasoning_info;
   const tierId = reasoningInfo?.model_tier;
   // The label comes from the configured tiers; an id with no configured label
   // (a tier removed since the turn ran) still names what served the turn.

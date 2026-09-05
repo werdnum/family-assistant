@@ -2285,6 +2285,15 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
     const convertedMessage = {
       ...messageWithoutAttachments,
       content,
+      // assistant-ui rebuilds each message from the fields it knows and drops
+      // the rest, so anything of ours the thread has to render — which profile
+      // answered, which model tier served it — travels in metadata.custom.
+      metadata: {
+        custom: {
+          processing_profile_id: message.processing_profile_id,
+          reasoning_info: message.reasoning_info,
+        },
+      },
     };
     if (message.role === 'user' && convertedAttachments && convertedAttachments.length > 0) {
       return { ...convertedMessage, attachments: convertedAttachments };
