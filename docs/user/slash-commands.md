@@ -36,6 +36,10 @@ is already using. See [intelligence-levels.md](intelligence-levels.md).
 
 If you type a command the assistant doesn't recognise, it replies saying so.
 
+A chat handles one request at a time. Send a command while the assistant is still working on your
+previous message there and it says so and keeps working; wait for the answer, or send `/interrupt`
+first. An ordinary message is different — that gets folded into the request already running.
+
 ## Choosing between them
 
 - **Simple page summaries don't need `/browse`.** The assistant can usually fetch a page directly;

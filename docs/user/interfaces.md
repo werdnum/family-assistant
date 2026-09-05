@@ -19,7 +19,9 @@ messages as you would to a person.
 - **Send photos and files** directly in a message, with your question as the caption. A whole album
   is treated as one message, so you get one answer covering all the photos.
 - **Follow up mid-reply:** if you send another message while the assistant is still working, it
-  folds that into the response it's already preparing.
+  folds that into the response it's already preparing. A slash command is the exception: it needs a
+  request of its own, so the assistant asks you to wait for the current one to finish or
+  `/interrupt` it.
 - **`/interrupt`** stops the request currently being processed in that chat.
 - **Confirmations** arrive as inline **✅ Confirm** and **❌ Cancel** buttons. See
   [confirmations-and-safety.md](confirmations-and-safety.md).

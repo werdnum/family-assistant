@@ -292,6 +292,37 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             user_name=user_name,
         )
 
+    @contextlib.asynccontextmanager
+    async def _active_turn(
+        self, chat_id: int
+    ) -> AsyncIterator[TelegramMidTurnController]:
+        """Hold this chat's turn slot for the length of one LLM loop.
+
+        Telegram dispatches updates concurrently, so this registration is the
+        only thing standing between a conversation and two loops reading and
+        writing its history at once. Holding the slot is what makes a message
+        arriving mid-turn steer the running turn rather than start a second one,
+        and what lets ``/interrupt`` find the task to cancel.
+
+        Every path that calls ``handle_chat_interaction`` for a Telegram chat
+        goes through here -- a plain message and a slash command alike.
+        """
+        controller = TelegramMidTurnController()
+        self._active_mid_turns[chat_id] = controller
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            self._active_processing_tasks[chat_id] = current_task
+        try:
+            yield controller
+        finally:
+            if self._active_mid_turns.get(chat_id) is controller:
+                self._active_mid_turns.pop(chat_id, None)
+            if (
+                current_task is not None
+                and self._active_processing_tasks.get(chat_id) is current_task
+            ):
+                self._active_processing_tasks.pop(chat_id, None)
+
     async def _route_mid_turn_update_if_active(
         self,
         update: Update,
@@ -716,47 +747,38 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     chat_interfaces = self._get_chat_interfaces()
                     confirmation_ui_managers = self._get_confirmation_ui_managers()
 
-                    mid_turn_controller = TelegramMidTurnController()
-                    self._active_mid_turns[chat_id] = mid_turn_controller
-                    current_task = asyncio.current_task()
-                    if current_task is not None:
-                        self._active_processing_tasks[chat_id] = current_task
-                    try:
-                        result = await selected_processing_service.handle_chat_interaction(
-                            db_context=db_context,
-                            interface_type=interface_type,
-                            conversation_id=conversation_id,
-                            trigger_content_parts=trigger_content_parts,
-                            trigger_interface_message_id=trigger_interface_message_id,
-                            user_name=user_name,
-                            user_id=resolved_user.user_id,
-                            replied_to_interface_id=replied_to_interface_id,
-                            chat_interface=self.telegram_service.chat_interface,
-                            chat_interfaces=chat_interfaces,
-                            confirmation_ui_managers=confirmation_ui_managers,
-                            request_confirmation_callback=confirmation_callback_wrapper,
-                            trigger_attachments=trigger_attachments,  # type: ignore
-                            mid_turn_input_provider=mid_turn_controller,
-                        )
-                    except asyncio.CancelledError:
-                        logger.info(
-                            "Telegram processing turn for chat %s was interrupted.",
-                            chat_id,
-                        )
-                        return
-                    finally:
-                        if self._active_mid_turns.get(chat_id) is mid_turn_controller:
-                            self._active_mid_turns.pop(chat_id, None)
-                        if (
-                            current_task is not None
-                            and self._active_processing_tasks.get(chat_id)
-                            is current_task
-                        ):
-                            self._active_processing_tasks.pop(chat_id, None)
-                        if not mid_turn_controller.should_interrupt():
-                            pending_mid_turn_batch = (
-                                await mid_turn_controller.pop_unconsumed_batch()
+                    async with self._active_turn(chat_id) as mid_turn_controller:
+                        try:
+                            result = await selected_processing_service.handle_chat_interaction(
+                                db_context=db_context,
+                                interface_type=interface_type,
+                                conversation_id=conversation_id,
+                                trigger_content_parts=trigger_content_parts,
+                                trigger_interface_message_id=trigger_interface_message_id,
+                                user_name=user_name,
+                                user_id=resolved_user.user_id,
+                                replied_to_interface_id=replied_to_interface_id,
+                                chat_interface=self.telegram_service.chat_interface,
+                                chat_interfaces=chat_interfaces,
+                                confirmation_ui_managers=confirmation_ui_managers,
+                                request_confirmation_callback=confirmation_callback_wrapper,
+                                trigger_attachments=trigger_attachments,  # type: ignore
+                                mid_turn_input_provider=mid_turn_controller,
                             )
+                        except asyncio.CancelledError:
+                            logger.info(
+                                "Telegram processing turn for chat %s was interrupted.",
+                                chat_id,
+                            )
+                            return
+
+                    # Drained only after the slot is released, so an update that
+                    # arrives in between is batched normally instead of being
+                    # queued onto a controller nobody will read again.
+                    if not mid_turn_controller.should_interrupt():
+                        pending_mid_turn_batch = (
+                            await mid_turn_controller.pop_unconsumed_batch()
+                        )
 
                     final_llm_content_to_send = result.text_reply
                     last_assistant_internal_id = result.assistant_message_internal_id
@@ -1399,7 +1421,83 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         The half a profile command and a tier command have in common: they
         differ in which service, which model tier and which thread they pick,
         and in nothing that happens afterwards.
+
+        A command is an ordinary turn with a selection attached, so it takes the
+        chat's turn slot like any other message: while it holds the slot, a
+        message arriving mid-turn steers it instead of starting a second loop
+        over the same conversation, and ``/interrupt`` can cancel it.
+
+        A command that arrives while another turn holds the slot is refused
+        rather than folded into that turn: what a command chooses -- a profile
+        or a model tier -- was already settled when the running turn began, so
+        accepting it as steering text would silently drop the choice that was
+        the reason for typing the command.
         """
+        assert update.message is not None
+
+        if chat_id in self._active_mid_turns:
+            logger.info(
+                "Refusing slash command in chat %s: a turn is already running.",
+                chat_id,
+            )
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    "I'm still working on your previous request. Wait for it to "
+                    "finish, or send /interrupt to stop it."
+                ),
+                reply_to_message_id=update.message.message_id,
+            )
+            return
+
+        async with self._active_turn(chat_id) as mid_turn_controller:
+            try:
+                await self._execute_slash_command_turn(
+                    update,
+                    context,
+                    chat_id=chat_id,
+                    service=service,
+                    resolved_user=resolved_user,
+                    request_text=request_text,
+                    model_selection=model_selection,
+                    thread_root_id=thread_root_id,
+                    mid_turn_controller=mid_turn_controller,
+                )
+            except asyncio.CancelledError:
+                logger.info(
+                    "Telegram slash command turn for chat %s was interrupted.",
+                    chat_id,
+                )
+                return
+
+        if mid_turn_controller.should_interrupt():
+            return
+        follow_up_batch = await mid_turn_controller.pop_unconsumed_batch()
+        if follow_up_batch:
+            logger.info(
+                "Processing %d undrained mid-turn Telegram update(s) as a follow-up "
+                "batch after the slash command turn for chat %s.",
+                len(follow_up_batch),
+                chat_id,
+            )
+            await self.process_batch(
+                chat_id=chat_id, batch=follow_up_batch, context=context
+            )
+
+    async def _execute_slash_command_turn(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        *,
+        chat_id: int,
+        service: DelegatableService,
+        resolved_user: ResolvedUserIdentity,
+        request_text: str,
+        model_selection: ResolvedModelSelection | None,
+        thread_root_id: int | None,
+        mid_turn_controller: TelegramMidTurnController,
+    ) -> None:
+        """The command turn itself, run while its chat's turn slot is held."""
         assert update.message is not None
 
         photo_bytes = None
@@ -1531,6 +1629,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     trigger_attachments=None,
                     model_selection=model_selection,
                     thread_root_id=thread_root_id,
+                    mid_turn_input_provider=mid_turn_controller,
                 )
 
                 final_llm_content_to_send = result.text_reply
