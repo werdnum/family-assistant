@@ -483,7 +483,7 @@ class GeminiOmniVideoBackend:
                     f"Omni Flash video generation ended with status "
                     f"'{interaction.status}'.",
                     usage=_omni_video_usage(interaction),
-                    served_model=interaction.model,
+                    served_model=getattr(interaction, "model", None),
                 )
 
             video_bytes = await self._extract_video_bytes(client, interaction)
@@ -492,7 +492,7 @@ class GeminiOmniVideoBackend:
                     content=video_bytes, mime_type="video/mp4", model=self.model
                 ),
                 _omni_video_usage(interaction),
-                interaction.model,
+                getattr(interaction, "model", None),
             )
 
     async def _await_completion(
