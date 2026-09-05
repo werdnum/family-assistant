@@ -67,7 +67,11 @@ from family_assistant.indexing.notes_indexer import NotesIndexer
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.llm.factory import LLMClientFactory
-from family_assistant.llm.model_routing import MODEL_ROUTING_PROMPT_KEY, ModelRouter
+from family_assistant.llm.model_routing import (
+    MODEL_ROUTING_PROMPT_KEY,
+    ModelRouter,
+    validate_routing_prompt_renders,
+)
 from family_assistant.llm.model_selection import ModelTierEligibility
 from family_assistant.llm.model_tiers import (
     models_in_chain,
@@ -1198,6 +1202,14 @@ class Assistant:
                 f"'{MODEL_ROUTING_PROMPT_KEY}'. The classifier's instructions are "
                 "what it routes on, so there is nothing to run without them."
             )
+        try:
+            # Rendered once here for the same reason a profile's system prompt
+            # is: an operator template with a stray brace would otherwise fail
+            # once per turn, as a run of routing errors that read like a
+            # provider outage.
+            validate_routing_prompt_renders(prompt_template)
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
         classifier_model = routing.classifier.model
         assert classifier_model is not None  # AppConfig validates this with the mode
         llm_client = override or LLMClientFactory.create_client(

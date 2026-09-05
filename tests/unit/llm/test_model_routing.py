@@ -18,7 +18,10 @@ import pytest
 from pydantic import BaseModel
 
 from family_assistant.llm.messages import AssistantMessage, UserMessage
-from family_assistant.llm.model_routing import ModelRouter
+from family_assistant.llm.model_routing import (
+    ModelRouter,
+    validate_routing_prompt_renders,
+)
 from family_assistant.llm.model_selection import (
     ROUTING_OUTCOMES,
     ModelTierEligibility,
@@ -286,6 +289,46 @@ async def test_a_profile_with_no_automatic_tiers_is_not_asked_to_choose() -> Non
 
     assert decision.outcome == "invalid"
     assert not client.get_calls()
+
+
+async def test_a_prompt_that_cannot_be_rendered_is_an_error_the_run_survives() -> None:
+    """Building the prompt is inside the same guard as the call it precedes.
+
+    An operator's stray brace must not take down every turn on the profile;
+    startup validation is what makes it visible, and this is what makes it
+    survivable if it ever gets past.
+    """
+    client = _deciding_client("deep")
+    router = ModelRouter(
+        client,
+        prompt_template="Choose a tier.\n{tiers}\n{guidance}\n{oh_no}",
+        classifier_model="mock-classifier",
+        timeout_seconds=5.0,
+        history_messages=6,
+    )
+
+    decision = await router.route(
+        eligibility=ELIGIBILITY,
+        guidance=None,
+        history=[],
+        request_text="hello",
+        attachment_summary=[],
+    )
+
+    assert decision.outcome == "error"
+    assert decision.tier is None
+    assert not client.get_calls()
+
+
+def test_a_classifier_prompt_that_does_not_render_is_refused_up_front() -> None:
+    """Startup validation, so the failure is one boot rather than every turn."""
+    with pytest.raises(ValueError, match="does not render"):
+        validate_routing_prompt_renders("Choose a tier from {tiers}. {unknown}")
+
+
+def test_the_shape_the_router_actually_fills_is_what_is_validated() -> None:
+    """A template using only the two placeholders passes, braces doubled or not."""
+    validate_routing_prompt_renders("Tiers:\n{tiers}\nGuidance:\n{guidance}\n{{json}}")
 
 
 def test_the_persisted_outcome_values_are_derived_from_the_type() -> None:

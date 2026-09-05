@@ -19,12 +19,13 @@ only caller is an async generator, where a ``with`` block wrapped around a
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, AsyncIterator
+    from collections.abc import AsyncGenerator, AsyncIterator, Iterator
 
     from family_assistant.llm.model_selection import ResolvedModelSelection
 
@@ -32,6 +33,7 @@ __all__ = [
     "CallAttribution",
     "ModelSelectionToken",
     "ProfileToken",
+    "attributed_call",
     "attributed_to_profile",
     "current_model_selection",
     "current_processing_profile",
@@ -95,6 +97,23 @@ def set_model_selection(
 def reset_model_selection(token: ModelSelectionToken) -> None:
     """Undo the attribution *token* established."""
     _model_selection.reset(token)
+
+
+@contextlib.contextmanager
+def attributed_call(attribution: CallAttribution) -> Iterator[None]:
+    """Attribute the calls made inside this block to *attribution*.
+
+    For a plain awaited call, where :func:`attributed_to_profile`'s reason for
+    not being a context manager does not apply: nothing yields out of the
+    block, so the reset always runs in the context that set it.
+    """
+    profile_token = set_processing_profile(attribution.profile_id)
+    selection_token = set_model_selection(attribution.model_selection)
+    try:
+        yield
+    finally:
+        reset_model_selection(selection_token)
+        reset_processing_profile(profile_token)
 
 
 async def attributed_to_profile[T](

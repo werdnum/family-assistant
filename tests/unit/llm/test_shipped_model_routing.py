@@ -68,11 +68,33 @@ def test_the_shipped_configuration_builds_a_router(shipped_config: AppConfig) ->
 
 
 def test_switching_routing_off_builds_no_router(shipped_config: AppConfig) -> None:
-    """A deployment that never routes constructs no classifier client at all."""
+    """A deployment that never routes constructs no classifier client at all.
+
+    The absent router is also the *only* switch: nothing downstream re-reads
+    the mode to decide whether to route, so "off" cannot be encoded in two
+    places that come to disagree.
+    """
     shipped_config.model_routing.mode = "off"
     assistant = Assistant(shipped_config, llm_client_overrides={})
 
     assert assistant._create_model_router() is None
+
+
+def test_a_classifier_prompt_that_does_not_render_fails_startup(
+    shipped_config: AppConfig,
+) -> None:
+    """One boot failure rather than a routing error on every turn.
+
+    Left to the first routed turn, an operator's stray brace would surface as a
+    run of `error` outcomes that read like a classifier outage.
+    """
+    shipped_config.default_profile_settings.processing_config.prompts[
+        MODEL_ROUTING_PROMPT_KEY
+    ] = "Choose from {tiers}, guided by {guidance}, and also {nonsense}."
+    assistant = Assistant(shipped_config, llm_client_overrides={})
+
+    with pytest.raises(SystemExit, match="does not render"):
+        assistant._create_model_router()
 
 
 async def test_an_override_keeps_the_classifier_off_external_providers(

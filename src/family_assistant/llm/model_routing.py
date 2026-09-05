@@ -41,7 +41,10 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
-from family_assistant.llm.model_selection import RoutingOutcome
+from family_assistant.llm.model_selection import (
+    ResolvedModelSelection,
+    RoutingOutcome,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -54,10 +57,13 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "MODEL_ROUTING_PROMPT_KEY",
+    "ROUTER_CALL_SELECTION",
+    "ROUTER_CALL_TIER",
     "ModelRouter",
     "ModelRoutingChoice",
     "RoutingDecision",
     "RoutingOutcome",
+    "validate_routing_prompt_renders",
 ]
 
 MODEL_ROUTING_PROMPT_KEY = "model_routing_prompt"
@@ -78,6 +84,28 @@ the conversation happened to contain.
 """
 
 _REQUEST_CHARS = 4000
+
+ROUTER_CALL_TIER = "router"
+"""Tier label the classifier's own call is counted under.
+
+Routing is spend, and it is spend on the profile whose turn is about to run,
+but it is not spend *at* that profile's tier: bucketing it under `standard`
+would inflate the cheap tier by one small call per turn and hide the cost of
+routing itself. One extra label value rather than one per tier, because there
+is only ever one classifier."""
+
+ROUTER_CALL_SELECTION = ResolvedModelSelection(
+    tier=ROUTER_CALL_TIER,
+    requested=None,
+    source="auto",
+    frozen=True,
+)
+"""The attribution envelope a classification is made under.
+
+Not a run envelope -- nothing executes at this "tier" -- but the label carrier
+the metrics and span attributes below the processing layer read, so that a
+classifier call lands under the profile it was made for instead of under
+whatever turn happened to be on the stack."""
 
 
 class ModelRoutingChoice(BaseModel):
@@ -104,6 +132,28 @@ class RoutingDecision:
     outcome: RoutingOutcome
     classifier_model: str
     latency_ms: int
+
+
+def validate_routing_prompt_renders(prompt_template: str) -> None:
+    """Render the classifier's instructions once, raising if the template is bad.
+
+    Called at startup, for the same reason ``validate_system_prompt_renders``
+    is: an operator prompt with a stray ``{`` renders nothing, and discovering
+    that per turn would show up as a run of routing errors that look like a
+    provider problem. The placeholder values are stand-ins -- any value
+    exercises the same formatting.
+    """
+    try:
+        prompt_template.format(
+            tiers="(startup validation)", guidance="(startup validation)"
+        )
+    except (KeyError, IndexError, ValueError) as error:
+        msg = (
+            f"'{MODEL_ROUTING_PROMPT_KEY}' does not render: {error}. It is "
+            "formatted with {tiers} and {guidance}; any other brace has to be "
+            "doubled."
+        )
+        raise ValueError(msg) from error
 
 
 def _routing_choice_model(tier_ids: Sequence[str]) -> type[ModelRoutingChoice]:
@@ -201,20 +251,25 @@ class ModelRouter:
                 latency_ms=self._elapsed_ms(started),
             )
 
-        messages = self._build_messages(
-            eligibility=eligibility,
-            guidance=guidance,
-            history=history,
-            request_text=request_text,
-            attachment_summary=attachment_summary,
-        )
         try:
+            # Building the prompt is inside the try with the call it precedes:
+            # an operator template that fails to render, or a history message
+            # that fails to, is a routing failure like any other and must not
+            # take the turn down with it.
+            messages = self._build_messages(
+                eligibility=eligibility,
+                guidance=guidance,
+                history=history,
+                request_text=request_text,
+                attachment_summary=attachment_summary,
+            )
             choice = await asyncio.wait_for(
                 self._llm_client.generate_structured(
                     messages, _routing_choice_model(tier_ids)
                 ),
                 timeout=self._timeout_seconds,
             )
+            chosen_tier = choice.tier
         except TimeoutError:
             logger.warning(
                 "Model routing timed out after %.1fs; the run continues on the "
@@ -234,17 +289,18 @@ class ModelRouter:
             return self._failed("invalid", started)
         except Exception:
             # Deliberately broad, and deliberately not re-raised: whatever the
-            # provider did, the turn it was asked about still has to run.
+            # provider -- or the prompt this deployment is configured with --
+            # did, the turn it was asked about still has to run.
             logger.exception(
                 "Model routing failed; the run continues on the profile's "
                 "configured tier."
             )
             return self._failed("error", started)
 
-        if choice.tier not in tier_ids:
+        if chosen_tier not in tier_ids:
             logger.warning(
                 "Model routing returned tier %r, which is not one of %s.",
-                choice.tier,
+                chosen_tier,
                 ", ".join(tier_ids),
             )
             return self._failed("invalid", started)
@@ -252,11 +308,11 @@ class ModelRouter:
         latency_ms = self._elapsed_ms(started)
         logger.info(
             "Model routing chose tier '%s' in %dms.",
-            choice.tier,
+            chosen_tier,
             latency_ms,
         )
         return RoutingDecision(
-            tier=choice.tier,
+            tier=chosen_tier,
             outcome="decided",
             classifier_model=self._classifier_model,
             latency_ms=latency_ms,
