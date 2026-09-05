@@ -15,13 +15,18 @@ from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
+from browser_handoff_service.runtime import CHECK_REF_JS as SERVER_CHECK_REF_JS
+from browser_handoff_service.runtime import SNAPSHOT_JS as SERVER_SNAPSHOT_JS
 
 from family_assistant.config_models import BrowserHandoffConfig, RemoteA2AAuthConfig
 from family_assistant.tools.browser_backend import (
+    CHECK_REF_JS,
+    SNAPSHOT_JS,
     BrowserBackendError,
     HandoffUnavailableError,
     LocalPlaywrightBackend,
     RemoteBrowserBackend,
+    StaleRefError,
     get_browser_backend,
 )
 
@@ -64,6 +69,7 @@ def _make_mock_browser_server() -> tuple[httpx.AsyncClient, list[httpx.Request]]
                     "title": "Fixture",
                     "forms": 1,
                     "elements": 1,
+                    "next_ref": body["args"].get("next_ref", 1) + 1,
                     "roots": [{"ref": "e1", "role": "heading", "name": "Welcome"}],
                 }
             elif ctype == "screenshot":
@@ -120,9 +126,12 @@ async def test_remote_backend_snapshot_and_refs() -> None:
     client, seen = _make_mock_browser_server()
     backend = RemoteBrowserBackend(_config(), "conv_1", client=client)
     await backend.goto("https://example.test/page")
-    snapshot = await backend.raw_snapshot()
+    snapshot = await backend.raw_snapshot(41)
     assert snapshot["title"] == "Fixture"
     assert snapshot["roots"][0]["ref"] == "e1"
+    # The counter the caller passed in comes back advanced, so the next
+    # snapshot numbers above it.
+    assert snapshot["next_ref"] == 42
     assert backend.current_url == "https://example.test/page"
     # A session is created once and reused for subsequent commands.
     assert sum(1 for r in seen if r.url.path == "/v1/sessions") == 1
@@ -256,7 +265,7 @@ async def test_command_on_handed_off_session_prompts_browser_open() -> None:
     await backend.goto("https://example.test/before")  # uses bs_1
     state["handed_off"] = True
     with pytest.raises(BrowserBackendError, match="browser_open"):
-        await backend.raw_snapshot()  # bs_1 snapshot -> 403, no silent restart
+        await backend.raw_snapshot(1)  # bs_1 snapshot -> 403, no silent restart
     await backend.close()
 
 
@@ -360,3 +369,119 @@ async def test_local_backend_handoff_is_unavailable() -> None:
             handoff_note="",
             expected_origin=None,
         )
+
+
+def _ref_error_client(result: dict[str, object]) -> httpx.AsyncClient:
+    """A browser-server that answers every ref action with ``result``.
+
+    browser-server reports a rejected ref with HTTP 200 and an error result, so
+    the client is what has to turn it into an exception.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/sessions":
+            return httpx.Response(
+                200, json={"session_id": "bs_ref", "state": "agent_active"}
+            )
+        return httpx.Response(
+            200, json={"command_id": "cmd_1", "ok": True, "result": result}
+        )
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=5.0)
+
+
+_STALE_REF_RESULT: dict[str, object] = {
+    "error": True,
+    "code": "stale_ref",
+    "ref": "e35",
+    "cause": "missing",
+    "reason": (
+        "ref e35 is no longer on the page as snapshotted; the page has changed "
+        "since the last snapshot"
+    ),
+    "url": "https://example.test/page",
+    "title": "Fixture",
+}
+
+
+@pytest.mark.asyncio
+async def test_remote_backend_raises_stale_ref_with_cause_and_reason() -> None:
+    backend = RemoteBrowserBackend(
+        _config(), "conv_stale", client=_ref_error_client(_STALE_REF_RESULT)
+    )
+    try:
+        with pytest.raises(StaleRefError) as exc:
+            await backend.click("e35")
+        assert exc.value.ref == "e35"
+        assert exc.value.cause == "missing"
+        assert "no longer on the page as snapshotted" in str(exc.value)
+    finally:
+        await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_remote_backend_stale_ref_on_fill_and_select() -> None:
+    backend = RemoteBrowserBackend(
+        _config(), "conv_stale_2", client=_ref_error_client(_STALE_REF_RESULT)
+    )
+    try:
+        with pytest.raises(StaleRefError):
+            await backend.fill("e35", "text", submit=False)
+        with pytest.raises(StaleRefError):
+            await backend.select("e35", "Green")
+    finally:
+        await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_remote_backend_malformed_ref_is_a_value_error() -> None:
+    """A malformed ref is a call the model should not have made, not staleness."""
+    backend = RemoteBrowserBackend(
+        _config(),
+        "conv_invalid",
+        client=_ref_error_client({"error": True, "code": "invalid_ref", "ref": "nope"}),
+    )
+    try:
+        with pytest.raises(ValueError, match="Invalid ref"):
+            await backend.click("nope")
+    finally:
+        await backend.close()
+
+
+@pytest.mark.asyncio
+async def test_remote_backend_sends_the_ref_not_a_selector() -> None:
+    seen: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v1/sessions":
+            return httpx.Response(
+                200, json={"session_id": "bs_ref", "state": "agent_active"}
+            )
+        if request.url.path.endswith("/agent-command"):
+            seen.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "command_id": "cmd_1",
+                "ok": True,
+                "result": {"accepted": True, "url": "https://example.test/page"},
+            },
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), timeout=5.0)
+    backend = RemoteBrowserBackend(_config(), "conv_ref_arg", client=client)
+    try:
+        await backend.click("e12")
+        assert seen[-1]["args"] == {"ref": "e12"}
+    finally:
+        await backend.close()
+
+
+def test_walker_js_is_byte_identical_to_browser_servers() -> None:
+    """The local walker and browser-server's must not drift.
+
+    Both stamp refs and decide staleness; if the two copies diverged, a ref
+    would mean one thing on the local path and another on the remote one.
+    """
+    assert SNAPSHOT_JS == SERVER_SNAPSHOT_JS
+    assert CHECK_REF_JS == SERVER_CHECK_REF_JS

@@ -13,6 +13,8 @@ tools work against a real browser.
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
@@ -35,10 +37,13 @@ from family_assistant.tools.browser_dom import (
 )
 from family_assistant.tools.browser_session import (
     close_browser_session,
-    get_browser_session,
 )
 from family_assistant.tools.computer_use import computer_use_navigate
-from family_assistant.tools.types import ToolExecutionContext, ToolResult
+from family_assistant.tools.types import (
+    ToolCallBatch,
+    ToolExecutionContext,
+    ToolResult,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -105,6 +110,25 @@ LABELLEDBY_HTML = """<!doctype html>
 """
 
 
+# Two independently addressable inputs, for batched ref actions.
+TWO_INPUTS_HTML = """<!doctype html>
+<html>
+  <head><title>Two inputs</title></head>
+  <body>
+    <h1>Two inputs</h1>
+    <label for="first">First</label>
+    <input id="first" name="first" type="text" />
+    <label for="second">Second</label>
+    <input id="second" name="second" type="text" />
+  </body>
+</html>
+"""
+
+
+async def _two_inputs(_request: web.Request) -> web.Response:
+    return web.Response(text=TWO_INPUTS_HTML, content_type="text/html")
+
+
 async def _index(_request: web.Request) -> web.Response:
     return web.Response(text=INDEX_HTML, content_type="text/html")
 
@@ -147,6 +171,7 @@ async def fixture_server() -> AsyncGenerator[BoundFixtureServer]:
     app.router.add_get("/about", _about)
     app.router.add_get("/submit", _submit)
     app.router.add_get("/labelledby", _labelledby)
+    app.router.add_get("/two-inputs", _two_inputs)
 
     server = TestServer(app)
     await server.start_server()
@@ -166,10 +191,43 @@ def exec_context(request: pytest.FixtureRequest) -> ToolExecutionContext:
     per-conversation ``BrowserSession``. Using the test's nodeid keeps each
     test's session isolated.
     """
+    return _context(f"browser-dom-test-{request.node.nodeid}")
+
+
+_CallFactory = Callable[[ToolExecutionContext], Awaitable[ToolResult]]
+
+
+def _context(
+    conversation_id: str,
+    batch: ToolCallBatch | None = None,
+    call_id: str | None = None,
+) -> ToolExecutionContext:
+    """A context for one tool call, optionally as part of a batch."""
     return MagicMock(
         spec=ToolExecutionContext,
-        conversation_id=f"browser-dom-test-{request.node.nodeid}",
+        conversation_id=conversation_id,
+        tool_call_batch=batch,
+        tool_call_id=call_id,
     )
+
+
+async def _run_batch(
+    conversation_id: str, calls: list[tuple[str, str, _CallFactory]]
+) -> list[ToolResult]:
+    """Run ``(call_id, tool_name, coroutine factory)`` calls as one model response.
+
+    Mirrors the loop: one batch, tasks created in issue order, each reporting
+    completion when it finishes however it finishes.
+    """
+    batch = ToolCallBatch([(call_id, name) for call_id, name, _ in calls])
+
+    async def _one(call_id: str, make: _CallFactory) -> ToolResult:
+        try:
+            return await make(_context(conversation_id, batch, call_id))
+        finally:
+            batch.mark_done(call_id)
+
+    return await asyncio.gather(*[_one(call_id, make) for call_id, _, make in calls])
 
 
 @pytest.fixture(autouse=True)
@@ -313,84 +371,247 @@ async def test_browser_exec_handles_js_errors_gracefully(
     assert "nonexistent_variable" in data["error"]
 
 
-async def test_browser_exec_clears_refs_even_when_js_throws(
+async def test_click_after_browser_exec_still_works(
     fixture_server: BoundFixtureServer, exec_context: ToolExecutionContext
 ) -> None:
-    """JS that mutates the DOM *and then* throws must still invalidate refs.
+    """A script that leaves the page alone leaves refs alone too.
 
-    If the cache survived the exception, a follow-up ``browser_click`` could
-    target a selector pointing at a node that was already removed.
+    The old ref cache was wiped by every browser_exec, so this click used to
+    fail on a page where nothing had changed.
     """
-    await browser_open_tool(exec_context, fixture_server.url + "/")
-    session = await get_browser_session(exec_context)
-    assert session.ref_cache, "browser_open should populate ref cache"
-
-    # Remove the about link, then throw. The remove() succeeds before the
-    # throw, so the DOM is mutated even though evaluate() raises.
-    result = await browser_exec_tool(
-        exec_context,
-        code=(
-            "document.querySelector('#about-link').remove(); throw new Error('boom');"
-        ),
-    )
-    data = result.get_data()
-    assert isinstance(data, dict)
-    assert "error" in data
-    assert session.ref_cache == {}, (
-        "ref cache must be cleared even when JS throws after mutating the DOM"
-    )
-
-
-async def test_browser_exec_clears_refs_after_dom_mutation(
-    fixture_server: BoundFixtureServer, exec_context: ToolExecutionContext
-) -> None:
-    """After browser_exec mutates the DOM, refs from the last snapshot are
-    invalidated — the agent must re-snapshot before clicking/filling."""
-    await browser_open_tool(exec_context, fixture_server.url + "/")
-    await browser_snapshot_tool(exec_context)
-    session = await get_browser_session(exec_context)
-    assert session.ref_cache, "snapshot should have populated ref cache"
+    snap = await browser_open_tool(exec_context, fixture_server.url + "/")
+    link_ref = _first_ref_for(snap, role="link")
 
     await browser_exec_tool(exec_context, code="return document.title")
-    assert session.ref_cache == {}
+
+    result = await browser_click_tool(exec_context, ref=link_ref)
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data["title"] == "About"
 
 
-async def test_unknown_ref_raises_clear_error(
+async def test_click_on_a_removed_node_returns_the_error_with_a_snapshot(
+    fixture_server: BoundFixtureServer, exec_context: ToolExecutionContext
+) -> None:
+    """A miss comes back with the page as it is now, so no extra round trip."""
+    snap = await browser_open_tool(exec_context, fixture_server.url + "/")
+    link_ref = _first_ref_for(snap, role="link")
+
+    await browser_exec_tool(
+        exec_context,
+        code="document.querySelector('#about-link').remove(); return true;",
+    )
+
+    result = await browser_click_tool(exec_context, ref=link_ref)
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data["error"] == "stale_ref"
+    assert data["ref"] == link_ref
+    assert data["roots"], "the miss must carry a snapshot of the current page"
+    assert "no longer on the page as snapshotted" in result.get_text()
+    # The page did not navigate, so the rest of it is still addressable.
+    assert data["title"] == "Index"
+
+
+async def test_a_ref_from_the_previous_page_fails_with_the_current_page(
+    fixture_server: BoundFixtureServer, exec_context: ToolExecutionContext
+) -> None:
+    """The failure a ref cache could not prevent: a ref copied across pages."""
+    first = await browser_open_tool(exec_context, fixture_server.url + "/")
+    old_ref = _first_ref_for(first, role="link")
+
+    await browser_open_tool(exec_context, fixture_server.url + "/about")
+
+    result = await browser_click_tool(exec_context, ref=old_ref)
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data["error"] == "stale_ref"
+    assert data["title"] == "About"
+    assert old_ref not in data["refs"]
+
+
+async def test_refs_are_unchanged_across_snapshots_and_actions(
+    fixture_server: BoundFixtureServer, exec_context: ToolExecutionContext
+) -> None:
+    first = await browser_open_tool(exec_context, fixture_server.url + "/")
+    second = await browser_snapshot_tool(exec_context)
+    first_data = first.get_data()
+    second_data = second.get_data()
+    assert isinstance(first_data, dict)
+    assert isinstance(second_data, dict)
+    assert second_data["refs"] == first_data["refs"]
+
+    select_ref = _first_ref_for(first, role="combobox")
+    after_action = await browser_select_tool(
+        exec_context, ref=select_ref, value="Green"
+    )
+    after_data = after_action.get_data()
+    assert isinstance(after_data, dict)
+    # Selecting an option does not renumber the untouched nodes.
+    assert _first_ref_for(after_action, role="link") == _first_ref_for(
+        first, role="link"
+    )
+    assert select_ref in after_data["refs"]
+
+
+async def test_two_ref_actions_in_one_batch_each_land_on_their_own_node(
+    fixture_server: BoundFixtureServer, exec_context: ToolExecutionContext
+) -> None:
+    """Concurrent siblings run in issue order, each against the live page."""
+    conversation_id = str(exec_context.conversation_id)
+    snap = await browser_open_tool(exec_context, fixture_server.url + "/two-inputs")
+    first_ref = _ref_for_name(snap, "First")
+    second_ref = _ref_for_name(snap, "Second")
+
+    results = await _run_batch(
+        conversation_id,
+        [
+            (
+                "call_1",
+                "browser_fill",
+                lambda ctx: browser_fill_tool(ctx, ref=first_ref, text="alpha"),
+            ),
+            (
+                "call_2",
+                "browser_fill",
+                lambda ctx: browser_fill_tool(ctx, ref=second_ref, text="beta"),
+            ),
+        ],
+    )
+
+    values = await browser_exec_tool(
+        exec_context,
+        code=(
+            "return [document.querySelector('#first').value, "
+            "document.querySelector('#second').value]"
+        ),
+    )
+    values_data = values.get_data()
+    assert isinstance(values_data, dict)
+    assert values_data["result"] == ["alpha", "beta"]
+
+    first_result, second_result = (r.get_data() for r in results)
+    assert isinstance(first_result, dict)
+    assert isinstance(second_result, dict)
+    # Only the last snapshot-bearing call in a batch hands back refs.
+    assert first_result["refs"] == []
+    assert "refs omitted" in results[0].get_text()
+    assert second_ref in second_result["refs"]
+
+
+async def test_a_batched_action_after_a_navigating_sibling_fails_rather_than_acting(
+    fixture_server: BoundFixtureServer, exec_context: ToolExecutionContext
+) -> None:
+    """Ordering alone is not enough; unique numbering is what makes it safe."""
+    conversation_id = str(exec_context.conversation_id)
+    snap = await browser_open_tool(exec_context, fixture_server.url + "/")
+    link_ref = _first_ref_for(snap, role="link")
+    input_ref = _first_ref_for(snap, role="textbox")
+
+    results = await _run_batch(
+        conversation_id,
+        [
+            (
+                "call_1",
+                "browser_click",
+                lambda ctx: browser_click_tool(ctx, ref=link_ref),
+            ),
+            (
+                "call_2",
+                "browser_fill",
+                lambda ctx: browser_fill_tool(ctx, ref=input_ref, text="kittens"),
+            ),
+        ],
+    )
+
+    second = results[1].get_data()
+    assert isinstance(second, dict)
+    assert second["error"] == "stale_ref"
+    # The failure reports the page the click navigated to, not the old one.
+    assert second["title"] == "About"
+
+
+async def test_a_batch_that_navigates_twice_hands_back_refs_only_at_the_end(
+    fixture_server: BoundFixtureServer, exec_context: ToolExecutionContext
+) -> None:
+    conversation_id = str(exec_context.conversation_id)
+    results = await _run_batch(
+        conversation_id,
+        [
+            (
+                "call_1",
+                "browser_open",
+                lambda ctx: browser_open_tool(ctx, fixture_server.url + "/"),
+            ),
+            (
+                "call_2",
+                "browser_open",
+                lambda ctx: browser_open_tool(ctx, fixture_server.url + "/about"),
+            ),
+        ],
+    )
+
+    first, second = (r.get_data() for r in results)
+    assert isinstance(first, dict)
+    assert isinstance(second, dict)
+    assert first["title"] == "Index"
+    assert first["refs"] == []
+    assert "refs omitted" in results[0].get_text()
+    assert second["title"] == "About"
+    assert second["refs"]
+
+
+async def test_filtered_post_click_snapshot_keeps_usable_refs(
+    fixture_server: BoundFixtureServer, exec_context: ToolExecutionContext
+) -> None:
+    """A `query` on an action prunes the snapshot without breaking its refs."""
+    snap = await browser_open_tool(exec_context, fixture_server.url + "/two-inputs")
+    first_ref = _ref_for_name(snap, "First")
+
+    filtered = await browser_fill_tool(
+        exec_context, ref=first_ref, text="alpha", query="second"
+    )
+    # The filter prunes what the model reads; the structured data stays whole.
+    rendered = filtered.get_text()
+    assert "Second" in rendered
+    assert "First" not in rendered
+
+    second_ref = _ref_for_name(filtered, "Second")
+    await browser_fill_tool(exec_context, ref=second_ref, text="beta")
+    values = await browser_exec_tool(
+        exec_context, code="return document.querySelector('#second').value"
+    )
+    values_data = values.get_data()
+    assert isinstance(values_data, dict)
+    assert values_data["result"] == "beta"
+
+
+async def test_invalid_ref_is_rejected_before_the_browser(
     fixture_server: BoundFixtureServer, exec_context: ToolExecutionContext
 ) -> None:
     await browser_open_tool(exec_context, fixture_server.url + "/")
-    with pytest.raises(ValueError, match="Unknown ref 'e999'"):
-        await browser_click_tool(exec_context, ref="e999")
+    with pytest.raises(ValueError, match="Invalid ref"):
+        await browser_click_tool(exec_context, ref="not-a-ref")
 
 
-async def test_computer_use_navigation_invalidates_dom_refs(
+async def test_computer_use_navigation_leaves_old_page_refs_failing(
     fixture_server: BoundFixtureServer, exec_context: ToolExecutionContext
 ) -> None:
-    """The core contract of the split browser profiles is that they share one
-    live tab via ``conversation_id``. Navigation through the visual profile
-    must therefore invalidate DOM refs captured by the semantic profile —
-    otherwise a follow-up ``browser_click`` would target selectors that no
-    longer match anything on the new page.
+    """The two browser profiles share one tab, so a ref must not survive it.
+
+    Nothing is invalidated client-side: the ref simply finds no node on the
+    page the visual profile navigated to.
     """
-    await browser_open_tool(exec_context, fixture_server.url + "/")
-    session = await get_browser_session(exec_context)
-    assert session.ref_cache, "browser_open should have populated ref cache"
-    stale_refs = set(session.ref_cache)
+    snap = await browser_open_tool(exec_context, fixture_server.url + "/")
+    link_ref = _first_ref_for(snap, role="link")
 
     await computer_use_navigate(exec_context, fixture_server.url + "/about")
 
-    assert session.ref_cache == {}, (
-        "computer_use navigation must clear stale DOM refs from the shared session"
-    )
-    # The tab really did navigate — a fresh snapshot sees the About page,
-    # confirming both profiles drove the same BrowserSession.
-    fresh = await browser_snapshot_tool(exec_context)
-    fresh_data = fresh.get_data()
-    assert isinstance(fresh_data, dict)
-    assert fresh_data["title"] == "About"
-    assert set(fresh_data["refs"]).isdisjoint(stale_refs) or session.ref_cache, (
-        "fresh snapshot should re-populate refs for the new page"
-    )
+    result = await browser_click_tool(exec_context, ref=link_ref)
+    data = result.get_data()
+    assert isinstance(data, dict)
+    assert data["error"] == "stale_ref"
+    assert data["title"] == "About"
 
 
 async def test_aria_labelledby_joins_multiple_ids(
@@ -445,5 +666,27 @@ def _first_ref_for(snap: ToolResult, role: str) -> str:
     if found is None:
         raise AssertionError(
             f"No ref with role={role!r} found in snapshot:\n{snap.get_text()}"
+        )
+    return found
+
+
+def _ref_for_name(snap: ToolResult, name: str) -> str:
+    """Return the ref of the first node whose accessible name is ``name``."""
+    data = snap.get_data()
+    assert isinstance(data, dict), f"expected dict snapshot data, got {type(data)}"
+
+    def walk(nodes: list[SnapshotNode]) -> str | None:
+        for node in nodes:
+            if node["name"] == name and node["role"] == "textbox":
+                return node["ref"]
+            found = walk(node.get("children", []))
+            if found is not None:
+                return found
+        return None
+
+    found = walk(data.get("roots", []))
+    if found is None:
+        raise AssertionError(
+            f"No textbox named {name!r} in snapshot:\n{snap.get_text()}"
         )
     return found
