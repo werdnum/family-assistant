@@ -100,9 +100,7 @@ def install_tiered_service(
         server_url="http://test.server",
         app_config=template.app_config,
         attachment_registry=template.attachment_registry,
-        tier_llm_clients={
-            name: client for name, client in tier_clients.items() if name != "standard"
-        },
+        tier_llm_clients=tier_clients,
     )
     fix.handler.telegram_service.processing_services_registry[config.id] = service
     if profile_id is None:
@@ -313,6 +311,37 @@ async def test_a_tier_command_keeps_the_profile_a_reply_adopts(
 
     assert other_clients["deep"].get_calls()
     assert not tier_clients["deep"].get_calls()
+
+
+@pytest.mark.asyncio
+async def test_a_tier_command_on_a_reply_stays_in_that_thread(
+    telegram_handler_fixture: TelegramHandlerTestFixture,
+    tier_clients: dict[str, RuleBasedMockLLMClient],
+) -> None:
+    """A reply continues a thread, and a command on it does not start a new one.
+
+    The profile a reply adopts and the thread it belongs to come from the same
+    replied-to row, so resolving one without the other would answer inside the
+    right conversation while filing the turn outside it.
+    """
+    fix = telegram_handler_fixture
+    install_tiered_service(fix, tier_clients, ALL_TIERS)
+    root_id = await fix.database.message_history.add_message(
+        UserMessage(content="an earlier answer"),
+        interface_type="telegram",
+        conversation_id=str(CHAT_ID),
+        timestamp=datetime.now(UTC),
+        interface_message_id="390",
+    )
+
+    await run_command(fix, "/deep and now the follow-up", reply_to_message_id=390)
+
+    rows = await fix.database.message_history.get_recent_with_metadata(
+        interface_type="telegram", conversation_id=str(CHAT_ID), limit=20
+    )
+    turn_rows = [row for row in rows if row["internal_id"] != root_id]
+    assert turn_rows, "the tier command persisted nothing"
+    assert {row["thread_root_id"] for row in turn_rows} == {root_id}
 
 
 @pytest.mark.asyncio

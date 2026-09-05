@@ -523,6 +523,9 @@ def _processing_service(
         credential_resolvers=credential_resolvers,
         api_backend=api_backend,
         processing_services_registry=None,
+        # The client a tool that calls a model would use. Nothing here does,
+        # but the worker reads it when it builds an execution context.
+        llm_client=None,
     )
     return cast("ProcessingService", service)
 

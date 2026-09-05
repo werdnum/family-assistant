@@ -15,11 +15,17 @@ from family_assistant.a2a.types import (
     TaskStatus,
     TextPart,
 )
-from family_assistant.config_models import ToolsConfig
+from family_assistant.assistant import (
+    _build_profile_policy_engine,  # noqa: PLC2701 - the smallest helper that applies the synthetic self-delegation allow
+)
+from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.llm.model_selection import (
+    ModelSelectionRequest,
     ModelTierEligibility,
+    ModelTierNotPermitted,
     ModelTierOption,
     ResolvedModelSelection,
+    resolve_model_selection,
 )
 from family_assistant.processing.types import (
     ChatInteractionResult,
@@ -34,7 +40,9 @@ from family_assistant.security.taint import (
     TaintSourceType,
 )
 from family_assistant.storage.database import Database
+from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS
 from family_assistant.tools.confirmation import MAX_DELEGATION_REQUEST_CHARS
+from family_assistant.tools.policy import ToolPolicyDecision
 from family_assistant.tools.services import (
     _confirmation_tool_arguments,  # noqa: PLC2701 - the drift these guard is between two private helpers
     _durable_authorization_matches,  # noqa: PLC2701 - see above
@@ -46,6 +54,7 @@ from family_assistant.tools.types import (
     ToolExecutionContext,
     ToolResult,
 )
+from tests.unit.conftest import shipped_profile
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -53,6 +62,7 @@ if TYPE_CHECKING:
     from family_assistant.a2a.client import A2AClientWrapper
     from family_assistant.llm.content_parts import ContentPartDict
     from family_assistant.processing import ProcessingService
+    from family_assistant.tools import ToolDescriptor
 
 
 class _Namespace:
@@ -661,3 +671,52 @@ def test_an_approval_that_named_no_tier_still_matches_a_call_without_one() -> No
             "model_tier": None,
         },
     )
+
+
+def _delegate_descriptor() -> ToolDescriptor:
+    for descriptor in LOCAL_TOOL_DESCRIPTORS:
+        if descriptor.name == "delegate_to_service":
+            return descriptor
+    raise AssertionError("delegate_to_service descriptor not found")
+
+
+def test_the_synthetic_self_delegation_allow_does_not_bypass_the_tier_gate(
+    shipped_config: AppConfig,
+) -> None:
+    """A profile delegating to itself is still held to its `auto_model_tiers`.
+
+    The policy builder injects a self-delegation ALLOW at the `profile` layer on
+    the assumption that self-delegation cannot escalate. A spend-selecting
+    argument breaks that assumption, so admission has to be its own gate: the
+    policy engine says yes to the call either way, and the gate is what refuses
+    `frontier` while accepting `deep`.
+    """
+    profile = shipped_profile(shipped_config, "default_assistant")
+    eligibility = ModelTierEligibility.from_profile(profile, shipped_config.model_tiers)
+    engine = _build_profile_policy_engine(
+        profile.id,
+        profile.tools_policy,
+        profile.operator_tools_policy,
+        shipped_config.global_tools_policy,
+        profile.excluded_global_tools,
+    )
+
+    to_itself = engine.evaluate_for_execution(
+        _delegate_descriptor(),
+        arguments={"target_service_id": profile.id, "model_tier": "frontier"},
+        can_confirm=True,
+    )
+    assert to_itself.decision is ToolPolicyDecision.ALLOW
+
+    with pytest.raises(ModelTierNotPermitted):
+        resolve_model_selection(
+            eligibility,
+            ModelSelectionRequest(tier="frontier", source="model"),
+            profile_id=profile.id,
+        )
+    admitted = resolve_model_selection(
+        eligibility,
+        ModelSelectionRequest(tier="deep", source="model"),
+        profile_id=profile.id,
+    )
+    assert admitted.tier == "deep"

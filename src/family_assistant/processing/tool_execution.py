@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from family_assistant.events.indexing_source import IndexingSource
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface
+    from family_assistant.llm import LLMInterface
     from family_assistant.llm.google_types import GeminiProviderMetadata
     from family_assistant.llm.messages import LLMMessage
     from family_assistant.llm.tool_call import ToolCallItem
@@ -240,6 +241,7 @@ class ToolExecutor:
         request_confirmation_callback: RequestConfirmationCallback | None,
         subconversation_id: str | None,
         processing_service: ProcessingService | None,
+        llm_client: LLMInterface | None,
         home_assistant_client: HomeAssistantClientWrapper | None,
         camera_backend: CameraBackend | None,
         event_sources: EventSourcesById | None,
@@ -270,6 +272,7 @@ class ToolExecutor:
             subconversation_id=subconversation_id,
             request_confirmation_callback=request_confirmation_callback,
             processing_service=processing_service,
+            llm_client=llm_client,
             clock=self.clock,
             home_assistant_client=home_assistant_client,
             event_sources=event_sources,
@@ -862,6 +865,7 @@ class ToolExecutor:
         request_confirmation_callback: RequestConfirmationCallback | None = None,
         subconversation_id: str | None = None,
         processing_service: ProcessingService | None = None,
+        llm_client: LLMInterface | None = None,
         home_assistant_client: HomeAssistantClientWrapper | None = None,
         camera_backend: CameraBackend | None = None,
         event_sources: EventSourcesById | None = None,
@@ -1013,6 +1017,7 @@ class ToolExecutor:
                 request_confirmation_callback=request_confirmation_callback,
                 subconversation_id=subconversation_id,
                 processing_service=processing_service,
+                llm_client=llm_client,
                 home_assistant_client=home_assistant_client,
                 camera_backend=camera_backend,
                 event_sources=event_sources,

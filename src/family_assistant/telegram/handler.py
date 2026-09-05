@@ -629,73 +629,13 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     return
 
                 db_context = self.database
-                thread_root_id_for_turn: int | None = None
-                replied_to_db_msg = None
-
-                if replied_to_interface_id:
-
-                    async def resolve_reply_context() -> None:
-                        nonlocal replied_to_db_msg
-                        nonlocal selected_processing_service
-                        nonlocal thread_root_id_for_turn
-                        assert replied_to_interface_id is not None
-                        replied_to_db_msg = (
-                            await db_context.message_history.get_row_by_interface_id(
-                                interface_type=interface_type,
-                                interface_message_id=replied_to_interface_id,
-                            )
-                        )
-                        if replied_to_db_msg:
-                            thread_root_id_for_turn = replied_to_db_msg.get(
-                                "thread_root_id"
-                            ) or replied_to_db_msg.get("internal_id")
-                            logger.info(
-                                f"Determined thread_root_id {thread_root_id_for_turn} from replied-to message {replied_to_interface_id}"
-                            )
-
-                            original_profile_id = replied_to_db_msg.get(
-                                "processing_profile_id"
-                            )
-                            if original_profile_id:
-                                logger.info(
-                                    f"Replied-to message (ID: {replied_to_interface_id}) has processing_profile_id: {original_profile_id}"
-                                )
-                                profile_specific_service = (
-                                    self._local_service_for_profile(original_profile_id)
-                                )
-                                if profile_specific_service is not None:
-                                    selected_processing_service = (
-                                        profile_specific_service
-                                    )
-                                    logger.info(
-                                        f"Switched to ProcessingService for profile '{original_profile_id}' for this reply."
-                                    )
-                                else:
-                                    logger.warning(
-                                        f"Profile ID '{original_profile_id}' from replied-to message not found in registry. "
-                                        f"Falling back to default processing service ('{selected_processing_service.service_config.id}')."
-                                    )
-                            else:
-                                logger.info(
-                                    f"Replied-to message (ID: {replied_to_interface_id}) does not have a specific profile_id. "
-                                    f"Using default processing service ('{selected_processing_service.service_config.id}')."
-                                )
-                        else:
-                            logger.warning(
-                                f"Could not find replied-to message {replied_to_interface_id} in DB. "
-                                f"Using default processing service ('{selected_processing_service.service_config.id}')."
-                            )
-
-                    try:
-                        await resolve_reply_context()
-                    except Exception as thread_err:
-                        logger.exception(
-                            f"Error determining thread root ID or profile from reply: {thread_err}"
-                        )
-                else:
-                    logger.info(
-                        f"Not a reply. Using default processing service ('{selected_processing_service.service_config.id}')."
-                    )
+                (
+                    selected_processing_service,
+                    thread_root_id_for_turn,
+                ) = await self._reply_context(
+                    interface_type=interface_type,
+                    replied_to_interface_id=replied_to_interface_id,
+                )
 
                 trigger_interface_message_id: str | None = None
 
@@ -1154,14 +1094,6 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             command_str,
             tier_name,
         ) in self.telegram_service.slash_command_to_model_tier_map.items():
-            if command_str in self.telegram_service.slash_command_to_profile_id_map:
-                msg = (
-                    f"Model tier '{tier_name}' and profile "
-                    f"'{self.telegram_service.slash_command_to_profile_id_map[command_str]}' "
-                    f"both claim the Telegram command '{command_str}'; one of them "
-                    "would never run."
-                )
-                raise ValueError(msg)
             command_name = command_str.lstrip("/")
             application.add_handler(
                 CommandHandler(command_name, self.handle_tier_slash_command)
@@ -1328,7 +1260,13 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             )
             return
 
-        service = await self._service_for_conversation_turn(update)
+        replied_to = update.message.reply_to_message
+        service, thread_root_id = await self._reply_context(
+            interface_type="telegram",
+            replied_to_interface_id=(
+                str(replied_to.message_id) if replied_to is not None else None
+            ),
+        )
         try:
             selection = service.resolve_model_selection(
                 ModelSelectionRequest(tier=tier, source="user")
@@ -1355,28 +1293,75 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             resolved_user=invocation.resolved_user,
             request_text=invocation.request_text,
             model_selection=selection,
+            thread_root_id=thread_root_id,
         )
 
-    async def _service_for_conversation_turn(self, update: Update) -> ProcessingService:
-        """The profile this message would run on if it carried no command.
+    async def _reply_context(
+        self,
+        *,
+        interface_type: str,
+        replied_to_interface_id: str | None,
+    ) -> tuple[ProcessingService, int | None]:
+        """The profile a message continues, and the thread it belongs to.
 
-        The default profile, unless the message replies to one produced by
-        another profile -- which is the adoption a plain message gets, so a tier
-        command gets it too.
+        Replying to a message continues that message's profile *and* its
+        thread. Both come off the same replied-to row, so they are read
+        together: a caller that wanted only one of them would still pay for the
+        lookup, and could drift from the other on what "a reply" means.
+
+        A reply whose context cannot be resolved is logged and falls back to a
+        fresh turn on the default profile: losing the thread is better than
+        losing the message.
         """
-        replied_to = update.message.reply_to_message if update.message else None
-        if replied_to is None:
-            return self.processing_service
-        replied_to_row = await self.database.message_history.get_row_by_interface_id(
-            interface_type="telegram",
-            interface_message_id=str(replied_to.message_id),
-        )
+        if replied_to_interface_id is None:
+            logger.info(
+                "Not a reply. Using default processing service "
+                f"('{self.processing_service.service_config.id}')."
+            )
+            return self.processing_service, None
+        try:
+            replied_to_row = (
+                await self.database.message_history.get_row_by_interface_id(
+                    interface_type=interface_type,
+                    interface_message_id=replied_to_interface_id,
+                )
+            )
+        except Exception:
+            logger.exception(
+                "Error determining thread root ID or profile from reply "
+                f"{replied_to_interface_id}."
+            )
+            return self.processing_service, None
         if replied_to_row is None:
-            return self.processing_service
-        adopted = self._local_service_for_profile(
-            replied_to_row.get("processing_profile_id")
+            logger.warning(
+                f"Could not find replied-to message {replied_to_interface_id} in DB. "
+                "Using default processing service "
+                f"('{self.processing_service.service_config.id}')."
+            )
+            return self.processing_service, None
+
+        thread_root_id = replied_to_row.get("thread_root_id") or replied_to_row.get(
+            "internal_id"
         )
-        return adopted if adopted is not None else self.processing_service
+        logger.info(
+            f"Determined thread_root_id {thread_root_id} from replied-to message "
+            f"{replied_to_interface_id}"
+        )
+        original_profile_id = replied_to_row.get("processing_profile_id")
+        adopted = self._local_service_for_profile(original_profile_id)
+        if adopted is not None:
+            logger.info(
+                f"Switched to ProcessingService for profile '{original_profile_id}' "
+                "for this reply."
+            )
+            return adopted, thread_root_id
+        if original_profile_id:
+            logger.warning(
+                f"Profile ID '{original_profile_id}' from replied-to message not "
+                "found in registry. Falling back to default processing service "
+                f"('{self.processing_service.service_config.id}')."
+            )
+        return self.processing_service, thread_root_id
 
     def _local_service_for_profile(
         self, profile_id: str | None
@@ -1397,12 +1382,13 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         resolved_user: ResolvedUserIdentity,
         request_text: str,
         model_selection: ResolvedModelSelection | None = None,
+        thread_root_id: int | None = None,
     ) -> None:
         """Run one command's text, and any photo it carries, on *service*.
 
         The half a profile command and a tier command have in common: they
-        differ in which service and which model tier they pick, and in nothing
-        that happens afterwards.
+        differ in which service, which model tier and which thread they pick,
+        and in nothing that happens afterwards.
         """
         assert update.message is not None
 
@@ -1534,6 +1520,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     request_confirmation_callback=confirmation_callback_wrapper,
                     trigger_attachments=None,
                     model_selection=model_selection,
+                    thread_root_id=thread_root_id,
                 )
 
                 final_llm_content_to_send = result.text_reply

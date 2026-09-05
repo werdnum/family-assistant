@@ -436,7 +436,7 @@ def test_the_profile_is_captured_when_the_call_starts(profile: str) -> None:
 
     reset_processing_profile(set_processing_profile("some_other_profile"))
     assert current_processing_profile() == profile
-    assert telemetry.profile == profile
+    assert telemetry.attribution.profile_id == profile
 
 
 def test_an_abandoned_streamed_call_still_records_an_outcome(profile: str) -> None:

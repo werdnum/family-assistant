@@ -1307,6 +1307,9 @@ class AsteriskLiveHandler:
                     subconversation_id=None,
                     request_confirmation_callback=None,
                     processing_service=self.processing_service,
+                    # The Live session picks no tier, so tools that call a
+                    # model use the profile's default one.
+                    llm_client=self.processing_service.llm_client,
                     clock=self.processing_service.clock,
                     home_assistant_client=self.processing_service.home_assistant_client,
                     event_sources=self.processing_service.event_sources,

@@ -158,6 +158,9 @@ async def execute_tool_api(
         db_context=db_context,
         # Infrastructure fields (required - no defaults)
         processing_service=processing_service,
+        # A direct tool call is not a turn, so there is no run binding for a
+        # tool that calls a model to inherit: the profile's default tier.
+        llm_client=processing_service.llm_client if processing_service else None,
         clock=clock,
         home_assistant_client=processing_service.home_assistant_client
         if processing_service

@@ -25,10 +25,6 @@ from typing import TYPE_CHECKING, Any
 
 from opentelemetry.trace import Span, StatusCode
 
-from family_assistant.llm.call_context import (
-    current_model_selection,
-    current_processing_profile,
-)
 from family_assistant.llm.messages import (
     MessageReasoningInfo,
     message_to_json_dict,
@@ -37,7 +33,7 @@ from family_assistant.llm.model_selection import stamp_model_selection
 from family_assistant.llm.request_buffer import LLMRequestRecord, get_request_buffer
 from family_assistant.llm.utils.usage_telemetry import set_usage_span_attributes
 from family_assistant.observability.metrics import (
-    UNATTRIBUTED_PROFILE,
+    current_call_attribution,
     record_llm_call,
 )
 
@@ -134,8 +130,7 @@ class LLMCallTelemetry:
         # Read at construction rather than at completion: a streamed call ends
         # inside an async generator's finally, which can run after the caller
         # has already left the profile's block.
-        self.profile = current_processing_profile() or UNATTRIBUTED_PROFILE
-        self.model_selection = current_model_selection()
+        self.attribution = current_call_attribution()
         self.request_timestamp = datetime.now(UTC)
         self.request_id = "_".join(
             part
@@ -187,14 +182,15 @@ class LLMCallTelemetry:
             "llm.request.tool_count": len(tools) if tools else 0,
             "llm.request.tool_choice": tool_choice or "",
         })
-        if self.model_selection is not None:
+        selection = self.attribution.model_selection
+        if selection is not None:
             # Recorded on every call of the turn, not only the one that closes
             # it: a tool loop's intermediate calls are spend at the same tier,
             # and a cost breakdown that omitted them would understate it.
             self.span.set_attributes({
-                "llm.model_tier": self.model_selection.tier or "",
-                "llm.model_tier.requested": self.model_selection.requested or "",
-                "llm.model_tier.source": self.model_selection.source,
+                "llm.model_tier": selection.tier or "",
+                "llm.model_tier.requested": selection.requested or "",
+                "llm.model_tier.source": selection.source,
             })
 
     @property
@@ -291,7 +287,7 @@ class LLMCallTelemetry:
             finalized["resolved_model"] = self.resolved_model
         if self._finish_reason:
             finalized["finish_reason"] = self._finish_reason
-        return stamp_model_selection(finalized, self.model_selection)
+        return stamp_model_selection(finalized, self.attribution.model_selection)
 
     def record_output(self, output: LLMOutput) -> None:
         """Record the shape of a non-streamed response.
@@ -359,8 +355,7 @@ class LLMCallTelemetry:
         self._metrics_recorded = True
         first_output_ms = self.time_to_first_output_ms
         record_llm_call(
-            profile=self.profile,
-            tier=(self.model_selection.tier if self.model_selection else None),
+            attribution=self.attribution,
             provider=self.provider,
             model=self.requested_model,
             resolved_model=self.resolved_model,

@@ -44,10 +44,6 @@ from family_assistant.llm.antigravity_egress import (
     AntigravityEgressResolver,
     EgressNetworkResolver,
 )
-from family_assistant.llm.call_context import (
-    current_model_selection,
-    current_processing_profile,
-)
 from family_assistant.llm.google_types import (
     GeminiProviderMetadata,
     GeminiThoughtSignature,
@@ -63,7 +59,10 @@ from family_assistant.llm.messages import (
     is_turn_scaffolding,
 )
 from family_assistant.llm.utils.call_telemetry import LLMCallTelemetry
-from family_assistant.observability.metrics import UNATTRIBUTED_PROFILE, record_llm_call
+from family_assistant.observability.metrics import (
+    current_call_attribution,
+    record_llm_call,
+)
 from family_assistant.processing.protocol import (
     DelegationPermanentError,
     DelegationTaskNotFoundError,
@@ -1987,8 +1986,7 @@ class GoogleGenAIClient(BaseLLMClient):
         double every run.
         """
         record_llm_call(
-            profile=current_processing_profile() or UNATTRIBUTED_PROFILE,
-            tier=(selection.tier if (selection := current_model_selection()) else None),
+            attribution=current_call_attribution(),
             provider="google",
             model=self.model_name,
             resolved_model=None,

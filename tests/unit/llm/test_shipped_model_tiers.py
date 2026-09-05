@@ -25,7 +25,7 @@ from family_assistant.llm.model_tiers import (
     validate_profile_model_tier,
 )
 from family_assistant.llm.providers.anthropic_client import AnthropicClient
-from tests.unit.llm.conftest import shipped_profile
+from tests.unit.conftest import shipped_profile
 
 if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface

@@ -19,8 +19,6 @@ from family_assistant.telegram.interface import TelegramChatInterface
 from family_assistant.telegram.ui import TelegramConfirmationUIManager
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     from fastapi import FastAPI
 
     from family_assistant.config_models import AppConfig
@@ -64,36 +62,17 @@ def build_profile_slash_command_map(app_config: AppConfig) -> dict[str, str]:
     return command_map
 
 
-def build_tier_slash_command_map(
-    app_config: AppConfig,
-    profile_commands: Mapping[str, str],
-) -> dict[str, str]:
+def build_tier_slash_command_map(app_config: AppConfig) -> dict[str, str]:
     """Map each model tier's slash command to its tier name.
 
-    Config validation already refuses a command claimed twice, so a collision
-    here means the two checks disagree; raising says which pair rather than
-    letting one command silently shadow the other at dispatch.
+    No collision check: `AppConfig` refuses a word two things claim, and a
+    second check here could only ever disagree with it.
     """
-    command_map: dict[str, str] = {}
-    for tier_name, tier in app_config.model_tiers.items():
-        command = tier.slash_command
-        if command is None:
-            continue
-        if command in profile_commands:
-            msg = (
-                f"Model tier '{tier_name}' claims slash command '{command}', "
-                f"which profile '{profile_commands[command]}' also claims. One "
-                "of them would never run; give the tier its own command."
-            )
-            raise ValueError(msg)
-        if command in command_map:
-            msg = (
-                f"Model tiers '{command_map[command]}' and '{tier_name}' both "
-                f"claim slash command '{command}'. Give each tier its own."
-            )
-            raise ValueError(msg)
-        command_map[command] = tier_name
-    return command_map
+    return {
+        tier.slash_command: tier_name
+        for tier_name, tier in app_config.model_tiers.items()
+        if tier.slash_command is not None
+    }
 
 
 def build_bot_commands(app_config: AppConfig) -> list[BotCommand]:
@@ -237,7 +216,7 @@ class TelegramService:
                 f"Initialized slash command to profile ID map: {self.slash_command_to_profile_id_map}"
             )
         self.slash_command_to_model_tier_map = build_tier_slash_command_map(
-            self.app_config, self.slash_command_to_profile_id_map
+            self.app_config
         )
         if self.slash_command_to_model_tier_map:
             logger.info(

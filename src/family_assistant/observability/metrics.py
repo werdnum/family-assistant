@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Final
 from prometheus_client import Counter, Gauge, Histogram
 
 from family_assistant.llm.call_context import (
+    CallAttribution,
     current_model_selection,
     current_processing_profile,
 )
@@ -298,10 +299,21 @@ def normalized_token_buckets(
     return buckets
 
 
+def current_call_attribution() -> CallAttribution:
+    """Everything the call being made right now is attributed to.
+
+    Read here rather than at each call site so a new dimension is picked up
+    everywhere at once, and so "no profile" gets its label in one place.
+    """
+    return CallAttribution(
+        profile_id=current_processing_profile() or UNATTRIBUTED_PROFILE,
+        model_selection=current_model_selection(),
+    )
+
+
 def record_llm_call(
     *,
-    profile: str,
-    tier: str | None,
+    attribution: CallAttribution,
     provider: str,
     model: str,
     resolved_model: str | None,
@@ -317,9 +329,10 @@ def record_llm_call(
     Never raises: a metrics backend that has somehow got into a bad state must
     not take a user's reply down with it.
     """
+    selection = attribution.model_selection
     labels = (
-        profile or UNATTRIBUTED_PROFILE,
-        tier or UNTIERED_CALL,
+        attribution.profile_id or UNATTRIBUTED_PROFILE,
+        (selection.tier if selection else None) or UNTIERED_CALL,
         provider,
         model,
         resolved_model or model,
@@ -440,8 +453,7 @@ async def instrumented_llm_request[R](
     successes, and defeat comparing the two.
     """
     started = time.monotonic()
-    profile = current_processing_profile() or UNATTRIBUTED_PROFILE
-    selection = current_model_selection()
+    attribution = current_call_attribution()
 
     def record(
         outcome: str,
@@ -450,8 +462,7 @@ async def instrumented_llm_request[R](
         error: BaseException | None = None,
     ) -> None:
         record_llm_call(
-            profile=profile,
-            tier=selection.tier if selection else None,
+            attribution=attribution,
             provider=provider,
             model=model,
             resolved_model=_request_served_model(response, error),

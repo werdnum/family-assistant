@@ -4062,6 +4062,11 @@ class TaskWorker:
                     db_context=db_context,
                     # Infrastructure fields (required - no defaults)
                     processing_service=self.processing_service,
+                    # No run binding here: a task is not a turn, so a tool that
+                    # calls a model gets the profile's default tier.
+                    llm_client=self.processing_service.llm_client
+                    if self.processing_service
+                    else None,
                     clock=self.clock,
                     home_assistant_client=self.processing_service.home_assistant_client
                     if self.processing_service
@@ -5550,6 +5555,10 @@ async def _build_confirmation_execution_context(
         turn_id=turn_id,
         db_context=exec_context.db_context,
         processing_service=processing_service,
+        # The originating turn's binding is not available here -- this context
+        # is rebuilt from a persisted confirmation request -- so a tool that
+        # calls a model gets the profile's default tier.
+        llm_client=processing_service.llm_client,
         clock=exec_context.clock,
         home_assistant_client=processing_service.home_assistant_client,
         event_sources=exec_context.event_sources,

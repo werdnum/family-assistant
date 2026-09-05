@@ -34,7 +34,7 @@ from family_assistant.security.taint import (
     TurnTaintState,
     merge_taint_policy_config,
 )
-from tests.unit.llm.conftest import shipped_profile
+from tests.unit.conftest import shipped_profile
 
 
 def test_shipped_coder_profile_runs_gemini_37_flash_on_the_agent(
