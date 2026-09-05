@@ -11,6 +11,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import pytest
+
+from family_assistant.telegram.commands import normalize_slash_command
 from family_assistant.telegram.service import (
     build_bot_commands,
     build_tier_slash_command_map,
@@ -18,6 +21,26 @@ from family_assistant.telegram.service import (
 
 if TYPE_CHECKING:
     from family_assistant.config_models import AppConfig
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "/deep",
+        "/deep tell me about this",
+        # A command addressed to one bot, which is how a group chat spells it.
+        "/deep@FamilyAssistantBot",
+        "/deep@FamilyAssistantBot tell me about this",
+        # Telegram matches a command case-insensitively.
+        "/DEEP",
+        "/Deep@FamilyAssistantBot tell me about this",
+        # The request can start on the next line.
+        "/deep\ntell me about this",
+    ],
+)
+def test_every_spelling_telegram_delivers_keys_the_same_command(text: str) -> None:
+    """One key, however the message that carried the command was written."""
+    assert normalize_slash_command(text) == "/deep"
 
 
 def test_the_shipped_tier_commands_dispatch_to_their_tiers(

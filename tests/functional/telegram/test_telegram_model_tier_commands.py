@@ -224,6 +224,40 @@ async def test_deep_runs_the_message_on_the_deep_tier(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command_text",
+    [
+        # A group chat addresses a command to one bot; Telegram delivers it to
+        # the handler registered for `/deep` with the suffix still attached.
+        "/deep@FamilyAssistantBot which of these two contracts is worse",
+        # Telegram matches a command case-insensitively, so this reaches the
+        # same handler too.
+        "/DEEP which of these two contracts is worse",
+    ],
+)
+async def test_a_tier_command_telegram_spells_differently_still_runs_the_tier(
+    telegram_handler_fixture: TelegramHandlerTestFixture,
+    tier_clients: dict[str, RuleBasedMockLLMClient],
+    command_text: str,
+) -> None:
+    """What arrives is not what was configured, and it means the same thing.
+
+    Reporting a configuration error for a command Telegram itself accepted
+    would refuse a request the person spelled correctly.
+    """
+    fix = telegram_handler_fixture
+    install_tiered_service(fix, tier_clients, ALL_TIERS)
+
+    await run_command(fix, command_text)
+
+    assert tier_clients["deep"].get_calls()
+    assert not tier_clients["standard"].get_calls()
+    reasoning = await assistant_reasoning_info(fix)
+    assert reasoning.get("model_tier") == "deep"
+    assert reasoning.get("model_tier_source") == "user"
+
+
+@pytest.mark.asyncio
 async def test_max_runs_the_message_on_the_frontier_tier(
     telegram_handler_fixture: TelegramHandlerTestFixture,
     tier_clients: dict[str, RuleBasedMockLLMClient],
@@ -375,3 +409,35 @@ async def test_a_profile_command_still_chooses_a_profile(
     reasoning = await assistant_reasoning_info(fix)
     assert reasoning.get("model_tier") == "standard"
     assert reasoning.get("model_tier_source") == "default"
+
+
+@pytest.mark.asyncio
+async def test_a_profile_command_addressed_to_the_bot_still_chooses_the_profile(
+    telegram_handler_fixture: TelegramHandlerTestFixture,
+    tier_clients: dict[str, RuleBasedMockLLMClient],
+) -> None:
+    """Both kinds of command are normalised by the same shared step."""
+    fix = telegram_handler_fixture
+    install_tiered_service(fix, tier_clients, ALL_TIERS)
+    specialist_client = _client_saying("the specialist answered")
+    specialist = install_tiered_service(
+        fix,
+        {
+            "standard": specialist_client,
+            "deep": _client_saying("specialist deep"),
+            "frontier": _client_saying("specialist frontier"),
+        },
+        ALL_TIERS,
+        profile_id="specialist_profile",
+    )
+    fix.handler.telegram_service.slash_command_to_profile_id_map["/specialist"] = (
+        specialist.service_config.id
+    )
+
+    update = create_command_update(
+        "/specialist@FamilyAssistantBot do the specialist thing", fix.bot
+    )
+    context = create_context(fix.application, args=["do", "the", "specialist", "thing"])
+    await fix.handler.handle_generic_slash_command(update, context)
+
+    assert specialist_client.get_calls()

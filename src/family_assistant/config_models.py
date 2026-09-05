@@ -73,6 +73,7 @@ if TYPE_CHECKING:
 from .config_sources import DeepMergedYamlSource
 from .delegation_security import DelegationSecurityLevel
 from .security.taint import SinkClass, TaintPolicyConfig
+from .telegram.commands import BUILT_IN_SLASH_COMMANDS, normalize_slash_command
 from .tools.policy import (
     ToolPolicyConfig,
     ToolPolicyDecision,
@@ -107,6 +108,26 @@ class RetryConfig(BaseModel):
 
 _TIER_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 _TIER_SLASH_COMMAND_PATTERN = re.compile(r"^/[a-z0-9_]{1,31}$")
+
+
+def _reject_built_in_slash_command(claimant: str, command: str) -> None:
+    """Refuse a configured command the bot already answers itself.
+
+    ``command`` must already be normalised. The built-in handlers are registered
+    before any configured command and Telegram dispatches to the first match, so
+    a configuration claiming one of those names loses every time: the built-in
+    action runs and the thing that was configured never does. Failing at startup
+    says so, rather than advertising a command in the menu that does something
+    else entirely.
+    """
+    if command not in BUILT_IN_SLASH_COMMANDS:
+        return
+    msg = (
+        f"{claimant} uses slash command {command!r}, which the bot answers with "
+        "a built-in command. Built-in handlers are registered first and win, so "
+        "the configured command would never run."
+    )
+    raise ValueError(msg)
 
 
 class ModelTierConfig(BaseModel):
@@ -1829,13 +1850,20 @@ class AppConfig(BaseSettings):
         wins and the other silently never runs. A tier command and a profile
         command mean different things -- pick the intelligence for this message
         versus pick the agent -- so a collision between them is the same
-        ambiguity, not a resolvable precedence.
+        ambiguity, not a resolvable precedence. The bot's own commands are in
+        the same namespace and are registered ahead of both, so claiming one of
+        those is the same defect with a guaranteed loser.
+
+        Compared on the normalised command, since that is what dispatch keys on:
+        ``/Deep`` and ``/deep`` are one word to Telegram, not two.
         """
         owners: dict[str, str] = {}
         for tier_name, tier in self.model_tiers.items():
             if tier.slash_command is None:
                 continue
-            existing = owners.get(tier.slash_command)
+            command = normalize_slash_command(tier.slash_command)
+            _reject_built_in_slash_command(f"Model tier {tier_name!r}", command)
+            existing = owners.get(command)
             if existing is not None:
                 msg = (
                     f"Model tiers {existing!r} and {tier_name!r} both use "
@@ -1843,18 +1871,20 @@ class AppConfig(BaseSettings):
                     "thing to run."
                 )
                 raise ValueError(msg)
-            owners[tier.slash_command] = tier_name
+            owners[command] = tier_name
 
         for profile in self.service_profiles:
-            for command in profile.slash_commands:
+            for raw_command in profile.slash_commands:
+                command = normalize_slash_command(raw_command)
+                _reject_built_in_slash_command(f"Profile {profile.id!r}", command)
                 tier_name = owners.get(command)
                 if tier_name is not None:
                     msg = (
-                        f"Profile {profile.id!r} uses slash command {command!r}, "
-                        f"which model tier {tier_name!r} also claims. A tier "
-                        "command selects the intelligence for one message and a "
-                        "profile command selects the agent, so one word cannot "
-                        "mean both."
+                        f"Profile {profile.id!r} uses slash command "
+                        f"{raw_command!r}, which model tier {tier_name!r} also "
+                        "claims. A tier command selects the intelligence for one "
+                        "message and a profile command selects the agent, so one "
+                        "word cannot mean both."
                     )
                     raise ValueError(msg)
         return self

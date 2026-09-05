@@ -14,6 +14,10 @@ from family_assistant.telegram.batching import (
     DefaultMessageBatcher,
     NoBatchMessageBatcher,
 )
+from family_assistant.telegram.commands import (
+    BUILT_IN_COMMANDS,
+    normalize_slash_command,
+)
 from family_assistant.telegram.handler import TelegramUpdateHandler
 from family_assistant.telegram.interface import TelegramChatInterface
 from family_assistant.telegram.ui import TelegramConfirmationUIManager
@@ -44,32 +48,37 @@ MAX_BOT_COMMAND_DESCRIPTION_LENGTH = 255
 
 
 def build_profile_slash_command_map(app_config: AppConfig) -> dict[str, str]:
-    """Map each profile slash command (leading '/' included) to its profile id."""
+    """Map each profile slash command (leading '/' included) to its profile id.
+
+    Keyed by the normalised command, which is what an incoming message is looked
+    up by: Telegram delivers `/Deep` and `/deep@FamilyBot` to the same handler.
+    """
     command_map: dict[str, str] = {}
     for profile_config in app_config.service_profiles:
         profile_id = profile_config.id
         if not profile_id:
             continue
         for command in profile_config.slash_commands:
-            if command in command_map:
+            key = normalize_slash_command(command)
+            if key in command_map:
                 logger.warning(
                     f"Slash command '{command}' is mapped to multiple profile IDs. "
-                    f"Using '{command_map[command]}', "
+                    f"Using '{command_map[key]}', "
                     f"ignoring mapping to '{profile_id}'."
                 )
             else:
-                command_map[command] = profile_id
+                command_map[key] = profile_id
     return command_map
 
 
 def build_tier_slash_command_map(app_config: AppConfig) -> dict[str, str]:
-    """Map each model tier's slash command to its tier name.
+    """Map each model tier's normalised slash command to its tier name.
 
     No collision check: `AppConfig` refuses a word two things claim, and a
     second check here could only ever disagree with it.
     """
     return {
-        tier.slash_command: tier_name
+        normalize_slash_command(tier.slash_command): tier_name
         for tier_name, tier in app_config.model_tiers.items()
         if tier.slash_command is not None
     }
@@ -83,14 +92,13 @@ def build_bot_commands(app_config: AppConfig) -> list[BotCommand]:
     tier's description says which of the two a reader is looking at.
     """
     commands = [
-        BotCommand("start", "Start the bot and get a welcome message"),
-        BotCommand("interrupt", "Stop the current request"),
+        BotCommand(name, description) for name, description in BUILT_IN_COMMANDS.items()
     ]
     seen: set[str] = set()
 
     for profile_config in app_config.service_profiles:
         for slash_command in profile_config.slash_commands:
-            name = slash_command.lstrip("/")
+            name = normalize_slash_command(slash_command).removeprefix("/")
             if name in seen:
                 continue
             description = (
@@ -104,7 +112,7 @@ def build_bot_commands(app_config: AppConfig) -> list[BotCommand]:
     for tier_name, tier in app_config.model_tiers.items():
         if tier.slash_command is None:
             continue
-        name = tier.slash_command.lstrip("/")
+        name = normalize_slash_command(tier.slash_command).removeprefix("/")
         if name in seen:
             continue
         label = tier.label or tier_name

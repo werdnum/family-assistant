@@ -56,6 +56,10 @@ from family_assistant.telegram.chunking import (
     TELEGRAM_MAX_MESSAGE_LENGTH,
     split_message_text,
 )
+from family_assistant.telegram.commands import (
+    BUILT_IN_COMMANDS,
+    normalize_slash_command,
+)
 from family_assistant.telegram.markdown_utils import convert_to_telegram_markdown
 from family_assistant.telegram.rich_messages import (
     is_rich_message_compatibility_error,
@@ -1079,8 +1083,14 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         """Registers the necessary Telegram handlers with the application."""
         application = self.telegram_service.application
 
-        application.add_handler(CommandHandler("start", self.start))
-        application.add_handler(CommandHandler("interrupt", self.interrupt_command))
+        built_in_callbacks = {
+            "start": self.start,
+            "interrupt": self.interrupt_command,
+        }
+        for command_name in BUILT_IN_COMMANDS:
+            application.add_handler(
+                CommandHandler(command_name, built_in_callbacks[command_name])
+            )
 
         if self.telegram_service.slash_command_to_profile_id_map:
             for command_str in self.telegram_service.slash_command_to_profile_id_map:
@@ -1159,7 +1169,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
 
         return _SlashCommandInvocation(
             chat_id=update.effective_chat.id,
-            command=update.message.text.split(maxsplit=1)[0],
+            command=normalize_slash_command(update.message.text),
             request_text=" ".join(context.args or []),
             resolved_user=resolved_user,
         )

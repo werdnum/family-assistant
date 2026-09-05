@@ -857,9 +857,11 @@ the example above, `claude-fable-5` has no global entry at all, so it inherits n
 configuration where it serves as another tier's fallback, and gets adaptive thinking only in
 `frontier`.
 
-Tier names must not collide with each other's `slash_command`, or with any profile's
-`slash_commands`: a chat surface dispatches a leading `/word` by looking it up, so a collision means
-one of the two silently never runs. Shipped: `/deep` and `/max`.
+Tier names must not collide with each other's `slash_command`, with any profile's `slash_commands`,
+or with the bot's own commands (`/start`, `/interrupt`): a chat surface dispatches a leading `/word`
+by looking it up, so a collision means one of the two silently never runs — and against a built-in
+it is always the configured one that loses. Compared case-insensitively, since Telegram treats
+`/Deep` and `/deep` as one command. Shipped: `/deep` and `/max`.
 
 #### Eligibility: `model_tier`, `allowed_model_tiers`, `auto_model_tiers`
 
