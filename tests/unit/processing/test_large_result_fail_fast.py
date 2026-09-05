@@ -31,7 +31,6 @@ def _create_processor(
     app_config.attachment_config.large_tool_result_threshold_kb = threshold_kb
     return AttachmentProcessor(
         attachment_registry=attachment_registry,
-        llm_client=Mock(),
         app_config=app_config,
         clock=SystemClock(),
     )

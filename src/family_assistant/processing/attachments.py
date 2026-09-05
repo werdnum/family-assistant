@@ -57,7 +57,6 @@ class AttachmentProcessor:
     def __init__(
         self,
         attachment_registry: AttachmentRegistry | None,
-        llm_client: LLMInterface,
         app_config: AppConfig,
         clock: Clock,
     ) -> None:
@@ -66,12 +65,10 @@ class AttachmentProcessor:
 
         Args:
             attachment_registry: Registry for managing attachments (can be None if disabled).
-            llm_client: LLM client for generating responses.
             app_config: Application configuration.
             clock: Clock instance for time operations.
         """
         self.attachment_registry = attachment_registry
-        self.llm_client = llm_client
         self.app_config = app_config
         self.clock = clock
 
@@ -82,6 +79,7 @@ class AttachmentProcessor:
         content_parts: list[ContentPartDict],
         *,
         acting_user_id: str | None,
+        llm_client: LLMInterface,
     ) -> ProcessedContentParts:
         """
         Process attachment content parts by fetching and injecting them as user messages.
@@ -95,6 +93,9 @@ class AttachmentProcessor:
             conversation_id: Current conversation ID for security validation
             content_parts: List of content parts that may contain attachment references
             acting_user_id: Acting user for owner-scoped attachment access.
+            llm_client: The client serving this run. The injection is built by
+                the provider adapter, so it has to be the adapter the run will
+                actually send to.
 
         Returns:
             The injection messages, and metadata for every attachment they carry.
@@ -136,9 +137,7 @@ class AttachmentProcessor:
                     attachment_id=attachment_id,
                     description=attachment_metadata.description or "Attachment",
                 )
-                injection_msg = self.llm_client.create_attachment_injection(
-                    tool_attachment
-                )
+                injection_msg = llm_client.create_attachment_injection(tool_attachment)
                 # The injected message *is* the attachment's content as the
                 # model sees it, so it has to carry the attachment's taint.
                 # Without this the turn reads as trusted no matter what the
@@ -426,6 +425,7 @@ class AttachmentProcessor:
         original_query: str,
         *,
         acting_user_id: str | None,
+        llm_client: LLMInterface,
     ) -> list[str]:
         """
         Select the most relevant attachments to include in the response.
@@ -437,6 +437,8 @@ class AttachmentProcessor:
             pending_attachment_ids: List of available attachment IDs to choose from
             original_query: The original user query to evaluate relevance
             acting_user_id: Acting user; owned rows are surfaced only for a match.
+            llm_client: The client serving this run, so the selection is made by
+                the same model as the turn it belongs to.
 
         Returns:
             List of selected attachment IDs (up to max_response_attachments)
@@ -500,7 +502,7 @@ Call attach_to_response with your selected attachment IDs."""
         )
 
         try:
-            response = await self.llm_client.generate_response(
+            response = await llm_client.generate_response(
                 messages=selection_messages,
                 tools=selection_tools,
                 tool_choice="required",

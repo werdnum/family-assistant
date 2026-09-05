@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from family_assistant.llm import LLMInterface, LLMStreamEvent, StreamEventMetadata
 from family_assistant.llm.base import ContextLengthError
-from family_assistant.llm.call_context import attributed_to_profile
+from family_assistant.llm.call_context import CallAttribution, attributed_to_profile
 from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.llm.messages import (
     AssistantMessage,
@@ -57,6 +57,7 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import EventSourcesById, ToolDefinition
 
     from .attachments import AttachmentProcessor
+    from .model_selection import ResolvedModelSelection
     from .service import ProcessingService
     from .tool_execution import ToolExecutor
     from .types import (
@@ -129,13 +130,11 @@ class LLMStreamingLoop:
 
     def __init__(
         self,
-        llm_client: LLMInterface,
         config: LLMStreamingLoopConfig,
         app_config: AppConfig,
         tool_executor: ToolExecutor,
         attachment_processor: AttachmentProcessor,
     ) -> None:
-        self.llm_client = llm_client
         self.config = config
         self.app_config = app_config
         self.tool_executor = tool_executor
@@ -178,6 +177,8 @@ class LLMStreamingLoop:
         user_name: str,
         turn_id: str,
         chat_interface: ChatInterface | None,
+        llm_client: LLMInterface,
+        model_selection: ResolvedModelSelection,
         user_id: str | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
         confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
@@ -215,6 +216,8 @@ class LLMStreamingLoop:
             user_id=user_id,
             turn_id=turn_id,
             chat_interface=chat_interface,
+            llm_client=llm_client,
+            model_selection=model_selection,
             chat_interfaces=chat_interfaces,
             confirmation_ui_managers=confirmation_ui_managers,
             request_confirmation_callback=request_confirmation_callback,
@@ -248,6 +251,8 @@ class LLMStreamingLoop:
         user_name: str,
         turn_id: str,
         chat_interface: ChatInterface | None,
+        llm_client: LLMInterface,
+        model_selection: ResolvedModelSelection,
         user_id: str | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
         confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
@@ -278,6 +283,8 @@ class LLMStreamingLoop:
             user_name=user_name,
             turn_id=turn_id,
             chat_interface=chat_interface,
+            llm_client=llm_client,
+            model_selection=model_selection,
             user_id=user_id,
             chat_interfaces=chat_interfaces,
             confirmation_ui_managers=confirmation_ui_managers,
@@ -293,7 +300,10 @@ class LLMStreamingLoop:
             tool_call_review_trigger=tool_call_review_trigger,
         )
         try:
-            async for item in attributed_to_profile(self.config.id, inner):
+            attribution = CallAttribution(
+                profile_id=self.config.id, model_selection=model_selection
+            )
+            async for item in attributed_to_profile(attribution, inner):
                 yield item
         except (asyncio.CancelledError, GeneratorExit):
             turn.finish("cancelled")
@@ -315,6 +325,8 @@ class LLMStreamingLoop:
         user_name: str,
         turn_id: str,
         chat_interface: ChatInterface | None,
+        llm_client: LLMInterface,
+        model_selection: ResolvedModelSelection,
         user_id: str | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
         confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
@@ -508,6 +520,7 @@ class LLMStreamingLoop:
                                 pending_attachment_ids=pending_attachment_ids,
                                 original_query=original_query,
                                 acting_user_id=user_id,
+                                llm_client=llm_client,
                             )
                         )
                     except AttachmentSelectionError as exc:
@@ -656,7 +669,7 @@ class LLMStreamingLoop:
                     tool_calls_for_attempt: list[ToolCallItem],
                 ) -> AsyncGenerator[LLMStreamEvent]:
                     nonlocal done_provider_metadata, final_reasoning_info
-                    async for event in self.llm_client.generate_response_stream(
+                    async for event in llm_client.generate_response_stream(
                         messages=messages_for_attempt,
                         tools=tools_for_attempt,
                         tool_choice=tool_choice_for_attempt,

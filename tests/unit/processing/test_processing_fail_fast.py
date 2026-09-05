@@ -36,6 +36,7 @@ from family_assistant.processing.attachments import (
     AttachmentSelectionError,
 )
 from family_assistant.processing.context import ContextPreparer
+from family_assistant.processing.model_selection import ResolvedModelSelection
 from family_assistant.processing.types import ToolExecutionResult
 from family_assistant.storage.database import Database
 from family_assistant.tools.types import (
@@ -693,7 +694,6 @@ async def test_delegation_catalog_addition_lists_profiles_when_advertised() -> N
 async def test_process_content_parts_missing_attachment_id_raises() -> None:
     processor = AttachmentProcessor(
         attachment_registry=AsyncMock(),
-        llm_client=MagicMock(),
         app_config=AppConfig(),
         clock=SystemClock(),
     )
@@ -704,6 +704,7 @@ async def test_process_content_parts_missing_attachment_id_raises() -> None:
             conversation_id="conv",
             content_parts=cast("list[ContentPartDict]", [{"type": "attachment"}]),
             acting_user_id=None,
+            llm_client=MagicMock(),
         )
 
 
@@ -714,7 +715,6 @@ async def test_process_content_parts_missing_attachment_metadata_raises() -> Non
     mock_registry.get_attachment.return_value = None
     processor = AttachmentProcessor(
         attachment_registry=mock_registry,
-        llm_client=MagicMock(),
         app_config=AppConfig(),
         clock=SystemClock(),
     )
@@ -728,6 +728,7 @@ async def test_process_content_parts_missing_attachment_metadata_raises() -> Non
                 [{"type": "attachment", "attachment_id": "att-1"}],
             ),
             acting_user_id=None,
+            llm_client=MagicMock(),
         )
 
 
@@ -739,7 +740,6 @@ async def test_process_content_parts_missing_attachment_content_raises() -> None
     mock_registry.get_attachment_content.return_value = None
     processor = AttachmentProcessor(
         attachment_registry=mock_registry,
-        llm_client=MagicMock(),
         app_config=AppConfig(),
         clock=SystemClock(),
     )
@@ -753,6 +753,7 @@ async def test_process_content_parts_missing_attachment_content_raises() -> None
                 [{"type": "attachment", "attachment_id": "att-1"}],
             ),
             acting_user_id=None,
+            llm_client=MagicMock(),
         )
 
 
@@ -762,7 +763,6 @@ async def test_convert_urls_to_data_uris_invalid_internal_url_raises() -> None:
     mock_registry = MagicMock()
     processor = AttachmentProcessor(
         attachment_registry=mock_registry,
-        llm_client=MagicMock(),
         app_config=AppConfig(),
         clock=SystemClock(),
     )
@@ -789,7 +789,6 @@ async def test_convert_urls_to_data_uris_missing_file_raises() -> None:
     )
     processor = AttachmentProcessor(
         attachment_registry=mock_registry,
-        llm_client=MagicMock(),
         app_config=AppConfig(),
         clock=SystemClock(),
     )
@@ -818,7 +817,6 @@ async def test_extract_conversation_context_propagates_registry_failures() -> No
     )
     processor = AttachmentProcessor(
         attachment_registry=mock_registry,
-        llm_client=MagicMock(),
         app_config=AppConfig(),
         clock=SystemClock(),
     )
@@ -863,8 +861,7 @@ async def test_stream_done_attachment_metadata_lookup_propagates_failures() -> N
             yield LLMStreamEvent(type="content", content="final answer")
             yield LLMStreamEvent(type="done", metadata={})
 
-    service = _make_service()
-    service.llm_client = cast("Any", TwoStepToolThenContentLLM())
+    service = _make_service(llm_client=cast("Any", TwoStepToolThenContentLLM()))
     service.tool_executor.execute = AsyncMock(  # type: ignore[method-assign]
         return_value=ToolExecutionResult(
             stream_event=LLMStreamEvent(
@@ -899,6 +896,8 @@ async def test_stream_done_attachment_metadata_lookup_propagates_failures() -> N
             user_name="tester",
             turn_id="turn",
             chat_interface=None,
+            llm_client=service.llm_client,
+            model_selection=ResolvedModelSelection.unselected(None),
             processing_service=service,
         ):
             pass
@@ -936,8 +935,7 @@ async def test_denial_escalation_ends_after_complete_tool_result_batch_without_m
             yield LLMStreamEvent(type="done", metadata={})
 
     llm_client = ModelCallMustNotRepeat()
-    service = _make_service()
-    service.llm_client = cast("Any", llm_client)
+    service = _make_service(llm_client=cast("Any", llm_client))
 
     async def execute_with_terminal_escalation(
         tool_call: ToolCallItem,
@@ -978,6 +976,8 @@ async def test_denial_escalation_ends_after_complete_tool_result_batch_without_m
         user_name="tester",
         turn_id="turn",
         chat_interface=None,
+        llm_client=service.llm_client,
+        model_selection=ResolvedModelSelection.unselected(None),
         processing_service=service,
     ):
         emitted.append((event, message))
@@ -1046,10 +1046,9 @@ async def test_stream_attachment_selection_failure_uses_capped_auto_queue() -> N
             yield LLMStreamEvent(type="content", content="final answer")
             yield LLMStreamEvent(type="done", metadata={})
 
-    service = _make_service()
+    service = _make_service(llm_client=cast("Any", TwoStepToolThenContentLLM()))
     service.app_config.attachment_selection_threshold = 0
     service.app_config.max_response_attachments = 1
-    service.llm_client = cast("Any", TwoStepToolThenContentLLM())
     service.tool_executor.execute = AsyncMock(  # type: ignore[method-assign]
         side_effect=[
             ToolExecutionResult(
@@ -1098,6 +1097,8 @@ async def test_stream_attachment_selection_failure_uses_capped_auto_queue() -> N
         user_name="tester",
         turn_id="turn",
         chat_interface=None,
+        llm_client=service.llm_client,
+        model_selection=ResolvedModelSelection.unselected(None),
         processing_service=service,
     ):
         if event.type == "done":

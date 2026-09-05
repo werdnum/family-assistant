@@ -36,6 +36,12 @@ from family_assistant.utils.text_normalization import normalize_latex_to_unicode
 from .attachments import AttachmentProcessor
 from .context import ContextPreparer
 from .llm_loop import LLMStreamingLoop
+from .model_selection import (
+    ModelSelectionRequest,
+    ModelTierNotPermitted,
+    ResolvedModelSelection,
+    resolve_model_selection,
+)
 from .tool_execution import ToolExecutor
 from .turn_context import build_turn_context_message, turn_context_guidance
 from .types import (
@@ -194,8 +200,19 @@ class ProcessingService:
         credential_resolvers: Mapping[str, OAuthCredentialResolver] | None = None,
         api_backend: ApiBackend | None = None,
         taint_policy: TaintPolicyConfig | None = None,
+        tier_llm_clients: Mapping[str, LLMInterface] | None = None,
     ) -> None:
+        """Build a profile's service.
+
+        ``llm_client`` serves a run that selects no tier, and is the client for
+        the profile's own ``model_tier`` where it has one. ``tier_llm_clients``
+        holds one client per tier the profile may be run on, built once at
+        startup: a run binds to one of them for its whole duration rather than
+        rebinding shared state, so two conversations at different tiers cannot
+        take each other's models.
+        """
         self._llm_client = llm_client
+        self._tier_llm_clients: dict[str, LLMInterface] = dict(tier_llm_clients or {})
         self.tools_provider = tools_provider
         self.on_demand_view = on_demand_view
         self.service_config = service_config
@@ -215,9 +232,11 @@ class ProcessingService:
         # taint per tool, inside the tools provider.
         self.taint_policy = taint_policy or TaintPolicyConfig()
 
-        # Compose helpers
+        # Compose helpers. None of them holds a client: the run's client is
+        # passed to the calls that need one, so which model a turn talks to is
+        # a property of that turn rather than of the shared service.
         self.attachment_processor = AttachmentProcessor(
-            attachment_registry, llm_client, app_config, self.clock
+            attachment_registry, app_config, self.clock
         )
         self.context_preparer = ContextPreparer(
             context_providers, service_config, self.clock
@@ -232,7 +251,6 @@ class ProcessingService:
             api_backend=api_backend,
         )
         self.llm_loop = LLMStreamingLoop(
-            llm_client,
             service_config,
             app_config,
             self.tool_executor,
@@ -305,13 +323,67 @@ class ProcessingService:
 
     @property
     def llm_client(self) -> LLMInterface:
+        """The client a run that selects no tier is served by."""
         return self._llm_client
 
-    @llm_client.setter
-    def llm_client(self, value: LLMInterface) -> None:
-        self._llm_client = value
-        self.llm_loop.llm_client = value
-        self.attachment_processor.llm_client = value
+    def resolve_model_selection(
+        self,
+        request: ModelSelectionRequest | ResolvedModelSelection | None,
+    ) -> ResolvedModelSelection:
+        """Admit a tier request for this profile, or raise.
+
+        Takes an already-resolved selection too, and re-checks that its tier is
+        still one this profile can serve: that is the queued-run path, where the
+        envelope was frozen at enqueue time and the configuration may have moved
+        underneath it. Re-resolving it from scratch would be worse -- a
+        deployment that narrowed the eligibility lists would silently downgrade
+        a run somebody already authorized.
+        """
+        if isinstance(request, ResolvedModelSelection):
+            self._client_for_selection(request)
+            return request
+        return resolve_model_selection(
+            self.service_config.tier_eligibility,
+            request,
+            profile_id=self.service_config.id,
+        )
+
+    def _run_binding(
+        self,
+        selection: ResolvedModelSelection | None,
+        llm_client: LLMInterface | None,
+    ) -> tuple[ResolvedModelSelection, LLMInterface]:
+        """Fill in the run's binding for a caller that supplied part of it.
+
+        ``handle_chat_interaction`` resolves both before preparing anything and
+        passes them down, so this only fills in for a caller that entered lower
+        down -- which means the profile's own tier and its own client.
+        """
+        resolved = selection or ResolvedModelSelection.unselected(
+            self.service_config.tier_eligibility.default_tier
+        )
+        return resolved, llm_client or self._client_for_selection(resolved)
+
+    def _client_for_selection(self, selection: ResolvedModelSelection) -> LLMInterface:
+        """The client this run's resolved tier binds to."""
+        tier = selection.tier
+        if tier is None or tier == self.service_config.tier_eligibility.default_tier:
+            return self._llm_client
+        client = self._tier_llm_clients.get(tier)
+        if client is None:
+            msg = (
+                f"Profile '{self.service_config.id}' has no client for model tier "
+                f"'{tier}'. Configured tiers here: "
+                f"{', '.join(sorted(self._tier_llm_clients)) or '(none)'}."
+            )
+            raise ModelTierNotPermitted(
+                msg,
+                profile_id=self.service_config.id,
+                requested_tier=tier,
+                source=selection.source,
+                eligible_tiers=self.service_config.tier_eligibility.selectable_ids,
+            )
+        return client
 
     @property
     def attachment_registry(self) -> AttachmentRegistry | None:
@@ -901,6 +973,7 @@ class ProcessingService:
         replied_to_interface_id: str | None,
         trigger_attachments: list[MessageAttachmentMetadata] | None,
         subconversation_id: str | None,
+        llm_client: LLMInterface,
         thread_root_id: int | None = None,
         trigger_is_internal: bool = False,
         pinned_history_message_ids: list[int] | None = None,
@@ -1035,6 +1108,7 @@ class ProcessingService:
             conversation_id,
             trigger_content_parts,
             acting_user_id=user_id,
+            llm_client=llm_client,
         )
         # Before the injection messages are appended, so the block lands on the
         # trigger rather than on the newest injection. An injection built by a
@@ -1076,6 +1150,8 @@ class ProcessingService:
         user_name: str,
         turn_id: str,
         chat_interface: ChatInterface | None,
+        llm_client: LLMInterface | None = None,
+        model_selection: ResolvedModelSelection | None = None,
         user_id: str | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
         confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
@@ -1095,6 +1171,7 @@ class ProcessingService:
             - A dictionary containing reasoning/usage info from the final LLM call (or None).
             - A list of attachment IDs to send with the response (or None).
         """
+        run_selection, run_llm_client = self._run_binding(model_selection, llm_client)
         return await self.llm_loop.run(
             db_context=db_context,
             messages=messages,
@@ -1103,6 +1180,8 @@ class ProcessingService:
             user_name=user_name,
             turn_id=turn_id,
             chat_interface=chat_interface,
+            llm_client=run_llm_client,
+            model_selection=run_selection,
             user_id=user_id,
             chat_interfaces=chat_interfaces,
             confirmation_ui_managers=confirmation_ui_managers,
@@ -1127,6 +1206,8 @@ class ProcessingService:
         user_name: str,
         turn_id: str,
         chat_interface: ChatInterface | None,
+        llm_client: LLMInterface | None = None,
+        model_selection: ResolvedModelSelection | None = None,
         user_id: str | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
         confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
@@ -1146,6 +1227,7 @@ class ProcessingService:
 
         This generator handles the same logic as process_message but yields events incrementally.
         """
+        run_selection, run_llm_client = self._run_binding(model_selection, llm_client)
         async for item in self.llm_loop.run_stream(
             db_context=db_context,
             messages=messages,
@@ -1154,6 +1236,8 @@ class ProcessingService:
             user_name=user_name,
             turn_id=turn_id,
             chat_interface=chat_interface,
+            llm_client=run_llm_client,
+            model_selection=run_selection,
             user_id=user_id,
             chat_interfaces=chat_interfaces,
             confirmation_ui_managers=confirmation_ui_managers,
@@ -1195,6 +1279,7 @@ class ProcessingService:
         reuse_existing_user_row: bool = False,
         initial_taint_sources: Sequence[TaintSource] | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
+        model_selection: ModelSelectionRequest | ResolvedModelSelection | None = None,
     ) -> ChatInteractionResult:
         """
         Handles a complete chat interaction from user input to final response.
@@ -1240,6 +1325,14 @@ class ProcessingService:
             f"Starting handle_chat_interaction for conversation {conversation_id}, turn {turn_id}"
         )
 
+        # Resolved before any model-dependent preparation: attachment injection
+        # is built by the primary adapter, so the binding has to exist before
+        # the turn's messages do. A refusal propagates to the caller rather than
+        # becoming an assistant error message -- it is an answer about the
+        # request, not a failure of it.
+        resolved_selection = self.resolve_model_selection(model_selection)
+        run_llm_client = self._client_for_selection(resolved_selection)
+
         thread_root_id_for_turn: int | None = None
 
         async def interaction_success() -> ChatInteractionResult:
@@ -1267,6 +1360,7 @@ class ProcessingService:
                 trigger_role=trigger_role,
                 reuse_existing_user_row=reuse_existing_user_row,
                 initial_taint_sources=initial_taint_sources,
+                llm_client=run_llm_client,
             )
 
             # --- 3. Call Core LLM Processing (self.process_message) ---
@@ -1283,6 +1377,8 @@ class ProcessingService:
                 user_id=user_id,
                 turn_id=turn_id,
                 chat_interface=chat_interface,
+                llm_client=run_llm_client,
+                model_selection=resolved_selection,
                 chat_interfaces=chat_interfaces,
                 confirmation_ui_managers=confirmation_ui_managers,
                 request_confirmation_callback=request_confirmation_callback,
@@ -1433,6 +1529,7 @@ class ProcessingService:
         initial_taint_sources: Sequence[TaintSource] | None = None,
         taint_tracker: TurnTaintTracker | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
+        model_selection: ModelSelectionRequest | ResolvedModelSelection | None = None,
     ) -> AsyncIterator[LLMStreamEvent]:
         """
         Streaming version of handle_chat_interaction.
@@ -1448,6 +1545,11 @@ class ProcessingService:
         """
         if turn_id is None:
             turn_id = str(uuid.uuid4())
+
+        # Before the span: a refused tier is an answer about the request, and
+        # the caller (the web layer) turns it into a 400 rather than a stream.
+        resolved_selection = self.resolve_model_selection(model_selection)
+        run_llm_client = self._client_for_selection(resolved_selection)
 
         span = tracer.start_span(
             "conversation.process",
@@ -1492,6 +1594,7 @@ class ProcessingService:
                 trigger_attachments=trigger_attachments,
                 subconversation_id=subconversation_id,
                 reuse_existing_user_row=reuse_existing_user_row,
+                llm_client=run_llm_client,
             )
 
             # --- 3. Stream LLM Processing ---
@@ -1507,6 +1610,8 @@ class ProcessingService:
                 user_id=user_id,
                 turn_id=turn_id,
                 chat_interface=chat_interface,
+                llm_client=run_llm_client,
+                model_selection=resolved_selection,
                 chat_interfaces=chat_interfaces,
                 confirmation_ui_managers=confirmation_ui_managers,
                 request_confirmation_callback=request_confirmation_callback,

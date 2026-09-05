@@ -515,6 +515,7 @@ async def test_an_injected_attachment_carries_its_provenance_into_the_turn(
         "conv-1",
         [{"type": "attachment", "attachment_id": tainted.attachment_id}],
         acting_user_id="user-1",
+        llm_client=service.llm_client,
     )
 
     assert merge_history_taint(processed.messages).max_tier is (

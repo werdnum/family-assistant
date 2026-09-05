@@ -14,6 +14,7 @@ from family_assistant.llm import LLMOutput
 from family_assistant.llm.messages import SystemMessage, UserMessage
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.processing.model_selection import ResolvedModelSelection
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from family_assistant.tools.attachments import read_text_attachment_tool
@@ -459,6 +460,8 @@ async def test_stream_done_event_attachment_metadata_visible_same_transaction(
     db = Database(engine=db_engine)
     async for event, _message in service.llm_loop.run_stream(
         db_context=db,
+        llm_client=service.llm_client,
+        model_selection=ResolvedModelSelection.unselected(None),
         messages=[
             SystemMessage(content="system"),
             UserMessage(content="show me the logs"),
@@ -580,6 +583,8 @@ async def test_large_result_attachment_not_sent_with_response(
     db = Database(engine=db_engine)
     async for event, _message in service.llm_loop.run_stream(
         db_context=db,
+        llm_client=service.llm_client,
+        model_selection=ResolvedModelSelection.unselected(None),
         messages=[
             SystemMessage(content="system"),
             UserMessage(content="show me the logs"),

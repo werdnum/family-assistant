@@ -88,6 +88,7 @@ from family_assistant.processing import (
 from family_assistant.processing.interactions_agent_service import (
     InteractionsAgentProcessingService,
 )
+from family_assistant.processing.model_selection import ModelTierEligibility
 from family_assistant.security.taint import TaintMetadata, merge_taint_policy_config
 from family_assistant.services.api_backend import HttpApiBackend
 from family_assistant.services.apns import APNsService, load_apns_auth_key
@@ -1190,6 +1191,12 @@ class Assistant:
         llm_client_for_profile = self._create_profile_llm_client(
             profile_conf, profile_llm_model, model_tier
         )
+        tier_eligibility = ModelTierEligibility.from_profile(
+            profile_conf, self.config.model_tiers
+        )
+        tier_llm_clients = self._create_profile_tier_llm_clients(
+            profile_conf, tier_eligibility
+        )
 
         (
             profile_tools_provider,
@@ -1240,6 +1247,7 @@ class Assistant:
             greeting_wav_path=profile_proc_conf.greeting_wav_path,
             poll_interval_seconds=profile_proc_conf.poll_interval_seconds,
             max_async_seconds=profile_proc_conf.max_async_seconds,
+            tier_eligibility=tier_eligibility,
         )
 
         home_assistant_client_for_profile = self.home_assistant_clients.get(profile_id)
@@ -1276,6 +1284,7 @@ class Assistant:
             credential_resolvers=self.credential_resolvers,
             api_backend=self.api_backend,
             taint_policy=merged_taint_policy,
+            tier_llm_clients=tier_llm_clients,
         )
 
         # Render once now so a template referencing a placeholder that no
@@ -1548,6 +1557,43 @@ class Assistant:
             "Profile '%s' using client: %s", profile_id, type(llm_client).__name__
         )
         return llm_client
+
+    def _create_profile_tier_llm_clients(
+        self,
+        profile_conf: ServiceProfile,
+        tier_eligibility: ModelTierEligibility,
+    ) -> dict[str, LLMInterface]:
+        """One client per tier this profile may be run on, built once at startup.
+
+        A run binds to one of these for its whole duration. Building them here
+        rather than per request means a tier's chain, parameters and provider
+        credentials are validated at startup, and the first request at a tier
+        pays no construction cost.
+
+        A test may override any of them individually with a
+        ``"<profile_id>@<tier>"`` key in ``llm_client_overrides``; a bare profile
+        id overrides every tier, which is what a test that does not care about
+        tiers wants.
+        """
+        profile_id = profile_conf.id
+        clients: dict[str, LLMInterface] = {}
+        for option in tier_eligibility.selectable:
+            override = self.llm_client_overrides.get(
+                f"{profile_id}@{option.id}"
+            ) or self.llm_client_overrides.get(profile_id)
+            if override is not None:
+                clients[option.id] = override
+                continue
+            tier = self.config.model_tiers[option.id]
+            client_config = resolve_tier_client_config(tier, self.config.llm_parameters)
+            clients[option.id] = LLMClientFactory.create_client(config=client_config)
+            logger.info(
+                "Profile '%s' tier '%s' using client: %s",
+                profile_id,
+                option.id,
+                type(clients[option.id]).__name__,
+            )
+        return clients
 
     @staticmethod
     def _validate_computer_use_config(

@@ -65,6 +65,29 @@ TEST_TIMEZONE_STR = "Europe/Berlin"  # Example timezone for tests
 TEST_TIMEZONE = ZoneInfo(TEST_TIMEZONE_STR)
 
 
+def _served_by(
+    service: ProcessingService, llm_client: LLMInterface
+) -> ProcessingService:
+    """The same profile, served by a different model.
+
+    These tests drive several turns with differently scripted responses. The
+    client a profile runs on is fixed when the service is built -- a run binds
+    to one for its whole duration -- so each phase gets its own service rather
+    than rebinding a shared one.
+    """
+    return ProcessingService(
+        llm_client=llm_client,
+        tools_provider=service.tools_provider,
+        service_config=service.service_config,
+        context_providers=service.context_providers,
+        server_url=service.server_url,
+        app_config=service.app_config,
+        clock=service.clock,
+        attachment_registry=service.attachment_registry,
+        processing_services_registry=service.processing_services_registry,
+    )
+
+
 def latest_turn_context(llm_client: RuleBasedMockLLMClient) -> str:
     """The ``<turn_context>`` block from the most recent request to the LLM.
 
@@ -725,14 +748,17 @@ async def test_delete_event(
     )
 
     # --- Simulate User Interaction to Create Event to Delete ---
-    processing_service.llm_client = RuleBasedMockLLMClient(
-        rules=[
-            (add_event_to_delete_matcher, add_event_to_delete_response),
-            (
-                final_response_matcher_for_add_to_delete,
-                final_llm_response_for_add_to_delete,
-            ),
-        ]
+    processing_service = _served_by(
+        processing_service,
+        RuleBasedMockLLMClient(
+            rules=[
+                (add_event_to_delete_matcher, add_event_to_delete_response),
+                (
+                    final_response_matcher_for_add_to_delete,
+                    final_llm_response_for_add_to_delete,
+                ),
+            ]
+        ),
     )
     user_message_create_to_delete = (
         f"Please schedule {event_to_delete_summary} for 3 days from now at 11 AM."
@@ -820,7 +846,7 @@ async def test_delete_event(
             (final_response_matcher_for_delete, final_llm_response_for_delete),
         ]
     )
-    processing_service.llm_client = llm_client_for_delete
+    processing_service = _served_by(processing_service, llm_client_for_delete)
 
     # --- Simulate User Interaction to Delete ---
     user_message_delete = f"Please delete event {event_to_delete_summary}."
@@ -1013,11 +1039,14 @@ async def test_search_events(
         content=f"Event '{event1_summary}' scheduled.", tool_calls=None
     )
 
-    processing_service.llm_client = RuleBasedMockLLMClient(
-        rules=[
-            (add_event1_matcher, add_event1_response),
-            (final_response_matcher_event1, final_response_event1),
-        ]
+    processing_service = _served_by(
+        processing_service,
+        RuleBasedMockLLMClient(
+            rules=[
+                (add_event1_matcher, add_event1_response),
+                (final_response_matcher_event1, final_response_event1),
+            ]
+        ),
     )
     db_context = Database(engine=pg_vector_db_engine)
     result = await processing_service.handle_chat_interaction(
@@ -1079,11 +1108,14 @@ async def test_search_events(
         content=f"Event '{event2_summary}' scheduled.", tool_calls=None
     )
 
-    processing_service.llm_client = RuleBasedMockLLMClient(
-        rules=[
-            (add_event2_matcher, add_event2_response),
-            (final_response_matcher_event2, final_response_event2),
-        ]
+    processing_service = _served_by(
+        processing_service,
+        RuleBasedMockLLMClient(
+            rules=[
+                (add_event2_matcher, add_event2_response),
+                (final_response_matcher_event2, final_response_event2),
+            ]
+        ),
     )
     db_context = Database(engine=pg_vector_db_engine)
     result = await processing_service.handle_chat_interaction(
@@ -1198,7 +1230,7 @@ async def test_search_events(
         ]
     )
     # Assign the new LLM client with search rules to the existing processing_service
-    processing_service.llm_client = llm_client
+    processing_service = _served_by(processing_service, llm_client)
 
     # --- Simulate User Interaction ---
     # User asks a general question, LLM will refine it to search_query_text ("Search Event")
@@ -1470,11 +1502,14 @@ async def test_similarity_based_search_finds_similar_events(
         content=f"Event '{event1_summary}' scheduled.", tool_calls=None
     )
 
-    processing_service.llm_client = RuleBasedMockLLMClient(
-        rules=[
-            (add_event1_matcher, add_event1_response),
-            (final_response_matcher_event1, final_response_event1),
-        ]
+    processing_service = _served_by(
+        processing_service,
+        RuleBasedMockLLMClient(
+            rules=[
+                (add_event1_matcher, add_event1_response),
+                (final_response_matcher_event1, final_response_event1),
+            ]
+        ),
     )
     db_context = Database(engine=pg_vector_db_engine)
     result = await processing_service.handle_chat_interaction(
@@ -1529,11 +1564,14 @@ async def test_similarity_based_search_finds_similar_events(
         content=f"Event '{event2_summary}' scheduled.", tool_calls=None
     )
 
-    processing_service.llm_client = RuleBasedMockLLMClient(
-        rules=[
-            (add_event2_matcher, add_event2_response),
-            (final_response_matcher_event2, final_response_event2),
-        ]
+    processing_service = _served_by(
+        processing_service,
+        RuleBasedMockLLMClient(
+            rules=[
+                (add_event2_matcher, add_event2_response),
+                (final_response_matcher_event2, final_response_event2),
+            ]
+        ),
     )
     db_context = Database(engine=pg_vector_db_engine)
     result = await processing_service.handle_chat_interaction(
@@ -1588,11 +1626,14 @@ async def test_similarity_based_search_finds_similar_events(
         content=f"Event '{event3_summary}' scheduled.", tool_calls=None
     )
 
-    processing_service.llm_client = RuleBasedMockLLMClient(
-        rules=[
-            (add_event3_matcher, add_event3_response),
-            (final_response_matcher_event3, final_response_event3),
-        ]
+    processing_service = _served_by(
+        processing_service,
+        RuleBasedMockLLMClient(
+            rules=[
+                (add_event3_matcher, add_event3_response),
+                (final_response_matcher_event3, final_response_event3),
+            ]
+        ),
     )
     db_context = Database(engine=pg_vector_db_engine)
     result = await processing_service.handle_chat_interaction(

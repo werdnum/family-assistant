@@ -119,9 +119,10 @@ class MockContextProvider:
 
 def _make_processing_service(
     context_providers: list[MockContextProvider] | None = None,
+    llm_client: object | None = None,
 ) -> ProcessingService:
     """Build a minimal ProcessingService with mocked dependencies."""
-    mock_llm = MagicMock()
+    mock_llm = llm_client if llm_client is not None else MagicMock()
     mock_tools = MagicMock()
     service_config = ProcessingServiceConfig(
         prompts={"system": "test"},
@@ -438,12 +439,10 @@ class TestConversationProcessSpan:
     async def test_conversation_process_creates_span(
         self, processing_span_exporter: InMemorySpanExporter
     ) -> None:
-        service = _make_processing_service()
-        service.context_providers = []
-
         mock_llm = AsyncMock()
         mock_llm.generate_response_stream = _fake_llm_stream
-        service.llm_client = mock_llm
+        service = _make_processing_service(llm_client=mock_llm)
+        service.context_providers = []
 
         mock_db_context = AsyncMock()
         mock_db_context.engine = MagicMock()
@@ -477,12 +476,10 @@ class TestConversationProcessSpan:
     async def test_conversation_process_sets_subconversation_id(
         self, processing_span_exporter: InMemorySpanExporter
     ) -> None:
-        service = _make_processing_service()
-        service.context_providers = []
-
         mock_llm = AsyncMock()
         mock_llm.generate_response_stream = _fake_llm_stream
-        service.llm_client = mock_llm
+        service = _make_processing_service(llm_client=mock_llm)
+        service.context_providers = []
 
         mock_db_context = AsyncMock()
         mock_db_context.engine = MagicMock()

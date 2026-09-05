@@ -113,6 +113,7 @@ class TestAttachmentSelectionThreshold:
             pending_attachment_ids=pending_attachment_ids,
             original_query="Test query",
             acting_user_id=None,
+            llm_client=processing_service.llm_client,
         )
 
         assert len(result) == 3
@@ -167,6 +168,7 @@ class TestAttachmentSelectionThreshold:
             pending_attachment_ids=pending_attachment_ids,
             original_query="Test query",
             acting_user_id=None,
+            llm_client=processing_service.llm_client,
         )
 
         # Should have called LLM for selection
@@ -279,6 +281,7 @@ class TestSelectAttachmentsForResponse:
             pending_attachment_ids=pending_ids,
             original_query="Show me the most relevant images",
             acting_user_id=None,
+            llm_client=processing_service.llm_client,
         )
 
         assert result == ["att2", "att4", "att5"]
@@ -326,6 +329,7 @@ class TestSelectAttachmentsForResponse:
             pending_attachment_ids=pending_ids,
             original_query="Select images",
             acting_user_id=None,
+            llm_client=processing_service.llm_client,
         )
 
         assert result == ["att1", "att3"]
@@ -364,6 +368,7 @@ class TestSelectAttachmentsForResponse:
                 pending_attachment_ids=pending_ids,
                 original_query="Select images",
                 acting_user_id=None,
+                llm_client=processing_service.llm_client,
             )
 
     @pytest.mark.asyncio
@@ -409,6 +414,7 @@ class TestSelectAttachmentsForResponse:
                 pending_attachment_ids=pending_ids,
                 original_query="Select images",
                 acting_user_id=None,
+                llm_client=processing_service.llm_client,
             )
 
     @pytest.mark.asyncio
@@ -456,6 +462,7 @@ class TestSelectAttachmentsForResponse:
             pending_attachment_ids=pending_ids,
             original_query="Select images",
             acting_user_id=None,
+            llm_client=processing_service.llm_client,
         )
 
         # Should be limited to max_response_attachments (6)
@@ -497,6 +504,7 @@ class TestSelectAttachmentsForResponse:
                 pending_attachment_ids=pending_ids,
                 original_query="Select images",
                 acting_user_id=None,
+                llm_client=processing_service.llm_client,
             )
 
     @pytest.mark.asyncio
@@ -526,6 +534,7 @@ class TestSelectAttachmentsForResponse:
                 pending_attachment_ids=pending_ids,
                 original_query="Select images",
                 acting_user_id=None,
+                llm_client=processing_service.llm_client,
             )
 
     @pytest.mark.asyncio
@@ -562,6 +571,7 @@ class TestSelectAttachmentsForResponse:
                 pending_attachment_ids=pending_ids,
                 original_query="Select images",
                 acting_user_id=None,
+                llm_client=processing_service.llm_client,
             )
 
     @pytest.mark.asyncio
@@ -579,6 +589,7 @@ class TestSelectAttachmentsForResponse:
             pending_attachment_ids=[],
             original_query="Select images",
             acting_user_id=None,
+            llm_client=processing_service.llm_client,
         )
 
         # Should return empty list
@@ -599,6 +610,7 @@ class TestSelectAttachmentsForResponse:
             pending_attachment_ids=pending_ids,
             original_query="Select images",
             acting_user_id=None,
+            llm_client=processing_service.llm_client,
         )
 
         # Should return original list when no registry
@@ -649,4 +661,5 @@ class TestSelectAttachmentsForResponse:
                 pending_attachment_ids=pending_ids,
                 original_query="Select images",
                 acting_user_id=None,
+                llm_client=processing_service.llm_client,
             )

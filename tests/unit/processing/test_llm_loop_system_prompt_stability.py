@@ -16,7 +16,7 @@ import pytest
 
 from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
-from family_assistant.llm import LLMOutput
+from family_assistant.llm import LLMInterface, LLMOutput
 from family_assistant.llm.base import ContextLengthError
 from family_assistant.llm.messages import SystemMessage, UserMessage
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
@@ -287,7 +287,9 @@ async def test_attachment_selection_uses_the_users_request_not_the_scaffolding(
         original_query: str,
         *,
         acting_user_id: str | None,
+        llm_client: LLMInterface,
     ) -> list[str]:
+        _ = llm_client
         queries.append(original_query)
         return pending_attachment_ids
 
