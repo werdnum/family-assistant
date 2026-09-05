@@ -186,11 +186,25 @@ availability fallback. An explicit user selection bypasses the router entirely.
 
 Because the classifier reads the trusted trigger message itself, the user can also nudge routing in
 the prompt: "think hard about this", "quick question", "this is subtle" are legitimate signals the
-classifier weighs, and on surfaces without a composer control they are the zero-UI steering channel.
-Prompt nudges steer **within `auto_model_tiers`**; they do not reach tiers outside the Auto range —
+classifier weighs, and on surfaces without a composer control they are the zero-UI steering channel
+— this is what keeps Telegram at two tier commands instead of a combinatorial command set. Prompt
+nudges steer **within `auto_model_tiers`**; they do not reach tiers outside the Auto range —
 crossing into `frontier`/Max stays on the unambiguous explicit surfaces (selector, tier command)
 rather than being inferred from phrasing, so the boundary between "Auto listened to me" and "I
 explicitly chose to spend more" never depends on natural-language interpretation.
+
+Nudging is **not a prompt-injection vector**, by construction rather than by filtering, and this is
+an accepted design property, not an oversight. The classifier's inputs are the authenticated
+initiator's own words and bounded history stored under the profile; untrusted tool results arrive
+only after routing has been resolved and frozen for the turn. Where untrusted text can reach a
+trigger at all (a forwarded email quoted in a user message, an unattended intake profile), the worst
+a planted "think very hard about this" can achieve is a selection *inside the same
+`auto_model_tiers` range Auto was already authorized to choose from on its own* — it steals no
+authority that exists, which is exactly why the explicit-selection boundary above is drawn where it
+is. Unattended untrusted-input profiles additionally pin a tier or run a deliberately narrow Auto
+range, so there the channel selects among one option. Reviewers should evaluate proposals to
+restrict nudging against this: the mitigation would remove a legitimate steering channel to defend
+authority the channel never had.
 
 Routing runs once per user turn, before the tool loop, and the result holds for the whole run —
 providers carry different reasoning metadata, tool representations, and attachment handling, and
@@ -353,6 +367,9 @@ Accepted residual behavior, recorded so review does not re-litigate it:
 - `research`/`research_max` stay as-is; deep-research models are pinned by design.
 - Auto's initial range excludes `frontier` even where manual selection allows it: classifier false
   positives have asymmetric cost, and widening later is a one-line config change.
+- Prompt nudges to the Auto classifier are accepted as-is, with no injection filtering: the channel
+  cannot select outside `auto_model_tiers`, so a planted nudge steals no authority Auto did not
+  already hold (argued in full under "Auto routing").
 
 ## Work plan
 
