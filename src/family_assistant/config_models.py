@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import zoneinfo
 from contextvars import ContextVar
 from email.utils import parseaddr
@@ -85,6 +86,14 @@ class RetryModelConfig(BaseModel):
 
     provider: str | None = None
     model: str | None = None
+    # Request parameters for this entry only, overlaid on the top-level
+    # `llm_parameters` map. That map is keyed by model substring, so the same
+    # model at two reasoning efforts cannot be expressed there at all -- the
+    # first matching pattern wins for every use of the model. An overlay here
+    # is re-inserted under the entry's exact model id after the global patterns,
+    # so it applies last and only to this entry.
+    # ast-grep-ignore: no-dict-any - LLM params are provider-specific and genuinely arbitrary
+    llm_parameters: dict[str, Any] | None = None
 
 
 class RetryConfig(BaseModel):
@@ -94,6 +103,47 @@ class RetryConfig(BaseModel):
 
     primary: RetryModelConfig = Field(default_factory=RetryModelConfig)
     fallback: RetryModelConfig | None = None
+
+
+_TIER_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+class ModelTierConfig(BaseModel):
+    """A named model recipe: which models to run, and how.
+
+    A tier says how inference runs; a profile says how the agent operates.
+    Profiles reference a tier by name through
+    ``processing_config.model_tier`` instead of naming providers and models
+    inline, so replacing a model is a tier-map edit rather than a change to
+    every profile that used it.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # Primary first, optional availability fallback second. Two entries is the
+    # ceiling because that is what RetryingLLMClient serves: a chain answers
+    # "what if the selected model is unavailable", not "try progressively
+    # weaker models".
+    chain: list[RetryModelConfig]
+    # User-facing name for the tier (e.g. "Max" for `frontier`). Config
+    # vocabulary and UI vocabulary are deliberately allowed to differ.
+    label: str | None = None
+    # One line describing when this tier is worth its cost.
+    description: str | None = None
+
+    @field_validator("chain")
+    @classmethod
+    def validate_chain(cls, v: list[RetryModelConfig]) -> list[RetryModelConfig]:
+        if not 1 <= len(v) <= 2:
+            msg = (
+                f"A model tier chain must have 1 or 2 entries (a primary and an "
+                f"optional fallback), got {len(v)}."
+            )
+            raise ValueError(msg)
+        if any(not entry.model for entry in v):
+            msg = "Every model tier chain entry must set 'model'."
+            raise ValueError(msg)
+        return v
 
 
 class ToolCallReviewEscalationConfig(BaseModel):
@@ -329,6 +379,11 @@ class ProcessingConfig(BaseModel):
     llm_model: str | None = None
     provider: str | None = None  # 'google', 'openai', 'anthropic'
     retry_config: RetryConfig | None = None
+    # Name of an entry in the top-level `model_tiers` map. A profile names
+    # either a tier or an inline model (`provider`/`llm_model`/`retry_config`),
+    # never both -- the loader rejects a definition that does both, and a
+    # declaration of either kind drops the other when inherited.
+    model_tier: str | None = None
     review_guidance: str = ""
     delegation_security_level: DelegationSecurityLevel = DelegationSecurityLevel.CONFIRM
     allowed_delegation_sources: list[str] | None = None
@@ -518,6 +573,10 @@ class ServiceProfile(BaseModel):
     # privileges to actually hold none.
     excluded_global_tools: list[str] = Field(default_factory=list)
     remote_a2a: RemoteA2AConfig | None = None
+    # Tiers this profile may run on. `None` means "only its configured
+    # `model_tier`", which is what a profile pinned to a model or to a
+    # provider-coupled runtime stays at.
+    allowed_model_tiers: list[str] | None = None
 
 
 class DefaultProfileSettings(BaseModel):
@@ -533,6 +592,7 @@ class DefaultProfileSettings(BaseModel):
     chat_id_to_name_map: dict[int, str] = Field(default_factory=dict)
     slash_commands: list[str] = Field(default_factory=list)
     visibility_grants: list[str] = Field(default_factory=list)
+    allowed_model_tiers: list[str] | None = None
 
 
 class NotesConfig(BaseModel):
@@ -1666,6 +1726,24 @@ class AppConfig(BaseSettings):
     # LLM parameters (pattern -> parameters mapping)
     # ast-grep-ignore: no-dict-any - LLM params are provider-specific and genuinely arbitrary
     llm_parameters: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+    # Named model recipes profiles select with `processing_config.model_tier`.
+    model_tiers: dict[str, ModelTierConfig] = Field(default_factory=dict)
+
+    @field_validator("model_tiers")
+    @classmethod
+    def validate_model_tier_names(
+        cls, v: dict[str, ModelTierConfig]
+    ) -> dict[str, ModelTierConfig]:
+        invalid = sorted(name for name in v if not _TIER_NAME_PATTERN.match(name))
+        if invalid:
+            msg = (
+                f"Invalid model tier name(s): {', '.join(invalid)}. Tier names "
+                "must start with a lowercase letter and contain only lowercase "
+                "letters, digits and underscores."
+            )
+            raise ValueError(msg)
+        return v
 
     # Logging configuration
     logging: LoggingConfig = Field(default_factory=LoggingConfig)

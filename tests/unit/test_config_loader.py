@@ -2625,6 +2625,7 @@ def test_every_service_profile_field_is_accounted_for() -> None:
         "visibility_grants",
         "excluded_global_tools",
         "remote_a2a",
+        "allowed_model_tiers",
         # Set from the profile definition directly rather than merged.
         "id",
         "description",
@@ -2694,10 +2695,10 @@ def test_operator_supplied_retry_chain_is_kept(tmp_path: Path) -> None:
     assert processing_config.retry_config.primary.provider == "anthropic"
 
 
-def test_unrelated_operator_override_keeps_the_shipped_retry_chain(
+def test_unrelated_operator_override_keeps_the_shipped_model_selection(
     tmp_path: Path,
 ) -> None:
-    """Only a model selection drops the chain; other overrides must not."""
+    """Only a model selection displaces the shipped one; other overrides must not."""
     processing_config = _resolved_default_assistant(
         tmp_path,
         "service_profiles:\n"
@@ -2707,8 +2708,7 @@ def test_unrelated_operator_override_keeps_the_shipped_retry_chain(
     )
 
     assert processing_config.max_iterations == 7
-    assert processing_config.retry_config is not None
-    assert processing_config.retry_config.primary.model == "gemini-3.8-flash"
+    assert processing_config.model_tier == "standard"
 
 
 def test_explicit_null_retry_config_with_a_model_drops_the_shipped_chain(
@@ -2740,9 +2740,10 @@ def test_explicit_null_retry_config_alone_still_inherits(tmp_path: Path) -> None
     """`retry_config: null` with no model reads as "no chain of my own".
 
     The merged definition can only carry presence, and an absent key means
-    inherit — so this keeps the chain from `default_profile_settings`. Turning a
-    shipped chain off while keeping the shipped model has no expression today;
-    naming the model alongside the null does it.
+    inherit — so this says nothing about which model the profile runs on and
+    leaves the shipped selection in place. Turning a shipped chain off while
+    keeping the shipped model has no expression today; naming the model
+    alongside the null does it.
     """
     processing_config = _resolved_default_assistant(
         tmp_path,
@@ -2752,4 +2753,4 @@ def test_explicit_null_retry_config_alone_still_inherits(tmp_path: Path) -> None
         "      retry_config: null\n",
     )
 
-    assert processing_config.retry_config is not None
+    assert processing_config.model_tier == "standard"

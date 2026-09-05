@@ -726,6 +726,7 @@ PROFILE_OVERRIDABLE_PROCESSING_KEYS: tuple[str, ...] = (
     "delegation_security_level",
     "allowed_delegation_sources",
     "retry_config",
+    "model_tier",
     "camera_config",
     "default_note_visibility_labels",
     "required_note_visibility_labels",
@@ -755,6 +756,65 @@ PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS: frozenset[str] = frozenset({
     "prompts",  # deep-merged with the inherited prompts, not replaced
     "include_system_docs",  # loaded into prompts.system_prompt_docs
 })
+
+
+# The two mutually exclusive ways a profile says which model it runs on.
+MODEL_SELECTION_KEYS: tuple[str, ...] = ("provider", "llm_model", "retry_config")
+
+
+def reject_conflicting_model_selection(
+    source: str,
+    # ast-grep-ignore: no-dict-any - raw YAML processing_config before validation
+    declared: dict[str, Any],
+) -> None:
+    """Refuse a definition that names both a tier and an inline model.
+
+    Declaring both in the same block has no defensible resolution -- the tier's
+    chain and the inline model cannot both be what it runs on -- so it is a
+    startup error rather than a precedence question.
+    """
+    if declared.get("model_tier") is None:
+        return
+    named = ", ".join(key for key in MODEL_SELECTION_KEYS if declared.get(key))
+    if not named:
+        return
+    msg = (
+        f"{source} declares model_tier '{declared['model_tier']}' alongside "
+        f"{named}. A profile names either a tier or an inline model, not both: "
+        "the tier's chain and the inline model cannot both be what it runs on."
+    )
+    raise ValueError(msg)
+
+
+def _apply_model_selection_precedence(
+    profile_id: str,
+    # ast-grep-ignore: no-dict-any - raw YAML processing_config before validation
+    declared: dict[str, Any],
+    # ast-grep-ignore: no-dict-any - raw YAML processing_config before validation
+    resolved: dict[str, Any],
+    *,
+    profile_declares_model: bool,
+) -> None:
+    """Let a profile's own model selection win over the inherited one.
+
+    A profile names either a tier or an inline model, and whichever it names
+    displaces the other kind inherited from ``default_profile_settings``.
+    Without this a profile declaring ``model_tier`` would keep the inherited
+    chain, which ``assistant.py`` cannot honour alongside a tier, and a profile
+    declaring an inline model would keep the inherited tier, which wins over the
+    model it declared -- the silent override the equivalent ``retry_config`` rule
+    above exists to prevent.
+    """
+    reject_conflicting_model_selection(f"Profile '{profile_id}'", declared)
+
+    declares_tier = declared.get("model_tier") is not None
+    declares_inline = profile_declares_model or declared.get("retry_config") is not None
+
+    if declares_tier:
+        for key in MODEL_SELECTION_KEYS:
+            resolved[key] = None
+    elif declares_inline:
+        resolved["model_tier"] = None
 
 
 def resolve_service_profile(
@@ -833,6 +893,13 @@ def resolve_service_profile(
         ):
             resolved["processing_config"]["retry_config"] = None
 
+        _apply_model_selection_precedence(
+            profile_id,
+            profile_def["processing_config"],
+            resolved["processing_config"],
+            profile_declares_model=profile_declares_model,
+        )
+
         # Handle include_system_docs
         if "include_system_docs" in profile_def["processing_config"]:
             include_docs = profile_def["processing_config"]["include_system_docs"]
@@ -889,6 +956,19 @@ def resolve_service_profile(
     ):
         resolved["visibility_grants"] = profile_def["visibility_grants"]
 
+    # Handle allowed_model_tiers (replace if present). It is an eligibility
+    # list, so merging it with an inherited one would widen what a profile may
+    # run on rather than replace it.
+    if "allowed_model_tiers" in profile_def and isinstance(
+        profile_def["allowed_model_tiers"], list
+    ):
+        resolved["allowed_model_tiers"] = profile_def["allowed_model_tiers"]
+    elif resolved["processing_config"].get("model_tier") is None:
+        # An inherited eligibility list means nothing to a profile that names an
+        # inline model; keeping it would only fail validation for a profile that
+        # said nothing about tiers.
+        resolved["allowed_model_tiers"] = None
+
     # Handle excluded_global_tools (replace if present). This withholds tools
     # that global_tools_policy grants to every profile, so dropping it here would
     # silently restore access a profile deliberately gave up.
@@ -923,6 +1003,9 @@ def resolve_all_service_profiles(
         yaml_profiles = []
 
     default_settings = config_data["default_profile_settings"]
+    reject_conflicting_model_selection(
+        "default_profile_settings", default_settings.get("processing_config") or {}
+    )
     resolved_profiles = []
 
     for profile_def in yaml_profiles:
@@ -1006,21 +1089,26 @@ def _shipped_base_for_operator_override(
     operator: dict[str, Any],
     # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
 ) -> dict[str, Any]:
-    """Drop a shipped retry chain the operator's chosen model would lose to.
+    """Drop the shipped model selection the operator's own would lose to.
 
     An operator naming a `provider`/`llm_model` without their own `retry_config`
     means "run this model". `assistant.py` prefers `retry_config` over those
     fields, so a chain left behind by the shipped profile silently wins and the
-    operator's choice never reaches the API.
+    operator's choice never reaches the API. The same holds across the two kinds
+    of selection: a shipped `model_tier` survives an operator's inline model and
+    wins over it, and a shipped chain or model survives an operator's
+    `model_tier` and makes the merged definition declare both -- which is a
+    startup error rather than the override the operator asked for.
 
-    `resolve_service_profile` already applies this rule to a chain inherited from
-    `default_profile_settings`, but it can only test whether the key is present
-    in the merged definition -- and after this merge it always is, for any profile
-    that ships its own chain (`default_assistant` does). Provenance is only
-    knowable here, where the two layers are still separate.
+    `resolve_service_profile` already applies these rules to values inherited
+    from `default_profile_settings`, but it can only test whether the key is
+    present in the merged definition -- and after this merge it always is, for
+    any profile that ships its own selection. Provenance is only knowable here,
+    where the two layers are still separate.
 
     An explicit `retry_config: null` is not the operator declaring a chain; it is
-    asking for no chain, so it drops the shipped one too.
+    asking for no chain, so it drops the shipped one too. On its own it says
+    nothing about tiers, so it leaves a shipped `model_tier` alone.
     """
     operator_processing = operator.get("processing_config") or {}
     shipped_processing = shipped.get("processing_config") or {}
@@ -1031,25 +1119,38 @@ def _shipped_base_for_operator_override(
     operator_clears_chain = (
         "retry_config" in operator_processing and not operator_declares_chain
     )
-    if (
-        operator_declares_chain
-        or "retry_config" not in shipped_processing
-        or not (operator_declares_model or operator_clears_chain)
+    operator_declares_tier = operator_processing.get("model_tier") is not None
+
+    superseded: set[str] = set()
+    if operator_declares_tier:
+        superseded.update(MODEL_SELECTION_KEYS)
+    if operator_declares_model or operator_declares_chain:
+        superseded.add("model_tier")
+    if not operator_declares_chain and (
+        operator_declares_model or operator_clears_chain
     ):
+        superseded.add("retry_config")
+
+    dropped = sorted(superseded & set(shipped_processing))
+    if not dropped:
         return shipped
 
-    without_chain = copy.deepcopy(shipped)
-    without_chain["processing_config"].pop("retry_config", None)
+    without_superseded = copy.deepcopy(shipped)
+    for key in dropped:
+        without_superseded["processing_config"].pop(key, None)
     logger.info(
-        "Profile '%s': operator asked for no retry chain (model=%s/%s, "
-        "retry_config explicitly null: %s), so the shipped retry chain is "
-        "dropped rather than overriding that choice.",
+        "Profile '%s': operator selected its own model (tier=%s, model=%s/%s, "
+        "retry_config explicitly null: %s), so the shipped %s %s dropped rather "
+        "than overriding that choice.",
         shipped.get("id"),
+        operator_processing.get("model_tier"),
         operator_processing.get("provider"),
         operator_processing.get("llm_model"),
         operator_clears_chain,
+        ", ".join(dropped),
+        "is" if len(dropped) == 1 else "are",
     )
-    return without_chain
+    return without_superseded
 
 
 # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
