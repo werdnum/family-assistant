@@ -5,6 +5,7 @@ Moved here to avoid circular imports.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from collections.abc import Callable, Mapping, Sequence
@@ -375,6 +376,50 @@ class ToolConfirmationAuthorization:
     consumed: bool = False
 
 
+class ToolCallBatch:
+    """The tool calls of one model response, in the order the model issued them.
+
+    The loop runs them concurrently, so a tool that must respect issue order
+    (browser operations, which all drive one page) asks the batch which of its
+    siblings came before it and waits for them. Completion is reported by the
+    executor for every call it handles — including denials, failures and
+    declined confirmations — so a sibling that never ran cannot leave the rest
+    of the batch waiting.
+    """
+
+    def __init__(self, calls: Sequence[tuple[str, str]]) -> None:
+        self._calls = list(calls)
+        self._done: dict[str, asyncio.Event] = {
+            call_id: asyncio.Event() for call_id, _ in self._calls
+        }
+
+    def _index_of(self, call_id: str) -> int:
+        for index, (candidate, _) in enumerate(self._calls):
+            if candidate == call_id:
+                return index
+        raise ValueError(f"call id {call_id!r} is not part of this tool-call batch")
+
+    def mark_done(self, call_id: str) -> None:
+        """Record that ``call_id`` has finished, however it finished."""
+        event = self._done.get(call_id)
+        if event is None:
+            raise ValueError(f"call id {call_id!r} is not part of this tool-call batch")
+        event.set()
+
+    def earlier(self, call_id: str) -> list[tuple[str, str]]:
+        """The ``(call_id, tool_name)`` pairs the model issued before this one."""
+        return self._calls[: self._index_of(call_id)]
+
+    def later(self, call_id: str) -> list[tuple[str, str]]:
+        """The ``(call_id, tool_name)`` pairs the model issued after this one."""
+        return self._calls[self._index_of(call_id) + 1 :]
+
+    async def wait_done(self, call_ids: Sequence[str]) -> None:
+        """Wait until every named call has reported completion."""
+        for call_id in call_ids:
+            await self._done[call_id].wait()
+
+
 @dataclass
 class ToolExecutionContext:
     """
@@ -478,6 +523,14 @@ class ToolExecutionContext:
     )
     tool_call_review_messages: Sequence[LLMMessage] | None = None
     tool_call_review_trigger: TriggerReviewInput | None = None
+    tool_call_id: str | None = None
+    """Id of the tool call this context is executing, when there is one."""
+    tool_call_batch: ToolCallBatch | None = None
+    """The response's tool calls in issue order, when this call came from one.
+
+    Tools that must respect issue order relative to their siblings — browser
+    operations, which all drive one page — read it through this field.
+    """
     tool_call_review_confirmation_reason: str | None = None
     tool_call_review_authorization: ToolCallReviewAuthorization | None = None
     tool_confirmation_authorization: ToolConfirmationAuthorization | None = None

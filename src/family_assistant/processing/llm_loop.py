@@ -32,7 +32,7 @@ from family_assistant.tools import (
     find_provider_by_type,
     get_tool_definitions_for_advertisement,
 )
-from family_assistant.tools.types import ToolCallReviewTurnState
+from family_assistant.tools.types import ToolCallBatch, ToolCallReviewTurnState
 
 from .attachments import AttachmentSelectionError
 from .protocol import TaintedSinkRefusedError
@@ -965,13 +965,23 @@ class LLMStreamingLoop:
             tool_response_messages_for_llm = []
             pre_batch_taint_snapshot = taint_tracker.snapshot()
 
+            # The calls run concurrently, but the model issued them in an order
+            # and tools that share one resource (the browser) have to respect
+            # it. The batch is what lets a call see its own place in that order.
+            tool_call_batch = ToolCallBatch([
+                (tool_call.id, tool_call.function.name)
+                for tool_call in regular_tool_calls
+            ])
+
             async def _execute_tool_call(
                 tool_call: ToolCallItem,
                 taint_policy_snapshot: TurnTaintState = pre_batch_taint_snapshot,
                 review_messages: tuple[LLMMessage, ...] = tuple(messages),
+                batch: ToolCallBatch = tool_call_batch,
             ) -> ToolExecutionResult:
                 return await self.tool_executor.execute(
                     tool_call,
+                    tool_call_batch=batch,
                     interface_type=interface_type,
                     conversation_id=conversation_id,
                     user_name=user_name,

@@ -6,12 +6,22 @@ Playwright browser instance. Extracting session management here lets the two
 profiles share a tab when the first delegates to the second via
 ``delegate_to_service`` — the shared ``conversation_id`` keeps them pointed at
 the same ``BrowserSession``.
+
+The session is also the chokepoint every browser operation passes through: the
+``@browser_operation`` decorator registers a tool as a browser operation and
+runs its body under :meth:`BrowserSession.operation`, which holds the
+conversation's browser lock and, within a batch of tool calls, waits for the
+earlier browser siblings the model issued before it.
 """
 
 from __future__ import annotations
 
+import asyncio
+import functools
+import random
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Concatenate
 
 from rebrowser_playwright.async_api import (
     Browser,
@@ -27,8 +37,16 @@ from family_assistant.utils.stealth_browser import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Awaitable, Callable
+
     from family_assistant.services.ucp import MerchantUCPProfile
-    from family_assistant.tools.types import ToolExecutionContext
+    from family_assistant.tools.types import ToolExecutionContext, ToolResult
+
+# Every tool that drives the shared browser, filled by ``@browser_operation``.
+# One registry rather than a hand-maintained list, so a browser tool that
+# forgets the decorator is simply not serialised rather than silently absent
+# from a list someone has to remember to update.
+BROWSER_TOOL_NAMES: set[str] = set()
 
 # Default screen dimensions for coordinate-based Computer Use.
 # The semantic DOM tools don't care about these values, but they still scope
@@ -37,18 +55,33 @@ if TYPE_CHECKING:
 SCREEN_WIDTH = 1024
 SCREEN_HEIGHT = 768
 
+# Refs are numbered from a counter seeded in this range when a conversation's
+# browser state is created, so numbers issued before a process restart do not
+# collide with numbers issued after it.
+_REF_SEED_MIN = 1_000
+_REF_SEED_MAX = 1_000_000
+
+
+def _seed_next_ref() -> int:
+    # Non-cryptographic randomness is the right tool: the seed keeps post-restart
+    # numbers away from pre-restart ones, and nothing is authorized by a ref.
+    return random.randrange(_REF_SEED_MIN, _REF_SEED_MAX)
+
 
 @dataclass
 class BrowserSession:
-    """Manages the browser lifecycle for browser automation tools.
+    """The conversation's persistent browser state, on both backend paths.
 
-    Each session owns a single Playwright-driven tab. The session is lazily
-    initialized — ``ensure_page`` is what actually launches the browser.
+    On the local path it also owns the Playwright lifecycle: a single tab,
+    lazily launched by ``ensure_page``. On the remote (browser-server) path the
+    tab lives in the service and only the conversation-level state here
+    applies — the ref counter, the UCP discovery cache, and the lock that
+    serialises browser operations.
 
-    ``ref_cache`` is populated by the semantic DOM tools when they take an
-    accessibility snapshot, mapping stable short refs (e.g. ``"e12"``) to
-    serialized selectors so subsequent tool calls can resolve them back to
-    Playwright locators. Coordinate-based tools don't touch it.
+    ``next_ref`` is the lowest number the next snapshot may issue for a node it
+    has not seen before. The walker takes it, never allocates below the highest
+    number already stamped on the document, and reports the advanced counter
+    back, so a ref names one node for the whole conversation.
     """
 
     playwright: Playwright | None = field(default=None, repr=False)
@@ -61,10 +94,13 @@ class BrowserSession:
     # in-page JS (``new Date()``, ``Intl``) reports the user's local time. ``None``
     # leaves the host default in place. Mirrors the remote browser-server backend.
     timezone_id: str | None = None
-    # Maps short refs (e.g. ``"e12"``) to CSS selectors that the
-    # semantic DOM tools can hand back to Playwright. Populated by
-    # browser_dom snapshots; cleared on navigation.
-    ref_cache: dict[str, str] = field(default_factory=dict)
+    # Lowest number the next snapshot may issue for a node it has not stamped
+    # before. Randomly seeded so refs from before a restart cannot be reissued
+    # for a different node after one.
+    next_ref: int = field(default_factory=_seed_next_ref)
+    # Serialises this conversation's browser operations, so each one runs
+    # against the page as the previous one left it.
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     # Caches UCP discovery results keyed by origin (e.g.
     # ``"https://shop.example.com"``). Values are a ``MerchantUCPProfile`` or
     # ``None`` (negative cache) so repeated navigation within an origin probes
@@ -99,14 +135,31 @@ class BrowserSession:
         self.page = page
         return page
 
-    def clear_refs(self) -> None:
-        """Invalidate the ref cache. Called on navigation to prevent stale refs."""
-        self.ref_cache.clear()
+    @asynccontextmanager
+    async def operation(
+        self, exec_context: ToolExecutionContext
+    ) -> AsyncIterator[None]:
+        """Hold the conversation's browser for one operation, in issue order.
+
+        The model's tool calls run concurrently, so without this two browser
+        actions from one response would race and the second could resolve its
+        ref against a page the first had already replaced. Waiting for the
+        earlier browser siblings of the same batch first, then taking the lock,
+        makes every operation run against the page the previous one left.
+        """
+        batch = exec_context.tool_call_batch
+        call_id = exec_context.tool_call_id
+        if batch is not None and call_id is not None:
+            await batch.wait_done([
+                sibling_id
+                for sibling_id, tool_name in batch.earlier(call_id)
+                if tool_name in BROWSER_TOOL_NAMES
+            ])
+        async with self.lock:
+            yield
 
     async def close(self) -> None:
         """Close all browser resources."""
-        self.ref_cache.clear()
-
         if self.context is not None:
             await self.context.close()
             self.context = None
@@ -140,6 +193,29 @@ async def close_browser_session(exec_context: ToolExecutionContext) -> None:
     if session_key in _sessions:
         await _sessions[session_key].close()
         del _sessions[session_key]
+
+
+def browser_operation[**P](
+    func: Callable[Concatenate[ToolExecutionContext, P], Awaitable[ToolResult]],
+) -> Callable[Concatenate[ToolExecutionContext, P], Awaitable[ToolResult]]:
+    """Register a tool as a browser operation and serialise its body.
+
+    The tool name is the function name without the ``_tool`` suffix, which is
+    the naming convention every tool module follows. Registering here rather
+    than in a hand-written list is what keeps the ordering rule and the set of
+    tools it applies to from drifting apart.
+    """
+    BROWSER_TOOL_NAMES.add(func.__name__.removesuffix("_tool"))
+
+    @functools.wraps(func)
+    async def wrapper(
+        exec_context: ToolExecutionContext, *args: P.args, **kwargs: P.kwargs
+    ) -> ToolResult:
+        session = await get_browser_session(exec_context)
+        async with session.operation(exec_context):
+            return await func(exec_context, *args, **kwargs)
+
+    return wrapper
 
 
 def denormalize_coordinate(value: int, max_value: int) -> int:

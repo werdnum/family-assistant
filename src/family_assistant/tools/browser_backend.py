@@ -47,7 +47,7 @@ from family_assistant.tools.browser_session import (
 )
 
 if TYPE_CHECKING:
-    from rebrowser_playwright.async_api import Page
+    from rebrowser_playwright.async_api import Locator, Page
 
     from family_assistant.config_models import BrowserHandoffConfig
     from family_assistant.tools.browser_dom import Snapshot
@@ -63,17 +63,21 @@ JsonDict = dict[str, Any]
 LoadState = Literal["load", "domcontentloaded", "networkidle"]
 _VALID_LOAD_STATES: tuple[LoadState, ...] = get_args(LoadState)
 
-# In-page DOM walker shared by the local backend. Tags interactive/labeled
-# elements with a stable ``data-fa-ref`` attribute and returns a nested
-# accessibility tree matching the ``Snapshot`` shape. ``browser-server`` runs an
-# identical copy server-side, so the remote backend returns the same structure.
-# The ref ``e12`` always resolves to ``[data-fa-ref="e12"]``.
-SNAPSHOT_JS = r"""
-() => {
-  document.querySelectorAll('[data-fa-ref]').forEach(el => el.removeAttribute('data-fa-ref'));
+# In-page accessibility walker and ref resolver, shared VERBATIM with
+# browser-server (``browser_handoff_service.runtime``). A unit test asserts the
+# two copies are equal, so edit both or neither.
+#
+# A node keeps its ref across snapshots while its role and accessible name are
+# unchanged; anything else is stamped with a fresh number taken from the
+# caller-supplied counter, which the conversation's ``BrowserSession`` holds.
+# The ref ``e12`` always resolves to ``[data-fa-ref="e12"]``, and
+# ``CHECK_REF_JS`` decides whether it still names the node it was issued for.
 
-  let refCounter = 0;
-  const allocRef = () => 'e' + (++refCounter);
+_WALKER_HELPERS_JS = r"""
+  const REF_ATTR = 'data-fa-ref';
+  const ROLE_ATTR = 'data-fa-role';
+  const NAME_ATTR = 'data-fa-name';
+  const REF_PATTERN = /^e[0-9]+$/;
 
   const ROLE_MAP = {
     A: 'link', BUTTON: 'button', SELECT: 'combobox',
@@ -145,14 +149,71 @@ SNAPSHOT_JS = r"""
     return null;
   }
 
+  // Why a snapshot taken now would not list ``el`` under its stamped ref, or
+  // null when it would. This is the one eligibility predicate the walker and
+  // the resolver share: the walker lists exactly the nodes for which it is
+  // null, and an action resolves a ref exactly when it is null.
+  function ineligible(el) {
+    let inBody = false;
+    for (let n = el; n; n = n.parentElement) {
+      if (n.nodeType !== 1 || !isVisible(n)) return 'hidden';
+      if (n === document.body) { inBody = true; break; }
+    }
+    if (!inBody) return 'missing';
+    const role = interesting(el);
+    if (role === null) return 'changed';
+    if (role !== el.getAttribute(ROLE_ATTR)) return 'changed';
+    if (accName(el) !== el.getAttribute(NAME_ATTR)) return 'changed';
+    return null;
+  }
+"""
+
+# ``(nextRef) => snapshot``. ``nextRef`` is the lowest number the caller permits
+# for a fresh ref; the result's ``next_ref`` is the counter after this walk.
+SNAPSHOT_JS = (
+    "(nextRef) => {"
+    + _WALKER_HELPERS_JS
+    + r"""
+  let highest = 0;
+  for (const el of document.querySelectorAll('[' + REF_ATTR + ']')) {
+    const stamped = el.getAttribute(REF_ATTR) || '';
+    if (!REF_PATTERN.test(stamped)) continue;
+    const n = parseInt(stamped.slice(1), 10);
+    if (n > highest) highest = n;
+  }
+  let counter = Math.max(Math.floor(Number(nextRef)) || 1, highest + 1);
+  const issued = new Set();
+
+  function refFor(el, role, name) {
+    const existing = el.getAttribute(REF_ATTR) || '';
+    if (
+      REF_PATTERN.test(existing) &&
+      !issued.has(existing) &&
+      el.getAttribute(ROLE_ATTR) === role &&
+      el.getAttribute(NAME_ATTR) === name
+    ) {
+      issued.add(existing);
+      return existing;
+    }
+    const ref = 'e' + (counter++);
+    el.setAttribute(REF_ATTR, ref);
+    el.setAttribute(ROLE_ATTR, role);
+    el.setAttribute(NAME_ATTR, name);
+    issued.add(ref);
+    return ref;
+  }
+
+  let listed = 0;
+
   function walk(el, out) {
     if (el.nodeType !== 1) return;
     if (!isVisible(el)) return;
     const role = interesting(el);
     if (role) {
-      const ref = allocRef();
-      el.setAttribute('data-fa-ref', ref);
-      const node = { ref, role, name: accName(el) };
+      const name = accName(el);
+      const ref = refFor(el, role, name);
+      listed += 1;
+      const node = { ref, role, name };
       const href = el.getAttribute('href');
       if (href) node.href = href;
       const value = el.value;
@@ -179,11 +240,30 @@ SNAPSHOT_JS = r"""
     url: location.href,
     title: document.title,
     forms: formCount,
-    elements: refCounter,
+    elements: listed,
+    next_ref: counter,
     roots,
   };
 }
 """
+)
+
+# ``(ref) => {ok: true} | {ok: false, cause}``. ``cause`` is ``missing`` (no node
+# carries the ref), ``hidden`` (the node or an ancestor is not visible) or
+# ``changed`` (the node's role or name differs from what was snapshotted).
+CHECK_REF_JS = (
+    "(ref) => {"
+    + _WALKER_HELPERS_JS
+    + r"""
+  if (typeof ref !== 'string' || !REF_PATTERN.test(ref)) return { ok: false, cause: 'missing' };
+  const el = document.querySelector('[' + REF_ATTR + '="' + ref + '"]');
+  if (!el) return { ok: false, cause: 'missing' };
+  const cause = ineligible(el);
+  if (cause !== null) return { ok: false, cause };
+  return { ok: true };
+}
+"""
+)
 
 
 def _coerce_load_state(state: str) -> LoadState:
@@ -224,20 +304,40 @@ class HandoffUnavailableError(BrowserBackendError):
     """Raised when a human handoff is requested but no remote backend is active."""
 
 
+class StaleRefError(BrowserBackendError):
+    """Raised when a ref no longer names the node it was issued for.
+
+    The page decides this: a snapshot taken at that moment would not list the
+    node under that ref, because it was removed (``missing``), is no longer
+    visible (``hidden``), or its role or accessible name changed (``changed``).
+    """
+
+    def __init__(self, ref: str, cause: str, reason: str | None = None) -> None:
+        self.ref = ref
+        self.cause = cause
+        super().__init__(
+            reason
+            or (
+                f"ref {ref} is no longer on the page as snapshotted; the page "
+                f"has changed since the last snapshot"
+            )
+        )
+
+
 @runtime_checkable
 class BrowserBackend(Protocol):
     """Page-level operations shared by semantic DOM and visual computer-use tools.
 
-    ``ref_cache`` maps short refs (``e12``) to selectors; it is repopulated on
-    each snapshot and cleared on navigation / arbitrary JS execution.
+    Ref actions take the ref itself (``e12``) rather than a selector: the
+    backend checks in the page that the ref still names the node it was issued
+    for — raising :class:`StaleRefError` when it does not — before acting on
+    ``[data-fa-ref="e12"]``. ``raw_snapshot`` takes the conversation's ref
+    counter and reports the advanced one back as ``next_ref``.
 
     The ``mouse_*`` / ``keyboard_*`` / ``go_back`` / ``go_forward`` methods are
     used by the visual (Computer Use) profile so it can share the same remote
     browser session instead of opening a separate local tab.
     """
-
-    @property
-    def ref_cache(self) -> dict[str, str]: ...
 
     @property
     def current_url(self) -> str: ...
@@ -248,19 +348,17 @@ class BrowserBackend(Protocol):
     @property
     def screen_height(self) -> int: ...
 
-    def clear_refs(self) -> None: ...
-
     async def goto(self, url: str) -> None: ...
 
-    async def raw_snapshot(self) -> Snapshot: ...
+    async def raw_snapshot(self, next_ref: int) -> Snapshot: ...
 
     async def settle(self, timeout_ms: int = 5000) -> None: ...
 
-    async def click(self, selector: str) -> None: ...
+    async def click(self, ref: str) -> None: ...
 
-    async def fill(self, selector: str, text: str, submit: bool) -> None: ...
+    async def fill(self, ref: str, text: str, submit: bool) -> None: ...
 
-    async def select(self, selector: str, value: str) -> None: ...
+    async def select(self, ref: str, value: str) -> None: ...
 
     async def wait(self, selector: str | None, state: str, timeout_ms: int) -> None: ...
 
@@ -318,10 +416,6 @@ class LocalPlaywrightBackend:
         self._session = session
 
     @property
-    def ref_cache(self) -> dict[str, str]:
-        return self._session.ref_cache
-
-    @property
     def current_url(self) -> str:
         page = self._session.page
         return page.url if page is not None else ""
@@ -334,19 +428,31 @@ class LocalPlaywrightBackend:
     def screen_height(self) -> int:
         return self._session.screen_height
 
-    def clear_refs(self) -> None:
-        self._session.clear_refs()
-
     async def _page(self) -> Page:
         return await self._session.ensure_page()
+
+    async def _locator_for_ref(self, ref: str) -> Locator:
+        """Check ``ref`` in the page and return a locator for its node.
+
+        The check runs the walker's own eligibility predicate, so a ref
+        resolves exactly when a snapshot taken now would list that node under
+        it — and fails immediately rather than waiting out Playwright's
+        actionability timeout when it would not.
+        """
+        page = await self._page()
+        raw = await page.evaluate(CHECK_REF_JS, ref)
+        checked = cast("JsonDict", raw)
+        if not checked.get("ok"):
+            raise StaleRefError(ref=ref, cause=str(checked.get("cause", "missing")))
+        return page.locator(f'[data-fa-ref="{ref}"]')
 
     async def goto(self, url: str) -> None:
         page = await self._page()
         await page.goto(url)
 
-    async def raw_snapshot(self) -> Snapshot:
+    async def raw_snapshot(self, next_ref: int) -> Snapshot:
         page = await self._page()
-        raw = await page.evaluate(SNAPSHOT_JS)
+        raw = await page.evaluate(SNAPSHOT_JS, next_ref)
         return cast("Snapshot", raw)
 
     async def settle(self, timeout_ms: int = 5000) -> None:
@@ -354,20 +460,19 @@ class LocalPlaywrightBackend:
         with contextlib.suppress(PlaywrightError):
             await page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
 
-    async def click(self, selector: str) -> None:
-        page = await self._page()
-        await page.locator(selector).click()
+    async def click(self, ref: str) -> None:
+        locator = await self._locator_for_ref(ref)
+        await locator.click()
 
-    async def fill(self, selector: str, text: str, submit: bool) -> None:
-        page = await self._page()
-        locator = page.locator(selector)
+    async def fill(self, ref: str, text: str, submit: bool) -> None:
+        locator = await self._locator_for_ref(ref)
         await locator.fill(text)
         if submit:
             await locator.press("Enter")
 
-    async def select(self, selector: str, value: str) -> None:
-        page = await self._page()
-        await page.locator(selector).select_option(value)
+    async def select(self, ref: str, value: str) -> None:
+        locator = await self._locator_for_ref(ref)
+        await locator.select_option(value)
 
     async def wait(self, selector: str | None, state: str, timeout_ms: int) -> None:
         page = await self._page()
@@ -504,15 +609,11 @@ class RemoteBrowserBackend:
         self._session_id: str | None = None
         # ``client`` is an injection seam for tests (e.g. httpx.MockTransport).
         self._client = client or httpx.AsyncClient(timeout=config.timeout_seconds)
-        self.ref_cache: dict[str, str] = {}
         self._last_url: str = ""
 
     @property
     def current_url(self) -> str:
         return self._last_url
-
-    def clear_refs(self) -> None:
-        self.ref_cache.clear()
 
     def _headers(self) -> dict[str, str]:
         auth = self._config.auth
@@ -552,7 +653,6 @@ class RemoteBrowserBackend:
             session_id,
         )
         self._session_id = None
-        self.ref_cache.clear()
         self._last_url = ""
 
     def _is_unknown_session_response(self, resp: httpx.Response) -> bool:
@@ -658,25 +758,53 @@ class RemoteBrowserBackend:
     async def goto(self, url: str) -> None:
         await self._command("navigate", {"url": url})
 
-    async def raw_snapshot(self) -> Snapshot:
-        result = await self._command("snapshot")
+    async def raw_snapshot(self, next_ref: int) -> Snapshot:
+        result = await self._command("snapshot", {"next_ref": next_ref})
         return cast("Snapshot", result)
+
+    @staticmethod
+    def _raise_for_ref_error(result: JsonDict, ref: str) -> None:
+        """Translate browser-server's ref-check failure into an exception.
+
+        The server answers a rejected ref with HTTP 200 and an error result, so
+        the distinction between "the page moved on" (retryable by the model
+        after a fresh snapshot) and "that is not a ref" (a call the model
+        should not have made) is made here.
+        """
+        if not result.get("error"):
+            return
+        code = result.get("code")
+        if code == "invalid_ref":
+            raise ValueError(
+                f"Invalid ref {ref!r}. Refs look like 'e12' and come from a "
+                f"snapshot; pass one exactly as the snapshot listed it."
+            )
+        if code == "stale_ref":
+            reason = result.get("reason")
+            raise StaleRefError(
+                ref=str(result.get("ref", ref)),
+                cause=str(result.get("cause", "missing")),
+                reason=reason if isinstance(reason, str) else None,
+            )
+        raise BrowserBackendError(str(result.get("reason") or result.get("error")))
 
     async def settle(self, timeout_ms: int = 5000) -> None:
         # browser-server navigates with wait_until=domcontentloaded and settles
         # after click/type itself, so there is nothing extra to wait for here.
         return None
 
-    async def click(self, selector: str) -> None:
-        await self._command("click", {"selector": selector})
+    async def click(self, ref: str) -> None:
+        self._raise_for_ref_error(await self._command("click", {"ref": ref}), ref)
 
-    async def fill(self, selector: str, text: str, submit: bool) -> None:
-        await self._command("type_text", {"selector": selector, "text": text})
+    async def fill(self, ref: str, text: str, submit: bool) -> None:
+        result = await self._command("type_text", {"ref": ref, "text": text})
+        self._raise_for_ref_error(result, ref)
         if submit:
             await self._command("press_key", {"key": "Enter"})
 
-    async def select(self, selector: str, value: str) -> None:
-        await self._command("select", {"selector": selector, "value": value})
+    async def select(self, ref: str, value: str) -> None:
+        result = await self._command("select", {"ref": ref, "value": value})
+        self._raise_for_ref_error(result, ref)
 
     async def wait(self, selector: str | None, state: str, timeout_ms: int) -> None:
         args: JsonDict = {"state": state, "timeout_ms": timeout_ms}

@@ -3,8 +3,10 @@
 These tools drive a Playwright browser session via the accessibility tree
 rather than pixel coordinates, adopting AXI-style conventions:
 
-- Every interactive element is assigned a stable short ref (``e1``, ``e2``, …)
-  by tagging it with ``data-ref`` in the page.
+- Every interesting element is assigned a short ref (``e1``, ``e2``, …) by
+  tagging it with ``data-fa-ref`` in the page. A node keeps its ref across
+  snapshots and actions, and a ref is never issued for another node in the same
+  conversation, so a ref either targets the node it was issued for or fails.
 - Snapshots are rendered as indented TOON-style text (cheaper to tokenize than
   JSON) and returned alongside structured ``data`` for tests.
 - ``browser_exec`` is the escape hatch: it runs arbitrary JavaScript in the
@@ -36,9 +38,14 @@ from family_assistant.tools.browser_backend import (
     BrowserBackend,
     BrowserBackendError,
     HandoffUnavailableError,
+    StaleRefError,
     get_browser_backend,
 )
-from family_assistant.tools.browser_session import get_browser_session
+from family_assistant.tools.browser_session import (
+    BrowserSession,
+    browser_operation,
+    get_browser_session,
+)
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
 from family_assistant.utils.scraping import convert_html_bytes_to_markdown
 
@@ -50,6 +57,21 @@ UCP_PROBE_TIMEOUT_SECONDS = 5.0
 # are echoed into the assistant-authored hint to prevent instruction injection.
 _SAFE_CAPABILITY_SUFFIX = re.compile(r"[a-z0-9_.-]{1,40}")
 _MAX_HINT_CAPABILITIES = 12
+# Client-side ref check: syntax only. Whether a ref still names its node is
+# decided in the page, by the same predicate the snapshot walker uses.
+_REF_SYNTAX = re.compile(r"e[0-9]+")
+# Tools whose result carries a snapshot of the page as they left it. When a
+# batch holds more than one, only the last hands back refs — the earlier pages
+# have moved on, so their refs would fail.
+_SNAPSHOT_RETURNING_TOOLS = frozenset({
+    "browser_claim_handback",
+    "browser_click",
+    "browser_fill",
+    "browser_open",
+    "browser_select",
+    "browser_snapshot",
+    "browser_wait",
+})
 
 
 class SnapshotNode(TypedDict):
@@ -72,12 +94,18 @@ class SnapshotNode(TypedDict):
 
 
 class Snapshot(TypedDict):
-    """Top-level accessibility snapshot returned by the in-page JS walker."""
+    """Top-level accessibility snapshot returned by the in-page JS walker.
+
+    ``next_ref`` is the ref counter after this walk, which the conversation's
+    :class:`~family_assistant.tools.browser_session.BrowserSession` stores so
+    the next snapshot — of this document or another — numbers above it.
+    """
 
     url: str
     title: str
     forms: int
     elements: int
+    next_ref: int
     roots: list[SnapshotNode]
 
 
@@ -163,7 +191,28 @@ def _filter_tree(
     return kept
 
 
-def _format_toon(snapshot: Snapshot, query: str | None = None) -> str:
+def _strip_refs(nodes: list[SnapshotNode]) -> list[SnapshotNode]:
+    """Return the tree with every ``ref`` removed.
+
+    Used for a snapshot a later action in the same batch has already moved
+    past: those refs would fail, so the model is not shown them.
+    """
+    stripped: list[SnapshotNode] = []
+    for node in nodes:
+        # TypedDicts can't be copy-constructed via dict(td) per pyright, and
+        # ``ref`` is a required key, so the copy is edited as a plain dict.
+        copy = cast("dict[str, object]", cast("object", dict(node)))
+        copy.pop("ref", None)
+        children = node.get("children")
+        if children:
+            copy["children"] = _strip_refs(children)
+        stripped.append(cast("SnapshotNode", cast("object", copy)))
+    return stripped
+
+
+def _format_toon(
+    snapshot: Snapshot, query: str | None = None, *, with_refs: bool = True
+) -> str:
     """Render an accessibility snapshot as TOON v3 text via the ``toons`` lib.
 
     The snapshot is a plain nested dict, so ``toons.dumps`` handles the
@@ -173,6 +222,8 @@ def _format_toon(snapshot: Snapshot, query: str | None = None) -> str:
     roots = snapshot["roots"]
     if query:
         roots = _filter_tree(roots, query, include_all=False)
+    if not with_refs:
+        roots = _strip_refs(roots)
     payload: dict[str, object] = {
         "url": snapshot["url"],
         "title": snapshot["title"],
@@ -185,46 +236,58 @@ def _format_toon(snapshot: Snapshot, query: str | None = None) -> str:
     return toons.dumps(payload)
 
 
-def _collect_refs(
-    nodes: list[SnapshotNode], out: dict[str, str] | None = None
-) -> dict[str, str]:
-    """Walk a snapshot tree, returning ``{ref: selector}`` for every node."""
+def _collect_refs(nodes: list[SnapshotNode], out: list[str] | None = None) -> list[str]:
+    """Walk a snapshot tree, returning every node's ref in document order."""
     if out is None:
-        out = {}
+        out = []
     for node in nodes:
-        out[node["ref"]] = f'[data-fa-ref="{node["ref"]}"]'
+        out.append(node["ref"])
         children = node.get("children")
         if children:
             _collect_refs(children, out)
     return out
 
 
-async def _take_snapshot(backend: BrowserBackend, query: str | None) -> SnapshotData:
-    """Capture a snapshot via the backend, update the ref cache, and return it."""
-    snapshot = await backend.raw_snapshot()
-    backend.ref_cache.clear()
-    backend.ref_cache.update(_collect_refs(snapshot["roots"]))
-    text = _format_toon(snapshot, query=query)
+async def _take_snapshot(
+    session: BrowserSession,
+    backend: BrowserBackend,
+    query: str | None,
+    *,
+    with_refs: bool = True,
+) -> SnapshotData:
+    """Capture a snapshot, advancing the conversation's ref counter.
+
+    The counter goes into the walker and the advanced one comes back out, so a
+    number is never issued twice in a conversation however many documents the
+    snapshots span.
+    """
+    snapshot = await backend.raw_snapshot(session.next_ref)
+    session.next_ref = snapshot["next_ref"]
+    text = _format_toon(snapshot, query=query, with_refs=with_refs)
+    roots = snapshot["roots"]
     return SnapshotData(
         text=text,
         url=snapshot["url"] or backend.current_url,
         title=snapshot["title"],
         counts=SnapshotCounts(forms=snapshot["forms"], elements=snapshot["elements"]),
-        refs=list(backend.ref_cache.keys()),
-        roots=snapshot["roots"],
+        refs=_collect_refs(roots) if with_refs else [],
+        roots=roots if with_refs else _strip_refs(roots),
     )
 
 
-def _resolve_ref(backend: BrowserBackend, ref: str) -> str:
-    """Return the selector for ``ref`` or raise a clear error."""
-    selector = backend.ref_cache.get(ref)
-    if selector is None:
+def _validate_ref(ref: str) -> str:
+    """Check that ``ref`` is well-formed; whether it resolves is the page's call.
+
+    There is no client-side allowlist of live refs: a ref the page still
+    carries works, and one it does not fails in the page with a specific
+    error. All this rejects is a string that was never a ref.
+    """
+    if not _REF_SYNTAX.fullmatch(ref):
         raise ValueError(
-            f"Unknown ref {ref!r}. Refs are only valid for the most recent "
-            f"snapshot; call browser_snapshot again after navigation or DOM "
-            f"changes. Known refs: {sorted(backend.ref_cache.keys())[:10]}…"
+            f"Invalid ref {ref!r}. Refs look like 'e12' and come from a "
+            f"snapshot; pass one exactly as the snapshot listed it."
         )
-    return selector
+    return ref
 
 
 def _format_ucp_hint(profile: MerchantUCPProfile) -> str:
@@ -344,6 +407,20 @@ async def _ucp_hint_on_url_change(
     return await _probe_ucp_support(exec_context, current_url)
 
 
+def _a_later_sibling_returns_a_snapshot(exec_context: ToolExecutionContext) -> bool:
+    """Whether a browser tool issued after this one also returns a snapshot.
+
+    Decided from the batch's tool names alone, before any of them runs.
+    """
+    batch = exec_context.tool_call_batch
+    call_id = exec_context.tool_call_id
+    if batch is None or call_id is None:
+        return False
+    return any(
+        tool_name in _SNAPSHOT_RETURNING_TOOLS for _, tool_name in batch.later(call_id)
+    )
+
+
 async def _snapshot_result(
     exec_context: ToolExecutionContext,
     backend: BrowserBackend,
@@ -356,9 +433,20 @@ async def _snapshot_result(
     Shared by every snapshot-returning navigation tool so UCP auto-detection
     fires after click-driven navigation, not just ``browser_open``, and only
     when the URL's origin changes from one snapshot to the next.
+
+    When a later browser call in the same batch also returns a snapshot, this
+    page is one the batch has already moved past by the time the model reads
+    it, so the refs are left out and the result says so.
     """
-    snap = await _take_snapshot(backend, query=query)
+    session = await get_browser_session(exec_context)
+    superseded = _a_later_sibling_returns_a_snapshot(exec_context)
+    snap = await _take_snapshot(session, backend, query=query, with_refs=not superseded)
     text = snap["text"]
+    if superseded:
+        text = (
+            f"{text}\n\nrefs omitted: a later browser action in this batch "
+            f"returns the current page"
+        )
     ucp_hint = await _ucp_hint_on_url_change(exec_context, snap["url"])
     if ucp_hint is not None:
         text = f"{text}\n\n{ucp_hint}"
@@ -370,6 +458,7 @@ async def _snapshot_result(
 # ---------------------------------------------------------------------------
 
 
+@browser_operation
 async def browser_open_tool(
     exec_context: ToolExecutionContext, url: str, query: str | None = None
 ) -> ToolResult:
@@ -383,6 +472,7 @@ async def browser_open_tool(
     return await _snapshot_result(exec_context, backend, query=query)
 
 
+@browser_operation
 async def browser_snapshot_tool(
     exec_context: ToolExecutionContext, query: str | None = None
 ) -> ToolResult:
@@ -391,36 +481,66 @@ async def browser_snapshot_tool(
     return await _snapshot_result(exec_context, backend, query=query)
 
 
-async def browser_click_tool(
-    exec_context: ToolExecutionContext, ref: str
+async def _stale_ref_result(
+    exec_context: ToolExecutionContext,
+    backend: BrowserBackend,
+    exc: StaleRefError,
+    query: str | None,
 ) -> ToolResult:
-    """Click an element identified by a semantic ref from the latest snapshot."""
+    """Report a ref that no longer resolves, with the page as it is now.
+
+    The snapshot rides along so the model retargets on its next call instead of
+    spending a round trip on ``browser_snapshot``. There is no retry: choosing
+    a replacement element is an inference to make with the page in view.
+    """
+    snapshot = await _snapshot_result(exec_context, backend, query=query)
+    snapshot_data = snapshot.get_data()
+    data: dict[str, object] = {"error": "stale_ref", "ref": exc.ref, "cause": exc.cause}
+    if isinstance(snapshot_data, dict):
+        data |= snapshot_data
+    return ToolResult(text=f"{exc}\n\n{snapshot.get_text()}", data=data)
+
+
+@browser_operation
+async def browser_click_tool(
+    exec_context: ToolExecutionContext, ref: str, query: str | None = None
+) -> ToolResult:
+    """Click an element identified by a semantic ref from a snapshot."""
     backend = await get_browser_backend(exec_context)
-    selector = _resolve_ref(backend, ref)
-    logger.info("browser_click: %s -> %s", ref, selector)
-    await backend.click(selector)
+    _validate_ref(ref)
+    logger.info("browser_click: %s", ref)
+    try:
+        await backend.click(ref)
+    except StaleRefError as exc:
+        return await _stale_ref_result(exec_context, backend, exc, query)
     await backend.settle()
-    return await _snapshot_result(exec_context, backend)
+    return await _snapshot_result(exec_context, backend, query=query)
 
 
+@browser_operation
 async def browser_fill_tool(
     exec_context: ToolExecutionContext,
     ref: str,
     text: str,
     submit: bool = False,
+    query: str | None = None,
 ) -> ToolResult:
     """Fill a text input identified by ``ref``. Optionally press Enter."""
     backend = await get_browser_backend(exec_context)
-    selector = _resolve_ref(backend, ref)
+    _validate_ref(ref)
     logger.info("browser_fill: %s <- %r (submit=%s)", ref, text, submit)
-    await backend.fill(selector, text, submit)
+    try:
+        await backend.fill(ref, text, submit)
+    except StaleRefError as exc:
+        return await _stale_ref_result(exec_context, backend, exc, query)
     if submit:
         await backend.settle()
-    return await _snapshot_result(exec_context, backend)
+    return await _snapshot_result(exec_context, backend, query=query)
 
 
+@browser_operation
 async def browser_select_tool(
-    exec_context: ToolExecutionContext, ref: str, value: str
+    exec_context: ToolExecutionContext, ref: str, value: str, query: str | None = None
 ) -> ToolResult:
     """Select an ``<option>`` by visible label or value.
 
@@ -429,17 +549,22 @@ async def browser_select_tool(
     timeout when the LLM guesses value-vs-label wrong.
     """
     backend = await get_browser_backend(exec_context)
-    selector = _resolve_ref(backend, ref)
+    _validate_ref(ref)
     logger.info("browser_select: %s <- %r", ref, value)
-    await backend.select(selector, value)
-    return await _snapshot_result(exec_context, backend)
+    try:
+        await backend.select(ref, value)
+    except StaleRefError as exc:
+        return await _stale_ref_result(exec_context, backend, exc, query)
+    return await _snapshot_result(exec_context, backend, query=query)
 
 
+@browser_operation
 async def browser_wait_tool(
     exec_context: ToolExecutionContext,
     selector: str | None = None,
     state: str = "domcontentloaded",
     timeout_ms: int = 5000,
+    query: str | None = None,
 ) -> ToolResult:
     """Wait for a load state or a CSS selector to appear."""
     backend = await get_browser_backend(exec_context)
@@ -447,9 +572,10 @@ async def browser_wait_tool(
         "browser_wait: selector=%s state=%s timeout=%s", selector, state, timeout_ms
     )
     await backend.wait(selector, state, timeout_ms)
-    return await _snapshot_result(exec_context, backend)
+    return await _snapshot_result(exec_context, backend, query=query)
 
 
+@browser_operation
 async def browser_extract_tool(
     exec_context: ToolExecutionContext, selector: str | None = None
 ) -> ToolResult:
@@ -475,6 +601,7 @@ async def browser_extract_tool(
     )
 
 
+@browser_operation
 async def browser_screenshot_tool(
     exec_context: ToolExecutionContext,
 ) -> ToolResult:
@@ -494,6 +621,7 @@ async def browser_screenshot_tool(
     )
 
 
+@browser_operation
 async def browser_exec_tool(
     exec_context: ToolExecutionContext, code: str
 ) -> ToolResult:
@@ -506,15 +634,13 @@ async def browser_exec_tool(
 
     The script runs in the page's V8 context with only same-origin privileges.
     It has no access to the Python process or browser internals.
+
+    Refs are unaffected: the script leaves the ``data-fa-ref`` stamps it does
+    not remove in place, and a later action is judged against the page as the
+    script left it, so a ref whose node is still there still works.
     """
     backend = await get_browser_backend(exec_context)
     logger.info("browser_exec: %d chars", len(code))
-    # Clear the ref cache unconditionally — arbitrary JS could have mutated
-    # the DOM before throwing (e.g. ``node.remove(); throw new Error()``),
-    # so previously-captured refs are unreliable whether or not ``evaluate``
-    # succeeds. Doing this up-front keeps the invariant simple: any call to
-    # browser_exec means the next click/fill must re-snapshot.
-    backend.clear_refs()
     try:
         raw_result = await backend.evaluate(code)
     except BrowserBackendError as exc:
@@ -533,6 +659,7 @@ async def browser_exec_tool(
     return ToolResult(data=data)
 
 
+@browser_operation
 async def browser_request_handoff_tool(
     exec_context: ToolExecutionContext,
     reason: str,
@@ -577,6 +704,7 @@ async def browser_request_handoff_tool(
     )
 
 
+@browser_operation
 async def browser_claim_handback_tool(
     exec_context: ToolExecutionContext,
     session_id: str,
@@ -606,7 +734,8 @@ async def browser_claim_handback_tool(
         )
     # Return a fresh snapshot so the agent sees the current page state
     try:
-        snap = await _take_snapshot(backend, query=None)
+        session = await get_browser_session(exec_context)
+        snap = await _take_snapshot(session, backend, query=None)
         return ToolResult(
             text=f"Session reclaimed. Now at: {backend.current_url}",
             data={"claimed": True, "session_id": session_id, "snapshot": snap},
@@ -652,7 +781,10 @@ BROWSER_DOM_TOOLS_DEFINITION: list[ToolDefinition] = [
             "name": "browser_snapshot",
             "description": (
                 "Return an accessibility snapshot of the current page as indented "
-                "TOON text. Use after navigation or DOM mutation to refresh refs."
+                "TOON text. Refs survive snapshots and actions — a ref names one "
+                "element for the whole conversation — so snapshot again to see "
+                "elements you have not been shown yet, not to refresh refs you "
+                "already have."
             ),
             "parameters": {
                 "type": "object",
@@ -671,15 +803,22 @@ BROWSER_DOM_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "browser_click",
             "description": (
-                "Click an element by its semantic ref (e.g. 'e12') from the last "
-                "snapshot. Returns a fresh snapshot after the click."
+                "Click an element by its semantic ref (e.g. 'e12') from any "
+                "snapshot in this conversation. The ref either targets the "
+                "element it was issued for or fails; a failure comes back with a "
+                "fresh snapshot to retarget from. Returns a snapshot after the "
+                "click — pass `query` to keep it small."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "ref": {
                         "type": "string",
-                        "description": "Ref id from the last snapshot (e.g. 'e12').",
+                        "description": "Ref id from a snapshot (e.g. 'e12').",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Optional case-insensitive substring filter.",
                     },
                 },
                 "required": ["ref"],
@@ -692,7 +831,8 @@ BROWSER_DOM_TOOLS_DEFINITION: list[ToolDefinition] = [
             "name": "browser_fill",
             "description": (
                 "Fill an input element identified by ref. If `submit` is true, "
-                "presses Enter after filling."
+                "presses Enter after filling. A ref that no longer names its "
+                "element fails and returns a fresh snapshot instead of acting."
             ),
             "parameters": {
                 "type": "object",
@@ -703,6 +843,10 @@ BROWSER_DOM_TOOLS_DEFINITION: list[ToolDefinition] = [
                         "type": "boolean",
                         "description": "Press Enter after filling.",
                         "default": False,
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Optional case-insensitive substring filter.",
                     },
                 },
                 "required": ["ref", "text"],
@@ -724,6 +868,10 @@ BROWSER_DOM_TOOLS_DEFINITION: list[ToolDefinition] = [
                     "value": {
                         "type": "string",
                         "description": "Option label or value.",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Optional case-insensitive substring filter.",
                     },
                 },
                 "required": ["ref", "value"],
@@ -754,6 +902,10 @@ BROWSER_DOM_TOOLS_DEFINITION: list[ToolDefinition] = [
                         "type": "integer",
                         "description": "Timeout in milliseconds.",
                         "default": 5000,
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Optional case-insensitive substring filter.",
                     },
                 },
                 "required": [],
@@ -808,7 +960,9 @@ BROWSER_DOM_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "\"{ const h = document.querySelectorAll('h2'); return [...h].map(e => e.innerText); }\". "
                 "Returns the script's return value. Use when the fixed tools "
                 "don't fit: shadow DOM traversal, iframes, reading JSON from "
-                "same-origin endpoints, or custom DOM mutation."
+                "same-origin endpoints, or custom DOM mutation. Refs you already "
+                "have keep working afterwards for elements the script left on "
+                "the page."
             ),
             "parameters": {
                 "type": "object",
