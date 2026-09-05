@@ -66,7 +66,14 @@ async def gemini_client() -> AsyncGenerator[GoogleGenAIClient]:
 @pytest.fixture
 def mock_exec_context() -> ToolExecutionContext:
     """Create a mock ToolExecutionContext for testing."""
-    return MagicMock(spec=ToolExecutionContext, conversation_id="test-conversation")
+    # A bare mock would hand the browser chokepoint a mock batch to await; a
+    # context outside any tool-call batch has neither field set.
+    return MagicMock(
+        spec=ToolExecutionContext,
+        conversation_id="test-conversation",
+        tool_call_id=None,
+        tool_call_batch=None,
+    )
 
 
 @pytest.fixture

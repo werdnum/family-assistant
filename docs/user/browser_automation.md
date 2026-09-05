@@ -47,8 +47,13 @@ Prefix your request with `/browse` to use the semantic DOM profile:
 - Each interaction uses an **accessibility snapshot** of the page — a structured tree of roles,
   names, and references (like `e12`).
 - The assistant clicks, fills, and selects by **semantic ref**, not by pixel coordinates.
-- Snapshots can be filtered with a query substring to keep the context small, so the assistant stays
-  focused on what matters.
+- A ref points at one element for as long as the session lasts. It keeps working across further
+  snapshots and actions, so the assistant does not have to re-read the page between steps.
+- If the page has moved on — the element is gone, hidden, or has become something else — the action
+  fails instead of clicking the wrong thing, and the failure comes back with a fresh snapshot the
+  assistant can pick a new target from.
+- Snapshots can be filtered with a query substring to keep the context small, and that filter works
+  on actions too, so a click or a fill can come back with just the part of the page that matters.
 
 ### Available actions in `/browse`
 
@@ -188,7 +193,9 @@ Both profiles share these limits:
 ### Action Didn't Work
 
 - Dynamic pages may require waiting for content to load.
-- Ask the assistant to try again, or to take a snapshot/screenshot first to check the page state.
+- If the page changed under the assistant, the action fails and comes back with a fresh view of the
+  page; ask it to try again from there.
+- Ask the assistant to take a snapshot/screenshot first to check the page state.
 
 ### Session Timeout
 

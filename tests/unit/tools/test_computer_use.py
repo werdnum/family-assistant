@@ -49,11 +49,6 @@ class FakeBrowserBackend:
         self.current_url = "https://example.com"
         self.screen_width = 1280
         self.screen_height = 720
-        self.ref_cache: dict[str, str] = {}
-
-    def clear_refs(self) -> None:
-        self.ref_cache.clear()
-        self.calls.append(("clear_refs", {}))
 
     async def screenshot_png(self) -> bytes:
         self.calls.append(("screenshot_png", {}))
@@ -101,19 +96,19 @@ class FakeBrowserBackend:
     async def go_forward(self) -> None:
         self.calls.append(("go_forward", {}))
 
-    async def raw_snapshot(self) -> JsonDict:
-        return {"url": self.current_url}
+    async def raw_snapshot(self, next_ref: int) -> JsonDict:
+        return {"url": self.current_url, "next_ref": next_ref}
 
     async def settle(self, timeout_ms: int = 5000) -> None:
         pass
 
-    async def click(self, selector: str) -> None:
+    async def click(self, ref: str) -> None:
         pass
 
-    async def fill(self, selector: str, text: str, submit: bool) -> None:
+    async def fill(self, ref: str, text: str, submit: bool) -> None:
         pass
 
-    async def select(self, selector: str, value: str) -> None:
+    async def select(self, ref: str, value: str) -> None:
         pass
 
     async def wait(self, selector: str | None, state: str, timeout_ms: int) -> None:
@@ -162,6 +157,10 @@ def exec_context(
 
     ctx = MagicMock(spec=ToolExecutionContext)
     ctx.conversation_id = "test-conversation"
+    # No batch: these tools are called one at a time, so the chokepoint only
+    # has its lock to take.
+    ctx.tool_call_batch = None
+    ctx.tool_call_id = None
     return ctx
 
 

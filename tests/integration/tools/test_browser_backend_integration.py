@@ -20,6 +20,7 @@ from family_assistant.config_models import BrowserHandoffConfig, RemoteA2AAuthCo
 from family_assistant.tools.browser_backend import (
     BrowserBackendError,
     RemoteBrowserBackend,
+    StaleRefError,
 )
 
 if TYPE_CHECKING:
@@ -72,6 +73,26 @@ def _make_backend(*, conversation_id: str = "integ-conv-1") -> RemoteBrowserBack
     )
 
 
+def _refs(snapshot: object) -> list[str]:
+    """Every ref in a snapshot tree, in document order."""
+    refs: list[str] = []
+
+    def walk(nodes: object) -> None:
+        if not isinstance(nodes, list):
+            return
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            ref = node.get("ref")
+            if isinstance(ref, str):
+                refs.append(ref)
+            walk(node.get("children"))
+
+    if isinstance(snapshot, dict):
+        walk(snapshot.get("roots"))
+    return refs
+
+
 def _session_id_for_conversation(conversation_id: str) -> str:
     matches = [
         session.session_id
@@ -84,11 +105,11 @@ def _session_id_for_conversation(conversation_id: str) -> str:
 
 @pytest.mark.integration
 async def test_goto_and_raw_snapshot_return_full_accessibility_tree() -> None:
-    """goto() + raw_snapshot() returns a full accessibility tree, not a stub."""
+    """goto() + raw_snapshot(1) returns a full accessibility tree, not a stub."""
     backend = _make_backend(conversation_id="integ-snap")
     try:
         await backend.goto("https://example.test/page")
-        snap = await backend.raw_snapshot()
+        snap = await backend.raw_snapshot(1)
         # Full tree fields — not the old stub {title, body_text} shape
         for key in ("url", "title", "forms", "elements", "roots"):
             assert key in snap, f"missing key {key!r} in snapshot"
@@ -100,12 +121,12 @@ async def test_goto_and_raw_snapshot_return_full_accessibility_tree() -> None:
 
 @pytest.mark.integration
 async def test_raw_snapshot_is_stable_between_calls() -> None:
-    """Consecutive raw_snapshot() calls return the same element count."""
+    """Consecutive raw_snapshot(1) calls return the same element count."""
     backend = _make_backend(conversation_id="integ-stable")
     try:
         await backend.goto("https://example.test/page")
-        snap1 = await backend.raw_snapshot()
-        snap2 = await backend.raw_snapshot()
+        snap1 = await backend.raw_snapshot(1)
+        snap2 = await backend.raw_snapshot(1)
         assert snap1.get("elements") == snap2.get("elements")
     finally:
         await backend.close()
@@ -247,7 +268,7 @@ async def test_bearer_token_is_sent_in_every_request() -> None:
     )
     try:
         await backend.goto("https://example.test/")
-        await backend.raw_snapshot()
+        await backend.raw_snapshot(1)
     finally:
         await backend.close()
 
@@ -365,7 +386,7 @@ async def test_expired_session_command_prompts_browser_open() -> None:
         await _expire_session(stale_session_id)
 
         with pytest.raises(BrowserBackendError, match="browser_open"):
-            await backend.raw_snapshot()
+            await backend.raw_snapshot(1)
 
         # The dead session is cleared, so a fresh browser_open succeeds without
         # any manual lease release or pod restart.
@@ -441,7 +462,7 @@ async def test_handed_off_session_command_prompts_browser_open() -> None:
         )
 
         with pytest.raises(BrowserBackendError, match="browser_open"):
-            await backend.raw_snapshot()
+            await backend.raw_snapshot(1)
 
         # The handed-off session is cleared, so a fresh browser_open succeeds.
         await backend.goto("https://example.test/restarted")
@@ -508,7 +529,7 @@ async def test_claim_handback_resumes_session() -> None:
         # version newer than the one pinned in uv.lock.
 
         # 5. Snapshot works after reclaim
-        snap = await backend.raw_snapshot()
+        snap = await backend.raw_snapshot(1)
         assert "roots" in snap
     finally:
         await backend.close()
@@ -543,3 +564,45 @@ async def test_missing_token_env_raises_browser_backend_error(
     )
     with pytest.raises(BrowserBackendError, match="token env"):
         await backend.goto("https://example.test/")
+
+
+@pytest.mark.integration
+async def test_snapshot_reports_the_advanced_ref_counter() -> None:
+    """The caller's counter goes in and the advanced one comes back out."""
+    backend = _make_backend(conversation_id="integ-next-ref")
+    try:
+        await backend.goto("https://example.test/page")
+        snap = await backend.raw_snapshot(5_000)
+        assert snap["next_ref"] > 5_000
+        # A second snapshot handed the advanced counter reuses the stamped
+        # refs, so a ref names one node across snapshots.
+        again = await backend.raw_snapshot(snap["next_ref"])
+        assert _refs(again) == _refs(snap)
+    finally:
+        await backend.close()
+
+
+@pytest.mark.integration
+async def test_click_on_an_issued_ref_is_accepted() -> None:
+    backend = _make_backend(conversation_id="integ-click-ref")
+    try:
+        await backend.goto("https://example.test/page")
+        snap = await backend.raw_snapshot(1)
+        ref = _refs(snap)[0]
+        await backend.click(ref)
+    finally:
+        await backend.close()
+
+
+@pytest.mark.integration
+async def test_click_on_a_ref_the_page_never_issued_raises_stale_ref() -> None:
+    """Staleness is the page's call, and it comes back as a typed error."""
+    backend = _make_backend(conversation_id="integ-stale-ref")
+    try:
+        await backend.goto("https://example.test/page")
+        await backend.raw_snapshot(1)
+        with pytest.raises(StaleRefError) as exc:
+            await backend.click("e999999")
+        assert exc.value.ref == "e999999"
+    finally:
+        await backend.close()

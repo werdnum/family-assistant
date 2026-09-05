@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import traceback
@@ -35,6 +36,7 @@ from family_assistant.tools.infrastructure import (
 )
 from family_assistant.tools.types import (
     ToolAttachment,
+    ToolCallBatch,
     ToolCallReviewTurnState,
     ToolResult,
 )
@@ -47,7 +49,7 @@ from .types import (
 from .utils import get_file_extension_from_mime_type
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterator, Mapping, Sequence
 
     from family_assistant.camera.protocol import CameraBackend
     from family_assistant.events.indexing_source import IndexingSource
@@ -99,6 +101,21 @@ class _ToolOutput:
     stream_metadata: StreamEventMetadata | None
     auto_attachment_ids: list[str]
     large_result_attachment_ids: list[str]
+
+
+@contextlib.contextmanager
+def _batch_completion(batch: ToolCallBatch | None, call_id: str) -> Iterator[None]:
+    """Report this call's completion to its batch however the call ends.
+
+    Siblings that wait for issue order wait on this, so a denied, failed or
+    declined call must report too — otherwise it leaves the rest of the batch
+    waiting on a call that will never run.
+    """
+    try:
+        yield
+    finally:
+        if batch is not None:
+            batch.mark_done(call_id)
 
 
 def _argument_attachment_ids(value: object) -> set[str]:
@@ -231,6 +248,8 @@ class ToolExecutor:
         tool_call_review_state: ToolCallReviewTurnState | None,
         tool_call_review_messages: Sequence[LLMMessage] | None,
         tool_call_review_trigger: TriggerReviewInput | None,
+        tool_call_id: str | None = None,
+        tool_call_batch: ToolCallBatch | None = None,
     ) -> ToolExecutionContext:
         chat_interfaces_dict = chat_interfaces
         if chat_interfaces_dict is None and chat_interface:
@@ -278,6 +297,8 @@ class ToolExecutor:
             ),
             tool_call_review_messages=tool_call_review_messages,
             tool_call_review_trigger=tool_call_review_trigger,
+            tool_call_id=tool_call_id,
+            tool_call_batch=tool_call_batch,
         )
 
     @staticmethod
@@ -849,6 +870,7 @@ class ToolExecutor:
         tool_call_review_state: ToolCallReviewTurnState | None = None,
         tool_call_review_messages: Sequence[LLMMessage] | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
+        tool_call_batch: ToolCallBatch | None = None,
     ) -> ToolExecutionResult:
         """Execute a single tool call and return the result.
 
@@ -886,13 +908,16 @@ class ToolExecutor:
             else TurnTaintState.empty().to_metadata()
         )
 
-        with tracer.start_as_current_span(
-            f"tool.execute.{function_name}",
-            attributes={
-                "tool.name": function_name,
-                "tool.call_id": call_id,
-            },
-        ) as span:
+        with (
+            _batch_completion(tool_call_batch, call_id),
+            tracer.start_as_current_span(
+                f"tool.execute.{function_name}",
+                attributes={
+                    "tool.name": function_name,
+                    "tool.call_id": call_id,
+                },
+            ) as span,
+        ):
             # Parse arguments
             try:
                 arguments = self._parse_arguments(function_name, function_args)
@@ -996,6 +1021,8 @@ class ToolExecutor:
                 tool_call_review_state=tool_call_review_state,
                 tool_call_review_messages=tool_call_review_messages,
                 tool_call_review_trigger=tool_call_review_trigger,
+                tool_call_id=call_id,
+                tool_call_batch=tool_call_batch,
             )
 
             # Result of a durable "completed" confirmation that already
