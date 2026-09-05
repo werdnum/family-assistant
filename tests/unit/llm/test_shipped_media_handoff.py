@@ -21,7 +21,6 @@ from family_assistant.config_loader import load_config
 from family_assistant.config_models import (
     CONTEXT_PROVIDER_NAMES,
     AppConfig,
-    ServiceProfile,
 )
 from family_assistant.context_providers import (
     CalendarContextProvider,
@@ -45,24 +44,11 @@ from family_assistant.tools import (
     ToolPolicyDecision,
 )
 from family_assistant.tools.types import ToolAttachment
+from tests.unit.llm.conftest import shipped_profile
 
 _HANDOFF_PROFILE_ID = "media_analyst"
 # The profile users send attachments to from Telegram and web chat.
 _MEDIA_RECEIVING_PROFILE_ID = "default_assistant"
-
-
-def _load_defaults() -> AppConfig:
-    return load_config(
-        config_file_path="nonexistent-so-only-defaults.yaml",
-        load_dotenv_file=False,
-    )
-
-
-def _shipped_profile(profile_id: str) -> ServiceProfile:
-    config = _load_defaults()
-    matching = [p for p in config.service_profiles if p.id == profile_id]
-    assert matching, f"no shipped profile with id {profile_id!r}"
-    return matching[0]
 
 
 def _unreadable_media_note() -> str:
@@ -85,19 +71,25 @@ def _unreadable_media_note() -> str:
     return text
 
 
-def test_the_profile_the_adapter_names_is_shipped() -> None:
+def test_the_profile_the_adapter_names_is_shipped(shipped_config: AppConfig) -> None:
     """The handoff target has to be a real profile to be delegated to."""
     assert _HANDOFF_PROFILE_ID in _unreadable_media_note()
-    assert _shipped_profile(_HANDOFF_PROFILE_ID).id == _HANDOFF_PROFILE_ID
+    assert (
+        shipped_profile(shipped_config, _HANDOFF_PROFILE_ID).id == _HANDOFF_PROFILE_ID
+    )
 
 
-def test_the_handoff_profile_uses_a_provider_that_reads_audio_and_video() -> None:
+def test_the_handoff_profile_uses_a_provider_that_reads_audio_and_video(
+    shipped_config: AppConfig,
+) -> None:
     """Pointing the handoff at an OpenAI model would recreate the gap it exists for.
 
     Google is the only configured provider whose adapter represents audio and
     video at all.
     """
-    processing_config = _shipped_profile(_HANDOFF_PROFILE_ID).processing_config
+    processing_config = shipped_profile(
+        shipped_config, _HANDOFF_PROFILE_ID
+    ).processing_config
     assert processing_config is not None
 
     assert processing_config.provider == "google"
@@ -106,7 +98,9 @@ def test_the_handoff_profile_uses_a_provider_that_reads_audio_and_video() -> Non
     assert processing_config.retry_config is None
 
 
-def test_the_media_receiving_profile_may_delegate_to_the_handoff_profile() -> None:
+def test_the_media_receiving_profile_may_delegate_to_the_handoff_profile(
+    shipped_config: AppConfig,
+) -> None:
     """The note is only an affordance if the profile reading it can make the call.
 
     `default_assistant` runs a Google primary that reads audio and video itself,
@@ -115,7 +109,7 @@ def test_the_media_receiving_profile_may_delegate_to_the_handoff_profile() -> No
     targets, and a deny landing on this one would leave the model told to do
     something its own policy forbids.
     """
-    profile = _shipped_profile(_MEDIA_RECEIVING_PROFILE_ID)
+    profile = shipped_profile(shipped_config, _MEDIA_RECEIVING_PROFILE_ID)
     assert profile.tools_policy is not None
     engine = PolicyEngine.from_policy_config(profile.tools_policy)
     descriptor = next(
@@ -129,7 +123,9 @@ def test_the_media_receiving_profile_may_delegate_to_the_handoff_profile() -> No
     assert evaluation.decision == ToolPolicyDecision.ALLOW
 
 
-def test_the_handoff_profile_can_reach_no_tool_that_acts() -> None:
+def test_the_handoff_profile_can_reach_no_tool_that_acts(
+    shipped_config: AppConfig,
+) -> None:
     """It reads untrusted media, so it must have no way to act.
 
     Rule of Two: with [A] untrustworthy input, it must hold neither [B] nor [C].
@@ -150,13 +146,12 @@ def test_the_handoff_profile_can_reach_no_tool_that_acts() -> None:
     a tool added to the global policy has to fail this test rather than quietly
     reach a profile built to hold no privileges.
     """
-    config = _load_defaults()
-    profile = next(p for p in config.service_profiles if p.id == _HANDOFF_PROFILE_ID)
+    profile = shipped_profile(shipped_config, _HANDOFF_PROFILE_ID)
     engine = _build_profile_policy_engine(
         profile_id=profile.id,
         profile_tools_policy=profile.tools_policy,
         operator_tools_policy=None,
-        global_tools_policy=config.global_tools_policy,
+        global_tools_policy=shipped_config.global_tools_policy,
         excluded_global_tools=profile.excluded_global_tools,
     )
 
@@ -169,7 +164,9 @@ def test_the_handoff_profile_can_reach_no_tool_that_acts() -> None:
     assert reachable == set()
 
 
-def test_the_handoff_profile_gets_none_of_the_user_s_context() -> None:
+def test_the_handoff_profile_gets_none_of_the_user_s_context(
+    shipped_config: AppConfig,
+) -> None:
     """Context providers inject private data into the system prompt by default.
 
     An empty tool policy does not deny [B] on its own: notes, calendar and
@@ -177,7 +174,9 @@ def test_the_handoff_profile_gets_none_of_the_user_s_context() -> None:
     the user's notes with attacker-controlled audio in one prompt is the
     pairing the Rule of Two exists to prevent.
     """
-    processing_config = _shipped_profile(_HANDOFF_PROFILE_ID).processing_config
+    processing_config = shipped_profile(
+        shipped_config, _HANDOFF_PROFILE_ID
+    ).processing_config
     assert processing_config is not None
 
     assert set(processing_config.excluded_context_providers) == CONTEXT_PROVIDER_NAMES

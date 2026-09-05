@@ -14,40 +14,34 @@ surface and a tier would offer to replace it.
 import pytest
 
 from family_assistant.assistant import Assistant
-from family_assistant.config_loader import load_config
-from family_assistant.config_models import AppConfig, ServiceProfile
+from family_assistant.config_models import AppConfig
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.llm.model_tiers import (
+    resolve_profile_llm_model,
     resolve_tier_client_config,
     validate_profile_model_tier,
 )
 from family_assistant.llm.providers.anthropic_client import AnthropicClient
-
-
-@pytest.fixture(name="shipped_config")
-def shipped_config_fixture() -> AppConfig:
-    return load_config(
-        config_file_path="nonexistent-so-only-defaults.yaml",
-        load_dotenv_file=False,
-    )
-
-
-def _profile(config: AppConfig, profile_id: str) -> ServiceProfile:
-    return next(p for p in config.service_profiles if p.id == profile_id)
+from tests.unit.llm.conftest import shipped_profile
 
 
 # ast-grep-ignore: no-dict-any - Factory config has varying provider keys.
 def _client_config_for(config: AppConfig, profile_id: str) -> dict[str, object]:
     """The configuration the assistant would build this profile's client from."""
     assistant = Assistant(config)
-    profile = _profile(config, profile_id)
+    profile = shipped_profile(config, profile_id)
     tier = validate_profile_model_tier(profile, config.model_tiers)
-    model = (
-        tier.chain[0].model or config.model
-        if tier is not None
-        else profile.processing_config.llm_model or config.model
-    )
+    model = resolve_profile_llm_model(profile.processing_config, tier, config.model)
     return assistant._build_profile_llm_client_config(profile, model, tier)
+
+
+# ast-grep-ignore: no-dict-any - Factory config has varying provider keys.
+def _tier_config_for(config: AppConfig, profile_id: str) -> dict[str, object]:
+    """The configuration this profile's tier resolves to, with no assistant."""
+    profile = shipped_profile(config, profile_id)
+    tier = validate_profile_model_tier(profile, config.model_tiers)
+    assert tier is not None, f"profile {profile_id!r} does not name a model tier"
+    return resolve_tier_client_config(tier, config.llm_parameters)
 
 
 @pytest.mark.parametrize(
@@ -60,6 +54,7 @@ def _client_config_for(config: AppConfig, profile_id: str) -> dict[str, object]:
 def test_standard_tier_profiles_keep_the_gemini_terra_chain(
     shipped_config: AppConfig, profile_id: str
 ) -> None:
+    """Through the assistant, so the tier reaching the client is asserted too."""
     assert _client_config_for(shipped_config, profile_id) == {
         "retry_config": {
             "primary": {
@@ -77,7 +72,7 @@ def test_standard_tier_profiles_keep_the_gemini_terra_chain(
 
 
 def test_complex_tasks_keeps_the_sol_fable_chain(shipped_config: AppConfig) -> None:
-    assert _client_config_for(shipped_config, "complex_tasks") == {
+    assert _tier_config_for(shipped_config, "complex_tasks") == {
         "retry_config": {
             "primary": {
                 "provider": "openai",
@@ -97,7 +92,7 @@ def test_a_profile_inheriting_the_default_tier_keeps_the_default_chain(
     shipped_config: AppConfig,
 ) -> None:
     """The chain `default_profile_settings` used to carry is now `standard`."""
-    config = _client_config_for(shipped_config, "email_intake")
+    config = _tier_config_for(shipped_config, "email_intake")
 
     assert config == {
         "retry_config": {
@@ -194,7 +189,7 @@ def test_the_global_map_still_configures_nothing_for_fable(
 def test_provider_coupled_profiles_stay_pinned_to_an_inline_model(
     shipped_config: AppConfig, profile_id: str
 ) -> None:
-    processing_config = _profile(shipped_config, profile_id).processing_config
+    processing_config = shipped_profile(shipped_config, profile_id).processing_config
 
     assert processing_config.model_tier is None
     assert processing_config.llm_model is not None

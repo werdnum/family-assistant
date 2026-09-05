@@ -11,12 +11,11 @@ plausible-looking answer rather than an error, so each is pinned here.
 import pytest
 
 from family_assistant.assistant import validate_antigravity_agent_config
-from family_assistant.config_loader import load_config
 from family_assistant.config_models import (
+    AppConfig,
     ProcessingConfig,
     RetryConfig,
     RetryModelConfig,
-    ServiceProfile,
 )
 from family_assistant.llm.messages import UserMessage
 from family_assistant.llm.providers.google_genai_client import (
@@ -35,21 +34,14 @@ from family_assistant.security.taint import (
     TurnTaintState,
     merge_taint_policy_config,
 )
+from tests.unit.llm.conftest import shipped_profile
 
 
-def _shipped_profile(profile_id: str) -> ServiceProfile:
-    config = load_config(
-        config_file_path="nonexistent-so-only-defaults.yaml",
-        load_dotenv_file=False,
-    )
-    matches = [p for p in config.service_profiles if p.id == profile_id]
-    assert matches, f"No shipped profile '{profile_id}'"
-    return matches[0]
-
-
-def test_shipped_coder_profile_runs_gemini_37_flash_on_the_agent() -> None:
+def test_shipped_coder_profile_runs_gemini_37_flash_on_the_agent(
+    shipped_config: AppConfig,
+) -> None:
     """The profile names the managed agent and pins its reasoning model."""
-    profile = _shipped_profile("coder")
+    profile = shipped_profile(shipped_config, "coder")
     processing_config = profile.processing_config
 
     assert processing_config.provider == "google"
@@ -59,7 +51,9 @@ def test_shipped_coder_profile_runs_gemini_37_flash_on_the_agent() -> None:
     assert "/coder" in profile.slash_commands
 
 
-def test_shipped_coder_profile_configures_no_sandbox_credentials() -> None:
+def test_shipped_coder_profile_configures_no_sandbox_credentials(
+    shipped_config: AppConfig,
+) -> None:
     """Out of the box the sandbox holds no credential, so the profile keeps [C] only.
 
     `antigravity_config.environment` can inject a credential into the sandbox's
@@ -68,14 +62,16 @@ def test_shipped_coder_profile_configures_no_sandbox_credentials() -> None:
     own config, so shipping it enabled here would hand every deployment the
     widening silently.
     """
-    profile = _shipped_profile("coder")
+    profile = shipped_profile(shipped_config, "coder")
     antigravity_config = profile.processing_config.antigravity_config
 
     assert antigravity_config is not None
     assert antigravity_config.environment is None
 
 
-def test_shipped_coder_profile_grants_no_family_assistant_tools() -> None:
+def test_shipped_coder_profile_grants_no_family_assistant_tools(
+    shipped_config: AppConfig,
+) -> None:
     """The agent works only from the request; it holds no [B] access.
 
     A deny-by-default `tools_policy` is not enough on its own: `global_tools_policy`
@@ -83,7 +79,7 @@ def test_shipped_coder_profile_grants_no_family_assistant_tools() -> None:
     policy occupies, so the three globally granted tools have to be withheld
     explicitly or the profile is advertised as holding them.
     """
-    profile = _shipped_profile("coder")
+    profile = shipped_profile(shipped_config, "coder")
     assert profile.tools_policy is not None
     assert profile.tools_policy.default_decision == "deny"
     assert set(profile.excluded_global_tools) == {
@@ -93,18 +89,22 @@ def test_shipped_coder_profile_grants_no_family_assistant_tools() -> None:
     }
 
 
-def test_shipped_coder_profile_is_a_sandbox_network_sink() -> None:
+def test_shipped_coder_profile_is_a_sandbox_network_sink(
+    shipped_config: AppConfig,
+) -> None:
     """The profile declares the sink that gates reaching it at all.
 
     Without the declaration, a delegation to it is classified as an ordinary
     delegation and untrusted content could direct a code-execution agent --
     the thing the shipped matrix already denies for `spawn_worker`.
     """
-    processing_config = _shipped_profile("coder").processing_config
+    processing_config = shipped_profile(shipped_config, "coder").processing_config
     assert processing_config.taint_sink_class is SinkClass.SANDBOX_NETWORK
 
 
-def test_shipped_coder_profile_does_not_override_the_rollout_mode() -> None:
+def test_shipped_coder_profile_does_not_override_the_rollout_mode(
+    shipped_config: AppConfig,
+) -> None:
     """The sink declaration rides the deployment's rollout; it does not preempt it.
 
     A profile-level `enforce` would apply the context-free tier x sink matrix to
@@ -118,17 +118,13 @@ def test_shipped_coder_profile_does_not_override_the_rollout_mode() -> None:
     for interactive `unknown_external -> sandbox_network` is confirmation
     rather than the hard denial an override produces.
     """
-    config = load_config(
-        config_file_path="nonexistent-so-only-defaults.yaml",
-        load_dotenv_file=False,
-    )
-    profile = next(p for p in config.service_profiles if p.id == "coder")
+    profile = shipped_profile(shipped_config, "coder")
 
     merged = merge_taint_policy_config(
-        base=config.taint_policy, profile=profile.taint_policy
+        base=shipped_config.taint_policy, profile=profile.taint_policy
     )
 
-    assert merged.mode is config.taint_policy.mode
+    assert merged.mode is shipped_config.taint_policy.mode
 
 
 def test_the_shipped_matrix_adjudicates_a_sandbox_run_untrusted_content() -> None:
@@ -151,9 +147,11 @@ def test_the_shipped_matrix_adjudicates_a_sandbox_run_untrusted_content() -> Non
     assert evaluation.fallback_outcome is TaintPolicyOutcome.CONFIRM
 
 
-def test_shipped_coder_config_reaches_the_agent_config_payload() -> None:
+def test_shipped_coder_config_reaches_the_agent_config_payload(
+    shipped_config: AppConfig,
+) -> None:
     """Feeding the shipped values to the client produces the API's agent_config."""
-    processing_config = _shipped_profile("coder").processing_config
+    processing_config = shipped_profile(shipped_config, "coder").processing_config
     assert processing_config.antigravity_config is not None
 
     client = GoogleGenAIClient(
@@ -171,9 +169,11 @@ def test_shipped_coder_config_reaches_the_agent_config_payload() -> None:
     }
 
 
-def test_shipped_coder_profile_passes_its_own_startup_validation() -> None:
+def test_shipped_coder_profile_passes_its_own_startup_validation(
+    shipped_config: AppConfig,
+) -> None:
     """What ships must survive the guard that rejects unrunnable combinations."""
-    profile = _shipped_profile("coder")
+    profile = shipped_profile(shipped_config, "coder")
     validate_antigravity_agent_config(
         profile.id, profile.processing_config, profile.processing_config.llm_model or ""
     )
