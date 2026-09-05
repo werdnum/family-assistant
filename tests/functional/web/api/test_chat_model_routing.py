@@ -19,7 +19,9 @@ import asyncio
 import json
 import uuid
 from datetime import timedelta
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Literal, Protocol, cast
+from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import BaseModel
@@ -28,6 +30,7 @@ from family_assistant.config_models import (
     AppConfig,
     ModelRoutingConfig,
     RetryModelConfig,
+    ToolsConfig,
 )
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from family_assistant.llm.call_context import CallAttribution, attributed_call
@@ -45,6 +48,8 @@ from family_assistant.llm.model_selection import (
 from family_assistant.observability.metrics import current_call_attribution
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.database import Database
+from family_assistant.tools.services import delegate_to_service_tool
+from family_assistant.tools.types import ToolExecutionContext
 from family_assistant.utils.clock import SystemClock
 from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
     RuleBasedMockLLMClient,
@@ -59,6 +64,7 @@ if TYPE_CHECKING:
 
     from family_assistant.llm import LLMInterface
     from family_assistant.llm.messages import LLMMessage, MessageReasoningInfo
+    from family_assistant.services.attachment_registry import AttachmentRegistry
     from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
         MatcherArgs,
         StructuredMatcherArgs,
@@ -132,6 +138,7 @@ async def _add_history(
     *,
     age: timedelta = timedelta(minutes=1),
     interface_type: str = "api",
+    subconversation_id: str | None = None,
 ) -> None:
     """Put one earlier user message in the conversation the classifier reads."""
     db = Database(engine=db_engine)
@@ -142,6 +149,7 @@ async def _add_history(
         timestamp=SystemClock().now() - age,
         turn_id=str(uuid.uuid4()),
         processing_profile_id="chat_api_test_profile",
+        subconversation_id=subconversation_id,
     )
 
 
@@ -279,6 +287,81 @@ async def _assistant_reasoning_info(
     reasoning = assistant_rows[-1]["reasoning_info"]
     assert reasoning is not None
     return cast("MessageReasoningInfo", reasoning)
+
+
+_DELEGATION_USER_ID = "routing-delegation-user"
+_DELEGATION_SOURCE_ID = "delegating_source"
+
+
+def _delegating_context(
+    db_engine: AsyncEngine,
+    target: ProcessingService,
+    *,
+    conversation_id: str,
+    attachment_registry: AttachmentRegistry | None = None,
+) -> ToolExecutionContext:
+    """A source profile holding *target* in its registry, ready to delegate."""
+    source = cast(
+        "ProcessingService",
+        SimpleNamespace(
+            service_config=SimpleNamespace(
+                id=_DELEGATION_SOURCE_ID,
+                tools_config=ToolsConfig(async_delegation_enabled=True),
+            ),
+            processing_services_registry={target.service_config.id: target},
+        ),
+    )
+    return ToolExecutionContext(
+        interface_type="api",
+        conversation_id=conversation_id,
+        user_name="tester",
+        user_id=_DELEGATION_USER_ID,
+        turn_id=str(uuid.uuid4()),
+        db_context=Database(engine=db_engine),
+        processing_service=source,
+        clock=SystemClock(),
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=attachment_registry,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
+
+
+async def _completed_prior_delegation(
+    db_engine: AsyncEngine,
+    *,
+    conversation_id: str,
+    subconversation_id: str,
+    target_service_id: str,
+) -> str:
+    """A finished delegation of this caller's, available to resume."""
+    db = Database(engine=db_engine)
+    delegation_id = f"delegation_{uuid.uuid4().hex}"
+    await db.delegation_runs.create_run({
+        "delegation_id": delegation_id,
+        "task_id": f"task_{uuid.uuid4().hex}",
+        "source_profile_id": _DELEGATION_SOURCE_ID,
+        "target_service_id": target_service_id,
+        "interface_type": "api",
+        "conversation_id": conversation_id,
+        "user_id": _DELEGATION_USER_ID,
+        "user_name": "tester",
+        "source_turn_id": str(uuid.uuid4()),
+        "source_subconversation_id": None,
+        "subconversation_id": subconversation_id,
+        "request_text": "the first half of this",
+        "content_parts_json": [],
+    })
+    await db.delegation_runs.mark_completed(
+        delegation_id=delegation_id,
+        result_text="done",
+        result_attachment_ids=[],
+        completed_at=SystemClock().now(),
+    )
+    return delegation_id
 
 
 async def _send(client: AsyncClient, conversation_id: str, **body: object) -> str:
@@ -742,6 +825,128 @@ async def test_a_child_profiles_classifier_is_not_billed_to_its_parent(
 
     assert len(seen) == 1
     assert seen[0].profile_id == "chat_api_test_profile"
+
+
+async def test_a_fresh_delegation_is_not_routed_on_the_targets_direct_chat(
+    db_engine: AsyncEngine,
+    build_routed_service: RoutedServiceBuilder,
+) -> None:
+    """A fresh delegation runs in an isolated subconversation, and is routed there.
+
+    The target may also be someone this user chats to directly, so the
+    conversation holds its main-conversation rows -- which `None` selects,
+    "no subconversation" being how the main conversation is spelled. Routed
+    under that, the classifier would decide an isolated delegation from an
+    unrelated exchange and the run would then execute on an empty history.
+    """
+    captured: list[StructuredMatcherArgs] = []
+    target = build_routed_service(
+        "active", classifier_client=_capturing_classifier(captured)
+    )
+    conversation_id = f"routing-fresh-delegation-{uuid.uuid4()}"
+    await _add_history(
+        db_engine, conversation_id, "the settlement figure we discussed earlier"
+    )
+
+    await delegate_to_service_tool(
+        exec_context=_delegating_context(
+            db_engine, target, conversation_id=conversation_id
+        ),
+        target_service_id=target.service_config.id,
+        user_request="weigh these two quotes against each other",
+        delivery_hint="background",
+    )
+
+    assert len(captured) == 1
+    assert "the settlement figure we discussed earlier" not in _prompt_text(captured[0])
+
+
+async def test_a_resumed_delegation_is_routed_on_the_history_it_continues(
+    db_engine: AsyncEngine,
+    build_routed_service: RoutedServiceBuilder,
+) -> None:
+    """The same id decides the routing and the run, so a resume reads its own thread."""
+    captured: list[StructuredMatcherArgs] = []
+    target = build_routed_service(
+        "active", classifier_client=_capturing_classifier(captured)
+    )
+    conversation_id = f"routing-resumed-delegation-{uuid.uuid4()}"
+    subconversation_id = str(uuid.uuid4())
+    await _add_history(
+        db_engine, conversation_id, "the settlement figure we discussed earlier"
+    )
+    await _add_history(
+        db_engine,
+        conversation_id,
+        "the first quote omits delivery",
+        subconversation_id=subconversation_id,
+    )
+    delegation_id = await _completed_prior_delegation(
+        db_engine,
+        conversation_id=conversation_id,
+        subconversation_id=subconversation_id,
+        target_service_id=target.service_config.id,
+    )
+
+    await delegate_to_service_tool(
+        exec_context=_delegating_context(
+            db_engine, target, conversation_id=conversation_id
+        ),
+        target_service_id=target.service_config.id,
+        user_request="now weigh it against the second",
+        delivery_hint="background",
+        resume_delegation_id=delegation_id,
+    )
+
+    assert len(captured) == 1
+    prompt = _prompt_text(captured[0])
+    assert "the first quote omits delivery" in prompt
+    assert "the settlement figure we discussed earlier" not in prompt
+
+
+async def test_a_delegated_attachment_is_described_to_the_classifier(
+    db_engine: AsyncEngine,
+    build_routed_service: RoutedServiceBuilder,
+    attachment_registry_fixture: AttachmentRegistry,
+) -> None:
+    """ "Analyze this" says nothing until you know what "this" is.
+
+    A delegated attachment reaches the target as a content-part reference
+    carrying an id and nothing readable, so without its name and type the
+    classifier judges a terse request as though it arrived bare -- while the
+    same upload typed directly at the profile is described.
+    """
+    captured: list[StructuredMatcherArgs] = []
+    target = build_routed_service(
+        "active", classifier_client=_capturing_classifier(captured)
+    )
+    conversation_id = f"routing-delegated-attachment-{uuid.uuid4()}"
+    attachment = await attachment_registry_fixture.store_and_register_tool_attachment(
+        file_content=b"%PDF-1.4 quote",
+        filename="quote-b.pdf",
+        content_type="application/pdf",
+        tool_name="upload",
+        conversation_id=conversation_id,
+        db_context=Database(engine=db_engine),
+    )
+
+    await delegate_to_service_tool(
+        exec_context=_delegating_context(
+            db_engine,
+            target,
+            conversation_id=conversation_id,
+            attachment_registry=attachment_registry_fixture,
+        ),
+        target_service_id=target.service_config.id,
+        user_request="analyze this",
+        delivery_hint="background",
+        attachment_ids=[attachment.attachment_id],
+    )
+
+    assert len(captured) == 1
+    prompt = _prompt_text(captured[0])
+    assert "quote-b.pdf" in prompt
+    assert "application/pdf" in prompt
 
 
 async def _listed_model_selection(client: AsyncClient) -> str:

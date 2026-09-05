@@ -852,9 +852,6 @@ async def test_an_enqueued_delegation_is_routed_before_it_is_persisted(
     )
 
     assert len(target_service.routing_calls) == 1
-    # A fresh delegation opens its own subconversation, so there is no history
-    # for the classifier to read and nothing to name here.
-    assert target_service.routing_calls[0]["subconversation_id"] is None
     db_context = Database(engine=db_engine)
     runs = await db_context.delegation_runs.list_for_conversation(
         conversation_id=TEST_CONVERSATION_ID,
@@ -866,6 +863,13 @@ async def test_an_enqueued_delegation_is_routed_before_it_is_persisted(
     assert (
         ResolvedModelSelection.from_json(runs[0]["model_selection_json"])
         == routed.freeze()
+    )
+    # Routed under the subconversation the run is persisted with, so the
+    # classifier read the history the run will execute on. `None` would not
+    # mean "no history": it selects the main conversation.
+    assert (
+        target_service.routing_calls[0]["subconversation_id"]
+        == runs[0]["subconversation_id"]
     )
 
 

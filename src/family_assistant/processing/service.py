@@ -491,8 +491,11 @@ class ProcessingService:
         take the target's default while the synchronous path routed the same
         request. Called by ``delegate_to_service`` before the run row exists.
 
-        A fresh delegation has no history under its subconversation, which is
-        the correct input for a first turn; a resumed one has its own.
+        ``subconversation_id`` is the one the run will execute under, which the
+        caller therefore allocates before calling: a fresh delegation reads the
+        empty history of its own new subconversation, a resumed one reads the
+        history it is continuing. Passing ``None`` would not mean "no history"
+        -- it selects the main conversation.
         """
         routed = await self._auto_routed_selection(
             db_context,
