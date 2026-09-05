@@ -980,6 +980,143 @@ class TestResolveServiceProfile:
         result = resolve_service_profile(profile_def, default_settings, {})
         assert result["processing_config"]["retry_config"] == default_retry
 
+    def test_model_tier_is_overridable_by_a_profile(self) -> None:
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "model_tier": "standard"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {"model_tier": "deep"},
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["processing_config"]["model_tier"] == "deep"
+
+    def test_declared_tier_drops_the_inherited_chain_and_model(self) -> None:
+        """A tier is what the profile runs on, so an inherited model cannot win."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {
+                "timezone": "UTC",
+                "provider": "google",
+                "llm_model": "gemini-3.8-flash",
+                "retry_config": {
+                    "primary": {"provider": "google", "model": "gemini-3.8-flash"},
+                },
+            },
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {"model_tier": "deep"},
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["processing_config"]["model_tier"] == "deep"
+        assert result["processing_config"]["retry_config"] is None
+        assert result["processing_config"]["llm_model"] is None
+        assert result["processing_config"]["provider"] is None
+
+    def test_declared_inline_model_drops_the_inherited_tier(self) -> None:
+        """`assistant.py` builds from the tier, so it would win over the model."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "model_tier": "standard"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {
+                "provider": "anthropic",
+                "llm_model": "claude-opus-5",
+            },
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["processing_config"]["model_tier"] is None
+        assert result["processing_config"]["llm_model"] == "claude-opus-5"
+
+    def test_declared_retry_chain_drops_the_inherited_tier(self) -> None:
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "model_tier": "standard"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        own_retry = {"primary": {"provider": "openai", "model": "gpt-5.6-luna"}}
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {"retry_config": own_retry},
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["processing_config"]["model_tier"] is None
+        assert result["processing_config"]["retry_config"] == own_retry
+
+    def test_declaring_a_tier_and_an_inline_model_together_is_an_error(self) -> None:
+        """Both cannot be what the profile runs on, so neither is chosen for it."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {
+                "model_tier": "deep",
+                "llm_model": "claude-opus-5",
+            },
+        }
+
+        with pytest.raises(ValueError, match="either a tier or an inline model"):
+            resolve_service_profile(profile_def, default_settings, {})
+
+    def test_allowed_model_tiers_are_replaced_not_merged(self) -> None:
+        """An eligibility list must narrow, so a merge could only widen it."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "model_tier": "standard"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+            "allowed_model_tiers": ["standard", "deep", "frontier"],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "allowed_model_tiers": ["standard"],
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["allowed_model_tiers"] == ["standard"]
+
+    def test_inherited_allowed_model_tiers_drop_with_an_inline_model(self) -> None:
+        """Tier eligibility means nothing to a profile pinned to one model."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "model_tier": "standard"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+            "allowed_model_tiers": ["standard", "deep"],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {"llm_model": "claude-opus-5"},
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["allowed_model_tiers"] is None
+
     def test_profile_taint_policy_overrides_are_preserved(self) -> None:
         """Profile-level runtime taint policy must survive profile resolution."""
         default_settings: dict[str, Any] = {
@@ -2754,3 +2891,65 @@ def test_explicit_null_retry_config_alone_still_inherits(tmp_path: Path) -> None
     )
 
     assert processing_config.model_tier == "standard"
+
+
+def test_operator_model_override_drops_the_shipped_model_tier(
+    tmp_path: Path,
+) -> None:
+    """A shipped tier would otherwise win over the model the operator named.
+
+    `assistant.py` builds the client from the tier when one is set, and the
+    merged definition carrying both is a startup error besides — so provenance
+    has to resolve this where the two layers are still separate.
+    """
+    processing_config = _resolved_default_assistant(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      provider: "anthropic"\n'
+        '      llm_model: "claude-sonnet-5"\n',
+    )
+
+    assert processing_config.model_tier is None
+    assert processing_config.llm_model == "claude-sonnet-5"
+
+
+def test_operator_retry_chain_drops_the_shipped_model_tier(tmp_path: Path) -> None:
+    processing_config = _resolved_default_assistant(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        "      retry_config:\n"
+        '        primary: {provider: "anthropic", model: "claude-sonnet-5"}\n',
+    )
+
+    assert processing_config.model_tier is None
+    assert processing_config.retry_config is not None
+    assert processing_config.retry_config.primary.model == "claude-sonnet-5"
+
+
+def test_operator_model_tier_drops_a_shipped_inline_model(tmp_path: Path) -> None:
+    """The reverse direction: the operator's tier wins over the shipped model.
+
+    `engineer` ships `anthropic`/`claude-opus-5` inline. Left in place, the
+    merged definition would name both kinds of selection, which is refused.
+    """
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "service_profiles:\n"
+        '  - id: "engineer"\n'
+        "    processing_config:\n"
+        '      model_tier: "deep"\n'
+    )
+
+    config = load_config(config_file_path=str(config_file), load_dotenv_file=False)
+
+    processing_config = next(
+        p for p in config.service_profiles if p.id == "engineer"
+    ).processing_config
+    assert processing_config.model_tier == "deep"
+    assert processing_config.llm_model is None
+    assert processing_config.provider is None
+    assert processing_config.retry_config is None
