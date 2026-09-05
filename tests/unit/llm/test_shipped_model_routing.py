@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from family_assistant.assistant import Assistant
 from family_assistant.config_models import (
     ModelTierConfig,
     ProcessingConfig,
@@ -20,7 +21,14 @@ from family_assistant.config_models import (
     ServiceProfile,
 )
 from family_assistant.llm.model_routing import MODEL_ROUTING_PROMPT_KEY
+from family_assistant.llm.model_selection import (
+    ModelTierEligibility,
+    ModelTierOption,
+)
 from family_assistant.llm.model_tiers import validate_profile_model_tier
+from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
+    RuleBasedMockLLMClient,
+)
 from tests.unit.conftest import shipped_profile
 
 if TYPE_CHECKING:
@@ -32,12 +40,107 @@ _STANDARD_ONLY = {
     )
 }
 
+_ROUTABLE = ModelTierEligibility(
+    default_tier="standard",
+    selectable=(
+        ModelTierOption(id="standard", label="Standard"),
+        ModelTierOption(id="deep", label="Deep"),
+    ),
+    auto=frozenset({"standard", "deep"}),
+)
+
 
 def test_the_classifier_runs_but_decides_nothing_yet(shipped_config: AppConfig) -> None:
     assert shipped_config.model_routing.mode == "shadow"
     assert shipped_config.model_routing.classifier.model
     assert shipped_config.model_routing.timeout_seconds > 0
     assert shipped_config.model_routing.history_messages > 0
+
+
+def test_the_shipped_configuration_builds_a_router(shipped_config: AppConfig) -> None:
+    """From the classifier entry, not from any profile's client."""
+    assistant = Assistant(shipped_config, llm_client_overrides={})
+
+    router = assistant._create_model_router()
+
+    assert router is not None
+    assert router.history_messages == shipped_config.model_routing.history_messages
+
+
+def test_switching_routing_off_builds_no_router(shipped_config: AppConfig) -> None:
+    """A deployment that never routes constructs no classifier client at all."""
+    shipped_config.model_routing.mode = "off"
+    assistant = Assistant(shipped_config, llm_client_overrides={})
+
+    assert assistant._create_model_router() is None
+
+
+async def test_an_override_keeps_the_classifier_off_external_providers(
+    shipped_config: AppConfig,
+) -> None:
+    """Routing runs on every turn of an auto profile, tests included.
+
+    Overrides exist to keep tests and embedded callers away from real
+    providers; reaching one here because nobody named the router specifically
+    would make routing the single call a test could not stop.
+    """
+    stand_in = RuleBasedMockLLMClient(rules=[])
+    assistant = Assistant(
+        shipped_config, llm_client_overrides={"default_assistant": stand_in}
+    )
+
+    router = assistant._create_model_router()
+
+    assert router is not None
+    await router.route(
+        eligibility=_ROUTABLE,
+        guidance=None,
+        history=[],
+        request_text="hello",
+        attachment_summary=[],
+    )
+    assert stand_in.get_calls()
+
+
+async def test_a_named_router_override_wins_over_a_profile_one(
+    shipped_config: AppConfig,
+) -> None:
+    """A test that cares what the classifier says addresses it directly."""
+    profile_client = RuleBasedMockLLMClient(rules=[])
+    router_client = RuleBasedMockLLMClient(rules=[])
+    assistant = Assistant(
+        shipped_config,
+        llm_client_overrides={
+            "default_assistant": profile_client,
+            "__model_router__": router_client,
+        },
+    )
+
+    router = assistant._create_model_router()
+
+    assert router is not None
+    await router.route(
+        eligibility=_ROUTABLE,
+        guidance=None,
+        history=[],
+        request_text="hello",
+        attachment_summary=[],
+    )
+    assert router_client.get_calls()
+    assert not profile_client.get_calls()
+
+
+def test_routing_without_the_classifier_prompt_fails_startup(
+    shipped_config: AppConfig,
+) -> None:
+    """Its instructions are what it routes on; there is nothing to run without."""
+    shipped_config.default_profile_settings.processing_config.prompts.pop(
+        MODEL_ROUTING_PROMPT_KEY
+    )
+    assistant = Assistant(shipped_config, llm_client_overrides={})
+
+    with pytest.raises(SystemExit, match=MODEL_ROUTING_PROMPT_KEY):
+        assistant._create_model_router()
 
 
 def test_the_assistant_is_the_profile_auto_is_evaluated_on(
