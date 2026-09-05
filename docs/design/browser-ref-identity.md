@@ -83,6 +83,12 @@ never issued twice. It is seeded randomly when that state is created, so numbers
 process restart do not collide with numbers issued after it. The seed range only has to make such a
 collision negligible; the implementing PR chooses it.
 
+The walker never allocates below the highest number already stamped on the document, whatever
+counter it was handed. A snapshot whose response is lost leaves the page stamped past the client's
+counter; the next snapshot starts above those stamps rather than duplicating them. Numbers from a
+lost response were never shown to the model, so reusing them on a later document is harmless, and
+only the same-document case needs the floor.
+
 This is one integer of client state and no identity bookkeeping. A ref from an earlier page, an
 earlier turn, or a concurrently issued sibling finds no node on the current page, and the page says
 so.
@@ -163,8 +169,9 @@ element is an inference the model should make with the page in front of it.
    a distinct error for a ref whose node would no longer be listed by a snapshot, using the walker's
    predicate. Verified by the service's own tests: two snapshots of an unchanged page yield
    identical refs, a node inserted before an existing one does not renumber it, a relabelled node
-   gets a new ref, numbering continues across navigation and a same-URL reload, and an action on a
-   removed, hidden, relabelled or previous-document ref fails fast with the specific error.
+   gets a new ref, numbering continues across navigation and a same-URL reload, a snapshot handed a
+   counter below the document's highest stamp allocates above the stamp, and an action on a removed,
+   hidden, relabelled or previous-document ref fails fast with the specific error.
 2. **Family Assistant: delete the ref cache; hold the counter; mirror the walker; serialise
    operations; attach snapshots to misses.** Outcome: `ref_cache` and `clear_refs` are gone from the
    backend protocol, the local session and the computer-use tools; the persistent browser state
@@ -172,9 +179,10 @@ element is an inference the model should make with the page in front of it.
    walker matches browser-server's and the local backend performs the same pre-action check; every
    browser operation for one conversation runs one at a time in issue order, and a batch hands back
    refs only in its last snapshot; a miss returns error plus snapshot; `browser_click`,
-   `browser_fill` and `browser_select` accept the same `query` filter as `browser_snapshot`; tool
-   descriptions and the `/browse` prompt state the contract; the browser automation user guide is
-   updated. Verified by the existing functional tests rewritten for the new contract, including
+   `browser_fill`, `browser_select` and `browser_wait`, being every remaining tool that returns a
+   snapshot, accept the same `query` filter as `browser_snapshot`; tool descriptions and the
+   `/browse` prompt state the contract; the browser automation user guide is updated. Verified by
+   the existing functional tests rewritten for the new contract, including
    click-after-`browser_exec` succeeding when the script did not navigate, click-after-removal
    returning the error with a snapshot, a ref copied from the previous page's snapshot failing with
    the current page's snapshot, two ref actions issued from one snapshot both landing on their own
