@@ -1612,6 +1612,19 @@ class AppConfig(BaseSettings):
     # Server port (optional, defaults to 8000)
     server_port: int = 8000
 
+    # Prometheus metrics exporter. Served on a port of its own rather than as a
+    # route on the main app, which an Ingress publishes to the internet in its
+    # entirety -- see docs/design/prometheus-metrics.md.
+    #
+    # Off by default, and loopback-only when switched on. The endpoint carries
+    # token spend, model line-up and error rates and has no authentication of
+    # its own, so a deployment that wants it reachable from a scraper says so
+    # explicitly. Getting this wrong then breaks scraping, which is visible and
+    # gets fixed, rather than publishing the data, which is not.
+    metrics_enabled: bool = False
+    metrics_port: int = 9090
+    metrics_bind_host: str = "127.0.0.1"
+
     # Number of in-process TaskWorker instances to run concurrently.
     # Multiple workers are required so a handler that parks waiting on an
     # in-process future (e.g. a confirmation-gated delegated profile run) can be
@@ -1623,6 +1636,26 @@ class AppConfig(BaseSettings):
     # Attachment selection thresholds (global)
     attachment_selection_threshold: int = 3  # Trigger selection when > this many
     max_response_attachments: int = 6  # Max attachments per response
+
+    @model_validator(mode="after")
+    def validate_metrics_port_is_not_the_application_port(self) -> AppConfig:
+        """Reject a metrics port that collides with the application's.
+
+        The exporter binds synchronously during startup, before the Uvicorn
+        task scheduled just before it gets to run. On a collision Uvicorn is
+        the one that fails to bind, and it does so inside a background task
+        nobody observes, leaving a process that is up and serving metrics
+        while the API it exists to serve is gone. Failing here instead turns
+        a silent half-outage into a startup error naming the setting.
+        """
+        if self.metrics_enabled and self.metrics_port == self.server_port:
+            msg = (
+                f"metrics_port ({self.metrics_port}) must differ from server_port "
+                f"({self.server_port}): the exporter and the application cannot "
+                f"share a port, and the application is the one that loses."
+            )
+            raise ValueError(msg)
+        return self
 
     @model_validator(mode="after")
     def validate_excluded_global_tools_are_granted(self) -> AppConfig:

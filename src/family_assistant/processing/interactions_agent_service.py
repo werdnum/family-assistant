@@ -19,13 +19,19 @@ from __future__ import annotations
 import base64
 import logging
 import re
+from datetime import datetime
 from typing import TYPE_CHECKING, TypedDict
 
+from family_assistant.llm.call_context import (
+    reset_processing_profile,
+    set_processing_profile,
+)
 from family_assistant.llm.messages import UserMessage
 from family_assistant.llm.providers.google_genai_client import (
     GoogleGenAIClient,
     is_interaction_terminal_error_status,
 )
+from family_assistant.observability.metrics import record_llm_call
 from family_assistant.processing.protocol import (
     PENDING,
     DelegationPermanentError,
@@ -56,7 +62,7 @@ if TYPE_CHECKING:
     from google.genai.interactions import Interaction
 
     from family_assistant.llm.content_parts import ContentPartDict
-    from family_assistant.llm.messages import LLMMessage
+    from family_assistant.llm.messages import LLMMessage, MessageReasoningInfo
     from family_assistant.services.attachment_registry import AttachmentMetadata
     from family_assistant.storage.database import Database
 
@@ -157,6 +163,37 @@ def _attachment_taint_sources(
             reason="Attachment routed into the sandbox.",
         ),
     )
+
+
+def _interaction_timestamp(value: str | datetime | None) -> datetime | None:
+    """Parse one Interactions API timestamp.
+
+    The SDK types these as ISO-8601 strings, not datetimes, so they have to be
+    parsed rather than subtracted. Accepts a datetime too, in case a later SDK
+    starts returning one, and returns None for anything unparseable -- which
+    is logged rather than silently treated as zero.
+    """
+    if value is None or isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        logger.warning("Unparseable Interactions API timestamp: %r", value)
+        return None
+
+
+def _interaction_duration_seconds(interaction: Interaction) -> float:
+    """How long the provider ran the interaction for, in seconds.
+
+    Both timestamps are the provider's, so this measures the run rather than
+    the poll that observed it finishing. Zero when either is missing: a run
+    with no duration is better than a wrong one, and the call still counts.
+    """
+    created = _interaction_timestamp(getattr(interaction, "created", None))
+    updated = _interaction_timestamp(getattr(interaction, "updated", None))
+    if created is None or updated is None:
+        return 0.0
+    return max(0.0, (updated - created).total_seconds())
 
 
 def _describe_interaction_errors(interaction: Interaction) -> str:
@@ -457,11 +494,21 @@ class InteractionsAgentProcessingService(ProcessingService):
             if prior_run is not None:
                 previous_interaction_id = prior_run["remote_task_id"]
 
-        interaction = await self._google_client().start_agent_interaction(
-            messages,
-            previous_interaction_id=previous_interaction_id,
-            environment_sources=environment_sources or None,
-        )
+        # The client counts the submission itself, at the point the request
+        # actually reaches Google. This path never enters the streaming loop,
+        # so the profile it should be attributed to is established here.
+        token = set_processing_profile(self.service_config.id)
+        try:
+            interaction = await self._google_client().start_agent_interaction(
+                messages,
+                previous_interaction_id=previous_interaction_id,
+                environment_sources=environment_sources or None,
+            )
+        finally:
+            reset_processing_profile(token)
+        # The client raises rather than returning an interaction without an id,
+        # having counted the failed submission; this narrows the SDK's Optional
+        # so the invariant is checked rather than assumed.
         if not interaction.id:
             raise DelegationTransientError(
                 "Interactions API create response carried no interaction id"
@@ -510,6 +557,92 @@ class InteractionsAgentProcessingService(ProcessingService):
             )
         return PENDING
 
+    async def record_terminal_metrics(
+        self,
+        remote_task_id: str,
+        *,
+        outcome: str = "success",
+        cancelled: bool = False,
+    ) -> None:
+        """Count the finished run, called once the terminal CAS has committed.
+
+        ``outcome`` comes from the caller, which learned it from the result it
+        just committed, rather than from the interaction read below: the read
+        is enrichment and may fail, while the outcome is already known.
+
+        ``cancelled`` is the timeout path, which cancels the remote run and
+        never polls it again: the run has an outcome but no terminal poll to
+        read it from, and those are the longest runs, so the most expensive.
+
+        Re-reads the interaction rather than carrying one out of the poll: the
+        poll that saw the terminal state is not necessarily the attempt that
+        commits it, and counting there would count a run again for every
+        retried poll. One extra read per run is not worth avoiding against a
+        run that took minutes to produce, and the provider's totals have
+        settled by now.
+        """
+        if cancelled:
+            await self._record_cancelled_run(remote_task_id)
+            return
+        interaction: Interaction | None = None
+        try:
+            interaction = await self._google_client().get_agent_interaction(
+                remote_task_id
+            )
+        except Exception:
+            # The read is for the tokens and the duration, not for whether the
+            # run happened -- and the caller has already committed the terminal
+            # transition, so no later poll will reach this hook again. Dropping
+            # the call here would lose the whole run rather than its detail.
+            logger.warning(
+                "Could not read interaction %s to count its usage; recording the "
+                "run without it.",
+                remote_task_id,
+                exc_info=True,
+            )
+        self._record_run_metrics(interaction, outcome=outcome)
+
+    def _record_run_metrics(
+        self,
+        interaction: Interaction | None,
+        *,
+        outcome: str,
+    ) -> None:
+        """Count a finished agent run and the tokens it spent.
+
+        Recorded once, when the run reaches a terminal state, rather than on
+        every poll: a poll is a cheap status read, and counting one per poll
+        would report a long run as hundreds of calls it never made.
+
+        The duration is the provider's own -- the wall-clock between the
+        interaction being created and last updated -- because the run outlives
+        the task-worker invocation that submitted it, and no timer on this side
+        spans it.
+        """
+        client = self._google_client()
+        record_llm_call(
+            profile=self.service_config.id,
+            provider="google",
+            model=client.model_name,
+            resolved_model=interaction.model if interaction else None,
+            operation=client.agent_operation_name,
+            outcome=outcome,
+            error_type=(
+                (interaction.status if interaction else "unknown")
+                if outcome == "error"
+                else None
+            ),
+            duration_seconds=(
+                _interaction_duration_seconds(interaction) if interaction else 0.0
+            ),
+            time_to_first_output_seconds=None,
+            reasoning_info=(
+                client.reasoning_info_from_interaction(interaction)
+                if interaction
+                else None
+            ),
+        )
+
     async def cancel_async(self, remote_task_id: str) -> None:
         """Best-effort cancellation; mirrors ``RemoteA2AService.cancel_async``."""
         try:
@@ -521,3 +654,45 @@ class InteractionsAgentProcessingService(ProcessingService):
                 self.service_config.id,
                 exc,
             )
+
+    async def _record_cancelled_run(self, remote_task_id: str) -> None:
+        """Account for a run that was cancelled rather than polled to an end.
+
+        The worker's timeout path cancels and never polls again, so without
+        this the longest runs -- the ones that reached the timeout, and so the
+        most expensive -- would be the only ones missing from the metrics.
+
+        Read after cancelling, when the provider's totals have settled, and
+        best-effort throughout: a run whose usage cannot be fetched is still
+        counted, because a call with no tokens beats no call at all.
+        """
+        usage: MessageReasoningInfo | None = None
+        resolved_model: str | None = None
+        duration_seconds = 0.0
+        try:
+            interaction = await self._google_client().get_agent_interaction(
+                remote_task_id
+            )
+        except Exception as exc:
+            logger.debug(
+                "Could not read usage for cancelled interaction %s: %s",
+                remote_task_id,
+                exc,
+            )
+        else:
+            usage = self._google_client().reasoning_info_from_interaction(interaction)
+            resolved_model = interaction.model
+            duration_seconds = _interaction_duration_seconds(interaction)
+
+        record_llm_call(
+            profile=self.service_config.id,
+            provider="google",
+            model=self._google_client().model_name,
+            resolved_model=resolved_model,
+            operation=self._google_client().agent_operation_name,
+            outcome="cancelled",
+            error_type=None,
+            duration_seconds=duration_seconds,
+            time_to_first_output_seconds=None,
+            reasoning_info=usage,
+        )

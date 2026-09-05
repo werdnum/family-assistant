@@ -81,6 +81,7 @@ class ToolExecutorConfig(Protocol):
 class LLMStreamingLoopConfig(Protocol):
     """Config surface required by LLMStreamingLoop."""
 
+    id: str
     max_iterations: int
     context_pruning_min_turns: int
     tools_config: ToolsConfig

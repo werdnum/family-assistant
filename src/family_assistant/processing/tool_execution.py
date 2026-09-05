@@ -461,6 +461,9 @@ class ToolExecutor:
         span: Span,
     ) -> ToolResult | object | ToolExecutionResult:
         """Execute a tool and map tool runtime failures to tool_result errors."""
+        # Not counted here: MeteredToolsProvider wraps the provider itself, so
+        # every entry path is counted once, including the ones that never reach
+        # this executor.
         try:
             result = await self.tools_provider.execute_tool(
                 function_name, arguments, tool_execution_context, call_id

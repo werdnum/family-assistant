@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 from family_assistant.llm import LLMInterface, LLMStreamEvent, StreamEventMetadata
 from family_assistant.llm.base import ContextLengthError
+from family_assistant.llm.call_context import attributed_to_profile
 from family_assistant.llm.google_types import GeminiProviderMetadata
 from family_assistant.llm.messages import (
     AssistantMessage,
@@ -17,6 +18,7 @@ from family_assistant.llm.messages import (
     UserMessage,
     is_turn_scaffolding,
 )
+from family_assistant.observability.metrics import TurnMetrics
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
     TurnTaintState,
@@ -261,6 +263,75 @@ class LLMStreamingLoop:
         taint_tracker: TurnTaintTracker | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
+        """Run a turn, attributing its telemetry to this profile.
+
+        Every path into the loop funnels through here -- ``run()`` consumes
+        this same generator -- so entering the profile context and counting the
+        turn once here covers both the streaming and the non-streaming caller.
+        """
+        turn = TurnMetrics(self.config.id)
+        inner = self._run_stream(
+            db_context=db_context,
+            messages=messages,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            user_name=user_name,
+            turn_id=turn_id,
+            chat_interface=chat_interface,
+            user_id=user_id,
+            chat_interfaces=chat_interfaces,
+            confirmation_ui_managers=confirmation_ui_managers,
+            request_confirmation_callback=request_confirmation_callback,
+            subconversation_id=subconversation_id,
+            processing_service=processing_service,
+            home_assistant_client=home_assistant_client,
+            camera_backend=camera_backend,
+            event_sources=event_sources,
+            mid_turn_input_provider=mid_turn_input_provider,
+            initial_taint_sources=initial_taint_sources,
+            taint_tracker=taint_tracker,
+            tool_call_review_trigger=tool_call_review_trigger,
+        )
+        try:
+            async for item in attributed_to_profile(self.config.id, inner):
+                yield item
+        except (asyncio.CancelledError, GeneratorExit):
+            turn.finish("cancelled")
+            raise
+        except BaseException:
+            turn.finish("error")
+            raise
+        else:
+            turn.finish("success")
+        finally:
+            await inner.aclose()
+
+    async def _run_stream(
+        self,
+        db_context: Database,
+        messages: list[LLMMessage],
+        interface_type: str,
+        conversation_id: str,
+        user_name: str,
+        turn_id: str,
+        chat_interface: ChatInterface | None,
+        user_id: str | None = None,
+        chat_interfaces: dict[str, ChatInterface] | None = None,
+        confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
+        request_confirmation_callback: RequestConfirmationCallback | None = None,
+        subconversation_id: str | None = None,
+        # Runtime deps passed through to tool_executor
+        processing_service: ProcessingService | None = None,
+        home_assistant_client: HomeAssistantClientWrapper | None = None,
+        camera_backend: CameraBackend | None = None,
+        event_sources: EventSourcesById | None = None,
+        mid_turn_input_provider: MidTurnInputProvider | None = None,
+        initial_taint_sources: Sequence[TaintSource] | None = None,
+        taint_tracker: TurnTaintTracker | None = None,
+        tool_call_review_trigger: TriggerReviewInput | None = None,
+        # AsyncGenerator rather than AsyncIterator: run_stream closes this
+        # deterministically, and only the generator protocol offers aclose().
+    ) -> AsyncGenerator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """
         Streaming version of process_message that yields LLMStreamEvent objects as they are generated.
 

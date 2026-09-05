@@ -25,12 +25,17 @@ from typing import TYPE_CHECKING, Any
 
 from opentelemetry.trace import Span, StatusCode
 
+from family_assistant.llm.call_context import current_processing_profile
 from family_assistant.llm.messages import (
     MessageReasoningInfo,
     message_to_json_dict,
 )
 from family_assistant.llm.request_buffer import LLMRequestRecord, get_request_buffer
 from family_assistant.llm.utils.usage_telemetry import set_usage_span_attributes
+from family_assistant.observability.metrics import (
+    UNATTRIBUTED_PROFILE,
+    record_llm_call,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -115,11 +120,17 @@ class LLMCallTelemetry:
         tool_choice: str | None,
         streaming: bool,
         operation: str = "chat",
+        response_schema: object | None = None,
     ) -> None:
         self.span = span
         self.provider = provider
         self.requested_model = requested_model
         self.streaming = streaming
+        self.operation = operation
+        # Read at construction rather than at completion: a streamed call ends
+        # inside an async generator's finally, which can run after the caller
+        # has already left the profile's block.
+        self.profile = current_processing_profile() or UNATTRIBUTED_PROFILE
         self.request_timestamp = datetime.now(UTC)
         self.request_id = "_".join(
             part
@@ -144,12 +155,19 @@ class LLMCallTelemetry:
         self._content_chars = 0
         self._thinking_chars: int | None = None
         self._tool_call_count = 0
+        self._metrics_recorded = False
 
         # Tool schemas are part of the prompt the model has to process, and a
         # tool-heavy profile sends a lot of them, so they belong in the size
-        # that explains a slow first token just as much as the messages do.
-        self._payload_chars = _payload_chars(self._message_dicts) + _payload_chars(
-            tools
+        # that explains a slow first token just as much as the messages do. A
+        # structured-output schema is the same kind of weight and is counted
+        # here too -- but not in `tool_count`, because it is not something the
+        # model can call, and conflating the two would make that count mean two
+        # different things depending on the operation.
+        self._payload_chars = (
+            _payload_chars(self._message_dicts)
+            + _payload_chars(tools)
+            + _payload_chars(response_schema)
         )
         self._attachment_chars = _attachment_chars(messages)
         self.span.set_attributes({
@@ -276,6 +294,7 @@ class LLMCallTelemetry:
     def finish_success(self, response: dict[str, Any] | None) -> None:
         """Close out a successful call: span attributes plus a buffer record."""
         self._set_completion_attributes()
+        self._record_metrics(outcome="success", error_type=None)
         self._add_record(response=response, error=None)
 
     def finish_error(self, error: BaseException) -> None:
@@ -294,7 +313,51 @@ class LLMCallTelemetry:
         self._set_completion_attributes()
         self.span.set_status(StatusCode.ERROR, message)
         self.span.set_attribute("llm.error.type", error_type)
+        self._record_metrics(outcome="error", error_type=error_type)
         self._add_record(response=None, error=message)
+
+    def finish_abandoned(self) -> None:
+        """Close out a call nobody waited for.
+
+        A streamed turn the client disconnected from raises ``CancelledError``
+        or ``GeneratorExit`` inside the provider's generator, which its
+        ``except Exception`` handler does not catch -- so without this the call
+        would end having recorded no outcome at all, despite having run and
+        possibly having cost a full prompt. Called from the same ``finally``
+        that ends the span, and a no-op when a terminal path already ran, so
+        every constructed telemetry records exactly one outcome.
+        """
+        if self._metrics_recorded:
+            return
+        self.span.set_attribute("llm.cancelled", True)
+        self._record_metrics(outcome="cancelled", error_type=None)
+
+    def _record_metrics(self, *, outcome: str, error_type: str | None) -> None:
+        """Fold this call into the Prometheus counters.
+
+        Every terminal path calls it, so a call that failed or was abandoned
+        still contributes its latency and whatever usage the provider managed
+        to report -- a turn that burned a large prompt and then hit a rate
+        limit cost exactly as much as one that succeeded.
+        """
+        if self._metrics_recorded:
+            return
+        self._metrics_recorded = True
+        first_output_ms = self.time_to_first_output_ms
+        record_llm_call(
+            profile=self.profile,
+            provider=self.provider,
+            model=self.requested_model,
+            resolved_model=self.resolved_model,
+            operation=self.operation,
+            outcome=outcome,
+            error_type=error_type,
+            duration_seconds=self.elapsed_ms / 1000,
+            time_to_first_output_seconds=(
+                first_output_ms / 1000 if first_output_ms is not None else None
+            ),
+            reasoning_info=self._reasoning_info,
+        )
 
     def _set_completion_attributes(self) -> None:
         attributes: dict[str, str | int | float] = {

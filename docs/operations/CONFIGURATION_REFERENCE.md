@@ -70,6 +70,56 @@ Base URL of the running server, used for generating links and webhooks.
 
 ______________________________________________________________________
 
+### METRICS_ENABLED
+
+Whether to serve Prometheus metrics. Off by default: the endpoint has no authentication of its own
+and carries token spend, model line-up and error rates, so a deployment that wants it says so. See
+[MONITORING.md](MONITORING.md#metrics) for the metric reference.
+
+| Property  | Value   |
+| --------- | ------- |
+| Required  | No      |
+| Default   | `false` |
+| Sensitive | No      |
+| Example   | `true`  |
+
+______________________________________________________________________
+
+### METRICS_BIND_HOST
+
+Address the metrics endpoint binds. Defaults to loopback, so enabling metrics does not by itself
+expose them to the network. Set to `0.0.0.0` when the scraper is not on the same host — a Kubernetes
+pod scrape reaching the pod IP, for instance. Getting this wrong breaks scraping, which is visible;
+the opposite default would publish the data, which is not.
+
+| Property  | Value       |
+| --------- | ----------- |
+| Required  | No          |
+| Default   | `127.0.0.1` |
+| Sensitive | No          |
+| Example   | `0.0.0.0`   |
+
+______________________________________________________________________
+
+### METRICS_PORT
+
+Port the metrics endpoint listens on. Deliberately separate from the application port: the
+application port is normally published by an Ingress in its entirety, and token spend, model line-up
+and error rates should not be public. Do not route this port from an Ingress.
+
+Setting it equal to `SERVER_PORT` while metrics are enabled is a startup error. The exporter binds
+first, so on a collision it is the application that fails to bind — in a background task nobody
+observes, leaving a process that is up and serving metrics for an API that is gone.
+
+| Property  | Value  |
+| --------- | ------ |
+| Required  | No     |
+| Default   | `9090` |
+| Sensitive | No     |
+| Example   | `9100` |
+
+______________________________________________________________________
+
 ### TIMEZONE
 
 Default timezone for date/time operations.

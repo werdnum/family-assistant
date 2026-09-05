@@ -117,6 +117,26 @@ class _StreamingToolAccumulator(TypedDict):
 _THINKING_BLOCK_TYPES = frozenset({"thinking", "redacted_thinking"})
 
 
+class _MergedAnthropicUsage:
+    """The prompt side of ``message_start`` with the output side of a delta.
+
+    Anthropic splits a streamed turn's usage across two frames: the prompt and
+    cache counts land on ``message_start``, while ``output_tokens`` is updated
+    on each ``message_delta``. Neither frame alone is the turn's usage, so this
+    presents the pair with the attribute names the usage mapper reads.
+    """
+
+    def __init__(self, started: Any, delta: Any) -> None:  # noqa: ANN401 - SDK usage objects
+        self.input_tokens = getattr(started, "input_tokens", 0) or 0
+        self.cache_read_input_tokens = getattr(started, "cache_read_input_tokens", None)
+        self.cache_creation_input_tokens = getattr(
+            started, "cache_creation_input_tokens", None
+        )
+        self.output_tokens = getattr(delta, "output_tokens", None) or (
+            getattr(started, "output_tokens", 0) or 0
+        )
+
+
 class AnthropicProviderMetadata(TypedDict):
     """Assistant-turn metadata persisted for the Anthropic provider.
 
@@ -470,7 +490,12 @@ class AnthropicClient(BaseLLMClient):
         description: str,
         input_schema: dict[str, object],
     ) -> dict[str, object]:
-        """Request and extract one forced native-output tool call."""
+        """Request and extract one forced native-output tool call.
+
+        Instrumented per attempt rather than per ``generate_structured`` call:
+        a schema-validation retry is a second billed request, and rolling the
+        two together would report one call that cost twice what it looks like.
+        """
         processed_messages = self._process_tool_messages(attempt_messages)
         system_blocks, api_messages = self._convert_messages_to_anthropic_format(
             processed_messages
@@ -495,8 +520,57 @@ class AnthropicClient(BaseLLMClient):
         if system_blocks:
             params["system"] = system_blocks
 
-        response = await self.client.messages.create(**params)
+        span = tracer.start_span("llm.provider.structured")
+        telemetry = LLMCallTelemetry(
+            span,
+            provider="anthropic",
+            system="anthropic",
+            requested_model=self.model,
+            messages=attempt_messages,
+            # The forced output tool goes in as a schema, not as a tool: it
+            # shapes the reply rather than offering the model something to
+            # call, and counting it would make tool_count mean two things.
+            tools=None,
+            tool_choice=tool_name,
+            streaming=False,
+            response_schema=params["tools"],
+            operation="structured",
+        )
+        try:
+            response = await self.client.messages.create(**params)
+            self._record_structured_response(telemetry, response)
+        except Exception as e:
+            telemetry.finish_error(e)
+            raise
+        finally:
+            # Cancellation during tool-call review or shutdown passes every
+            # `except Exception`; without this the billable request would reach
+            # no counter at all. A no-op once a terminal path has run.
+            telemetry.finish_abandoned()
+            span.end()
+
+        # Outside the instrumented block: the request itself succeeded and was
+        # billed, so a schema that fails to parse is the caller's retry to
+        # count, not this call's failure.
         return self._extract_forced_tool_input(response, tool_name)
+
+    @staticmethod
+    def _record_structured_response(
+        telemetry: LLMCallTelemetry,
+        response: Any,  # noqa: ANN401 - anthropic.types.Message, shape varies by SDK version
+    ) -> None:
+        """Stamp one structured-output response onto its telemetry."""
+        telemetry.record_response_metadata(
+            resolved_model=getattr(response, "model", None),
+            response_id=getattr(response, "id", None),
+            finish_reason=getattr(response, "stop_reason", None),
+        )
+        telemetry.record_usage(
+            AnthropicClient._reasoning_info_from_usage(response.usage)
+            if response.usage
+            else None
+        )
+        telemetry.finish_success(None)
 
     async def generate_structured(
         self,
@@ -1071,6 +1145,12 @@ class AnthropicClient(BaseLLMClient):
             except Exception as e:
                 telemetry.finish_error(e)
                 self._raise_mapped_error(e)
+            finally:
+                # Cancellation -- a task timeout, a shutdown, an abandoned
+                # indexing job -- passes every `except Exception`, and the
+                # request still ran and may still be billed. A no-op once a
+                # terminal path has recorded the call.
+                telemetry.finish_abandoned()
 
     async def _generate_response_success(
         self,
@@ -1302,16 +1382,59 @@ class AnthropicClient(BaseLLMClient):
                 # Check for VCR replay mode
                 vcr_events = await self._maybe_parse_vcr_stream(params)
                 if vcr_events is not None:
+                    # Replayed turns finish through the same telemetry path as
+                    # live ones. Returning without it leaves the call with no
+                    # terminal outcome, which the abandonment fallback then
+                    # records as a cancellation -- so every replayed stream
+                    # would read as a cancelled call that spent nothing.
                     for event in vcr_events:
+                        if event.type == "done" and event.metadata:
+                            event.metadata["reasoning_info"] = telemetry.finalize_usage(
+                                event.metadata.get("reasoning_info")
+                            )
+                        telemetry.observe_event(event)
                         yield event
+                    telemetry.finish_success({"streaming": True})
                     return
 
                 # Use Anthropic streaming
                 with trace.use_span(span, end_on_exit=False):
                     async with self.client.messages.stream(**params) as stream:
                         current_tool: _StreamingToolAccumulator | None = None
+                        started_usage: Any | None = None
 
                         async for event in stream:
+                            # Usage arrives in two frames -- the prompt side on
+                            # message_start, the output side on message_delta --
+                            # and is recorded as each lands rather than only at
+                            # the end, so a stream that is cancelled or dies
+                            # keeps the tokens the provider already reported.
+                            if event.type == "message_start":
+                                started_usage = getattr(event.message, "usage", None)
+                                if started_usage is not None:
+                                    telemetry.record_usage(
+                                        self._reasoning_info_from_usage(started_usage)
+                                    )
+                                telemetry.record_response_metadata(
+                                    resolved_model=getattr(
+                                        event.message, "model", None
+                                    ),
+                                    response_id=getattr(event.message, "id", None),
+                                )
+                            elif event.type == "message_delta":
+                                delta_usage = getattr(event, "usage", None)
+                                if (
+                                    delta_usage is not None
+                                    and started_usage is not None
+                                ):
+                                    telemetry.record_usage(
+                                        self._reasoning_info_from_usage(
+                                            _MergedAnthropicUsage(
+                                                started_usage, delta_usage
+                                            )
+                                        )
+                                    )
+
                             if event.type == "content_block_start":
                                 block = event.content_block
                                 if block.type == "tool_use":
@@ -1436,6 +1559,11 @@ class AnthropicClient(BaseLLMClient):
             finally:
                 await events.aclose()
         finally:
+            # A no-op unless the stream ended without reaching a terminal path
+            # -- a client that disconnected mid-turn raises through the
+            # generator, and the call would otherwise be counted nowhere
+            # despite having run.
+            telemetry.finish_abandoned()
             span.end()
 
     async def _maybe_parse_vcr_stream(

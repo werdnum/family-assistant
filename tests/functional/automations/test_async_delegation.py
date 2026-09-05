@@ -3077,6 +3077,11 @@ async def test_deep_research_delegation_polls_to_completion_and_notifies(
     completed_interaction = AsyncMock()
     completed_interaction.status = "completed"
     completed_interaction.output_text = "Here is the research report."
+    # The SDK types these as ISO-8601 strings; a bare AsyncMock attribute is
+    # not one, and the run duration is read from them when the run terminates.
+    completed_interaction.created = "2026-01-01T00:00:00+00:00"
+    completed_interaction.updated = "2026-01-01T00:04:30+00:00"
+    completed_interaction.usage = None
     llm_client.get_agent_interaction = AsyncMock(
         side_effect=[pending_interaction, completed_interaction]
     )

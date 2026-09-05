@@ -13,6 +13,7 @@ import inspect
 import json
 import logging
 import re
+import time
 import unicodedata
 import uuid
 from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping
@@ -29,6 +30,11 @@ from typing import (
     runtime_checkable,
 )
 
+from family_assistant.observability.metrics import (
+    UNATTRIBUTED_PROFILE,
+    UNKNOWN_TOOL,
+    record_tool_call,
+)
 from family_assistant.security.definition_records import (
     CreationDisposition,
     DefinitionGateOutcome,
@@ -1520,6 +1526,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
         deployment_review_guidance: str = "",
         profile_review_guidance: str = "",
         include_aggregated_context: bool | None = None,
+        profile: str = UNATTRIBUTED_PROFILE,
     ) -> None:
         if not isinstance(wrapped_provider, ToolDescriptorProvider):
             msg = (
@@ -1542,6 +1549,15 @@ class TaintTrackingToolsProvider(ToolsProvider):
         self._profile_review_guidance = profile_review_guidance
         self._include_aggregated_context = include_aggregated_context
         self._review_tasks: set[asyncio.Task[object]] = set()
+        # This is the outermost provider every caller holds, so counting
+        # executions here counts them whichever entry path reached them --
+        # the processing loop, native voice, the tools API, Monty scripts,
+        # the durable-confirmation worker. Counted here rather than in a
+        # wrapper of its own because a wrapper is a new type, and the
+        # providers are probed with isinstance against several capability
+        # protocols; one that delegates by __getattr__ satisfies hasattr but
+        # not isinstance, so it silently strips capabilities.
+        self._profile = profile
 
     def _record_sink_approval(
         self,
@@ -1884,6 +1900,48 @@ class TaintTrackingToolsProvider(ToolsProvider):
         call_id: str | None = None,
     ) -> str | ToolResult:
         """Coordinate taint review through the static-policy execution chokepoint."""
+        started = time.monotonic()
+        outcome = "error"
+        try:
+            result = await self._execute_tool_tracked(name, arguments, context, call_id)
+            # `returned`, not `success`: a tool reports an expected failure by
+            # returning a result, and ToolResult has no status field, so
+            # nothing here can tell a refusal from an answer.
+            outcome = "returned"
+            return result
+        except ToolPolicyDeniedError:
+            outcome = "denied"
+            raise
+        except ToolNotFoundError:
+            outcome = "not_found"
+            raise
+        except asyncio.CancelledError:
+            outcome = "cancelled"
+            raise
+        finally:
+            # A name that resolved to no tool never came from the registry: it
+            # came from an LLM or from /api/tools/execute/{tool_name}, so it is
+            # attacker-shaped free text. Prometheus keeps every distinct label
+            # tuple for the life of the process, so recording those verbatim
+            # would let a typo loop grow the series set without bound. The
+            # sentinel keeps "how often is a missing tool asked for" visible
+            # while making the label's range finite.
+            record_tool_call(
+                profile=self._profile,
+                tool=UNKNOWN_TOOL if outcome == "not_found" else name,
+                outcome=outcome,
+                duration_seconds=time.monotonic() - started,
+            )
+
+    async def _execute_tool_tracked(
+        self,
+        name: str,
+        # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from LLM
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        call_id: str | None = None,
+    ) -> str | ToolResult:
+        """The taint-tracked execution itself, without the accounting."""
         policy_provider = (
             self.wrapped_provider
             if isinstance(self.wrapped_provider, PolicyCoordinatingToolsProvider)

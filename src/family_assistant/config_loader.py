@@ -89,6 +89,9 @@ ENV_VAR_MAPPINGS: list[EnvVarMapping] = [
     EnvVarMapping("DOCUMENT_STORAGE_PATH", "document_storage_path"),
     EnvVarMapping("ATTACHMENT_STORAGE_PATH", "attachment_storage_path"),
     EnvVarMapping("CHAT_ATTACHMENT_STORAGE_PATH", "chat_attachment_storage_path"),
+    EnvVarMapping("METRICS_ENABLED", "metrics_enabled", bool),
+    EnvVarMapping("METRICS_PORT", "metrics_port", int),
+    EnvVarMapping("METRICS_BIND_HOST", "metrics_bind_host"),
     # Model configuration
     EnvVarMapping("LLM_MODEL", "model"),
     EnvVarMapping("EMBEDDING_MODEL", "embedding_model"),

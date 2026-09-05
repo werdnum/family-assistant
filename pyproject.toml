@@ -143,6 +143,7 @@ dependencies = [
     "cryptography>=44.0.1",
     "publicsuffix2>=2.20191221",
     "greenlet>=3.2.3",
+    "prometheus-client>=0.21.0",
 ]
 
 [project.optional-dependencies]

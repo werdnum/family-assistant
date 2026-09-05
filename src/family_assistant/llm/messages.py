@@ -109,6 +109,25 @@ class MessageReasoningInfo(TypedDict, total=False):
     reasoning_tokens: int
     cached_prompt_tokens: int
     cache_write_tokens: int
+    tool_use_tokens: int
+    """Tokens the provider spent running a server-side tool on its own -- code
+    execution, search grounding. Reported by Gemini apart from the prompt and
+    the candidates, so it is a bucket of its own rather than a subset."""
+    image_input_tokens: int
+    """Prompt tokens that were image rather than text, where the provider
+    reports the split. A subset of ``prompt_tokens``, broken out because the
+    two are priced differently -- OpenAI's image models bill image input above
+    text input, so an aggregate cannot be costed from one price."""
+    image_output_tokens: int
+    """Generated tokens that were image rather than text, where the provider
+    reports the split. A subset of ``completion_tokens``, and priced well above
+    text output on the models that emit both, so the two cannot share a
+    price."""
+    cached_image_tokens: int
+    """Image prompt tokens that were served from the cache, where the provider
+    reports the split. The overlap between ``cached_prompt_tokens`` and
+    ``image_input_tokens``, recorded so the exported buckets can stay disjoint
+    rather than counting these tokens under both."""
     source_turn_id: str | None
     tool_name: str
     thought_summaries: list[dict[str, str | int]]

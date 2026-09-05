@@ -9,12 +9,16 @@ import logging
 import math
 import re
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, Protocol, cast, runtime_checkable
 
 from google import genai
 from google.genai import types as genai_types
 from google.genai.client import DebugConfig
 from openai import AsyncOpenAI
+
+from family_assistant.llm.messages import MessageReasoningInfo
+from family_assistant.observability.metrics import instrumented_llm_request
 
 # Whether the optional sentence-transformers stack is installed. This is detected
 # WITHOUT importing it: importing sentence_transformers pulls in torch (hundreds of
@@ -34,6 +38,23 @@ class EmbeddingResult:
 
     embeddings: list[list[float]]
     model_name: str
+
+
+def _openai_embedding_usage(
+    response: Any,  # noqa: ANN401 - openai CreateEmbeddingResponse
+) -> MessageReasoningInfo | None:
+    """Billable tokens for an OpenAI embedding request.
+
+    Prompt side only: an embedding has no output, so setting anything else
+    would invent a bucket the provider never billed.
+    """
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+    return MessageReasoningInfo(
+        prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+        total_tokens=getattr(usage, "total_tokens", 0) or 0,
+    )
 
 
 @runtime_checkable
@@ -105,10 +126,19 @@ class GoogleEmbeddingGenerator:
             output_dimensionality=self._dimensions,
             task_type=self._task_type,
         )
-        response = await self._client.aio.models.embed_content(
-            model=self._api_model_name,
-            contents=cast("Any", texts),
-            config=config,
+        response = await instrumented_llm_request(
+            provider="google",
+            model=self.model_name,
+            operation="embedding",
+            request=lambda: self._client.aio.models.embed_content(
+                model=self._api_model_name,
+                contents=cast("Any", texts),
+                config=config,
+            ),
+            # Google reports only `billable_character_count` on an embedding
+            # response -- no token count at all -- so there is nothing honest to
+            # put in a token bucket. The call counter is the meter here; a
+            # zero-valued bucket would read as "embedded nothing".
         )
 
         if not response.embeddings:
@@ -179,14 +209,26 @@ class OpenAIEmbeddingGenerator:
             f"Calling OpenAI-compatible embedding model {self.model_name} "
             f"for {len(texts)} texts."
         )
-        if self._dimensions is not None:
-            response = await self._client.embeddings.create(
-                model=self._model_name, input=texts, dimensions=self._dimensions
+        create = (
+            partial(
+                self._client.embeddings.create,
+                model=self._model_name,
+                input=texts,
+                dimensions=self._dimensions,
             )
-        else:
-            response = await self._client.embeddings.create(
-                model=self._model_name, input=texts
+            if self._dimensions is not None
+            else partial(
+                self._client.embeddings.create, model=self._model_name, input=texts
             )
+        )
+        response = await instrumented_llm_request(
+            provider="openai",
+            model=self.model_name,
+            operation="embedding",
+            request=create,
+            usage=_openai_embedding_usage,
+            served_model=lambda response: getattr(response, "model", None),
+        )
 
         if not response.data:
             raise ValueError(

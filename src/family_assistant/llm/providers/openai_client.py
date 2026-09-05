@@ -6,7 +6,13 @@ import base64
 import json
 import logging
 import os
-from collections.abc import AsyncGenerator, AsyncIterator, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Sequence,
+)
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any, TypedDict, TypeVar, cast
 
@@ -32,6 +38,7 @@ from family_assistant.llm import (
     describe_attachment_for_fallback,
 )
 from family_assistant.llm.messages import (
+    AssistantMessage,
     ContentPart,
     ImageUrlContentPart,
     LLMMessage,
@@ -442,6 +449,14 @@ class OpenAIClient(BaseLLMClient):
         resolved_model = getattr(response, "model", None)
         if isinstance(resolved_model, str):
             metadata["resolved_model"] = resolved_model
+        # A run that stopped short was still billed for what it produced --
+        # `incomplete` on an output-token limit is the common case, and it is
+        # billed for a full output allowance. The usage rides on the failure
+        # frame, so it has to be carried out with it or the spend is lost.
+        if response is not None:
+            reasoning_info = self._responses_reasoning_info(cast("Response", response))
+            if reasoning_info:
+                metadata["reasoning_info"] = reasoning_info
         return LLMStreamEvent(type="error", error=error_message, metadata=metadata)
 
     @staticmethod
@@ -690,6 +705,83 @@ class OpenAIClient(BaseLLMClient):
         return None
 
     @classmethod
+    def _reasoning_info_from_chat_usage(
+        cls,
+        usage: Any,  # noqa: ANN401 - CompletionUsage, shape varies by SDK version
+    ) -> MessageReasoningInfo | None:
+        """Build reasoning info from a Chat Completions usage object.
+
+        OpenAI reports the whole prompt in `prompt_tokens`, with the cache
+        numbers as subsets of it, and folds reasoning into `completion_tokens`.
+        """
+        if not usage:
+            return None
+        reasoning_info = MessageReasoningInfo(
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            total_tokens=usage.total_tokens,
+        )
+        details = getattr(usage, "completion_tokens_details", None)
+        if (
+            details is not None
+            and getattr(details, "reasoning_tokens", None) is not None
+        ):
+            reasoning_info["reasoning_tokens"] = details.reasoning_tokens
+        cached = cls._cached_prompt_tokens(usage)
+        if cached is not None:
+            reasoning_info["cached_prompt_tokens"] = cached
+        cache_write = cls._cache_write_tokens(usage)
+        if cache_write is not None:
+            reasoning_info["cache_write_tokens"] = cache_write
+        return reasoning_info
+
+    async def _instrumented_structured_request[R](
+        self,
+        messages: Sequence[LLMMessage],
+        request: Callable[[], Awaitable[R]],
+        response_schema: object | None = None,
+    ) -> R:
+        """Run one structured-output request under the shared telemetry.
+
+        Wraps the request rather than the whole `generate_structured` call: a
+        schema-validation retry is a second billed request, and rolling the two
+        together would report one call that cost twice what it looks like.
+        """
+        span = tracer.start_span("llm.provider.structured")
+        telemetry = LLMCallTelemetry(
+            span,
+            provider="openai",
+            system="openai",
+            requested_model=self.model,
+            messages=messages,
+            tools=None,
+            tool_choice=None,
+            streaming=False,
+            operation="structured",
+            response_schema=response_schema,
+        )
+        try:
+            response = await request()
+            telemetry.record_response_metadata(
+                resolved_model=getattr(response, "model", None),
+                response_id=getattr(response, "id", None),
+            )
+            telemetry.record_usage(
+                self._reasoning_info_from_chat_usage(getattr(response, "usage", None))
+            )
+            telemetry.finish_success(None)
+        except Exception as e:
+            telemetry.finish_error(e)
+            raise
+        finally:
+            # Cancellation during tool-call review or shutdown passes every
+            # `except Exception`; without this the billable request would reach
+            # no counter at all. A no-op once a terminal path has run.
+            telemetry.finish_abandoned()
+            span.end()
+        return response
+
+    @classmethod
     def _cached_prompt_tokens(
         cls,
         usage: Any,  # noqa: ANN401 - usage arrives as an SDK object or a raw dict
@@ -814,6 +906,12 @@ class OpenAIClient(BaseLLMClient):
             except Exception as e:
                 telemetry.finish_error(e)
                 raise self._map_error_to_typed_exception(e) from e
+            finally:
+                # Cancellation -- a task timeout, a shutdown, an abandoned
+                # indexing job -- passes every `except Exception`, and the
+                # request still ran and may still be billed. A no-op once a
+                # terminal path has recorded the call.
+                telemetry.finish_abandoned()
 
     async def _generate_response_inner(
         self,
@@ -907,26 +1005,7 @@ class OpenAIClient(BaseLLMClient):
             ]
 
         # Extract usage information
-        reasoning_info: MessageReasoningInfo | None = None
-        if response.usage:
-            reasoning_info = MessageReasoningInfo(
-                prompt_tokens=response.usage.prompt_tokens,
-                completion_tokens=response.usage.completion_tokens,
-                total_tokens=response.usage.total_tokens,
-            )
-
-            # Add reasoning tokens if available (for o1 models)
-            if hasattr(response.usage, "completion_tokens_details"):
-                details = response.usage.completion_tokens_details
-                if details and hasattr(details, "reasoning_tokens"):
-                    reasoning_info["reasoning_tokens"] = details.reasoning_tokens
-
-            cached = self._cached_prompt_tokens(response.usage)
-            if cached is not None:
-                reasoning_info["cached_prompt_tokens"] = cached
-            cache_write = self._cache_write_tokens(response.usage)
-            if cache_write is not None:
-                reasoning_info["cache_write_tokens"] = cache_write
+        reasoning_info = self._reasoning_info_from_chat_usage(response.usage)
 
         telemetry.record_response_metadata(
             resolved_model=response.model,
@@ -968,12 +1047,19 @@ class OpenAIClient(BaseLLMClient):
 
         raw_response: str | None = None
         last_error: Exception | None = None
+        # Mirrors api_message_dicts, which the retry loop appends to in place:
+        # telemetry describes the payload actually sent, so it has to grow too.
+        attempt_messages: list[LLMMessage] = list(messages)
 
         async def request_structured_output() -> T:
             nonlocal raw_response
-            response = await self.client.beta.chat.completions.parse(
-                response_format=response_model,
-                **base_params,
+            response = await self._instrumented_structured_request(
+                attempt_messages,
+                lambda: self.client.beta.chat.completions.parse(
+                    response_format=response_model,
+                    **base_params,
+                ),
+                response_schema=response_model.model_json_schema(),
             )
             if not response.choices:
                 raise ValueError("LLM returned empty response")
@@ -999,17 +1085,22 @@ class OpenAIClient(BaseLLMClient):
                     f"(attempt {attempt + 1}/{max_retries + 1}): {e}"
                 )
                 if attempt < max_retries:
+                    correction = (
+                        "Your previous response did not satisfy the required schema. "
+                        f"Error: {e}\n\nPlease try again with valid structured output."
+                    )
                     api_message_dicts.append({
                         "role": "assistant",
                         "content": raw_response or "",
                     })
                     api_message_dicts.append({
                         "role": "user",
-                        "content": (
-                            "Your previous response did not satisfy the required schema. "
-                            f"Error: {e}\n\nPlease try again with valid structured output."
-                        ),
+                        "content": correction,
                     })
+                    attempt_messages.append(
+                        AssistantMessage(content=raw_response or "")
+                    )
+                    attempt_messages.append(UserMessage(content=correction))
                     raw_response = None
             except Exception as e:
                 raise self._map_error_to_typed_exception(e) from e
@@ -1053,10 +1144,16 @@ class OpenAIClient(BaseLLMClient):
 
         raw_response: str | None = None
         last_error: Exception | None = None
+        # Mirrors api_message_dicts, which the retry loop appends to in place.
+        attempt_messages: list[LLMMessage] = list(messages)
 
         async def request_json_output() -> JsonObject:
             nonlocal raw_response
-            response = await self.client.chat.completions.create(**base_params)
+            response = await self._instrumented_structured_request(
+                attempt_messages,
+                lambda: self.client.chat.completions.create(**base_params),
+                response_schema=base_params.get("response_format"),
+            )
             if not response.choices:
                 raise ValueError("LLM returned empty response")
 
@@ -1076,17 +1173,22 @@ class OpenAIClient(BaseLLMClient):
                     f"(attempt {attempt + 1}/{max_retries + 1}): {e}"
                 )
                 if attempt < max_retries:
+                    correction = (
+                        f"Your previous response was not a valid JSON object. Error: {e}\n\n"
+                        "Please try again and respond with JSON only."
+                    )
                     api_message_dicts.append({
                         "role": "assistant",
                         "content": raw_response or "",
                     })
                     api_message_dicts.append({
                         "role": "user",
-                        "content": (
-                            f"Your previous response was not a valid JSON object. Error: {e}\n\n"
-                            "Please try again and respond with JSON only."
-                        ),
+                        "content": correction,
                     })
+                    attempt_messages.append(
+                        AssistantMessage(content=raw_response or "")
+                    )
+                    attempt_messages.append(UserMessage(content=correction))
                     raw_response = None
             except Exception as e:
                 raise self._map_error_to_typed_exception(e) from e
@@ -1202,6 +1304,13 @@ class OpenAIClient(BaseLLMClient):
                                 ),
                                 response_id=(event.metadata or {}).get("response_id"),
                             )
+                            # Before finish_failure: a stream that failed or
+                            # ran out of output tokens was still billed for
+                            # what it generated, and finish_failure is what
+                            # writes the token counters.
+                            telemetry.record_usage(
+                                (event.metadata or {}).get("reasoning_info")
+                            )
                             # Recorded before the yield, not after the loop: the
                             # consumer raises on this event, which closes this
                             # generator where it is suspended, so anything left
@@ -1270,8 +1379,24 @@ class OpenAIClient(BaseLLMClient):
             # manually parse and emit events when detected.
             vcr_chunks = await self._maybe_parse_vcr_stream(stream)
             if vcr_chunks is not None:
+                # Replayed turns finish through the same telemetry path as live
+                # ones. Returning without it leaves the call with no terminal
+                # outcome, which the abandonment fallback then records as a
+                # cancellation -- so every replayed stream would read as a
+                # cancelled call that spent nothing.
                 async for event in self._emit_events_from_chunk_dicts(vcr_chunks):
+                    if event.type == "done" and event.metadata:
+                        telemetry.record_response_metadata(
+                            resolved_model=event.metadata.get("resolved_model"),
+                            response_id=event.metadata.get("response_id"),
+                            finish_reason=event.metadata.get("finish_reason"),
+                        )
+                        event.metadata["reasoning_info"] = telemetry.finalize_usage(
+                            event.metadata.get("reasoning_info")
+                        )
+                    telemetry.observe_event(event)
                     yield event
+                telemetry.finish_success({"streaming": True})
                 return
 
             # Track current tool call being built
@@ -1284,6 +1409,13 @@ class OpenAIClient(BaseLLMClient):
                 # list, so it has to be captured before the guards below skip it.
                 if chunk is not None and getattr(chunk, "usage", None):
                     last_chunk_with_usage = chunk
+                    # Recorded as it arrives, not only once the stream ends
+                    # cleanly: a stream that dies after the usage chunk still
+                    # spent what was reported, and the failure finalizer reads
+                    # whatever telemetry already holds.
+                    telemetry.record_usage(
+                        self._reasoning_info_from_chat_usage(chunk.usage)
+                    )
                 if chunk is not None:
                     telemetry.record_response_metadata(
                         resolved_model=getattr(chunk, "model", None),
@@ -1449,6 +1581,11 @@ class OpenAIClient(BaseLLMClient):
             try:
                 await events.aclose()
             finally:
+                # A no-op unless the stream ended without reaching a terminal
+                # path -- a client that disconnected mid-turn raises through
+                # the generator, and the call would otherwise be counted
+                # nowhere despite having run.
+                telemetry.finish_abandoned()
                 span.end()
 
     async def _generate_responses_stream(

@@ -203,67 +203,172 @@ This enables debug logging for LLM API calls to OpenAI, Anthropic, Google, and o
 
 ______________________________________________________________________
 
-## Metrics (Recommendations)
+## Metrics
 
-Family Assistant does not currently expose a `/metrics` endpoint, but the following metrics are
-recommended for comprehensive monitoring.
+Family Assistant exports Prometheus metrics on a port of its own — **9090** by default, not the
+application port. The application port is typically published by an Ingress in its entirety, and
+token spend, model line-up and error rates are not public information; a separate port keeps the
+exporter reachable from inside the cluster and nowhere else.
 
-### Key Metrics to Track
-
-| Metric                     | Type      | Description                      |
-| -------------------------- | --------- | -------------------------------- |
-| `http_requests_total`      | Counter   | Total HTTP requests by path/code |
-| `http_request_duration_ms` | Histogram | Request latency distribution     |
-| `llm_requests_total`       | Counter   | LLM API calls by model/status    |
-| `llm_request_duration_ms`  | Histogram | LLM response time                |
-| `llm_tokens_total`         | Counter   | Token usage by model             |
-| `telegram_messages_total`  | Counter   | Telegram messages processed      |
-| `tool_calls_total`         | Counter   | Tool invocations by name/status  |
-| `db_query_duration_ms`     | Histogram | Database query latency           |
-| `active_conversations`     | Gauge     | Currently active conversations   |
-| `background_tasks_queued`  | Gauge     | Pending background tasks         |
-
-### Example Prometheus Configuration
-
-If implementing Prometheus metrics, add middleware using `starlette-exporter` or
-`prometheus-fastapi-instrumentator`:
-
-```python
-# Example integration (not currently implemented)
-from prometheus_fastapi_instrumentator import Instrumentator
-
-Instrumentator().instrument(app).expose(app)
+```
+curl http://localhost:9090/metrics    # from inside the container or pod
 ```
 
-Then configure Prometheus scraping:
+The exporter is **off by default and binds loopback when enabled**, because the endpoint has no
+authentication of its own and carries data that is not public. Turn it on with
+`METRICS_ENABLED=true`, and set `METRICS_BIND_HOST=0.0.0.0` when the scraper is not on the same host
+— a Kubernetes pod scrape reaching the pod IP, for instance. Getting that wrong breaks scraping,
+which is visible; the opposite default would publish the data, which is not. `METRICS_PORT` moves
+the port. The rationale and the chokepoints the numbers come from are in
+[docs/design/prometheus-metrics.md](../design/prometheus-metrics.md).
 
-```yaml
-scrape_configs:
-  - job_name: "family-assistant"
-    static_configs:
-      - targets: ["family-assistant:8000"]
-    metrics_path: /metrics
-    scrape_interval: 15s
+Standard process and Python runtime metrics (`process_resident_memory_bytes`, `python_gc_*`, …) are
+exported alongside the application ones.
+
+**What is counted.** Chat (streamed or not), structured output (tool-call review), embeddings, image
+generation, video generation, and managed-agent runs — plus every tool execution, including one run
+later from an approved durable confirmation. Successful, failed, cancelled and abandoned calls each
+record exactly one outcome.
+
+**What is not.** The Gemini Live audio session behind the Asterisk phone integration is billable and
+is not counted here. It is a bidirectional session rather than a request, so it does not fit the
+call-and-usage shape the rest of these metrics share, and its `usage_metadata` arrives per server
+message with semantics this deployment has not confirmed — a wrong token total would be worse than a
+missing one. Phone-call spend has to be read from the provider's own billing until that is settled.
+
+Not every provider reports tokens. Google's embedding API reports only billable characters, and the
+image models that bill per image report no usage block. Those emit no token buckets, and
+`family_assistant_llm_calls_total` is the meter for them.
+
+### LLM
+
+Every LLM metric carries the same five labels:
+
+| Label            | Meaning                                                                  |
+| ---------------- | ------------------------------------------------------------------------ |
+| `profile`        | The processing profile whose turn made the call; `none` outside a turn   |
+| `provider`       | `anthropic`, `openai`, `google`, …                                       |
+| `model`          | The model as configured                                                  |
+| `resolved_model` | The model the provider reports serving (an alias resolves to a snapshot) |
+| `operation`      | `chat`, `structured`, `embedding`, `image`, or the managed agent's name  |
+
+| Metric                                              | Type      | Extra labels            |
+| --------------------------------------------------- | --------- | ----------------------- |
+| `family_assistant_llm_tokens_total`                 | Counter   | `kind`                  |
+| `family_assistant_llm_calls_total`                  | Counter   | `outcome`, `error_type` |
+| `family_assistant_llm_call_duration_seconds`        | Histogram | `outcome`               |
+| `family_assistant_llm_time_to_first_output_seconds` | Histogram | —                       |
+
+`kind` splits tokens into **disjoint** buckets, normalised so that they mean the same thing on every
+provider — providers disagree about whether their own cache and reasoning counts are separate
+buckets or subsets, and that correction is applied before export rather than in every query:
+
+| `kind`           | Meaning                                                                 |
+| ---------------- | ----------------------------------------------------------------------- |
+| `input_uncached` | Prompt tokens neither read from nor written to the prompt cache         |
+| `input_image`    | Uncached prompt tokens that were image rather than text, where reported |
+| `cache_read`     | Prompt tokens served from the prompt cache                              |
+| `cache_write`    | Prompt tokens written into the prompt cache                             |
+| `output`         | Generated tokens, excluding reasoning                                   |
+| `output_image`   | Generated tokens that were image rather than text, where reported       |
+| `reasoning`      | Reasoning / thinking tokens                                             |
+| `tool_use`       | Tokens the provider spent running its own server-side tools             |
+
+A bucket a provider does not report is absent rather than zero, so no `cache_read` series means
+"this provider or model does not report caching", not "nothing was cached".
+
+Where a provider reports both caching and a modality split, cached image tokens belong to
+`cache_read` alone — `input_image` carries only the uncached remainder, so the prompt tiers still
+sum to the prompt. Those tokens are therefore priced as cached rather than as cached *image* tokens;
+no provider here prices the two apart today.
+
+The buckets are **billing tiers**, which is what makes cost a single join against a price table on
+`(model, kind)`. A price table that omits `tool_use`, `input_image` or `output_image` will silently
+drop that spend from the join, so give every bucket a price — including the ones a given model never
+emits.
+
+`family_assistant_llm_time_to_first_output_seconds` is only observed for streamed calls, where it is
+the latency the user actually feels.
+
+### Tools and turns
+
+| Metric                                   | Type      | Labels                       |
+| ---------------------------------------- | --------- | ---------------------------- |
+| `family_assistant_tool_calls_total`      | Counter   | `profile`, `tool`, `outcome` |
+| `family_assistant_tool_duration_seconds` | Histogram | `profile`, `tool`            |
+| `family_assistant_turns_total`           | Counter   | `profile`, `outcome`         |
+| `family_assistant_turn_duration_seconds` | Histogram | `profile`, `outcome`         |
+| `family_assistant_turns_in_progress`     | Gauge     | `profile`                    |
+
+Tool `outcome` is how the *execution* ended: `returned`, `denied` (refused by tool policy),
+`not_found`, `cancelled`, or `error`. `returned` is deliberately not called "success" — a tool
+reports an expected failure by returning a result, and that result carries no status field, so
+nothing can tell the two apart. Treat a tool error rate as counting executions that never completed,
+not tasks that went wrong. Turn `outcome` is `success`, `error`, or `cancelled` — a browser that
+navigated away mid-turn is not a failure.
+
+### Useful queries
+
+Token spend per profile, in tokens per second:
+
+```promql
+sum by (profile) (rate(family_assistant_llm_tokens_total[1h]))
 ```
 
-### Custom Metrics for LLM
+What is driving the spend — chat, tool-call review, agent runs, embeddings:
 
-Track LLM-specific metrics by instrumenting the LLM client:
+```promql
+sum by (operation) (rate(family_assistant_llm_tokens_total[1h]))
+```
 
-```python
-# Conceptual example for custom metrics
-from prometheus_client import Counter, Histogram
+Which profile is spending on reasoning rather than answers:
 
-llm_requests = Counter(
-    'llm_requests_total',
-    'Total LLM API requests',
-    ['model', 'status']
-)
+```promql
+sum by (profile) (rate(family_assistant_llm_tokens_total{kind="reasoning"}[1h]))
+  / sum by (profile) (rate(family_assistant_llm_tokens_total{kind=~"output|reasoning"}[1h]))
+```
 
-llm_latency = Histogram(
-    'llm_request_duration_seconds',
-    'LLM request duration',
-    ['model']
+Prompt-cache hit rate — the denominator is the reconstructed full prompt, which is what makes this
+comparable across providers:
+
+```promql
+sum by (model) (rate(family_assistant_llm_tokens_total{kind="cache_read"}[1h]))
+  / sum by (model) (
+      rate(family_assistant_llm_tokens_total{kind=~"input_uncached|input_image|cache_read|cache_write"}[1h])
+    )
+```
+
+Whether a profile is being served by its configured model or by a fallback:
+
+```promql
+sum by (profile, model, resolved_model) (rate(family_assistant_llm_calls_total[1h]))
+```
+
+LLM calls per turn, which is where a runaway tool loop shows up. Scoped to `operation="chat"`,
+because the iteration cap counts model turns: structured output adds a call per reviewed tool call,
+and a delegated `coder` or Deep Research run increments the numerator without ever entering the
+streaming loop that produces a turn, so an unscoped ratio is inflated for profiles that delegate and
+undefined for those that only delegate.
+
+```promql
+sum by (profile) (rate(family_assistant_llm_calls_total{operation="chat"}[1h]))
+  / sum by (profile) (rate(family_assistant_turns_total[1h]))
+```
+
+Error rate by provider:
+
+```promql
+sum by (provider) (rate(family_assistant_llm_calls_total{outcome="error"}[15m]))
+  / sum by (provider) (rate(family_assistant_llm_calls_total[15m]))
+```
+
+Estimated cost, if you keep a price table in a recording rule — prices are deliberately not compiled
+into the binary, where they would go stale silently:
+
+```promql
+sum by (profile) (
+  rate(family_assistant_llm_tokens_total[1h]) * on (model, kind) group_left
+    llm_price_per_token
 )
 ```
 
@@ -310,12 +415,28 @@ groups:
           summary: "Family Assistant health check failing"
 
       - alert: HighLLMLatency
-        expr: histogram_quantile(0.95, llm_request_duration_seconds_bucket) > 30
+        expr: >-
+          histogram_quantile(
+            0.95,
+            sum by (le, profile) (
+              rate(family_assistant_llm_call_duration_seconds_bucket[15m])
+            )
+          ) > 30
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "High LLM response latency (p95 > 30s)"
+          summary: "High LLM response latency (p95 > 30s) on {{ $labels.profile }}"
+
+      - alert: LLMCallsFailing
+        expr: >-
+          sum by (provider) (rate(family_assistant_llm_calls_total{outcome="error"}[15m]))
+            / sum by (provider) (rate(family_assistant_llm_calls_total[15m])) > 0.1
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Over 10% of {{ $labels.provider }} LLM calls are failing"
 
       - alert: HighErrorRate
         expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
@@ -479,7 +600,49 @@ data:
 
 ### Prometheus/Grafana Stack
 
-If adding Prometheus metrics support:
+Scrape the metrics port (9090 by default), not the application port — and note that the metrics port
+is deliberately **not** on the Kubernetes Service. `deploy/service.yaml` publishes only port 80 to
+the application's 8000, because the Service backs a public Ingress; a static target of
+`family-assistant:9090` would never resolve.
+
+**Kubernetes** — discover pods rather than the Service. With the Prometheus Operator or
+VictoriaMetrics Operator, a pod scrape selecting the workload's labels:
+
+```yaml
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMPodScrape
+metadata:
+  name: family-assistant
+spec:
+  selector:
+    matchLabels:
+      app: family-assistant
+  podMetricsEndpoints:
+    - port: metrics
+      interval: 30s
+```
+
+The container must declare the port for `port: metrics` to match:
+
+```yaml
+ports:
+  - name: metrics
+    containerPort: 9090
+```
+
+Plain Prometheus without an operator wants `kubernetes_sd_configs` with a `role: pod` job and the
+same label filter — again, not a static target.
+
+**Docker Compose** — use the compose service name, which is the DNS name on the shared network. In
+the devcontainer stack that service is `backend`, so:
+
+```yaml
+scrape_configs:
+  - job_name: "family-assistant"
+    static_configs:
+      - targets: ["backend:9090"]
+    scrape_interval: 30s
+```
 
 ```yaml
 version: "3.8"
@@ -489,7 +652,7 @@ services:
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
     ports:
-      - "9090:9090"
+      - "9091:9090"
 
   grafana:
     image: grafana/grafana:latest

@@ -8,6 +8,7 @@ import logging
 import mimetypes
 import os
 import re
+import time
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
 from dataclasses import asdict
@@ -43,6 +44,7 @@ from family_assistant.llm.antigravity_egress import (
     AntigravityEgressResolver,
     EgressNetworkResolver,
 )
+from family_assistant.llm.call_context import current_processing_profile
 from family_assistant.llm.google_types import (
     GeminiProviderMetadata,
     GeminiThoughtSignature,
@@ -58,6 +60,7 @@ from family_assistant.llm.messages import (
     is_turn_scaffolding,
 )
 from family_assistant.llm.utils.call_telemetry import LLMCallTelemetry
+from family_assistant.observability.metrics import UNATTRIBUTED_PROFILE, record_llm_call
 from family_assistant.processing.protocol import (
     DelegationPermanentError,
     DelegationTaskNotFoundError,
@@ -131,6 +134,27 @@ _INTERACTION_TERMINAL_ERROR_STATUSES = {
     "incomplete",
     "budget_exceeded",
 }
+
+
+def _image_modality_tokens(
+    by_modality: Any,  # noqa: ANN401 - genai per-modality token list
+    *,
+    token_attr: str = "tokens",
+) -> int | None:
+    """Image-modality tokens from one Interactions per-modality breakdown.
+
+    ``None`` when the breakdown is absent, so a run that reports no modalities
+    emits no image bucket rather than a zero that would read as "no image
+    tokens" when it means "not reported". The SDK types this a list; anything
+    else is not a breakdown to read.
+    """
+    if not isinstance(by_modality, list) or not by_modality:
+        return None
+    return sum(
+        getattr(entry, token_attr, 0) or 0
+        for entry in by_modality
+        if str(getattr(entry, "modality", "")).upper().endswith("IMAGE")
+    )
 
 
 def is_interaction_terminal_error_status(status: str) -> bool:
@@ -482,10 +506,8 @@ class GoogleGenAIClient(BaseLLMClient):
                 contents = self._convert_messages_to_genai_format(
                     self._process_tool_messages(attempt_messages)
                 )
-                response = await self.client.aio.models.generate_content(
-                    model=self.model_name,
-                    contents=contents,
-                    config=generation_config,
+                response = await self._instrumented_structured_request(
+                    attempt_messages, contents, generation_config
                 )
                 raw_response = self._extract_text_response(response)
                 if not raw_response:
@@ -520,6 +542,60 @@ class GoogleGenAIClient(BaseLLMClient):
             validation_error=last_error,
         )
 
+    async def _instrumented_structured_request(
+        self,
+        messages: Sequence[LLMMessage],
+        contents: Any,  # noqa: ANN401 - genai ContentListUnion
+        generation_config: Any,  # noqa: ANN401 - genai GenerateContentConfig
+    ) -> Any:  # noqa: ANN401 - genai GenerateContentResponse
+        """Run one structured-output request under the shared telemetry.
+
+        Wraps the request rather than the whole `generate_structured` call: a
+        schema-validation retry is a second billed request, and rolling the two
+        together would report one call that cost twice what it looks like.
+        """
+        span = tracer.start_span("llm.provider.structured")
+        telemetry = LLMCallTelemetry(
+            span,
+            provider="google",
+            system="google-genai",
+            requested_model=self.model_name,
+            messages=messages,
+            tools=None,
+            tool_choice=None,
+            streaming=False,
+            operation="structured",
+            response_schema=generation_config,
+        )
+        try:
+            response = await self.client.aio.models.generate_content(
+                model=self.model_name,
+                contents=contents,
+                config=generation_config,
+            )
+            # Before finishing, so the resolved model reaches the metric: an
+            # alias resolves to a dated snapshot, and without this a
+            # structured call would always report the requested name.
+            telemetry.record_response_metadata(
+                resolved_model=getattr(response, "model_version", None),
+                response_id=getattr(response, "response_id", None),
+            )
+            usage = getattr(response, "usage_metadata", None)
+            telemetry.record_usage(
+                self._reasoning_info_from_usage_metadata(usage) if usage else None
+            )
+            telemetry.finish_success(None)
+        except Exception as e:
+            telemetry.finish_error(e)
+            raise
+        finally:
+            # Cancellation during tool-call review or shutdown passes every
+            # `except Exception`; without this the billable request would reach
+            # no counter at all. A no-op once a terminal path has run.
+            telemetry.finish_abandoned()
+            span.end()
+        return response
+
     async def generate_json(
         self,
         messages: Sequence[LLMMessage],
@@ -547,10 +623,8 @@ class GoogleGenAIClient(BaseLLMClient):
                 contents = self._convert_messages_to_genai_format(
                     self._process_tool_messages(attempt_messages)
                 )
-                response = await self.client.aio.models.generate_content(
-                    model=self.model_name,
-                    contents=contents,
-                    config=generation_config,
+                response = await self._instrumented_structured_request(
+                    attempt_messages, contents, generation_config
                 )
                 raw_response = self._extract_text_response(response)
                 if not raw_response:
@@ -1071,6 +1145,17 @@ class GoogleGenAIClient(BaseLLMClient):
         )
 
     @property
+    def agent_operation_name(self) -> str:
+        """The ``operation`` metric label for this agent's runs.
+
+        Public because the pollable delegation path records its own metrics and
+        has to use the same value: an agent that reported ``deep_research``
+        when run interactively and something else when delegated would split
+        one agent across two series.
+        """
+        return self._agent_label.lower().replace(" ", "_")
+
+    @property
     def _agent_name(self) -> str:
         """The bare agent id to send as ``agent=`` on an Interactions call."""
         return self.model_name.replace("models/", "")
@@ -1361,6 +1446,12 @@ class GoogleGenAIClient(BaseLLMClient):
             except Exception as e:
                 telemetry.finish_error(e)
                 raise self._map_error_to_typed_exception(e) from e
+            finally:
+                # Cancellation -- a task timeout, a shutdown, an abandoned
+                # indexing job -- passes every `except Exception`, and the
+                # request still ran and may still be billed. A no-op once a
+                # terminal path has recorded the call.
+                telemetry.finish_abandoned()
 
     def _map_error_to_typed_exception(self, e: Exception) -> LLMProviderError:
         """Map a raw exception to a typed LLMProviderError subclass."""
@@ -1428,6 +1519,66 @@ class GoogleGenAIClient(BaseLLMClient):
         thoughts_tokens = getattr(usage, "thoughts_token_count", None)
         if thoughts_tokens is not None:
             reasoning_info["reasoning_tokens"] = thoughts_tokens
+        # Billed apart from the prompt and the candidates: what the provider
+        # spent running code execution or search grounding on its own.
+        tool_use_tokens = getattr(usage, "tool_use_prompt_token_count", None)
+        if tool_use_tokens is not None:
+            reasoning_info["tool_use_tokens"] = tool_use_tokens
+        # An ordinary Gemini turn can carry images too -- an attachment on a
+        # chat message is the common case -- and they are not billed at the
+        # text rate, so the split belongs here rather than only on the image
+        # backends. The cached slice is recorded so the buckets can stay
+        # disjoint instead of counting cached images twice.
+        for field, key in (
+            ("prompt_tokens_details", "image_input_tokens"),
+            ("candidates_tokens_details", "image_output_tokens"),
+            ("cache_tokens_details", "cached_image_tokens"),
+        ):
+            image_tokens = _image_modality_tokens(
+                getattr(usage, field, None), token_attr="token_count"
+            )
+            if image_tokens is not None:
+                reasoning_info[key] = image_tokens  # pyright: ignore[reportGeneralTypeIssues] - key is a literal from the tuple above
+        return reasoning_info
+
+    @staticmethod
+    def _reasoning_info_from_interaction_usage(
+        usage: Any,  # noqa: ANN401 - google.genai interactions Usage
+    ) -> MessageReasoningInfo | None:
+        """Build reasoning info from an Interactions API run's `usage`.
+
+        A managed agent's spend is reported on the interaction rather than as
+        chat usage, so it reaches no `generate_content` response and has to be
+        read from here. The buckets follow the same Gemini conventions the
+        chat path does: cached tokens are a subset of the input, while thought
+        and server-side tool tokens are billed apart from the output.
+        """
+        if not usage:
+            return None
+        reasoning_info = MessageReasoningInfo(
+            prompt_tokens=getattr(usage, "total_input_tokens", 0) or 0,
+            completion_tokens=getattr(usage, "total_output_tokens", 0) or 0,
+            total_tokens=getattr(usage, "total_tokens", 0) or 0,
+        )
+        for field, key in (
+            ("total_cached_tokens", "cached_prompt_tokens"),
+            ("total_thought_tokens", "reasoning_tokens"),
+            ("total_tool_use_tokens", "tool_use_tokens"),
+        ):
+            value = getattr(usage, field, None)
+            if value is not None:
+                reasoning_info[key] = value  # pyright: ignore[reportGeneralTypeIssues] - key is a literal from the tuple above
+        # An Interactions run can be multimodal on both sides -- reference
+        # images in, generated video out -- and those tokens are not billed at
+        # the text rate, so the modality split has to reach the buckets.
+        for field, key in (
+            ("input_tokens_by_modality", "image_input_tokens"),
+            ("output_tokens_by_modality", "image_output_tokens"),
+            ("cached_tokens_by_modality", "cached_image_tokens"),
+        ):
+            image_tokens = _image_modality_tokens(getattr(usage, field, None))
+            if image_tokens is not None:
+                reasoning_info[key] = image_tokens  # pyright: ignore[reportGeneralTypeIssues] - key is a literal from the tuple above
         return reasoning_info
 
     @staticmethod
@@ -1797,15 +1948,66 @@ class GoogleGenAIClient(BaseLLMClient):
         environment = await self._build_agent_environment(environment_sources)
         if environment is not None:
             create_kwargs["environment"] = environment
+        # Accounting starts here, not above: building the kwargs and resolving
+        # the sandbox's credentials can fail without any request reaching
+        # Google, and a failure that never left the process is not a provider
+        # error. A submission that does reach the API is counted here because
+        # it is the last place it can be -- a run that never gets an id
+        # reaches no terminal poll.
+        started = time.monotonic()
         try:
-            return cast(
+            interaction = cast(
                 "Interaction",
                 await self.client.aio.interactions.create(
                     **create_kwargs, stream=False
                 ),
             )
         except Exception as e:
-            raise self._classify_agent_delegation_error(e) from e
+            error = self._classify_agent_delegation_error(e)
+            self._record_failed_submission(error, time.monotonic() - started)
+            raise error from e
+        if not interaction.id:
+            error = DelegationTransientError(
+                "Interactions API create response carried no interaction id"
+            )
+            self._record_failed_submission(error, time.monotonic() - started)
+            raise error
+        return interaction
+
+    def _record_failed_submission(
+        self, error: BaseException, duration_seconds: float
+    ) -> None:
+        """Count a submission that reached the API but started no run.
+
+        Recorded on failure only: a submission that succeeds is counted when
+        the run reaches a terminal state, and counting it here too would
+        double every run.
+        """
+        record_llm_call(
+            profile=current_processing_profile() or UNATTRIBUTED_PROFILE,
+            provider="google",
+            model=self.model_name,
+            resolved_model=None,
+            operation=self.agent_operation_name,
+            outcome="error",
+            error_type=type(error).__name__,
+            duration_seconds=duration_seconds,
+            time_to_first_output_seconds=None,
+            reasoning_info=None,
+        )
+
+    def reasoning_info_from_interaction(
+        self,
+        interaction: Interaction,
+    ) -> MessageReasoningInfo | None:
+        """Token usage for a finished agent run, for callers that poll.
+
+        The pollable delegation path never sees the stream that would otherwise
+        carry usage, so it reads the totals off the interaction it polled.
+        """
+        return self._reasoning_info_from_interaction_usage(
+            getattr(interaction, "usage", None)
+        )
 
     async def get_agent_interaction(self, interaction_id: str) -> Interaction:
         """Fetch the current state of any Interactions API agent run (one poll).
@@ -1845,6 +2047,17 @@ class GoogleGenAIClient(BaseLLMClient):
         rendered, so the interactive transcript stays the agent's prose.
         """
         agent_label = self._agent_label
+        # Built before the span, and so before the metrics lifecycle: shaping
+        # the request and resolving the sandbox's egress credential both happen
+        # entirely in this process, and a failure there is not a provider
+        # error. Counted inside, it would put a Google call that never left the
+        # process into the provider error rate.
+        create_kwargs = self._build_agent_create_kwargs(messages)
+        environment = await self._build_agent_environment()
+        if environment is not None:
+            create_kwargs["environment"] = environment
+        create_kwargs["stream"] = True
+
         span = tracer.start_span("llm.provider.agent_interaction")
         telemetry = LLMCallTelemetry(
             span,
@@ -1855,21 +2068,21 @@ class GoogleGenAIClient(BaseLLMClient):
             tools=None,
             tool_choice=None,
             streaming=True,
-            operation=agent_label.lower().replace(" ", "_"),
+            operation=self.agent_operation_name,
         )
 
         content_yielded = False
         interaction_id: str | None = None
         last_event_id: str | None = None
+        # An agent run reports its spend on the interaction, not as chat usage,
+        # so it has to be picked up off whichever events carry the interaction.
+        # Last one wins: the totals are cumulative for the run.
+        interaction_usage: Any | None = None
+        interaction_model: str | None = None
 
         async def stream_events() -> AsyncGenerator[LLMStreamEvent]:
             nonlocal content_yielded, interaction_id, last_event_id
-            create_kwargs = self._build_agent_create_kwargs(messages)
-            environment = await self._build_agent_environment()
-            if environment is not None:
-                create_kwargs["environment"] = environment
-            create_kwargs["stream"] = True
-
+            nonlocal interaction_usage, interaction_model
             stream = cast(
                 "AsyncIterator[Any]",
                 await self.client.aio.interactions.create(**create_kwargs),
@@ -1883,6 +2096,27 @@ class GoogleGenAIClient(BaseLLMClient):
                 # Track event IDs for potential stream reconnection
                 if event_id := getattr(chunk, "event_id", None):
                     last_event_id = event_id
+
+                if served := getattr(
+                    getattr(chunk, "interaction", None), "model", None
+                ):
+                    interaction_model = served
+                    # Recorded as it arrives, for the same reason the usage is:
+                    # a terminal error status or an error frame raises straight
+                    # past the finalization block, and a failure series that
+                    # substitutes the alias cannot be analysed by model.
+                    telemetry.record_response_metadata(resolved_model=served)
+
+                if usage := getattr(getattr(chunk, "interaction", None), "usage", None):
+                    interaction_usage = usage
+                    # Recorded as it arrives rather than only at finalization: a
+                    # terminal error status or an error frame raises out of this
+                    # loop, and a run that failed still spent what it spent.
+                    # Interactions usage is cumulative, so the last one seen is
+                    # the total and later reports simply supersede earlier ones.
+                    telemetry.record_usage(
+                        self._reasoning_info_from_interaction_usage(usage)
+                    )
 
                 # Capture Interaction ID
                 if event_type in {"interaction.created", "interaction.start"}:
@@ -1966,13 +2200,22 @@ class GoogleGenAIClient(BaseLLMClient):
             if last_event_id:
                 done_metadata["last_event_id"] = last_event_id
 
+            run_usage = self._reasoning_info_from_interaction_usage(interaction_usage)
             if thought_summaries:
-                done_metadata["reasoning_info"] = MessageReasoningInfo(
-                    thought_summaries=[{"summary": t} for t in thought_summaries]
-                )
+                run_usage = run_usage or MessageReasoningInfo()
+                run_usage["thought_summaries"] = [
+                    {"summary": t} for t in thought_summaries
+                ]
+            if run_usage is not None:
+                done_metadata["reasoning_info"] = run_usage
 
-            if interaction_id:
-                telemetry.record_response_metadata(response_id=interaction_id)
+            # The interaction reports the model it actually ran, which an alias
+            # can make different from the configured one -- the pollable path
+            # already records it, and this is its interactive equivalent.
+            if interaction_id or interaction_model:
+                telemetry.record_response_metadata(
+                    response_id=interaction_id, resolved_model=interaction_model
+                )
             done_metadata["reasoning_info"] = telemetry.finalize_usage(
                 done_metadata.get("reasoning_info")
             )
@@ -2026,6 +2269,11 @@ class GoogleGenAIClient(BaseLLMClient):
             try:
                 await events.aclose()
             finally:
+                # A no-op unless the stream ended without reaching a terminal
+                # path -- a client that disconnected mid-turn raises through
+                # the generator, and the call would otherwise be counted
+                # nowhere despite having run.
+                telemetry.finish_abandoned()
                 span.end()
 
     async def _generate_response_stream(
@@ -2159,9 +2407,27 @@ class GoogleGenAIClient(BaseLLMClient):
                 async for chunk in stream_response:  # type: ignore[misc]
                     if getattr(chunk, "usage_metadata", None):
                         latest_usage_metadata = chunk.usage_metadata
+                        # Recorded as it arrives, not only once the stream ends
+                        # cleanly: a stream that dies mid-flight still spent
+                        # what the provider has already reported, and the
+                        # failure finalizer reads whatever telemetry holds.
+                        # Gemini's counts are cumulative, so the latest wins.
+                        telemetry.record_usage(
+                            self._reasoning_info_from_usage_metadata(
+                                latest_usage_metadata
+                            )
+                        )
                     resolved_model = chunk.model_version or resolved_model
                     response_id = chunk.response_id or response_id
                     finish_reason = _first_finish_reason(chunk) or finish_reason
+                    # Recorded as it arrives, like the usage above: a stream
+                    # that dies later is finalized without reaching the block
+                    # below, and a failure filed under the requested alias
+                    # cannot be compared with that model's successes.
+                    if resolved_model or response_id:
+                        telemetry.record_response_metadata(
+                            resolved_model=resolved_model, response_id=response_id
+                        )
 
                     # Extract text content from chunk
                     if hasattr(chunk, "text") and chunk.text:
@@ -2342,4 +2608,9 @@ class GoogleGenAIClient(BaseLLMClient):
             try:
                 await events.aclose()
             finally:
+                # A no-op unless the stream ended without reaching a terminal
+                # path -- a client that disconnected mid-turn raises through
+                # the generator, and the call would otherwise be counted
+                # nowhere despite having run.
+                telemetry.finish_abandoned()
                 span.end()
