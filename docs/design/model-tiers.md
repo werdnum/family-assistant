@@ -142,7 +142,7 @@ service_profiles:
   - id: "default_assistant"
     processing_config:
       model_selection: "auto"
-      model_tier: "standard" # fallback when routing is unavailable or disabled
+      model_tier: "standard" # the tier when Auto is off, not requested, or routing fails
     allowed_model_tiers: ["standard", "deep", "frontier"]
     auto_model_tiers: ["standard", "deep"]
     auto_routing_guidance: |
@@ -181,8 +181,13 @@ enum of configured targets, timeout, explicit availability fallback, once-per-tu
 over with profile targets replaced by tiers. What disappears is that design's hardest part:
 separating router conversation identity from hidden execution-profile identity. There is one
 Assistant profile; the router never creates a new agent identity, and existing history needs no
-migration. If classification fails or times out, the profile's configured `model_tier` is the
-availability fallback. An explicit user selection bypasses the router entirely.
+migration. An explicit user selection bypasses the router entirely.
+
+**Routing failure is visible, never a silent decision.** If classification fails or times out the
+run continues on the profile's configured `model_tier` — a lost turn is worse than a weaker one —
+but the envelope records the routing outcome (`decided`, `timeout`, `invalid`) separately from the
+resolved tier, and the turn detail shows it (`Auto ⚠ Standard · routing unavailable`), so a
+classifier outage cannot masquerade as a run of confident `Auto → Standard` decisions.
 
 Because the classifier reads the trusted trigger message itself, the user can also nudge routing in
 the prompt: "think hard about this", "quick question", "this is subtle" are legitimate signals the
