@@ -1118,6 +1118,43 @@ class TestResolveServiceProfile:
 
         assert result["allowed_model_tiers"] is None
 
+    def test_inherited_auto_model_tiers_drop_with_an_inline_model(self) -> None:
+        """Both eligibility lists follow the same rule, not just the first."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "model_tier": "standard"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+            "allowed_model_tiers": ["standard", "deep"],
+            "auto_model_tiers": ["standard", "deep"],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {"llm_model": "claude-opus-5"},
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["auto_model_tiers"] is None
+
+    def test_auto_model_tiers_are_replaced_not_merged(self) -> None:
+        """The tiers a model may select on its own must narrow, never widen."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "model_tier": "standard"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+            "auto_model_tiers": ["standard", "deep"],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "auto_model_tiers": ["standard"],
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["auto_model_tiers"] == ["standard"]
+
     def test_profile_taint_policy_overrides_are_preserved(self) -> None:
         """Profile-level runtime taint policy must survive profile resolution."""
         default_settings: dict[str, Any] = {
@@ -2768,6 +2805,7 @@ def test_every_service_profile_field_is_accounted_for() -> None:
         "excluded_global_tools",
         "remote_a2a",
         "allowed_model_tiers",
+        "auto_model_tiers",
         # Set from the profile definition directly rather than merged.
         "id",
         "description",

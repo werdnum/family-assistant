@@ -8,10 +8,12 @@ tests go through the provider client's own resolution.
 """
 
 import pytest
+from pydantic import ValidationError
 
 from family_assistant.assistant import validate_antigravity_agent_config
 from family_assistant.config_models import (
     AntigravityConfig,
+    AppConfig,
     ModelTierConfig,
     ProcessingConfig,
     RemoteA2AConfig,
@@ -38,12 +40,14 @@ def _profile(
     processing_config: ProcessingConfig,
     profile_id: str = "test_profile",
     allowed_model_tiers: list[str] | None = None,
+    auto_model_tiers: list[str] | None = None,
     remote_a2a: RemoteA2AConfig | None = None,
 ) -> ServiceProfile:
     return ServiceProfile(
         id=profile_id,
         processing_config=processing_config,
         allowed_model_tiers=allowed_model_tiers,
+        auto_model_tiers=auto_model_tiers,
         remote_a2a=remote_a2a,
     )
 
@@ -319,7 +323,7 @@ def test_allowed_model_tiers_naming_an_unknown_tier_is_rejected() -> None:
         allowed_model_tiers=["standard", "frontier"],
     )
 
-    with pytest.raises(ValueError, match="allows unknown model tier"):
+    with pytest.raises(ValueError, match="unknown model tier"):
         validate_profile_model_tier(profile, TIERS)
 
 
@@ -340,3 +344,87 @@ def test_allowed_model_tiers_without_a_tier_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="allowed_model_tiers without a model_tier"):
         validate_profile_model_tier(profile, TIERS)
+
+
+def test_auto_model_tiers_beyond_the_allowed_list_are_rejected() -> None:
+    """Automatic selection is the weaker authority; it cannot reach further."""
+    profile = _profile(
+        ProcessingConfig(model_tier="standard"),
+        allowed_model_tiers=["standard"],
+        auto_model_tiers=["standard", "deep"],
+    )
+
+    with pytest.raises(ValueError, match="Automatic selection cannot reach"):
+        validate_profile_model_tier(profile, TIERS)
+
+
+def test_auto_model_tiers_without_an_allowed_list_hold_only_the_default() -> None:
+    """No allowed list means the profile runs on its default tier alone."""
+    profile = _profile(
+        ProcessingConfig(model_tier="standard"),
+        auto_model_tiers=["deep"],
+    )
+
+    with pytest.raises(ValueError, match="Automatic selection cannot reach"):
+        validate_profile_model_tier(profile, TIERS)
+
+
+def test_auto_model_tiers_within_the_allowed_list_are_accepted() -> None:
+    profile = _profile(
+        ProcessingConfig(model_tier="standard"),
+        allowed_model_tiers=["standard", "deep"],
+        auto_model_tiers=["standard", "deep"],
+    )
+
+    assert validate_profile_model_tier(profile, TIERS) is TIERS["standard"]
+
+
+def test_auto_model_tiers_without_a_tier_is_rejected() -> None:
+    profile = _profile(
+        ProcessingConfig(llm_model="claude-opus-5"), auto_model_tiers=["deep"]
+    )
+
+    with pytest.raises(ValueError, match="auto_model_tiers without a model_tier"):
+        validate_profile_model_tier(profile, TIERS)
+
+
+def test_two_tiers_claiming_one_slash_command_are_rejected() -> None:
+    with pytest.raises(ValidationError, match="both use slash_command"):
+        AppConfig(
+            model_tiers={
+                "deep": ModelTierConfig(
+                    chain=[RetryModelConfig(provider="openai", model="gpt-5.6-sol")],
+                    slash_command="/deep",
+                ),
+                "frontier": ModelTierConfig(
+                    chain=[
+                        RetryModelConfig(provider="anthropic", model="claude-fable-5")
+                    ],
+                    slash_command="/deep",
+                ),
+            }
+        )
+
+
+def test_a_tier_command_colliding_with_a_profile_command_is_rejected() -> None:
+    """One word cannot mean both 'run this agent' and 'at this intelligence'."""
+    with pytest.raises(ValidationError, match="also claims"):
+        AppConfig(
+            model_tiers={
+                "frontier": ModelTierConfig(
+                    chain=[
+                        RetryModelConfig(provider="anthropic", model="claude-fable-5")
+                    ],
+                    slash_command="/max",
+                )
+            },
+            service_profiles=[ServiceProfile(id="maximiser", slash_commands=["/max"])],
+        )
+
+
+def test_a_malformed_tier_slash_command_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="Invalid model tier slash_command"):
+        ModelTierConfig(
+            chain=[RetryModelConfig(provider="openai", model="gpt-5.6-sol")],
+            slash_command="deep",
+        )

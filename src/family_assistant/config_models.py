@@ -106,6 +106,7 @@ class RetryConfig(BaseModel):
 
 
 _TIER_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+_TIER_SLASH_COMMAND_PATTERN = re.compile(r"^/[a-z0-9_]{1,31}$")
 
 
 class ModelTierConfig(BaseModel):
@@ -130,6 +131,22 @@ class ModelTierConfig(BaseModel):
     label: str | None = None
     # One line describing when this tier is worth its cost.
     description: str | None = None
+    # Per-message chat command that runs one request on this tier, on whatever
+    # profile the conversation is already using. A tier command and a profile
+    # command are separate commands rather than a combinatorial set, so a
+    # message carries one or the other.
+    slash_command: str | None = None
+
+    @field_validator("slash_command")
+    @classmethod
+    def validate_slash_command(cls, v: str | None) -> str | None:
+        if v is not None and not _TIER_SLASH_COMMAND_PATTERN.match(v):
+            msg = (
+                f"Invalid model tier slash_command {v!r}. It must start with '/' "
+                "and continue with 1-31 lowercase letters, digits or underscores."
+            )
+            raise ValueError(msg)
+        return v
 
     @field_validator("chain")
     @classmethod
@@ -577,6 +594,12 @@ class ServiceProfile(BaseModel):
     # `model_tier`", which is what a profile pinned to a model or to a
     # provider-coupled runtime stays at.
     allowed_model_tiers: list[str] | None = None
+    # The subset of `allowed_model_tiers` a *model-composed* request may select
+    # without a confirmation -- a `delegate_to_service` `model_tier` argument
+    # today, and Auto routing when it lands. A user's explicit selection is
+    # authorized by `allowed_model_tiers` instead: it is the user's own choice
+    # to spend more, where this is authority handed to a model.
+    auto_model_tiers: list[str] | None = None
 
 
 class DefaultProfileSettings(BaseModel):
@@ -593,6 +616,7 @@ class DefaultProfileSettings(BaseModel):
     slash_commands: list[str] = Field(default_factory=list)
     visibility_grants: list[str] = Field(default_factory=list)
     allowed_model_tiers: list[str] | None = None
+    auto_model_tiers: list[str] | None = None
 
 
 class NotesConfig(BaseModel):
@@ -1794,6 +1818,45 @@ class AppConfig(BaseSettings):
                 f"share a port, and the application is the one that loses."
             )
             raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def validate_model_tier_slash_commands_are_unique(self) -> AppConfig:
+        """Reject a tier command that another command already answers to.
+
+        A chat surface dispatches a leading ``/word`` by looking it up, so two
+        configurations claiming one word means whichever the lookup finds first
+        wins and the other silently never runs. A tier command and a profile
+        command mean different things -- pick the intelligence for this message
+        versus pick the agent -- so a collision between them is the same
+        ambiguity, not a resolvable precedence.
+        """
+        owners: dict[str, str] = {}
+        for tier_name, tier in self.model_tiers.items():
+            if tier.slash_command is None:
+                continue
+            existing = owners.get(tier.slash_command)
+            if existing is not None:
+                msg = (
+                    f"Model tiers {existing!r} and {tier_name!r} both use "
+                    f"slash_command {tier.slash_command!r}. A command names one "
+                    "thing to run."
+                )
+                raise ValueError(msg)
+            owners[tier.slash_command] = tier_name
+
+        for profile in self.service_profiles:
+            for command in profile.slash_commands:
+                tier_name = owners.get(command)
+                if tier_name is not None:
+                    msg = (
+                        f"Profile {profile.id!r} uses slash command {command!r}, "
+                        f"which model tier {tier_name!r} also claims. A tier "
+                        "command selects the intelligence for one message and a "
+                        "profile command selects the agent, so one word cannot "
+                        "mean both."
+                    )
+                    raise ValueError(msg)
         return self
 
     @model_validator(mode="after")

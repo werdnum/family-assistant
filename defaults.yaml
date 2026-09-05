@@ -171,6 +171,9 @@ model_tiers:
   deep:
     label: "Deep"
     description: "Multi-stage reasoning, difficult judgement, conflicting evidence."
+    # Per-message chat command: `/deep <request>` runs that one message on this
+    # tier, on whatever profile the conversation is already using.
+    slash_command: "/deep"
     chain:
       # Sol's reasoning_effort comes from the global llm_parameters entry above.
       - provider: "openai"
@@ -180,6 +183,7 @@ model_tiers:
   frontier:
     label: "Max"
     description: "The strongest configured recipe, for the hardest requests."
+    slash_command: "/max"
     chain:
       # No fallback: this tier is chosen for its capability, and a weaker
       # stand-in would answer the request the tier was not chosen for. A future
@@ -809,9 +813,13 @@ service_profiles:
       include_aggregated_context: true
       max_iterations: 50
       model_tier: "standard"
-    # The tiers this profile may be run on. Stage 1 only validates the list;
-    # per-request selection arrives with the model-selection envelope.
+    # The tiers a user may explicitly run this profile on.
     allowed_model_tiers: ["standard", "deep", "frontier"]
+    # The subset a model may select on its own -- a delegate_to_service
+    # `model_tier` argument today. `frontier` is deliberately absent: it is
+    # chosen when somebody decides this request is worth the spend, not
+    # inferred.
+    auto_model_tiers: ["standard", "deep"]
   - id: "email_intake"
     description: "Assistant profile for handling email the user sends or forwards. Replies by email and may propose calendar events, notes, reminders, document indexing, or messages to known users; writes wait for confirmation."
     processing_config:
@@ -1505,6 +1513,9 @@ service_profiles:
     # `standard` is deliberately absent: a request routed here is one the
     # standard tier was not expected to complete well.
     allowed_model_tiers: ["deep", "frontier"]
+    # Delegating here is already the decision to spend more, so a delegating
+    # model may confirm the default tier but not escalate beyond it.
+    auto_model_tiers: ["deep"]
     tools_config:
       on_demand_local_tools:
         - "render_home_assistant_template"

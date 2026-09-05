@@ -143,15 +143,20 @@ def validate_profile_model_tier(
     processing_config = profile_conf.processing_config
     tier_name = processing_config.model_tier
     allowed = profile_conf.allowed_model_tiers
+    auto = profile_conf.auto_model_tiers
 
     if tier_name is None:
-        if allowed is not None:
-            msg = (
-                f"Profile '{profile_id}' sets allowed_model_tiers without a "
-                "model_tier. A profile that names an inline model runs on that "
-                "model only; selection needs a default tier to fall back to."
-            )
-            raise ValueError(msg)
+        for field, value in (
+            ("allowed_model_tiers", allowed),
+            ("auto_model_tiers", auto),
+        ):
+            if value is not None:
+                msg = (
+                    f"Profile '{profile_id}' sets {field} without a model_tier. "
+                    "A profile that names an inline model runs on that model "
+                    "only; selection needs a default tier to fall back to."
+                )
+                raise ValueError(msg)
         return None
 
     tier = model_tiers.get(tier_name)
@@ -165,20 +170,40 @@ def validate_profile_model_tier(
 
     _reject_tier_on_pinned_runtime(profile_conf, tier_name, tier)
 
-    if allowed is not None:
-        unknown = sorted(set(allowed) - set(model_tiers))
+    for field, value in (("allowed_model_tiers", allowed), ("auto_model_tiers", auto)):
+        if value is None:
+            continue
+        unknown = sorted(set(value) - set(model_tiers))
         if unknown:
             known = ", ".join(sorted(model_tiers)) or "(none configured)"
             msg = (
-                f"Profile '{profile_id}' allows unknown model tier(s): "
+                f"Profile '{profile_id}' lists unknown model tier(s) in {field}: "
                 f"{', '.join(unknown)}. Configured tiers: {known}."
             )
             raise ValueError(msg)
-        if tier_name not in allowed:
+
+    if allowed is not None and tier_name not in allowed:
+        msg = (
+            f"Profile '{profile_id}' has model_tier '{tier_name}', which is "
+            f"not in its allowed_model_tiers ({', '.join(allowed)}). The "
+            "default tier must itself be selectable."
+        )
+        raise ValueError(msg)
+
+    if auto is not None:
+        # A tier a model may pick on its own but a user may not explicitly ask
+        # for describes no coherent policy: automatic selection is the weaker
+        # authority of the two, so it cannot reach further. Absent
+        # allowed_model_tiers means the profile runs on its default tier alone.
+        selectable = allowed if allowed is not None else [tier_name]
+        beyond_allowed = sorted(set(auto) - set(selectable))
+        if beyond_allowed:
             msg = (
-                f"Profile '{profile_id}' has model_tier '{tier_name}', which is "
-                f"not in its allowed_model_tiers ({', '.join(allowed)}). The "
-                "default tier must itself be selectable."
+                f"Profile '{profile_id}' has auto_model_tiers "
+                f"({', '.join(auto)}) reaching tier(s) outside what it may be "
+                f"explicitly run on ({', '.join(selectable)}): "
+                f"{', '.join(beyond_allowed)}. Automatic selection cannot reach "
+                "a tier explicit selection may not."
             )
             raise ValueError(msg)
 
