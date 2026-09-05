@@ -37,6 +37,10 @@ from family_assistant.llm.messages import (
     image_url_content,
     text_content,
 )
+from family_assistant.llm.model_selection import (
+    ModelSelectionRequest,
+    ModelTierNotPermitted,
+)
 from family_assistant.processing import ProcessingService
 from family_assistant.processing.types import MidTurnUserInput
 from family_assistant.services.user_identity import (
@@ -69,6 +73,8 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from family_assistant.interfaces import ChatInterface
+    from family_assistant.llm.model_selection import ResolvedModelSelection
+    from family_assistant.processing import DelegatableService
     from family_assistant.storage.database import Database
     from family_assistant.telegram.protocols import (
         ConfirmationUIManager,
@@ -80,6 +86,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+
+
+@dataclass(frozen=True)
+class _SlashCommandInvocation:
+    """One authorized ``/command <request>`` message, before it is dispatched."""
+
+    chat_id: int
+    command: str
+    """The leading word, with its slash, as the command maps are keyed."""
+    request_text: str
+    resolved_user: ResolvedUserIdentity
 
 
 @dataclass
@@ -643,12 +660,10 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                                 logger.info(
                                     f"Replied-to message (ID: {replied_to_interface_id}) has processing_profile_id: {original_profile_id}"
                                 )
-                                profile_specific_service = self.telegram_service.processing_services_registry.get(
-                                    original_profile_id
+                                profile_specific_service = (
+                                    self._local_service_for_profile(original_profile_id)
                                 )
-                                if isinstance(
-                                    profile_specific_service, ProcessingService
-                                ):
+                                if profile_specific_service is not None:
                                     selected_processing_service = (
                                         profile_specific_service
                                     )
@@ -1135,6 +1150,26 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 )
                 logger.info(f"Registered CommandHandler for /{command_name}")
 
+        for (
+            command_str,
+            tier_name,
+        ) in self.telegram_service.slash_command_to_model_tier_map.items():
+            if command_str in self.telegram_service.slash_command_to_profile_id_map:
+                msg = (
+                    f"Model tier '{tier_name}' and profile "
+                    f"'{self.telegram_service.slash_command_to_profile_id_map[command_str]}' "
+                    f"both claim the Telegram command '{command_str}'; one of them "
+                    "would never run."
+                )
+                raise ValueError(msg)
+            command_name = command_str.lstrip("/")
+            application.add_handler(
+                CommandHandler(command_name, self.handle_tier_slash_command)
+            )
+            logger.info(
+                f"Registered CommandHandler for /{command_name} (model tier '{tier_name}')"
+            )
+
         application.add_handler(
             MessageHandler(filters.COMMAND, self.handle_unknown_command)
         )
@@ -1160,23 +1195,27 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             "Telegram handlers registered (start, generic commands, unknown commands, message, error)."
         )
 
-    async def handle_generic_slash_command(
+    async def _authorize_slash_command(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
-        """Handles generic slash commands mapped to processing profiles."""
+    ) -> _SlashCommandInvocation | None:
+        """The parts every command handler needs, or ``None`` if it must stop.
+
+        Shared by the profile commands and the model tier commands: both are a
+        leading ``/word`` from an authorized user followed by a request, and
+        they differ only in what the word selects.
+        """
         if not update.effective_user:
             logger.warning("Slash command: Update has no effective_user.")
-            return
+            return None
         user_id = update.effective_user.id
 
         if not update.effective_chat:
             logger.warning("Slash command: Update has no effective_chat.")
-            return
-        chat_id = update.effective_chat.id
+            return None
 
         if not update.message or not update.message.text:
             logger.warning("Slash command: Update has no message or message text.")
-            return
+            return None
 
         resolved_user = self._resolve_telegram_user(user_id)
         if resolved_user is None:
@@ -1184,11 +1223,26 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             await update.message.reply_text(
                 f"You're not authorized to use this command. User ID: `{user_id}`"
             )
-            return
+            return None
 
-        message_text = update.message.text
-        command_with_slash = message_text.split(maxsplit=1)[0]
-        user_input_for_profile = " ".join(context.args or [])
+        return _SlashCommandInvocation(
+            chat_id=update.effective_chat.id,
+            command=update.message.text.split(maxsplit=1)[0],
+            request_text=" ".join(context.args or []),
+            resolved_user=resolved_user,
+        )
+
+    async def handle_generic_slash_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handles generic slash commands mapped to processing profiles."""
+        invocation = await self._authorize_slash_command(update, context)
+        if invocation is None:
+            return
+        assert update.message is not None
+        chat_id = invocation.chat_id
+        command_with_slash = invocation.command
+        user_input_for_profile = invocation.request_text
 
         profile_id = self.telegram_service.slash_command_to_profile_id_map.get(
             command_with_slash
@@ -1229,6 +1283,129 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             f"Handling slash command '{command_with_slash}' for profile '{profile_id}'. User input: '{user_input_for_profile[:50]}...'"
         )
 
+        await self._run_slash_command_turn(
+            update,
+            context,
+            chat_id=chat_id,
+            service=targeted_processing_service,
+            resolved_user=invocation.resolved_user,
+            request_text=user_input_for_profile,
+        )
+
+    async def handle_tier_slash_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Runs one message at a chosen model tier.
+
+        A tier command says how hard to think about this message, not which
+        assistant answers it, so the run goes to the profile the conversation is
+        already on -- the same one a plain message would reach, including the
+        profile a reply adopts. The choice applies to this message only; nothing
+        is pinned.
+        """
+        invocation = await self._authorize_slash_command(update, context)
+        if invocation is None:
+            return
+        assert update.message is not None
+
+        tier = self.telegram_service.slash_command_to_model_tier_map.get(
+            invocation.command
+        )
+        if tier is None:
+            logger.error(
+                f"No model tier found for command '{invocation.command}'. This "
+                "shouldn't happen if CommandHandler is correctly set up."
+            )
+            await update.message.reply_text(
+                f"Error: Command '{invocation.command}' is not configured correctly."
+            )
+            return
+
+        if not invocation.request_text.strip():
+            await update.message.reply_text(
+                f"Send {invocation.command} followed by your request, for example: "
+                f"{invocation.command} compare these two quotes and tell me which is cheaper."
+            )
+            return
+
+        service = await self._service_for_conversation_turn(update)
+        try:
+            selection = service.resolve_model_selection(
+                ModelSelectionRequest(tier=tier, source="user")
+            )
+        except ModelTierNotPermitted as refusal:
+            logger.info(
+                f"Refused model tier '{tier}' on profile "
+                f"'{service.service_config.id}': {refusal}"
+            )
+            await update.message.reply_text(str(refusal))
+            return
+
+        logger.info(
+            f"Handling tier command '{invocation.command}' at tier '{tier}' on "
+            f"profile '{service.service_config.id}'. User input: "
+            f"'{invocation.request_text[:50]}...'"
+        )
+
+        await self._run_slash_command_turn(
+            update,
+            context,
+            chat_id=invocation.chat_id,
+            service=service,
+            resolved_user=invocation.resolved_user,
+            request_text=invocation.request_text,
+            model_selection=selection,
+        )
+
+    async def _service_for_conversation_turn(self, update: Update) -> ProcessingService:
+        """The profile this message would run on if it carried no command.
+
+        The default profile, unless the message replies to one produced by
+        another profile -- which is the adoption a plain message gets, so a tier
+        command gets it too.
+        """
+        replied_to = update.message.reply_to_message if update.message else None
+        if replied_to is None:
+            return self.processing_service
+        replied_to_row = await self.database.message_history.get_row_by_interface_id(
+            interface_type="telegram",
+            interface_message_id=str(replied_to.message_id),
+        )
+        if replied_to_row is None:
+            return self.processing_service
+        adopted = self._local_service_for_profile(
+            replied_to_row.get("processing_profile_id")
+        )
+        return adopted if adopted is not None else self.processing_service
+
+    def _local_service_for_profile(
+        self, profile_id: str | None
+    ) -> ProcessingService | None:
+        """The locally-run service for *profile_id*, if there is one."""
+        if not profile_id:
+            return None
+        service = self.telegram_service.processing_services_registry.get(profile_id)
+        return service if isinstance(service, ProcessingService) else None
+
+    async def _run_slash_command_turn(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        *,
+        chat_id: int,
+        service: DelegatableService,
+        resolved_user: ResolvedUserIdentity,
+        request_text: str,
+        model_selection: ResolvedModelSelection | None = None,
+    ) -> None:
+        """Run one command's text, and any photo it carries, on *service*.
+
+        The half a profile command and a tier command have in common: they
+        differ in which service and which model tier they pick, and in nothing
+        that happens afterwards.
+        """
+        assert update.message is not None
+
         photo_bytes = None
         if update.message.photo:
             logger.info(
@@ -1259,22 +1436,18 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 )
                 return
 
-        trigger_content_parts_for_profile: list[ContentPartDict] = [
-            text_content(user_input_for_profile)
-        ]
+        trigger_content_parts: list[ContentPartDict] = [text_content(request_text)]
         if photo_bytes:
             try:
                 base64_image = base64.b64encode(photo_bytes).decode("utf-8")
                 mime_type = "image/jpeg"
                 data_url = f"data:{mime_type};base64,{base64_image}"
-                trigger_content_parts_for_profile.append(image_url_content(data_url))
+                trigger_content_parts.append(image_url_content(data_url))
             except Exception as img_err_direct:
                 logger.error(
                     f"Error encoding photo for slash command direct profile call: {img_err_direct}"
                 )
-                trigger_content_parts_for_profile = [
-                    text_content(user_input_for_profile)
-                ]
+                trigger_content_parts = [text_content(request_text)]
 
         reply_to_interface_id_str = (
             str(update.message.reply_to_message.message_id)
@@ -1344,11 +1517,11 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             confirmation_ui_managers = self._get_confirmation_ui_managers()
 
             async with self._typing_notifications(context, chat_id):
-                result = await targeted_processing_service.handle_chat_interaction(
+                result = await service.handle_chat_interaction(
                     db_context=db_ctx,
                     interface_type="telegram",
                     conversation_id=str(chat_id),
-                    trigger_content_parts=trigger_content_parts_for_profile,
+                    trigger_content_parts=trigger_content_parts,
                     trigger_interface_message_id=str(update.message.message_id),
                     user_name=update.effective_user.full_name
                     if update.effective_user
@@ -1360,6 +1533,7 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     confirmation_ui_managers=confirmation_ui_managers,
                     request_confirmation_callback=confirmation_callback_wrapper,
                     trigger_attachments=None,
+                    model_selection=model_selection,
                 )
 
                 final_llm_content_to_send = result.text_reply
