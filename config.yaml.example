@@ -61,17 +61,23 @@
 #     timezone: "America/New_York"
 
 # --- LLM Model ---
-# Override the default LLM model
-# Or use the LLM_MODEL environment variable
+# Which models run is configured as named tiers, which profiles select by name.
+# Redefining a shipped tier here changes the models for every profile on it.
+# model_tiers:
+#   standard:
+#     label: "Standard"
+#     chain:
+#       - provider: "google"
+#         model: "gemini-2.5-pro"
+#       - provider: "openai"
+#         model: "gpt-4o"
+#
+# Point a profile at a different tier, or at a model of its own. A profile
+# names either a tier or an inline model (provider/llm_model/retry_config),
+# never both; whichever it names displaces the other kind it would inherit.
 # default_profile_settings:
 #   processing_config:
-#     retry_config:
-#       primary:
-#         provider: "google"
-#         model: "gemini-2.5-pro"
-#       fallback:
-#         provider: "openai"
-#         model: "gpt-4o"
+#     model_tier: "standard"
 
 # --- Calendar Configuration ---
 # Configure CalDAV or iCal calendar integration

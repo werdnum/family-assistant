@@ -45,6 +45,7 @@ from family_assistant.config_sources import (
     load_yaml_file,
 )
 from family_assistant.delegation_security import DelegationSecurityLevel
+from family_assistant.llm.model_tiers import validate_profile_model_tier
 from family_assistant.security.taint import (
     SinkClass,
     SourceTrustTier,
@@ -979,6 +980,143 @@ class TestResolveServiceProfile:
         }
         result = resolve_service_profile(profile_def, default_settings, {})
         assert result["processing_config"]["retry_config"] == default_retry
+
+    def test_model_tier_is_overridable_by_a_profile(self) -> None:
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "model_tier": "standard"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {"model_tier": "deep"},
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["processing_config"]["model_tier"] == "deep"
+
+    def test_declared_tier_drops_the_inherited_chain_and_model(self) -> None:
+        """A tier is what the profile runs on, so an inherited model cannot win."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {
+                "timezone": "UTC",
+                "provider": "google",
+                "llm_model": "gemini-3.8-flash",
+                "retry_config": {
+                    "primary": {"provider": "google", "model": "gemini-3.8-flash"},
+                },
+            },
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {"model_tier": "deep"},
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["processing_config"]["model_tier"] == "deep"
+        assert result["processing_config"]["retry_config"] is None
+        assert result["processing_config"]["llm_model"] is None
+        assert result["processing_config"]["provider"] is None
+
+    def test_declared_inline_model_drops_the_inherited_tier(self) -> None:
+        """`assistant.py` builds from the tier, so it would win over the model."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "model_tier": "standard"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {
+                "provider": "anthropic",
+                "llm_model": "claude-opus-5",
+            },
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["processing_config"]["model_tier"] is None
+        assert result["processing_config"]["llm_model"] == "claude-opus-5"
+
+    def test_declared_retry_chain_drops_the_inherited_tier(self) -> None:
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "model_tier": "standard"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        own_retry = {"primary": {"provider": "openai", "model": "gpt-5.6-luna"}}
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {"retry_config": own_retry},
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["processing_config"]["model_tier"] is None
+        assert result["processing_config"]["retry_config"] == own_retry
+
+    def test_declaring_a_tier_and_an_inline_model_together_is_an_error(self) -> None:
+        """Both cannot be what the profile runs on, so neither is chosen for it."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {
+                "model_tier": "deep",
+                "llm_model": "claude-opus-5",
+            },
+        }
+
+        with pytest.raises(ValueError, match="either a tier or an inline model"):
+            resolve_service_profile(profile_def, default_settings, {})
+
+    def test_allowed_model_tiers_are_replaced_not_merged(self) -> None:
+        """An eligibility list must narrow, so a merge could only widen it."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "model_tier": "standard"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+            "allowed_model_tiers": ["standard", "deep", "frontier"],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "allowed_model_tiers": ["standard"],
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["allowed_model_tiers"] == ["standard"]
+
+    def test_inherited_allowed_model_tiers_drop_with_an_inline_model(self) -> None:
+        """Tier eligibility means nothing to a profile pinned to one model."""
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "model_tier": "standard"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+            "allowed_model_tiers": ["standard", "deep"],
+        }
+        profile_def = {
+            "id": "test_profile",
+            "processing_config": {"llm_model": "claude-opus-5"},
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["allowed_model_tiers"] is None
 
     def test_profile_taint_policy_overrides_are_preserved(self) -> None:
         """Profile-level runtime taint policy must survive profile resolution."""
@@ -2091,6 +2229,10 @@ class TestLoadConfig:
         assert k8s_profile.remote_a2a.auth.type == "bearer"
         assert k8s_profile.remote_a2a.auth.token_env == "K8S_AGENT_TOKEN"
         assert k8s_profile.remote_a2a.timeout_seconds == 60.0
+        # The remote agent chooses its own model, so nothing model-related is
+        # inherited from default_profile_settings into a remote profile.
+        assert k8s_profile.processing_config.model_tier is None
+        assert k8s_profile.allowed_model_tiers is None
 
     def test_profile_inherits_timezone_from_defaults(self, tmp_path: Path) -> None:
         """Regression: profile without explicit timezone inherits from defaults.
@@ -2625,6 +2767,7 @@ def test_every_service_profile_field_is_accounted_for() -> None:
         "visibility_grants",
         "excluded_global_tools",
         "remote_a2a",
+        "allowed_model_tiers",
         # Set from the profile definition directly rather than merged.
         "id",
         "description",
@@ -2641,12 +2784,23 @@ def test_every_service_profile_field_is_accounted_for() -> None:
     )
 
 
-def _resolved_default_assistant(tmp_path: Path, operator_yaml: str) -> ProcessingConfig:
+def _loaded_with_operator_config(tmp_path: Path, operator_yaml: str) -> AppConfig:
     config_file = tmp_path / "config.yaml"
     config_file.write_text(operator_yaml)
-    config = load_config(config_file_path=str(config_file), load_dotenv_file=False)
+    return load_config(config_file_path=str(config_file), load_dotenv_file=False)
+
+
+def _resolved_default_assistant(tmp_path: Path, operator_yaml: str) -> ProcessingConfig:
+    """The resolved `default_assistant`, as startup would accept it.
+
+    The tier validation is part of the assertion: a merge that resolves the
+    selection correctly and leaves the shipped tier-eligibility list behind
+    passes every field check below and then refuses to boot.
+    """
+    config = _loaded_with_operator_config(tmp_path, operator_yaml)
     profile = next(p for p in config.service_profiles if p.id == "default_assistant")
     assert profile.processing_config is not None
+    validate_profile_model_tier(profile, config.model_tiers)
     return profile.processing_config
 
 
@@ -2694,10 +2848,10 @@ def test_operator_supplied_retry_chain_is_kept(tmp_path: Path) -> None:
     assert processing_config.retry_config.primary.provider == "anthropic"
 
 
-def test_unrelated_operator_override_keeps_the_shipped_retry_chain(
+def test_unrelated_operator_override_keeps_the_shipped_model_selection(
     tmp_path: Path,
 ) -> None:
-    """Only a model selection drops the chain; other overrides must not."""
+    """Only a model selection displaces the shipped one; other overrides must not."""
     processing_config = _resolved_default_assistant(
         tmp_path,
         "service_profiles:\n"
@@ -2707,8 +2861,7 @@ def test_unrelated_operator_override_keeps_the_shipped_retry_chain(
     )
 
     assert processing_config.max_iterations == 7
-    assert processing_config.retry_config is not None
-    assert processing_config.retry_config.primary.model == "gemini-3.8-flash"
+    assert processing_config.model_tier == "standard"
 
 
 def test_explicit_null_retry_config_with_a_model_drops_the_shipped_chain(
@@ -2740,9 +2893,10 @@ def test_explicit_null_retry_config_alone_still_inherits(tmp_path: Path) -> None
     """`retry_config: null` with no model reads as "no chain of my own".
 
     The merged definition can only carry presence, and an absent key means
-    inherit — so this keeps the chain from `default_profile_settings`. Turning a
-    shipped chain off while keeping the shipped model has no expression today;
-    naming the model alongside the null does it.
+    inherit — so this says nothing about which model the profile runs on and
+    leaves the shipped selection in place. Turning a shipped chain off while
+    keeping the shipped model has no expression today; naming the model
+    alongside the null does it.
     """
     processing_config = _resolved_default_assistant(
         tmp_path,
@@ -2752,4 +2906,332 @@ def test_explicit_null_retry_config_alone_still_inherits(tmp_path: Path) -> None
         "      retry_config: null\n",
     )
 
+    assert processing_config.model_tier == "standard"
+
+
+def test_operator_model_override_drops_the_shipped_model_tier(
+    tmp_path: Path,
+) -> None:
+    """A shipped tier would otherwise win over the model the operator named.
+
+    `assistant.py` builds the client from the tier when one is set, and the
+    merged definition carrying both is a startup error besides — so provenance
+    has to resolve this where the two layers are still separate.
+    """
+    processing_config = _resolved_default_assistant(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      provider: "anthropic"\n'
+        '      llm_model: "claude-sonnet-5"\n',
+    )
+
+    assert processing_config.model_tier is None
+    assert processing_config.llm_model == "claude-sonnet-5"
+
+
+def test_operator_retry_chain_drops_the_shipped_model_tier(tmp_path: Path) -> None:
+    processing_config = _resolved_default_assistant(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        "      retry_config:\n"
+        '        primary: {provider: "anthropic", model: "claude-sonnet-5"}\n',
+    )
+
+    assert processing_config.model_tier is None
     assert processing_config.retry_config is not None
+    assert processing_config.retry_config.primary.model == "claude-sonnet-5"
+
+
+def test_operator_model_tier_drops_a_shipped_inline_model(tmp_path: Path) -> None:
+    """The reverse direction: the operator's tier wins over the shipped model.
+
+    `engineer` ships `anthropic`/`claude-opus-5` inline. Left in place, the
+    merged definition would name both kinds of selection, which is refused.
+    """
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "engineer"\n'
+        "    processing_config:\n"
+        '      model_tier: "deep"\n',
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "engineer")
+    processing_config = profile.processing_config
+    assert processing_config.model_tier == "deep"
+    assert processing_config.llm_model is None
+    assert processing_config.provider is None
+    assert processing_config.retry_config is None
+    assert validate_profile_model_tier(profile, config.model_tiers) is not None
+
+
+def test_operator_retry_chain_drops_the_shipped_tier_eligibility(
+    tmp_path: Path,
+) -> None:
+    """A superseded shipped tier takes the shipped eligibility list with it.
+
+    `default_assistant` ships both `model_tier` and `allowed_model_tiers`. The
+    list survived the merge by ID and read as the operator's own, so the merged
+    profile named eligible tiers with no tier to qualify, and
+    `validate_profile_model_tier` refused to boot.
+    """
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        "      retry_config:\n"
+        '        primary: {provider: "anthropic", model: "claude-sonnet-5"}\n',
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "default_assistant")
+    assert profile.processing_config.model_tier is None
+    assert profile.allowed_model_tiers is None
+    assert validate_profile_model_tier(profile, config.model_tiers) is None
+
+
+def test_operator_model_override_drops_the_shipped_tier_eligibility(
+    tmp_path: Path,
+) -> None:
+    """The same for an inline model, on the other profile that ships a list."""
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "complex_tasks"\n'
+        "    processing_config:\n"
+        '      provider: "anthropic"\n'
+        '      llm_model: "claude-opus-5"\n',
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "complex_tasks")
+    assert profile.processing_config.model_tier is None
+    assert profile.processing_config.llm_model == "claude-opus-5"
+    assert profile.allowed_model_tiers is None
+    assert validate_profile_model_tier(profile, config.model_tiers) is None
+
+
+def test_operator_model_tier_keeps_the_shipped_tier_eligibility(
+    tmp_path: Path,
+) -> None:
+    """An operator's own tier supersedes nothing the list qualifies.
+
+    The shipped list still describes which tiers the profile may be run on, and
+    the tier the operator named is one of them.
+    """
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      model_tier: "deep"\n',
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "default_assistant")
+    assert profile.processing_config.model_tier == "deep"
+    assert profile.allowed_model_tiers == ["standard", "deep", "frontier"]
+    assert validate_profile_model_tier(profile, config.model_tiers) is not None
+
+
+def test_operator_eligibility_list_beside_an_inline_model_is_still_refused(
+    tmp_path: Path,
+) -> None:
+    """Only the shipped list goes; one the operator stated stays and fails.
+
+    Naming eligible tiers for a profile that runs on one inline model is a
+    misconfiguration, and it is the operator's to fix -- so it is refused by
+    name rather than resolved away.
+    """
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      provider: "anthropic"\n'
+        '      llm_model: "claude-sonnet-5"\n'
+        '    allowed_model_tiers: ["standard", "deep"]\n',
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "default_assistant")
+    assert profile.allowed_model_tiers == ["standard", "deep"]
+
+    with pytest.raises(
+        ValueError, match="sets allowed_model_tiers without a model_tier"
+    ):
+        validate_profile_model_tier(profile, config.model_tiers)
+
+
+def _default_settings_and_heir(
+    config: AppConfig,
+) -> tuple[ProcessingConfig, ProcessingConfig]:
+    """The default settings plus one profile that selects no model of its own.
+
+    `email_intake` declares neither a tier nor an inline model, so whatever the
+    defaults block ends up selecting is what it runs on.
+    """
+    heir = next(p for p in config.service_profiles if p.id == "email_intake")
+    assert heir.processing_config is not None
+    return config.default_profile_settings.processing_config, heir.processing_config
+
+
+def test_operator_default_settings_chain_drops_the_shipped_tier(
+    tmp_path: Path,
+) -> None:
+    """An operator retry chain in `default_profile_settings` still loads.
+
+    The block reaches resolution already deep-merged, so the shipped
+    `model_tier` sat alongside the operator's chain: the config named both kinds
+    of selection and startup was refused outright. Provenance decides it here
+    the same way it does for a service profile.
+    """
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "default_profile_settings:\n"
+        "  processing_config:\n"
+        "    retry_config:\n"
+        '      primary: {provider: "anthropic", model: "claude-sonnet-5"}\n'
+        '      fallback: {provider: "google", model: "gemini-3.8-flash"}\n',
+    )
+
+    defaults, heir = _default_settings_and_heir(config)
+
+    assert defaults.model_tier is None
+    assert defaults.retry_config is not None
+    assert defaults.retry_config.primary.model == "claude-sonnet-5"
+    assert heir.model_tier is None
+    assert heir.retry_config is not None
+    assert heir.retry_config.fallback is not None
+    assert heir.retry_config.fallback.model == "gemini-3.8-flash"
+
+
+def test_operator_default_settings_model_drops_the_shipped_tier(
+    tmp_path: Path,
+) -> None:
+    """The same for an inline model, which the shipped tier would win over."""
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "default_profile_settings:\n"
+        "  processing_config:\n"
+        '    provider: "anthropic"\n'
+        '    llm_model: "claude-sonnet-5"\n',
+    )
+
+    defaults, heir = _default_settings_and_heir(config)
+
+    assert defaults.model_tier is None
+    assert defaults.llm_model == "claude-sonnet-5"
+    assert heir.model_tier is None
+    assert heir.provider == "anthropic"
+    assert heir.llm_model == "claude-sonnet-5"
+
+
+def test_operator_default_settings_tier_replaces_the_shipped_tier(
+    tmp_path: Path,
+) -> None:
+    """A tier of the operator's own is a plain override, not a supersession."""
+    config = _loaded_with_operator_config(
+        tmp_path,
+        'default_profile_settings:\n  processing_config:\n    model_tier: "deep"\n',
+    )
+
+    defaults, heir = _default_settings_and_heir(config)
+
+    assert defaults.model_tier == "deep"
+    assert heir.model_tier == "deep"
+
+
+def test_null_retry_config_in_default_settings_keeps_the_shipped_tier(
+    tmp_path: Path,
+) -> None:
+    """`retry_config: null` asks for no chain and says nothing about tiers."""
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "default_profile_settings:\n  processing_config:\n    retry_config: null\n",
+    )
+
+    defaults, heir = _default_settings_and_heir(config)
+
+    assert defaults.model_tier == "standard"
+    assert defaults.retry_config is None
+    assert heir.model_tier == "standard"
+
+
+def test_default_settings_declaring_both_selections_is_still_refused(
+    tmp_path: Path,
+) -> None:
+    """Provenance resolves layers, not a single block naming both kinds."""
+    with pytest.raises(
+        ValueError, match="default_profile_settings declares model_tier"
+    ):
+        _loaded_with_operator_config(
+            tmp_path,
+            "default_profile_settings:\n"
+            "  processing_config:\n"
+            '    model_tier: "deep"\n'
+            '    llm_model: "claude-sonnet-5"\n',
+        )
+
+
+_REMOTE_PROFILE_YAML = (
+    "service_profiles:\n"
+    '  - id: "k8s_agent"\n'
+    '    description: "Remote Kubernetes agent"\n'
+    "    remote_a2a:\n"
+    '      agent_url: "http://k8s-agent:9000/a2a"\n'
+)
+
+
+def test_remote_profile_inherits_no_model_selection(tmp_path: Path) -> None:
+    """A remote profile names no model because the remote agent chooses it.
+
+    Inheriting the defaults block's `model_tier` made every ordinary remote
+    profile fail `validate_profile_model_tier` at startup, which refuses a tier
+    on a remote profile — so the whole application stopped booting.
+    """
+    config = _loaded_with_operator_config(tmp_path, _REMOTE_PROFILE_YAML)
+
+    profile = next(p for p in config.service_profiles if p.id == "k8s_agent")
+    assert profile.remote_a2a is not None
+    assert profile.processing_config.model_tier is None
+    assert profile.allowed_model_tiers is None
+    assert profile.processing_config.llm_model is None
+    assert profile.processing_config.retry_config is None
+    assert validate_profile_model_tier(profile, config.model_tiers) is None
+
+
+def test_remote_profile_declaring_a_tier_is_still_refused(tmp_path: Path) -> None:
+    """Only the inherited tier goes; one the profile named stays and fails."""
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "k8s_agent"\n'
+        '    description: "Remote Kubernetes agent"\n'
+        "    processing_config:\n"
+        '      model_tier: "deep"\n'
+        "    remote_a2a:\n"
+        '      agent_url: "http://k8s-agent:9000/a2a"\n',
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "k8s_agent")
+    assert profile.processing_config.model_tier == "deep"
+
+    with pytest.raises(ValueError, match="is a remote A2A profile and cannot use"):
+        validate_profile_model_tier(profile, config.model_tiers)
+
+
+def test_remote_profile_inherits_no_operator_default_model(tmp_path: Path) -> None:
+    """An operator's inline default is as inapplicable to it as the tier was."""
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "default_profile_settings:\n"
+        "  processing_config:\n"
+        '    provider: "anthropic"\n'
+        '    llm_model: "claude-sonnet-5"\n' + _REMOTE_PROFILE_YAML,
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "k8s_agent")
+    assert profile.processing_config.provider is None
+    assert profile.processing_config.llm_model is None

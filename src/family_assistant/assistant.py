@@ -67,6 +67,13 @@ from family_assistant.indexing.notes_indexer import NotesIndexer
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.llm.factory import LLMClientFactory
+from family_assistant.llm.model_tiers import (
+    models_in_chain,
+    resolve_entry_client_config,
+    resolve_profile_llm_model,
+    resolve_tier_client_config,
+    validate_profile_model_tier,
+)
 from family_assistant.llm.providers.google_genai_client import (
     is_antigravity_model,
     is_interactions_agent_model,
@@ -165,7 +172,11 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.camera.protocol import CameraBackend
-    from family_assistant.config_models import AIWorkerConfig, ServiceProfile
+    from family_assistant.config_models import (
+        AIWorkerConfig,
+        ModelTierConfig,
+        ServiceProfile,
+    )
     from family_assistant.context_providers import ContextProvider
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.llm import LLMInterface
@@ -368,10 +379,10 @@ def _antigravity_models_in_retry_config(retry_config: RetryConfig | None) -> lis
     """Antigravity model ids named anywhere in a retry chain."""
     if retry_config is None:
         return []
-    chain = [retry_config.primary.model]
+    chain = [retry_config.primary]
     if retry_config.fallback is not None:
-        chain.append(retry_config.fallback.model)
-    return [model for model in chain if model and is_antigravity_model(model)]
+        chain.append(retry_config.fallback)
+    return models_in_chain(chain, is_antigravity_model)
 
 
 def validate_antigravity_agent_config(
@@ -1162,6 +1173,8 @@ class Assistant:
         """Build and register one configured processing service."""
         profile_id = profile_conf.id
 
+        model_tier = validate_profile_model_tier(profile_conf, self.config.model_tiers)
+
         if profile_conf.remote_a2a:
             self._setup_remote_a2a_profile(profile_conf)
             return
@@ -1170,10 +1183,12 @@ class Assistant:
         profile_proc_conf = profile_conf.processing_config
         profile_tools_conf = profile_conf.tools_config
 
-        profile_llm_model = profile_proc_conf.llm_model or self.config.model
+        profile_llm_model = resolve_profile_llm_model(
+            profile_proc_conf, model_tier, self.config.model
+        )
 
         llm_client_for_profile = self._create_profile_llm_client(
-            profile_conf, profile_llm_model
+            profile_conf, profile_llm_model, model_tier
         )
 
         (
@@ -1504,7 +1519,10 @@ class Assistant:
         return profile_tools_provider, profile_on_demand_view
 
     def _create_profile_llm_client(
-        self, profile_conf: ServiceProfile, profile_llm_model: str
+        self,
+        profile_conf: ServiceProfile,
+        profile_llm_model: str,
+        model_tier: ModelTierConfig | None,
     ) -> LLMInterface:
         """Use an override or create the configured client for one profile."""
         profile_id = profile_conf.id
@@ -1523,7 +1541,7 @@ class Assistant:
             profile_id, profile_proc_conf, profile_llm_model
         )
         client_config = self._build_profile_llm_client_config(
-            profile_conf, profile_llm_model
+            profile_conf, profile_llm_model, model_tier
         )
         llm_client = LLMClientFactory.create_client(config=client_config)
         logger.info(
@@ -1557,9 +1575,18 @@ class Assistant:
         self,
         profile_conf: ServiceProfile,
         profile_llm_model: str,
+        model_tier: ModelTierConfig | None = None,
         # ast-grep-ignore: no-dict-any - Factory config has varying provider keys.
     ) -> dict[str, Any]:
         profile_proc_conf = profile_conf.processing_config
+        if model_tier is not None:
+            logger.info(
+                "Creating LLM client for profile '%s' from model tier '%s' (chain: %s)",
+                profile_conf.id,
+                profile_proc_conf.model_tier,
+                ", ".join(entry.model or "?" for entry in model_tier.chain),
+            )
+            return resolve_tier_client_config(model_tier, self.config.llm_parameters)
         if profile_proc_conf.retry_config is not None:
             return self._build_retry_client_config(profile_conf)
 
@@ -1603,20 +1630,21 @@ class Assistant:
     ) -> dict[str, Any]:
         retry_config = profile_conf.processing_config.retry_config
         assert retry_config is not None
-        retry_config_dict = retry_config.model_dump(exclude_none=True)
         llm_params = self.config.llm_parameters
-        primary = retry_config_dict.get("primary")
-        if primary is not None and "model_parameters" not in primary:
-            primary["model_parameters"] = llm_params
-        fallback = retry_config_dict.get("fallback")
-        if fallback and "model_parameters" not in fallback:
-            fallback["model_parameters"] = llm_params
+        # ast-grep-ignore: no-dict-any - Factory config has varying retry keys.
+        retry_config_dict: dict[str, Any] = {
+            "primary": resolve_entry_client_config(retry_config.primary, llm_params)
+        }
+        if retry_config.fallback is not None:
+            retry_config_dict["fallback"] = resolve_entry_client_config(
+                retry_config.fallback, llm_params
+            )
         logger.info(
             "Creating RetryingLLMClient for profile '%s' with primary='%s', "
             "fallback='%s'",
             profile_conf.id,
-            primary.get("model") if primary else None,
-            fallback.get("model") if fallback else None,
+            retry_config.primary.model,
+            retry_config.fallback.model if retry_config.fallback else None,
         )
         return {"retry_config": retry_config_dict}
 

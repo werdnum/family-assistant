@@ -287,14 +287,18 @@ supervision requirements based on input trust level:
    shared workspace. A sandbox run reproduces a failure or reads a repository without giving the
    profile anything that writes back, and the `sandbox_network` taint sink gates it whenever the
    turn carries untrusted content.
-5. **Complex Tasks Profile [BC]**: full tool access via OpenAI GPT-5.6-sol (`gpt-5.6-sol`) at
-   `reasoning_effort: high`, with a higher iteration limit (100) for deep multi-step reasoning. Used
-   via `/complex` or delegation from the default assistant, which runs Gemini 3.8 Flash
-   (`gemini-3.8-flash`, with GPT-5.6-terra as its fallback) with 50 iterations. **Not to be confused
-   with `spawn_worker`**, which launches isolated coding agents (Claude Code / Gemini CLI) in
-   sandboxed containers with NO access to Family Assistant tools or data. Use `complex_tasks` when
-   the task needs FA context (notes, calendar, documents, Home Assistant, etc.); use `spawn_worker`
-   for standalone coding or computing tasks.
+5. **Complex Tasks Profile [BC]**: full tool access on the `deep` model tier (OpenAI GPT-5.6-sol at
+   `reasoning_effort: high`, falling back to Claude Fable 5), with a higher iteration limit (100)
+   for deep multi-step reasoning. Used via `/complex` or delegation from the default assistant,
+   which runs the `standard` tier (Gemini 3.8 Flash, with GPT-5.6-terra as its fallback) with 50
+   iterations. Which models a tier names is configured in the top-level `model_tiers` map, not on
+   the profile — see
+   [docs/operations/CONFIGURATION_REFERENCE.md](docs/operations/CONFIGURATION_REFERENCE.md) and
+   [docs/design/model-tiers.md](docs/design/model-tiers.md). **Not to be confused with
+   `spawn_worker`**, which launches isolated coding agents (Claude Code / Gemini CLI) in sandboxed
+   containers with NO access to Family Assistant tools or data. Use `complex_tasks` when the task
+   needs FA context (notes, calendar, documents, Home Assistant, etc.); use `spawn_worker` for
+   standalone coding or computing tasks.
 6. **Media Analyst Profile [A]**: describes and transcribes audio, video, images and PDFs on Gemini,
    which is the only configured provider whose adapter represents audio and video at all. Delegated
    to with `attachment_ids` when a profile's own model cannot read an attachment. It reads untrusted

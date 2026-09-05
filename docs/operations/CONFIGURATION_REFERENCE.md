@@ -736,7 +736,8 @@ ______________________________________________________________________
 
 `llm_parameters` in `config.yaml` maps a model name or prefix to keyword arguments passed to that
 provider for every matching model. It is shared by all profiles, including both halves of a
-`retry_config`.
+`retry_config`. A single model tier entry can overlay it for itself — see
+[model_tiers](#model_tiers) below.
 
 ```yaml
 llm_parameters:
@@ -789,6 +790,111 @@ same `llm_parameters` entry if you want a larger budget.
 
 Enabling thinking is worthwhile mainly for long tool loops — the profile running Claude (`engineer`)
 is the candidate. Note that thinking is incompatible with a non-default `temperature`.
+
+______________________________________________________________________
+
+### model_tiers
+
+A **model tier** is a named model recipe: a primary provider/model, an optional availability
+fallback, and the request parameters each is served with. A tier says how inference runs; a profile
+says how the agent operates (prompt, tools, iteration limit). A profile selects one with
+`processing_config.model_tier`, so replacing a model is an edit here rather than in every profile
+that named it.
+
+```yaml
+model_tiers:
+  standard:
+    label: "Standard" # user-facing name; may differ from the config name
+    description: "Everyday conversation, retrieval and straightforward tool use."
+    chain:
+      - provider: "google"
+        model: "gemini-3.8-flash"
+      - provider: "openai"
+        model: "gpt-5.6-terra"
+  frontier:
+    label: "Max"
+    chain:
+      - provider: "anthropic"
+        model: "claude-fable-5"
+        llm_parameters:
+          thinking:
+            type: "adaptive"
+          output_config:
+            effort: "xhigh"
+
+service_profiles:
+  - id: "default_assistant"
+    processing_config:
+      model_tier: "standard"
+    allowed_model_tiers: ["standard", "frontier"]
+```
+
+| Key                      | Meaning                                                                     |
+| ------------------------ | --------------------------------------------------------------------------- |
+| `chain`                  | One or two entries: primary, then optional availability fallback. Required. |
+| `chain[].provider`       | Optional; auto-detected from the model name when omitted.                   |
+| `chain[].model`          | Required on every entry.                                                    |
+| `chain[].llm_parameters` | Request parameters for **this entry only**, overlaid on the global map.     |
+| `label`                  | User-facing name for the tier.                                              |
+| `description`            | One line on when the tier is worth its cost.                                |
+
+Tier names must start with a lowercase letter and contain only lowercase letters, digits and
+underscores. A chain is capped at two entries because that is what the retry client serves: a chain
+answers "what if the selected model is unavailable", never "the cheap model's answer was poor, run
+it again on the expensive one".
+
+#### Per-entry `llm_parameters`
+
+The global `llm_parameters` map stays the source of model defaults. An entry's own block is merged
+over the global entry for that model and re-inserted under the model's exact id **after** every
+global pattern, so it applies last and reaches no other entry.
+
+This exists because the global map is matched by *substring* in insertion order, which makes the
+same model at two efforts inexpressible there — the first matching pattern wins for every use of the
+model. Put the shared defaults in the global map and the tier-specific difference on the entry. In
+the example above, `claude-fable-5` has no global entry at all, so it inherits no thinking
+configuration where it serves as another tier's fallback, and gets adaptive thinking only in
+`frontier`.
+
+#### `model_tier` and `allowed_model_tiers` on a profile
+
+- `processing_config.model_tier` — the tier the profile runs on.
+- `allowed_model_tiers` (top level on the profile, beside `tools_policy`) — the tiers the profile
+  may be run on. Omitted means "only its own `model_tier`". The list is replaced, never merged, when
+  a profile or an operator overrides it, so it can only narrow. Every name must exist in
+  `model_tiers`, the profile's own `model_tier` must appear in it, and setting it on a profile with
+  no `model_tier` is a startup error.
+
+#### Precedence against `retry_config` / `llm_model` / `provider`
+
+A profile names **either** a tier **or** an inline model, never both:
+
+- Declaring both in the same block is a startup error.
+- Declaring `model_tier` drops any `provider`, `llm_model` and `retry_config` inherited from
+  `default_profile_settings` or from the shipped profile an operator is overriding.
+- Declaring `provider`, `llm_model` or `retry_config` drops an inherited `model_tier` the same way.
+
+The same rule applies to `default_profile_settings` itself: an operator who sets a chain or an
+inline model there replaces the shipped `model_tier` rather than colliding with it, and one who sets
+`model_tier` replaces a shipped chain or model. A bare `retry_config: null` asks for no chain and
+says nothing about tiers, so it leaves the shipped tier in place.
+
+`default_profile_settings.processing_config.model_tier` therefore sets the tier for every profile
+that does not select its own or pin an inline model.
+
+#### Profiles that cannot use a tier
+
+Refused at startup, because the runtime is coupled to one provider or one API surface and a tier
+offers to replace it:
+
+- `enable_computer_use` profiles (Google GenAI client only).
+- profiles with `antigravity_config`, and any tier whose chain names an Interactions API agent
+  (Antigravity or Deep Research) — those run server-side rather than as chat models.
+- `remote_a2a` profiles, where the remote agent chooses its own model. A remote profile inherits no
+  model selection at all — neither a tier nor an inline model reaches it from
+  `default_profile_settings` — so only a `model_tier` written on the profile itself is refused.
+- profiles pinned for perception reasons rather than by a config flag, such as `media_analyst` (only
+  the Gemini adapter represents audio and video), which stay on an inline model by choice.
 
 ______________________________________________________________________
 
