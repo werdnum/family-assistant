@@ -11,11 +11,14 @@ their model inline, because their runtime is coupled to one provider or one API
 surface and a tier would offer to replace it.
 """
 
+from typing import TYPE_CHECKING, cast
+
 import pytest
 
 from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig
 from family_assistant.llm.factory import LLMClientFactory
+from family_assistant.llm.model_selection import ModelTierEligibility
 from family_assistant.llm.model_tiers import (
     resolve_profile_llm_model,
     resolve_tier_client_config,
@@ -23,6 +26,9 @@ from family_assistant.llm.model_tiers import (
 )
 from family_assistant.llm.providers.anthropic_client import AnthropicClient
 from tests.unit.llm.conftest import shipped_profile
+
+if TYPE_CHECKING:
+    from family_assistant.llm import LLMInterface
 
 
 # ast-grep-ignore: no-dict-any - Factory config has varying provider keys.
@@ -201,3 +207,46 @@ def test_every_shipped_profile_passes_tier_validation(
     """Startup validates each profile; nothing shipped may fail it."""
     for profile in shipped_config.service_profiles:
         validate_profile_model_tier(profile, shipped_config.model_tiers)
+
+
+def test_a_tiered_profile_gets_one_client_per_tier_it_may_run_on(
+    shipped_config: AppConfig,
+) -> None:
+    """Built at startup, so a tier's chain and credentials fail the boot, not
+    the first request that reaches for it."""
+    assistant = Assistant(shipped_config)
+    profile = shipped_profile(shipped_config, "default_assistant")
+    eligibility = ModelTierEligibility.from_profile(profile, shipped_config.model_tiers)
+
+    clients = assistant._create_profile_tier_llm_clients(profile, eligibility)
+
+    assert set(clients) == {"standard", "deep", "frontier"}
+    assert isinstance(clients["frontier"], AnthropicClient)
+
+
+def test_a_test_override_can_replace_one_tiers_client(
+    shipped_config: AppConfig,
+) -> None:
+    """`"<profile>@<tier>"` is the seam a test uses to tell the tiers apart.
+
+    A bare profile id keeps overriding every tier, which is what a test that
+    does not care about tiers wants -- and what stops one from reaching a real
+    provider by accident.
+    """
+    only_deep = cast("LLMInterface", object())
+    everything = cast("LLMInterface", object())
+    assistant = Assistant(
+        shipped_config,
+        llm_client_overrides={
+            "default_assistant@deep": only_deep,
+            "default_assistant": everything,
+        },
+    )
+    profile = shipped_profile(shipped_config, "default_assistant")
+    eligibility = ModelTierEligibility.from_profile(profile, shipped_config.model_tiers)
+
+    clients = assistant._create_profile_tier_llm_clients(profile, eligibility)
+
+    assert clients["deep"] is only_deep
+    assert clients["standard"] is everything
+    assert clients["frontier"] is everything

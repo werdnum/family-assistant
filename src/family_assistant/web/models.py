@@ -263,6 +263,14 @@ class ChatPromptRequest(BaseModel):
             "instead of re-driving the LLM."
         ),
     )
+    model_tier: str | None = Field(
+        default=None,
+        description=(
+            "Optional model tier to run this request on, from the profile's "
+            "model_tiers. Omit to use the profile's default. A tier the profile "
+            "does not accept is a 400."
+        ),
+    )
 
 
 class VoiceSessionTurn(BaseModel):
