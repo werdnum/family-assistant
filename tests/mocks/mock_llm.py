@@ -34,6 +34,7 @@ from family_assistant.llm.messages import (
     is_turn_scaffolding,
     message_to_json_dict,
 )
+from family_assistant.llm.model_selection import stamp_model_selection
 from family_assistant.storage.database import in_transaction
 from family_assistant.tools.types import ToolDefinition
 
@@ -254,22 +255,18 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
         """Stamp the run's model tier onto the usage, as a real provider does.
 
         Every real client routes its result through
-        ``LLMCallTelemetry.finalize_usage``, which reads the turn's resolved
-        selection from the call context and records it with the message. A fake
-        that skipped it would make every tier assertion above the LLM layer
-        untestable, and would quietly disagree with production about what a
-        reply carries.
+        ``LLMCallTelemetry.finalize_usage``, which stamps the turn's resolved
+        selection with the same helper this uses. A fake that skipped it would
+        make every tier assertion above the LLM layer untestable, and would
+        quietly disagree with production about what a reply carries.
         """
         selection = current_model_selection()
         if selection is None:
             return output
-        reasoning: MessageReasoningInfo = dict(output.reasoning_info or {})  # type: ignore[assignment]
-        if selection.tier is not None:
-            reasoning["model_tier"] = selection.tier
-        if selection.requested is not None:
-            reasoning["model_tier_requested"] = selection.requested
-        reasoning["model_tier_source"] = selection.source
-        return replace(output, reasoning_info=reasoning)
+        reasoning: MessageReasoningInfo = dict(output.reasoning_info or {})  # type: ignore[assignment] - a TypedDict copy is still that TypedDict
+        return replace(
+            output, reasoning_info=stamp_model_selection(reasoning, selection)
+        )
 
     def generate_response_stream(
         self,

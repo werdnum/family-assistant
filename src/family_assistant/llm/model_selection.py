@@ -2,9 +2,8 @@
 
 A profile says how the agent operates; a model tier says how inference runs.
 This module carries the second choice through a run: what was requested, by
-whom, what it resolved to, and -- once Auto routing lands -- how the routing
-went. It is resolved once per turn, before any model-dependent preparation, and
-frozen for the rest of the run.
+whom, and what it resolved to. It is resolved once per turn, before any
+model-dependent preparation, and frozen for the rest of the run.
 
 Admission is a gate of its own rather than a tool-policy rule. The policy
 builder injects a synthetic self-delegation ALLOW above a profile's own
@@ -25,23 +24,24 @@ inline model instead of a tier admits no selection at all.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Self
+from typing import TYPE_CHECKING, Literal, Self
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
     from family_assistant.config_models import ModelTierConfig, ServiceProfile
+    from family_assistant.llm.messages import MessageReasoningInfo
 
 __all__ = [
     "ModelSelectionRequest",
+    "ModelTierClientMissing",
     "ModelTierEligibility",
     "ModelTierNotPermitted",
     "ModelTierOption",
     "ResolvedModelSelection",
-    "RoutingOutcome",
     "SelectionSource",
     "resolve_model_selection",
+    "stamp_model_selection",
 ]
 
 type SelectionSource = Literal["user", "model", "default"]
@@ -50,10 +50,16 @@ type SelectionSource = Literal["user", "model", "default"]
 ``"default"`` no selection at all -- the profile's configured tier. Auto routing
 adds ``"auto"`` here."""
 
-type RoutingOutcome = Literal["not_requested", "decided", "timeout", "invalid"]
-"""How Auto routing went, recorded apart from the resolved tier so a classifier
-outage cannot masquerade as a run of confident decisions. Only
-``"not_requested"`` is produced until routing lands."""
+
+class ModelTierClientMissing(RuntimeError):
+    """A profile admits a tier it has no client built for.
+
+    Deliberately not a :class:`ModelTierNotPermitted`: nothing about the
+    request is wrong, so telling the requester to choose another tier would
+    blame them for a deployment that built fewer clients than it advertises.
+    It propagates as the internal error it is, with a traceback naming the
+    profile and the tier.
+    """
 
 
 class ModelTierNotPermitted(ValueError):
@@ -174,17 +180,11 @@ class ResolvedModelSelection:
     tier: str | None
     requested: str | None
     source: SelectionSource
-    routing_outcome: RoutingOutcome = "not_requested"
 
     @classmethod
     def unselected(cls, default_tier: str | None) -> Self:
         """The profile's own tier, chosen by nobody."""
-        return cls(
-            tier=default_tier,
-            requested=None,
-            source="default",
-            routing_outcome="not_requested",
-        )
+        return cls(tier=default_tier, requested=None, source="default")
 
     def to_json(self) -> dict[str, str | None]:
         """Serialize for persistence on a queued run.
@@ -196,25 +196,30 @@ class ResolvedModelSelection:
             "tier": self.tier,
             "requested": self.requested,
             "source": self.source,
-            "routing_outcome": self.routing_outcome,
         }
 
     @classmethod
-    # ast-grep-ignore: no-dict-any - JSON column payload, validated below
-    def from_json(cls, data: Mapping[str, Any]) -> Self:
+    def from_json(cls, data: object) -> Self:
         """Rehydrate a persisted selection, refusing one that is not one.
 
         Nothing downstream can act sensibly on a half-understood envelope: a
         selection that failed to load is not "no selection", it is a run whose
         models are unknown, so this raises rather than falling back.
+
+        Takes whatever the JSON column decoded to, rather than something a
+        caller has already shaped into a mapping: shaping it is where a payload
+        that is not an envelope quietly becomes an empty one.
+
+        Keys it does not know are ignored, so a row written by a deployment
+        that records more than this one -- an Auto routing outcome, say -- still
+        loads here.
         """
+        if not isinstance(data, Mapping):
+            msg = f"Persisted model selection is {type(data).__name__}, not an object."
+            raise ValueError(msg)
         source = data.get("source")
         if source not in {"user", "model", "default"}:
             msg = f"Persisted model selection has unknown source {source!r}."
-            raise ValueError(msg)
-        outcome = data.get("routing_outcome", "not_requested")
-        if outcome not in {"not_requested", "decided", "timeout", "invalid"}:
-            msg = f"Persisted model selection has unknown routing outcome {outcome!r}."
             raise ValueError(msg)
         tier = data.get("tier")
         requested = data.get("requested")
@@ -223,17 +228,12 @@ class ResolvedModelSelection:
         ):
             msg = "Persisted model selection has a non-string tier."
             raise ValueError(msg)
-        return cls(
-            tier=tier,
-            requested=requested,
-            source=source,
-            routing_outcome=outcome,
-        )
+        return cls(tier=tier, requested=requested, source=source)
 
 
 def resolve_model_selection(
     eligibility: ModelTierEligibility,
-    request: ModelSelectionRequest | None,
+    request: ModelSelectionRequest | ResolvedModelSelection | None,
     *,
     profile_id: str,
 ) -> ResolvedModelSelection:
@@ -242,7 +242,14 @@ def resolve_model_selection(
     Asking for the tier the profile already defaults to is always fine and
     keeps its stated source: "I chose Standard" and "I chose nothing" differ in
     what they authorize later even where they run the same models.
+
+    An already-resolved envelope is admitted here on the same terms as a fresh
+    request -- which is what a target that cannot serve any tier needs in order
+    to refuse one resolved against somebody else's eligibility, without
+    restating the gate for itself.
     """
+    if isinstance(request, ResolvedModelSelection):
+        request = ModelSelectionRequest(tier=request.tier, source=request.source)
     if request is None or request.tier is None:
         return ResolvedModelSelection.unselected(eligibility.default_tier)
 
@@ -273,8 +280,32 @@ def resolve_model_selection(
         tier=request.tier,
         requested=request.tier,
         source=request.source,
-        routing_outcome="not_requested",
     )
+
+
+def stamp_model_selection(
+    reasoning: MessageReasoningInfo,
+    selection: ResolvedModelSelection | None,
+) -> MessageReasoningInfo:
+    """Record *selection* on the usage a reply carries, in place.
+
+    One writer for the tier fields, so the fake LLM client and the real
+    telemetry path cannot drift into disagreeing about what a reply says it ran
+    at -- an assertion above the LLM layer would then pass against a fake and
+    mean nothing about production.
+
+    Auto's routing outcome is deliberately absent: while it can only say "not
+    requested" it is a constant on every row, and adding it when it can vary is
+    cheaper than removing it once history is full of it.
+    """
+    if selection is None:
+        return reasoning
+    if selection.tier is not None:
+        reasoning["model_tier"] = selection.tier
+    if selection.requested is not None:
+        reasoning["model_tier_requested"] = selection.requested
+    reasoning["model_tier_source"] = selection.source
+    return reasoning
 
 
 def _eligible_tiers(

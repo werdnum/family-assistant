@@ -38,7 +38,13 @@ from family_assistant.config_loader import (
     resolve_service_profile,
     set_nested_value,
 )
-from family_assistant.config_models import AppConfig, ProcessingConfig, ServiceProfile
+from family_assistant.config_models import (
+    AppConfig,
+    ModelTierConfig,
+    ProcessingConfig,
+    RetryModelConfig,
+    ServiceProfile,
+)
 from family_assistant.config_sources import (
     DeepMergedYamlSource,
     deep_merge_dicts,
@@ -1540,6 +1546,42 @@ class TestResolveServiceProfile:
         }
         result = resolve_service_profile(profile_def, default_settings, {})
         assert result["remote_a2a"] == remote_a2a_config
+
+    def test_a_remote_profile_inherits_no_tier_eligibility_list(self) -> None:
+        """An operator's default eligibility must not make a remote unbootable.
+
+        `validate_profile_model_tier` refuses any eligibility list on a profile
+        with no `model_tier`, and a remote profile has none by construction --
+        so an inherited list would fail startup for every remote profile in a
+        deployment whose defaults mention tiers at all.
+        """
+        default_settings: dict[str, Any] = {
+            "processing_config": {"timezone": "UTC", "model_tier": "standard"},
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+            "allowed_model_tiers": ["standard", "deep"],
+            "auto_model_tiers": ["standard"],
+        }
+        profile_def = {
+            "id": "remote_agent",
+            "remote_a2a": {
+                "agent_url": "https://agent.example.com/a2a",
+                "auth": {"type": "bearer", "token_env": "AGENT_TOKEN"},
+            },
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["allowed_model_tiers"] is None
+        assert result["auto_model_tiers"] is None
+        assert (
+            validate_profile_model_tier(
+                ServiceProfile.model_validate(result),
+                {"standard": ModelTierConfig(chain=[RetryModelConfig(model="m")])},
+            )
+            is None
+        )
 
     def test_remote_a2a_absent_when_not_in_profile(self) -> None:
         """Test that remote_a2a is not added when not in profile definition."""

@@ -218,10 +218,22 @@ def test_a_tiered_profile_gets_one_client_per_tier_it_may_run_on(
     profile = shipped_profile(shipped_config, "default_assistant")
     eligibility = ModelTierEligibility.from_profile(profile, shipped_config.model_tiers)
 
-    clients = assistant._create_profile_tier_llm_clients(profile, eligibility)
+    default_client, clients = assistant._create_profile_llm_clients(
+        profile,
+        resolve_profile_llm_model(
+            profile.processing_config,
+            validate_profile_model_tier(profile, shipped_config.model_tiers),
+            shipped_config.model,
+        ),
+        validate_profile_model_tier(profile, shipped_config.model_tiers),
+        eligibility,
+    )
 
     assert set(clients) == {"standard", "deep", "frontier"}
     assert isinstance(clients["frontier"], AnthropicClient)
+    # The default tier's entry *is* the service's default client, not a second
+    # client built the same way.
+    assert default_client is clients["standard"]
 
 
 def test_a_test_override_can_replace_one_tiers_client(
@@ -245,7 +257,16 @@ def test_a_test_override_can_replace_one_tiers_client(
     profile = shipped_profile(shipped_config, "default_assistant")
     eligibility = ModelTierEligibility.from_profile(profile, shipped_config.model_tiers)
 
-    clients = assistant._create_profile_tier_llm_clients(profile, eligibility)
+    _, clients = assistant._create_profile_llm_clients(
+        profile,
+        resolve_profile_llm_model(
+            profile.processing_config,
+            validate_profile_model_tier(profile, shipped_config.model_tiers),
+            shipped_config.model,
+        ),
+        validate_profile_model_tier(profile, shipped_config.model_tiers),
+        eligibility,
+    )
 
     assert clients["deep"] is only_deep
     assert clients["standard"] is everything

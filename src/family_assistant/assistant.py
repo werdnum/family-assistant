@@ -1188,14 +1188,11 @@ class Assistant:
             profile_proc_conf, model_tier, self.config.model
         )
 
-        llm_client_for_profile = self._create_profile_llm_client(
-            profile_conf, profile_llm_model, model_tier
-        )
         tier_eligibility = ModelTierEligibility.from_profile(
             profile_conf, self.config.model_tiers
         )
-        tier_llm_clients = self._create_profile_tier_llm_clients(
-            profile_conf, tier_eligibility
+        llm_client_for_profile, tier_llm_clients = self._create_profile_llm_clients(
+            profile_conf, profile_llm_model, model_tier, tier_eligibility
         )
 
         (
@@ -1527,60 +1524,63 @@ class Assistant:
         await profile_tools_provider.get_tool_definitions()
         return profile_tools_provider, profile_on_demand_view
 
-    def _create_profile_llm_client(
+    def _create_profile_llm_clients(
         self,
         profile_conf: ServiceProfile,
         profile_llm_model: str,
         model_tier: ModelTierConfig | None,
-    ) -> LLMInterface:
-        """Use an override or create the configured client for one profile."""
-        profile_id = profile_conf.id
-        profile_proc_conf = profile_conf.processing_config
-        if profile_id in self.llm_client_overrides:
-            llm_client = self.llm_client_overrides[profile_id]
-            logger.info(
-                "Profile '%s' using overridden LLM client: %s",
-                profile_id,
-                type(llm_client).__name__,
-            )
-            return llm_client
-
-        self._validate_computer_use_config(profile_conf, profile_llm_model)
-        validate_antigravity_agent_config(
-            profile_id, profile_proc_conf, profile_llm_model
-        )
-        client_config = self._build_profile_llm_client_config(
-            profile_conf, profile_llm_model, model_tier
-        )
-        llm_client = LLMClientFactory.create_client(config=client_config)
-        logger.info(
-            "Profile '%s' using client: %s", profile_id, type(llm_client).__name__
-        )
-        return llm_client
-
-    def _create_profile_tier_llm_clients(
-        self,
-        profile_conf: ServiceProfile,
         tier_eligibility: ModelTierEligibility,
-    ) -> dict[str, LLMInterface]:
-        """One client per tier this profile may be run on, built once at startup.
+    ) -> tuple[LLMInterface, dict[str, LLMInterface]]:
+        """Every client this profile may run on, and the one it runs on by default.
 
-        A run binds to one of these for its whole duration. Building them here
-        rather than per request means a tier's chain, parameters and provider
-        credentials are validated at startup, and the first request at a tier
-        pays no construction cost.
+        One construction path, because the default tier's client has to *be* the
+        map's entry for that tier rather than a second client configured the
+        same way: a run that names the default tier and a run that names nothing
+        must reach the same object, or telemetry, caching and provider state
+        split between two of them.
 
-        A test may override any of them individually with a
+        Building them at startup means a tier's chain, parameters and provider
+        credentials are validated then, and the first request at a tier pays no
+        construction cost. A profile pinned to an inline model has no tiers and
+        gets an empty map.
+
+        A test may override any tier individually with a
         ``"<profile_id>@<tier>"`` key in ``llm_client_overrides``; a bare profile
         id overrides every tier, which is what a test that does not care about
         tiers wants.
         """
         profile_id = profile_conf.id
+        profile_override = self.llm_client_overrides.get(profile_id)
+        if profile_override is None:
+            self._validate_computer_use_config(profile_conf, profile_llm_model)
+            validate_antigravity_agent_config(
+                profile_id, profile_conf.processing_config, profile_llm_model
+            )
+
+        default_tier = tier_eligibility.default_tier
+        if default_tier is None:
+            if profile_override is not None:
+                logger.info(
+                    "Profile '%s' using overridden LLM client: %s",
+                    profile_id,
+                    type(profile_override).__name__,
+                )
+                return profile_override, {}
+            client_config = self._build_profile_llm_client_config(
+                profile_conf, profile_llm_model, model_tier
+            )
+            llm_client = LLMClientFactory.create_client(config=client_config)
+            logger.info(
+                "Profile '%s' using client: %s", profile_id, type(llm_client).__name__
+            )
+            return llm_client, {}
+
         clients: dict[str, LLMInterface] = {}
         for option in tier_eligibility.selectable:
-            override = self.llm_client_overrides.get(
-                f"{profile_id}@{option.id}"
-            ) or self.llm_client_overrides.get(profile_id)
+            override = (
+                self.llm_client_overrides.get(f"{profile_id}@{option.id}")
+                or profile_override
+            )
             if override is not None:
                 clients[option.id] = override
                 continue
@@ -1593,7 +1593,7 @@ class Assistant:
                 option.id,
                 type(clients[option.id]).__name__,
             )
-        return clients
+        return clients[default_tier], clients
 
     @staticmethod
     def _validate_computer_use_config(

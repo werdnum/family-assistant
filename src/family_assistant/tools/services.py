@@ -20,6 +20,7 @@ from family_assistant.llm.model_selection import (
     ModelSelectionRequest,
     ModelTierNotPermitted,
     ResolvedModelSelection,
+    resolve_model_selection,
 )
 from family_assistant.security.taint import TaintMetadata, TaintSource, TurnTaintState
 from family_assistant.services.tool_call_review import (
@@ -1302,10 +1303,12 @@ async def delegate_to_service_tool(
     # admit must not become a question put to the user, nor a queued run that
     # fails when a worker picks it up.
     try:
-        model_selection = target_service.resolve_model_selection(
+        model_selection = resolve_model_selection(
+            target_service.service_config.tier_eligibility,
             ModelSelectionRequest(tier=model_tier, source="model")
             if model_tier is not None
-            else None
+            else None,
+            profile_id=target_service.service_config.id,
         )
     except ModelTierNotPermitted as refusal:
         logger.info(

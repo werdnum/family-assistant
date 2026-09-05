@@ -33,6 +33,7 @@ from family_assistant.llm.messages import (
     MessageReasoningInfo,
     message_to_json_dict,
 )
+from family_assistant.llm.model_selection import stamp_model_selection
 from family_assistant.llm.request_buffer import LLMRequestRecord, get_request_buffer
 from family_assistant.llm.utils.usage_telemetry import set_usage_span_attributes
 from family_assistant.observability.metrics import (
@@ -194,7 +195,6 @@ class LLMCallTelemetry:
                 "llm.model_tier": self.model_selection.tier or "",
                 "llm.model_tier.requested": self.model_selection.requested or "",
                 "llm.model_tier.source": self.model_selection.source,
-                "llm.model_tier.routing_outcome": self.model_selection.routing_outcome,
             })
 
     @property
@@ -291,18 +291,7 @@ class LLMCallTelemetry:
             finalized["resolved_model"] = self.resolved_model
         if self._finish_reason:
             finalized["finish_reason"] = self._finish_reason
-        selection = self.model_selection
-        if selection is not None:
-            # `routing_outcome` is deliberately not persisted while it can only
-            # ever say "not_requested": a field with one value on every row is
-            # noise in history and a migration away from it later is cheaper
-            # than one back to it.
-            if selection.tier is not None:
-                finalized["model_tier"] = selection.tier
-            if selection.requested is not None:
-                finalized["model_tier_requested"] = selection.requested
-            finalized["model_tier_source"] = selection.source
-        return finalized
+        return stamp_model_selection(finalized, self.model_selection)
 
     def record_output(self, output: LLMOutput) -> None:
         """Record the shape of a non-streamed response.

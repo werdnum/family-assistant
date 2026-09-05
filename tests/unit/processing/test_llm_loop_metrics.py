@@ -13,6 +13,7 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMOutput
 from family_assistant.llm.call_context import current_processing_profile
 from family_assistant.llm.messages import UserMessage
+from family_assistant.llm.model_selection import ResolvedModelSelection
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
 from family_assistant.tools.infrastructure import LocalToolsProvider
@@ -139,6 +140,8 @@ async def test_abandoning_the_stream_does_not_strand_the_attribution(
         user_name="Test User",
         turn_id="turn-abandoned",
         chat_interface=None,
+        llm_client=service.llm_client,
+        model_selection=ResolvedModelSelection.unselected(None),
     )
     async for _event, _message in stream:
         break

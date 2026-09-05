@@ -63,10 +63,7 @@ def test_no_request_resolves_to_the_profile_default() -> None:
     )
 
     assert resolved == ResolvedModelSelection(
-        tier="standard",
-        requested=None,
-        source="default",
-        routing_outcome="not_requested",
+        tier="standard", requested=None, source="default"
     )
 
 
@@ -108,10 +105,7 @@ def test_a_user_may_select_any_allowed_tier() -> None:
     )
 
     assert resolved == ResolvedModelSelection(
-        tier="frontier",
-        requested="frontier",
-        source="user",
-        routing_outcome="not_requested",
+        tier="frontier", requested="frontier", source="user"
     )
 
 
@@ -207,9 +201,7 @@ def test_eligibility_presents_tiers_in_configured_order_with_labels() -> None:
 
 
 def test_a_resolved_selection_survives_a_json_round_trip() -> None:
-    selection = ResolvedModelSelection(
-        tier="deep", requested="deep", source="model", routing_outcome="not_requested"
-    )
+    selection = ResolvedModelSelection(tier="deep", requested="deep", source="model")
 
     assert ResolvedModelSelection.from_json(selection.to_json()) == selection
 
@@ -218,3 +210,21 @@ def test_a_persisted_selection_with_an_unknown_source_is_refused() -> None:
     """A half-understood envelope is a run whose models are unknown."""
     with pytest.raises(ValueError, match="unknown source"):
         ResolvedModelSelection.from_json({"tier": "deep", "source": "vibes"})
+
+
+def test_a_persisted_selection_ignores_a_key_it_does_not_know() -> None:
+    """A row written by a deployment that records more still has to load.
+
+    Auto routing will record its outcome here; a run enqueued by the newer
+    deployment must not fail on the older one that picks it up.
+    """
+    loaded = ResolvedModelSelection.from_json({
+        "tier": "deep",
+        "requested": "deep",
+        "source": "user",
+        "routing_outcome": "decided",
+    })
+
+    assert loaded == ResolvedModelSelection(
+        tier="deep", requested="deep", source="user"
+    )

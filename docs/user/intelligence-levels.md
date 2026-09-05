@@ -26,8 +26,8 @@ why the request is hard: it turns on the answer being *right* rather than merely
 
 ## Choosing a level
 
-**In the web and iOS apps**, there is a control beside the assistant picker. Pick a level and send
-your message.
+**In the web app**, there is a control beside the assistant picker. Pick a level and send your
+message.
 
 **In Telegram**, put a command at the start of the message:
 
@@ -44,7 +44,7 @@ An intelligence level is **one-shot**: it applies to the message you send it wit
 message goes back to the assistant's usual level. That is deliberate — a hard question in the middle
 of an ordinary conversation is a property of that question, not of the conversation.
 
-The web and iOS apps also let you pin a level for the current conversation, when you know the whole
+The web app also lets you pin a level for the current conversation, when you know the whole
 conversation is going to be hard. The pin is visible while it is on, and clears when you start a new
 chat or switch assistants.
 
@@ -52,25 +52,23 @@ Choosing a level never starts a new conversation and never loses your history. T
 were talking to is still the same assistant, with the same tools and the same access; only how hard
 it thinks changes.
 
-## Asking for more thinking in words
-
-You can also just say so — "think carefully about this", "this one is subtle" — and the assistant
-takes it into account. Words are a hint; the control and the commands are a decision. When it
-matters, use the control.
-
 ## What it does not change
 
 - **What the assistant can do.** A stronger level never grants extra tools, extra access, or
   permission to skip a confirmation. If it needed your approval at Standard, it needs your approval
   at Max.
 - **What it can see.** The same notes, calendar and documents, no more.
-- **Which assistant answers.** `/deep` on a conversation with the Engineer is still the Engineer.
+- **Which assistant answers.** `/deep` runs the same assistant you were already talking to, harder.
 
-## Not every assistant offers a choice
+## Which assistants offer a choice
 
-Some are tied to one model because of what they do — the ones that read audio and video, drive a
-browser visually, or run code in a sandbox. Those show no intelligence control, and asking for a
-level there is refused with an explanation rather than silently ignored.
+The **Assistant** offers all three levels. **Complex Tasks** (`/complex`) offers Deep and Max — it
+exists for requests Standard was not expected to complete well, so Standard is not on its menu.
+
+Every other assistant runs on one fixed level: some because what they do is tied to one model
+(reading audio and video, driving a browser visually, running code in a sandbox), the rest because
+one level is the right one for the job. Those show no intelligence control, and asking for a level
+there is refused with an explanation rather than silently ignored.
 
 ## Seeing what a reply ran at
 

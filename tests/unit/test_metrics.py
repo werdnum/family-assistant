@@ -385,9 +385,7 @@ def test_the_resolved_tier_labels_the_call_and_lands_in_the_usage(
     profile: str,
 ) -> None:
     """Spend is attributed to the tier that incurred it, not just the profile."""
-    selection = ResolvedModelSelection(
-        tier="deep", requested="deep", source="user", routing_outcome="not_requested"
-    )
+    selection = ResolvedModelSelection(tier="deep", requested="deep", source="user")
     token = set_model_selection(selection)
     try:
         telemetry = _telemetry(provider="openai", model="gpt-sol")

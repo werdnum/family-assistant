@@ -16,10 +16,7 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.content_parts import ContentPartDict
     from family_assistant.llm.messages import MessageAttachmentMetadata
-    from family_assistant.llm.model_selection import (
-        ModelSelectionRequest,
-        ResolvedModelSelection,
-    )
+    from family_assistant.llm.model_selection import ResolvedModelSelection
     from family_assistant.processing.types import (
         ChatInteractionResult,
         MidTurnInputProvider,
@@ -47,18 +44,6 @@ class DelegatableService(Protocol):
     @property
     def service_config(self) -> ProcessingServiceConfig | RemoteServiceConfig: ...
 
-    def resolve_model_selection(
-        self,
-        request: ModelSelectionRequest | ResolvedModelSelection | None,
-    ) -> ResolvedModelSelection:
-        """Admit a tier request for this target, or raise ``ModelTierNotPermitted``.
-
-        On the protocol so the delegation tool asks every target the same
-        question and resolves the envelope *before* enqueueing a durable run --
-        a refusal must not become a queued run that fails later.
-        """
-        ...
-
     async def handle_chat_interaction(
         self,
         db_context: Database,
@@ -84,7 +69,7 @@ class DelegatableService(Protocol):
         reuse_existing_user_row: bool = False,
         initial_taint_sources: Sequence[TaintSource] | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
-        model_selection: ModelSelectionRequest | ResolvedModelSelection | None = None,
+        model_selection: ResolvedModelSelection | None = None,
     ) -> ChatInteractionResult: ...
 
 

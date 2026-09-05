@@ -17,11 +17,9 @@ from family_assistant.a2a.types import (
 )
 from family_assistant.config_models import ToolsConfig
 from family_assistant.llm.model_selection import (
-    ModelSelectionRequest,
     ModelTierEligibility,
     ModelTierOption,
     ResolvedModelSelection,
-    resolve_model_selection,
 )
 from family_assistant.processing.types import (
     ChatInteractionResult,
@@ -58,29 +56,18 @@ if TYPE_CHECKING:
 
 
 class _Namespace:
-    """Small attribute bag for test service doubles."""
+    """Small attribute bag for test service doubles.
+
+    Carries the pinned tier eligibility unless a double states its own, so a
+    ``service_config`` that says nothing about tiers is what the real gate sees
+    for a profile with an inline model.
+    """
 
     service_config: Any
+    tier_eligibility: ModelTierEligibility = ModelTierEligibility()
 
     def __init__(self, **kwargs: Any) -> None:  # noqa: ANN401 - test helper
         self.__dict__.update(kwargs)
-
-    def resolve_model_selection(
-        self, request: ModelSelectionRequest | ResolvedModelSelection | None
-    ) -> ResolvedModelSelection:
-        """Answer the tier gate the way a real target would.
-
-        Through the real function rather than a canned answer, so a double
-        cannot admit a tier the shipped gate would refuse. These doubles carry
-        no eligibility, so they are pinned profiles.
-        """
-        if isinstance(request, ResolvedModelSelection):
-            request = ModelSelectionRequest(tier=request.tier, source=request.source)
-        return resolve_model_selection(
-            getattr(self.service_config, "tier_eligibility", ModelTierEligibility()),
-            request,
-            profile_id=self.service_config.id,
-        )
 
 
 class _SynchronousRemoteClient:
@@ -483,7 +470,7 @@ async def test_delegating_at_an_automatically_admitted_tier_runs_on_it() -> None
     assert await_args is not None
     selection = await_args.kwargs["model_selection"]
     assert selection == ResolvedModelSelection(
-        tier="deep", requested="deep", source="model", routing_outcome="not_requested"
+        tier="deep", requested="deep", source="model"
     )
 
 
@@ -566,7 +553,7 @@ async def test_a_queued_delegation_persists_its_resolved_tier(
     persisted = run["model_selection_json"]
     assert persisted is not None
     assert ResolvedModelSelection.from_json(persisted) == ResolvedModelSelection(
-        tier="deep", requested="deep", source="model", routing_outcome="not_requested"
+        tier="deep", requested="deep", source="model"
     )
 
 

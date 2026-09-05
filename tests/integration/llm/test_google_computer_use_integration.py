@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig
 from family_assistant.llm.messages import AssistantMessage, UserMessage
+from family_assistant.llm.model_selection import ResolvedModelSelection
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.storage.database import Database
 from family_assistant.tools.computer_use import (
@@ -506,6 +507,8 @@ async def test_computer_use_browser_navigation_e2e(db_engine: AsyncEngine) -> No
             user_name="TestUser",
             turn_id="turn-1",
             chat_interface=None,
+            llm_client=processing_service.llm_client,
+            model_selection=ResolvedModelSelection.unselected(None),
         )
 
         # Find the final assistant response
@@ -665,6 +668,8 @@ async def test_grab_screenshot_of_website(db_engine: AsyncEngine) -> None:
             user_name="TestUser",
             turn_id="turn-1",
             chat_interface=None,
+            llm_client=processing_service.llm_client,
+            model_selection=ResolvedModelSelection.unselected(None),
         )
 
         # Find the final assistant response
