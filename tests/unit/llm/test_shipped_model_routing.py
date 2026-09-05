@@ -57,7 +57,9 @@ def test_the_classifier_runs_but_decides_nothing_yet(shipped_config: AppConfig) 
     assert shipped_config.model_routing.history_messages > 0
 
 
-def test_the_shipped_configuration_builds_a_router(shipped_config: AppConfig) -> None:
+def test_the_shipped_configuration_builds_a_router(
+    shipped_config: AppConfig, provider_api_keys: None
+) -> None:
     """From the classifier entry, not from any profile's client."""
     assistant = Assistant(shipped_config, llm_client_overrides={})
 
