@@ -391,6 +391,7 @@ async def instrumented_llm_request[R](
     usage: Callable[[R], MessageReasoningInfo | None] | None = None,
     error_usage: Callable[[BaseException], MessageReasoningInfo | None] | None = None,
     served_model: Callable[[R], str | None] | None = None,
+    error_served_model: Callable[[BaseException], str | None] | None = None,
 ) -> R:
     """Count one provider request that is not a chat call.
 
@@ -415,6 +416,10 @@ async def instrumented_llm_request[R](
     where it says so. Without it the ``resolved_model`` label repeats the
     requested one, which makes provider-side routing and alias resolution
     invisible on exactly the calls where an alias is most common.
+    ``error_served_model`` is its failure-path counterpart, so a run that
+    failed after the provider named its model is not filed under the alias --
+    which would put a model's failures under a different label than its
+    successes, and defeat comparing the two.
     """
     started = time.monotonic()
     profile = current_processing_profile() or UNATTRIBUTED_PROFILE
@@ -429,11 +434,7 @@ async def instrumented_llm_request[R](
             profile=profile,
             provider=provider,
             model=model,
-            resolved_model=(
-                served_model(response)
-                if served_model is not None and response is not None
-                else None
-            ),
+            resolved_model=_request_served_model(response, error),
             operation=operation,
             outcome=outcome,
             error_type=error_type,
@@ -441,6 +442,15 @@ async def instrumented_llm_request[R](
             time_to_first_output_seconds=None,
             reasoning_info=_request_usage(response, error),
         )
+
+    def _request_served_model(
+        response: R | None, error: BaseException | None
+    ) -> str | None:
+        if response is not None and served_model is not None:
+            return served_model(response)
+        if error is not None and error_served_model is not None:
+            return error_served_model(error)
+        return None
 
     def _request_usage(
         response: R | None, error: BaseException | None

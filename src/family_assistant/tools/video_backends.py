@@ -424,6 +424,7 @@ class GeminiOmniVideoBackend:
             usage=lambda triple: triple[1],
             error_usage=lambda error: getattr(error, "usage", None),
             served_model=lambda triple: triple[2],
+            error_served_model=lambda error: getattr(error, "served_model", None),
         )
         return result
 

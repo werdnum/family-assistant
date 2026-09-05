@@ -507,7 +507,7 @@ class GoogleGenAIClient(BaseLLMClient):
                     self._process_tool_messages(attempt_messages)
                 )
                 response = await self._instrumented_structured_request(
-                    messages, contents, generation_config
+                    attempt_messages, contents, generation_config
                 )
                 raw_response = self._extract_text_response(response)
                 if not raw_response:
@@ -623,7 +623,7 @@ class GoogleGenAIClient(BaseLLMClient):
                     self._process_tool_messages(attempt_messages)
                 )
                 response = await self._instrumented_structured_request(
-                    messages, contents, generation_config
+                    attempt_messages, contents, generation_config
                 )
                 raw_response = self._extract_text_response(response)
                 if not raw_response:

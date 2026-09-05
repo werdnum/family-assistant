@@ -38,6 +38,7 @@ from family_assistant.llm import (
     describe_attachment_for_fallback,
 )
 from family_assistant.llm.messages import (
+    AssistantMessage,
     ContentPart,
     ImageUrlContentPart,
     LLMMessage,
@@ -1044,11 +1045,14 @@ class OpenAIClient(BaseLLMClient):
 
         raw_response: str | None = None
         last_error: Exception | None = None
+        # Mirrors api_message_dicts, which the retry loop appends to in place:
+        # telemetry describes the payload actually sent, so it has to grow too.
+        attempt_messages: list[LLMMessage] = list(messages)
 
         async def request_structured_output() -> T:
             nonlocal raw_response
             response = await self._instrumented_structured_request(
-                messages,
+                attempt_messages,
                 lambda: self.client.beta.chat.completions.parse(
                     response_format=response_model,
                     **base_params,
@@ -1078,17 +1082,22 @@ class OpenAIClient(BaseLLMClient):
                     f"(attempt {attempt + 1}/{max_retries + 1}): {e}"
                 )
                 if attempt < max_retries:
+                    correction = (
+                        "Your previous response did not satisfy the required schema. "
+                        f"Error: {e}\n\nPlease try again with valid structured output."
+                    )
                     api_message_dicts.append({
                         "role": "assistant",
                         "content": raw_response or "",
                     })
                     api_message_dicts.append({
                         "role": "user",
-                        "content": (
-                            "Your previous response did not satisfy the required schema. "
-                            f"Error: {e}\n\nPlease try again with valid structured output."
-                        ),
+                        "content": correction,
                     })
+                    attempt_messages.append(
+                        AssistantMessage(content=raw_response or "")
+                    )
+                    attempt_messages.append(UserMessage(content=correction))
                     raw_response = None
             except Exception as e:
                 raise self._map_error_to_typed_exception(e) from e
@@ -1132,11 +1141,14 @@ class OpenAIClient(BaseLLMClient):
 
         raw_response: str | None = None
         last_error: Exception | None = None
+        # Mirrors api_message_dicts, which the retry loop appends to in place.
+        attempt_messages: list[LLMMessage] = list(messages)
 
         async def request_json_output() -> JsonObject:
             nonlocal raw_response
             response = await self._instrumented_structured_request(
-                messages, lambda: self.client.chat.completions.create(**base_params)
+                attempt_messages,
+                lambda: self.client.chat.completions.create(**base_params),
             )
             if not response.choices:
                 raise ValueError("LLM returned empty response")
@@ -1157,17 +1169,22 @@ class OpenAIClient(BaseLLMClient):
                     f"(attempt {attempt + 1}/{max_retries + 1}): {e}"
                 )
                 if attempt < max_retries:
+                    correction = (
+                        f"Your previous response was not a valid JSON object. Error: {e}\n\n"
+                        "Please try again and respond with JSON only."
+                    )
                     api_message_dicts.append({
                         "role": "assistant",
                         "content": raw_response or "",
                     })
                     api_message_dicts.append({
                         "role": "user",
-                        "content": (
-                            f"Your previous response was not a valid JSON object. Error: {e}\n\n"
-                            "Please try again and respond with JSON only."
-                        ),
+                        "content": correction,
                     })
+                    attempt_messages.append(
+                        AssistantMessage(content=raw_response or "")
+                    )
+                    attempt_messages.append(UserMessage(content=correction))
                     raw_response = None
             except Exception as e:
                 raise self._map_error_to_typed_exception(e) from e
