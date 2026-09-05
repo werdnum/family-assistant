@@ -1415,6 +1415,12 @@ class AnthropicClient(BaseLLMClient):
                                     telemetry.record_usage(
                                         self._reasoning_info_from_usage(started_usage)
                                     )
+                                telemetry.record_response_metadata(
+                                    resolved_model=getattr(
+                                        event.message, "model", None
+                                    ),
+                                    response_id=getattr(event.message, "id", None),
+                                )
                             elif event.type == "message_delta":
                                 delta_usage = getattr(event, "usage", None)
                                 if (

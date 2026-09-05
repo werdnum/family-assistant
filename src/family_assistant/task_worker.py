@@ -2315,7 +2315,12 @@ class TaskWorker:
             # remote work.
             if past_cap:
                 await self._fail_delegation_run(
-                    exec_context, delegation_id=delegation_id, error=timed_out_error
+                    exec_context,
+                    delegation_id=delegation_id,
+                    error=timed_out_error,
+                    on_committed=self._terminal_metrics_recorder(
+                        target_service, remote_task_id, outcome="error"
+                    ),
                 )
                 return
             await self._resubmit_with_backoff(
@@ -2334,7 +2339,12 @@ class TaskWorker:
                 "Polling remote delegation %s hit a permanent error.", delegation_id
             )
             await self._fail_delegation_run(
-                exec_context, delegation_id=delegation_id, error=error
+                exec_context,
+                delegation_id=delegation_id,
+                error=error,
+                on_committed=self._terminal_metrics_recorder(
+                    target_service, remote_task_id, outcome="error"
+                ),
             )
             return
         except DelegationTransientError:
@@ -2355,8 +2365,17 @@ class TaskWorker:
                 "Polling remote delegation %s raised a non-transient error.",
                 delegation_id,
             )
+            # A run that was submitted and is now terminally failed still
+            # happened: the submission was deliberately not counted, and no
+            # later poll reaches this hook, so without it the whole run
+            # disappears from the metrics.
             await self._fail_delegation_run(
-                exec_context, delegation_id=delegation_id, error=error
+                exec_context,
+                delegation_id=delegation_id,
+                error=error,
+                on_committed=self._terminal_metrics_recorder(
+                    target_service, remote_task_id, outcome="error"
+                ),
             )
             return
 

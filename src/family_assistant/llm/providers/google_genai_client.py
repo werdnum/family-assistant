@@ -2420,6 +2420,14 @@ class GoogleGenAIClient(BaseLLMClient):
                     resolved_model = chunk.model_version or resolved_model
                     response_id = chunk.response_id or response_id
                     finish_reason = _first_finish_reason(chunk) or finish_reason
+                    # Recorded as it arrives, like the usage above: a stream
+                    # that dies later is finalized without reaching the block
+                    # below, and a failure filed under the requested alias
+                    # cannot be compared with that model's successes.
+                    if resolved_model or response_id:
+                        telemetry.record_response_metadata(
+                            resolved_model=resolved_model, response_id=response_id
+                        )
 
                     # Extract text content from chunk
                     if hasattr(chunk, "text") and chunk.text:
