@@ -20,6 +20,19 @@ export interface ChatAppProps {
   profileId?: string;
 }
 
+/**
+ * What is known about the LLM call that produced a message: the serving model
+ * and, where the profile offers a choice of them, the model tier it ran at.
+ * `model_tier_source` says who chose that tier — the user, the Auto router
+ * (`model`), or the profile default.
+ */
+export interface MessageReasoningInfo {
+  model?: string | null;
+  model_tier?: string | null;
+  model_tier_source?: 'user' | 'model' | 'default' | null;
+  model_tier_requested?: string | null;
+}
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -40,6 +53,7 @@ export interface Message {
     file?: File;
   }>;
   processing_profile_id?: string;
+  reasoning_info?: MessageReasoningInfo;
 }
 
 export interface MessageContent {
@@ -97,6 +111,7 @@ export interface BackendConversationMessage extends Record<string, unknown> {
   tool_calls?: BackendToolCall[];
   tool_call_id?: string;
   processing_profile_id?: string | null;
+  reasoning_info?: MessageReasoningInfo | null;
 }
 
 export interface ActiveTurnInfo {
