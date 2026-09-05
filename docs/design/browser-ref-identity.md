@@ -116,6 +116,15 @@ chokepoint hands back only the last snapshot-bearing result with refs, and the e
 refs and with a line saying the page has since moved on. Those refs would fail anyway; stripping
 them keeps the model from being shown a ref it cannot use.
 
+### Every snapshot-returning tool takes the same filter
+
+The post-action snapshot is where the token cost of browsing lives, and today only `browser_open`
+and `browser_snapshot` accept the `query` filter; a click, fill or select on a large page always
+returns the whole tree. The filter moves to the shared snapshot path so every tool that returns a
+snapshot accepts it, actions included. A filtered snapshot still carries refs, and those refs are
+the same ones an unfiltered snapshot would show, so filtering costs nothing in correctness. The
+default stays unfiltered: the model asks for less when it knows what it is looking for.
+
 ### A miss returns the snapshot it would otherwise force
 
 When an action fails because the ref does not resolve, the tool result carries the error together
@@ -141,7 +150,8 @@ element is an inference the model should make with the page in front of it.
   today. That is the price of a ref that can never silently mean something else, and it is the trade
   Chrome DevTools MCP makes.
 - **No diff or abbreviated snapshot mode.** No surveyed harness produces one; the proven lever for
-  post-action token cost is returning less, which the existing `query` filter already provides.
+  post-action token cost is returning less, which the `query` filter provides once every
+  snapshot-returning tool accepts it.
 - **No refs for elements added since the last snapshot.** They are unaddressable until the next
   snapshot, the same contract as today.
 
@@ -161,14 +171,16 @@ element is an inference the model should make with the page in front of it.
    holds the randomly seeded counter and threads it through every snapshot on both paths; the local
    walker matches browser-server's and the local backend performs the same pre-action check; every
    browser operation for one conversation runs one at a time in issue order, and a batch hands back
-   refs only in its last snapshot; a miss returns error plus snapshot; tool descriptions and the
-   `/browse` prompt state the contract; the browser automation user guide is updated. Verified by
-   the existing functional tests rewritten for the new contract, including
+   refs only in its last snapshot; a miss returns error plus snapshot; `browser_click`,
+   `browser_fill` and `browser_select` accept the same `query` filter as `browser_snapshot`; tool
+   descriptions and the `/browse` prompt state the contract; the browser automation user guide is
+   updated. Verified by the existing functional tests rewritten for the new contract, including
    click-after-`browser_exec` succeeding when the script did not navigate, click-after-removal
    returning the error with a snapshot, a ref copied from the previous page's snapshot failing with
    the current page's snapshot, two ref actions issued from one snapshot both landing on their own
    nodes when run as a batch, a batched action after a navigating sibling failing rather than
-   acting, and a batch that navigates twice handing back refs only in its final snapshot.
+   acting, and a batch that navigates twice handing back refs only in its final snapshot, and a
+   filtered post-click snapshot containing only matching branches with refs that resolve.
 
 Milestone 1 merges before milestone 2 starts, because the remote backend's behaviour is what the
 functional tests in milestone 2 assert against.
