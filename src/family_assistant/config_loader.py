@@ -21,14 +21,14 @@ import os
 import pathlib
 import string
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import yaml
 from dotenv import find_dotenv, load_dotenv
 from pydantic import SecretStr, ValidationError
 
 from .config_inspection import redact_sensitive_config
-from .config_models import AppConfig
+from .config_models import AppConfig, ProcessingConfig
 from .config_sources import deep_merge_dicts, load_yaml_file
 
 logger = logging.getLogger(__name__)
@@ -785,8 +785,56 @@ PROFILE_REPLACED_LIST_KEYS: tuple[str, ...] = (
 # so merging it with another's would produce guidance describing neither.
 PROFILE_REPLACED_SCALAR_KEYS: tuple[str, ...] = ("auto_routing_guidance",)
 
+# Everything that qualifies a `model_tier` rather than standing on its own: the
+# tiers a profile may run on, the guidance the Auto classifier routes by, and --
+# in `processing_config` -- whether the profile routes at all. None of it means
+# anything to a profile with no tier, and `validate_profile_model_tier` refuses
+# a profile that keeps it without one, so every rule that drops a tier drops
+# these alongside it -- and stating them once here is what keeps those rules
+# from diverging as the set grows.
+PROFILE_TIER_QUALIFIER_KEYS: tuple[str, ...] = (
+    *PROFILE_TIER_ELIGIBILITY_KEYS,
+    "auto_routing_guidance",
+)
+PROFILE_TIER_QUALIFIER_PROCESSING_KEYS: tuple[str, ...] = ("model_selection",)
+
 # The two mutually exclusive ways a profile says which model it runs on.
 MODEL_SELECTION_KEYS: tuple[str, ...] = ("provider", "llm_model", "retry_config")
+
+
+def _unstated_tier_qualifiers(
+    # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
+    declared: dict[str, Any],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The tier qualifiers a definition did not state for itself.
+
+    Returns the top-level keys first, then the `processing_config` ones, which
+    is where a caller has to write each of them back.
+
+    These are the qualifiers a caller dropping a tier may drop with it. One the
+    definition stated is its own statement about a tier it names or has none of,
+    so it stays and `validate_profile_model_tier` refuses it by name rather than
+    it being quietly resolved away.
+    """
+    declared_processing = declared.get("processing_config") or {}
+    return (
+        tuple(key for key in PROFILE_TIER_QUALIFIER_KEYS if declared.get(key) is None),
+        tuple(
+            key
+            for key in PROFILE_TIER_QUALIFIER_PROCESSING_KEYS
+            if declared_processing.get(key) is None
+        ),
+    )
+
+
+def _tier_qualifier_default(key: str) -> str:
+    """What a `processing_config` tier qualifier says when nothing selects one.
+
+    Taken from the field itself so "reset" and "never set" are the same value:
+    a resolved `processing_config` is a full dump where every key exists, so
+    these cannot be removed the way a top-level qualifier is set to `None`.
+    """
+    return cast("str", ProcessingConfig.model_fields[key].default)
 
 
 def reject_conflicting_model_selection(
@@ -979,13 +1027,17 @@ def resolve_service_profile(
         if profile_def.get(key) is not None:
             resolved[key] = profile_def[key]
 
-    # An eligibility list the profile did not state for itself means nothing to
-    # one that names an inline model; keeping the inherited list would only fail
-    # validation for a profile that said nothing about tiers.
+    # A qualifier the profile did not state for itself means nothing to one that
+    # names an inline model: an inherited eligibility list would only fail
+    # validation for a profile that said nothing about tiers, and an inherited
+    # `model_selection: auto` would ask the classifier to route to a tier the
+    # profile does not have.
     if resolved["processing_config"].get("model_tier") is None:
-        for key in PROFILE_TIER_ELIGIBILITY_KEYS:
-            if not isinstance(profile_def.get(key), list):
-                resolved[key] = None
+        unstated_top_level, unstated_processing = _unstated_tier_qualifiers(profile_def)
+        for key in unstated_top_level:
+            resolved[key] = None
+        for key in unstated_processing:
+            resolved["processing_config"][key] = _tier_qualifier_default(key)
 
     # Handle remote_a2a (replace if present)
     if "remote_a2a" in profile_def:
@@ -1013,14 +1065,20 @@ def _clear_inherited_model_selection_for_remote(
     Only inherited values go. A tier the remote profile declared for itself
     stays, so that refusal still fires by name at startup rather than being
     quietly resolved away.
+
+    Nothing that qualifies a tier is inherited either: a remote profile runs no
+    routing policy of ours, so an inherited eligibility list or
+    `model_selection: auto` would describe a decision nothing here makes.
     """
     declared_processing = profile_def.get("processing_config") or {}
     for key in (*MODEL_SELECTION_KEYS, "model_tier"):
         if declared_processing.get(key) is None:
             resolved["processing_config"][key] = None
-    for key in PROFILE_TIER_ELIGIBILITY_KEYS:
-        if not isinstance(profile_def.get(key), list):
-            resolved[key] = None
+    unstated_top_level, unstated_processing = _unstated_tier_qualifiers(profile_def)
+    for key in unstated_top_level:
+        resolved[key] = None
+    for key in unstated_processing:
+        resolved["processing_config"][key] = _tier_qualifier_default(key)
 
 
 def resolve_all_service_profiles(
@@ -1209,12 +1267,13 @@ def _shipped_base_for_operator_override(
     operator selected is what the merged definition says. See
     `_superseded_shipped_selection` for which keys go and why.
 
-    A shipped tier that goes takes the shipped eligibility lists with it: they
-    qualify that tier, and nothing else in the merged definition records that
-    they were the shipped block's rather than the operator's, so left behind they
-    read as an operator naming eligible tiers for a profile with no tier --
-    which `validate_profile_model_tier` refuses at startup. Lists the operator
-    stated for itself stay, and that refusal still fires for them by name.
+    A shipped tier that goes takes the shipped qualifiers with it: they qualify
+    that tier, and nothing else in the merged definition records that they were
+    the shipped block's rather than the operator's, so left behind they read as
+    an operator naming eligible tiers -- or asking the Auto classifier to route
+    -- for a profile with no tier, which `validate_profile_model_tier` refuses
+    at startup. Qualifiers the operator stated for itself stay, and that refusal
+    still fires for them by name.
     """
     dropped = _superseded_shipped_selection(
         shipped.get("processing_config") or {},
@@ -1228,9 +1287,11 @@ def _shipped_base_for_operator_override(
     for key in dropped:
         without_superseded["processing_config"].pop(key, None)
     if "model_tier" in dropped:
-        for key in PROFILE_TIER_ELIGIBILITY_KEYS:
-            if not isinstance(operator.get(key), list):
-                without_superseded.pop(key, None)
+        unstated_top_level, unstated_processing = _unstated_tier_qualifiers(operator)
+        for key in unstated_top_level:
+            without_superseded.pop(key, None)
+        for key in unstated_processing:
+            without_superseded["processing_config"].pop(key, None)
     return without_superseded
 
 
@@ -1252,22 +1313,31 @@ def _apply_default_profile_selection_provenance(
 
     The superseded shipped values are cleared rather than removed: the merged
     block is a `model_dump`, where every key exists and `None` is what "not
-    selected" looks like.
+    selected" looks like. A shipped tier that goes takes the shipped qualifiers
+    with it here too, so the block does not hand every heir an eligibility list
+    or an Auto routing policy for a tier it no longer has.
     """
-    operator_settings = operator_config_data.get("default_profile_settings") or {}
-    operator_processing = (
-        operator_settings.get("processing_config") or {}
-        if isinstance(operator_settings, dict)
-        else {}
+    raw_operator_settings = operator_config_data.get("default_profile_settings")
+    operator_settings = (
+        raw_operator_settings if isinstance(raw_operator_settings, dict) else {}
     )
     dropped = _superseded_shipped_selection(
         shipped_default_settings.get("processing_config") or {},
-        operator_processing,
+        operator_settings.get("processing_config") or {},
         "default_profile_settings",
     )
-    merged_processing = config_data["default_profile_settings"]["processing_config"]
+    merged_settings = config_data["default_profile_settings"]
+    merged_processing = merged_settings["processing_config"]
     for key in dropped:
         merged_processing[key] = None
+    if "model_tier" in dropped:
+        unstated_top_level, unstated_processing = _unstated_tier_qualifiers(
+            operator_settings
+        )
+        for key in unstated_top_level:
+            merged_settings[key] = None
+        for key in unstated_processing:
+            merged_processing[key] = _tier_qualifier_default(key)
 
 
 # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
