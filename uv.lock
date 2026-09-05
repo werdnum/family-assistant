@@ -1162,14 +1162,18 @@ wheels = [
 [[package]]
 name = "browser-handoff-service"
 version = "0.1.0"
-source = { git = "https://github.com/werdnum/browser-server.git#668d2157954028b91ba4701b473a2aa22501c864" }
+source = { git = "https://github.com/werdnum/browser-server.git?rev=1fec1042b4752ce3d9c0d3a53d2133b108b3fe2f#1fec1042b4752ce3d9c0d3a53d2133b108b3fe2f" }
 dependencies = [
+    { name = "cryptography", version = "44.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13.2'" },
+    { name = "cryptography", version = "45.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation == 'PyPy'" },
+    { name = "cryptography", version = "45.0.7", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation != 'PyPy'" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "jinja2" },
+    { name = "patchright" },
     { name = "pydantic" },
     { name = "pyjwt", extra = ["crypto"] },
-    { name = "rebrowser-playwright" },
+    { name = "tldextract" },
     { name = "uvicorn", extra = ["standard"] },
     { name = "websockets" },
 ]
@@ -1883,7 +1887,7 @@ requires-dist = [
     { name = "backoff", specifier = ">=2.2.1" },
     { name = "basedpyright", marker = "extra == 'dev'" },
     { name = "bcrypt", specifier = ">=4.0.0,<5.0.0" },
-    { name = "browser-handoff-service", marker = "extra == 'dev'", git = "https://github.com/werdnum/browser-server.git" },
+    { name = "browser-handoff-service", marker = "extra == 'dev'", git = "https://github.com/werdnum/browser-server.git?rev=1fec1042b4752ce3d9c0d3a53d2133b108b3fe2f" },
     { name = "caldav", specifier = ">=1.2.0" },
     { name = "cloudcoil-models-kubernetes", specifier = ">=1.32" },
     { name = "cryptography", specifier = ">=44.0.1" },
@@ -4403,6 +4407,25 @@ wheels = [
 ]
 
 [[package]]
+name = "patchright"
+version = "1.62.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "greenlet" },
+    { name = "pyee" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9f/ac/990b4d42a1b8a2827b80a19be29ed4976ef52dfde56fa2eaac638b57957f/patchright-1.62.3-py3-none-macosx_10_13_x86_64.whl", hash = "sha256:5d9e45c300b72ebc90cc9434da4e06222fdcad18ba473bd6859169421bf37fe3", size = 43724986, upload-time = "2026-09-02T22:11:54.543Z" },
+    { url = "https://files.pythonhosted.org/packages/13/60/58a84797867c3404e715d4beb0e393c8643c34b4b54a52870d1fc5a1a32d/patchright-1.62.3-py3-none-macosx_11_0_arm64.whl", hash = "sha256:4bdbe4e0ff224d02b27f154040049d30f4bbabe39f511910c3aa846d04d997ae", size = 42503735, upload-time = "2026-09-02T22:11:57.71Z" },
+    { url = "https://files.pythonhosted.org/packages/40/34/77e52d126ef36defbd9bce5b1ec8096fcfc4bc5cfe5afb3c46b4a1033a82/patchright-1.62.3-py3-none-macosx_11_0_universal2.whl", hash = "sha256:88edcf3d04eb4ab7f041cf92a28e0e2f00ad8ef24fc3d2b4ea134000b9474185", size = 43724986, upload-time = "2026-09-02T22:12:00.977Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/c6/2e78216dd206aa7c4031432162962881c3abd7b1f246cf5ec0ad445da426/patchright-1.62.3-py3-none-manylinux1_x86_64.whl", hash = "sha256:d652b4e5f3a7cc8e8d9e896d1c95853feeb99bcd63ac9439538cf9a752a6c82c", size = 47741822, upload-time = "2026-09-02T22:12:04.412Z" },
+    { url = "https://files.pythonhosted.org/packages/86/d6/78af3bfff6c778a94f9d76ba70eb5b85d9ea67e280bf2008c9d9c6559224/patchright-1.62.3-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:f6453c3a5067d44608ff08727c2ad5c5c3305d577162934bcbfa609a78ec5fe7", size = 47434317, upload-time = "2026-09-02T22:12:07.255Z" },
+    { url = "https://files.pythonhosted.org/packages/64/51/4a117b30fb1ed480a173580b4ea82267d2d10b38bc0e43c1a8d0cec2dcf3/patchright-1.62.3-py3-none-win32.whl", hash = "sha256:f70d0672a551e5a8b9f36a823ccc47361667cdbdb85c77205555a0450fa4149d", size = 38157354, upload-time = "2026-09-02T22:12:09.92Z" },
+    { url = "https://files.pythonhosted.org/packages/c7/b7/6aefc1767deed5f0dbac23fc35bb23b370f0db77968923af07708caa3947/patchright-1.62.3-py3-none-win_amd64.whl", hash = "sha256:ccca9f1fa9fc4e9cdc2cdd784d4bb0e992e83defaec60e5a5d2d31cad9bd785a", size = 38157362, upload-time = "2026-09-02T22:12:13.123Z" },
+    { url = "https://files.pythonhosted.org/packages/a8/6d/52b9365d6dc8582af1e94af88dbc4c8d1ebd03feecd5d0acafb6fcfc0f60/patchright-1.62.3-py3-none-win_arm64.whl", hash = "sha256:22c50ef98b192000a8501bbf1a1e188660b5b63b626c4efce5fafe71dc8d27bf", size = 34201773, upload-time = "2026-09-02T22:12:16.348Z" },
+]
+
+[[package]]
 name = "pdfminer-six"
 version = "20250506"
 source = { registry = "https://pypi.org/simple" }
@@ -5877,6 +5900,20 @@ wheels = [
 ]
 
 [[package]]
+name = "requests-file"
+version = "3.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests", version = "2.32.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13.2'" },
+    { name = "requests", version = "2.32.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation == 'PyPy'" },
+    { name = "requests", version = "2.32.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation != 'PyPy'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3c/f8/5dc70102e4d337063452c82e1f0d95e39abfe67aa222ed8a5ddeb9df8de8/requests_file-3.0.1.tar.gz", hash = "sha256:f14243d7796c588f3521bd423c5dea2ee4cc730e54a3cac9574d78aca1272576", size = 6967, upload-time = "2025-10-20T18:56:42.279Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/e1/d5/de8f089119205a09da657ed4784c584ede8381a0ce6821212a6d4ca47054/requests_file-3.0.1-py2.py3-none-any.whl", hash = "sha256:d0f5eb94353986d998f80ac63c7f146a307728be051d4d1cd390dbdb59c10fa2", size = 4514, upload-time = "2025-10-20T18:56:41.184Z" },
+]
+
+[[package]]
 name = "rpds-py"
 version = "0.25.1"
 source = { registry = "https://pypi.org/simple" }
@@ -6530,6 +6567,23 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/b7/4d/08c89e34946fce2aec4fbb45c9016efd5f4d7f24af8e5d93296e935631d8/threadpoolctl-3.6.0.tar.gz", hash = "sha256:8ab8b4aa3491d812b623328249fab5302a68d2d71745c8a4c719a2fcaba9f44e", size = 21274, upload-time = "2025-03-13T13:49:23.031Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/32/d5/f9a850d79b0851d1d4ef6456097579a9005b31fea68726a4ae5f2d82ddd9/threadpoolctl-3.6.0-py3-none-any.whl", hash = "sha256:43a0b8fd5a2928500110039e43a5eed8480b918967083ea48dc3ab9f13c4a7fb", size = 18638, upload-time = "2025-03-13T13:49:21.846Z" },
+]
+
+[[package]]
+name = "tldextract"
+version = "5.3.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "filelock" },
+    { name = "idna" },
+    { name = "requests", version = "2.32.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13.2'" },
+    { name = "requests", version = "2.32.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation == 'PyPy'" },
+    { name = "requests", version = "2.32.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13.2' and platform_python_implementation != 'PyPy'" },
+    { name = "requests-file" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/01/a9/ed5d3be29bfaf90c00b7159d3884b311f3880b55833d1c7be764164dc288/tldextract-5.3.2.tar.gz", hash = "sha256:c017431bc0800f2d3d1b57cce36e06668f0930f60a6d8c4615d4e2b8da298fa9", size = 191971, upload-time = "2026-08-08T20:53:13.732Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4a/3b/930310b274dfe3b9a4fe64ef8b24e5faf376c9a6f94bba6fc6e438058598/tldextract-5.3.2-py3-none-any.whl", hash = "sha256:6c90d2a259f5c89f4fcf01f97af15708416a59ffedddff006d67222ab30d0fb0", size = 106415, upload-time = "2026-08-08T20:53:12.675Z" },
 ]
 
 [[package]]
