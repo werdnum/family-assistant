@@ -35,7 +35,7 @@ export const streamResumeTuning = {
  * @param {Function} [options.onToolConfirmationRequest] - Callback when tool confirmation is requested
  * @param {Function} [options.onToolConfirmationResult] - Callback when tool confirmation result is received
  * @param {Function} [options.onError] - Callback when an error occurs (receives Error object)
- * @param {Function} [options.onComplete] - Callback when stream completes (receives { content, toolCalls, completed, turnId, streamedTurnId }). `turnId` is the id this send was kicked off with, so caller-side bookkeeping keyed at send time still matches; `streamedTurnId` is the turn actually followed, which differs only when a refused send adopted the conversation's running turn.
+ * @param {Function} [options.onComplete] - Callback when stream completes (receives { content, toolCalls, completed, turnId, streamedTurnId, reasoningInfo }). `reasoningInfo` is what the turn reported about the LLM call that served it (model, resolved model tier and who chose it). `turnId` is the id this send was kicked off with, so caller-side bookkeeping keyed at send time still matches; `streamedTurnId` is the turn actually followed, which differs only when a refused send adopted the conversation's running turn.
  * @param {Function} [options.onUserInput] - Callback when a mid-turn steering message is injected into the running turn (receives the message content and the submitting client's `input_id`, or null when it sent none). Lets the UI render the steering message as a user bubble while the turn continues, and tells a sender that this turn consumed its own submission.
  * @param {Function} [options.onCancelled] - Callback when the turn ends because the user stopped it (no payload). Distinct from onError: a stop is not a failure, so the UI should mark the bubble "stopped" without an error toast.
  * @param {Function} [options.onReloadHistory] - Callback to reload persisted history (receives conversationId, options). Used when the reply is durably complete but not replayable from the live stream (already_complete/410) or when a bounded resume gives up. Pass `{ errorIfNoReply: true }` on a give-up with no durable completion signal so the caller surfaces an error if the reconciled turn has no terminal reply.
@@ -84,6 +84,10 @@ export const useStreamingResponse = ({
       interfaceType = 'web',
       attachments = undefined,
       turnId = undefined,
+      // The model tier the user selected, when it differs from the profile's
+      // default. Omitted from the request body otherwise, so the backend applies
+      // the profile default rather than being told what it already is.
+      modelTier = undefined,
     }) => {
       setIsStreaming(true);
       stopRequestedRef.current = false;
@@ -105,6 +109,9 @@ export const useStreamingResponse = ({
       // Per-file `attachment` events are accumulated into a single synthetic
       // attach_to_response tool call so queued attachments render in the UI.
       const autoAttachments = [];
+      // What the turn reported about the LLM call that served it (model, model
+      // tier, who chose that tier), carried on turn_ended.
+      let turnReasoningInfo = null;
 
       // The echo of a prompt delivered to an adopted turn, cleared once that
       // echo arrives. Declared out here so the completion report below can see
@@ -190,6 +197,7 @@ export const useStreamingResponse = ({
             profile_id: profileId,
             interface_type: interfaceType,
             attachments: attachments,
+            ...(modelTier ? { model_tier: modelTier } : {}),
           }),
           signal: abortControllerRef.current.signal,
         });
@@ -240,7 +248,17 @@ export const useStreamingResponse = ({
             return;
           }
           const errorData = await startResponse.json().catch(() => ({}));
-          throw new Error(errorData.detail || `HTTP error! status: ${startResponse.status}`);
+          const detail = typeof errorData.detail === 'string' ? errorData.detail : null;
+          // A 400 is the server refusing what was asked for -- an intelligence
+          // tier this profile does not permit, say -- and its message names the
+          // choice to change. Show it as written rather than replacing it with
+          // the generic error line and a diagnostics link for a non-fault.
+          if (startResponse.status === 400 && detail) {
+            const refusal = new Error(detail);
+            refusal.userFacing = true;
+            throw refusal;
+          }
+          throw new Error(detail || `HTTP error! status: ${startResponse.status}`);
         }
 
         let resolvedConversationId;
@@ -567,6 +585,9 @@ export const useStreamingResponse = ({
                 payload.status === 'cancelled'
               ) {
                 turnEnded = true;
+                if (payload.reasoning_info) {
+                  turnReasoningInfo = payload.reasoning_info;
+                }
                 // Explicitly acknowledge receipt so the server suppresses the
                 // "you have a new reply" disconnect push. The server never
                 // treats writing the SSE chunk as delivery — only this ack
@@ -928,6 +949,9 @@ export const useStreamingResponse = ({
           // be. The caller has to settle that here rather than carry it into an
           // unrelated later turn.
           reconciledWithoutEnd,
+          // What served the turn (model, resolved tier, who chose it), as
+          // reported on turn_ended. Null when the stream never saw the turn end.
+          reasoningInfo: turnReasoningInfo,
         });
         abortControllerRef.current = null;
         activeTurnRef.current = null;
