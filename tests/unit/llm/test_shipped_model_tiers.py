@@ -31,6 +31,18 @@ if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface
 
 
+@pytest.fixture(name="provider_api_keys")
+def provider_api_keys_fixture(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Credentials for every provider the shipped tiers name.
+
+    Constructing a client reads its provider's key from the environment, so a
+    test that builds real clients needs all three present. They are never sent
+    anywhere: nothing here issues a request.
+    """
+    for env_var in ("GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.setenv(env_var, f"fake-{env_var.lower()}-for-tests")
+
+
 # ast-grep-ignore: no-dict-any - Factory config has varying provider keys.
 def _client_config_for(config: AppConfig, profile_id: str) -> dict[str, object]:
     """The configuration the assistant would build this profile's client from."""
@@ -210,7 +222,7 @@ def test_every_shipped_profile_passes_tier_validation(
 
 
 def test_a_tiered_profile_gets_one_client_per_tier_it_may_run_on(
-    shipped_config: AppConfig,
+    shipped_config: AppConfig, provider_api_keys: None
 ) -> None:
     """Built at startup, so a tier's chain and credentials fail the boot, not
     the first request that reaches for it."""
