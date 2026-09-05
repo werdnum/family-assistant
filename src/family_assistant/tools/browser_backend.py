@@ -91,6 +91,9 @@ _WALKER_HELPERS_JS = r"""
     range: 'slider', file: 'textbox',
   };
   const HEADING_TAGS = new Set(['H1','H2','H3','H4','H5','H6']);
+  // Button-like inputs are labelled by their value, which is also what a page
+  // changes when it repurposes one, so identity has to include it.
+  const BUTTON_INPUT_TYPES = new Set(['submit', 'button', 'reset']);
   const NAME_FROM_CONTENT = new Set([
     'A', 'BUTTON', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
     'P', 'LI', 'SPAN', 'LABEL', 'OPTION', 'TD', 'TH', 'CAPTION',
@@ -128,6 +131,9 @@ _WALKER_HELPERS_JS = r"""
     if (el.getAttribute('alt')) return el.getAttribute('alt').trim();
     if (el.getAttribute('title')) return el.getAttribute('title').trim();
     if (el.getAttribute('placeholder')) return el.getAttribute('placeholder').trim();
+    if (el.tagName === 'INPUT' && BUTTON_INPUT_TYPES.has((el.getAttribute('type') || '').toLowerCase())) {
+      return (el.value || '').trim();
+    }
     if (!NAME_FROM_CONTENT.has(el.tagName)) return '';
     const txt = (el.innerText || el.textContent || '').trim();
     return txt.length > 120 ? txt.slice(0, 120) + '…' : txt;
