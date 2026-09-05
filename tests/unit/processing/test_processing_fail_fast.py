@@ -31,6 +31,7 @@ from family_assistant.llm.messages import (
     UserMessage,
 )
 from family_assistant.llm.model_selection import (
+    ModelTierClientMissing,
     ModelTierEligibility,
     ModelTierOption,
     ResolvedModelSelection,
@@ -107,6 +108,34 @@ def _make_service(
         server_url="http://testserver",
         app_config=AppConfig(),
     )
+
+
+@pytest.mark.asyncio
+async def test_a_tier_with_no_client_built_is_an_internal_error_not_a_refusal(
+    db_engine: AsyncEngine,
+) -> None:
+    """A deployment that admits more tiers than it built is a defect, not a no.
+
+    The gate already admitted this tier, so telling the requester to choose
+    differently would blame them for something only an operator can fix -- and
+    the web layer would render it as a 400 rather than the 500 it is.
+    """
+    service = _make_service()
+    service.service_config.tier_eligibility = ModelTierEligibility(
+        default_tier="standard",
+        selectable=(ModelTierOption(id="standard", label="Standard"),),
+        auto=frozenset({"standard"}),
+    )
+
+    with pytest.raises(ModelTierClientMissing, match="standard"):
+        await service.handle_chat_interaction(
+            db_context=Database(db_engine),
+            interface_type="web",
+            conversation_id="conversation-missing-tier-client",
+            trigger_content_parts=[{"type": "text", "text": "Hello"}],
+            trigger_interface_message_id=None,
+            user_name="Test User",
+        )
 
 
 @pytest.mark.asyncio
