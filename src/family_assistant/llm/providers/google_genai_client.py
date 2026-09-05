@@ -565,6 +565,7 @@ class GoogleGenAIClient(BaseLLMClient):
             tool_choice=None,
             streaming=False,
             operation="structured",
+            response_schema=generation_config,
         )
         try:
             response = await self.client.aio.models.generate_content(

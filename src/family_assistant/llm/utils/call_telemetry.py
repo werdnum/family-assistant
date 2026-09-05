@@ -120,6 +120,7 @@ class LLMCallTelemetry:
         tool_choice: str | None,
         streaming: bool,
         operation: str = "chat",
+        response_schema: object | None = None,
     ) -> None:
         self.span = span
         self.provider = provider
@@ -158,9 +159,15 @@ class LLMCallTelemetry:
 
         # Tool schemas are part of the prompt the model has to process, and a
         # tool-heavy profile sends a lot of them, so they belong in the size
-        # that explains a slow first token just as much as the messages do.
-        self._payload_chars = _payload_chars(self._message_dicts) + _payload_chars(
-            tools
+        # that explains a slow first token just as much as the messages do. A
+        # structured-output schema is the same kind of weight and is counted
+        # here too -- but not in `tool_count`, because it is not something the
+        # model can call, and conflating the two would make that count mean two
+        # different things depending on the operation.
+        self._payload_chars = (
+            _payload_chars(self._message_dicts)
+            + _payload_chars(tools)
+            + _payload_chars(response_schema)
         )
         self._attachment_chars = _attachment_chars(messages)
         self.span.set_attributes({

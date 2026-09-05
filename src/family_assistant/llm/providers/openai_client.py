@@ -739,6 +739,7 @@ class OpenAIClient(BaseLLMClient):
         self,
         messages: Sequence[LLMMessage],
         request: Callable[[], Awaitable[R]],
+        response_schema: object | None = None,
     ) -> R:
         """Run one structured-output request under the shared telemetry.
 
@@ -757,6 +758,7 @@ class OpenAIClient(BaseLLMClient):
             tool_choice=None,
             streaming=False,
             operation="structured",
+            response_schema=response_schema,
         )
         try:
             response = await request()
@@ -1057,6 +1059,7 @@ class OpenAIClient(BaseLLMClient):
                     response_format=response_model,
                     **base_params,
                 ),
+                response_schema=response_model.model_json_schema(),
             )
             if not response.choices:
                 raise ValueError("LLM returned empty response")
@@ -1149,6 +1152,7 @@ class OpenAIClient(BaseLLMClient):
             response = await self._instrumented_structured_request(
                 attempt_messages,
                 lambda: self.client.chat.completions.create(**base_params),
+                response_schema=base_params.get("response_format"),
             )
             if not response.choices:
                 raise ValueError("LLM returned empty response")

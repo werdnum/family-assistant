@@ -527,9 +527,13 @@ class AnthropicClient(BaseLLMClient):
             system="anthropic",
             requested_model=self.model,
             messages=attempt_messages,
+            # The forced output tool goes in as a schema, not as a tool: it
+            # shapes the reply rather than offering the model something to
+            # call, and counting it would make tool_count mean two things.
             tools=None,
             tool_choice=tool_name,
             streaming=False,
+            response_schema=params["tools"],
             operation="structured",
         )
         try:
