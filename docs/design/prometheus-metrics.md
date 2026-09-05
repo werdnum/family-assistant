@@ -153,6 +153,25 @@ the Ingress's reachable surface for no gain.
   honest fix is to confirm the semantics against a real session and then record one call per session
   at close, which is a change in its own right rather than a line in this one.
 
+- **A local failure before the provider call is still counted as a provider error.** Telemetry is
+  constructed before each client converts its messages and attachments into an SDK payload, so a
+  request rejected locally -- an attachment part that cannot be resolved, say -- records a call that
+  never left the process. The accounting sits at the SDK boundary wherever that boundary is a single
+  statement (the Interactions submit and stream paths), but the ordinary chat paths build their
+  payload inside the lifecycle across ten sites in three clients, and moving it is a hot-path
+  refactor touching spans, diagnostics records and the retry wrapper. Accepted for now: the affected
+  failures are configuration or programming errors rather than a rate that varies, so they show up
+  as a small constant in `family_assistant_llm_calls_total{outcome="error"}` rather than as a moving
+  signal, and they are visible in the logs and traces either way.
+
+- **A turn abandoned without closing its generator releases late.** `LLMStreamingLoop.run_stream`
+  decrements `family_assistant_turns_in_progress` in a `finally`, which runs when the generator is
+  closed. A consumer that leaves its `async for` with `break` and drops the reference relies on
+  asyncio's async-generator finalizer, so the gauge reads high until then. It is a gauge rather than
+  a counter, self-corrects rather than accumulating error, and the alternative -- moving the turn
+  lifecycle to a boundary that owns closure -- reshapes how the loop is composed for a discrepancy
+  that resolves itself. Every consumer in the tree today either drains the stream or closes it.
+
 - **Process-local state.** The exporter holds counters in the process, so a restart resets them.
   Every metric is a counter or a histogram, so `rate()`/`increase()` handle resets; nothing here
   needs to survive a restart.
