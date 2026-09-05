@@ -18,6 +18,12 @@ from family_assistant.config_models import ToolCallReviewConfig, ToolsConfig
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.llm.messages import UserMessage
+from family_assistant.llm.model_selection import (
+    ModelSelectionRequest,
+    ModelTierEligibility,
+    ResolvedModelSelection,
+    resolve_model_selection,
+)
 from family_assistant.processing.types import (
     ChatInteractionResult,
     ChatInteractionStatus,
@@ -212,6 +218,20 @@ class RecordingDelegationTarget:
         self.service_config = SimpleNamespace(
             id="target-profile",
             allowed_delegation_sources=None,
+            # Pinned to one model, so it admits no tier selection.
+            tier_eligibility=ModelTierEligibility(),
+        )
+
+    def resolve_model_selection(
+        self, request: ModelSelectionRequest | ResolvedModelSelection | None
+    ) -> ResolvedModelSelection:
+        """Answer the tier gate through the real function, not a canned reply."""
+        if isinstance(request, ResolvedModelSelection):
+            request = ModelSelectionRequest(tier=request.tier, source=request.source)
+        return resolve_model_selection(
+            self.service_config.tier_eligibility,
+            request,
+            profile_id=self.service_config.id,
         )
 
     async def handle_chat_interaction(self, **_kwargs: object) -> ChatInteractionResult:
