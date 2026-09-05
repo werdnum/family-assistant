@@ -181,9 +181,14 @@ SNAPSHOT_JS = (
     + _WALKER_HELPERS_JS
     + r"""
   let highest = 0;
+  // How many elements carry each stamp, hidden ones included: a page that
+  // clones a stamped node leaves two, and a ref shared by two nodes is no
+  // ref at all, so neither keeps it.
+  const carriers = new Map();
   for (const el of document.querySelectorAll('[' + REF_ATTR + ']')) {
     const stamped = el.getAttribute(REF_ATTR) || '';
     if (!REF_PATTERN.test(stamped)) continue;
+    carriers.set(stamped, (carriers.get(stamped) || 0) + 1);
     const n = parseInt(stamped.slice(1), 10);
     if (n > highest) highest = n;
   }
@@ -194,6 +199,7 @@ SNAPSHOT_JS = (
     const existing = el.getAttribute(REF_ATTR) || '';
     if (
       REF_PATTERN.test(existing) &&
+      carriers.get(existing) === 1 &&
       !issued.has(existing) &&
       el.getAttribute(ROLE_ATTR) === role &&
       el.getAttribute(NAME_ATTR) === name
@@ -262,8 +268,9 @@ CHECK_REF_JS = (
     + _WALKER_HELPERS_JS
     + r"""
   if (typeof ref !== 'string' || !REF_PATTERN.test(ref)) return { ok: false, cause: 'missing' };
-  const el = document.querySelector('[' + REF_ATTR + '="' + ref + '"]');
-  if (!el) return { ok: false, cause: 'missing' };
+  const carriers = document.querySelectorAll('[' + REF_ATTR + '="' + ref + '"]');
+  if (carriers.length !== 1) return { ok: false, cause: 'missing' };
+  const el = carriers[0];
   const cause = ineligible(el);
   if (cause !== null) return { ok: false, cause };
   return { ok: true };
