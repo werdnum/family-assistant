@@ -869,10 +869,15 @@ configuration where it serves as another tier's fallback, and gets adaptive thin
 
 A profile names **either** a tier **or** an inline model, never both:
 
-- Declaring both in the same profile block is a startup error.
+- Declaring both in the same block is a startup error.
 - Declaring `model_tier` drops any `provider`, `llm_model` and `retry_config` inherited from
   `default_profile_settings` or from the shipped profile an operator is overriding.
 - Declaring `provider`, `llm_model` or `retry_config` drops an inherited `model_tier` the same way.
+
+The same rule applies to `default_profile_settings` itself: an operator who sets a chain or an
+inline model there replaces the shipped `model_tier` rather than colliding with it, and one who sets
+`model_tier` replaces a shipped chain or model. A bare `retry_config: null` asks for no chain and
+says nothing about tiers, so it leaves the shipped tier in place.
 
 `default_profile_settings.processing_config.model_tier` therefore sets the tier for every profile
 that does not select its own or pin an inline model.
@@ -885,7 +890,9 @@ offers to replace it:
 - `enable_computer_use` profiles (Google GenAI client only).
 - profiles with `antigravity_config`, and any tier whose chain names an Interactions API agent
   (Antigravity or Deep Research) — those run server-side rather than as chat models.
-- `remote_a2a` profiles, where the remote agent chooses its own model.
+- `remote_a2a` profiles, where the remote agent chooses its own model. A remote profile inherits no
+  model selection at all — neither a tier nor an inline model reaches it from
+  `default_profile_settings` — so only a `model_tier` written on the profile itself is refused.
 - profiles pinned for perception reasons rather than by a config flag, such as `media_analyst` (only
   the Gemini adapter represents audio and video), which stay on an inline model by choice.
 

@@ -45,6 +45,7 @@ from family_assistant.config_sources import (
     load_yaml_file,
 )
 from family_assistant.delegation_security import DelegationSecurityLevel
+from family_assistant.llm.model_tiers import validate_profile_model_tier
 from family_assistant.security.taint import (
     SinkClass,
     SourceTrustTier,
@@ -2228,6 +2229,10 @@ class TestLoadConfig:
         assert k8s_profile.remote_a2a.auth.type == "bearer"
         assert k8s_profile.remote_a2a.auth.token_env == "K8S_AGENT_TOKEN"
         assert k8s_profile.remote_a2a.timeout_seconds == 60.0
+        # The remote agent chooses its own model, so nothing model-related is
+        # inherited from default_profile_settings into a remote profile.
+        assert k8s_profile.processing_config.model_tier is None
+        assert k8s_profile.allowed_model_tiers is None
 
     def test_profile_inherits_timezone_from_defaults(self, tmp_path: Path) -> None:
         """Regression: profile without explicit timezone inherits from defaults.
@@ -2953,3 +2958,182 @@ def test_operator_model_tier_drops_a_shipped_inline_model(tmp_path: Path) -> Non
     assert processing_config.llm_model is None
     assert processing_config.provider is None
     assert processing_config.retry_config is None
+
+
+def _loaded_with_operator_config(tmp_path: Path, operator_yaml: str) -> AppConfig:
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(operator_yaml)
+    return load_config(config_file_path=str(config_file), load_dotenv_file=False)
+
+
+def _default_settings_and_heir(
+    config: AppConfig,
+) -> tuple[ProcessingConfig, ProcessingConfig]:
+    """The default settings plus one profile that selects no model of its own.
+
+    `email_intake` declares neither a tier nor an inline model, so whatever the
+    defaults block ends up selecting is what it runs on.
+    """
+    heir = next(p for p in config.service_profiles if p.id == "email_intake")
+    assert heir.processing_config is not None
+    return config.default_profile_settings.processing_config, heir.processing_config
+
+
+def test_operator_default_settings_chain_drops_the_shipped_tier(
+    tmp_path: Path,
+) -> None:
+    """An operator retry chain in `default_profile_settings` still loads.
+
+    The block reaches resolution already deep-merged, so the shipped
+    `model_tier` sat alongside the operator's chain: the config named both kinds
+    of selection and startup was refused outright. Provenance decides it here
+    the same way it does for a service profile.
+    """
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "default_profile_settings:\n"
+        "  processing_config:\n"
+        "    retry_config:\n"
+        '      primary: {provider: "anthropic", model: "claude-sonnet-5"}\n'
+        '      fallback: {provider: "google", model: "gemini-3.8-flash"}\n',
+    )
+
+    defaults, heir = _default_settings_and_heir(config)
+
+    assert defaults.model_tier is None
+    assert defaults.retry_config is not None
+    assert defaults.retry_config.primary.model == "claude-sonnet-5"
+    assert heir.model_tier is None
+    assert heir.retry_config is not None
+    assert heir.retry_config.fallback is not None
+    assert heir.retry_config.fallback.model == "gemini-3.8-flash"
+
+
+def test_operator_default_settings_model_drops_the_shipped_tier(
+    tmp_path: Path,
+) -> None:
+    """The same for an inline model, which the shipped tier would win over."""
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "default_profile_settings:\n"
+        "  processing_config:\n"
+        '    provider: "anthropic"\n'
+        '    llm_model: "claude-sonnet-5"\n',
+    )
+
+    defaults, heir = _default_settings_and_heir(config)
+
+    assert defaults.model_tier is None
+    assert defaults.llm_model == "claude-sonnet-5"
+    assert heir.model_tier is None
+    assert heir.provider == "anthropic"
+    assert heir.llm_model == "claude-sonnet-5"
+
+
+def test_operator_default_settings_tier_replaces_the_shipped_tier(
+    tmp_path: Path,
+) -> None:
+    """A tier of the operator's own is a plain override, not a supersession."""
+    config = _loaded_with_operator_config(
+        tmp_path,
+        'default_profile_settings:\n  processing_config:\n    model_tier: "deep"\n',
+    )
+
+    defaults, heir = _default_settings_and_heir(config)
+
+    assert defaults.model_tier == "deep"
+    assert heir.model_tier == "deep"
+
+
+def test_null_retry_config_in_default_settings_keeps_the_shipped_tier(
+    tmp_path: Path,
+) -> None:
+    """`retry_config: null` asks for no chain and says nothing about tiers."""
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "default_profile_settings:\n  processing_config:\n    retry_config: null\n",
+    )
+
+    defaults, heir = _default_settings_and_heir(config)
+
+    assert defaults.model_tier == "standard"
+    assert defaults.retry_config is None
+    assert heir.model_tier == "standard"
+
+
+def test_default_settings_declaring_both_selections_is_still_refused(
+    tmp_path: Path,
+) -> None:
+    """Provenance resolves layers, not a single block naming both kinds."""
+    with pytest.raises(
+        ValueError, match="default_profile_settings declares model_tier"
+    ):
+        _loaded_with_operator_config(
+            tmp_path,
+            "default_profile_settings:\n"
+            "  processing_config:\n"
+            '    model_tier: "deep"\n'
+            '    llm_model: "claude-sonnet-5"\n',
+        )
+
+
+_REMOTE_PROFILE_YAML = (
+    "service_profiles:\n"
+    '  - id: "k8s_agent"\n'
+    '    description: "Remote Kubernetes agent"\n'
+    "    remote_a2a:\n"
+    '      agent_url: "http://k8s-agent:9000/a2a"\n'
+)
+
+
+def test_remote_profile_inherits_no_model_selection(tmp_path: Path) -> None:
+    """A remote profile names no model because the remote agent chooses it.
+
+    Inheriting the defaults block's `model_tier` made every ordinary remote
+    profile fail `validate_profile_model_tier` at startup, which refuses a tier
+    on a remote profile — so the whole application stopped booting.
+    """
+    config = _loaded_with_operator_config(tmp_path, _REMOTE_PROFILE_YAML)
+
+    profile = next(p for p in config.service_profiles if p.id == "k8s_agent")
+    assert profile.remote_a2a is not None
+    assert profile.processing_config.model_tier is None
+    assert profile.allowed_model_tiers is None
+    assert profile.processing_config.llm_model is None
+    assert profile.processing_config.retry_config is None
+    assert validate_profile_model_tier(profile, config.model_tiers) is None
+
+
+def test_remote_profile_declaring_a_tier_is_still_refused(tmp_path: Path) -> None:
+    """Only the inherited tier goes; one the profile named stays and fails."""
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "k8s_agent"\n'
+        '    description: "Remote Kubernetes agent"\n'
+        "    processing_config:\n"
+        '      model_tier: "deep"\n'
+        "    remote_a2a:\n"
+        '      agent_url: "http://k8s-agent:9000/a2a"\n',
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "k8s_agent")
+    assert profile.processing_config.model_tier == "deep"
+
+    with pytest.raises(ValueError, match="is a remote A2A profile and cannot use"):
+        validate_profile_model_tier(profile, config.model_tiers)
+
+
+def test_remote_profile_inherits_no_operator_default_model(tmp_path: Path) -> None:
+    """An operator's inline default is as inapplicable to it as the tier was."""
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "default_profile_settings:\n"
+        "  processing_config:\n"
+        '    provider: "anthropic"\n'
+        '    llm_model: "claude-sonnet-5"\n' + _REMOTE_PROFILE_YAML,
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "k8s_agent")
+    assert profile.processing_config.provider is None
+    assert profile.processing_config.llm_model is None

@@ -971,7 +971,35 @@ def resolve_service_profile(
     if "remote_a2a" in profile_def:
         resolved["remote_a2a"] = profile_def["remote_a2a"]
 
+    if resolved.get("remote_a2a"):
+        _clear_inherited_model_selection_for_remote(profile_def, resolved)
+
     return resolved
+
+
+def _clear_inherited_model_selection_for_remote(
+    profile_def: dict[str, Any],
+    # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
+    resolved: dict[str, Any],
+) -> None:
+    """A remote A2A profile inherits no model selection at all.
+
+    The remote agent chooses its own model, so a remote profile names none --
+    and then inherits whatever `default_profile_settings` selected. For the
+    inline fields that is merely untrue; for `model_tier` it is fatal, because
+    `validate_profile_model_tier` refuses a tier on a remote profile and would
+    reject every ordinary remote profile the shipped defaults' tier reached.
+
+    Only inherited values go. A tier the remote profile declared for itself
+    stays, so that refusal still fires by name at startup rather than being
+    quietly resolved away.
+    """
+    declared_processing = profile_def.get("processing_config") or {}
+    for key in (*MODEL_SELECTION_KEYS, "model_tier"):
+        if declared_processing.get(key) is None:
+            resolved["processing_config"][key] = None
+    if not isinstance(profile_def.get("allowed_model_tiers"), list):
+        resolved["allowed_model_tiers"] = None
 
 
 def resolve_all_service_profiles(
@@ -1072,36 +1100,42 @@ def load_indexing_pipeline_config(
             logger.warning("INDEXING_PIPELINE_CONFIG_JSON is not a valid dictionary.")
 
 
-def _shipped_base_for_operator_override(
-    # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
-    shipped: dict[str, Any],
-    # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
-    operator: dict[str, Any],
-    # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
-) -> dict[str, Any]:
-    """Drop the shipped model selection the operator's own would lose to.
+def _superseded_shipped_selection(
+    # ast-grep-ignore: no-dict-any - raw YAML processing_config before validation
+    shipped_processing: dict[str, Any],
+    # ast-grep-ignore: no-dict-any - raw YAML processing_config before validation
+    operator_processing: dict[str, Any],
+    source: str,
+) -> list[str]:
+    """The shipped model-selection keys the operator's own selection displaces.
 
     An operator naming a `provider`/`llm_model` without their own `retry_config`
     means "run this model". `assistant.py` prefers `retry_config` over those
-    fields, so a chain left behind by the shipped profile silently wins and the
+    fields, so a chain left behind by the shipped block silently wins and the
     operator's choice never reaches the API. The same holds across the two kinds
     of selection: a shipped `model_tier` survives an operator's inline model and
     wins over it, and a shipped chain or model survives an operator's
-    `model_tier` and makes the merged definition declare both -- which is a
-    startup error rather than the override the operator asked for.
+    `model_tier` and makes the merged block declare both -- which is a startup
+    error rather than the override the operator asked for.
 
     `resolve_service_profile` already applies these rules to values inherited
     from `default_profile_settings`, but it can only test whether the key is
-    present in the merged definition -- and after this merge it always is, for
-    any profile that ships its own selection. Provenance is only knowable here,
-    where the two layers are still separate.
+    present in the merged block -- and after the merge it always is, for any
+    block that ships its own selection. Provenance is only knowable while the
+    two layers are still separate, which is what this answers for both shapes a
+    `processing_config` arrives in: a service profile and
+    `default_profile_settings`.
 
     An explicit `retry_config: null` is not the operator declaring a chain; it is
     asking for no chain, so it drops the shipped one too. On its own it says
     nothing about tiers, so it leaves a shipped `model_tier` alone.
+
+    A key the operator gives a value of its own is never reported: the operator's
+    value is what the merge keeps, and a caller that removes it would delete the
+    operator's declaration rather than the shipped one. An operator declaring
+    both kinds at once is left for `reject_conflicting_model_selection`, which
+    refuses it by name.
     """
-    operator_processing = operator.get("processing_config") or {}
-    shipped_processing = shipped.get("processing_config") or {}
     operator_declares_model = any(
         operator_processing.get(key) is not None for key in ("provider", "llm_model")
     )
@@ -1121,26 +1155,87 @@ def _shipped_base_for_operator_override(
     ):
         superseded.add("retry_config")
 
-    dropped = sorted(superseded & set(shipped_processing))
+    operator_declared = {
+        key for key, value in operator_processing.items() if value is not None
+    }
+    dropped = sorted((superseded & set(shipped_processing)) - operator_declared)
+    if dropped:
+        logger.info(
+            "%s: operator selected its own model (tier=%s, model=%s/%s, "
+            "retry_config explicitly null: %s), so the shipped %s %s dropped "
+            "rather than overriding that choice.",
+            source,
+            operator_processing.get("model_tier"),
+            operator_processing.get("provider"),
+            operator_processing.get("llm_model"),
+            operator_clears_chain,
+            ", ".join(dropped),
+            "is" if len(dropped) == 1 else "are",
+        )
+    return dropped
+
+
+def _shipped_base_for_operator_override(
+    # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
+    shipped: dict[str, Any],
+    # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
+    operator: dict[str, Any],
+    # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
+) -> dict[str, Any]:
+    """The shipped profile with the selection the operator's own supersedes gone.
+
+    The base the operator's definition is deep-merged onto, so that what the
+    operator selected is what the merged definition says. See
+    `_superseded_shipped_selection` for which keys go and why.
+    """
+    dropped = _superseded_shipped_selection(
+        shipped.get("processing_config") or {},
+        operator.get("processing_config") or {},
+        f"Profile '{shipped.get('id')}'",
+    )
     if not dropped:
         return shipped
 
     without_superseded = copy.deepcopy(shipped)
     for key in dropped:
         without_superseded["processing_config"].pop(key, None)
-    logger.info(
-        "Profile '%s': operator selected its own model (tier=%s, model=%s/%s, "
-        "retry_config explicitly null: %s), so the shipped %s %s dropped rather "
-        "than overriding that choice.",
-        shipped.get("id"),
-        operator_processing.get("model_tier"),
-        operator_processing.get("provider"),
-        operator_processing.get("llm_model"),
-        operator_clears_chain,
-        ", ".join(dropped),
-        "is" if len(dropped) == 1 else "are",
-    )
     return without_superseded
+
+
+def _apply_default_profile_selection_provenance(
+    # ast-grep-ignore: no-dict-any - raw config dict before validation
+    config_data: dict[str, Any],
+    shipped_default_settings: dict[str, Any],
+    # ast-grep-ignore: no-dict-any - raw YAML config data before validation
+    operator_config_data: dict[str, Any],
+) -> None:
+    """Let an operator's `default_profile_settings` model selection win.
+
+    `default_profile_settings` reaches here already deep-merged, so an operator
+    who set an inline model or a retry chain there still carries the shipped
+    `model_tier` alongside it -- which every profile inheriting from the block
+    would run on, and which `reject_conflicting_model_selection` refuses
+    outright. This is the same provenance rule the service-profile merge applies,
+    on the one other block that names a model.
+
+    The superseded shipped values are cleared rather than removed: the merged
+    block is a `model_dump`, where every key exists and `None` is what "not
+    selected" looks like.
+    """
+    operator_settings = operator_config_data.get("default_profile_settings") or {}
+    operator_processing = (
+        operator_settings.get("processing_config") or {}
+        if isinstance(operator_settings, dict)
+        else {}
+    )
+    dropped = _superseded_shipped_selection(
+        shipped_default_settings.get("processing_config") or {},
+        operator_processing,
+        "default_profile_settings",
+    )
+    merged_processing = config_data["default_profile_settings"]["processing_config"]
+    for key in dropped:
+        merged_processing[key] = None
 
 
 # ast-grep-ignore: no-dict-any - raw YAML profile dicts before validation
@@ -1318,6 +1413,12 @@ def load_config(
     )
     if not embedding_dimensions_configured:
         config_data.pop("embedding_dimensions", None)
+
+    _apply_default_profile_selection_provenance(
+        config_data,
+        defaults_only_config.default_profile_settings.model_dump(exclude_unset=True),
+        operator_config_data,
+    )
 
     default_policy_data = defaults_only_config.model_dump()["default_profile_settings"][
         "tools_policy"
