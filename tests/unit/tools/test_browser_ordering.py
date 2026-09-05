@@ -15,9 +15,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from family_assistant.tools.browser_dom import browser_click_tool
+from family_assistant.tools import AVAILABLE_FUNCTIONS
 from family_assistant.tools.browser_session import BROWSER_TOOL_NAMES, BrowserSession
-from family_assistant.tools.computer_use import computer_use_click
 from family_assistant.tools.types import ToolCallBatch, ToolExecutionContext
 
 if TYPE_CHECKING:
@@ -177,23 +176,17 @@ class TestBrowserSessionOperation:
 class TestBrowserToolRegistry:
     """Every browser tool registers itself via ``@browser_operation``."""
 
-    def test_registry_covers_the_dom_and_visual_tools(self) -> None:
-        # Importing the tool modules is what fills the registry; the two tools
-        # referenced here are the imports that make that happen.
-        assert callable(browser_click_tool)
-        assert callable(computer_use_click)
-        assert {
-            "browser_open",
-            "browser_snapshot",
-            "browser_click",
-            "browser_fill",
-            "browser_select",
-            "browser_wait",
-            "browser_extract",
-            "browser_screenshot",
-            "browser_exec",
-            "browser_request_handoff",
-            "browser_claim_handback",
-            "computer_use_click",
-            "computer_use_navigate",
-        } <= BROWSER_TOOL_NAMES
+    def test_registry_matches_the_tool_table(self) -> None:
+        # A batch carries the names tools are exposed under, so the registry
+        # must hold exactly those names for every decorated implementation:
+        # a name that differs (or a browser tool without the decorator) would
+        # silently drop that tool out of issue-order waiting.
+        decorated = {
+            name
+            for name, implementation in AVAILABLE_FUNCTIONS.items()
+            if getattr(implementation, "browser_tool_name", None) is not None
+        }
+        assert decorated == BROWSER_TOOL_NAMES
+        assert {"browser_click", "click", "navigate", "take_screenshot"} <= decorated
+        for name in decorated:
+            assert AVAILABLE_FUNCTIONS[name].browser_tool_name == name

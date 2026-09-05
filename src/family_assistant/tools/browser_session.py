@@ -196,26 +196,39 @@ async def close_browser_session(exec_context: ToolExecutionContext) -> None:
 
 
 def browser_operation[**P](
-    func: Callable[Concatenate[ToolExecutionContext, P], Awaitable[ToolResult]],
-) -> Callable[Concatenate[ToolExecutionContext, P], Awaitable[ToolResult]]:
+    tool_name: str | None = None,
+) -> Callable[
+    [Callable[Concatenate[ToolExecutionContext, P], Awaitable[ToolResult]]],
+    Callable[Concatenate[ToolExecutionContext, P], Awaitable[ToolResult]],
+]:
     """Register a tool as a browser operation and serialise its body.
 
-    The tool name is the function name without the ``_tool`` suffix, which is
-    the naming convention every tool module follows. Registering here rather
-    than in a hand-written list is what keeps the ordering rule and the set of
-    tools it applies to from drifting apart.
+    ``tool_name`` is the name the tool is exposed under, which is what a
+    :class:`~family_assistant.tools.types.ToolCallBatch` carries; it defaults to
+    the function name without the ``_tool`` suffix. The wrapper is marked so a
+    test can check the registry against the tool table, which is what keeps the
+    ordering rule and the set of tools it applies to from drifting apart.
     """
-    BROWSER_TOOL_NAMES.add(func.__name__.removesuffix("_tool"))
 
-    @functools.wraps(func)
-    async def wrapper(
-        exec_context: ToolExecutionContext, *args: P.args, **kwargs: P.kwargs
-    ) -> ToolResult:
-        session = await get_browser_session(exec_context)
-        async with session.operation(exec_context):
-            return await func(exec_context, *args, **kwargs)
+    def decorate(
+        func: Callable[Concatenate[ToolExecutionContext, P], Awaitable[ToolResult]],
+    ) -> Callable[Concatenate[ToolExecutionContext, P], Awaitable[ToolResult]]:
+        name = tool_name or func.__name__.removesuffix("_tool")
+        BROWSER_TOOL_NAMES.add(name)
 
-    return wrapper
+        @functools.wraps(func)
+        async def wrapper(
+            exec_context: ToolExecutionContext, *args: P.args, **kwargs: P.kwargs
+        ) -> ToolResult:
+            session = await get_browser_session(exec_context)
+            async with session.operation(exec_context):
+                return await func(exec_context, *args, **kwargs)
+
+        # The marker a test reads to check the registry against the tool table.
+        wrapper.browser_tool_name = name  # pyright: ignore[reportAttributeAccessIssue]
+        return wrapper
+
+    return decorate
 
 
 def denormalize_coordinate(value: int, max_value: int) -> int:

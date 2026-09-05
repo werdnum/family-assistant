@@ -161,7 +161,7 @@ async def _take_screenshot_with_url(backend: BrowserBackend) -> ToolResult:
 # --- Tool Implementations (Gemini 3.5 action space) ---
 
 
-@browser_operation
+@browser_operation("click")
 async def computer_use_click(
     exec_context: ToolExecutionContext, x: int, y: int, intent: str = ""
 ) -> ToolResult:
@@ -184,7 +184,7 @@ async def computer_use_click(
     return await _take_screenshot_with_url(backend)
 
 
-@browser_operation
+@browser_operation("double_click")
 async def computer_use_double_click(
     exec_context: ToolExecutionContext, x: int, y: int, intent: str = ""
 ) -> ToolResult:
@@ -207,7 +207,7 @@ async def computer_use_double_click(
     return await _take_screenshot_with_url(backend)
 
 
-@browser_operation
+@browser_operation("triple_click")
 async def computer_use_triple_click(
     exec_context: ToolExecutionContext, x: int, y: int, intent: str = ""
 ) -> ToolResult:
@@ -230,7 +230,7 @@ async def computer_use_triple_click(
     return await _take_screenshot_with_url(backend)
 
 
-@browser_operation
+@browser_operation("middle_click")
 async def computer_use_middle_click(
     exec_context: ToolExecutionContext, x: int, y: int, intent: str = ""
 ) -> ToolResult:
@@ -253,7 +253,7 @@ async def computer_use_middle_click(
     return await _take_screenshot_with_url(backend)
 
 
-@browser_operation
+@browser_operation("right_click")
 async def computer_use_right_click(
     exec_context: ToolExecutionContext, x: int, y: int, intent: str = ""
 ) -> ToolResult:
@@ -276,7 +276,7 @@ async def computer_use_right_click(
     return await _take_screenshot_with_url(backend)
 
 
-@browser_operation
+@browser_operation("mouse_down")
 async def computer_use_mouse_down(
     exec_context: ToolExecutionContext, x: int, y: int, intent: str = ""
 ) -> ToolResult:
@@ -300,7 +300,7 @@ async def computer_use_mouse_down(
     return await _take_screenshot_with_url(backend)
 
 
-@browser_operation
+@browser_operation("mouse_up")
 async def computer_use_mouse_up(
     exec_context: ToolExecutionContext, x: int, y: int, intent: str = ""
 ) -> ToolResult:
@@ -324,7 +324,7 @@ async def computer_use_mouse_up(
     return await _take_screenshot_with_url(backend)
 
 
-@browser_operation
+@browser_operation("move")
 async def computer_use_move(
     exec_context: ToolExecutionContext, x: int, y: int, intent: str = ""
 ) -> ToolResult:
@@ -347,7 +347,7 @@ async def computer_use_move(
     return await _take_screenshot_with_url(backend)
 
 
-@browser_operation
+@browser_operation("type")
 async def computer_use_type(
     exec_context: ToolExecutionContext,
     text: str,
@@ -382,7 +382,7 @@ async def computer_use_type(
     return await _take_screenshot_with_url(backend)
 
 
-@browser_operation
+@browser_operation("press_key")
 async def computer_use_press_key(
     exec_context: ToolExecutionContext, key: str, intent: str = ""
 ) -> ToolResult:
@@ -403,7 +403,7 @@ async def computer_use_press_key(
     return await _take_screenshot_with_url(backend)
 
 
-@browser_operation
+@browser_operation("key_down")
 async def computer_use_key_down(
     exec_context: ToolExecutionContext, key: str, intent: str = ""
 ) -> ToolResult:
@@ -427,7 +427,7 @@ async def computer_use_key_down(
     return await _take_screenshot_with_url(backend)
 
 
-@browser_operation
+@browser_operation("key_up")
 async def computer_use_key_up(
     exec_context: ToolExecutionContext, key: str, intent: str = ""
 ) -> ToolResult:
@@ -451,7 +451,7 @@ async def computer_use_key_up(
     return await _take_screenshot_with_url(backend)
 
 
-@browser_operation
+@browser_operation("hotkey")
 async def computer_use_hotkey(
     exec_context: ToolExecutionContext, keys: list[str], intent: str = ""
 ) -> ToolResult:
@@ -473,7 +473,7 @@ async def computer_use_hotkey(
     return await _take_screenshot_with_url(backend)
 
 
-@browser_operation
+@browser_operation("scroll")
 async def computer_use_scroll(
     exec_context: ToolExecutionContext,
     x: int,
@@ -525,7 +525,7 @@ async def computer_use_scroll(
     return await _take_screenshot_with_url(backend)
 
 
-@browser_operation
+@browser_operation("drag_and_drop")
 async def computer_use_drag_and_drop(
     exec_context: ToolExecutionContext,
     start_x: int,
@@ -567,7 +567,7 @@ async def computer_use_drag_and_drop(
     return await _take_screenshot_with_url(backend)
 
 
-@browser_operation
+@browser_operation("navigate")
 async def computer_use_navigate(
     exec_context: ToolExecutionContext, url: str, intent: str = ""
 ) -> ToolResult:
@@ -589,7 +589,7 @@ async def computer_use_navigate(
     return await _take_screenshot_with_url(backend)
 
 
-@browser_operation
+@browser_operation("go_back")
 async def computer_use_go_back(
     exec_context: ToolExecutionContext, intent: str = ""
 ) -> ToolResult:
@@ -608,7 +608,7 @@ async def computer_use_go_back(
     return await _take_screenshot_with_url(backend)
 
 
-@browser_operation
+@browser_operation("go_forward")
 async def computer_use_go_forward(
     exec_context: ToolExecutionContext, intent: str = ""
 ) -> ToolResult:
@@ -627,7 +627,7 @@ async def computer_use_go_forward(
     return await _take_screenshot_with_url(backend)
 
 
-@browser_operation
+@browser_operation("take_screenshot")
 async def computer_use_take_screenshot(
     exec_context: ToolExecutionContext, intent: str = ""
 ) -> ToolResult:
@@ -645,7 +645,7 @@ async def computer_use_take_screenshot(
     return await _take_screenshot_with_url(backend)
 
 
-@browser_operation
+@browser_operation("wait")
 async def computer_use_wait(
     exec_context: ToolExecutionContext, seconds: int = 1, intent: str = ""
 ) -> ToolResult:

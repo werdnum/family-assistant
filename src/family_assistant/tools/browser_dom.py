@@ -458,7 +458,7 @@ async def _snapshot_result(
 # ---------------------------------------------------------------------------
 
 
-@browser_operation
+@browser_operation()
 async def browser_open_tool(
     exec_context: ToolExecutionContext, url: str, query: str | None = None
 ) -> ToolResult:
@@ -472,7 +472,7 @@ async def browser_open_tool(
     return await _snapshot_result(exec_context, backend, query=query)
 
 
-@browser_operation
+@browser_operation()
 async def browser_snapshot_tool(
     exec_context: ToolExecutionContext, query: str | None = None
 ) -> ToolResult:
@@ -501,7 +501,7 @@ async def _stale_ref_result(
     return ToolResult(text=f"{exc}\n\n{snapshot.get_text()}", data=data)
 
 
-@browser_operation
+@browser_operation()
 async def browser_click_tool(
     exec_context: ToolExecutionContext, ref: str, query: str | None = None
 ) -> ToolResult:
@@ -517,7 +517,7 @@ async def browser_click_tool(
     return await _snapshot_result(exec_context, backend, query=query)
 
 
-@browser_operation
+@browser_operation()
 async def browser_fill_tool(
     exec_context: ToolExecutionContext,
     ref: str,
@@ -538,7 +538,7 @@ async def browser_fill_tool(
     return await _snapshot_result(exec_context, backend, query=query)
 
 
-@browser_operation
+@browser_operation()
 async def browser_select_tool(
     exec_context: ToolExecutionContext, ref: str, value: str, query: str | None = None
 ) -> ToolResult:
@@ -558,7 +558,7 @@ async def browser_select_tool(
     return await _snapshot_result(exec_context, backend, query=query)
 
 
-@browser_operation
+@browser_operation()
 async def browser_wait_tool(
     exec_context: ToolExecutionContext,
     selector: str | None = None,
@@ -575,7 +575,7 @@ async def browser_wait_tool(
     return await _snapshot_result(exec_context, backend, query=query)
 
 
-@browser_operation
+@browser_operation()
 async def browser_extract_tool(
     exec_context: ToolExecutionContext, selector: str | None = None
 ) -> ToolResult:
@@ -601,7 +601,7 @@ async def browser_extract_tool(
     )
 
 
-@browser_operation
+@browser_operation()
 async def browser_screenshot_tool(
     exec_context: ToolExecutionContext,
 ) -> ToolResult:
@@ -621,7 +621,7 @@ async def browser_screenshot_tool(
     )
 
 
-@browser_operation
+@browser_operation()
 async def browser_exec_tool(
     exec_context: ToolExecutionContext, code: str
 ) -> ToolResult:
@@ -659,7 +659,7 @@ async def browser_exec_tool(
     return ToolResult(data=data)
 
 
-@browser_operation
+@browser_operation()
 async def browser_request_handoff_tool(
     exec_context: ToolExecutionContext,
     reason: str,
@@ -704,7 +704,7 @@ async def browser_request_handoff_tool(
     )
 
 
-@browser_operation
+@browser_operation()
 async def browser_claim_handback_tool(
     exec_context: ToolExecutionContext,
     session_id: str,
