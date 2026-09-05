@@ -184,6 +184,14 @@ Assistant profile; the router never creates a new agent identity, and existing h
 migration. If classification fails or times out, the profile's configured `model_tier` is the
 availability fallback. An explicit user selection bypasses the router entirely.
 
+Because the classifier reads the trusted trigger message itself, the user can also nudge routing in
+the prompt: "think hard about this", "quick question", "this is subtle" are legitimate signals the
+classifier weighs, and on surfaces without a composer control they are the zero-UI steering channel.
+Prompt nudges steer **within `auto_model_tiers`**; they do not reach tiers outside the Auto range —
+crossing into `frontier`/Max stays on the unambiguous explicit surfaces (selector, tier command)
+rather than being inferred from phrasing, so the boundary between "Auto listened to me" and "I
+explicitly chose to spend more" never depends on natural-language interpretation.
+
 Routing runs once per user turn, before the tool loop, and the result holds for the whole run —
 providers carry different reasoning metadata, tool representations, and attachment handling, and
 attachment injection is built by the primary adapter. Deliberate hybrid patterns ("strong model
