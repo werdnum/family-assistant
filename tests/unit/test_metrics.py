@@ -27,9 +27,11 @@ from family_assistant.llm.utils.call_telemetry import LLMCallTelemetry
 from family_assistant.observability.exporter import start_metrics_exporter
 from family_assistant.observability.metrics import (
     UNKNOWN_TOOL,
+    UNROUTED_TIER,
     TurnMetrics,
     instrumented_llm_request,
     normalized_token_buckets,
+    record_model_routing,
     record_tool_call,
 )
 from family_assistant.processing.interactions_agent_service import (
@@ -409,6 +411,71 @@ def test_the_resolved_tier_labels_the_call_and_lands_in_the_usage(
                 "operation": "chat",
                 "outcome": "success",
                 "error_type": "",
+            },
+        )
+        == 1
+    )
+
+
+def test_a_shadow_decision_is_counted_under_the_mode_that_produced_it(
+    profile: str,
+) -> None:
+    """Shadow and active decisions are not comparable and must not be summed.
+
+    A shadow `deep` is a recommendation nothing acted on; an active one is
+    spend. A deployment mid-rollout has both.
+    """
+    record_model_routing(
+        profile=profile,
+        mode="shadow",
+        outcome="decided",
+        tier="deep",
+        latency_seconds=0.4,
+    )
+
+    assert (
+        _sample(
+            "family_assistant_model_routing_decisions_total",
+            {
+                "profile": profile,
+                "mode": "shadow",
+                "outcome": "decided",
+                "tier": "deep",
+            },
+        )
+        == 1
+    )
+    assert (
+        _sample(
+            "family_assistant_model_routing_latency_seconds_count",
+            {"profile": profile, "outcome": "decided"},
+        )
+        == 1
+    )
+
+
+def test_a_failed_decision_is_counted_rather_than_dropped(profile: str) -> None:
+    """The ratio of failures to decisions is the health of the classifier.
+
+    A timeout that vanished from the counter would make an outage look like a
+    quiet period, which is the exact confusion the outcome exists to prevent.
+    """
+    record_model_routing(
+        profile=profile,
+        mode="active",
+        outcome="timeout",
+        tier=None,
+        latency_seconds=10.0,
+    )
+
+    assert (
+        _sample(
+            "family_assistant_model_routing_decisions_total",
+            {
+                "profile": profile,
+                "mode": "active",
+                "outcome": "timeout",
+                "tier": UNROUTED_TIER,
             },
         )
         == 1

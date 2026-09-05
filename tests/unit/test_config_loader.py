@@ -2852,6 +2852,7 @@ def test_every_service_profile_field_is_accounted_for() -> None:
         "remote_a2a",
         "allowed_model_tiers",
         "auto_model_tiers",
+        "auto_routing_guidance",
         # Set from the profile definition directly rather than merged.
         "id",
         "description",
@@ -3593,3 +3594,54 @@ ucp_config:
         assert "front_door" in caplog.text
         assert "webhook" in caplog.text
         assert "signing_private_key" in caplog.text
+
+
+def test_a_profile_overriding_model_selection_actually_gets_it(tmp_path: Path) -> None:
+    """A gate that fails open silently is what the key list exists to prevent.
+
+    `model_selection` decides whether a classifier runs before every turn on
+    the profile, so a value that parsed and was then dropped would leave an
+    operator's "do not route this one" with no effect at all.
+    """
+    processing_config = _resolved_default_assistant(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      model_selection: "explicit"\n',
+    )
+
+    assert processing_config.model_selection == "explicit"
+
+
+def test_a_profile_replaces_the_inherited_routing_guidance(tmp_path: Path) -> None:
+    """Guidance describes one agent's threshold; merging two describes neither."""
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "default_profile_settings:\n"
+        '  auto_routing_guidance: "Everything is easy."\n'
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        '    auto_routing_guidance: "Reach for deep when evidence conflicts."\n'
+        '  - id: "email_intake"\n',
+    )
+
+    assistant = next(p for p in config.service_profiles if p.id == "default_assistant")
+    inheritor = next(p for p in config.service_profiles if p.id == "email_intake")
+    assert assistant.auto_routing_guidance == "Reach for deep when evidence conflicts."
+    assert inheritor.auto_routing_guidance == "Everything is easy."
+
+
+def test_routing_switched_on_without_a_classifier_is_a_startup_error() -> None:
+    """Otherwise the omission surfaces as errors that look like a provider outage."""
+    with pytest.raises(ValidationError, match="names no model"):
+        AppConfig.model_validate({
+            "model_routing": {"mode": "active", "classifier": {"provider": "google"}}
+        })
+
+
+def test_routing_left_off_needs_no_classifier() -> None:
+    """A deployment that never routes should not have to configure a router."""
+    config = AppConfig.model_validate({"model_routing": {"mode": "off"}})
+
+    assert config.model_routing.classifier.model is None

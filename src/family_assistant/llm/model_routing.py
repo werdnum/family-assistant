@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, ValidationError, create_model
 
+from family_assistant.llm.base import StructuredOutputError
 from family_assistant.llm.messages import (
     AssistantMessage,
     SystemMessage,
@@ -40,6 +41,7 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
+from family_assistant.llm.model_selection import RoutingOutcome
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -76,17 +78,6 @@ the conversation happened to contain.
 """
 
 _REQUEST_CHARS = 4000
-
-
-type RoutingOutcome = Literal["decided", "timeout", "invalid", "error"]
-"""How the classification went, separately from what the run resolved to.
-
-``decided`` is a usable answer. ``timeout`` is the classifier not answering in
-time, ``invalid`` an answer that is not one of the offered tiers, and ``error``
-anything else the provider did. The last three all resolve to the profile's
-configured tier, and are distinguished because they fail for different reasons
-and a deployment needs to know which it has.
-"""
 
 
 class ModelRoutingChoice(BaseModel):
@@ -231,9 +222,14 @@ class ModelRouter:
                 self._timeout_seconds,
             )
             return self._failed("timeout", started)
-        except ValidationError:
+        except (StructuredOutputError, ValidationError):
+            # The classifier answered, but not with one of the offered ids in
+            # the shape asked for. That is a different problem from the
+            # provider being unavailable, and a deployment seeing a lot of it
+            # should look at the classifier model rather than at its network.
             logger.warning(
-                "Model routing returned a tier outside %s.", ", ".join(tier_ids)
+                "Model routing returned no usable choice among %s.",
+                ", ".join(tier_ids),
             )
             return self._failed("invalid", started)
         except Exception:

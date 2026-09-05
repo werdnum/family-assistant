@@ -26,20 +26,21 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Self
+from typing import TYPE_CHECKING, Literal, Self, get_args
 
 if TYPE_CHECKING:
     from family_assistant.config_models import ModelTierConfig, ServiceProfile
     from family_assistant.llm.messages import MessageReasoningInfo
-    from family_assistant.llm.model_routing import RoutingOutcome
 
 __all__ = [
+    "ROUTING_OUTCOMES",
     "ModelSelectionRequest",
     "ModelTierClientMissing",
     "ModelTierEligibility",
     "ModelTierNotPermitted",
     "ModelTierOption",
     "ResolvedModelSelection",
+    "RoutingOutcome",
     "SelectionSource",
     "resolve_model_selection",
     "stamp_model_selection",
@@ -58,14 +59,25 @@ record, and only one of them can be evaluated against a routing prompt."""
 
 _PERSISTABLE_SOURCES: frozenset[str] = frozenset({"user", "model", "default", "auto"})
 
-_ROUTING_OUTCOMES: frozenset[str] = frozenset({
-    "decided",
-    "timeout",
-    "invalid",
-    "error",
-})
-"""``RoutingOutcome``'s members, spelled again because a ``Literal`` alias has
-no runtime membership to check a persisted value against."""
+type RoutingOutcome = Literal["decided", "timeout", "invalid", "error"]
+"""How an Auto classification went, separately from what the run resolved to.
+
+``decided`` is a usable answer. ``timeout`` is the classifier not answering in
+time, ``invalid`` an answer that is not one of the offered tiers, and ``error``
+anything else the provider did. The last three all resolve to the profile's
+configured tier, and are distinguished because they fail for different reasons
+and a deployment needs to know which it has.
+
+Declared here rather than beside the router because it is part of the
+envelope's vocabulary: a persisted run carries the outcome, and this module is
+what has to be able to read one back."""
+
+ROUTING_OUTCOMES: frozenset[str] = frozenset(get_args(RoutingOutcome.__value__))
+"""``RoutingOutcome``'s members, for validating a value read from storage.
+
+Derived rather than written out again: a ``Literal`` alias has no runtime
+membership of its own, and a second hand-written list would be free to drift
+from the type until a row this deployment itself wrote failed to load."""
 
 
 class ModelTierClientMissing(RuntimeError):
@@ -275,7 +287,7 @@ class ResolvedModelSelection:
             msg = "Persisted model selection has a non-string tier."
             raise ValueError(msg)
         outcome = data.get("routing_outcome")
-        if outcome is not None and outcome not in _ROUTING_OUTCOMES:
+        if outcome is not None and outcome not in ROUTING_OUTCOMES:
             msg = f"Persisted model selection has unknown routing outcome {outcome!r}."
             raise ValueError(msg)
         would_choose = data.get("routing_would_choose")
