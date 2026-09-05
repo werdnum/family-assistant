@@ -904,11 +904,15 @@ describe('ChatApp intelligence tier selection', () => {
     await waitForMessageSent(input);
   };
 
-  // The turn is over once the composer stops being the steer box.
+  // The turn is over, and the composer takes a new message instead of steering
+  // it into the running one, exactly when the thread stops running: that is the
+  // state Enter submits in, and the state that puts the send button back and
+  // returns the placeholder to its idle text.
   const waitForTurnToSettle = async (expectedTurns: number) => {
     await waitFor(
       () => {
         expect(screen.queryAllByTestId('assistant-message').length).toBe(expectedTurns);
+        expect(screen.getByTestId('send-button')).toBeInTheDocument();
         expect(screen.getByTestId('chat-input')).toHaveAttribute(
           'placeholder',
           'Message Family Assistant...'
@@ -916,10 +920,6 @@ describe('ChatApp intelligence tier selection', () => {
       },
       { timeout: 10000 }
     );
-    // @assistant-ui/react needs a moment after a stream completes before it
-    // accepts the next submission — the same settle the multi-message test
-    // above waits for.
-    await new Promise((resolve) => setTimeout(resolve, 2000));
   };
 
   it('sends no model_tier while the profile default is in effect', async () => {

@@ -137,7 +137,9 @@ def validate_profile_model_tier(
     model instead. Raises ``ValueError`` naming the profile otherwise: an
     unknown tier, a tier on a profile whose runtime is coupled to one provider
     or one API surface, or an eligibility list that does not describe reachable
-    tiers.
+    tiers. Runtime compatibility is judged over every tier the profile may be
+    run on, not just its default, because each of those gets a client built for
+    it and can serve a turn.
     """
     profile_id = profile_conf.id
     processing_config = profile_conf.processing_config
@@ -181,6 +183,14 @@ def validate_profile_model_tier(
                 f"{', '.join(unknown)}. Configured tiers: {known}."
             )
             raise ValueError(msg)
+
+    # Every tier the profile may be run on gets a client built for it, so a
+    # runtime the tier system cannot serve is the same defect wherever it is
+    # named -- checking only the default would let an alternate reach a
+    # server-side agent runtime that silently drops the profile's tools and
+    # history.
+    for selectable in sorted({*(allowed or ()), *(auto or ())} - {tier_name}):
+        _reject_interactions_agent_tier(profile_id, selectable, model_tiers[selectable])
 
     if allowed is not None and tier_name not in allowed:
         msg = (
@@ -232,11 +242,20 @@ def _reject_tier_on_pinned_runtime(
             "Google GenAI client."
         )
         raise ValueError(msg)
+    _reject_interactions_agent_tier(profile_id, tier_name, tier)
+
+
+def _reject_interactions_agent_tier(
+    profile_id: str,
+    tier_name: str,
+    tier: ModelTierConfig,
+) -> None:
+    """Refuse a tier whose chain names a model that is not a chat model."""
     agent_models = models_in_chain(tier.chain, is_interactions_agent_model)
     if agent_models:
         msg = (
-            f"Profile '{profile_id}' uses model_tier '{tier_name}', whose chain "
-            f"names Interactions API agent model(s): {', '.join(agent_models)}. "
+            f"Profile '{profile_id}' can run on model_tier '{tier_name}', whose "
+            f"chain names Interactions API agent model(s): {', '.join(agent_models)}. "
             "Those run server-side rather than as chat models, so they are "
             "configured inline on a profile, not as an interchangeable tier."
         )

@@ -306,6 +306,34 @@ def test_tier_naming_an_interactions_agent_model_is_rejected() -> None:
         validate_profile_model_tier(profile, tiers)
 
 
+def test_a_selectable_tier_naming_an_interactions_agent_model_is_rejected() -> None:
+    """Every tier the profile may run on gets a client, so every one is checked.
+
+    Reaching an Interactions agent through an alternate tier would run the turn
+    on a server-side agent that ignores the profile's tools and history, which
+    looks like an answer rather than like the misconfiguration it is.
+    """
+    tiers = {
+        "standard": ModelTierConfig(
+            chain=[RetryModelConfig(provider="openai", model="gpt-5.6-terra")]
+        ),
+        "research": ModelTierConfig(
+            chain=[
+                RetryModelConfig(
+                    provider="google", model="deep-research-preview-04-2026"
+                )
+            ]
+        ),
+    }
+    profile = _profile(
+        ProcessingConfig(model_tier="standard"),
+        allowed_model_tiers=["standard", "research"],
+    )
+
+    with pytest.raises(ValueError, match="'research'.*Interactions API agent model"):
+        validate_profile_model_tier(profile, tiers)
+
+
 def test_tier_on_a_remote_a2a_profile_is_rejected() -> None:
     profile = _profile(
         ProcessingConfig(model_tier="standard"),
@@ -419,6 +447,33 @@ def test_a_tier_command_colliding_with_a_profile_command_is_rejected() -> None:
                 )
             },
             service_profiles=[ServiceProfile(id="maximiser", slash_commands=["/max"])],
+        )
+
+
+@pytest.mark.parametrize("command", ["/start", "/interrupt"])
+def test_a_tier_command_claiming_a_built_in_command_is_rejected(command: str) -> None:
+    """The built-in handler is registered first and answers, so the tier never runs."""
+    with pytest.raises(ValidationError, match="built-in command"):
+        AppConfig(
+            model_tiers={
+                "frontier": ModelTierConfig(
+                    chain=[
+                        RetryModelConfig(provider="anthropic", model="claude-fable-5")
+                    ],
+                    slash_command=command,
+                )
+            }
+        )
+
+
+@pytest.mark.parametrize("command", ["/start", "/Interrupt"])
+def test_a_profile_command_claiming_a_built_in_command_is_rejected(
+    command: str,
+) -> None:
+    """Same collision, same outcome -- and Telegram ignores the capital."""
+    with pytest.raises(ValidationError, match="built-in command"):
+        AppConfig(
+            service_profiles=[ServiceProfile(id="starter", slash_commands=[command])]
         )
 
 
