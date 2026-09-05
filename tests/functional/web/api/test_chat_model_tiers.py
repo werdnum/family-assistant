@@ -148,6 +148,43 @@ async def test_a_turn_naming_no_tier_stays_on_the_profile_default(
 
 
 @pytest.mark.usefixtures("tiered_app")
+async def test_the_conversation_history_reports_the_tier_a_reply_ran_at(
+    api_test_client: AsyncClient,
+) -> None:
+    """The history view reads this, so serialisation is part of the contract.
+
+    `MessageReasoningInfo` is a TypedDict validated by pydantic, which drops
+    keys it does not declare -- so a field added to the stamping side but not
+    to the type would vanish exactly here, with nothing else failing.
+    """
+    conversation_id = f"tier-history-{uuid.uuid4()}"
+    await api_test_client.post(
+        "/api/v1/chat/send_message",
+        json={
+            "prompt": "think hard about this",
+            "conversation_id": conversation_id,
+            "model_tier": "deep",
+        },
+    )
+
+    response = await api_test_client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/messages"
+    )
+
+    assert response.status_code == 200
+    assistant = [
+        message
+        for message in response.json()["messages"]
+        if message["role"] == "assistant"
+    ]
+    assert assistant, "the turn persisted no assistant reply"
+    reasoning = assistant[-1]["reasoning_info"]
+    assert reasoning["model_tier"] == "deep"
+    assert reasoning["model_tier_source"] == "user"
+    assert reasoning["model_tier_requested"] == "deep"
+
+
+@pytest.mark.usefixtures("tiered_app")
 async def test_a_person_may_choose_a_tier_no_model_is_allowed_to(
     api_test_client: AsyncClient,
 ) -> None:
