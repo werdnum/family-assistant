@@ -27,6 +27,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
+from pydantic import SecretStr
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012, SchemaRegistry
 
@@ -362,7 +363,7 @@ def _signed_config() -> AppConfig:
         server_url="https://assistant.example",
         ucp_config=UCPConfig(
             signing_key_id="platform-2026",
-            signing_private_key=_private_key_pem(),
+            signing_private_key=SecretStr(_private_key_pem()),
         ),
     )
 

@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
+from pydantic import SecretStr
 
 from family_assistant.config_models import AppConfig, KeychuteConfig
 from family_assistant.llm.messages import AssistantMessage, ToolMessage
@@ -902,7 +903,7 @@ async def test_script_testing_does_not_expose_keychute(
         keychute_config=KeychuteConfig(
             enabled=True,
             url="https://keychute.test",
-            token="client-token",
+            token=SecretStr("client-token"),
         )
     )
     request = AsyncMock(side_effect=AssertionError("real Keychute call attempted"))

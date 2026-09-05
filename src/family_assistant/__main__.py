@@ -7,6 +7,8 @@ import sys
 from typing import Any
 
 # Import the FastAPI app (needed for app.state)
+from pydantic import SecretStr
+
 from family_assistant.web.app_creator import app as fastapi_app
 
 # Import the Assistant class
@@ -78,10 +80,12 @@ def main() -> int:
     # Apply CLI Overrides to config using model_copy for immutable updates
     # ast-grep-ignore: no-dict-any - Used for dynamic kwargs passed to model_copy()
     cli_overrides: dict[str, Any] = {}
+    # model_copy(update=...) assigns without validating, so a SecretStr field
+    # given a bare string would stay a string and fail at .get_secret_value().
     if args.telegram_token is not None:
-        cli_overrides["telegram_token"] = args.telegram_token
+        cli_overrides["telegram_token"] = SecretStr(args.telegram_token)
     if args.openrouter_api_key is not None:
-        cli_overrides["openrouter_api_key"] = args.openrouter_api_key
+        cli_overrides["openrouter_api_key"] = SecretStr(args.openrouter_api_key)
     if args.model is not None:
         cli_overrides["model"] = args.model
     if args.embedding_model is not None:

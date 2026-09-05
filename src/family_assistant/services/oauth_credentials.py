@@ -238,7 +238,7 @@ class OAuthCredentialResolver:
                 data={
                     "grant_type": "refresh_token",
                     "client_id": self._config.oauth_client_id,
-                    "client_secret": self._config.oauth_client_secret,
+                    "client_secret": self._config.oauth_client_secret.get_secret_value(),
                     "refresh_token": refresh_token,
                 },
             )

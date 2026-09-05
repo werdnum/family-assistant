@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 import pytest
+from pydantic import SecretStr
 
 from family_assistant.config_loader import resolve_all_service_profiles
 from family_assistant.config_models import (
@@ -47,7 +48,9 @@ def _make_sample_config() -> AppConfig:
             llm_model="gemini/gemini-3.1-pro-preview",
             provider="google",
             max_iterations=7,
-            home_assistant_token="super-secret-ha-token",  # should be redacted
+            home_assistant_token=SecretStr(
+                "super-secret-ha-token"
+            ),  # should be redacted
             prompts={
                 "system_prompt": "You are a helpful assistant for {user_name}.",
             },
@@ -181,7 +184,7 @@ async def test_dump_profiles_returns_full_config(
 async def test_dump_profiles_redacts_sensitive_fields(
     api_client: httpx.AsyncClient,
 ) -> None:
-    """Token/password-like fields are replaced with [REDACTED]."""
+    """A declared credential is masked by SecretStr before the dump is built."""
     original_config = _install_test_config(_make_sample_config())
     original_registry = _install_registry({})
     try:
@@ -191,7 +194,9 @@ async def test_dump_profiles_redacts_sensitive_fields(
 
         trusted = data["profiles"][0]
         token = trusted["config"]["processing_config"]["home_assistant_token"]
-        assert token == "[REDACTED]"
+        # Pydantic's own mask, not the "[REDACTED]" this module writes for a
+        # credential it strips out of a larger value.
+        assert token == "**********"
         assert "super-secret-ha-token" not in response.text
     finally:
         _restore_registry(original_registry)

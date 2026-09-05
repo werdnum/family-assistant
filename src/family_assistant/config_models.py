@@ -11,6 +11,35 @@ Configuration priority (lowest to highest):
 1. Code defaults (defined in model Field defaults)
 2. config.yaml file
 3. Environment variables
+
+Fields that hold credentials
+----------------------------
+Type a credential-bearing field ``SecretStr``. Pydantic then masks it in
+``model_dump``, so it cannot reach a diagnostic dump
+(``get_resolved_config``, ``get_profile_config``, ``GET /api/debug/profiles``),
+and the guarantee is enforced by the type rather than by anything guessing from
+the field's name.
+
+The guarantee starts at validation, so it does not cover startup logging:
+``_log_config`` in ``config_loader`` runs on the raw dict *before*
+``AppConfig.model_validate``, and keeps its own hand-maintained exclusion list.
+A credential supplied through an environment variable is a plain string at that
+point. Read the value with
+``.get_secret_value()`` at the point of use; the type checker will point out
+every place that needs it.
+
+Two things this cannot express, handled in
+:mod:`family_assistant.config_inspection` instead:
+
+* A credential *inside* a larger value -- the password in ``database_url``, a
+  ``token=`` parameter in an endpoint. The field as a whole is not secret and
+  masking it would throw away the host and database an operator needs.
+* Config whose shape is not declared -- ``mcp_config.mcpServers`` uses
+  ``extra="allow"`` and its ``env`` blocks are keyed by operator-chosen
+  variable names, so there is no field to annotate.
+
+Add a case to ``tests/unit/test_config_inspection.py`` when you add a
+credential field.
 """
 
 from __future__ import annotations
@@ -25,7 +54,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import cloudcoil.models.kubernetes.core.v1 as k8s_models  # noqa: TC002 - Pydantic needs at runtime
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 if TYPE_CHECKING:
@@ -95,7 +131,7 @@ class ReolinkCameraItemConfig(BaseModel):
 
     host: str
     username: str
-    password: str
+    password: SecretStr
     port: int | None = None  # None means auto-detect based on use_https
     use_https: bool = True
     channel: int = 0
@@ -297,7 +333,7 @@ class ProcessingConfig(BaseModel):
     delegation_security_level: DelegationSecurityLevel = DelegationSecurityLevel.CONFIRM
     allowed_delegation_sources: list[str] | None = None
     home_assistant_api_url: str | None = None
-    home_assistant_token: str | None = None
+    home_assistant_token: SecretStr | None = None
     home_assistant_context_template: str | None = None
     home_assistant_verify_ssl: bool = True
     include_system_docs: list[str] | None = None
@@ -522,7 +558,7 @@ class CalDAVConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     username: str | None = None
-    password: str | None = None
+    password: SecretStr | None = None
     calendar_urls: list[str] = Field(default_factory=list)
     base_url: str | None = None
 
@@ -576,7 +612,7 @@ class PWAConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     vapid_public_key: str | None = None
-    vapid_private_key: str | None = None
+    vapid_private_key: SecretStr | None = None
     vapid_contact_email: str | None = None
 
 
@@ -591,7 +627,7 @@ class ApnsConfig(BaseModel):
 
     team_id: str | None = None
     key_id: str | None = None
-    auth_key: str | None = None
+    auth_key: SecretStr | None = None
     auth_key_path: str | None = None
     bundle_id: str | None = None
     use_sandbox: bool = False
@@ -609,8 +645,8 @@ class OAuthIntegrationConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     oauth_client_id: str = ""
-    oauth_client_secret: str = ""
-    credential_encryption_key: str = ""
+    oauth_client_secret: SecretStr = SecretStr("")
+    credential_encryption_key: SecretStr = SecretStr("")
     scopes: list[str] = Field(default_factory=list)
     require_taint_enforcement: bool = True
 
@@ -956,7 +992,7 @@ class EmailIntakeConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    mailgun_webhook_signing_key: str | None = None
+    mailgun_webhook_signing_key: SecretStr | None = None
     mailgun_signature_max_age_seconds: int = Field(default=300, gt=0)
     allowed_sender_addresses: list[str] = Field(default_factory=list)
     allowed_recipient_addresses: list[str] = Field(default_factory=list)
@@ -970,7 +1006,7 @@ class EmailIntakeConfig(BaseModel):
     max_raw_request_bytes: int = Field(default=25 * 1024 * 1024, gt=0)
     max_attachment_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
     max_total_attachment_bytes: int = Field(default=25 * 1024 * 1024, gt=0)
-    outbound_mailgun_api_key: str | None = None
+    outbound_mailgun_api_key: SecretStr | None = None
     outbound_mailgun_domain: str | None = None
     outbound_from_address: str | None = None
     outbound_timeout_seconds: float = Field(default=10.0, gt=0)
@@ -1000,7 +1036,7 @@ class WebhookSourceConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     enabled: bool = True
-    secrets: dict[str, str] = Field(
+    secrets: dict[str, SecretStr] = Field(
         default_factory=dict,
         description="Optional per-source secrets for signature verification. "
         "Keys are source names, values are secret keys.",
@@ -1046,7 +1082,7 @@ class KeychuteConfig(BaseModel):
 
     enabled: bool = False
     url: str | None = None
-    token: str | None = None
+    token: SecretStr | None = None
     token_file: str | None = None
     ca_bundle: str | None = None
     max_response_bytes: int = Field(default=25 * 1024 * 1024, ge=1)
@@ -1083,6 +1119,11 @@ class MCPServerConfig(BaseModel):
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
     tool_metadata: dict[str, list[str]] = Field(default_factory=dict)
+    # Declared (rather than left to extra="allow") so diagnostic dumps mask it
+    # by type. `env` values cannot be declared this way -- their keys are
+    # operator-chosen environment variable names -- so they are redacted
+    # structurally by config_inspection instead.
+    token: SecretStr | None = None
 
 
 class MCPConfig(BaseModel):
@@ -1091,6 +1132,26 @@ class MCPConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     mcpServers: dict[str, MCPServerConfig] = Field(default_factory=dict)
+
+
+def mcp_servers_for_runtime(
+    mcp_config: MCPConfig,
+    # ast-grep-ignore: no-dict-any - Runtime MCP server dicts are heterogeneous by design
+) -> dict[str, dict[str, Any]]:
+    """Serialize MCP server entries for connecting, with the token unwrapped.
+
+    ``model_dump`` masks the ``SecretStr`` token, which is what diagnostic
+    dumps want and what a client trying to authenticate must not get.
+    """
+    # ast-grep-ignore: no-dict-any - Runtime MCP server dicts are heterogeneous by design
+    servers: dict[str, dict[str, Any]] = {}
+    for server_id, server_config in mcp_config.mcpServers.items():
+        dumped = server_config.model_dump()
+        token = server_config.token
+        if token is not None:
+            dumped["token"] = token.get_secret_value()
+        servers[server_id] = dumped
+    return servers
 
 
 class WorkerResourceLimits(BaseModel):
@@ -1219,7 +1280,7 @@ class MQTTConfig(BaseModel):
     broker_host: str | None = None
     broker_port: int = 1883
     username: str | None = None
-    password: str | None = None
+    password: SecretStr | None = None
 
 
 class UCPConfigObject(BaseModel):
@@ -1305,7 +1366,7 @@ class UCPConfig(BaseModel):
     profile_url: str | None = None
     profile_cache_max_age_seconds: int = Field(default=300, ge=60)
     signing_key_id: str | None = None
-    signing_private_key: str | None = None
+    signing_private_key: SecretStr | None = None
     signing_private_key_path: str | None = None
     additional_signing_keys: list[UCPSigningKeyConfig] = Field(default_factory=list)
     trusted_endpoint_suffixes: list[str] = Field(
@@ -1376,7 +1437,7 @@ class OIDCConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     client_id: str = ""
-    client_secret: str = ""
+    client_secret: SecretStr = SecretStr("")
     discovery_url: str = ""
     allowed_emails: list[str] = Field(default_factory=list)
 
@@ -1493,14 +1554,14 @@ class AppConfig(BaseSettings):
         return tuple(sources)
 
     # Secrets and API keys (primarily from environment)
-    telegram_token: str | None = None
+    telegram_token: SecretStr | None = None
     telegram_enabled: bool = True
     telegram_api_base_url: str | None = (
         None  # Custom Telegram Bot API URL (for testing or self-hosted)
     )
-    openrouter_api_key: str | None = None
-    gemini_api_key: str | None = None
-    openai_api_key: str | None = None
+    openrouter_api_key: SecretStr | None = None
+    gemini_api_key: SecretStr | None = None
+    openai_api_key: SecretStr | None = None
 
     # User access control
     users: list[UserIdentityConfig] = Field(default_factory=list)
@@ -1537,7 +1598,7 @@ class AppConfig(BaseSettings):
     embedding_base_url: str | None = None
     # API key for the OpenAI-compatible embeddings endpoint. Falls back to
     # openai_api_key / OPENAI_API_KEY when unset.
-    embedding_api_key: str | None = None
+    embedding_api_key: SecretStr | None = None
 
     # Storage paths
     database_url: str = "sqlite+aiosqlite:///family_assistant.db"
@@ -1550,7 +1611,7 @@ class AppConfig(BaseSettings):
     )
 
     # Weather integration
-    willyweather_api_key: str | None = None
+    willyweather_api_key: SecretStr | None = None
     willyweather_location_id: int | None = None
 
     # Debug flags

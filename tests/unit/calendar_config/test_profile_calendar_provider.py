@@ -11,7 +11,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
+from pydantic import SecretStr
+
 from family_assistant.assistant import (
+    _calendar_config_to_dict,  # noqa: PLC2701 - no public seam for the runtime dict
     _root_provider_for_profile,  # noqa: PLC2701 - the selection under test; there is no public seam for it
 )
 from family_assistant.config_models import CalDAVConfig, CalendarConfig
@@ -33,7 +36,7 @@ def _calendar_config(url: str) -> CalendarConfig:
     return CalendarConfig(
         caldav=CalDAVConfig(
             username="user",
-            password="secret",
+            password=SecretStr("secret"),
             base_url="https://calendar.example/dav/",
             calendar_urls=[url],
         )
@@ -104,3 +107,22 @@ def test_a_profile_without_its_own_calendar_shares_the_root_provider() -> None:
 
     assert provider is shared_root
     assert _calendar_urls(provider) == [_APP_CALENDAR]
+
+
+def test_calendar_runtime_dict_carries_the_real_caldav_password() -> None:
+    """DAVClient is handed a plain dict, which loses the SecretStr declaration.
+
+    A SecretStr surviving into it would be serialized as its mask, so every
+    CalDAV read and write would fail authentication.
+    """
+    config = CalendarConfig(
+        caldav=CalDAVConfig(
+            username="user",
+            password=SecretStr("caldav-secret"),
+            base_url="https://calendar.example/dav/",
+        )
+    )
+
+    caldav = _calendar_config_to_dict(config).get("caldav")
+    assert caldav is not None
+    assert caldav.get("password") == "caldav-secret"

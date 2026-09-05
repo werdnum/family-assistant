@@ -344,10 +344,24 @@ class TestJWTTokens:
         ).decode("ascii")
         monkeypatch.setenv("JWT_SIGNING_KEY", pem)
         service = jwt_tokens_module.JWTTokenService.from_environment()
+        # app_fixture is the module-level app, shared with every other test on
+        # this worker. monkeypatch restores the env, but a service built while
+        # it was set would otherwise stay attached and keep API authentication
+        # switched on, 401-ing unrelated endpoints later in the session.
+        previous_token_service = getattr(app_fixture.state, "jwt_token_service", None)
+        auth_service = app_fixture.state.auth_service
+        previous_auth_tokens = (
+            auth_service.jwt_tokens if isinstance(auth_service, AuthService) else None
+        )
         app_fixture.state.jwt_token_service = service
-        if isinstance(app_fixture.state.auth_service, AuthService):
-            app_fixture.state.auth_service.jwt_tokens = service
-        yield service
+        if isinstance(auth_service, AuthService):
+            auth_service.jwt_tokens = service
+        try:
+            yield service
+        finally:
+            app_fixture.state.jwt_token_service = previous_token_service
+            if isinstance(auth_service, AuthService) and previous_auth_tokens:
+                auth_service.jwt_tokens = previous_auth_tokens
 
     @pytest.mark.asyncio
     async def test_exchange_returns_signed_jwt(

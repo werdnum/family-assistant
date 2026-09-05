@@ -593,9 +593,13 @@ async def get_mcp_server_status(
 
     Includes per-server status (``connected`` / ``failed`` / ``cancelled`` /
     ``pending`` / ``connecting``), transport, the discovered tool list, and
-    whether a session is currently active. Tokens are omitted; URLs and stdio
-    commands are included verbatim so the engineer can correlate against the
-    deployment config.
+    whether a session is currently active. Tokens are omitted, and credentials
+    embedded in a server's URL or stdio arguments (userinfo passwords,
+    ``token=``-style query parameters) are redacted; the rest of the URL and
+    the stdio command are included so the engineer can correlate against the
+    deployment config. Credentials configured outside the supported path
+    (``env`` for stdio servers, ``token`` for remote ones) are not guaranteed
+    to be redacted — see ``MCPServerStatus``.
 
     ``reconnect_attempts`` and ``next_reconnect_in_seconds`` describe the
     retry backoff: a server that has been down for a while is retried less

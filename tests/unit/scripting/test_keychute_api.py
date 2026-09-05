@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
+from pydantic import SecretStr
 
 from family_assistant.config_models import KeychuteConfig
 from family_assistant.scripting.apis.keychute import (
@@ -195,7 +196,7 @@ async def test_request_denies_high_taint_before_contacting_keychute() -> None:
             KeychuteConfig(
                 enabled=True,
                 url="https://keychute.test",
-                token="client-token",
+                token=SecretStr("client-token"),
             ),
             "keychute_http_request(...) ",
             execution_context,
@@ -232,7 +233,9 @@ async def test_request_review_receives_complete_outbound_envelope() -> None:
     assert isinstance(authorizer, TaintTrackingToolsProvider)
     authorize = AsyncMock()
     client = KeychuteScriptHttpClient(
-        KeychuteConfig(enabled=True, url="https://keychute.test", token="token"),
+        KeychuteConfig(
+            enabled=True, url="https://keychute.test", token=SecretStr("token")
+        ),
         "keychute_http_request(...) ",
         execution_context,
     )
@@ -277,7 +280,9 @@ async def test_large_binary_review_body_is_encoded_off_event_loop(
     assert isinstance(authorizer, TaintTrackingToolsProvider)
     authorize = AsyncMock()
     client = KeychuteScriptHttpClient(
-        KeychuteConfig(enabled=True, url="https://keychute.test", token="token"),
+        KeychuteConfig(
+            enabled=True, url="https://keychute.test", token=SecretStr("token")
+        ),
         "keychute_http_request(...) ",
         execution_context,
     )
@@ -338,7 +343,7 @@ async def test_request_surfaces_keychute_failure() -> None:
             KeychuteConfig(
                 enabled=True,
                 url="https://keychute.test",
-                token="client-token",
+                token=SecretStr("client-token"),
             ),
             "keychute_http_request(...)",
             http_client=http_client,
@@ -381,7 +386,7 @@ async def test_request_enforces_response_body_limit() -> None:
             KeychuteConfig(
                 enabled=True,
                 url="https://keychute.test",
-                token="client-token",
+                token=SecretStr("client-token"),
                 max_response_bytes=3,
             ),
             "keychute_http_request(...)",

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.events.webhook_source import WebhookEventSource
@@ -154,7 +155,9 @@ async def test_webhook_event_signature_required_when_secret_configured(
 
     # Create a mock config with a secret for 'grafana' source
     mock_config = MagicMock()
-    mock_config.event_system.sources.webhook.secrets = {"grafana": "test-secret"}
+    mock_config.event_system.sources.webhook.secrets = {
+        "grafana": SecretStr("test-secret")
+    }
 
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         with patch.object(fastapi_app.state, "config", mock_config, create=True):
@@ -181,7 +184,9 @@ async def test_webhook_event_invalid_signature_rejected(
 
     # Create a mock config with a secret for 'grafana' source
     mock_config = MagicMock()
-    mock_config.event_system.sources.webhook.secrets = {"grafana": "test-secret"}
+    mock_config.event_system.sources.webhook.secrets = {
+        "grafana": SecretStr("test-secret")
+    }
 
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         with patch.object(fastapi_app.state, "config", mock_config, create=True):
@@ -218,7 +223,7 @@ async def test_webhook_event_valid_signature_accepted(
 
     # Create a mock config with a secret for 'grafana' source
     mock_config = MagicMock()
-    mock_config.event_system.sources.webhook.secrets = {"grafana": secret}
+    mock_config.event_system.sources.webhook.secrets = {"grafana": SecretStr(secret)}
 
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         with patch.object(fastapi_app.state, "config", mock_config, create=True):
@@ -245,7 +250,9 @@ async def test_webhook_event_no_signature_needed_for_unconfigured_source(
 
     # Create a mock config with a secret only for 'grafana', not for 'github'
     mock_config = MagicMock()
-    mock_config.event_system.sources.webhook.secrets = {"grafana": "test-secret"}
+    mock_config.event_system.sources.webhook.secrets = {
+        "grafana": SecretStr("test-secret")
+    }
 
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
         with patch.object(fastapi_app.state, "config", mock_config, create=True):
@@ -280,7 +287,9 @@ async def test_worker_started_uses_nonpersisted_callback_token_header(
     )
 
     mock_config = MagicMock()
-    mock_config.event_system.sources.webhook.secrets = {"worker": "source-secret"}
+    mock_config.event_system.sources.webhook.secrets = {
+        "worker": SecretStr("source-secret")
+    }
     mock_webhook_source = AsyncMock(spec=WebhookEventSource)
     transport = ASGITransport(app=fastapi_app)
 

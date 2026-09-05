@@ -32,6 +32,7 @@ import sys
 from typing import TYPE_CHECKING, cast
 
 from family_assistant.config_loader import load_config
+from family_assistant.config_models import mcp_servers_for_runtime
 from family_assistant.tools import MCPServerConfig, MCPToolsProvider
 from family_assistant.tools.mcp import MCP_SERVER_STATUS_CONNECTED, MCPServerStatus
 
@@ -121,8 +122,8 @@ def load_configured_servers() -> dict[str, MCPServerConfig]:
     """Read mcp_config.mcpServers from the shipped and operator configuration."""
     config = load_config()
     return {
-        server_id: cast("MCPServerConfig", server_config.model_dump())
-        for server_id, server_config in config.mcp_config.mcpServers.items()
+        server_id: cast("MCPServerConfig", dumped)
+        for server_id, dumped in mcp_servers_for_runtime(config.mcp_config).items()
     }
 
 

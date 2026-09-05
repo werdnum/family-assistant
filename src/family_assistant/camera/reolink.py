@@ -1031,7 +1031,7 @@ def create_reolink_backend(
             cameras[camera_id] = ReolinkCameraConfig(
                 host=config.host,
                 username=config.username,
-                password=config.password,
+                password=config.password.get_secret_value(),
                 port=config.effective_port,
                 use_https=config.use_https,
                 channel=config.channel,

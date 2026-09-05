@@ -159,6 +159,15 @@ the message-history taint epoch, the read-only diagnostics token, embedding prov
 global tool policy. Look there before adding or changing anything that reads configuration, and
 update it when you add a new setting.
 
+Config fields that hold credentials must be typed `SecretStr` (pydantic). That masks them in
+`model_dump`, so they cannot reach a diagnostic dump, and the guarantee comes from the type rather
+than from anything matching on field names — read the value with `.get_secret_value()` at the point
+of use. `config_inspection.py` handles only what a type cannot express: a credential embedded inside
+a larger value (the password in `database_url`, a `token=` parameter in an endpoint URL), and config
+whose shape is not declared (`mcp_config.mcpServers` is `extra="allow"`, and its `env` blocks are
+keyed by operator-chosen variable names). Add a case to `tests/unit/test_config_inspection.py` when
+you add a credential field.
+
 ### Gemini Computer Use (visual browser profile)
 
 The `browser_visual_profile` drives a browser via Gemini's native computer-use capability, enabled

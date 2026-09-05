@@ -373,7 +373,7 @@ def evaluate_oauth_integration_state(
 
     # 2. Encryption key well-formed.
     try:
-        CredentialEncryption(integration.credential_encryption_key)
+        CredentialEncryption(integration.credential_encryption_key.get_secret_value())
     except CredentialEncryptionError as exc:
         return disabled(f"{spec.display_name} integration is disabled: {exc}")
 

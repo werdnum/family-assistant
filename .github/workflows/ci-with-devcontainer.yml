@@ -442,6 +442,9 @@ jobs:
               )
 
           summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          # Also to stdout: the step summary is not in the job log, so a failure
+          # is otherwise unidentifiable without downloading the artifact.
+          print("\n".join(lines))
           PY
       - name: Upload backend test results (SQLite)
         uses: actions/upload-artifact@v7
@@ -556,6 +559,9 @@ jobs:
               )
 
           summary_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          # Also to stdout: the step summary is not in the job log, so a failure
+          # is otherwise unidentifiable without downloading the artifact.
+          print("\n".join(lines))
           PY
       - name: Upload backend test results (PostgreSQL)
         uses: actions/upload-artifact@v7

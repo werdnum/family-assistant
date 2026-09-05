@@ -1630,6 +1630,42 @@ instead uses its declared scoped policy or, for a deliberately public receiver s
 config dump) is **not** covered, while the tool-inventory endpoint that is covered exposes only tool
 names and sizes — no prompts and no policy bodies.
 
+### Redaction in config dumps
+
+Every diagnostic dump of the resolved configuration — `GET /api/debug/profiles`, and the engineer
+profile's `get_resolved_config` / `get_profile_config` / `get_mcp_server_status` tools — hides
+credentials in three ways, in descending order of how much you should rely on them:
+
+- **Declared credential fields are typed `SecretStr`.** Pydantic masks them when the config is
+  serialized (they appear as `**********`, pydantic's own mask), so they cannot reach a dump at all.
+  This covers every credential the application declares — API keys, tokens, signing keys, OAuth
+  secrets, the APNs key, CalDAV and MQTT passwords, and the `token` of an MCP server entry. An unset
+  field shows as `null`, so a dump still distinguishes "not configured" from "configured but
+  hidden".
+- **Credentials embedded inside a larger value** are stripped by shape and marked `[REDACTED]`,
+  whatever the field is called: the password in a URL's userinfo
+  (`postgresql://user:[REDACTED]@host/db`), credential query parameters (`token`, `api_key`,
+  `client_secret`, `signature`, …) in any URL including MCP endpoints and stdio arguments, and
+  inline PEM blocks. The surrounding host, database and endpoint are preserved so the dump stays
+  useful. This exists because such a field is not wholly secret — masking `database_url` outright
+  would throw away the host and database you opened the dump to read.
+- **An MCP `env` block is redacted whole**, values only. Its keys are environment variable names you
+  chose rather than declared config fields, so nothing can judge them individually.
+
+**What is not covered.** Startup logging is outside this guarantee: config is logged before it is
+validated, so a credential supplied through an environment variable is still a plain string at that
+point and is hidden only by that logger's own exclusion list. Treat application logs as containing
+credentials, and do not rely on `SecretStr` there.
+
+`mcp_config.mcpServers` entries accept arbitrary extra keys, and an undeclared one —
+`custom_api_key`, say — is not a declared field and so is not masked. It is redacted only if its
+*value* has a recognizable shape (a URL or a PEM block). Keep MCP credentials in `env` or `token`,
+as described under [Passing credentials to an MCP server](#passing-credentials-to-an-mcp-server); a
+credential anywhere else in an entry may appear in full.
+
+When adding a config field that holds a credential, type it `SecretStr` — that is what makes the
+guarantee, not what you call the field.
+
 ______________________________________________________________________
 
 ## JWT Access Tokens (Edge Gateway Authentication)
@@ -2356,6 +2392,23 @@ MCP server definitions with environment variable expansion using `$VAR` or `${VA
 Expansion applies to every string value: stdio `command`, `args`, and `env` entries, and the `url`
 of a remote SSE or Streamable HTTP server. For example, `"url": "${MCP_HTTP_ORIGIN}/mcp"` keeps a
 deployment-specific origin out of `config.yaml`.
+
+#### Passing credentials to an MCP server
+
+Give a stdio server its credentials through `env`, and a remote SSE or Streamable HTTP server its
+credential through the `token` field. That is the supported path, and diagnostic dumps redact both:
+every value in an `env` block is redacted regardless of the variable's name, and `token` is redacted
+by field name.
+
+Note that `$VAR` references are expanded when the configuration is loaded, not when a server is
+contacted, so the resolved `AppConfig` holds the real value and a placeholder is not by itself
+protection. Redaction, not the placeholder, is what keeps a credential out of a dump.
+
+A credential put anywhere else in the entry is outside that path and may be shown in full by
+`get_mcp_server_status` and the config dump. Redaction still catches the shapes it can recognize — a
+userinfo password or a `token=`-style query parameter in a `url`, and the same inside an argument —
+but it does not, for instance, pair `args: ["--token", "secret"]` with its value. Keep credentials
+in `env` and `token`.
 
 #### The environment a stdio server actually receives
 

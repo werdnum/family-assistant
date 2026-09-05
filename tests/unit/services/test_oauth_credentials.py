@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 import httpx
 import pytest
 import pytest_asyncio
+from pydantic import SecretStr
 
 from family_assistant.config_models import GoogleIntegrationConfig
 from family_assistant.services.credential_encryption import (
@@ -151,7 +152,7 @@ def _resolver(
     transport = transport or _ScriptedTransport([_ok_token("access-1")])
     client = httpx.AsyncClient(transport=transport)
     config = GoogleIntegrationConfig(
-        oauth_client_id="client-id", oauth_client_secret="client-secret"
+        oauth_client_id="client-id", oauth_client_secret=SecretStr("client-secret")
     )
     return OAuthCredentialResolver(
         provider=GOOGLE_PROVIDER,
@@ -282,7 +283,7 @@ async def test_refresh_uses_decrypted_refresh_token(
 
     client = httpx.AsyncClient(transport=_CapturingTransport())
     config = GoogleIntegrationConfig(
-        oauth_client_id="cid", oauth_client_secret="csecret"
+        oauth_client_id="cid", oauth_client_secret=SecretStr("csecret")
     )
     resolver = OAuthCredentialResolver(
         provider=GOOGLE_PROVIDER,
