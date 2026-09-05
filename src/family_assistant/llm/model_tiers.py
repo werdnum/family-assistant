@@ -23,11 +23,46 @@ from family_assistant.llm.providers.google_genai_client import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
     from family_assistant.config_models import (
         ModelTierConfig,
+        ProcessingConfig,
         RetryModelConfig,
         ServiceProfile,
     )
+
+
+def models_in_chain(
+    entries: Sequence[RetryModelConfig],
+    predicate: Callable[[str], bool],
+) -> list[str]:
+    """The model ids in a chain that satisfy ``predicate``.
+
+    Chains reach here in two shapes -- a tier's ``chain`` list and a
+    ``retry_config``'s primary/fallback pair -- and every model-class check
+    over them asks the same question of each entry that names a model.
+    """
+    return [entry.model for entry in entries if entry.model and predicate(entry.model)]
+
+
+def resolve_profile_llm_model(
+    processing_config: ProcessingConfig,
+    model_tier: ModelTierConfig | None,
+    default_model: str,
+) -> str:
+    """The model a profile actually runs on.
+
+    A tier's primary is that model, so service-class selection and the model
+    validators see it rather than the global default.
+    """
+    if model_tier is None:
+        return processing_config.llm_model or default_model
+    primary_model = model_tier.chain[0].model
+    if not primary_model:
+        msg = "A model tier's primary chain entry must name its model."
+        raise ValueError(msg)
+    return primary_model
 
 
 def resolve_entry_model_parameters(
@@ -172,19 +207,7 @@ def _reject_tier_on_pinned_runtime(
             "Google GenAI client."
         )
         raise ValueError(msg)
-    if processing_config.antigravity_config is not None:
-        msg = (
-            f"Profile '{profile_id}' has antigravity_config and cannot use "
-            f"model_tier '{tier_name}': the managed agent is reached through "
-            "the Interactions API, not a chat client."
-        )
-        raise ValueError(msg)
-
-    agent_models = [
-        entry.model
-        for entry in tier.chain
-        if entry.model and is_interactions_agent_model(entry.model)
-    ]
+    agent_models = models_in_chain(tier.chain, is_interactions_agent_model)
     if agent_models:
         msg = (
             f"Profile '{profile_id}' uses model_tier '{tier_name}', whose chain "

@@ -68,7 +68,9 @@ from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.llm.model_tiers import (
+    models_in_chain,
     resolve_entry_client_config,
+    resolve_profile_llm_model,
     resolve_tier_client_config,
     validate_profile_model_tier,
 )
@@ -377,10 +379,10 @@ def _antigravity_models_in_retry_config(retry_config: RetryConfig | None) -> lis
     """Antigravity model ids named anywhere in a retry chain."""
     if retry_config is None:
         return []
-    chain = [retry_config.primary.model]
+    chain = [retry_config.primary]
     if retry_config.fallback is not None:
-        chain.append(retry_config.fallback.model)
-    return [model for model in chain if model and is_antigravity_model(model)]
+        chain.append(retry_config.fallback)
+    return models_in_chain(chain, is_antigravity_model)
 
 
 def validate_antigravity_agent_config(
@@ -1181,13 +1183,8 @@ class Assistant:
         profile_proc_conf = profile_conf.processing_config
         profile_tools_conf = profile_conf.tools_config
 
-        # The tier's primary is the model this profile actually runs on, so
-        # service-class selection and the model validators below see it rather
-        # than the global default.
-        profile_llm_model = (
-            model_tier.chain[0].model
-            if model_tier is not None and model_tier.chain[0].model
-            else profile_proc_conf.llm_model or self.config.model
+        profile_llm_model = resolve_profile_llm_model(
+            profile_proc_conf, model_tier, self.config.model
         )
 
         llm_client_for_profile = self._create_profile_llm_client(

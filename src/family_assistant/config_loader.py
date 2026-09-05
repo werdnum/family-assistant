@@ -758,6 +758,17 @@ PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS: frozenset[str] = frozenset({
 })
 
 
+# Top-level profile keys holding a list that a profile replaces wholesale rather
+# than extending. Each is a closed statement about the profile -- the commands it
+# answers to, the labels it may read, the tiers it may run on, the global grants
+# it gives up -- so appending an inherited entry would widen it.
+PROFILE_REPLACED_LIST_KEYS: tuple[str, ...] = (
+    "slash_commands",
+    "visibility_grants",
+    "allowed_model_tiers",
+    "excluded_global_tools",
+)
+
 # The two mutually exclusive ways a profile says which model it runs on.
 MODEL_SELECTION_KEYS: tuple[str, ...] = ("provider", "llm_model", "retry_config")
 
@@ -944,38 +955,17 @@ def resolve_service_profile(
             profile_def["chat_id_to_name_map"],
         )
 
-    # Handle slash_commands (replace if present)
-    if "slash_commands" in profile_def and isinstance(
-        profile_def["slash_commands"], list
-    ):
-        resolved["slash_commands"] = profile_def["slash_commands"]
+    for key in PROFILE_REPLACED_LIST_KEYS:
+        if key in profile_def and isinstance(profile_def[key], list):
+            resolved[key] = profile_def[key]
 
-    # Handle visibility_grants (replace if present)
-    if "visibility_grants" in profile_def and isinstance(
-        profile_def["visibility_grants"], list
+    # An eligibility list the profile did not state for itself means nothing to
+    # one that names an inline model; keeping the inherited list would only fail
+    # validation for a profile that said nothing about tiers.
+    if not isinstance(profile_def.get("allowed_model_tiers"), list) and (
+        resolved["processing_config"].get("model_tier") is None
     ):
-        resolved["visibility_grants"] = profile_def["visibility_grants"]
-
-    # Handle allowed_model_tiers (replace if present). It is an eligibility
-    # list, so merging it with an inherited one would widen what a profile may
-    # run on rather than replace it.
-    if "allowed_model_tiers" in profile_def and isinstance(
-        profile_def["allowed_model_tiers"], list
-    ):
-        resolved["allowed_model_tiers"] = profile_def["allowed_model_tiers"]
-    elif resolved["processing_config"].get("model_tier") is None:
-        # An inherited eligibility list means nothing to a profile that names an
-        # inline model; keeping it would only fail validation for a profile that
-        # said nothing about tiers.
         resolved["allowed_model_tiers"] = None
-
-    # Handle excluded_global_tools (replace if present). This withholds tools
-    # that global_tools_policy grants to every profile, so dropping it here would
-    # silently restore access a profile deliberately gave up.
-    if "excluded_global_tools" in profile_def and isinstance(
-        profile_def["excluded_global_tools"], list
-    ):
-        resolved["excluded_global_tools"] = profile_def["excluded_global_tools"]
 
     # Handle remote_a2a (replace if present)
     if "remote_a2a" in profile_def:

@@ -9,6 +9,7 @@ tests go through the provider client's own resolution.
 
 import pytest
 
+from family_assistant.assistant import validate_antigravity_agent_config
 from family_assistant.config_models import (
     AntigravityConfig,
     ModelTierConfig,
@@ -20,6 +21,7 @@ from family_assistant.config_models import (
 from family_assistant.llm.factory import LLMClientFactory
 from family_assistant.llm.model_tiers import (
     resolve_entry_client_config,
+    resolve_profile_llm_model,
     resolve_tier_client_config,
     validate_profile_model_tier,
 )
@@ -232,6 +234,22 @@ def test_validation_returns_none_for_an_inline_model_profile() -> None:
     assert validate_profile_model_tier(profile, TIERS) is None
 
 
+def test_the_model_a_tiered_profile_runs_on_is_its_chain_primary() -> None:
+    assert (
+        resolve_profile_llm_model(
+            ProcessingConfig(model_tier="deep"), TIERS["deep"], "gemini-3.8-flash"
+        )
+        == "gpt-5.6-sol"
+    )
+
+
+def test_a_profile_naming_neither_a_tier_nor_a_model_runs_the_default() -> None:
+    assert (
+        resolve_profile_llm_model(ProcessingConfig(), None, "gemini-3.8-flash")
+        == "gemini-3.8-flash"
+    )
+
+
 def test_unknown_tier_is_rejected() -> None:
     profile = _profile(ProcessingConfig(model_tier="cheap"), profile_id="reminder")
 
@@ -249,17 +267,22 @@ def test_tier_on_a_computer_use_profile_is_rejected() -> None:
         validate_profile_model_tier(profile, TIERS)
 
 
-def test_tier_on_an_antigravity_profile_is_rejected() -> None:
-    profile = _profile(
-        ProcessingConfig(
-            model_tier="standard",
-            antigravity_config=AntigravityConfig(model="gemini-3.8-flash"),
-        ),
-        profile_id="coder",
-    )
+def test_antigravity_config_on_a_tiered_profile_is_rejected() -> None:
+    """Refused by the agent validator every profile already passes through.
 
-    with pytest.raises(ValueError, match="antigravity_config"):
-        validate_profile_model_tier(profile, TIERS)
+    A tier's chain cannot name an agent model, so a tiered profile's model is
+    never the managed agent and its `antigravity_config` would go nowhere.
+    """
+    processing_config = ProcessingConfig(
+        model_tier="standard",
+        antigravity_config=AntigravityConfig(model="gemini-3.8-flash"),
+    )
+    profile = _profile(processing_config, profile_id="coder")
+    tier = validate_profile_model_tier(profile, TIERS)
+    model = resolve_profile_llm_model(processing_config, tier, "gemini-3.8-flash")
+
+    with pytest.raises(ValueError, match="sets antigravity_config but its model is"):
+        validate_antigravity_agent_config("coder", processing_config, model)
 
 
 def test_tier_naming_an_interactions_agent_model_is_rejected() -> None:
