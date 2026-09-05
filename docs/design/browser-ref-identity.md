@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed.
+Implemented.
 
 ## Problem
 
@@ -158,6 +158,9 @@ element is an inference the model should make with the page in front of it.
 - **No diff or abbreviated snapshot mode.** No surveyed harness produces one; the proven lever for
   post-action token cost is returning less, which the `query` filter provides once every
   snapshot-returning tool accepts it.
+- **Whether a batch's earlier snapshots hand back refs is decided statically.** The rule reads the
+  batch's tool names before any of them runs, so a later snapshot-returning sibling that is then
+  denied or fails leaves the batch with no refs at all and the model re-snapshots.
 - **No refs for elements added since the last snapshot.** They are unaddressable until the next
   snapshot, the same contract as today.
 
