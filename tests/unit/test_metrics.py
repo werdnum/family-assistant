@@ -21,6 +21,7 @@ from family_assistant.llm.call_context import (
     set_model_selection,
     set_processing_profile,
 )
+from family_assistant.llm.model_selection import ResolvedModelSelection
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.llm.utils.call_telemetry import LLMCallTelemetry
 from family_assistant.observability.exporter import start_metrics_exporter
@@ -34,7 +35,6 @@ from family_assistant.observability.metrics import (
 from family_assistant.processing.interactions_agent_service import (
     InteractionsAgentProcessingService,
 )
-from family_assistant.processing.model_selection import ResolvedModelSelection
 from family_assistant.tools import ToolNotFoundError
 from family_assistant.tools.infrastructure import (
     LocalToolsProvider,

@@ -16,6 +16,13 @@ from family_assistant.a2a.types import (
     TextPart,
 )
 from family_assistant.config_models import ToolsConfig
+from family_assistant.llm.model_selection import (
+    ModelSelectionRequest,
+    ModelTierEligibility,
+    ModelTierOption,
+    ResolvedModelSelection,
+    resolve_model_selection,
+)
 from family_assistant.processing.types import (
     ChatInteractionResult,
     ChatInteractionStatus,
@@ -30,8 +37,17 @@ from family_assistant.security.taint import (
 )
 from family_assistant.storage.database import Database
 from family_assistant.tools.confirmation import MAX_DELEGATION_REQUEST_CHARS
-from family_assistant.tools.services import delegate_to_service_tool
-from family_assistant.tools.types import ToolExecutionContext, ToolResult
+from family_assistant.tools.services import (
+    _confirmation_tool_arguments,  # noqa: PLC2701 - the drift these guard is between two private helpers
+    _durable_authorization_matches,  # noqa: PLC2701 - see above
+    delegate_to_service_tool,
+)
+from family_assistant.tools.types import (
+    ToolArguments,
+    ToolConfirmationAuthorization,
+    ToolExecutionContext,
+    ToolResult,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -44,8 +60,27 @@ if TYPE_CHECKING:
 class _Namespace:
     """Small attribute bag for test service doubles."""
 
+    service_config: Any
+
     def __init__(self, **kwargs: Any) -> None:  # noqa: ANN401 - test helper
         self.__dict__.update(kwargs)
+
+    def resolve_model_selection(
+        self, request: ModelSelectionRequest | ResolvedModelSelection | None
+    ) -> ResolvedModelSelection:
+        """Answer the tier gate the way a real target would.
+
+        Through the real function rather than a canned answer, so a double
+        cannot admit a tier the shipped gate would refuse. These doubles carry
+        no eligibility, so they are pinned profiles.
+        """
+        if isinstance(request, ResolvedModelSelection):
+            request = ModelSelectionRequest(tier=request.tier, source=request.source)
+        return resolve_model_selection(
+            getattr(self.service_config, "tier_eligibility", ModelTierEligibility()),
+            request,
+            profile_id=self.service_config.id,
+        )
 
 
 class _SynchronousRemoteClient:
@@ -370,3 +405,272 @@ async def test_async_delegate_to_service_persists_parent_taint_state(
     sources = taint_state.get("sources")
     assert isinstance(sources, list)
     assert sources[0]["source_type"] == "email"
+
+
+def _tiered_target(handler: AsyncMock) -> _Namespace:
+    """A delegation target admitting `deep` automatically but not `frontier`."""
+    return _Namespace(
+        service_config=_Namespace(
+            id="target_profile",
+            allowed_delegation_sources=None,
+            tier_eligibility=ModelTierEligibility(
+                default_tier="standard",
+                selectable=(
+                    ModelTierOption(id="standard", label="Standard"),
+                    ModelTierOption(id="deep", label="Deep"),
+                    ModelTierOption(id="frontier", label="Max"),
+                ),
+                auto=frozenset({"standard", "deep"}),
+            ),
+        ),
+        handle_chat_interaction=handler,
+    )
+
+
+def _delegating_context(
+    target: _Namespace,
+    *,
+    db_context: Database,
+    async_delegation_enabled: bool,
+) -> ToolExecutionContext:
+    source_service = _Namespace(
+        service_config=_Namespace(
+            id="source_profile",
+            tools_config=ToolsConfig(async_delegation_enabled=async_delegation_enabled),
+        ),
+        processing_services_registry={"target_profile": target},
+    )
+    return ToolExecutionContext(
+        interface_type="test",
+        conversation_id="conversation",
+        user_name="User",
+        turn_id="turn-1",
+        db_context=db_context,
+        processing_service=cast("ProcessingService", source_service),
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_delegating_at_an_automatically_admitted_tier_runs_on_it() -> None:
+    handler = AsyncMock(
+        return_value=ChatInteractionResult(
+            status=ChatInteractionStatus.SUCCESS, text_reply="delegated"
+        )
+    )
+    context = _delegating_context(
+        _tiered_target(handler),
+        db_context=_db_without_history(),
+        async_delegation_enabled=False,
+    )
+
+    result = await delegate_to_service_tool(
+        exec_context=context,
+        target_service_id="target_profile",
+        user_request="think hard about this",
+        model_tier="deep",
+    )
+
+    assert result.text == "delegated"
+    await_args = handler.await_args
+    assert await_args is not None
+    selection = await_args.kwargs["model_selection"]
+    assert selection == ResolvedModelSelection(
+        tier="deep", requested="deep", source="model", routing_outcome="not_requested"
+    )
+
+
+@pytest.mark.asyncio
+async def test_delegating_at_a_tier_only_a_user_may_choose_is_refused() -> None:
+    """A model cannot spend its way past what the target admits from it."""
+    handler = AsyncMock()
+    context = _delegating_context(
+        _tiered_target(handler),
+        db_context=_db_without_history(),
+        async_delegation_enabled=False,
+    )
+
+    result = await delegate_to_service_tool(
+        exec_context=context,
+        target_service_id="target_profile",
+        user_request="think hard about this",
+        model_tier="frontier",
+    )
+
+    assert result.text is not None
+    assert result.text.startswith("Error:")
+    assert "frontier" in result.text
+    handler.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_delegation_naming_no_tier_runs_on_the_targets_default() -> None:
+    """A parent's own tier never propagates: the default is the absence of one."""
+    handler = AsyncMock(
+        return_value=ChatInteractionResult(
+            status=ChatInteractionStatus.SUCCESS, text_reply="delegated"
+        )
+    )
+    context = _delegating_context(
+        _tiered_target(handler),
+        db_context=_db_without_history(),
+        async_delegation_enabled=False,
+    )
+
+    await delegate_to_service_tool(
+        exec_context=context,
+        target_service_id="target_profile",
+        user_request="do the thing",
+    )
+
+    await_args = handler.await_args
+    assert await_args is not None
+    selection = await_args.kwargs["model_selection"]
+    assert selection.tier == "standard"
+    assert selection.source == "default"
+    assert selection.requested is None
+
+
+@pytest.mark.asyncio
+async def test_a_queued_delegation_persists_its_resolved_tier(
+    db_engine: AsyncEngine,
+) -> None:
+    """The envelope is frozen at enqueue, not re-resolved when a worker runs it."""
+    db_context = Database(db_engine)
+    context = _delegating_context(
+        _tiered_target(AsyncMock()),
+        db_context=db_context,
+        async_delegation_enabled=True,
+    )
+
+    result = await delegate_to_service_tool(
+        exec_context=context,
+        target_service_id="target_profile",
+        user_request="think hard about this",
+        model_tier="deep",
+        delivery_hint="background",
+    )
+
+    result_data = cast("dict[str, object]", result.data)
+    delegation_id = cast("str", result_data["delegation_id"])
+    run = await db_context.delegation_runs.get_by_delegation_id(delegation_id)
+
+    assert run is not None
+    persisted = run["model_selection_json"]
+    assert persisted is not None
+    assert ResolvedModelSelection.from_json(persisted) == ResolvedModelSelection(
+        tier="deep", requested="deep", source="model", routing_outcome="not_requested"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_refused_tier_never_becomes_a_queued_run(
+    db_engine: AsyncEngine,
+) -> None:
+    db_context = Database(db_engine)
+    context = _delegating_context(
+        _tiered_target(AsyncMock()),
+        db_context=db_context,
+        async_delegation_enabled=True,
+    )
+
+    result = await delegate_to_service_tool(
+        exec_context=context,
+        target_service_id="target_profile",
+        user_request="think hard about this",
+        model_tier="frontier",
+        delivery_hint="background",
+    )
+
+    assert result.data is None
+    assert (
+        await db_context.delegation_runs.list_for_conversation(
+            conversation_id="conversation"
+        )
+        == []
+    )
+
+
+def _stored_approval(**arguments: object) -> ToolConfirmationAuthorization:
+    return ToolConfirmationAuthorization(
+        tool_name="delegate_to_service",
+        call_id="delegate_to_service_1",
+        tool_args=cast("ToolArguments", arguments),
+    )
+
+
+def test_a_stored_approval_records_the_tier_it_authorized() -> None:
+    """The stored args and the effective args must not drift apart.
+
+    `_durable_authorization_matches` requires every stored argument to be
+    present and equal, so an argument added to one side and not the other
+    silently stops every stored approval from matching.
+    """
+    stored = _confirmation_tool_arguments(
+        target_service_id="target_profile",
+        user_request="think hard",
+        confirm_delegation=True,
+        attachment_ids=None,
+        resume_delegation_id=None,
+        model_tier="deep",
+    )
+
+    assert stored["model_tier"] == "deep"
+    assert _durable_authorization_matches(
+        _stored_approval(**stored),
+        {
+            "target_service_id": "target_profile",
+            "user_request": "think hard",
+            "confirm_delegation": True,
+            "model_tier": "deep",
+        },
+    )
+
+
+def test_an_approval_for_one_tier_does_not_authorize_another() -> None:
+    stored = _stored_approval(
+        target_service_id="target_profile",
+        user_request="think hard",
+        confirm_delegation=True,
+        model_tier="deep",
+    )
+
+    assert not _durable_authorization_matches(
+        stored,
+        {
+            "target_service_id": "target_profile",
+            "user_request": "think hard",
+            "confirm_delegation": True,
+            "model_tier": "frontier",
+        },
+    )
+
+
+def test_an_approval_that_named_no_tier_still_matches_a_call_without_one() -> None:
+    """A tier argument only when set, so approvals predating tiers still work."""
+    stored = _confirmation_tool_arguments(
+        target_service_id="target_profile",
+        user_request="do the thing",
+        confirm_delegation=True,
+        attachment_ids=None,
+        resume_delegation_id=None,
+        model_tier=None,
+    )
+
+    assert "model_tier" not in stored
+    assert _durable_authorization_matches(
+        _stored_approval(**stored),
+        {
+            "target_service_id": "target_profile",
+            "user_request": "do the thing",
+            "confirm_delegation": True,
+            "model_tier": None,
+        },
+    )

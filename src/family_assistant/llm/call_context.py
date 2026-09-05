@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, AsyncIterator
 
-    from family_assistant.processing.model_selection import ResolvedModelSelection
+    from family_assistant.llm.model_selection import ResolvedModelSelection
 
 __all__ = [
     "CallAttribution",

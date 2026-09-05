@@ -66,6 +66,34 @@ async def test_delegate_confirmation_shows_resume_reference_and_context_note() -
 
 
 @pytest.mark.asyncio
+async def test_delegate_confirmation_names_a_requested_model_tier() -> None:
+    """Spending more is part of what the approver is being asked to authorize."""
+    prompt = await render_delegate_to_service_confirmation(
+        {
+            "target_service_id": "complex_tasks",
+            "user_request": "Work out why the brief did not fire",
+            "model_tier": "frontier",
+        },
+        _no_context(),
+    )
+
+    assert "frontier" in prompt
+    assert "Intelligence" in prompt
+
+
+@pytest.mark.asyncio
+async def test_delegate_confirmation_says_nothing_about_tiers_when_none_was_asked() -> (
+    None
+):
+    prompt = await render_delegate_to_service_confirmation(
+        {"target_service_id": "complex_tasks", "user_request": "Start a new task"},
+        _no_context(),
+    )
+
+    assert "Intelligence" not in prompt
+
+
+@pytest.mark.asyncio
 async def test_delegate_confirmation_omits_resume_note_for_fresh_handoff() -> None:
     prompt = await render_delegate_to_service_confirmation(
         {

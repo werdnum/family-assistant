@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Literal
 from family_assistant.a2a.client import A2AClientError
 from family_assistant.a2a.result_converter import a2a_task_to_chat_result
 from family_assistant.a2a.types import Task, TaskState
-from family_assistant.processing.model_selection import (
+from family_assistant.llm.model_selection import (
     ModelSelectionRequest,
     ResolvedModelSelection,
     resolve_model_selection,

@@ -16,6 +16,13 @@ from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.interfaces import ChatDeliveryError, ChatInterface
 from family_assistant.llm.messages import AssistantMessage, SystemMessage, UserMessage
+from family_assistant.llm.model_selection import (
+    ModelSelectionRequest,
+    ModelTierEligibility,
+    ModelTierOption,
+    ResolvedModelSelection,
+    resolve_model_selection,
+)
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.processing import (
     PENDING,
@@ -97,6 +104,7 @@ class FakeDelegationCall(TypedDict):
     request_confirmation_callback: object
     subconversation_id: object
     tool_call_review_trigger: TriggerReviewInput
+    model_selection: ResolvedModelSelection | None
 
 
 class FakeConfirmationRequest(TypedDict):
@@ -184,14 +192,28 @@ class FakeDelegatableService:
         *,
         request_confirmation: bool = False,
         attachment_registry: AttachmentRegistry | None = None,
+        tier_eligibility: ModelTierEligibility | None = None,
     ) -> None:
         self.service_config = SimpleNamespace(
             id="target_profile",
             allowed_delegation_sources=["source_profile"],
+            tier_eligibility=tier_eligibility or ModelTierEligibility(),
         )
         self.request_confirmation = request_confirmation
         self.attachment_registry = attachment_registry
         self.calls: list[FakeDelegationCall] = []
+
+    def resolve_model_selection(
+        self, request: ModelSelectionRequest | ResolvedModelSelection | None
+    ) -> ResolvedModelSelection:
+        """Answer the tier gate through the real function, not a canned reply."""
+        if isinstance(request, ResolvedModelSelection):
+            request = ModelSelectionRequest(tier=request.tier, source=request.source)
+        return resolve_model_selection(
+            self.service_config.tier_eligibility,
+            request,
+            profile_id=self.service_config.id,
+        )
 
     async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401 - test fake accepts the ProcessingService keyword surface
         self.calls.append(cast("FakeDelegationCall", kwargs))
@@ -276,6 +298,18 @@ class TaintReadingDelegatableService:
         )
         self.calls: list[FakeDelegationCall] = []
 
+    def resolve_model_selection(
+        self, request: ModelSelectionRequest | ResolvedModelSelection | None
+    ) -> ResolvedModelSelection:
+        """Answer the tier gate through the real function, not a canned reply."""
+        if isinstance(request, ResolvedModelSelection):
+            request = ModelSelectionRequest(tier=request.tier, source=request.source)
+        return resolve_model_selection(
+            self.service_config.tier_eligibility,
+            request,
+            profile_id=self.service_config.id,
+        )
+
     async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401 - test fake accepts the ProcessingService keyword surface
         self.calls.append(cast("FakeDelegationCall", kwargs))
         db_context = cast("Database", kwargs["db_context"])
@@ -340,6 +374,18 @@ class FakeWakeCapableSourceService:
         self.wake_call_count = 0
         self.wake_review_triggers: list[TriggerReviewInput | None] = []
         self.wake_assistant_message_ids: list[int] = []
+
+    def resolve_model_selection(
+        self, request: ModelSelectionRequest | ResolvedModelSelection | None
+    ) -> ResolvedModelSelection:
+        """Answer the tier gate through the real function, not a canned reply."""
+        if isinstance(request, ResolvedModelSelection):
+            request = ModelSelectionRequest(tier=request.tier, source=request.source)
+        return resolve_model_selection(
+            self.service_config.tier_eligibility,
+            request,
+            profile_id=self.service_config.id,
+        )
 
     async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401 - test fake accepts the ProcessingService keyword surface
         self.wake_call_count += 1
@@ -658,6 +704,7 @@ async def _create_run(
     interface_type: str = TEST_INTERFACE_TYPE,
     source_subconversation_id: str | None = None,
     taint_state_json: TaintMetadata | None = None,
+    model_selection: ResolvedModelSelection | None = None,
 ) -> str:
     """Create a queued delegation run and return its delegation_id."""
     await db_context.delegation_runs.create_run({
@@ -675,6 +722,9 @@ async def _create_run(
         "request_text": "do the thing",
         "content_parts_json": [],
         "taint_state_json": taint_state_json,
+        "model_selection_json": (
+            model_selection.to_json() if model_selection is not None else None
+        ),
     })
     return delegation_id
 
@@ -703,6 +753,74 @@ def _build_worker(
         engine=db_engine,
         confirmation_ui_managers=confirmation_ui_managers,
     )
+
+
+_TIERED_TARGET = ModelTierEligibility(
+    default_tier="standard",
+    selectable=(
+        ModelTierOption(id="standard", label="Standard"),
+        ModelTierOption(id="deep", label="Deep"),
+    ),
+    auto=frozenset({"standard", "deep"}),
+)
+
+
+@pytest.mark.asyncio
+async def test_the_worker_runs_a_queued_delegation_at_its_persisted_tier(
+    db_engine: AsyncEngine,
+) -> None:
+    """The envelope frozen at enqueue is what the worker applies, verbatim.
+
+    Re-resolving it here would let a configuration deployment between enqueue
+    and execution change the models of a run somebody already authorized.
+    """
+    target_service = FakeDelegatableService(tier_eligibility=_TIERED_TARGET)
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+
+    db_context = Database(engine=db_engine)
+    await _create_run(
+        db_context,
+        delegation_id="delegation_tiered",
+        model_selection=ResolvedModelSelection(
+            tier="deep",
+            requested="deep",
+            source="model",
+            routing_outcome="not_requested",
+        ),
+    )
+
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    await worker.handle_delegated_profile_run(
+        _tool_context(Database(engine=db_engine), processing_service, chat_interface),
+        _payload("delegation_tiered"),
+    )
+
+    assert len(target_service.calls) == 1
+    assert target_service.calls[0]["model_selection"] == ResolvedModelSelection(
+        tier="deep", requested="deep", source="model", routing_outcome="not_requested"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_run_queued_before_tiers_existed_still_runs(
+    db_engine: AsyncEngine,
+) -> None:
+    """A null envelope is "no selection", not a run that cannot be executed."""
+    target_service = FakeDelegatableService(tier_eligibility=_TIERED_TARGET)
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+
+    await _create_run(Database(engine=db_engine), delegation_id="delegation_untiered")
+
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    await worker.handle_delegated_profile_run(
+        _tool_context(Database(engine=db_engine), processing_service, chat_interface),
+        _payload("delegation_untiered"),
+    )
+
+    assert len(target_service.calls) == 1
+    assert target_service.calls[0]["model_selection"] is None
 
 
 @pytest.mark.asyncio
@@ -2241,6 +2359,18 @@ class FakeConfirmingWakeSourceService:
         self.attachment_registry = None
         self.confirmation_outcome: ConfirmationOutcome | None = None
 
+    def resolve_model_selection(
+        self, request: ModelSelectionRequest | ResolvedModelSelection | None
+    ) -> ResolvedModelSelection:
+        """Answer the tier gate through the real function, not a canned reply."""
+        if isinstance(request, ResolvedModelSelection):
+            request = ModelSelectionRequest(tier=request.tier, source=request.source)
+        return resolve_model_selection(
+            self.service_config.tier_eligibility,
+            request,
+            profile_id=self.service_config.id,
+        )
+
     async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401 - test fake accepts the ProcessingService keyword surface
         db_context = cast("Database", kwargs["db_context"])
         turn_id = cast("str", kwargs["turn_id"])
@@ -2398,6 +2528,8 @@ class FakePollableService:
 
     kind = "remote"
 
+    resolve_model_selection = FakeDelegatableService.resolve_model_selection
+
     def __init__(
         self,
         *,
@@ -2409,6 +2541,8 @@ class FakePollableService:
         self.service_config = SimpleNamespace(
             id="target_profile",
             allowed_delegation_sources=["source_profile"],
+            # A remote target picks its own model, so it is pinned.
+            tier_eligibility=ModelTierEligibility(),
         )
         self._poll_results = list(poll_results or [])
         self._submit_terminal = submit_terminal
@@ -3651,6 +3785,7 @@ async def test_resume_delegation_rejects_target_profile_mismatch(
     other_service.service_config = SimpleNamespace(
         id="other_profile",
         allowed_delegation_sources=["source_profile"],
+        tier_eligibility=ModelTierEligibility(),
     )
     processing_service = _source_processing_service(target_service)
     cast("Any", processing_service).processing_services_registry["other_profile"] = (

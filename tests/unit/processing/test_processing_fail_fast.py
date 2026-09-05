@@ -30,13 +30,17 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
+from family_assistant.llm.model_selection import (
+    ModelTierEligibility,
+    ModelTierOption,
+    ResolvedModelSelection,
+)
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.processing.attachments import (
     AttachmentProcessor,
     AttachmentSelectionError,
 )
 from family_assistant.processing.context import ContextPreparer
-from family_assistant.processing.model_selection import ResolvedModelSelection
 from family_assistant.processing.types import ToolExecutionResult
 from family_assistant.storage.database import Database
 from family_assistant.tools.types import (
@@ -639,11 +643,33 @@ def _registry_with_profiles() -> Any:  # noqa: ANN401 - test stub registry
         {
             "browser_profile": SimpleNamespace(
                 service_config=SimpleNamespace(
-                    id="browser_profile", description="Drives a web browser."
+                    id="browser_profile",
+                    description="Drives a web browser.",
+                    tier_eligibility=ModelTierEligibility(),
+                )
+            ),
+            "tiered_profile": SimpleNamespace(
+                service_config=SimpleNamespace(
+                    id="tiered_profile",
+                    description="Thinks hard.",
+                    tier_eligibility=ModelTierEligibility(
+                        default_tier="standard",
+                        selectable=(
+                            ModelTierOption(id="standard", label="Standard"),
+                            ModelTierOption(
+                                id="deep", label="Deep", description="Hard problems."
+                            ),
+                        ),
+                        auto=frozenset({"standard", "deep"}),
+                    ),
                 )
             ),
             "bare_profile": SimpleNamespace(
-                service_config=SimpleNamespace(id="bare_profile", description="")
+                service_config=SimpleNamespace(
+                    id="bare_profile",
+                    description="",
+                    tier_eligibility=ModelTierEligibility(),
+                )
             ),
         },
     )
@@ -665,6 +691,20 @@ def test_render_available_service_profiles_lists_registry_profiles() -> None:
 
     assert "- ID: browser_profile, Description: Drives a web browser." in rendered
     assert "- ID: bare_profile, Description: No description available." in rendered
+
+
+@pytest.mark.no_db
+def test_the_catalog_advertises_only_tiers_a_delegation_may_actually_ask_for() -> None:
+    """A tier the target would refuse from another profile is not a suggestion."""
+    service = _make_service()
+    service.processing_services_registry = _registry_with_profiles()
+
+    rendered = service.render_available_service_profiles()
+
+    assert "- deep (Deep): Hard problems." in rendered
+    # The target's own default needs no naming, and a pinned profile has none.
+    assert "standard" not in rendered
+    assert "model_tier" not in rendered.split("tiered_profile")[0]
 
 
 @pytest.mark.no_db

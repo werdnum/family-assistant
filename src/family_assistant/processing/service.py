@@ -23,6 +23,13 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
+from family_assistant.llm.model_selection import (
+    ModelSelectionRequest,
+    ModelTierEligibility,
+    ModelTierNotPermitted,
+    ResolvedModelSelection,
+    resolve_model_selection,
+)
 from family_assistant.processing.protocol import TaintedSinkRefusedError
 from family_assistant.security.taint import (
     TaintPolicyConfig,
@@ -36,12 +43,6 @@ from family_assistant.utils.text_normalization import normalize_latex_to_unicode
 from .attachments import AttachmentProcessor
 from .context import ContextPreparer
 from .llm_loop import LLMStreamingLoop
-from .model_selection import (
-    ModelSelectionRequest,
-    ModelTierNotPermitted,
-    ResolvedModelSelection,
-    resolve_model_selection,
-)
 from .tool_execution import ToolExecutor
 from .turn_context import build_turn_context_message, turn_context_guidance
 from .types import (
@@ -138,6 +139,30 @@ def _tool_row_attachment_ids(message: LLMMessage) -> set[str]:
         for attachment in message.attachments
         if (attachment_id := attachment.get("attachment_id"))
     }
+
+
+def _selectable_tier_lines(eligibility: ModelTierEligibility) -> list[str]:
+    """Catalog lines naming the tiers a delegating model may ask a target for.
+
+    Only the automatic list is advertised: a tier the target admits from a user
+    but not from another profile would be a suggestion the model can only be
+    refused for taking. A target with nothing beyond its default gets no lines
+    at all, which is most of them.
+    """
+    options = [
+        option
+        for option in eligibility.selectable
+        if option.id in eligibility.auto and option.id != eligibility.default_tier
+    ]
+    if not options:
+        return []
+    lines = ["  Optional `model_tier` values for this profile:"]
+    lines.extend(
+        f"  - {option.id} ({option.label})"
+        + (f": {option.description}" if option.description else "")
+        for option in options
+    )
+    return lines
 
 
 def _response_attachment_references(
@@ -665,11 +690,15 @@ class ProcessingService:
         registry = self.processing_services_registry
         if not registry:
             return ""
-        lines = [
-            f"- ID: {profile_id}, Description: "
-            f"{service.service_config.description or 'No description available.'}"
-            for profile_id, service in registry.items()
-        ]
+        lines: list[str] = []
+        for profile_id, service in registry.items():
+            description = (
+                service.service_config.description or "No description available."
+            )
+            lines.append(f"- ID: {profile_id}, Description: {description}")
+            lines.extend(
+                _selectable_tier_lines(service.service_config.tier_eligibility)
+            )
         return "\n".join(lines)
 
     async def delegation_catalog_addition(self) -> str:

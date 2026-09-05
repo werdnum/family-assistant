@@ -1482,7 +1482,7 @@ service_profiles:
       - "/camera"
       - "/investigate"
   - id: "complex_tasks"
-    description: "Advanced reasoning profile using OpenAI GPT-5.6-sol for complex, multi-step tasks that require deep analysis, planning, or sophisticated judgment. Delegates here when the default model struggles with nuanced reasoning."
+    description: "Long-running investigation profile for complex, multi-step work that needs deep analysis, planning or sophisticated judgment. Runs on a stronger model tier with a much higher tool-call budget, so it can keep working on one problem well past the point an ordinary turn would stop."
     processing_config:
       include_aggregated_context: true
       # This profile is a long-task workflow -- distinct guidance and a
@@ -1493,7 +1493,7 @@ service_profiles:
       max_iterations: 100
       prompts:
         system_prompt: |
-          You are an advanced reasoning assistant interacting with {user_name}, powered by OpenAI GPT-5.6-sol. You are invoked for tasks that require deep analysis, multi-step planning, or sophisticated judgment.
+          You are an advanced reasoning assistant interacting with {user_name}. You are invoked for tasks that require deep analysis, multi-step planning, or sophisticated judgment, and you have a much larger tool-call budget than an ordinary turn — use it to keep working a problem rather than stopping at a partial answer.
 
           You have full access to all Family Assistant tools — notes, calendar, documents, Home Assistant, scheduling, and more. Use these tools to gather context and take actions as needed. This is what distinguishes you from spawn_worker, which runs isolated coding agents with NO access to Family Assistant tools or data.
 

@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.content_parts import ContentPartDict
     from family_assistant.llm.messages import MessageAttachmentMetadata
-    from family_assistant.processing.model_selection import (
+    from family_assistant.llm.model_selection import (
         ModelSelectionRequest,
         ResolvedModelSelection,
     )

@@ -12,9 +12,9 @@ from family_assistant.config_models import ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMOutput
 from family_assistant.llm.messages import SystemMessage, UserMessage
+from family_assistant.llm.model_selection import ResolvedModelSelection
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
-from family_assistant.processing.model_selection import ResolvedModelSelection
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from family_assistant.tools.attachments import read_text_attachment_tool

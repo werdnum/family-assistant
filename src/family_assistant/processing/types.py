@@ -6,7 +6,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Protocol
 
 from family_assistant.delegation_security import DelegationSecurityLevel
-from family_assistant.processing.model_selection import ModelTierEligibility
+from family_assistant.llm.model_selection import ModelTierEligibility
 from family_assistant.tools.types import (
     RequestConfirmationCallback as ToolRequestConfirmationCallback,
 )

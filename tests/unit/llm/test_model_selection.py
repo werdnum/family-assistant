@@ -14,7 +14,7 @@ from family_assistant.config_models import (
     RetryModelConfig,
     ServiceProfile,
 )
-from family_assistant.processing.model_selection import (
+from family_assistant.llm.model_selection import (
     ModelSelectionRequest,
     ModelTierEligibility,
     ModelTierNotPermitted,

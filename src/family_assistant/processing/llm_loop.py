@@ -49,6 +49,7 @@ if TYPE_CHECKING:
     from family_assistant.config_models import AppConfig
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface
+    from family_assistant.llm.model_selection import ResolvedModelSelection
     from family_assistant.llm.tool_call import ToolCallItem
     from family_assistant.security.taint import TaintSource, TurnTaintTracker
     from family_assistant.services.tool_call_review import TriggerReviewInput
@@ -57,7 +58,6 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import EventSourcesById, ToolDefinition
 
     from .attachments import AttachmentProcessor
-    from .model_selection import ResolvedModelSelection
     from .service import ProcessingService
     from .tool_execution import ToolExecutor
     from .types import (

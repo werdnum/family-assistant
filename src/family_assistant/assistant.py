@@ -67,6 +67,7 @@ from family_assistant.indexing.notes_indexer import NotesIndexer
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.llm.factory import LLMClientFactory
+from family_assistant.llm.model_selection import ModelTierEligibility
 from family_assistant.llm.model_tiers import (
     models_in_chain,
     resolve_entry_client_config,
@@ -88,7 +89,6 @@ from family_assistant.processing import (
 from family_assistant.processing.interactions_agent_service import (
     InteractionsAgentProcessingService,
 )
-from family_assistant.processing.model_selection import ModelTierEligibility
 from family_assistant.security.taint import TaintMetadata, merge_taint_policy_config
 from family_assistant.services.api_backend import HttpApiBackend
 from family_assistant.services.apns import APNsService, load_apns_auth_key
