@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from datetime import timedelta
 from typing import TYPE_CHECKING, Literal, Protocol, cast
 
 import pytest
@@ -29,14 +30,22 @@ from family_assistant.config_models import (
     RetryModelConfig,
 )
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
-from family_assistant.llm.model_routing import ModelRouter
+from family_assistant.llm.call_context import CallAttribution, attributed_call
+from family_assistant.llm.messages import UserMessage
+from family_assistant.llm.model_routing import (
+    ROUTER_CALL_TIER,
+    ModelRouter,
+    RoutingDecision,
+)
 from family_assistant.llm.model_selection import (
     ModelTierEligibility,
     ModelTierOption,
     ResolvedModelSelection,
 )
+from family_assistant.observability.metrics import current_call_attribution
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.database import Database
+from family_assistant.utils.clock import SystemClock
 from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
     RuleBasedMockLLMClient,
 )
@@ -80,6 +89,62 @@ def _classifier_choosing(tier: str) -> RuleBasedMockLLMClient:
     return RuleBasedMockLLMClient(rules=[], structured_rules=[(lambda _: True, answer)])
 
 
+def _capturing_classifier(
+    captured: list[StructuredMatcherArgs],
+) -> RuleBasedMockLLMClient:
+    """A deciding classifier that also hands the test what it was asked."""
+
+    def answer(args: StructuredMatcherArgs) -> BaseModel:
+        captured.append(args)
+        return args["response_model"].model_validate({"tier": "deep"})
+
+    return RuleBasedMockLLMClient(rules=[], structured_rules=[(lambda _: True, answer)])
+
+
+def _attribution_reading_classifier(
+    seen: list[CallAttribution],
+) -> RuleBasedMockLLMClient:
+    """A classifier that records what its own call would be billed to.
+
+    Read where a provider client reads it, so this is the attribution the
+    metrics and the span below the processing layer would carry.
+    """
+
+    def answer(args: StructuredMatcherArgs) -> BaseModel:
+        seen.append(current_call_attribution())
+        return args["response_model"].model_validate({"tier": "deep"})
+
+    return RuleBasedMockLLMClient(rules=[], structured_rules=[(lambda _: True, answer)])
+
+
+def _prompt_text(args: StructuredMatcherArgs) -> str:
+    return "\n".join(
+        message.content
+        for message in args["messages"]
+        if isinstance(message.content, str)
+    )
+
+
+async def _add_history(
+    db_engine: AsyncEngine,
+    conversation_id: str,
+    text: str,
+    *,
+    age: timedelta = timedelta(minutes=1),
+    interface_type: str = "api",
+) -> None:
+    """Put one earlier user message in the conversation the classifier reads."""
+    db = Database(engine=db_engine)
+    await db.message_history.add_message(
+        UserMessage(content=text),
+        interface_type=interface_type,
+        conversation_id=conversation_id,
+        timestamp=SystemClock().now() - age,
+        turn_id=str(uuid.uuid4()),
+        processing_profile_id="chat_api_test_profile",
+    )
+
+
 type RoutingMode = Literal["off", "shadow", "active"]
 type SelectionPolicy = Literal["explicit", "auto"]
 
@@ -119,6 +184,8 @@ class RoutedServiceBuilder(Protocol):
         model_selection: SelectionPolicy = "auto",
         classifier_client: LLMInterface | None = None,
         timeout_seconds: float = 5.0,
+        history_messages: int = 6,
+        router: ModelRouter | None = None,
     ) -> ProcessingService: ...
 
 
@@ -140,17 +207,19 @@ def build_routed_service_fixture(
         model_selection: SelectionPolicy = "auto",
         classifier_client: LLMInterface | None = None,
         timeout_seconds: float = 5.0,
+        history_messages: int = 6,
+        router: ModelRouter | None = None,
     ) -> ProcessingService:
         config = api_test_processing_service.service_config
         config.tier_eligibility = _ELIGIBILITY
         config.model_selection = model_selection
         config.auto_routing_guidance = "Reach for deep when evidence conflicts."
-        router = ModelRouter(
+        router = router or ModelRouter(
             classifier_client if classifier_client is not None else classifier,
             prompt_template=_ROUTING_PROMPT,
             classifier_model="mock-classifier",
             timeout_seconds=timeout_seconds,
-            history_messages=6,
+            history_messages=history_messages,
         )
         return ProcessingService(
             llm_client=tier_clients["standard"],
@@ -180,12 +249,16 @@ def install_service_fixture(
         model_selection: SelectionPolicy = "auto",
         classifier_client: LLMInterface | None = None,
         timeout_seconds: float = 5.0,
+        history_messages: int = 6,
+        router: ModelRouter | None = None,
     ) -> ProcessingService:
         service = build_routed_service(
             mode,
             model_selection=model_selection,
             classifier_client=classifier_client,
             timeout_seconds=timeout_seconds,
+            history_messages=history_messages,
+            router=router,
         )
         app_fixture.state.processing_service = service
         app_fixture.state.processing_services = {service.service_config.id: service}
@@ -236,6 +309,9 @@ async def test_a_shadow_decision_is_recorded_while_the_turn_runs_on_the_default(
     assert reasoning.get("model_tier_source") == "default"
     assert reasoning.get("model_tier_would_choose") == "deep"
     assert reasoning.get("model_tier_routing_outcome") == "decided"
+    # The evaluation reads this column after the traces have expired, so the
+    # decision has to say which model made it.
+    assert reasoning.get("model_tier_classifier_model") == "mock-classifier"
 
 
 async def test_the_same_turn_in_active_mode_runs_on_the_tier_auto_chose(
@@ -256,6 +332,9 @@ async def test_the_same_turn_in_active_mode_runs_on_the_tier_auto_chose(
     assert reasoning.get("model_tier_routing_outcome") == "decided"
     # Nothing "would" have been chosen: it was chosen.
     assert "model_tier_would_choose" not in reasoning
+    # And nobody requested it. The source says Auto; a turn detail rendering
+    # "requested to resolved" must read `Auto -> Deep`, not `deep -> deep`.
+    assert "model_tier_requested" not in reasoning
 
 
 async def test_an_explicit_selection_never_reaches_the_classifier(
@@ -290,24 +369,6 @@ async def test_a_profile_that_selects_explicitly_is_never_routed(
 
     assert reply == "standard served this"
     assert not classifier.get_calls()
-
-
-async def test_mode_off_never_invokes_the_classifier(
-    api_test_client: AsyncClient,
-    db_engine: AsyncEngine,
-    install_service: RoutedServiceBuilder,
-    classifier: RuleBasedMockLLMClient,
-) -> None:
-    """A deployment that has switched routing off pays nothing for it."""
-    install_service("off")
-    conversation_id = f"routing-mode-off-{uuid.uuid4()}"
-
-    reply = await _send(api_test_client, conversation_id)
-
-    assert reply == "standard served this"
-    assert not classifier.get_calls()
-    reasoning = await _assistant_reasoning_info(db_engine, conversation_id)
-    assert "model_tier_routing_outcome" not in reasoning
 
 
 async def test_a_classifier_timeout_runs_the_turn_and_says_so(
@@ -425,7 +486,9 @@ async def test_a_queued_run_replays_its_envelope_rather_than_routing_again(
 
     Routing at execution time would decide the models of an already-authorized
     run from whatever the deployment looks like whenever a worker got to it --
-    exactly the drift persisting the envelope exists to prevent.
+    exactly the drift persisting the envelope exists to prevent. Nothing here
+    tells the service not to route: the envelope came out of storage, and that
+    is what says so.
     """
     service = build_routed_service("active")
     db = Database(engine=db_engine)
@@ -442,22 +505,272 @@ async def test_a_queued_run_replays_its_envelope_rather_than_routing_again(
             "requested": None,
             "source": "default",
         }),
-        allow_auto_routing=False,
     )
 
     assert result.text_reply == "standard served this"
     assert not classifier.get_calls()
 
 
-async def test_the_profile_listing_says_whether_a_client_should_offer_auto(
+async def test_shadow_mode_leaves_the_tier_the_run_arrived_with(
+    db_engine: AsyncEngine,
+    build_routed_service: RoutedServiceBuilder,
+) -> None:
+    """Shadow mode records; it does not decide, and it does not undecide.
+
+    Substituting a fresh default here would throw away the envelope the run
+    arrived with -- which is the one thing shadow mode must never touch.
+    """
+    service = build_routed_service("shadow")
+    db = Database(engine=db_engine)
+
+    result = await service.handle_chat_interaction(
+        db_context=db,
+        interface_type="delegation",
+        conversation_id=f"routing-shadow-envelope-{uuid.uuid4()}",
+        trigger_content_parts=[{"type": "text", "text": "look into this"}],
+        trigger_interface_message_id=None,
+        user_name="tester",
+        model_selection=ResolvedModelSelection(
+            tier="frontier", requested=None, source="default"
+        ),
+    )
+
+    assert result.text_reply == "frontier served this"
+    reasoning = result.reasoning_info
+    assert reasoning is not None
+    assert reasoning.get("model_tier") == "frontier"
+    assert reasoning.get("model_tier_would_choose") == "deep"
+
+
+async def test_a_decision_the_admission_gate_refuses_is_not_acted_on(
+    api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
+    install_service: RoutedServiceBuilder,
+) -> None:
+    """The classifier is offered the same list the gate enforces -- until it is not.
+
+    A profile reconfigured between the two is the case this covers, modelled by
+    a router that answers off-list. A decision the gate refuses is a
+    classification this deployment cannot use, not a licence to spend at a tier
+    Auto may not reach.
+    """
+
+    class OffListRouter(ModelRouter):
+        async def route(self, **kwargs: object) -> RoutingDecision:
+            _ = kwargs
+            return RoutingDecision(
+                tier="frontier",
+                outcome="decided",
+                classifier_model="mock-classifier",
+                latency_ms=1,
+            )
+
+    install_service(
+        "active",
+        router=OffListRouter(
+            _classifier_choosing("deep"),
+            prompt_template=_ROUTING_PROMPT,
+            classifier_model="mock-classifier",
+            timeout_seconds=5.0,
+            history_messages=6,
+        ),
+    )
+    conversation_id = f"routing-refused-{uuid.uuid4()}"
+
+    reply = await _send(api_test_client, conversation_id)
+
+    assert reply == "standard served this"
+    reasoning = await _assistant_reasoning_info(db_engine, conversation_id)
+    assert reasoning.get("model_tier") == "standard"
+    assert reasoning.get("model_tier_routing_outcome") == "invalid"
+
+
+async def test_a_history_window_of_zero_shows_the_classifier_no_history(
+    api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
+    install_service: RoutedServiceBuilder,
+) -> None:
+    """Zero has to skip the read, not be passed down.
+
+    The repository treats a falsy limit as *no* limit, so a deployment asking
+    for no history would otherwise hand the classifier the whole window.
+    """
+    conversation_id = f"routing-no-history-{uuid.uuid4()}"
+    await _add_history(
+        db_engine, conversation_id, "the settlement figure we discussed earlier"
+    )
+    captured: list[StructuredMatcherArgs] = []
+    install_service(
+        "shadow", classifier_client=_capturing_classifier(captured), history_messages=0
+    )
+
+    await _send(api_test_client, conversation_id)
+
+    assert len(captured) == 1
+    assert "the settlement figure we discussed earlier" not in _prompt_text(captured[0])
+
+
+async def test_the_classifier_reads_history_no_older_than_the_interface_allows(
+    db_engine: AsyncEngine,
+    build_routed_service: RoutedServiceBuilder,
+) -> None:
+    """The classifier's own message count, but the interface's configured age.
+
+    A message too old for the turn itself to see is not context for what is
+    being asked now, and reading it on one surface but not another would route
+    the same conversation differently depending on where it was typed.
+    """
+    captured: list[StructuredMatcherArgs] = []
+    service = build_routed_service(
+        "shadow", classifier_client=_capturing_classifier(captured)
+    )
+    service.service_config.history_max_age_hours = 24.0
+    service.service_config.web_history_max_age_hours = 0.5
+    conversation_id = f"routing-age-{uuid.uuid4()}"
+    await _add_history(
+        db_engine,
+        conversation_id,
+        "an hour-old remark",
+        age=timedelta(hours=1),
+        interface_type="telegram",
+    )
+    await _add_history(
+        db_engine,
+        conversation_id,
+        "an hour-old remark",
+        age=timedelta(hours=1),
+        interface_type="web",
+    )
+    db = Database(engine=db_engine)
+
+    for interface_type in ("telegram", "web"):
+        await service.handle_chat_interaction(
+            db_context=db,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            trigger_content_parts=[{"type": "text", "text": "and now?"}],
+            trigger_interface_message_id=None,
+            user_name="tester",
+        )
+
+    telegram_prompt, web_prompt = (_prompt_text(args) for args in captured)
+    assert "an hour-old remark" in telegram_prompt
+    assert "an hour-old remark" not in web_prompt
+
+
+async def test_the_streaming_path_shows_the_classifier_the_request_once(
+    api_test_client: AsyncClient,
+    install_service: RoutedServiceBuilder,
+) -> None:
+    """`POST /chat/turns` commits the prompt before the producer runs.
+
+    Without excluding the turn's own row the classifier reads the request twice
+    -- once as history, once as the request it is judging -- and a repeated
+    request is not the same evidence as a fresh one.
+    """
+    captured: list[StructuredMatcherArgs] = []
+    install_service("shadow", classifier_client=_capturing_classifier(captured))
+    conversation_id = f"routing-stream-{uuid.uuid4()}"
+    prompt = "weigh these two quotes against each other"
+
+    post = await api_test_client.post(
+        "/api/v1/chat/turns",
+        json={
+            "turn_id": str(uuid.uuid4()),
+            "conversation_id": conversation_id,
+            "prompt": prompt,
+        },
+    )
+    assert post.status_code == 200
+    stream = await api_test_client.get(
+        f"/api/v1/chat/conversations/{conversation_id}/stream",
+        params={"from_seq": 0},
+    )
+    assert stream.status_code == 200
+
+    assert len(captured) == 1
+    assert _prompt_text(captured[0]).count(prompt) == 1
+
+
+async def test_the_classifier_call_is_billed_to_the_profile_it_routes_for(
+    api_test_client: AsyncClient,
+    install_service: RoutedServiceBuilder,
+) -> None:
+    """Routing is the profile's spend, but not spend at the tier it routes to.
+
+    Attributed here rather than left to whatever turn is on the stack: the
+    binding has not happened yet when the classifier runs, so an unattributed
+    call is what the metrics would otherwise record.
+    """
+    seen: list[CallAttribution] = []
+    install_service("shadow", classifier_client=_attribution_reading_classifier(seen))
+
+    await _send(api_test_client, f"routing-attribution-{uuid.uuid4()}")
+
+    assert len(seen) == 1
+    assert seen[0].profile_id == "chat_api_test_profile"
+    assert seen[0].model_selection is not None
+    assert seen[0].model_selection.tier == ROUTER_CALL_TIER
+
+
+async def test_a_child_profiles_classifier_is_not_billed_to_its_parent(
+    db_engine: AsyncEngine,
+    build_routed_service: RoutedServiceBuilder,
+) -> None:
+    """A delegation routes for the target, so the target pays for the routing.
+
+    Under the parent's attribution -- which is what is in effect when a
+    synchronous delegation runs -- the child's classifier would otherwise land
+    in the parent's column.
+    """
+    seen: list[CallAttribution] = []
+    service = build_routed_service(
+        "shadow", classifier_client=_attribution_reading_classifier(seen)
+    )
+    db = Database(engine=db_engine)
+
+    with attributed_call(CallAttribution(profile_id="delegating_parent")):
+        await service.handle_chat_interaction(
+            db_context=db,
+            interface_type="delegation",
+            conversation_id=f"routing-child-{uuid.uuid4()}",
+            trigger_content_parts=[{"type": "text", "text": "look into this"}],
+            trigger_interface_message_id=None,
+            user_name="tester",
+            model_selection=ResolvedModelSelection.unselected("standard"),
+        )
+
+    assert len(seen) == 1
+    assert seen[0].profile_id == "chat_api_test_profile"
+
+
+async def _listed_model_selection(client: AsyncClient) -> str:
+    response = await client.get("/api/v1/profiles")
+    assert response.status_code == 200
+    profiles = {profile["id"]: profile for profile in response.json()["profiles"]}
+    return cast("str", profiles["chat_api_test_profile"]["model_selection"])
+
+
+async def test_the_profile_listing_offers_auto_once_auto_decides_something(
     api_test_client: AsyncClient,
     install_service: RoutedServiceBuilder,
 ) -> None:
     """The contract a composer's intelligence control reads to show `Auto`."""
+    install_service("active")
+
+    assert await _listed_model_selection(api_test_client) == "auto"
+
+
+async def test_the_profile_listing_reports_shadow_mode_as_explicit(
+    api_test_client: AsyncClient,
+    install_service: RoutedServiceBuilder,
+) -> None:
+    """What the deployment does, not what the profile asked for.
+
+    A profile configured `auto` under shadow mode still runs every request on
+    its configured tier, so offering the user an Auto control there would offer
+    one that changes nothing.
+    """
     install_service("shadow")
 
-    response = await api_test_client.get("/api/v1/profiles")
-
-    assert response.status_code == 200
-    profiles = {profile["id"]: profile for profile in response.json()["profiles"]}
-    assert profiles["chat_api_test_profile"]["model_selection"] == "auto"
+    assert await _listed_model_selection(api_test_client) == "explicit"

@@ -1307,6 +1307,7 @@ class MessageHistoryRepository(BaseRepository):
         processing_profile_id: str | None = None,
         subconversation_id: str | None = None,
         current_time: datetime | None = None,
+        exclude_turn_id: str | None = None,
     ) -> list[LLMMessage]:
         """
         Retrieves recent message history for a conversation.
@@ -1319,6 +1320,10 @@ class MessageHistoryRepository(BaseRepository):
             processing_profile_id: Filter by processing profile
             subconversation_id: Filter by subconversation ID
             current_time: Current time for calculating cutoff (defaults to now)
+            exclude_turn_id: Omit the rows a turn has already written. For a
+                caller reading "the conversation before this turn" on a path
+                that persists its trigger before reading, where the row would
+                otherwise come back as history of itself.
 
         Returns:
             List of typed LLMMessage objects in chronological order
@@ -1331,6 +1336,14 @@ class MessageHistoryRepository(BaseRepository):
             message_history_table.c.conversation_id == conversation_id,
             message_history_table.c.timestamp >= cutoff,
         ]
+
+        if exclude_turn_id is not None:
+            conditions.append(
+                or_(
+                    message_history_table.c.turn_id.is_(None),
+                    message_history_table.c.turn_id != exclude_turn_id,
+                )
+            )
 
         if processing_profile_id:
             conditions.append(

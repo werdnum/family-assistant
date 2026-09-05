@@ -72,6 +72,27 @@ class DelegatableService(Protocol):
         model_selection: ResolvedModelSelection | None = None,
     ) -> ChatInteractionResult: ...
 
+    async def resolve_model_selection_for_run(
+        self,
+        selection: ResolvedModelSelection,
+        *,
+        db_context: Database,
+        interface_type: str,
+        conversation_id: str,
+        subconversation_id: str | None,
+        trigger_content_parts: list[ContentPartDict],
+        trigger_attachments: list[MessageAttachmentMetadata] | None = None,
+    ) -> ResolvedModelSelection:
+        """Settle *selection* for a run that will execute later.
+
+        On the protocol rather than behind a local-only check because a queued
+        run persists whatever this returns, and the persisted envelope is the
+        run's authorization: a target that cannot route says so by returning
+        what it was given, instead of every caller remembering to ask whether
+        this one can.
+        """
+        ...
+
 
 class PendingPoll(enum.Enum):
     """Sentinel returned by ``poll_async`` when the remote task is not terminal."""

@@ -154,6 +154,30 @@ class RemoteA2AService:
             turn_taint_sources=initial_taint_sources or (),
         )
 
+    async def resolve_model_selection_for_run(
+        self,
+        selection: ResolvedModelSelection,
+        *,
+        db_context: Database,
+        interface_type: str,
+        conversation_id: str,
+        subconversation_id: str | None,
+        trigger_content_parts: list[ContentPartDict],
+        trigger_attachments: list[MessageAttachmentMetadata] | None = None,
+    ) -> ResolvedModelSelection:
+        """Unchanged: a remote agent picks its own model, so there is nothing
+        here to route. Its eligibility is the pinned one by construction, and
+        ``handle_chat_interaction`` still refuses an envelope naming a tier."""
+        _ = (
+            db_context,
+            interface_type,
+            conversation_id,
+            subconversation_id,
+            trigger_content_parts,
+            trigger_attachments,
+        )
+        return selection
+
     def _context_id(self, conversation_id: str, subconversation_id: str | None) -> str:
         base = subconversation_id or conversation_id
         return f"{base}:{self._service_config.id}"

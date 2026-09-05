@@ -1373,6 +1373,20 @@ async def delegate_to_service_tool(
             attachments=None,
         )
 
+    # Routed here, before the run row exists, rather than when a worker picks
+    # it up: the persisted envelope is the run's authorization, so a run
+    # enqueued unrouted reaches the worker with nothing to replay and takes the
+    # target's default silently -- while the synchronous path, which routes
+    # inside the turn, would have routed the same request.
+    model_selection = await target_service.resolve_model_selection_for_run(
+        model_selection,
+        db_context=exec_context.db_context,
+        interface_type=exec_context.interface_type,
+        conversation_id=exec_context.conversation_id,
+        subconversation_id=resumed_subconversation_id,
+        trigger_content_parts=content_parts,
+    )
+
     enqueue_result = await _enqueue_delegation(
         exec_context,
         source_service_id=source_service_id,

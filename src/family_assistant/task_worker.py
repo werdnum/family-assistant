@@ -1524,6 +1524,14 @@ async def handle_llm_callback(
             ),
             trigger_attachments=trigger_attachments,  # Pass attachments from script wake_llm
             tool_call_review_trigger=review_trigger,
+            # A worker-completed continuation carries no run envelope of its
+            # own -- the turn it continues is over -- so it runs at the
+            # profile's configured tier, frozen rather than routed. Its trigger
+            # is an application-composed wake text, not a request somebody
+            # wrote, so there is nothing here for a classifier to weigh.
+            model_selection=ResolvedModelSelection.unselected(
+                processing_service.service_config.tier_eligibility.default_tier
+            ).freeze(),
         )
 
         final_llm_content_to_send = result.text_reply
@@ -1857,9 +1865,8 @@ class TaskWorker:
             request_confirmation_callback = (
                 self._build_delegation_confirmation_callback(exec_context, run)
             )
-            result = await cast(
-                "ProcessingService", target_service
-            ).handle_chat_interaction(
+            local_target = cast("ProcessingService", target_service)
+            result = await local_target.handle_chat_interaction(
                 db_context=exec_context.db_context,
                 interface_type=run["interface_type"],
                 conversation_id=run["conversation_id"],
@@ -1881,12 +1888,16 @@ class TaskWorker:
                     active_request_role="user",
                     payload_present=False,
                 ),
-                model_selection=_model_selection_from_delegation_run(run),
-                # The envelope was frozen when the run was created. Routing it
-                # again here would decide the models of an already-authorized
-                # run from whatever the deployment looks like at execution
-                # time, which is the drift persisting the envelope prevents.
-                allow_auto_routing=False,
+                # Resolved, and routed, when the run was created, and frozen by
+                # the load: deciding the models of an already-authorized run
+                # from whatever the deployment looks like at execution time is
+                # the drift persisting the envelope prevents. A run queued
+                # before envelopes existed carries none, and takes the target's
+                # own tier -- frozen, so it is not routed here either.
+                model_selection=_model_selection_from_delegation_run(run)
+                or ResolvedModelSelection.unselected(
+                    local_target.service_config.tier_eligibility.default_tier
+                ).freeze(),
             )
         except Exception:
             # A timeout cancellation (CancelledError) is intentionally NOT caught

@@ -13,6 +13,7 @@ from opentelemetry import trace
 from opentelemetry.trace import StatusCode
 
 from family_assistant.llm import LLMInterface, LLMStreamEvent
+from family_assistant.llm.call_context import CallAttribution, attributed_call
 from family_assistant.llm.messages import (
     AssistantMessage,
     ContentPartDict,
@@ -24,10 +25,12 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
+from family_assistant.llm.model_routing import ROUTER_CALL_SELECTION
 from family_assistant.llm.model_selection import (
     ModelSelectionRequest,
     ModelTierClientMissing,
     ModelTierEligibility,
+    ModelTierNotPermitted,
     ResolvedModelSelection,
     resolve_model_selection,
 )
@@ -74,7 +77,8 @@ if TYPE_CHECKING:
     from family_assistant.context_providers import ContextProvider
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface
-    from family_assistant.llm.model_routing import ModelRouter
+    from family_assistant.llm.model_routing import ModelRouter, RoutingDecision
+    from family_assistant.llm.model_selection import RoutingOutcome
     from family_assistant.processing.protocol import DelegatableService
     from family_assistant.processing.types import MidTurnInputProvider
     from family_assistant.security.taint import (
@@ -154,8 +158,8 @@ def _selectable_tier_lines(eligibility: ModelTierEligibility) -> list[str]:
     """
     options = [
         option
-        for option in eligibility.selectable
-        if option.id in eligibility.auto and option.id != eligibility.default_tier
+        for option in eligibility.auto_options
+        if option.id != eligibility.default_tier
     ]
     if not options:
         return []
@@ -446,7 +450,7 @@ class ProcessingService:
         subconversation_id: str | None,
         trigger_content_parts: list[ContentPartDict],
         trigger_attachments: list[MessageAttachmentMetadata] | None,
-        allow_auto_routing: bool,
+        exclude_turn_id: str | None = None,
     ) -> tuple[ResolvedModelSelection, LLMInterface]:
         """Settle which models this turn runs on, Auto routing included.
 
@@ -463,16 +467,61 @@ class ProcessingService:
             subconversation_id=subconversation_id,
             trigger_content_parts=trigger_content_parts,
             trigger_attachments=trigger_attachments,
-            allow_auto_routing=allow_auto_routing,
+            exclude_turn_id=exclude_turn_id,
         )
         return self._run_binding(routed if routed is not None else selection)
 
-    def _should_auto_route(
+    async def resolve_model_selection_for_run(
         self,
-        selection: ResolvedModelSelection | None,
+        selection: ResolvedModelSelection,
         *,
-        allow_auto_routing: bool,
-    ) -> bool:
+        db_context: Database,
+        interface_type: str,
+        conversation_id: str,
+        subconversation_id: str | None,
+        trigger_content_parts: list[ContentPartDict],
+        trigger_attachments: list[MessageAttachmentMetadata] | None = None,
+    ) -> ResolvedModelSelection:
+        """Route *selection* now, for a run that will execute later.
+
+        A queued run's envelope is its authorization, and it is persisted so a
+        restart or a deployment cannot change the models underneath it. Routing
+        has to happen on the same side of that persistence: a run enqueued
+        unrouted reaches the worker with nothing to replay, and would silently
+        take the target's default while the synchronous path routed the same
+        request. Called by ``delegate_to_service`` before the run row exists.
+
+        A fresh delegation has no history under its subconversation, which is
+        the correct input for a first turn; a resumed one has its own.
+        """
+        routed = await self._auto_routed_selection(
+            db_context,
+            selection,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            subconversation_id=subconversation_id,
+            trigger_content_parts=trigger_content_parts,
+            trigger_attachments=trigger_attachments,
+            exclude_turn_id=None,
+        )
+        return routed if routed is not None else selection
+
+    @property
+    def effective_model_selection(self) -> Literal["explicit", "auto"]:
+        """What this deployment will actually do with a request naming no tier.
+
+        A profile configured ``auto`` under ``model_routing.mode: shadow`` still
+        runs every request on its configured tier, so a surface that advertised
+        Auto there would offer a control that changes nothing.
+        """
+        if (
+            self.service_config.model_selection == "auto"
+            and self.app_config.model_routing.mode == "active"
+        ):
+            return "auto"
+        return "explicit"
+
+    def _should_auto_route(self, selection: ResolvedModelSelection | None) -> bool:
         """Whether Auto gets to decide this turn's tier.
 
         An explicit selection bypasses routing entirely -- a person or a
@@ -481,13 +530,23 @@ class ProcessingService:
         second-guess an authorization. A delegation that named no tier is not
         an explicit selection and *is* routed: the target profile decides its
         own tier at each agent boundary.
+
+        A frozen envelope is not routed either, and that is a property of the
+        envelope rather than of the caller: everything read back from storage
+        arrives frozen, so no call site has to remember to say so.
+
+        Whether the deployment routes at all is asked once, at startup, by
+        there being a router to route with. ``model_routing.mode`` is not
+        re-read here: two places encoding "routing is off" is two places to
+        disagree.
         """
         return (
-            allow_auto_routing
-            and self._model_router is not None
-            and self.app_config.model_routing.mode != "off"
+            self._model_router is not None
             and self.service_config.model_selection == "auto"
-            and (selection is None or selection.source == "default")
+            and (
+                selection is None
+                or (selection.source == "default" and not selection.frozen)
+            )
         )
 
     async def _auto_routed_selection(
@@ -500,7 +559,7 @@ class ProcessingService:
         subconversation_id: str | None,
         trigger_content_parts: list[ContentPartDict],
         trigger_attachments: list[MessageAttachmentMetadata] | None,
-        allow_auto_routing: bool,
+        exclude_turn_id: str | None,
     ) -> ResolvedModelSelection | None:
         """The envelope Auto produced for this turn, or ``None`` if it did not run.
 
@@ -509,63 +568,193 @@ class ProcessingService:
         collect what Auto would have done while the deployment keeps running on
         what it already trusted. In ``active`` mode a decision resolves through
         the same admission gate every other selection passes, and a failed
-        outcome resolves to the profile's configured tier with the outcome on
+        outcome resolves to the tier the run already had with the outcome on
         the envelope -- never silently.
         """
         router = self._model_router
-        if router is None or not self._should_auto_route(
-            selection, allow_auto_routing=allow_auto_routing
-        ):
+        if router is None or not self._should_auto_route(selection):
             return None
 
         eligibility = self.service_config.tier_eligibility
-        history = await db_context.message_history.get_recent(
+        decision = await self._classify(
+            router,
+            db_context,
             interface_type=interface_type,
             conversation_id=conversation_id,
-            limit=router.history_messages,
-            processing_profile_id=self.service_config.id,
             subconversation_id=subconversation_id,
-            current_time=self.clock.now(),
-        )
-        decision = await router.route(
-            eligibility=eligibility,
-            guidance=self.service_config.auto_routing_guidance,
-            history=history,
-            request_text=self._extract_user_content_for_history(trigger_content_parts),
-            attachment_summary=_attachment_summary(trigger_attachments),
-        )
-        mode = self.app_config.model_routing.mode
-        record_model_routing(
-            profile=self.service_config.id,
-            mode=mode,
-            outcome=decision.outcome,
-            tier=decision.tier,
-            latency_seconds=decision.latency_ms / 1000,
+            trigger_content_parts=trigger_content_parts,
+            trigger_attachments=trigger_attachments,
+            exclude_turn_id=exclude_turn_id,
         )
 
-        default = ResolvedModelSelection.unselected(eligibility.default_tier)
+        # The envelope the run arrived with, not a fresh default: a caller that
+        # already resolved "no tier named" against this profile's eligibility
+        # has said something, and substituting a default here would discard the
+        # provenance it recorded.
+        base = (
+            selection
+            if selection is not None
+            else ResolvedModelSelection.unselected(eligibility.default_tier)
+        )
+        mode = self.app_config.model_routing.mode
+        outcome = decision.outcome
+        recorded_tier: str | None = None
         if mode == "shadow":
-            return replace(
-                default,
-                routing_outcome=decision.outcome,
+            recorded_tier = decision.tier
+            routed = replace(
+                base,
+                routing_outcome=outcome,
                 routing_would_choose=decision.tier,
                 classifier_model=decision.classifier_model,
             )
-        if decision.tier is None:
-            return replace(
-                default,
-                routing_outcome=decision.outcome,
+        elif decision.tier is None:
+            routed = replace(
+                base,
+                routing_outcome=outcome,
                 classifier_model=decision.classifier_model,
             )
-        chosen = resolve_model_selection(
-            eligibility,
-            ModelSelectionRequest(tier=decision.tier, source="auto"),
-            profile_id=self.service_config.id,
+        else:
+            routed, outcome, recorded_tier = self._admit_routed_tier(
+                base, decision.tier, classifier_model=decision.classifier_model
+            )
+
+        record_model_routing(
+            profile=self.service_config.id,
+            mode=mode,
+            outcome=outcome,
+            tier=recorded_tier,
+            latency_seconds=decision.latency_ms / 1000,
         )
-        return replace(
-            chosen,
-            routing_outcome=decision.outcome,
-            classifier_model=decision.classifier_model,
+        return routed
+
+    def _admit_routed_tier(
+        self,
+        base: ResolvedModelSelection,
+        tier: str,
+        *,
+        classifier_model: str,
+    ) -> tuple[ResolvedModelSelection, RoutingOutcome, str | None]:
+        """Put an active-mode decision through the shared admission gate.
+
+        The gate can refuse -- the eligibility the classifier was offered and
+        the eligibility the gate enforces are the same list, but a profile
+        reconfigured between the two would not be -- and a refusal here is a
+        classification this deployment cannot use, which is what ``invalid``
+        means. The run continues on the tier it already had.
+
+        ``requested`` is cleared: nobody asked for this tier. The source says
+        Auto, and a turn detail rendering "requested to resolved" must show
+        ``Auto -> Deep`` rather than a ``deep`` nobody typed.
+        """
+        try:
+            chosen = resolve_model_selection(
+                self.service_config.tier_eligibility,
+                ModelSelectionRequest(tier=tier, source="auto"),
+                profile_id=self.service_config.id,
+            )
+        except ModelTierNotPermitted:
+            logger.warning(
+                "Model routing chose tier '%s', which profile '%s' does not "
+                "admit from Auto; the run continues on its configured tier.",
+                tier,
+                self.service_config.id,
+            )
+            return (
+                replace(
+                    base, routing_outcome="invalid", classifier_model=classifier_model
+                ),
+                "invalid",
+                None,
+            )
+        return (
+            replace(
+                chosen,
+                requested=None,
+                routing_outcome="decided",
+                classifier_model=classifier_model,
+            ),
+            "decided",
+            tier,
+        )
+
+    async def _classify(
+        self,
+        router: ModelRouter,
+        db_context: Database,
+        *,
+        interface_type: str,
+        conversation_id: str,
+        subconversation_id: str | None,
+        trigger_content_parts: list[ContentPartDict],
+        trigger_attachments: list[MessageAttachmentMetadata] | None,
+        exclude_turn_id: str | None,
+    ) -> RoutingDecision:
+        """Ask the classifier, attributed to the profile it is deciding for.
+
+        The spend is this profile's -- it is what routing that profile's turn
+        costs -- but it is not spend at the tier the turn will run at, so it
+        carries its own label. Established here rather than inside the router
+        because the router serves every profile and knows none of them.
+        """
+        history = await self._routing_history(
+            db_context,
+            router,
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            subconversation_id=subconversation_id,
+            exclude_turn_id=exclude_turn_id,
+        )
+        attribution = CallAttribution(
+            profile_id=self.service_config.id,
+            model_selection=ROUTER_CALL_SELECTION,
+        )
+        with attributed_call(attribution):
+            return await router.route(
+                eligibility=self.service_config.tier_eligibility,
+                guidance=self.service_config.auto_routing_guidance,
+                history=history,
+                request_text=self._extract_user_content_for_history(
+                    trigger_content_parts
+                ),
+                attachment_summary=_attachment_summary(trigger_attachments),
+            )
+
+    async def _routing_history(
+        self,
+        db_context: Database,
+        router: ModelRouter,
+        *,
+        interface_type: str,
+        conversation_id: str,
+        subconversation_id: str | None,
+        exclude_turn_id: str | None,
+    ) -> list[LLMMessage]:
+        """The recent conversation the classifier is shown.
+
+        The classifier's own message count, but the interface's configured age:
+        a message old enough that the turn itself will not see it is not
+        context for what is being asked now, on any surface.
+
+        A count of zero means no history, and is read as such rather than
+        passed down -- the repository treats a falsy limit as "no limit", which
+        would hand the classifier the whole window instead of none of it.
+        """
+        if router.history_messages <= 0:
+            return []
+        _, history_max_age = self.context_preparer.get_history_limits(interface_type)
+        return await db_context.message_history.get_recent(
+            interface_type=interface_type,
+            conversation_id=conversation_id,
+            limit=router.history_messages,
+            max_age=history_max_age,
+            processing_profile_id=self.service_config.id,
+            subconversation_id=subconversation_id,
+            current_time=self.clock.now(),
+            # The streaming web path commits the prompt before the producer
+            # runs, so without this the classifier reads the request twice --
+            # once as history, once as the request it is judging -- and a
+            # repeated request is not the same evidence as a fresh one.
+            exclude_turn_id=exclude_turn_id,
         )
 
     @property
@@ -1494,7 +1683,6 @@ class ProcessingService:
         initial_taint_sources: Sequence[TaintSource] | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
         model_selection: ResolvedModelSelection | None = None,
-        allow_auto_routing: bool = True,
     ) -> ChatInteractionResult:
         """
         Handles a complete chat interaction from user input to final response.
@@ -1524,10 +1712,9 @@ class ProcessingService:
             trigger_is_internal: Hide the trigger row from user-facing history.
             pinned_history_message_ids: Message rows that must be present even if
                 normal history limits would exclude them.
-            allow_auto_routing: Whether Auto may choose this turn's tier. False
-                for a queued run replaying an envelope frozen when the run was
-                created: routing it again would let a deployment change the
-                models of a run somebody already authorized.
+            model_selection: The tier this run is bound to. A frozen envelope --
+                everything read back from storage -- is taken as settled; an
+                absent or unfrozen default-sourced one may be routed by Auto.
 
         Returns:
             ChatInteractionResult containing:
@@ -1555,7 +1742,7 @@ class ProcessingService:
             subconversation_id=subconversation_id,
             trigger_content_parts=trigger_content_parts,
             trigger_attachments=trigger_attachments,
-            allow_auto_routing=allow_auto_routing,
+            exclude_turn_id=turn_id if reuse_existing_user_row else None,
         )
 
         thread_root_id_for_turn: int | None = None
@@ -1755,7 +1942,6 @@ class ProcessingService:
         taint_tracker: TurnTaintTracker | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
         model_selection: ResolvedModelSelection | None = None,
-        allow_auto_routing: bool = True,
     ) -> AsyncIterator[LLMStreamEvent]:
         """
         Streaming version of handle_chat_interaction.
@@ -1782,7 +1968,7 @@ class ProcessingService:
             subconversation_id=subconversation_id,
             trigger_content_parts=trigger_content_parts,
             trigger_attachments=trigger_attachments,
-            allow_auto_routing=allow_auto_routing,
+            exclude_turn_id=turn_id if reuse_existing_user_row else None,
         )
 
         span = tracer.start_span(

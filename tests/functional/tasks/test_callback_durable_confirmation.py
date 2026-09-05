@@ -18,6 +18,10 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from family_assistant.interfaces import ChatInterface
+from family_assistant.llm.model_selection import (
+    ModelTierEligibility,
+    ResolvedModelSelection,
+)
 from family_assistant.processing.types import ChatInteractionResult
 from family_assistant.storage.database import Database
 from family_assistant.task_worker import LlmCallbackPayload, handle_llm_callback
@@ -40,16 +44,21 @@ class CallbackCapturingService:
 
     def __init__(self) -> None:
         self.service_config = SimpleNamespace(
-            id="callback_profile", allow_wake_llm=True
+            id="callback_profile",
+            allow_wake_llm=True,
+            # Pinned to one model, so the continuation takes it and is not routed.
+            tier_eligibility=ModelTierEligibility(),
         )
         self.processing_services_registry: dict[str, object] = {}
         self.captured_callback: object = "unset"
         self.captured_user_id: object = "unset"
+        self.captured_model_selection: object = "unset"
         self.confirmation_outcome: ConfirmationOutcome | None = None
 
     async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401 - test fake accepts the ProcessingService keyword surface
         self.captured_callback = kwargs["request_confirmation_callback"]
         self.captured_user_id = kwargs.get("user_id")
+        self.captured_model_selection = kwargs.get("model_selection")
         db_context = cast("Database", kwargs["db_context"])
         callback = kwargs["request_confirmation_callback"]
         if callback is not None:
@@ -155,6 +164,33 @@ async def test_callback_with_owner_can_request_durable_confirmation(
     assert len(pending) == 1
     assert pending[0]["tool_name"] == "delete_calendar_event"
     assert pending[0]["origin_conversation_id"] == TEST_CONVERSATION_ID
+
+
+@pytest.mark.asyncio
+async def test_a_worker_completed_continuation_runs_at_the_profiles_own_tier(
+    db_engine: AsyncEngine,
+) -> None:
+    """It carries no run envelope of its own, so it takes the default, frozen.
+
+    The turn it continues is over. Its trigger is an application-composed wake
+    text rather than a request somebody wrote, so there is nothing for a
+    classifier to weigh, and the design's recorded simplification -- a
+    continuation runs at the profile's configured tier -- has to keep holding
+    once Auto exists.
+    """
+    processing_service = CallbackCapturingService()
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "sent_message_id"
+
+    await handle_llm_callback(
+        _exec_context(Database(engine=db_engine), processing_service, chat_interface),
+        _payload(created_by_user_id="callback-owner"),
+    )
+
+    selection = processing_service.captured_model_selection
+    assert isinstance(selection, ResolvedModelSelection)
+    assert selection.source == "default"
+    assert selection.frozen
 
 
 @pytest.mark.asyncio
