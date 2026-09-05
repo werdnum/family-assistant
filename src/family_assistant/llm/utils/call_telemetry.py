@@ -25,7 +25,10 @@ from typing import TYPE_CHECKING, Any
 
 from opentelemetry.trace import Span, StatusCode
 
-from family_assistant.llm.call_context import current_processing_profile
+from family_assistant.llm.call_context import (
+    current_model_selection,
+    current_processing_profile,
+)
 from family_assistant.llm.messages import (
     MessageReasoningInfo,
     message_to_json_dict,
@@ -131,6 +134,7 @@ class LLMCallTelemetry:
         # inside an async generator's finally, which can run after the caller
         # has already left the profile's block.
         self.profile = current_processing_profile() or UNATTRIBUTED_PROFILE
+        self.model_selection = current_model_selection()
         self.request_timestamp = datetime.now(UTC)
         self.request_id = "_".join(
             part
@@ -182,6 +186,16 @@ class LLMCallTelemetry:
             "llm.request.tool_count": len(tools) if tools else 0,
             "llm.request.tool_choice": tool_choice or "",
         })
+        if self.model_selection is not None:
+            # Recorded on every call of the turn, not only the one that closes
+            # it: a tool loop's intermediate calls are spend at the same tier,
+            # and a cost breakdown that omitted them would understate it.
+            self.span.set_attributes({
+                "llm.model_tier": self.model_selection.tier or "",
+                "llm.model_tier.requested": self.model_selection.requested or "",
+                "llm.model_tier.source": self.model_selection.source,
+                "llm.model_tier.routing_outcome": self.model_selection.routing_outcome,
+            })
 
     @property
     def elapsed_ms(self) -> float:
@@ -277,6 +291,17 @@ class LLMCallTelemetry:
             finalized["resolved_model"] = self.resolved_model
         if self._finish_reason:
             finalized["finish_reason"] = self._finish_reason
+        selection = self.model_selection
+        if selection is not None:
+            # `routing_outcome` is deliberately not persisted while it can only
+            # ever say "not_requested": a field with one value on every row is
+            # noise in history and a migration away from it later is cheaper
+            # than one back to it.
+            if selection.tier is not None:
+                finalized["model_tier"] = selection.tier
+            if selection.requested is not None:
+                finalized["model_tier_requested"] = selection.requested
+            finalized["model_tier_source"] = selection.source
         return finalized
 
     def record_output(self, output: LLMOutput) -> None:
@@ -346,6 +371,7 @@ class LLMCallTelemetry:
         first_output_ms = self.time_to_first_output_ms
         record_llm_call(
             profile=self.profile,
+            tier=(self.model_selection.tier if self.model_selection else None),
             provider=self.provider,
             model=self.requested_model,
             resolved_model=self.resolved_model,

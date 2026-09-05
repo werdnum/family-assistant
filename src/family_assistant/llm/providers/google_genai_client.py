@@ -44,7 +44,10 @@ from family_assistant.llm.antigravity_egress import (
     AntigravityEgressResolver,
     EgressNetworkResolver,
 )
-from family_assistant.llm.call_context import current_processing_profile
+from family_assistant.llm.call_context import (
+    current_model_selection,
+    current_processing_profile,
+)
 from family_assistant.llm.google_types import (
     GeminiProviderMetadata,
     GeminiThoughtSignature,
@@ -1985,6 +1988,7 @@ class GoogleGenAIClient(BaseLLMClient):
         """
         record_llm_call(
             profile=current_processing_profile() or UNATTRIBUTED_PROFILE,
+            tier=(selection.tier if (selection := current_model_selection()) else None),
             provider="google",
             model=self.model_name,
             resolved_model=None,

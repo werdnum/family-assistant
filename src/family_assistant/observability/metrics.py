@@ -27,7 +27,10 @@ from typing import TYPE_CHECKING, Final
 
 from prometheus_client import Counter, Gauge, Histogram
 
-from family_assistant.llm.call_context import current_processing_profile
+from family_assistant.llm.call_context import (
+    current_model_selection,
+    current_processing_profile,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -72,7 +75,20 @@ Dropping those calls would hide real spend; a rising ``profile="none"`` series
 is itself the signal that something is calling a model outside a turn.
 """
 
-_LLM_LABELS: Final = ("profile", "provider", "model", "resolved_model", "operation")
+UNTIERED_CALL: Final = "none"
+"""Label for a call on a profile pinned to an inline model, which has no tier.
+
+Distinct from a tier named ``none`` only by convention; tier names must start
+with a letter, so no configured tier can collide with it."""
+
+_LLM_LABELS: Final = (
+    "profile",
+    "tier",
+    "provider",
+    "model",
+    "resolved_model",
+    "operation",
+)
 
 # Provider call latency spans three orders of magnitude: a cached one-liner
 # answers in well under a second, a high-effort reasoning turn with tools runs
@@ -285,6 +301,7 @@ def normalized_token_buckets(
 def record_llm_call(
     *,
     profile: str,
+    tier: str | None,
     provider: str,
     model: str,
     resolved_model: str | None,
@@ -302,6 +319,7 @@ def record_llm_call(
     """
     labels = (
         profile or UNATTRIBUTED_PROFILE,
+        tier or UNTIERED_CALL,
         provider,
         model,
         resolved_model or model,
@@ -423,6 +441,7 @@ async def instrumented_llm_request[R](
     """
     started = time.monotonic()
     profile = current_processing_profile() or UNATTRIBUTED_PROFILE
+    selection = current_model_selection()
 
     def record(
         outcome: str,
@@ -432,6 +451,7 @@ async def instrumented_llm_request[R](
     ) -> None:
         record_llm_call(
             profile=profile,
+            tier=selection.tier if selection else None,
             provider=provider,
             model=model,
             resolved_model=_request_served_model(response, error),

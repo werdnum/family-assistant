@@ -16,7 +16,9 @@ from pydantic import ValidationError
 from family_assistant.config_models import AppConfig
 from family_assistant.llm.call_context import (
     current_processing_profile,
+    reset_model_selection,
     reset_processing_profile,
+    set_model_selection,
     set_processing_profile,
 )
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
@@ -32,6 +34,7 @@ from family_assistant.observability.metrics import (
 from family_assistant.processing.interactions_agent_service import (
     InteractionsAgentProcessingService,
 )
+from family_assistant.processing.model_selection import ResolvedModelSelection
 from family_assistant.tools import ToolNotFoundError
 from family_assistant.tools.infrastructure import (
     LocalToolsProvider,
@@ -300,6 +303,7 @@ def test_successful_call_counts_tokens_against_the_active_profile(
 
     labels = {
         "profile": profile,
+        "tier": "none",
         "provider": "anthropic",
         "model": "claude-test",
         "resolved_model": "claude-test-20260101",
@@ -332,6 +336,7 @@ def test_failed_call_still_counts_the_tokens_it_burned(profile: str) -> None:
 
     labels = {
         "profile": profile,
+        "tier": "none",
         "provider": "openai",
         "model": "gpt-test",
         "resolved_model": "gpt-test",
@@ -356,6 +361,7 @@ def test_call_outside_a_turn_is_labelled_unattributed_rather_than_dropped() -> N
     telemetry = _telemetry(provider="openai", model="gpt-oneshot")
     labels = {
         "profile": "none",
+        "tier": "none",
         "provider": "openai",
         "model": "gpt-oneshot",
         "resolved_model": "gpt-oneshot",
@@ -373,6 +379,57 @@ def test_call_outside_a_turn_is_labelled_unattributed_rather_than_dropped() -> N
         {**labels, "outcome": "success", "error_type": ""},
     )
     assert after - before == 1
+
+
+def test_the_resolved_tier_labels_the_call_and_lands_in_the_usage(
+    profile: str,
+) -> None:
+    """Spend is attributed to the tier that incurred it, not just the profile."""
+    selection = ResolvedModelSelection(
+        tier="deep", requested="deep", source="user", routing_outcome="not_requested"
+    )
+    token = set_model_selection(selection)
+    try:
+        telemetry = _telemetry(provider="openai", model="gpt-sol")
+        usage = telemetry.finalize_usage({"prompt_tokens": 10})
+        telemetry.finish_success(response=None)
+    finally:
+        reset_model_selection(token)
+
+    assert usage.get("model_tier") == "deep"
+    assert usage.get("model_tier_source") == "user"
+    assert usage.get("model_tier_requested") == "deep"
+    assert (
+        _sample(
+            "family_assistant_llm_calls_total",
+            {
+                "profile": profile,
+                "tier": "deep",
+                "provider": "openai",
+                "model": "gpt-sol",
+                "resolved_model": "gpt-sol",
+                "operation": "chat",
+                "outcome": "success",
+                "error_type": "",
+            },
+        )
+        == 1
+    )
+
+
+def test_an_unselected_tier_records_the_default_without_a_requested_one() -> None:
+    """ "Nobody asked" must stay distinguishable from "asked for the default"."""
+    selection = ResolvedModelSelection.unselected("standard")
+    token = set_model_selection(selection)
+    try:
+        telemetry = _telemetry(provider="google", model="gemini-test")
+        usage = telemetry.finalize_usage(None)
+    finally:
+        reset_model_selection(token)
+
+    assert usage.get("model_tier") == "standard"
+    assert usage.get("model_tier_source") == "default"
+    assert "model_tier_requested" not in usage
 
 
 def test_the_profile_is_captured_when_the_call_starts(profile: str) -> None:
@@ -393,6 +450,7 @@ def test_an_abandoned_streamed_call_still_records_an_outcome(profile: str) -> No
 
     labels = {
         "profile": profile,
+        "tier": "none",
         "provider": "google",
         "model": "gemini-abandoned",
         "resolved_model": "gemini-abandoned",
@@ -422,6 +480,7 @@ def test_abandoning_a_call_that_already_finished_counts_it_once(profile: str) ->
 
     labels = {
         "profile": profile,
+        "tier": "none",
         "provider": "openai",
         "model": "gpt-once",
         "resolved_model": "gpt-once",
@@ -600,6 +659,7 @@ def test_a_committed_run_is_counted_even_if_its_usage_cannot_be_read() -> None:
             "family_assistant_llm_calls_total",
             {
                 "profile": "p_unreadable",
+                "tier": "none",
                 "provider": "google",
                 "model": "models/deep-research-preview-04-2026",
                 "resolved_model": "models/deep-research-preview-04-2026",
@@ -655,6 +715,7 @@ def test_a_cancelled_structured_call_still_records_an_outcome(profile: str) -> N
 
     labels = {
         "profile": profile,
+        "tier": "none",
         "provider": "anthropic",
         "model": "claude-structured",
         "resolved_model": "claude-structured",
@@ -691,6 +752,7 @@ async def test_video_generation_is_counted_like_any_other_provider_request(
             "family_assistant_llm_calls_total",
             {
                 "profile": profile,
+                "tier": "none",
                 "provider": "google",
                 "model": "veo-test",
                 "resolved_model": "veo-test",
@@ -724,6 +786,7 @@ async def test_a_request_rejected_before_the_provider_is_not_counted(
                 "family_assistant_llm_calls_total",
                 {
                     "profile": profile,
+                    "tier": "none",
                     "provider": "google",
                     "model": "omni-test",
                     "resolved_model": "omni-test",
@@ -758,6 +821,7 @@ async def test_the_served_model_is_recorded_where_the_provider_reports_it(
             "family_assistant_llm_calls_total",
             {
                 "profile": profile,
+                "tier": "none",
                 "provider": "google",
                 "model": "gemini-3-pro-image",
                 "resolved_model": "gemini-3-pro-image-2026-01-01",

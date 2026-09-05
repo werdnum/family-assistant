@@ -622,6 +622,9 @@ class InteractionsAgentProcessingService(ProcessingService):
         client = self._google_client()
         record_llm_call(
             profile=self.service_config.id,
+            # An Interactions API agent is configured inline on its profile,
+            # never as an interchangeable tier.
+            tier=None,
             provider="google",
             model=client.model_name,
             resolved_model=interaction.model if interaction else None,
@@ -686,6 +689,9 @@ class InteractionsAgentProcessingService(ProcessingService):
 
         record_llm_call(
             profile=self.service_config.id,
+            # An Interactions API agent is configured inline on its profile,
+            # never as an interchangeable tier.
+            tier=None,
             provider="google",
             model=self._google_client().model_name,
             resolved_model=resolved_model,
