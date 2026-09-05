@@ -758,6 +758,12 @@ PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS: frozenset[str] = frozenset({
 })
 
 
+# Top-level profile keys naming which tiers a profile may run on. They qualify a
+# `model_tier`, so they only mean something to a profile that has one: every rule
+# that drops a tier drops these alongside it, and stating them once is what keeps
+# those rules from diverging as the set grows.
+PROFILE_TIER_ELIGIBILITY_KEYS: tuple[str, ...] = ("allowed_model_tiers",)
+
 # Top-level profile keys holding a list that a profile replaces wholesale rather
 # than extending. Each is a closed statement about the profile -- the commands it
 # answers to, the labels it may read, the tiers it may run on, the global grants
@@ -765,7 +771,7 @@ PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS: frozenset[str] = frozenset({
 PROFILE_REPLACED_LIST_KEYS: tuple[str, ...] = (
     "slash_commands",
     "visibility_grants",
-    "allowed_model_tiers",
+    *PROFILE_TIER_ELIGIBILITY_KEYS,
     "excluded_global_tools",
 )
 
@@ -962,10 +968,10 @@ def resolve_service_profile(
     # An eligibility list the profile did not state for itself means nothing to
     # one that names an inline model; keeping the inherited list would only fail
     # validation for a profile that said nothing about tiers.
-    if not isinstance(profile_def.get("allowed_model_tiers"), list) and (
-        resolved["processing_config"].get("model_tier") is None
-    ):
-        resolved["allowed_model_tiers"] = None
+    if resolved["processing_config"].get("model_tier") is None:
+        for key in PROFILE_TIER_ELIGIBILITY_KEYS:
+            if not isinstance(profile_def.get(key), list):
+                resolved[key] = None
 
     # Handle remote_a2a (replace if present)
     if "remote_a2a" in profile_def:
@@ -998,8 +1004,9 @@ def _clear_inherited_model_selection_for_remote(
     for key in (*MODEL_SELECTION_KEYS, "model_tier"):
         if declared_processing.get(key) is None:
             resolved["processing_config"][key] = None
-    if not isinstance(profile_def.get("allowed_model_tiers"), list):
-        resolved["allowed_model_tiers"] = None
+    for key in PROFILE_TIER_ELIGIBILITY_KEYS:
+        if not isinstance(profile_def.get(key), list):
+            resolved[key] = None
 
 
 def resolve_all_service_profiles(
@@ -1187,6 +1194,13 @@ def _shipped_base_for_operator_override(
     The base the operator's definition is deep-merged onto, so that what the
     operator selected is what the merged definition says. See
     `_superseded_shipped_selection` for which keys go and why.
+
+    A shipped tier that goes takes the shipped eligibility lists with it: they
+    qualify that tier, and nothing else in the merged definition records that
+    they were the shipped block's rather than the operator's, so left behind they
+    read as an operator naming eligible tiers for a profile with no tier --
+    which `validate_profile_model_tier` refuses at startup. Lists the operator
+    stated for itself stay, and that refusal still fires for them by name.
     """
     dropped = _superseded_shipped_selection(
         shipped.get("processing_config") or {},
@@ -1199,6 +1213,10 @@ def _shipped_base_for_operator_override(
     without_superseded = copy.deepcopy(shipped)
     for key in dropped:
         without_superseded["processing_config"].pop(key, None)
+    if "model_tier" in dropped:
+        for key in PROFILE_TIER_ELIGIBILITY_KEYS:
+            if not isinstance(operator.get(key), list):
+                without_superseded.pop(key, None)
     return without_superseded
 
 

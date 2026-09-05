@@ -2784,12 +2784,23 @@ def test_every_service_profile_field_is_accounted_for() -> None:
     )
 
 
-def _resolved_default_assistant(tmp_path: Path, operator_yaml: str) -> ProcessingConfig:
+def _loaded_with_operator_config(tmp_path: Path, operator_yaml: str) -> AppConfig:
     config_file = tmp_path / "config.yaml"
     config_file.write_text(operator_yaml)
-    config = load_config(config_file_path=str(config_file), load_dotenv_file=False)
+    return load_config(config_file_path=str(config_file), load_dotenv_file=False)
+
+
+def _resolved_default_assistant(tmp_path: Path, operator_yaml: str) -> ProcessingConfig:
+    """The resolved `default_assistant`, as startup would accept it.
+
+    The tier validation is part of the assertion: a merge that resolves the
+    selection correctly and leaves the shipped tier-eligibility list behind
+    passes every field check below and then refuses to boot.
+    """
+    config = _loaded_with_operator_config(tmp_path, operator_yaml)
     profile = next(p for p in config.service_profiles if p.id == "default_assistant")
     assert profile.processing_config is not None
+    validate_profile_model_tier(profile, config.model_tiers)
     return profile.processing_config
 
 
@@ -2941,29 +2952,116 @@ def test_operator_model_tier_drops_a_shipped_inline_model(tmp_path: Path) -> Non
     `engineer` ships `anthropic`/`claude-opus-5` inline. Left in place, the
     merged definition would name both kinds of selection, which is refused.
     """
-    config_file = tmp_path / "config.yaml"
-    config_file.write_text(
+    config = _loaded_with_operator_config(
+        tmp_path,
         "service_profiles:\n"
         '  - id: "engineer"\n'
         "    processing_config:\n"
-        '      model_tier: "deep"\n'
+        '      model_tier: "deep"\n',
     )
 
-    config = load_config(config_file_path=str(config_file), load_dotenv_file=False)
-
-    processing_config = next(
-        p for p in config.service_profiles if p.id == "engineer"
-    ).processing_config
+    profile = next(p for p in config.service_profiles if p.id == "engineer")
+    processing_config = profile.processing_config
     assert processing_config.model_tier == "deep"
     assert processing_config.llm_model is None
     assert processing_config.provider is None
     assert processing_config.retry_config is None
+    assert validate_profile_model_tier(profile, config.model_tiers) is not None
 
 
-def _loaded_with_operator_config(tmp_path: Path, operator_yaml: str) -> AppConfig:
-    config_file = tmp_path / "config.yaml"
-    config_file.write_text(operator_yaml)
-    return load_config(config_file_path=str(config_file), load_dotenv_file=False)
+def test_operator_retry_chain_drops_the_shipped_tier_eligibility(
+    tmp_path: Path,
+) -> None:
+    """A superseded shipped tier takes the shipped eligibility list with it.
+
+    `default_assistant` ships both `model_tier` and `allowed_model_tiers`. The
+    list survived the merge by ID and read as the operator's own, so the merged
+    profile named eligible tiers with no tier to qualify, and
+    `validate_profile_model_tier` refused to boot.
+    """
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        "      retry_config:\n"
+        '        primary: {provider: "anthropic", model: "claude-sonnet-5"}\n',
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "default_assistant")
+    assert profile.processing_config.model_tier is None
+    assert profile.allowed_model_tiers is None
+    assert validate_profile_model_tier(profile, config.model_tiers) is None
+
+
+def test_operator_model_override_drops_the_shipped_tier_eligibility(
+    tmp_path: Path,
+) -> None:
+    """The same for an inline model, on the other profile that ships a list."""
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "complex_tasks"\n'
+        "    processing_config:\n"
+        '      provider: "anthropic"\n'
+        '      llm_model: "claude-opus-5"\n',
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "complex_tasks")
+    assert profile.processing_config.model_tier is None
+    assert profile.processing_config.llm_model == "claude-opus-5"
+    assert profile.allowed_model_tiers is None
+    assert validate_profile_model_tier(profile, config.model_tiers) is None
+
+
+def test_operator_model_tier_keeps_the_shipped_tier_eligibility(
+    tmp_path: Path,
+) -> None:
+    """An operator's own tier supersedes nothing the list qualifies.
+
+    The shipped list still describes which tiers the profile may be run on, and
+    the tier the operator named is one of them.
+    """
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      model_tier: "deep"\n',
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "default_assistant")
+    assert profile.processing_config.model_tier == "deep"
+    assert profile.allowed_model_tiers == ["standard", "deep", "frontier"]
+    assert validate_profile_model_tier(profile, config.model_tiers) is not None
+
+
+def test_operator_eligibility_list_beside_an_inline_model_is_still_refused(
+    tmp_path: Path,
+) -> None:
+    """Only the shipped list goes; one the operator stated stays and fails.
+
+    Naming eligible tiers for a profile that runs on one inline model is a
+    misconfiguration, and it is the operator's to fix -- so it is refused by
+    name rather than resolved away.
+    """
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      provider: "anthropic"\n'
+        '      llm_model: "claude-sonnet-5"\n'
+        '    allowed_model_tiers: ["standard", "deep"]\n',
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "default_assistant")
+    assert profile.allowed_model_tiers == ["standard", "deep"]
+
+    with pytest.raises(
+        ValueError, match="sets allowed_model_tiers without a model_tier"
+    ):
+        validate_profile_model_tier(profile, config.model_tiers)
 
 
 def _default_settings_and_heir(
