@@ -172,6 +172,11 @@ class MessageReasoningInfo(TypedDict, total=False):
     profile's configured tier anyway. This is the evaluation record: comparing
     it against what the run actually did is how Auto is judged before it is
     trusted to decide."""
+    model_tier_classifier_model: str
+    """Which model made the routing decision on this row. Recorded here and not
+    only on the trace span because the evaluation dataset is this column and
+    traces expire: a decision whose classifier is unidentifiable cannot be
+    re-judged after the classifier has been changed."""
 
 
 # Re-export content part types and helpers for backward compatibility

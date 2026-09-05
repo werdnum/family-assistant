@@ -147,6 +147,11 @@ def validate_profile_model_tier(
     allowed = profile_conf.allowed_model_tiers
     auto = profile_conf.auto_model_tiers
 
+    # Once, before the branches: whether Auto has anything to choose from is
+    # asked of the same two fields either way, and stating it on each exit is
+    # how one of them comes to be missing it.
+    _reject_auto_without_tiers(profile_conf)
+
     if tier_name is None:
         for field, value in (
             ("allowed_model_tiers", allowed),
@@ -159,7 +164,6 @@ def validate_profile_model_tier(
                     "only; selection needs a default tier to fall back to."
                 )
                 raise ValueError(msg)
-        _reject_auto_without_tiers(profile_conf)
         return None
 
     tier = model_tiers.get(tier_name)
@@ -217,8 +221,6 @@ def validate_profile_model_tier(
                 "a tier explicit selection may not."
             )
             raise ValueError(msg)
-
-    _reject_auto_without_tiers(profile_conf)
 
     return tier
 

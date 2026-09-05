@@ -25,7 +25,7 @@ inline model instead of a tier admits no selection at all.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Literal, Self, get_args
 
 if TYPE_CHECKING:
@@ -57,7 +57,12 @@ are selections a model made rather than a person, but "the router chose Deep"
 and "another profile asked for Deep" are different things to see in a run
 record, and only one of them can be evaluated against a routing prompt."""
 
-_PERSISTABLE_SOURCES: frozenset[str] = frozenset({"user", "model", "default", "auto"})
+_PERSISTABLE_SOURCES: frozenset[str] = frozenset(get_args(SelectionSource.__value__))
+"""``SelectionSource``'s members, for validating a value read from storage.
+
+Derived rather than written out again, for the same reason
+:data:`ROUTING_OUTCOMES` is: a second hand-written list would be free to drift
+from the type until a row this deployment itself wrote failed to load."""
 
 type RoutingOutcome = Literal["decided", "timeout", "invalid", "error"]
 """How an Auto classification went, separately from what the run resolved to.
@@ -236,16 +241,35 @@ class ResolvedModelSelection:
     """Which model made the routing call, so a change in decision quality can
     be attributed to a change of classifier."""
 
+    frozen: bool = False
+    """Whether this envelope is settled, so Auto must not revisit it.
+
+    A property of the envelope rather than a flag each caller passes down: an
+    envelope read back from storage was resolved when its run was created, and
+    routing it again at execution time would decide the models of an
+    already-authorized run from whatever the deployment looks like whenever a
+    worker got to it. :meth:`from_json` therefore freezes what it loads, and a
+    caller that means "this turn takes the default, full stop" says so with
+    :meth:`freeze` rather than by being trusted to pass an argument."""
+
     @classmethod
     def unselected(cls, default_tier: str | None) -> Self:
         """The profile's own tier, chosen by nobody."""
         return cls(tier=default_tier, requested=None, source="default")
+
+    def freeze(self) -> Self:
+        """This envelope, settled: Auto will not revisit it."""
+        return replace(self, frozen=True)
 
     def to_json(self) -> dict[str, str | None]:
         """Serialize for persistence on a queued run.
 
         A queued run persists the selection so a restart or a configuration
         deployment cannot silently change the models of a run already created.
+
+        ``frozen`` is not among the keys: everything read back from storage is
+        frozen by :meth:`from_json`, so persisting the flag would only create
+        the possibility of a stored row saying otherwise.
         """
         return {
             "tier": self.tier,
@@ -271,6 +295,10 @@ class ResolvedModelSelection:
         Keys it does not know are ignored, and the routing fields are optional,
         so a row written before Auto existed loads as a run that was not routed
         -- which is what it was.
+
+        What comes back is frozen. The run it belongs to was resolved, and
+        routed, when it was created; deciding it again now would be the drift
+        persisting the envelope exists to prevent.
         """
         if not isinstance(data, Mapping):
             msg = f"Persisted model selection is {type(data).__name__}, not an object."
@@ -304,6 +332,7 @@ class ResolvedModelSelection:
             routing_outcome=outcome,
             routing_would_choose=would_choose,
             classifier_model=classifier_model,
+            frozen=True,
         )
 
 
@@ -386,6 +415,12 @@ def stamp_model_selection(
         reasoning["model_tier_routing_outcome"] = selection.routing_outcome
     if selection.routing_would_choose is not None:
         reasoning["model_tier_would_choose"] = selection.routing_would_choose
+    if selection.classifier_model is not None:
+        # Persisted rather than left to the trace span: the shadow evaluation
+        # reads `message_history.reasoning_info`, and a decision whose
+        # classifier can no longer be identified is a decision that cannot be
+        # attributed to the model that made it once the traces have expired.
+        reasoning["model_tier_classifier_model"] = selection.classifier_model
     return reasoning
 
 
