@@ -150,6 +150,13 @@ paste it, use the composer's photo button, or share from Files. Long-pressing th
 
 **Voice** asks for microphone permission and shows a level meter while capturing audio.
 
+If voice cannot connect on your iPhone or Apple Watch, tell the assistant approximately when you
+tried and which device you used. The app sends connection-stage diagnostics automatically so the
+failure can be investigated without connecting your device to a computer. These diagnostics exclude
+audio, transcripts, instructions, tool arguments, and credentials. If delivery fails, queued reports
+are retried when you next open voice mode or relaunch the app. Connection startup times out after 30
+seconds instead of waiting indefinitely.
+
 ### Apple Watch
 
 Install Family Assistant from the Watch app on your iPhone (watchOS 10 or later). Open the watch app

@@ -41,19 +41,22 @@ final class GeminiLiveClient {
     private var socket: GeminiLiveSocket?
     private var receiveTask: Task<Void, Never>?
     private var isClosed = false
+    private let diagnostics: VoiceConnectionDiagnostics?
 
     init(
         host: String = GeminiLiveClient.defaultHost,
-        socketFactory: @escaping SocketFactory = { url in
+        diagnostics: VoiceConnectionDiagnostics? = nil,
+        socketFactory: SocketFactory? = nil
+    ) {
+        self.diagnostics = diagnostics
+        self.host = host
+        self.socketFactory = socketFactory ?? { url in
             #if os(watchOS)
-            NetworkGeminiLiveSocket(url: url)
+                NetworkGeminiLiveSocket(url: url, diagnostics: diagnostics)
             #else
-            URLSessionGeminiLiveSocket(url: url)
+                URLSessionGeminiLiveSocket(url: url, diagnostics: diagnostics)
             #endif
         }
-    ) {
-        self.host = host
-        self.socketFactory = socketFactory
         (events, continuation) = AsyncStream.makeStream(of: GeminiLiveServerEvent.self)
     }
 
@@ -61,10 +64,13 @@ final class GeminiLiveClient {
     func connect(token: EphemeralToken) async throws {
         guard socket == nil, !isClosed else { return }
         let url = try Self.endpointURL(token: token.token, host: host)
+        let setup = try GeminiLiveCodec.setupMessage(for: token)
+        diagnostics?.record("socket_start", fields: ["api_version": Self.apiVersion, "setup_bytes": String(setup.utf8.count)])
         let socket = socketFactory(url)
         self.socket = socket
         do {
-            try await socket.send(GeminiLiveCodec.setupMessage(for: token))
+            try await socket.send(setup)
+            diagnostics?.record("setup_sent")
         } catch {
             socket.close()
             throw error

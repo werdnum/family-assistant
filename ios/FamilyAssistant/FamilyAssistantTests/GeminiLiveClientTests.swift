@@ -1,7 +1,19 @@
+@testable import FamilyAssistant
 import Foundation
 import XCTest
 
-@testable import FamilyAssistant
+final class VoiceDiagnosticRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: [(String, [String: String], Bool)] = []
+    var records: [(String, [String: String], Bool)] {
+        lock.withLock { storage }
+    }
+
+    lazy var diagnostics = VoiceConnectionDiagnostics { [weak self] event, fields, failure in
+        guard let self else { return }
+        self.lock.withLock { self.storage.append((event, fields, failure)) }
+    }
+}
 
 /// In-memory ``GeminiLiveSocket`` for driving the client without a network.
 ///
@@ -79,6 +91,50 @@ final class FakeGeminiLiveSocket: GeminiLiveSocket, @unchecked Sendable {
 
 @MainActor
 final class GeminiLiveClientTests: XCTestCase {
+    func testConnectionDiagnosticsExcludeTokenAndSetupContent() async throws {
+        let recorder = VoiceDiagnosticRecorder()
+        let socket = FakeGeminiLiveSocket()
+        let client = GeminiLiveClient(diagnostics: recorder.diagnostics, socketFactory: { _ in socket })
+        try await client.connect(token: makeToken(token: "auth_tokens/private-secret"))
+        XCTAssertEqual(recorder.records.map { $0.0 }, ["socket_start", "setup_sent"])
+        let fields = try XCTUnwrap(recorder.records.first?.1)
+        XCTAssertEqual(fields["api_version"], "v1alpha")
+        XCTAssertGreaterThan(Int(fields["setup_bytes"] ?? "0") ?? 0, 0)
+        XCTAssertFalse(String(describing: recorder.records).contains("private-secret"))
+        XCTAssertNil(fields["system_instruction"])
+        client.close()
+    }
+
+    func testDiagnosticErrorsOnlyIncludeStructuredCodes() throws {
+        let recorder = VoiceDiagnosticRecorder()
+        let underlying = NSError(domain: NSPOSIXErrorDomain, code: 57,
+                                 userInfo: [NSLocalizedDescriptionKey: "private transcript"])
+        let error = try NSError(domain: NSURLErrorDomain, code: -1005, userInfo: [
+            NSUnderlyingErrorKey: underlying,
+            NSURLErrorFailingURLErrorKey: XCTUnwrap(URL(string: "https://example.com/?access_token=secret")),
+            NSLocalizedDescriptionKey: "private setup",
+        ])
+        recorder.diagnostics.record("failed", error: error)
+        let record = try XCTUnwrap(recorder.records.first)
+        XCTAssertTrue(record.2)
+        XCTAssertEqual(record.1["error_domain"], NSURLErrorDomain)
+        XCTAssertEqual(record.1["error_code"], "-1005")
+        XCTAssertEqual(record.1["underlying_1_code"], "57")
+        XCTAssertFalse(String(describing: record).contains("private"))
+        XCTAssertFalse(String(describing: record).contains("secret"))
+    }
+
+    func testCloseReasonIsClassifiedWithoutUploadingArbitraryText() {
+        let fields = VoiceConnectionDiagnostics.closeFields(code: 1008, reason: Data(
+            "Too many function declarations; maximum 128. private-tool auth_tokens/secret".utf8
+        ))
+        XCTAssertEqual(fields["close_code"], "1008")
+        XCTAssertEqual(fields["close_reason_category"], "function_limit")
+        XCTAssertFalse(String(describing: fields).contains("secret"))
+        XCTAssertFalse(String(describing: fields).contains("private-tool"))
+        XCTAssertEqual(VoiceConnectionDiagnostics.closeFields(code: 1008, reason: Data("private transcript".utf8))["close_reason_category"], "unclassified")
+    }
+
     private func makeToken(token: String = "auth_tokens/abc") -> EphemeralToken {
         EphemeralToken(
             token: token,
@@ -213,7 +269,7 @@ final class GeminiLiveClientTests: XCTestCase {
         let client = GeminiLiveClient(host: "h", socketFactory: { _ in socket })
         try await client.connect(token: makeToken())
         try await client.sendToolResponses([
-            GeminiFunctionResponse(id: "c1", name: "noop", response: .object([:]))
+            GeminiFunctionResponse(id: "c1", name: "noop", response: .object([:])),
         ])
         XCTAssertTrue(socket.sentFrames.last?.contains("\"toolResponse\"") == true)
         client.close()

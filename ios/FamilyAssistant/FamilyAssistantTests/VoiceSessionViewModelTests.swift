@@ -1,7 +1,6 @@
+@testable import FamilyAssistant
 import Foundation
 import XCTest
-
-@testable import FamilyAssistant
 
 // MARK: - Fakes
 
@@ -21,13 +20,16 @@ private final class FakeVoiceLiveSession: VoiceLiveSession {
         (events, continuation) = AsyncStream.makeStream(of: GeminiLiveServerEvent.self)
     }
 
-    func connect(token: EphemeralToken) async throws {
+    func connect(token _: EphemeralToken) async throws {
         onConnect?()
         if let connectError { throw connectError }
         connected = true
     }
 
-    func sendAudio(_ pcm16: Data) async throws { sentAudio.append(pcm16) }
+    func sendAudio(_ pcm16: Data) async throws {
+        sentAudio.append(pcm16)
+    }
+
     func endAudioStream() async throws {}
     func sendToolResponses(_ responses: [GeminiFunctionResponse]) async throws {
         sentToolResponses.append(responses)
@@ -38,7 +40,10 @@ private final class FakeVoiceLiveSession: VoiceLiveSession {
         continuation.finish()
     }
 
-    func emit(_ event: GeminiLiveServerEvent) { continuation.yield(event) }
+    func emit(_ event: GeminiLiveServerEvent) {
+        continuation.yield(event)
+    }
+
     func finish(withError error: Error?) {
         lastError = error
         continuation.finish()
@@ -61,15 +66,28 @@ private final class FakeAudioIO: VoiceAudioIO {
         started = true
     }
 
-    func stop() { stopped = true }
-    func enqueue(_ pcm24k: Data) { enqueued.append(pcm24k) }
-    func flushPlayback() { flushCount += 1 }
-    func setMuted(_ muted: Bool) { self.muted = muted }
+    func stop() {
+        stopped = true
+    }
+
+    func enqueue(_ pcm24k: Data) {
+        enqueued.append(pcm24k)
+    }
+
+    func flushPlayback() {
+        flushCount += 1
+    }
+
+    func setMuted(_ muted: Bool) {
+        self.muted = muted
+    }
 }
 
 private struct FakePermission: VoiceMicrophonePermission {
     let granted: Bool
-    func requestAccess() async -> Bool { granted }
+    func requestAccess() async -> Bool {
+        granted
+    }
 }
 
 /// A permission whose `requestAccess()` suspends until the test resumes it,
@@ -95,9 +113,11 @@ private final class ControllablePermission: VoiceMicrophonePermission, @unchecke
 @MainActor
 private final class FakeTokenProvider: VoiceTokenProviding {
     var error: Error?
+    var beforeFetch: (() async -> Void)?
     var maxSessionMinutes = 15
 
-    func fetchEphemeralToken(profileID: String?) async throws -> EphemeralToken {
+    func fetchEphemeralToken(profileID _: String?) async throws -> EphemeralToken {
+        await beforeFetch?()
         if let error { throw error }
         return EphemeralToken(
             token: "auth_tokens/test",
@@ -134,7 +154,7 @@ private final class FakeToolExecutor: VoiceToolExecuting {
 private final class FakeTranscriptStore: VoiceTranscriptStoring {
     var error: Error?
     private(set) var saved: [[VoiceTranscriptEntry]] = []
-    func saveVoiceSession(turns: [VoiceTranscriptEntry], conversationID: String?) async throws -> String {
+    func saveVoiceSession(turns: [VoiceTranscriptEntry], conversationID _: String?) async throws -> String {
         if let error { throw error }
         saved.append(turns)
         return "web_conv_test"
@@ -142,7 +162,9 @@ private final class FakeTranscriptStore: VoiceTranscriptStoring {
 }
 
 private struct SampleError: LocalizedError {
-    var errorDescription: String? { "boom" }
+    var errorDescription: String? {
+        "boom"
+    }
 }
 
 // MARK: - Tests
@@ -168,7 +190,9 @@ final class VoiceSessionViewModelTests: XCTestCase {
 
     private func makeModel(
         permissionGranted: Bool = true,
-        timeout: Duration? = nil
+        timeout: Duration? = nil,
+        connectionTimeout: Duration = .seconds(30),
+        diagnostics: VoiceConnectionDiagnostics = VoiceConnectionDiagnostics(sink: { _, _, _ in })
     ) -> VoiceSessionViewModel {
         VoiceSessionViewModel(
             tokenProvider: tokenProvider,
@@ -179,6 +203,8 @@ final class VoiceSessionViewModelTests: XCTestCase {
             profileID: nil,
             sessionFactory: { [session] in session! },
             sessionTimeoutOverride: timeout,
+            connectionTimeout: connectionTimeout,
+            diagnostics: diagnostics,
             reportError: { [weak self] error in self?.reportedErrors.append(error) }
         )
     }
@@ -203,6 +229,59 @@ final class VoiceSessionViewModelTests: XCTestCase {
         XCTAssertEqual(model.phase, .permissionDenied)
         XCTAssertFalse(session.connected)
         XCTAssertFalse(audio.started)
+    }
+
+    func testStartupDiagnosticsCarryOneAttemptThroughFailure() async throws {
+        let recorder = VoiceDiagnosticRecorder()
+        session.connectError = NSError(domain: NSPOSIXErrorDomain, code: 57)
+        let model = makeModel(diagnostics: recorder.diagnostics)
+        await model.start()
+        XCTAssertEqual(recorder.records.map { $0.0 }, ["permission_start", "token_start", "token_received", "audio_start", "audio_ready", "failed"])
+        XCTAssertEqual(Set(recorder.records.compactMap { $0.1["attempt_id"] }).count, 1)
+        let failure = try XCTUnwrap(recorder.records.last)
+        XCTAssertTrue(failure.2)
+        XCTAssertEqual(failure.1["stage"], "setup")
+        XCTAssertEqual(failure.1["error_code"], "57")
+    }
+
+    func testMissingSetupAcknowledgementTimesOutAndReportsStage() async throws {
+        let recorder = VoiceDiagnosticRecorder()
+        let model = makeModel(connectionTimeout: .milliseconds(20), diagnostics: recorder.diagnostics)
+        await model.start()
+        try await waitUntil { model.isTerminal }
+        XCTAssertEqual(model.phase, .failed("Voice connection timed out. Please try again."))
+        XCTAssertTrue(session.closed)
+        XCTAssertTrue(audio.stopped)
+        XCTAssertEqual(recorder.records.last?.1["stage"], "setup")
+        XCTAssertEqual(reportedErrors.count, 1)
+    }
+
+    func testSetupCompleteCancelsConnectionDeadline() async throws {
+        let model = makeModel()
+        await model.start()
+        let deadline = try XCTUnwrap(model.connectionTimeoutTask)
+        session.emit(.setupComplete)
+        try await waitUntil { model.phase == .active }
+        XCTAssertTrue(deadline.isCancelled)
+        XCTAssertNil(model.connectionTimeoutTask)
+        model.end()
+    }
+
+    func testTokenWaitTimesOutWithoutStartingAudioAfterLateResponse() async throws {
+        var continuation: CheckedContinuation<Void, Never>?
+        tokenProvider.beforeFetch = {
+            await withCheckedContinuation { continuation = $0 }
+        }
+        let recorder = VoiceDiagnosticRecorder()
+        let model = makeModel(connectionTimeout: .milliseconds(20), diagnostics: recorder.diagnostics)
+        let start = Task { await model.start() }
+        try await waitUntil { model.isTerminal }
+        XCTAssertEqual(recorder.records.last?.1["stage"], "token")
+        XCTAssertEqual(recorder.records.last?.1["failure_kind"], "startup_timeout")
+        continuation?.resume()
+        await start.value
+        XCTAssertFalse(audio.started)
+        XCTAssertFalse(session.connected)
     }
 
     func testTokenFetchFailureReportsAndFails() async {

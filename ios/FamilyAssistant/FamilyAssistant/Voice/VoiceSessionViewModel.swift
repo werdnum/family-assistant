@@ -68,6 +68,10 @@ final class VoiceSessionViewModel {
     private let profileID: String?
     private let reportError: @MainActor (Error) -> Void
     private let sessionTimeoutOverride: Duration?
+    private let diagnostics: VoiceConnectionDiagnostics
+    private var startupStage = "permission"
+    private let connectionTimeout: Duration
+    private(set) var connectionTimeoutTask: Task<Void, Never>?
 
     private var session: VoiceLiveSession?
     private var eventTask: Task<Void, Never>?
@@ -79,7 +83,9 @@ final class VoiceSessionViewModel {
     private var didStart = false
     private var didPersist = false
 
-    var pendingToolCallIDs: Set<String> { Set(toolTasks.keys) }
+    var pendingToolCallIDs: Set<String> {
+        Set(toolTasks.keys)
+    }
 
     init(
         tokenProvider: VoiceTokenProviding,
@@ -88,17 +94,21 @@ final class VoiceSessionViewModel {
         audio: VoiceAudioIO = VoiceAudioEngine(),
         permission: VoiceMicrophonePermission = SystemMicrophonePermission(),
         profileID: String? = nil,
-        sessionFactory: @escaping @MainActor () -> VoiceLiveSession = { GeminiLiveClient() },
+        sessionFactory: (@MainActor () -> VoiceLiveSession)? = nil,
         sessionTimeoutOverride: Duration? = nil,
-        reportError: @escaping @MainActor (Error) -> Void = { ErrorReporter.shared.report($0, component: "Voice") }
+        connectionTimeout: Duration = .seconds(30),
+        diagnostics: VoiceConnectionDiagnostics = VoiceConnectionDiagnostics(),
+        reportError: @escaping @MainActor (Error) -> Void = { _ in }
     ) {
         self.tokenProvider = tokenProvider
-        self.toolRunner = VoiceToolRunner(executor: toolExecutor, profileID: profileID)
+        toolRunner = VoiceToolRunner(executor: toolExecutor, profileID: profileID)
         self.transcriptStore = transcriptStore
         self.audio = audio
         self.permission = permission
         self.profileID = profileID
-        self.sessionFactory = sessionFactory
+        self.diagnostics = diagnostics
+        self.connectionTimeout = connectionTimeout
+        self.sessionFactory = sessionFactory ?? { GeminiLiveClient(diagnostics: diagnostics) }
         self.sessionTimeoutOverride = sessionTimeoutOverride
         self.reportError = reportError
         audio.onInputLevel = { [weak self] level in
@@ -139,16 +149,26 @@ final class VoiceSessionViewModel {
     func start() async {
         guard !didStart, !isTerminal else { return }
         didStart = true
+        diagnostics.record("permission_start")
+        Task { await ErrorReporter.shared.flushPersisted() }
 
         phase = .requestingPermission
         let granted = await permission.requestAccess()
         guard !isTerminal else { return }
         guard granted else {
+            diagnostics.record("permission_denied")
             phase = .permissionDenied
             return
         }
 
         phase = .connecting
+        startupStage = "token"
+        diagnostics.record("token_start")
+        connectionTimeoutTask = Task { [weak self, connectionTimeout] in
+            try? await Task.sleep(for: connectionTimeout)
+            guard !Task.isCancelled else { return }
+            self?.fail(VoiceConnectionTimeout())
+        }
         let token: EphemeralToken
         do {
             token = try await tokenProvider.fetchEphemeralToken(profileID: profileID)
@@ -158,6 +178,9 @@ final class VoiceSessionViewModel {
         }
         guard !isTerminal else { return }
 
+        diagnostics.record("token_received", fields: ["function_count": String(token.tools.reduce(0) {
+            $0 + ($1["functionDeclarations"]?.arrayValue?.count ?? 0)
+        })])
         let session = sessionFactory()
         self.session = session
         startEventLoop(session: session)
@@ -170,7 +193,10 @@ final class VoiceSessionViewModel {
         // wait for `setupComplete` before sending realtime input, so the capture
         // pump is started from the setupComplete handler.
         do {
+            startupStage = "audio"
+            diagnostics.record("audio_start")
             try await audio.start()
+            diagnostics.record("audio_ready")
         } catch {
             fail(error)
             return
@@ -182,6 +208,7 @@ final class VoiceSessionViewModel {
         }
 
         do {
+            startupStage = "setup"
             try await session.connect(token: token)
         } catch {
             fail(error)
@@ -196,6 +223,7 @@ final class VoiceSessionViewModel {
     /// End the session at the user's request.
     func end() {
         guard !isTerminal else { return }
+        diagnostics.record("ended", fields: ["stage": startupStage])
         phase = .finished
         teardown()
     }
@@ -216,24 +244,28 @@ final class VoiceSessionViewModel {
         case .setupComplete:
             if phase == .connecting {
                 phase = .active
+                connectionTimeoutTask?.cancel()
+                connectionTimeoutTask = nil
+                startupStage = "active"
+                diagnostics.record("setup_complete")
                 // The Live API is ready; begin forwarding captured microphone audio.
                 startAudioPump(session: session)
             }
-        case .audio(let data):
+        case let .audio(data):
             isAssistantSpeaking = true
             audio.enqueue(data)
-        case .outputTranscription(let text):
+        case let .outputTranscription(text):
             transcript.appendAssistant(text)
-        case .inputTranscription(let text):
+        case let .inputTranscription(text):
             transcript.appendUser(text)
         case .turnComplete, .generationComplete:
             isAssistantSpeaking = false
         case .interrupted:
             isAssistantSpeaking = false
             audio.flushPlayback()
-        case .toolCall(let calls):
+        case let .toolCall(calls):
             handleToolCalls(calls, session: session)
-        case .toolCallCancellation(let ids):
+        case let .toolCallCancellation(ids):
             cancelToolCalls(ids)
         case .goAway:
             // goAway warns that the server will close soon; it is not the close
@@ -281,6 +313,7 @@ final class VoiceSessionViewModel {
         if let error = session.lastError {
             fail(error)
         } else {
+            diagnostics.record("disconnected", fields: ["stage": startupStage])
             phase = .finished
             teardown()
         }
@@ -309,6 +342,7 @@ final class VoiceSessionViewModel {
         timeoutTask = Task { [weak self] in
             try? await Task.sleep(for: duration)
             guard !Task.isCancelled else { return }
+            self?.diagnostics.record("session_timeout", fields: ["stage": self?.startupStage ?? "unknown"])
             self?.end()
         }
     }
@@ -317,6 +351,8 @@ final class VoiceSessionViewModel {
 
     private func fail(_ error: Error) {
         guard !isTerminal else { return }
+        diagnostics.record("failed", fields: ["stage": startupStage,
+                                              "failure_kind": error is VoiceConnectionTimeout ? "startup_timeout" : "operation"], error: error)
         reportError(error)
         phase = .failed(error.localizedDescription)
         teardown()
@@ -330,16 +366,21 @@ final class VoiceSessionViewModel {
         guard !didPersist, !transcript.isEmpty, let transcriptStore else { return }
         didPersist = true
         let turns = transcript.entries
-        Task { [weak self] in
+        let diagnostics = diagnostics
+        let reportError = reportError
+        Task {
             do {
                 _ = try await transcriptStore.saveVoiceSession(turns: turns, conversationID: nil)
             } catch {
-                self?.reportError(error)
+                diagnostics.record("transcript_save_failed", error: error)
+                reportError(error)
             }
         }
     }
 
     private func teardown() {
+        connectionTimeoutTask?.cancel()
+        connectionTimeoutTask = nil
         persistTranscriptIfNeeded()
         isAssistantSpeaking = false
         inputLevel = 0
@@ -366,5 +407,11 @@ final class VoiceSessionViewModel {
         session = nil
         eventTask?.cancel()
         eventTask = nil
+    }
+}
+
+private struct VoiceConnectionTimeout: LocalizedError {
+    var errorDescription: String? {
+        "Voice connection timed out. Please try again."
     }
 }
