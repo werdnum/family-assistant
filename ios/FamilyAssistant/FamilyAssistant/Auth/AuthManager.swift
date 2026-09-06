@@ -2,7 +2,9 @@ import AuthenticationServices
 import CryptoKit
 import Foundation
 import os
+#if os(iOS)
 import WebKit
+#endif
 
 @Observable
 final class AuthManager {
@@ -100,7 +102,9 @@ final class AuthManager {
 
     private var codeVerifier: String?
     private var authSession: ASWebAuthenticationSession?
+    #if os(iOS)
     private var contextProvider: PresentationContextProvider?
+    #endif
     private let logger = Logger(subsystem: "com.familyassistant.app", category: "auth")
 
     private enum Keys {
@@ -188,9 +192,11 @@ final class AuthManager {
         }
 
         authSession?.prefersEphemeralWebBrowserSession = false
+        #if os(iOS)
         // Must retain the context provider — ASWebAuthenticationSession holds a weak reference
         contextProvider = PresentationContextProvider()
         authSession?.presentationContextProvider = contextProvider
+        #endif
 
         if authSession?.start() != true {
             logger.error("ASWebAuthenticationSession failed to start")
@@ -380,7 +386,9 @@ final class AuthManager {
         // attachment images belong to the session that was authorized to fetch
         // them, so they go with it. Views keyed on the epoch re-fetch rather
         // than keep showing what they already decoded.
+        #if os(iOS)
         AttachmentImageCache.clear()
+        #endif
     }
 
     /// Mutate ``authRequired`` and, on an actual change, emit the matching
@@ -718,6 +726,7 @@ final class AuthManager {
             return
         }
 
+        #if os(iOS)
         if let headerFields = httpResponse.allHeaderFields as? [String: String],
            let responseURL = httpResponse.url
         {
@@ -743,6 +752,7 @@ final class AuthManager {
                 }
             }
         }
+        #endif
     }
 
     // MARK: - Logout
@@ -781,10 +791,12 @@ final class AuthManager {
 
     @MainActor
     private static func clearWebsiteData() async {
+        #if os(iOS)
         let dataStore = WKWebsiteDataStore.default()
         let types = WKWebsiteDataStore.allWebsiteDataTypes()
         let records = await dataStore.dataRecords(ofTypes: types)
         await dataStore.removeData(ofTypes: types, for: records)
+        #endif
     }
 
     // MARK: - Helpers
@@ -930,6 +942,7 @@ enum AuthError: LocalizedError {
 
 // MARK: - ASWebAuthenticationSession Presentation
 
+#if os(iOS)
 private final class PresentationContextProvider: NSObject, ASWebAuthenticationPresentationContextProviding {
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
         let windowScenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
@@ -937,6 +950,8 @@ private final class PresentationContextProvider: NSObject, ASWebAuthenticationPr
         return allWindows.first { $0.isKeyWindow } ?? allWindows.first ?? UIWindow()
     }
 }
+
+#endif
 
 // MARK: - Base64URL Encoding
 

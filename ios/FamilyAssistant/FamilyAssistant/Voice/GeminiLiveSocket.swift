@@ -6,9 +6,9 @@ import Foundation
 protocol GeminiLiveSocket: AnyObject {
     /// Send one JSON text frame.
     func send(_ text: String) async throws
-    /// Await the next inbound frame, normalized to its raw bytes. Throws when the
-    /// connection closes or fails.
-    func receive() async throws -> Data
+    /// Await the next inbound frame, or nil for a clean end of stream.
+    /// Transport and protocol failures throw.
+    func receive() async throws -> Data?
     /// Close the connection.
     func close()
 }
@@ -26,7 +26,7 @@ final class URLSessionGeminiLiveSocket: GeminiLiveSocket {
         try await task.send(.string(text))
     }
 
-    func receive() async throws -> Data {
+    func receive() async throws -> Data? {
         switch try await task.receive() {
         case .data(let data):
             return data

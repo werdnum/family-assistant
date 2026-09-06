@@ -204,6 +204,11 @@ final class VoiceAudioEngine: VoiceAudioIO {
     }
 
     func start() async throws {
+        #if os(watchOS)
+        try configureSession()
+        let activated = try await AVAudioSession.sharedInstance().activate(options: [])
+        guard activated else { throw VoiceAudioError.restartFailed("Audio activation was declined.") }
+        #endif
         // All control-plane state (flags, observers, graph) is confined to the
         // main thread: the notification handlers and watchdog run there, and the
         // configuration-change notification can fire while this method is still
@@ -514,16 +519,20 @@ final class VoiceAudioEngine: VoiceAudioIO {
 
     private func configureSession() throws {
         let session = AVAudioSession.sharedInstance()
+        #if os(watchOS)
+        try session.setCategory(.playAndRecord, mode: .voiceChat)
+        #else
         try session.setCategory(
             .playAndRecord,
             mode: .voiceChat,
             options: [.allowBluetoothHFP, .allowBluetoothA2DP, .defaultToSpeaker]
         )
         try session.setActive(true, options: [])
+        #endif
     }
 }
 
-#if DEBUG && targetEnvironment(simulator)
+#if DEBUG && targetEnvironment(simulator) && os(iOS)
 /// Simulator-only audio source for live backend smoke tests.
 ///
 /// Some simulator/CoreAudio configurations abort inside `AVAudioEngine.inputNode`

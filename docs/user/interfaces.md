@@ -150,6 +150,23 @@ paste it, use the composer's photo button, or share from Files. Long-pressing th
 
 **Voice** asks for microphone permission and shows a level meter while capturing audio.
 
+### Apple Watch
+
+Install Family Assistant from the Watch app on your iPhone (watchOS 10 or later). Open the watch
+app, enter your Family Assistant server address, and sign in. The watch has its own sign-in and can
+use voice over Wi-Fi or cellular without your iPhone nearby. Signing out on one device does not sign
+out the other.
+
+Tap **Start Voice**, allow microphone access, and speak. The screen shows microphone activity and
+the latest transcription. Use **Mute** to pause your microphone or **End** to finish. Leaving the
+app ends the session. Watch voice conversations are not saved to your chat history.
+
+To start from your watch face, edit the face, choose a complication slot, and select **Family
+Assistant Voice**. Tapping its microphone opens the app and starts voice mode once you are signed
+in. It supports circular, corner, inline and rectangular slots, depending on the face.
+
+### Other native iOS features
+
 **Notes** lets you search, read, create, edit, and delete notes, including whether a note is
 included in the assistant's context automatically.
 
