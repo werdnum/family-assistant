@@ -66,6 +66,35 @@ enum ChatActivityStreamEvent: Equatable {
     case control
 }
 
+/// One intelligence level a profile can be run at: a named model recipe the
+/// user may select per request, not a model id.
+struct ChatModelTier: Codable, Equatable, Identifiable {
+    let id: String
+    let label: String
+    let tierDescription: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case label
+        case tierDescription = "description"
+    }
+
+    init(id: String, label: String, tierDescription: String?) {
+        self.id = id
+        self.label = label
+        self.tierDescription = tierDescription
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        // The server always sends a label (falling back to the id itself), but a
+        // tier that names no level is worse than one named by its id.
+        label = try container.decodeIfPresent(String.self, forKey: .label) ?? id
+        tierDescription = try container.decodeIfPresent(String.self, forKey: .tierDescription)
+    }
+}
+
 struct ChatProfile: Codable, Equatable, Identifiable {
     let id: String
     let description: String
@@ -73,6 +102,13 @@ struct ChatProfile: Codable, Equatable, Identifiable {
     let availableTools: [String]
     let enabledMCPServers: [String]
     let delegationOnly: Bool
+    /// Tiers this profile permits the user to choose between, in configuration
+    /// order. Empty for a profile pinned to one model, which is how the client
+    /// knows to offer no intelligence control for it.
+    let modelTiers: [ChatModelTier]
+    /// The tier the profile runs at when a request names none. Nil for a pinned
+    /// profile.
+    let defaultModelTier: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -81,6 +117,48 @@ struct ChatProfile: Codable, Equatable, Identifiable {
         case availableTools = "available_tools"
         case enabledMCPServers = "enabled_mcp_servers"
         case delegationOnly = "delegation_only"
+        case modelTiers = "model_tiers"
+        case defaultModelTier = "default_model_tier"
+    }
+
+    init(
+        id: String,
+        description: String,
+        llmModel: String?,
+        availableTools: [String],
+        enabledMCPServers: [String],
+        delegationOnly: Bool,
+        modelTiers: [ChatModelTier] = [],
+        defaultModelTier: String? = nil
+    ) {
+        self.id = id
+        self.description = description
+        self.llmModel = llmModel
+        self.availableTools = availableTools
+        self.enabledMCPServers = enabledMCPServers
+        self.delegationOnly = delegationOnly
+        self.modelTiers = modelTiers
+        self.defaultModelTier = defaultModelTier
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        description = try container.decode(String.self, forKey: .description)
+        llmModel = try container.decodeIfPresent(String.self, forKey: .llmModel)
+        availableTools = try container.decode([String].self, forKey: .availableTools)
+        enabledMCPServers = try container.decode([String].self, forKey: .enabledMCPServers)
+        delegationOnly = try container.decode(Bool.self, forKey: .delegationOnly)
+        // Absent against a server that predates tier selection: no tiers means no
+        // control, which is the same thing a pinned profile reports.
+        modelTiers = try container.decodeIfPresent([ChatModelTier].self, forKey: .modelTiers) ?? []
+        defaultModelTier = try container.decodeIfPresent(String.self, forKey: .defaultModelTier)
+    }
+
+    /// Whether this profile gives the user something to decide. One tier is not a
+    /// choice, so the intelligence control is hidden rather than shown dead.
+    var offersModelTierChoice: Bool {
+        modelTiers.count > 1
     }
 }
 
@@ -264,6 +342,27 @@ struct ChatMessage: Identifiable, Equatable {
     // be reconciled to its canonical persisted row precisely instead of by
     // heuristic. Nil for optimistic local bubbles and pre-turn_id backends.
     var turnID: String? = nil
+    // The intelligence level this reply was produced at, from the persisted
+    // message's `reasoning_info`. Nil on user messages, on a profile pinned to a
+    // single model, and on an optimistic bubble that its persisted row has not
+    // replaced yet — the badge appears when the turn settles.
+    var modelTier: String? = nil
+    // Who chose that tier: `user`, `model` (Auto routing), or `default` for the
+    // profile's own. What ran and who asked for it are separate questions.
+    var modelTierSource: String? = nil
+}
+
+/// The intelligence level a persisted reply ran at, as reported on the message's
+/// `reasoning_info`. Only the tier fields are decoded: the token counts and
+/// request id in the same blob have no surface on iOS.
+struct ChatMessageReasoningInfo: Decodable, Equatable {
+    let modelTier: String?
+    let modelTierSource: String?
+
+    enum CodingKeys: String, CodingKey {
+        case modelTier = "model_tier"
+        case modelTierSource = "model_tier_source"
+    }
 }
 
 enum ChatMessageRole: String, Codable, Equatable {
@@ -493,6 +592,7 @@ struct ChatBackendMessage: Decodable, Equatable {
     let errorTraceback: String?
     let attachments: [ChatBackendAttachment]
     let processingProfileID: String?
+    let reasoningInfo: ChatMessageReasoningInfo?
     let metadata: [String: JSONValue]?
 
     enum CodingKeys: String, CodingKey {
@@ -506,6 +606,7 @@ struct ChatBackendMessage: Decodable, Equatable {
         case errorTraceback = "error_traceback"
         case attachments
         case processingProfileID = "processing_profile_id"
+        case reasoningInfo = "reasoning_info"
         case metadata
     }
 
@@ -524,6 +625,7 @@ struct ChatBackendMessage: Decodable, Equatable {
         errorTraceback = try container.decodeIfPresent(String.self, forKey: .errorTraceback)
         attachments = try container.decodeIfPresent([ChatBackendAttachment].self, forKey: .attachments) ?? []
         processingProfileID = try container.decodeIfPresent(String.self, forKey: .processingProfileID)
+        reasoningInfo = try container.decodeIfPresent(ChatMessageReasoningInfo.self, forKey: .reasoningInfo)
         metadata = try container.decodeIfPresent([String: JSONValue].self, forKey: .metadata)
 
         if let content = try? container.decode(String.self, forKey: .content) {

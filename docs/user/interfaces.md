@@ -140,7 +140,9 @@ under More open the corresponding pages in-app. Each tab remembers where you wer
 **Chat** shares the same conversation history as the browser. It streams replies, supports stopping
 and steering, switches profiles (picking a profile starts a fresh conversation in it, carrying over
 anything you have typed and attached; on a chat that is still empty it switches in place; reopening
-an older conversation resumes its original profile), renders Markdown and tool calls, handles
+an older conversation resumes its original profile), picks an intelligence level for the next
+message where the assistant offers a choice of them (see
+[intelligence-levels.md](intelligence-levels.md)), renders Markdown and tool calls, handles
 approve/reject confirmations, and uploads images, PDFs, plain text, and Markdown up to 100 MB. Very
 long messages render a section at a time behind a **Show more** control.
 

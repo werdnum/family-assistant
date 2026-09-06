@@ -10651,7 +10651,7 @@ final class ChatViewModelTests: XCTestCase {
         model.failedSends[turnID] = ChatViewModel.FailedSend(
             turnID: turnID, conversationID: "web_conv_retry_role",
             assistantMessageID: "local_assistant_role", prompt: "Original prompt",
-            attachments: [], profileID: "default", previousSummary: nil,
+            attachments: [], profileID: "default", modelTier: nil, previousSummary: nil,
             postAccepted: false, lastAppliedSeq: nil
         )
 
@@ -10810,6 +10810,7 @@ final class ChatViewModelTests: XCTestCase {
             prompt: "Hi",
             attachments: [],
             profileID: "default_assistant",
+            modelTier: nil,
             previousSummary: nil,
             postAccepted: true,
             lastAppliedSeq: nil
@@ -11768,6 +11769,396 @@ final class ChatViewModelTests: XCTestCase {
         })
     }
 
+    // MARK: - Intelligence (model tier) selection
+
+    private static func tieredProfile(
+        id: String = "default_assistant",
+        tiers: [ChatModelTier] = [
+            ChatModelTier(id: "standard", label: "Standard", tierDescription: "Everyday"),
+            ChatModelTier(id: "deep", label: "Deep", tierDescription: "Hard questions"),
+        ],
+        defaultTier: String? = "standard"
+    ) -> ChatProfile {
+        ChatProfile(
+            id: id,
+            description: "Profile \(id)",
+            llmModel: nil,
+            availableTools: [],
+            enabledMCPServers: [],
+            delegationOnly: false,
+            modelTiers: tiers,
+            defaultModelTier: defaultTier
+        )
+    }
+
+    /// A backend that accepts one turn, streams a trivial reply, and records the
+    /// `model_tier` of every turn it was sent. Returns the recorder.
+    private func respondRecordingModelTiers(conversationID: String) -> ModelTierRecorder {
+        let recorder = ModelTierRecorder()
+        ChatMockBackendURLProtocol.respond { request in
+            switch (request.httpMethod ?? "GET", request.url?.path ?? "") {
+            case ("POST", "/api/v1/chat/turns"):
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                let turnID = try XCTUnwrap(payload["turn_id"] as? String)
+                recorder.record(payload["model_tier"] as? String, forTurn: turnID)
+                return .json(
+                    #"{"turn_id":"\#(turnID)","conversation_id":"\#(conversationID)","first_seq":0}"#
+                )
+            case ("GET", "/api/v1/chat/conversations/\(conversationID)/stream"):
+                let turnID = recorder.latestTurnID ?? "turn-unknown"
+                return .text(
+                    """
+                    event: turn_started
+                    data: {"turn_id":"\(turnID)","seq":0}
+
+                    event: text
+                    data: {"content":"Reply"}
+
+                    event: turn_ended
+                    data: {"turn_id":"\(turnID)","status":"complete"}
+
+                    """
+                )
+            case ("GET", "/api/v1/chat/conversations"):
+                return .json(#"{"conversations":[],"count":0}"#)
+            case ("GET", "/api/v1/chat/conversations/\(conversationID)/messages"):
+                return .json(
+                    """
+                    {
+                      "conversation_id":"\(conversationID)",
+                      "messages":[],
+                      "count":0,
+                      "total_messages":0,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+        return recorder
+    }
+
+    func testSelectingTheProfileDefaultIsNoSelection() {
+        let model = makeViewModel(conversationID: "web_conv_tier_default")
+        model.profiles = [Self.tieredProfile()]
+
+        model.selectModelTier("deep", pinned: false)
+        XCTAssertEqual(model.modelTierChoice?.tierID, "deep")
+
+        model.selectModelTier("standard", pinned: false)
+
+        XCTAssertNil(
+            model.modelTierChoice,
+            "Choosing the profile's own default is choosing nothing, so nothing is sent."
+        )
+    }
+
+    func testSelectingATierTheProfileDoesNotOfferClearsTheChoice() {
+        let model = makeViewModel(conversationID: "web_conv_tier_unknown")
+        model.profiles = [Self.tieredProfile()]
+        model.selectModelTier("deep", pinned: true)
+
+        model.selectModelTier("frontier", pinned: true)
+
+        XCTAssertNil(
+            model.modelTierChoice,
+            "A tier the active profile does not offer must never be sent."
+        )
+    }
+
+    func testModelTierChoiceIsSpentBySendAndOmittedFromTheNextTurn() async throws {
+        let recorder = respondRecordingModelTiers(conversationID: "web_conv_one_shot")
+        let model = makeViewModel(conversationID: "web_conv_one_shot")
+        model.profiles = [Self.tieredProfile()]
+        model.selectModelTier("deep", pinned: false)
+
+        model.draftText = "Think hard"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(recorder.tiers, ["deep"])
+        XCTAssertNil(
+            model.modelTierChoice,
+            "An unpinned selection is spent by the send that carried it."
+        )
+
+        model.draftText = "And now an easy one"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(
+            recorder.tiers,
+            ["deep", nil],
+            "The following message runs at the profile's default, with no tier sent at all."
+        )
+    }
+
+    func testPinnedModelTierIsSentByEveryTurnOfTheConversation() async throws {
+        let recorder = respondRecordingModelTiers(conversationID: "web_conv_pinned")
+        let model = makeViewModel(conversationID: "web_conv_pinned")
+        model.profiles = [Self.tieredProfile()]
+        model.selectModelTier("deep", pinned: true)
+
+        model.draftText = "First"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(model.modelTierChoice, ChatViewModel.ModelTierChoice(tierID: "deep", pinned: true))
+
+        model.draftText = "Second"
+        await model.sendDraft()
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(recorder.tiers, ["deep", "deep"])
+    }
+
+    func testIntelligenceControlIsUnavailableWhileATurnRuns() async throws {
+        let recorder = respondRecordingModelTiers(conversationID: "web_conv_tier_streaming")
+        let model = makeViewModel(conversationID: "web_conv_tier_streaming")
+        model.profiles = [Self.tieredProfile()]
+
+        XCTAssertTrue(model.canSelectModelTier)
+
+        model.draftText = "First"
+        await model.sendDraft()
+
+        // Mid-turn the composer is the steer box: what the user sends next folds
+        // into the running turn at its frozen tier, so there is no message a
+        // selection made here could apply to.
+        XCTAssertTrue(model.isStreaming)
+        XCTAssertFalse(model.canSelectModelTier)
+
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertTrue(model.canSelectModelTier)
+        XCTAssertEqual(recorder.tiers, [nil])
+    }
+
+    func testIntelligenceControlIsUnavailableWithoutAChoiceToMake() {
+        let model = makeViewModel(conversationID: "web_conv_tier_pinned_profile")
+        model.profiles = [
+            Self.tieredProfile(
+                tiers: [ChatModelTier(id: "standard", label: "Standard", tierDescription: nil)],
+                defaultTier: "standard"
+            ),
+        ]
+
+        XCTAssertFalse(
+            model.canSelectModelTier,
+            "One tier is not a choice, so the control is hidden rather than shown dead."
+        )
+    }
+
+    func testChangingProfileClearsAPinnedModelTier() {
+        let model = makeViewModel(conversationID: "web_conv_tier_profile")
+        model.profiles = [Self.tieredProfile(), Self.tieredProfile(id: "engineer")]
+        model.selectModelTier("deep", pinned: true)
+
+        model.changeProfile(to: "engineer")
+
+        XCTAssertNil(
+            model.modelTierChoice,
+            "A spend decision belongs to the agent it was made for, not the next one."
+        )
+    }
+
+    func testStartingANewConversationClearsAPinnedModelTier() {
+        let model = makeViewModel(conversationID: "web_conv_tier_new")
+        model.profiles = [Self.tieredProfile()]
+        model.selectModelTier("deep", pinned: true)
+
+        model.startNewConversation()
+
+        XCTAssertNil(model.modelTierChoice)
+    }
+
+    func testOpeningAnotherConversationClearsAPinnedModelTier() async {
+        ChatMockBackendURLProtocol.respond { request in
+            switch request.url?.path ?? "" {
+            case "/api/v1/chat/conversations/web_conv_other/messages":
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_other",
+                      "messages":[],
+                      "count":0,
+                      "total_messages":0,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+        let model = makeViewModel(conversationID: "web_conv_tier_switch")
+        model.profiles = [Self.tieredProfile()]
+        model.selectModelTier("deep", pinned: true)
+
+        await model.selectConversation("web_conv_other")
+
+        XCTAssertNil(model.modelTierChoice)
+    }
+
+    func testRetryingAFailedSendReissuesTheTierItWasSentAt() async throws {
+        let recorder = respondRecordingModelTiers(conversationID: "web_conv_tier_retry")
+        let model = makeViewModel(conversationID: "web_conv_tier_retry")
+        model.profiles = [Self.tieredProfile()]
+        model.messages = [
+            ChatMessage(
+                id: "local_assistant_retry",
+                role: .assistant,
+                text: "",
+                createdAt: Date(),
+                toolCalls: [],
+                attachments: [],
+                isLoading: false,
+                status: .failed,
+                processingProfileID: "default_assistant",
+                errorTraceback: nil,
+                turnID: "turn-tier-retry"
+            ),
+        ]
+        model.failedSends["turn-tier-retry"] = ChatViewModel.FailedSend(
+            turnID: "turn-tier-retry",
+            conversationID: "web_conv_tier_retry",
+            assistantMessageID: "local_assistant_retry",
+            prompt: "Think hard",
+            attachments: [],
+            profileID: "default_assistant",
+            modelTier: "deep",
+            previousSummary: nil,
+            postAccepted: false,
+            lastAppliedSeq: nil
+        )
+        // The picker has since returned to the default: the retry must reissue
+        // what the user actually sent, not what is selected now.
+        XCTAssertNil(model.modelTierChoice)
+
+        await model.retryFailedSend(turnID: "turn-tier-retry")
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertEqual(recorder.tiers, ["deep"])
+    }
+
+    func testPersistedRepliesCarryTheTierTheyRanAt() async throws {
+        ChatMockBackendURLProtocol.respond { request in
+            switch request.url?.path ?? "" {
+            case "/api/v1/chat/conversations/web_conv_tier_history/messages":
+                return .json(
+                    """
+                    {
+                      "conversation_id":"web_conv_tier_history",
+                      "messages":[
+                        {"internal_id":1,"role":"user","content":"Hi",
+                         "timestamp":"2026-09-06T12:00:00Z"},
+                        {"internal_id":2,"role":"assistant","content":"Deep reply",
+                         "timestamp":"2026-09-06T12:00:01Z",
+                         "reasoning_info":{"model":"gpt-test","model_tier":"deep",
+                                           "model_tier_source":"user","prompt_tokens":10}},
+                        {"internal_id":3,"role":"assistant","content":"Plain reply",
+                         "timestamp":"2026-09-06T12:00:02Z",
+                         "reasoning_info":{"model":"gpt-test","prompt_tokens":10}}
+                      ],
+                      "count":3,
+                      "total_messages":3,
+                      "has_more_before":false,
+                      "has_more_after":false
+                    }
+                    """
+                )
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+        let model = makeViewModel(conversationID: "web_conv_tier_history")
+
+        await model.loadMessages()
+
+        XCTAssertEqual(model.messages.map(\.modelTier), [nil, "deep", nil])
+        XCTAssertEqual(
+            model.messages.first { $0.modelTier == "deep" }?.modelTierSource,
+            "user",
+            "Who chose the tier is recorded separately from what ran."
+        )
+    }
+
+    func testGroupedTurnKeepsTheFinalReplyTier() {
+        let toolStep = ChatMessage(
+            id: "msg_1",
+            role: .assistant,
+            text: "",
+            createdAt: Date(),
+            toolCalls: [
+                ChatToolCall(
+                    id: "call_1",
+                    name: "search_notes",
+                    argumentsText: "{}",
+                    resultText: "ok",
+                    attachments: [],
+                    status: .complete
+                ),
+            ],
+            attachments: [],
+            isLoading: false,
+            status: .complete,
+            processingProfileID: "default_assistant",
+            errorTraceback: nil,
+            turnID: "turn-grouped",
+            modelTier: "deep",
+            modelTierSource: "user"
+        )
+        let reply = ChatMessage(
+            id: "msg_2",
+            role: .assistant,
+            text: "Answer",
+            createdAt: Date(),
+            toolCalls: [],
+            attachments: [],
+            isLoading: false,
+            status: .complete,
+            processingProfileID: "default_assistant",
+            errorTraceback: nil,
+            turnID: "turn-grouped",
+            modelTier: "deep",
+            modelTierSource: "user"
+        )
+
+        let grouped = ChatViewModel.groupToolCallTurns([toolStep, reply])
+
+        XCTAssertEqual(grouped.count, 2)
+        XCTAssertEqual(
+            grouped.last?.modelTier,
+            "deep",
+            "The bubble the badge renders on is the answer that ends the turn."
+        )
+    }
+
+    func testProfileTierLabelsSpanEveryLoadedProfile() {
+        let model = makeViewModel(conversationID: "web_conv_tier_labels")
+        model.profiles = [
+            Self.tieredProfile(),
+            Self.tieredProfile(
+                id: "complex_tasks",
+                tiers: [
+                    ChatModelTier(id: "deep", label: "Deep", tierDescription: nil),
+                    ChatModelTier(id: "frontier", label: "Max", tierDescription: nil),
+                ],
+                defaultTier: "deep"
+            ),
+        ]
+
+        XCTAssertEqual(
+            model.modelTierLabels,
+            ["standard": "Standard", "deep": "Deep", "frontier": "Max"],
+            "A past reply's tier is named even when its profile is not the selected one."
+        )
+    }
+
     private func privateStringArray(_ name: String, in model: ChatViewModel) -> [String] {
         for child in Mirror(reflecting: model).children where child.label == name {
             guard let value = child.value as? [String] else {
@@ -11869,5 +12260,26 @@ private final class AtomicStringList: @unchecked Sendable {
 
     var values: [String] {
         lock.withLock { stored }
+    }
+}
+
+/// Records the `model_tier` each turn was started with, off the URLProtocol
+/// loading thread.
+private final class ModelTierRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [(turnID: String, tier: String?)] = []
+
+    func record(_ tier: String?, forTurn turnID: String) {
+        lock.withLock { recorded.append((turnID, tier)) }
+    }
+
+    /// The tier of each turn, in the order they were started. `nil` entries are
+    /// turns that sent no `model_tier` at all.
+    var tiers: [String?] {
+        lock.withLock { recorded.map(\.tier) }
+    }
+
+    var latestTurnID: String? {
+        lock.withLock { recorded.last?.turnID }
     }
 }

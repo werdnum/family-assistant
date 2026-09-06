@@ -33,6 +33,11 @@ final class ActiveTurnSession {
     let prompt: String
     let attachments: [ChatAttachment]
     let profileID: String
+    /// The intelligence level this turn was sent at, or nil for the profile's
+    /// default. Retained for the same reason as `profileID`: a retry reissues the
+    /// turn the user actually sent, not one rebuilt from whatever the picker now
+    /// shows.
+    let modelTier: String?
     /// The conversation summary before this send's optimistic bump, so a turn
     /// that fails to start can roll the list row back to it.
     let previousSummary: ChatConversationSummary?
@@ -54,6 +59,7 @@ final class ActiveTurnSession {
         prompt: String,
         attachments: [ChatAttachment],
         profileID: String,
+        modelTier: String?,
         previousSummary: ChatConversationSummary?,
         streamToken: UUID,
         lastAppliedSeq: Int? = nil
@@ -64,6 +70,7 @@ final class ActiveTurnSession {
         self.prompt = prompt
         self.attachments = attachments
         self.profileID = profileID
+        self.modelTier = modelTier
         self.previousSummary = previousSummary
         self.streamToken = streamToken
         self.lastAppliedSeq = lastAppliedSeq

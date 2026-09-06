@@ -62,6 +62,7 @@ struct ChatRootView: View {
                             conversationID: viewModel.shareableConversationID
                         )
                         ProfilePickerView(viewModel: viewModel)
+                        IntelligencePickerView(viewModel: viewModel)
                     }
                 }
         }
@@ -508,6 +509,9 @@ struct MessageBubble: View {
     let attachmentLoader: any ChatAttachmentLoading
     let retryViewModel: ChatViewModel?
     let userRoleTitle: String
+    /// Tier id to user-facing name. Empty where no profile list is available (a
+    /// shared transcript), which falls back to naming the tier by its id.
+    let modelTierLabels: [String: String]
 
     init(
         message: ChatMessage,
@@ -518,17 +522,33 @@ struct MessageBubble: View {
         attachmentLoader = viewModel
         retryViewModel = viewModel
         self.userRoleTitle = userRoleTitle
+        modelTierLabels = viewModel.modelTierLabels
     }
 
     init(
         message: ChatMessage,
         attachmentLoader: any ChatAttachmentLoading,
-        userRoleTitle: String
+        userRoleTitle: String,
+        modelTierLabels: [String: String] = [:]
     ) {
         self.message = message
         self.attachmentLoader = attachmentLoader
         retryViewModel = nil
         self.userRoleTitle = userRoleTitle
+        self.modelTierLabels = modelTierLabels
+    }
+
+    /// The intelligence level this reply ran at, named as the user chose it.
+    ///
+    /// Shown only on a bubble that carries no tool calls — the answer that ends
+    /// the turn. Every assistant message of a turn records the same resolved
+    /// tier (it is frozen for the run), so badging the tool-call bubbles too
+    /// would repeat one fact several times down a single turn.
+    private var modelTierLabel: String? {
+        guard !isUser, message.toolCalls.isEmpty, let tier = message.modelTier else {
+            return nil
+        }
+        return modelTierLabels[tier] ?? tier
     }
 
     private var isUser: Bool {
@@ -558,6 +578,19 @@ struct MessageBubble: View {
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(.thinMaterial, in: Capsule())
+                }
+                if let modelTierLabel {
+                    Text(modelTierLabel)
+                        .font(.caption2)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.thinMaterial, in: Capsule())
+                        .accessibilityLabel(
+                            message.modelTierSource == "user"
+                                ? "Intelligence: \(modelTierLabel), you chose it"
+                                : "Intelligence: \(modelTierLabel)"
+                        )
+                        .accessibilityIdentifier("model-tier-badge")
                 }
             }
             .foregroundStyle(.secondary)
@@ -1285,6 +1318,111 @@ private struct ProfilePickerView: View {
                 .labelStyle(.titleAndIcon)
         }
         .accessibilityIdentifier("profile-picker")
+    }
+}
+
+/// Picks how much model capability to apply to the next message, beside the
+/// profile picker that says which agent handles it.
+///
+/// Renders nothing where the active profile offers no choice — one pinned to a
+/// single model, or a profile list that has not loaded — rather than a dead
+/// control the user can open and find nothing to decide in. It is disabled while
+/// a turn runs, where the next submission steers that turn at its already-frozen
+/// tier instead of starting one this choice could apply to.
+///
+/// The label is icon-only while the profile's own default is in force, and names
+/// the tier once the user has chosen one: a selection is the state that has to be
+/// visible, and a phone toolbar should not spend permanent width restating a
+/// default.
+private struct IntelligencePickerView: View {
+    var viewModel: ChatViewModel
+
+    private var choice: ChatViewModel.ModelTierChoice? {
+        viewModel.modelTierChoice
+    }
+
+    private var selectedLabel: String? {
+        guard let choice else {
+            return nil
+        }
+        return viewModel.availableModelTiers.first { $0.id == choice.tierID }?.label ?? choice.tierID
+    }
+
+    var body: some View {
+        if viewModel.offersModelTierChoice {
+            Menu {
+                Picker("Intelligence", selection: tierSelection) {
+                    ForEach(viewModel.availableModelTiers) { tier in
+                        tierRow(tier).tag(tier.id)
+                    }
+                }
+                .pickerStyle(.inline)
+                if let choice, let selectedLabel {
+                    Divider()
+                    Toggle(isOn: pinBinding(for: choice)) {
+                        Label(
+                            "Keep \(selectedLabel) for this chat",
+                            systemImage: "pin"
+                        )
+                    }
+                    .accessibilityIdentifier("intelligence-pin-toggle")
+                }
+            } label: {
+                label
+            }
+            .disabled(!viewModel.canSelectModelTier)
+            .accessibilityIdentifier("intelligence-picker")
+            .accessibilityLabel(accessibilityLabel)
+        }
+    }
+
+    @ViewBuilder
+    private func tierRow(_ tier: ChatModelTier) -> some View {
+        VStack(alignment: .leading) {
+            Text(tier.id == viewModel.defaultModelTierID ? "\(tier.label) (Default)" : tier.label)
+            if let description = tier.tierDescription {
+                Text(description)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var label: some View {
+        if let selectedLabel {
+            Label(
+                selectedLabel,
+                systemImage: choice?.pinned == true ? "pin.fill" : "gauge.with.dots.needle.67percent"
+            )
+            .labelStyle(.titleAndIcon)
+        } else {
+            Image(systemName: "gauge.with.dots.needle.67percent")
+        }
+    }
+
+    private var accessibilityLabel: String {
+        guard let selectedLabel else {
+            return "Intelligence"
+        }
+        return choice?.pinned == true
+            ? "Intelligence: \(selectedLabel), kept for this chat"
+            : "Intelligence: \(selectedLabel), for the next message"
+    }
+
+    /// The menu shows the tier actually in force, which is the profile's default
+    /// until the user chooses otherwise. Selecting the default is selecting
+    /// nothing, which `selectModelTier` turns back into no choice at all.
+    private var tierSelection: Binding<String> {
+        Binding(
+            get: { choice?.tierID ?? viewModel.defaultModelTierID ?? "" },
+            set: { viewModel.selectModelTier($0, pinned: choice?.pinned ?? false) }
+        )
+    }
+
+    private func pinBinding(for choice: ChatViewModel.ModelTierChoice) -> Binding<Bool> {
+        Binding(
+            get: { choice.pinned },
+            set: { viewModel.selectModelTier(choice.tierID, pinned: $0) }
+        )
     }
 }
 
