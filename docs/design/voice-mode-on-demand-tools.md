@@ -18,6 +18,11 @@ That is the whole registry including everything a profile lists in
 `tools_config.on_demand_local_tools` / `on_demand_mcp_server_ids` — tools the chat path deliberately
 keeps out of the prompt.
 
+In the production deployment that comes to 138 declarations, which exceeds the Live API's own limit
+on a session's function declarations, so voice mode cannot start at all. Even under the limit a list
+that size is well past the point where the model reliably picks the right tool: the same context rot
+the chat path's on-demand catalog exists to avoid.
+
 ## Approach
 
 Keep the hidden set exactly as it is: whatever the profile already configures as on-demand. Change
