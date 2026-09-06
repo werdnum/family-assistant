@@ -284,7 +284,7 @@ class TestWatchCredentials:
         return response.json()
 
     @pytest.mark.asyncio
-    async def test_watch_has_independent_refresh_and_bounded_lifetime(
+    async def test_watch_has_independent_refresh_and_preserves_refresh_deadline(
         self,
         api_test_client: AsyncClient,
         phone_credentials: dict[str, str],

@@ -49,6 +49,10 @@ automatic reconnection are outside this change.
 - Setup requires the paired phone to be reachable and signed in. Phone sign-out/account changes
   clear the watch when connectivity delivers the update, not immediately while disconnected.
   Previously issued watch credentials remain independently revocable through token settings.
+- Preserve the existing access/refresh expiration policy: the watch inherits the phone refresh
+  deadline, but access tokens issued before that deadline retain the server's normal lifetime and
+  may outlive it, just as phone access tokens do. This is not a strict coupling of the two devices'
+  access lifetimes. Changing that server-wide policy is outside the paired-setup feature.
 - No new Apple portal capabilities or shared Keychain/App Group entitlements are needed.
 - Watch voice provides live conversation and captions without transcript persistence. Reliable
   history across watch suspension requires durable delivery, which is outside the requested voice
