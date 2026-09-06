@@ -29,6 +29,16 @@ jobs:
         run: |
           xcodebuild -version
           xcrun simctl list devices available
+      - name: Install watchOS platform
+        run: xcodebuild -downloadPlatform watchOS
+      - name: Build watch app and complications
+        run: |
+          xcodebuild build \
+            -project FamilyAssistant.xcodeproj \
+            -scheme FamilyAssistantWatch \
+            -destination 'generic/platform=watchOS' \
+            -derivedDataPath "$DERIVED_DATA" \
+            CODE_SIGNING_ALLOWED=NO
       - name: Select iOS simulator
         id: sim
         run: |

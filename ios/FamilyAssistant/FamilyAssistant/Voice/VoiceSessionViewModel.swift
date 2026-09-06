@@ -137,7 +137,7 @@ final class VoiceSessionViewModel {
     /// system microphone-permission prompt is up — and a closed screen must not go
     /// on to open a network session or the microphone in the background.
     func start() async {
-        guard !didStart else { return }
+        guard !didStart, !isTerminal else { return }
         didStart = true
 
         phase = .requestingPermission
@@ -161,18 +161,10 @@ final class VoiceSessionViewModel {
         let session = sessionFactory()
         self.session = session
         startEventLoop(session: session)
+        // Bound audio activation and socket setup as well as the conversation.
+        startTimeout(token: token)
 
-        do {
-            try await session.connect(token: token)
-        } catch {
-            fail(error)
-            return
-        }
-        guard !isTerminal else {
-            session.close()
-            return
-        }
-
+        // watchOS requires an active audio session before opening its socket.
         // Start the audio engine now so assistant playback is ready immediately,
         // but do NOT forward microphone audio yet: the Live API expects clients to
         // wait for `setupComplete` before sending realtime input, so the capture
@@ -189,9 +181,16 @@ final class VoiceSessionViewModel {
             return
         }
 
-        // Start the session-duration cap now so a handshake that never completes
-        // still ends.
-        startTimeout(token: token)
+        do {
+            try await session.connect(token: token)
+        } catch {
+            fail(error)
+            return
+        }
+        guard !isTerminal else {
+            session.close()
+            return
+        }
     }
 
     /// End the session at the user's request.

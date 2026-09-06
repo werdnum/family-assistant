@@ -11,6 +11,7 @@ private final class FakeVoiceLiveSession: VoiceLiveSession {
     private let continuation: AsyncStream<GeminiLiveServerEvent>.Continuation
     var lastError: Error?
     var connectError: Error?
+    var onConnect: (() -> Void)?
     private(set) var connected = false
     private(set) var closed = false
     private(set) var sentAudio: [Data] = []
@@ -21,6 +22,7 @@ private final class FakeVoiceLiveSession: VoiceLiveSession {
     }
 
     func connect(token: EphemeralToken) async throws {
+        onConnect?()
         if let connectError { throw connectError }
         connected = true
     }
@@ -231,7 +233,29 @@ final class VoiceSessionViewModelTests: XCTestCase {
             .failed("Live microphone input is disabled in the iOS Simulator. Set FA_ALLOW_SIMULATOR_MIC=1 to try the simulator microphone.")
         )
         XCTAssertEqual(reportedErrors.count, 1)
-        XCTAssertTrue(session.connected)
+        XCTAssertFalse(session.connected)
+    }
+
+    func testAudioIsRunningBeforeOpeningStreamingConnection() async {
+        var wasRunningAtConnect = false
+        session.onConnect = { wasRunningAtConnect = self.audio.started }
+        let model = makeModel()
+
+        await model.start()
+
+        XCTAssertTrue(wasRunningAtConnect)
+        model.end()
+    }
+
+    func testEndBeforeScheduledStartDoesNotOpenMicrophoneOrConnection() async {
+        let model = makeModel()
+        model.end()
+
+        await model.start()
+
+        XCTAssertEqual(model.phase, .finished)
+        XCTAssertFalse(audio.started)
+        XCTAssertFalse(session.connected)
     }
 
     func testHappyPathConnectsThenActivatesOnSetupComplete() async throws {

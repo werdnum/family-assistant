@@ -327,21 +327,21 @@ final class ErrorReporter: @unchecked Sendable {
     private static func syntheticURL(component: String) -> String {
         let encoded = component.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)
             ?? component
-        return "familyassistant://ios/\(encoded)"
+        return "familyassistant://\(platform)/\(encoded)"
     }
 
     private static var userAgent: String {
         let info = Bundle.main.infoDictionary
         let version = info?["CFBundleShortVersionString"] as? String ?? "unknown"
         let build = info?["CFBundleVersion"] as? String ?? "unknown"
-        return "FamilyAssistant-iOS/\(version) (build \(build); "
+        return "FamilyAssistant-\(platform == "ios" ? "iOS" : "watchOS")/\(version) (build \(build); "
             + "\(ProcessInfo.processInfo.operatingSystemVersionString))"
     }
 
     private static func metadata() -> [String: String] {
         let info = Bundle.main.infoDictionary
         var data: [String: String] = [
-            "platform": "ios",
+            "platform": platform,
             "app_version": info?["CFBundleShortVersionString"] as? String ?? "unknown",
             "build": info?["CFBundleVersion"] as? String ?? "unknown",
             "os_version": ProcessInfo.processInfo.operatingSystemVersionString,
@@ -351,6 +351,14 @@ final class ErrorReporter: @unchecked Sendable {
             data["installation_id"] = installationID
         }
         return data
+    }
+
+    private static var platform: String {
+        #if os(watchOS)
+        "watchos"
+        #else
+        "ios"
+        #endif
     }
 
     /// A TestFlight (sandbox) build ships a `sandboxReceipt` rather than a production receipt.

@@ -44,7 +44,13 @@ final class GeminiLiveClient {
 
     init(
         host: String = GeminiLiveClient.defaultHost,
-        socketFactory: @escaping SocketFactory = { URLSessionGeminiLiveSocket(url: $0) }
+        socketFactory: @escaping SocketFactory = { url in
+            #if os(watchOS)
+            NetworkGeminiLiveSocket(url: url)
+            #else
+            URLSessionGeminiLiveSocket(url: url)
+            #endif
+        }
     ) {
         self.host = host
         self.socketFactory = socketFactory
@@ -56,13 +62,17 @@ final class GeminiLiveClient {
         guard socket == nil, !isClosed else { return }
         let url = try Self.endpointURL(token: token.token, host: host)
         let socket = socketFactory(url)
+        self.socket = socket
         do {
             try await socket.send(GeminiLiveCodec.setupMessage(for: token))
         } catch {
             socket.close()
             throw error
         }
-        self.socket = socket
+        guard !isClosed else {
+            socket.close()
+            return
+        }
         receiveTask = Task { [weak self] in
             await self?.runReceiveLoop(socket: socket)
         }

@@ -20,6 +20,24 @@ web UI.
 
 ## How It Works
 
+### Apple Watch targets
+
+`FamilyAssistantWatch` is a watchOS 10+ app embedded in the iOS app; its
+`FamilyAssistantWatchComplications` extension provides the voice launcher. Select the shared
+`FamilyAssistantWatch` scheme to run it on a watch simulator or device. Install the watchOS platform
+in Xcode first (`xcodebuild -downloadPlatform watchOS`).
+
+Both targets use automatic signing. When changing the iOS bundle identifier, also update the watch
+and complication bundle identifiers and `WKCompanionAppBundleIdentifier` in the watch Info.plist.
+The shipped identifiers are `dev.andrewgarrett.assistant.watchkitapp` and
+`dev.andrewgarrett.assistant.watchkitapp.complications`.
+
+The watch shares native auth, backend API and voice-session sources with iOS. It uses its own
+Keychain credentials, Network framework WebSockets and asynchronous audio activation. See
+[watchOS design](../../docs/design/watchos-voice.md) and
+[user setup](../../docs/user/interfaces.md#apple-watch). Check microphone capture, speaker or
+Bluetooth playback, sign-in and calling without the phone on a physical watch before release.
+
 ### Authentication Flow
 
 The app uses a PKCE-based auth flow to securely obtain API credentials:

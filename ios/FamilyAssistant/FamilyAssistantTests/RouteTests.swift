@@ -3,6 +3,17 @@ import XCTest
 @testable import FamilyAssistant
 
 final class RouteTests: XCTestCase {
+    func testWatchComplicationLaunchesVoice() {
+        XCTAssertTrue(WatchVoiceLaunch.opensVoice(WatchVoiceLaunch.url))
+    }
+
+    func testWatchLaunchRejectsUnrelatedURLs() throws {
+        for value in ["familyassistant://voice", "familyassistant-watch://settings",
+                      "https://voice", "familyassistant-watch://voice/other"] {
+            XCTAssertFalse(WatchVoiceLaunch.opensVoice(try XCTUnwrap(URL(string: value))), value)
+        }
+    }
+
     private let baseURL = URL(string: "https://assistant.example.test")!
 
     private func url(_ string: String) throws -> URL {

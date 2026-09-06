@@ -13,9 +13,18 @@ final class FakeGeminiLiveSocket: GeminiLiveSocket, @unchecked Sendable {
 
     private var buffered: [Result<Data, Error>] = []
     private var waiter: CheckedContinuation<Data, Error>?
+    var suspendSend = false
+    var onSendSuspended: (() -> Void)?
+    private var sendWaiter: CheckedContinuation<Void, Error>?
 
     func send(_ text: String) async throws {
         sentFrames.append(text)
+        if suspendSend {
+            try await withCheckedThrowingContinuation {
+                sendWaiter = $0
+                onSendSuspended?()
+            }
+        }
     }
 
     func receive() async throws -> Data {
@@ -29,6 +38,8 @@ final class FakeGeminiLiveSocket: GeminiLiveSocket, @unchecked Sendable {
 
     func close() {
         didClose = true
+        sendWaiter?.resume(throwing: CancellationError())
+        sendWaiter = nil
         if let waiter {
             self.waiter = nil
             waiter.resume(throwing: CancellationError())
@@ -128,6 +139,26 @@ final class GeminiLiveClientTests: XCTestCase {
     }
 
     // MARK: - Lifecycle
+
+    func testCloseCancelsSocketWhileSetupIsStillSending() async throws {
+        let socket = FakeGeminiLiveSocket()
+        socket.suspendSend = true
+        let suspended = expectation(description: "Setup send is suspended")
+        socket.onSendSuspended = { suspended.fulfill() }
+        let client = GeminiLiveClient(socketFactory: { _ in socket })
+        let connection = Task { try await client.connect(token: makeToken()) }
+        await fulfillment(of: [suspended], timeout: 2)
+
+        client.close()
+
+        XCTAssertTrue(socket.didClose)
+        do {
+            try await connection.value
+            XCTFail("Closing during setup should cancel the pending send")
+        } catch is CancellationError {
+            // Closing the owned socket unblocks its pending write.
+        }
+    }
 
     func testConnectSendsSetupFrame() async throws {
         let socket = FakeGeminiLiveSocket()

@@ -8,15 +8,37 @@
 
 /* Begin PBXBuildFile section */
 		091DA729DF332A031A84F715 /* VoiceToolRunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B4509B5C94F65C5466E3ADE /* VoiceToolRunnerTests.swift */; };
+		0EDDFD68E249EC73AF8D69CB /* GeminiLiveClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AC88843A54F47BA1012348A /* GeminiLiveClient.swift */; };
 		213AE766AAD6238AEA08C2A9 /* PCMConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B274147B0BE9AA6A6ADDF78 /* PCMConverter.swift */; };
+		239645FB1C8C8FBA19B15BFE /* GeminiLiveSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37DEFCC58E07BF48CF532F9D /* GeminiLiveSocket.swift */; };
 		24D4DDC9D7378629E9037704 /* GeminiLiveClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DE4D0615E3C63C4C9EE2206 /* GeminiLiveClientTests.swift */; };
 		2ABFDD16D062601B9E6B3852 /* GeminiLiveCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 099C971A1946B0E892D9358A /* GeminiLiveCodec.swift */; };
+		2BBE7129F35F936A06F86C4E /* WatchVoiceLaunch.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD8CC65944118C6E3E926B2B /* WatchVoiceLaunch.swift */; };
+		2D6C6F85983FE9A7A4D3BCA2 /* SSEParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10024 /* SSEParser.swift */; };
+		2E0024E1DA81D000BE9F6E22 /* WatchVoiceLaunch.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD8CC65944118C6E3E926B2B /* WatchVoiceLaunch.swift */; };
 		2ED6AA4CE512DAAFEB6C3404 /* VoiceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1DFADA16CF47BFC609852F9 /* VoiceView.swift */; };
 		321751B615B790F311E52249 /* VoiceToolRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89532A21EDFEC837F0AB3A5C /* VoiceToolRunner.swift */; };
 		369AFB32F99C2B9FB565EEE3 /* ChatLayoutBudgetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A272834699FEDEC1F4899A5 /* ChatLayoutBudgetTests.swift */; };
+		3978075EB8BA2ED6AC63E7FC /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10003 /* KeychainHelper.swift */; };
+		3AAF8A1EFDACC0F131CA1D26 /* NetworkGeminiLiveSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88C7E932EB1DEB14FCB40ECA /* NetworkGeminiLiveSocket.swift */; };
 		3ED19B4DB96F7326A74A511D /* EphemeralTokenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E3A27173FF16F5E7DBC2003 /* EphemeralTokenTests.swift */; };
+		3F7C16D73246C8539945CC09 /* WatchVoiceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CC90A11C08AE322E041E550 /* WatchVoiceView.swift */; };
+		404C176C1E45A62B8FC2758C /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 7A1C0FE3D24B8915C0770002 /* PrivacyInfo.xcprivacy */; };
+		4C5F6A7B8C9D0E1F2A3B4C5D /* SimulatorVoiceAudioIOTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D6E7F8091A2B3C4D5E6F708 /* SimulatorVoiceAudioIOTests.swift */; };
+		4DCD214A944201187F1DE53E /* FamilyAssistantWatchComplications.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = B906A08EA1A23FA933CF471F /* FamilyAssistantWatchComplications.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		55E5CF835271E7B0D7F640BC /* ChatModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10022 /* ChatModels.swift */; };
+		58CCDBB9E8397D47AB1DEAC4 /* GeminiLiveModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = D44CE4F8F09FB4DC3FBEB26F /* GeminiLiveModels.swift */; };
+		6546A65DC830711064D53059 /* VoiceComplication.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E3EECC49DADCA7E16F5CFE2 /* VoiceComplication.swift */; };
 		655619EB2F1F9C5B87CD3B8E /* VoiceTranscript.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03E11DABDDB4EA90D97100D9 /* VoiceTranscript.swift */; };
+		67EDB65809CB7691D418D270 /* GeminiLiveCodec.swift in Sources */ = {isa = PBXBuildFile; fileRef = 099C971A1946B0E892D9358A /* GeminiLiveCodec.swift */; };
+		6F4544A126780EA5BF36A201 /* FamilyAssistantWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = B1AAF72545947EFDE2F39529 /* FamilyAssistantWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		70F3914DA7B408BFA3ED8A1E /* AuthManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10004 /* AuthManager.swift */; };
+		74326E9F6665A624A2FA75E4 /* WatchVoiceLaunch.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD8CC65944118C6E3E926B2B /* WatchVoiceLaunch.swift */; };
+		7A1C0FE3D24B8915C0770001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 7A1C0FE3D24B8915C0770002 /* PrivacyInfo.xcprivacy */; };
+		86499605B845E8945237A0FE /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 47E2165B4C07FE3B17F87460 /* Foundation.framework */; };
 		9CAF6331AB1E68F9BE224900 /* VoiceTranscriptTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17887174AB0CD6F959485BF1 /* VoiceTranscriptTests.swift */; };
+		9F903112B24B7DFD3FABA731 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10008 /* Assets.xcassets */; };
+		A036A5C83E13F0983ECF47A3 /* VoiceJSONValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D663DEDC405191D0833C9B6 /* VoiceJSONValue.swift */; };
 		A10001 /* FamilyAssistantApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10001 /* FamilyAssistantApp.swift */; };
 		A10002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10002 /* ContentView.swift */; };
 		A10003 /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10003 /* KeychainHelper.swift */; };
@@ -24,7 +46,6 @@
 		A10005 /* SetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10005 /* SetupView.swift */; };
 		A10006 /* WebViewContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10006 /* WebViewContainer.swift */; };
 		A10008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = B10008 /* Assets.xcassets */; };
-		7A1C0FE3D24B8915C0770001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 7A1C0FE3D24B8915C0770002 /* PrivacyInfo.xcprivacy */; };
 		A10009 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10011 /* AppDelegate.swift */; };
 		A10010 /* NotificationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10012 /* NotificationManager.swift */; };
 		A10011 /* AppRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10014 /* AppRouting.swift */; };
@@ -37,9 +58,6 @@
 		A10019 /* ChatModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10022 /* ChatModels.swift */; };
 		A10020 /* ChatAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10023 /* ChatAPIClient.swift */; };
 		A10021 /* SSEParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10024 /* SSEParser.swift */; };
-		A10047 /* PathMonitoring.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10047 /* PathMonitoring.swift */; };
-		A10048 /* SyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10048 /* SyncCoordinator.swift */; };
-		A10049 /* ActiveTurnSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10049 /* ActiveTurnSession.swift */; };
 		A10022 /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10025 /* ChatViewModel.swift */; };
 		A10023 /* ChatViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10026 /* ChatViews.swift */; };
 		A10024 /* Markdown in Frameworks */ = {isa = PBXBuildFile; productRef = H10002 /* Markdown */; };
@@ -54,6 +72,9 @@
 		A10044 /* OpenConversationIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10044 /* OpenConversationIntent.swift */; };
 		A10045 /* AssistantReplySnippet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10045 /* AssistantReplySnippet.swift */; };
 		A10046 /* FamilyAssistantAppShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10046 /* FamilyAssistantAppShortcuts.swift */; };
+		A10047 /* PathMonitoring.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10047 /* PathMonitoring.swift */; };
+		A10048 /* SyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10048 /* SyncCoordinator.swift */; };
+		A10049 /* ActiveTurnSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10049 /* ActiveTurnSession.swift */; };
 		A10050 /* ErrorReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10050 /* ErrorReporter.swift */; };
 		A10051 /* ResyncOrchestrator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10051 /* ResyncOrchestrator.swift */; };
 		A10052 /* ChatErrorClassifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10052 /* ChatErrorClassifier.swift */; };
@@ -65,31 +86,53 @@
 		A20005 /* NotificationManagerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20006 /* NotificationManagerTests.swift */; };
 		A20006 /* ChatAPIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20007 /* ChatAPIClientTests.swift */; };
 		A20007 /* SSEParserTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20008 /* SSEParserTests.swift */; };
-		A20021 /* StubPathMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20021 /* StubPathMonitor.swift */; };
-		A20022 /* SyncCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20022 /* SyncCoordinatorTests.swift */; };
-		A20023 /* ResyncOrchestratorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20023 /* ResyncOrchestratorTests.swift */; };
-		A20024 /* ChatErrorClassifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20024 /* ChatErrorClassifierTests.swift */; };
 		A20008 /* ChatViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20009 /* ChatViewModelTests.swift */; };
 		A20009 /* MarkdownRendererTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20010 /* MarkdownRendererTests.swift */; };
 		A20010 /* ToolRenderingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20011 /* ToolRenderingTests.swift */; };
 		A20011 /* ConfirmationModalModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20012 /* ConfirmationModalModelTests.swift */; };
 		A20012 /* AppIntentsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20013 /* AppIntentsTests.swift */; };
 		A20020 /* ErrorReporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20020 /* ErrorReporterTests.swift */; };
+		A20021 /* StubPathMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20021 /* StubPathMonitor.swift */; };
+		A20022 /* SyncCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20022 /* SyncCoordinatorTests.swift */; };
+		A20023 /* ResyncOrchestratorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20023 /* ResyncOrchestratorTests.swift */; };
+		A20024 /* ChatErrorClassifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20024 /* ChatErrorClassifierTests.swift */; };
 		A30001 /* FamilyAssistantUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30002 /* FamilyAssistantUITests.swift */; };
 		A30010 /* ChatSceneWiringUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30010 /* ChatSceneWiringUITests.swift */; };
+		A3089D1445C0AB760F5B9AA0 /* ChatAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10023 /* ChatAPIClient.swift */; };
+		AAAC68A295CE7128C6DBB34F /* VoiceSessionViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAFF01F579AC57F9B68D2E5D /* VoiceSessionViewModel.swift */; };
 		B3D6F3BE9BB984B403AEE52E /* PCMConverterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34957746CE7E5DA61AC5149A /* PCMConverterTests.swift */; };
 		B7AAF73E52D328506FAA7F4F /* GeminiLiveCodecTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E436E5C30F0972F78B8B2990 /* GeminiLiveCodecTests.swift */; };
 		B7F030F107C950AD8C2BA887 /* VoiceSessionViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D5A200966EBAD61C16887A4 /* VoiceSessionViewModelTests.swift */; };
-		4C5F6A7B8C9D0E1F2A3B4C5D /* SimulatorVoiceAudioIOTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D6E7F8091A2B3C4D5E6F708 /* SimulatorVoiceAudioIOTests.swift */; };
+		C000F7A375D09553165F99D8 /* VoiceTranscript.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03E11DABDDB4EA90D97100D9 /* VoiceTranscript.swift */; };
 		D0F574A4B1DB1233913FABAD /* GeminiLiveModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = D44CE4F8F09FB4DC3FBEB26F /* GeminiLiveModels.swift */; };
 		DD63882BED34E2B8AC4AE7EA /* VoiceJSONValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D663DEDC405191D0833C9B6 /* VoiceJSONValue.swift */; };
+		E06086A6670BACC28BBED69A /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 47E2165B4C07FE3B17F87460 /* Foundation.framework */; };
 		E8B69F70B36D06EDB7911C45 /* VoiceSessionViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAFF01F579AC57F9B68D2E5D /* VoiceSessionViewModel.swift */; };
+		EC7941766A2B06553B0F745C /* WatchVoiceApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FA1B325D85B6E7199DC1AFA /* WatchVoiceApp.swift */; };
+		EE95EAA737213087ED04BE66 /* PCMConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B274147B0BE9AA6A6ADDF78 /* PCMConverter.swift */; };
 		EF5CFF1C03B3F01CCD627054 /* VoiceAudioEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 191DF8A54918B2F460735453 /* VoiceAudioEngine.swift */; };
 		EF8E1CBADFFFEADB737479EA /* GeminiLiveSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37DEFCC58E07BF48CF532F9D /* GeminiLiveSocket.swift */; };
+		F721E5A109BD4258ABBB0211 /* ErrorReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10050 /* ErrorReporter.swift */; };
+		FAB1EA2EA81F53D7DD53CD57 /* VoiceToolRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89532A21EDFEC837F0AB3A5C /* VoiceToolRunner.swift */; };
+		FBBCD33736F45CD2EB84BE38 /* VoiceAudioEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 191DF8A54918B2F460735453 /* VoiceAudioEngine.swift */; };
 		FD6DA9F02EC2DD763450746B /* GeminiLiveClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AC88843A54F47BA1012348A /* GeminiLiveClient.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		6C5211901A2BF9C49DC0FD63 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E10002 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 8519706530FD3EFF6BB81D3F;
+			remoteInfo = FamilyAssistantWatch;
+		};
+		BD333014C94A16258E9801B0 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E10002 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = DD79D5694D10068D69CF5529;
+			remoteInfo = FamilyAssistantWatchComplications;
+		};
 		G20002 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = E10002 /* Project object */;
@@ -106,7 +149,33 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		1CB59A5670B98B0C068B8A8C /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				6F4544A126780EA5BF36A201 /* FamilyAssistantWatch.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8BDACD07ADD5B72DE9379D11 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				4DCD214A944201187F1DE53E /* FamilyAssistantWatchComplications.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
+		0352FE40C799700EBD09C620 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		03E11DABDDB4EA90D97100D9 /* VoiceTranscript.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceTranscript.swift; sourceTree = "<group>"; };
 		099C971A1946B0E892D9358A /* GeminiLiveCodec.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiLiveCodec.swift; sourceTree = "<group>"; };
 		0AC88843A54F47BA1012348A /* GeminiLiveClient.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiLiveClient.swift; sourceTree = "<group>"; };
@@ -114,13 +183,21 @@
 		0E3A27173FF16F5E7DBC2003 /* EphemeralTokenTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = EphemeralTokenTests.swift; sourceTree = "<group>"; };
 		17887174AB0CD6F959485BF1 /* VoiceTranscriptTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceTranscriptTests.swift; sourceTree = "<group>"; };
 		191DF8A54918B2F460735453 /* VoiceAudioEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceAudioEngine.swift; sourceTree = "<group>"; };
+		1CC90A11C08AE322E041E550 /* WatchVoiceView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchVoiceView.swift; sourceTree = "<group>"; };
+		1FA5B98FB28594D7D037AC65 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		2B4509B5C94F65C5466E3ADE /* VoiceToolRunnerTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceToolRunnerTests.swift; sourceTree = "<group>"; };
 		34957746CE7E5DA61AC5149A /* PCMConverterTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = PCMConverterTests.swift; sourceTree = "<group>"; };
 		37DEFCC58E07BF48CF532F9D /* GeminiLiveSocket.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiLiveSocket.swift; sourceTree = "<group>"; };
+		47E2165B4C07FE3B17F87460 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/WatchOS.platform/Developer/SDKs/WatchOS11.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
+		4E3EECC49DADCA7E16F5CFE2 /* VoiceComplication.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceComplication.swift; sourceTree = "<group>"; };
+		5D6E7F8091A2B3C4D5E6F708 /* SimulatorVoiceAudioIOTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SimulatorVoiceAudioIOTests.swift; sourceTree = "<group>"; };
 		5DE4D0615E3C63C4C9EE2206 /* GeminiLiveClientTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiLiveClientTests.swift; sourceTree = "<group>"; };
 		6A272834699FEDEC1F4899A5 /* ChatLayoutBudgetTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChatLayoutBudgetTests.swift; sourceTree = "<group>"; };
 		6D663DEDC405191D0833C9B6 /* VoiceJSONValue.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceJSONValue.swift; sourceTree = "<group>"; };
+		7A1C0FE3D24B8915C0770002 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		88C7E932EB1DEB14FCB40ECA /* NetworkGeminiLiveSocket.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NetworkGeminiLiveSocket.swift; sourceTree = "<group>"; };
 		89532A21EDFEC837F0AB3A5C /* VoiceToolRunner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceToolRunner.swift; sourceTree = "<group>"; };
+		8FA1B325D85B6E7199DC1AFA /* WatchVoiceApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchVoiceApp.swift; sourceTree = "<group>"; };
 		9D5A200966EBAD61C16887A4 /* VoiceSessionViewModelTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceSessionViewModelTests.swift; sourceTree = "<group>"; };
 		A1DFADA16CF47BFC609852F9 /* VoiceView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceView.swift; sourceTree = "<group>"; };
 		B10001 /* FamilyAssistantApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyAssistantApp.swift; sourceTree = "<group>"; };
@@ -131,7 +208,6 @@
 		B10006 /* WebViewContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewContainer.swift; sourceTree = "<group>"; };
 		B10008 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B10009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		7A1C0FE3D24B8915C0770002 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		B10010 /* FamilyAssistant.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FamilyAssistant.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B10011 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		B10012 /* NotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationManager.swift; sourceTree = "<group>"; };
@@ -146,9 +222,6 @@
 		B10022 /* ChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatModels.swift; sourceTree = "<group>"; };
 		B10023 /* ChatAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatAPIClient.swift; sourceTree = "<group>"; };
 		B10024 /* SSEParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSEParser.swift; sourceTree = "<group>"; };
-		B10047 /* PathMonitoring.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PathMonitoring.swift; sourceTree = "<group>"; };
-		B10048 /* SyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncCoordinator.swift; sourceTree = "<group>"; };
-		B10049 /* ActiveTurnSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveTurnSession.swift; sourceTree = "<group>"; };
 		B10025 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
 		B10026 /* ChatViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViews.swift; sourceTree = "<group>"; };
 		B10027 /* ConfirmationModalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfirmationModalView.swift; sourceTree = "<group>"; };
@@ -162,10 +235,14 @@
 		B10044 /* OpenConversationIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenConversationIntent.swift; sourceTree = "<group>"; };
 		B10045 /* AssistantReplySnippet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantReplySnippet.swift; sourceTree = "<group>"; };
 		B10046 /* FamilyAssistantAppShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyAssistantAppShortcuts.swift; sourceTree = "<group>"; };
+		B10047 /* PathMonitoring.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PathMonitoring.swift; sourceTree = "<group>"; };
+		B10048 /* SyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncCoordinator.swift; sourceTree = "<group>"; };
+		B10049 /* ActiveTurnSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActiveTurnSession.swift; sourceTree = "<group>"; };
 		B10050 /* ErrorReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorReporter.swift; sourceTree = "<group>"; };
 		B10051 /* ResyncOrchestrator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResyncOrchestrator.swift; sourceTree = "<group>"; };
 		B10052 /* ChatErrorClassifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatErrorClassifier.swift; sourceTree = "<group>"; };
 		B10053 /* SharedConversationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedConversationView.swift; sourceTree = "<group>"; };
+		B1AAF72545947EFDE2F39529 /* FamilyAssistantWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FamilyAssistantWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B20001 /* FamilyAssistantTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FamilyAssistantTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B20002 /* RouteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouteTests.swift; sourceTree = "<group>"; };
 		B20003 /* NotesModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesModelTests.swift; sourceTree = "<group>"; };
@@ -174,26 +251,43 @@
 		B20006 /* NotificationManagerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationManagerTests.swift; sourceTree = "<group>"; };
 		B20007 /* ChatAPIClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatAPIClientTests.swift; sourceTree = "<group>"; };
 		B20008 /* SSEParserTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSEParserTests.swift; sourceTree = "<group>"; };
-		B20021 /* StubPathMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StubPathMonitor.swift; sourceTree = "<group>"; };
-		B20022 /* SyncCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncCoordinatorTests.swift; sourceTree = "<group>"; };
-		B20023 /* ResyncOrchestratorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResyncOrchestratorTests.swift; sourceTree = "<group>"; };
-		B20024 /* ChatErrorClassifierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatErrorClassifierTests.swift; sourceTree = "<group>"; };
 		B20009 /* ChatViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModelTests.swift; sourceTree = "<group>"; };
 		B20010 /* MarkdownRendererTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarkdownRendererTests.swift; sourceTree = "<group>"; };
 		B20011 /* ToolRenderingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToolRenderingTests.swift; sourceTree = "<group>"; };
 		B20012 /* ConfirmationModalModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfirmationModalModelTests.swift; sourceTree = "<group>"; };
 		B20013 /* AppIntentsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIntentsTests.swift; sourceTree = "<group>"; };
 		B20020 /* ErrorReporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ErrorReporterTests.swift; sourceTree = "<group>"; };
+		B20021 /* StubPathMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StubPathMonitor.swift; sourceTree = "<group>"; };
+		B20022 /* SyncCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncCoordinatorTests.swift; sourceTree = "<group>"; };
+		B20023 /* ResyncOrchestratorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResyncOrchestratorTests.swift; sourceTree = "<group>"; };
+		B20024 /* ChatErrorClassifierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatErrorClassifierTests.swift; sourceTree = "<group>"; };
 		B30001 /* FamilyAssistantUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FamilyAssistantUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B30002 /* FamilyAssistantUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyAssistantUITests.swift; sourceTree = "<group>"; };
 		B30010 /* ChatSceneWiringUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatSceneWiringUITests.swift; sourceTree = "<group>"; };
-		5D6E7F8091A2B3C4D5E6F708 /* SimulatorVoiceAudioIOTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SimulatorVoiceAudioIOTests.swift; sourceTree = "<group>"; };
+		B906A08EA1A23FA933CF471F /* FamilyAssistantWatchComplications.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = FamilyAssistantWatchComplications.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		BAFF01F579AC57F9B68D2E5D /* VoiceSessionViewModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceSessionViewModel.swift; sourceTree = "<group>"; };
+		CD8CC65944118C6E3E926B2B /* WatchVoiceLaunch.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchVoiceLaunch.swift; sourceTree = "<group>"; };
 		D44CE4F8F09FB4DC3FBEB26F /* GeminiLiveModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiLiveModels.swift; sourceTree = "<group>"; };
 		E436E5C30F0972F78B8B2990 /* GeminiLiveCodecTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiLiveCodecTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		139C43F1801BA8E0C9DB443D /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E06086A6670BACC28BBED69A /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		48D0F89447D0CE05DC72B8E5 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				86499605B845E8945237A0FE /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		C10001 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -219,6 +313,33 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		0161073B5D928E69C9BE8A59 /* WatchShared */ = {
+			isa = PBXGroup;
+			children = (
+				CD8CC65944118C6E3E926B2B /* WatchVoiceLaunch.swift */,
+			);
+			name = WatchShared;
+			path = WatchShared;
+			sourceTree = "<group>";
+		};
+		1B7A64A1C115AEAEAE90F396 /* watchOS */ = {
+			isa = PBXGroup;
+			children = (
+				47E2165B4C07FE3B17F87460 /* Foundation.framework */,
+			);
+			name = watchOS;
+			sourceTree = "<group>";
+		};
+		1EB47F450B3915C648A08649 /* FamilyAssistantWatchComplications */ = {
+			isa = PBXGroup;
+			children = (
+				1FA5B98FB28594D7D037AC65 /* Info.plist */,
+				4E3EECC49DADCA7E16F5CFE2 /* VoiceComplication.swift */,
+			);
+			name = FamilyAssistantWatchComplications;
+			path = FamilyAssistantWatchComplications;
+			sourceTree = "<group>";
+		};
 		2FC8B65BEA93F1F3A1A0192B /* Voice */ = {
 			isa = PBXGroup;
 			children = (
@@ -238,6 +359,14 @@
 			path = Voice;
 			sourceTree = "<group>";
 		};
+		A9DCF522968753DB36FCBBCF /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				1B7A64A1C115AEAEAE90F396 /* watchOS */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		D10001 = {
 			isa = PBXGroup;
 			children = (
@@ -245,6 +374,10 @@
 				D20001 /* FamilyAssistantTests */,
 				D30001 /* FamilyAssistantUITests */,
 				D10005 /* Products */,
+				A9DCF522968753DB36FCBBCF /* Frameworks */,
+				E793C50F493C089BB836D5DB /* FamilyAssistantWatch */,
+				1EB47F450B3915C648A08649 /* FamilyAssistantWatchComplications */,
+				0161073B5D928E69C9BE8A59 /* WatchShared */,
 			);
 			sourceTree = "<group>";
 		};
@@ -298,6 +431,8 @@
 				B10010 /* FamilyAssistant.app */,
 				B20001 /* FamilyAssistantTests.xctest */,
 				B30001 /* FamilyAssistantUITests.xctest */,
+				B1AAF72545947EFDE2F39529 /* FamilyAssistantWatch.app */,
+				B906A08EA1A23FA933CF471F /* FamilyAssistantWatchComplications.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -414,9 +549,57 @@
 			path = FamilyAssistantUITests;
 			sourceTree = "<group>";
 		};
+		E793C50F493C089BB836D5DB /* FamilyAssistantWatch */ = {
+			isa = PBXGroup;
+			children = (
+				0352FE40C799700EBD09C620 /* Info.plist */,
+				88C7E932EB1DEB14FCB40ECA /* NetworkGeminiLiveSocket.swift */,
+				8FA1B325D85B6E7199DC1AFA /* WatchVoiceApp.swift */,
+				1CC90A11C08AE322E041E550 /* WatchVoiceView.swift */,
+			);
+			name = FamilyAssistantWatch;
+			path = FamilyAssistantWatch;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		8519706530FD3EFF6BB81D3F /* FamilyAssistantWatch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F63E0775A4171A7B5AC19A05 /* Build configuration list for PBXNativeTarget "FamilyAssistantWatch" */;
+			buildPhases = (
+				F452754F3EDB7E4B52F93138 /* Sources */,
+				48D0F89447D0CE05DC72B8E5 /* Frameworks */,
+				0D0358A3720D194D6C42B26A /* Resources */,
+				8BDACD07ADD5B72DE9379D11 /* Embed App Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				150AD76174DDD75654440E1B /* PBXTargetDependency */,
+			);
+			name = FamilyAssistantWatch;
+			productName = FamilyAssistantWatch;
+			productReference = B1AAF72545947EFDE2F39529 /* FamilyAssistantWatch.app */;
+			productType = "com.apple.product-type.application";
+		};
+		DD79D5694D10068D69CF5529 /* FamilyAssistantWatchComplications */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 346F14286D6544635E6E871A /* Build configuration list for PBXNativeTarget "FamilyAssistantWatchComplications" */;
+			buildPhases = (
+				0E1BD9EE1B81710E09321966 /* Sources */,
+				139C43F1801BA8E0C9DB443D /* Frameworks */,
+				B966D1074307F3253ECB21B1 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = FamilyAssistantWatchComplications;
+			productName = FamilyAssistantWatchComplications;
+			productReference = B906A08EA1A23FA933CF471F /* FamilyAssistantWatchComplications.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		E10001 /* FamilyAssistant */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = F10003 /* Build configuration list for PBXNativeTarget "FamilyAssistant" */;
@@ -424,10 +607,12 @@
 				C10002 /* Sources */,
 				C10001 /* Frameworks */,
 				C10003 /* Resources */,
+				1CB59A5670B98B0C068B8A8C /* Embed Watch Content */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				F7810DB8F916B6F18B6C3252 /* PBXTargetDependency */,
 			);
 			name = FamilyAssistant;
 			packageProductDependencies = (
@@ -520,11 +705,29 @@
 				E10001 /* FamilyAssistant */,
 				E20001 /* FamilyAssistantTests */,
 				E30001 /* FamilyAssistantUITests */,
+				8519706530FD3EFF6BB81D3F /* FamilyAssistantWatch */,
+				DD79D5694D10068D69CF5529 /* FamilyAssistantWatchComplications */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		0D0358A3720D194D6C42B26A /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				404C176C1E45A62B8FC2758C /* PrivacyInfo.xcprivacy in Resources */,
+				9F903112B24B7DFD3FABA731 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B966D1074307F3253ECB21B1 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		C10003 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -551,6 +754,15 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		0E1BD9EE1B81710E09321966 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6546A65DC830711064D53059 /* VoiceComplication.swift in Sources */,
+				2E0024E1DA81D000BE9F6E22 /* WatchVoiceLaunch.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		C10002 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -637,6 +849,7 @@
 				9CAF6331AB1E68F9BE224900 /* VoiceTranscriptTests.swift in Sources */,
 				B7F030F107C950AD8C2BA887 /* VoiceSessionViewModelTests.swift in Sources */,
 				369AFB32F99C2B9FB565EEE3 /* ChatLayoutBudgetTests.swift in Sources */,
+				2BBE7129F35F936A06F86C4E /* WatchVoiceLaunch.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -649,9 +862,48 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		F452754F3EDB7E4B52F93138 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3AAF8A1EFDACC0F131CA1D26 /* NetworkGeminiLiveSocket.swift in Sources */,
+				EC7941766A2B06553B0F745C /* WatchVoiceApp.swift in Sources */,
+				3F7C16D73246C8539945CC09 /* WatchVoiceView.swift in Sources */,
+				74326E9F6665A624A2FA75E4 /* WatchVoiceLaunch.swift in Sources */,
+				70F3914DA7B408BFA3ED8A1E /* AuthManager.swift in Sources */,
+				3978075EB8BA2ED6AC63E7FC /* KeychainHelper.swift in Sources */,
+				A3089D1445C0AB760F5B9AA0 /* ChatAPIClient.swift in Sources */,
+				55E5CF835271E7B0D7F640BC /* ChatModels.swift in Sources */,
+				2D6C6F85983FE9A7A4D3BCA2 /* SSEParser.swift in Sources */,
+				F721E5A109BD4258ABBB0211 /* ErrorReporter.swift in Sources */,
+				EE95EAA737213087ED04BE66 /* PCMConverter.swift in Sources */,
+				0EDDFD68E249EC73AF8D69CB /* GeminiLiveClient.swift in Sources */,
+				58CCDBB9E8397D47AB1DEAC4 /* GeminiLiveModels.swift in Sources */,
+				A036A5C83E13F0983ECF47A3 /* VoiceJSONValue.swift in Sources */,
+				FBBCD33736F45CD2EB84BE38 /* VoiceAudioEngine.swift in Sources */,
+				FAB1EA2EA81F53D7DD53CD57 /* VoiceToolRunner.swift in Sources */,
+				C000F7A375D09553165F99D8 /* VoiceTranscript.swift in Sources */,
+				67EDB65809CB7691D418D270 /* GeminiLiveCodec.swift in Sources */,
+				239645FB1C8C8FBA19B15BFE /* GeminiLiveSocket.swift in Sources */,
+				AAAC68A295CE7128C6DBB34F /* VoiceSessionViewModel.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		150AD76174DDD75654440E1B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = FamilyAssistantWatchComplications;
+			target = DD79D5694D10068D69CF5529 /* FamilyAssistantWatchComplications */;
+			targetProxy = BD333014C94A16258E9801B0 /* PBXContainerItemProxy */;
+		};
+		F7810DB8F916B6F18B6C3252 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = FamilyAssistantWatch;
+			target = 8519706530FD3EFF6BB81D3F /* FamilyAssistantWatch */;
+			targetProxy = 6C5211901A2BF9C49DC0FD63 /* PBXContainerItemProxy */;
+		};
 		G20001 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = E10001 /* FamilyAssistant */;
@@ -665,6 +917,98 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		693C7B514EEE93F894D21035 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = H7NBC2S52X;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = FamilyAssistantWatchComplications/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Family Assistant";
+				MARKETING_VERSION = 1.1;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.andrewgarrett.assistant.watchkitapp.complications;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Debug;
+		};
+		772D97753CA0CE513C5FA4E4 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = H7NBC2S52X;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = FamilyAssistantWatchComplications/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Family Assistant";
+				MARKETING_VERSION = 1.1;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.andrewgarrett.assistant.watchkitapp.complications;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Release;
+		};
+		AA8F3A61AF37082FD6842DD3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = H7NBC2S52X;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = FamilyAssistantWatch/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Family Assistant";
+				MARKETING_VERSION = 1.1;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.andrewgarrett.assistant.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Release;
+		};
+		B698DD73C9BA0DBA4A1F522E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = H7NBC2S52X;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = FamilyAssistantWatch/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Family Assistant";
+				MARKETING_VERSION = 1.1;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.andrewgarrett.assistant.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Debug;
+		};
 		F10004 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -939,6 +1283,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		346F14286D6544635E6E871A /* Build configuration list for PBXNativeTarget "FamilyAssistantWatchComplications" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				772D97753CA0CE513C5FA4E4 /* Release */,
+				693C7B514EEE93F894D21035 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		F10001 /* Build configuration list for PBXProject "FamilyAssistant" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -971,6 +1324,15 @@
 			buildConfigurations = (
 				F30002 /* Debug */,
 				F30003 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F63E0775A4171A7B5AC19A05 /* Build configuration list for PBXNativeTarget "FamilyAssistantWatch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA8F3A61AF37082FD6842DD3 /* Release */,
+				B698DD73C9BA0DBA4A1F522E /* Debug */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
