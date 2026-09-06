@@ -55,6 +55,7 @@ private final class FakeAudioIO: VoiceAudioIO {
     var onInputLevel: (@Sendable (Double) -> Void)?
     var onEngineFailure: ((Error) -> Void)?
     var startError: Error?
+    var beforeStart: (() async -> Void)?
     private(set) var started = false
     private(set) var stopped = false
     private(set) var enqueued: [Data] = []
@@ -62,6 +63,7 @@ private final class FakeAudioIO: VoiceAudioIO {
     private(set) var muted = false
 
     func start() async throws {
+        await beforeStart?()
         if let startError { throw startError }
         started = true
     }
@@ -281,6 +283,23 @@ final class VoiceSessionViewModelTests: XCTestCase {
         continuation?.resume()
         await start.value
         XCTAssertFalse(audio.started)
+        XCTAssertFalse(session.connected)
+    }
+
+    func testLateAudioActivationDoesNotReportReadyAfterTimeout() async throws {
+        var continuation: CheckedContinuation<Void, Never>?
+        audio.beforeStart = {
+            await withCheckedContinuation { continuation = $0 }
+        }
+        let recorder = VoiceDiagnosticRecorder()
+        let model = makeModel(connectionTimeout: .milliseconds(20), diagnostics: recorder.diagnostics)
+        let start = Task { await model.start() }
+        try await waitUntil { model.isTerminal }
+        XCTAssertEqual(recorder.records.last?.1["stage"], "audio")
+        continuation?.resume()
+        await start.value
+        XCTAssertFalse(recorder.records.contains { $0.0 == "audio_ready" })
+        XCTAssertTrue(audio.stopped)
         XCTAssertFalse(session.connected)
     }
 

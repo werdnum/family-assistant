@@ -196,7 +196,6 @@ final class VoiceSessionViewModel {
             startupStage = "audio"
             diagnostics.record("audio_start")
             try await audio.start()
-            diagnostics.record("audio_ready")
         } catch {
             fail(error)
             return
@@ -206,6 +205,7 @@ final class VoiceSessionViewModel {
             session.close()
             return
         }
+        diagnostics.record("audio_ready")
 
         do {
             startupStage = "setup"

@@ -70,7 +70,6 @@ final class GeminiLiveClient {
         self.socket = socket
         do {
             try await socket.send(setup)
-            diagnostics?.record("setup_sent")
         } catch {
             socket.close()
             throw error
@@ -79,6 +78,7 @@ final class GeminiLiveClient {
             socket.close()
             return
         }
+        diagnostics?.record("setup_sent")
         receiveTask = Task { [weak self] in
             await self?.runReceiveLoop(socket: socket)
         }
