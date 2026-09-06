@@ -39,6 +39,15 @@ model needs arrives as tool *output* rather than as a new declaration. The names
 summaries of the hidden tools go into the system instruction as a catalog, the same information the
 chat path puts there, so the model knows what is worth searching for.
 
+## Headroom
+
+The eager set is whatever the profile does not list as on-demand. The shipped default profile names
+43 local tools plus the whole Home Assistant MCP server, which is what takes production's 138
+declarations back under the API's limit with room to spare. That is also the lever for shrinking it
+further: a deployment moves more names into `tools_config.on_demand_local_tools` and both voice and
+chat get the smaller list, because the two now hide the same set rather than each maintaining its
+own idea of what is worth declaring.
+
 ## Enforcement chokepoint
 
 `LiveMetaToolsProvider` is a `ToolsProvider` that wraps the profile's existing provider chain (taint
