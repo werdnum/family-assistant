@@ -152,10 +152,15 @@ paste it, use the composer's photo button, or share from Files. Long-pressing th
 
 ### Apple Watch
 
-Install Family Assistant from the Watch app on your iPhone (watchOS 10 or later). Open the watch
-app, enter your Family Assistant server address, and sign in. The watch has its own sign-in and can
-use voice over Wi-Fi or cellular without your iPhone nearby. Signing out on one device does not sign
-out the other.
+Install Family Assistant from the Watch app on your iPhone (watchOS 10 or later). Open the watch app
+and tap **Set up with iPhone** while your paired iPhone is nearby and signed in to Family Assistant.
+There is no server address or password to enter on the watch. If setup cannot connect, open Family
+Assistant on the iPhone and try again.
+
+After setup, voice works over the watch's Wi-Fi or cellular connection without your iPhone nearby.
+If sign-in expires, use **Set up with iPhone** again. Signing out or changing accounts on the phone
+clears the watch's sign-in when the devices next exchange updates; this is not immediate while
+disconnected. You can also revoke the watch's credentials in API token settings.
 
 Tap **Start Voice**, allow microphone access, and speak. The screen shows microphone activity and
 the latest transcription. Use **Mute** to pause your microphone or **End** to finish. Leaving the

@@ -342,12 +342,60 @@ async def exchange_code(
             detail=str(exc),
         ) from exc
 
+    return await _issue_app_credentials(
+        db_context,
+        jwt_token_service,
+        user_identifier,
+        "iOS App",
+        datetime.now(UTC) + timedelta(days=REFRESH_TOKEN_EXPIRY_DAYS),
+    )
+
+
+@api_auth_router.post("/watch-credentials")
+async def watch_credentials(
+    payload: RefreshTokenRequest,
+    response: Response,
+    current_user: Annotated[dict[str, object], Depends(get_current_api_user)],
+    db_context: Annotated[Database, Depends(get_db)],
+    jwt_token_service: Annotated[
+        jwt_tokens.JWTTokenService, Depends(get_jwt_token_service)
+    ],
+) -> CodeExchangeResponse:
+    """Provision an independent watch session using the phone's refresh authority."""
+    response.headers["Cache-Control"] = "no-store"
+    refresh = await api_tokens_storage.validate_token_by_value(
+        db_context, payload.refresh_token, expected_type="refresh"
+    )
+    if (
+        not refresh
+        or current_user.get("source") not in {"api_token", "jwt_access_token"}
+        or refresh["parent_token_id"] != current_user.get("token_id")
+        or refresh["expires_at"] is None
+    ):
+        raise HTTPException(
+            status_code=403, detail="A matching app session is required."
+        )
+    return await _issue_app_credentials(
+        db_context,
+        jwt_token_service,
+        refresh["user_identifier"],
+        "Apple Watch",
+        refresh["expires_at"],
+    )
+
+
+async def _issue_app_credentials(
+    db_context: Database,
+    jwt_token_service: jwt_tokens.JWTTokenService,
+    user_identifier: str,
+    name: str,
+    refresh_expires: datetime,
+) -> CodeExchangeResponse:
     # Minted before the block: hashing is blocking bcrypt, and on SQLite it
     # would hold the engine-wide transaction lock for its whole duration.
     api_minted = api_tokens_storage.mint_api_token()
     refresh_minted = api_tokens_storage.mint_api_token()
     api_token_expires = _api_token_expiry(jwt_token_service)
-    refresh_expires = datetime.now(UTC) + timedelta(days=REFRESH_TOKEN_EXPIRY_DAYS)
 
     async with db_context.transaction() as txn:
         # API-token insert + refresh-token insert must be atomic: a failed second
@@ -355,7 +403,7 @@ async def exchange_code(
         api_token_id = await api_tokens_storage.add_api_token(
             db_context=txn,
             user_identifier=user_identifier,
-            name="iOS App",
+            name=name,
             hashed_token=api_minted.hashed_secret,
             prefix=api_minted.prefix,
             created_at=api_minted.created_at,
@@ -365,7 +413,7 @@ async def exchange_code(
         await api_tokens_storage.add_api_token(
             db_context=txn,
             user_identifier=user_identifier,
-            name="iOS App (refresh)",
+            name=f"{name} (refresh)",
             hashed_token=refresh_minted.hashed_secret,
             prefix=refresh_minted.prefix,
             created_at=refresh_minted.created_at,
@@ -471,7 +519,7 @@ async def refresh_token(
         api_token_id = await api_tokens_storage.add_api_token(
             db_context=txn,
             user_identifier=user_identifier,
-            name="iOS App",
+            name=token_row["name"].removesuffix(" (refresh)"),
             hashed_token=api_minted.hashed_secret,
             prefix=api_minted.prefix,
             created_at=api_minted.created_at,

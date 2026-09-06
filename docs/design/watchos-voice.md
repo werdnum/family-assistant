@@ -7,9 +7,16 @@ iPhone does not relay audio or need to remain reachable during a session.
 ## Approach
 
 Reuse the native session orchestration, audio conversion, transcripts, backend tools and
-authentication. The watch signs in through the existing PKCE flow and stores its own credentials in
-its Keychain. It has a small setup screen for the server URL and sign-in, avoiding a second
-credential-transfer protocol or sharing rotating refresh tokens with the phone.
+authentication. Setup uses the signed-in paired iPhone through WatchConnectivity. The phone obtains
+a separate credential pair from the backend and returns it directly to the requesting watch, which
+stores it in its Keychain. The phone's refresh token never leaves the phone/backend boundary.
+Issuance requires both the phone's access and matching refresh credential, and does not extend the
+refresh credential's lifetime. Voice and subsequent token refreshes run directly on the watch.
+
+The watch offers “Set up with iPhone” instead of a URL field or browser. Authentication expiry sends
+the user back to that flow. A non-secret phone-session identity is synchronized to detect phone
+sign-out and account changes; credentials only travel in an interactive reply, never queued context.
+Late replies must not install credentials after the phone or watch setup session has changed.
 
 watchOS needs asynchronous audio-session activation before opening a streaming connection. Use
 Network framework WebSockets on watchOS, retaining the existing injectable socket boundary. The
@@ -32,10 +39,21 @@ automatic reconnection are outside this change.
 3. Add watch controls, complication launch routing and user documentation. Verify launch routing and
    build the complication families; live microphone, speaker, login and out-of-range calling require
    a physical Apple Watch smoke test.
+4. Replace watch-side login with paired-iPhone setup. Verify independent credential issuance with
+   both token formats and database engines, rejection of mismatched phone credentials, watch
+   Keychain installation and account-change handling. Check the setup screen in a watch simulator;
+   real WatchConnectivity delivery requires a paired-device smoke test.
 
 ## Deliberate simplifications
 
-- The watch has its own sign-in and sign-out. Signing out of the phone does not sign out the watch.
+- Setup requires the paired phone to be reachable and signed in. Phone sign-out/account changes
+  clear the watch when connectivity delivers the update, not immediately while disconnected.
+  Previously issued watch credentials remain independently revocable through token settings.
+- Preserve the existing access/refresh expiration policy: the watch inherits the phone refresh
+  deadline, but access tokens issued before that deadline retain the server's normal lifetime and
+  may outlive it, just as phone access tokens do. This is not a strict coupling of the two devices'
+  access lifetimes. Changing that server-wide policy is outside the paired-setup feature.
+- No new Apple portal capabilities or shared Keychain/App Group entitlements are needed.
 - Watch voice provides live conversation and captions without transcript persistence. Reliable
   history across watch suspension requires durable delivery, which is outside the requested voice
   launcher feature. The watch therefore does not initiate best-effort transcript uploads.

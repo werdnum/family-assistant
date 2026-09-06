@@ -17,6 +17,12 @@ final class AuthManager {
     var isBootstrapping = false
     var isLoading = false
     var errorMessage: String?
+    private(set) var isLoggingOut = false
+    private(set) var companionSessionID = UserDefaults.standard.string(forKey: "fa_companion_session_id") ?? UUID().uuidString
+
+    @MainActor var watchPairingIdentity: String {
+        isAuthenticated && !authRequired && !isBootstrapping && !isLoggingOut ? companionSessionID : ""
+    }
 
     /// Wall-clock budget for ``bootstrapSession()``. If the refresh + session-bridge
     /// work (notably the `WKWebsiteDataStore` cookie hand-off, whose first access
@@ -117,6 +123,7 @@ final class AuthManager {
 
     init(websiteDataCleaner: (@MainActor () async -> Void)? = nil) {
         self.websiteDataCleaner = websiteDataCleaner ?? Self.clearWebsiteData
+        UserDefaults.standard.set(companionSessionID, forKey: "fa_companion_session_id")
         serverURL = UserDefaults.standard.string(forKey: Keys.serverURL) ?? ""
         if KeychainHelper.readString(key: Keys.apiToken) != nil {
             isAuthenticated = true
@@ -380,6 +387,8 @@ final class AuthManager {
     @MainActor
     private func bumpAuthEpoch() {
         authEpoch += 1
+        companionSessionID = UUID().uuidString
+        UserDefaults.standard.set(companionSessionID, forKey: "fa_companion_session_id")
         // Every auth transition passes through here — logout, a terminal 401's
         // re-auth latch, and a fresh login (which may be a different account on
         // the same deployment, without the shell ever unmounting). Decoded
@@ -759,6 +768,8 @@ final class AuthManager {
 
     @MainActor
     func logout() async {
+        isLoggingOut = true
+        defer { isLoggingOut = false }
         // Supersede any in-flight session bridge before clearing WebKit data, so a
         // watchdog-abandoned bootstrap cannot re-add the cookie after this cleanup.
         bumpAuthEpoch()
@@ -800,6 +811,54 @@ final class AuthManager {
     }
 
     // MARK: - Helpers
+
+    @MainActor
+    func provisionWatchCredentials() async throws -> WatchCredentials {
+        guard !watchPairingIdentity.isEmpty else { throw AuthError.noCredentials }
+        let epoch = authEpoch
+        guard let baseURL = validatedServerURL() else { throw AuthError.invalidServerURL }
+        var request = try await authorizedRequest(
+            url: baseURL.appendingPathComponent("api/auth/watch-credentials"), method: "POST"
+        )
+        guard isCurrentAuthEpoch(epoch), !isLoggingOut,
+              let refresh = KeychainHelper.readString(key: Keys.refreshToken)
+        else { throw AuthError.noCredentials }
+        request.timeoutInterval = authRequestTimeoutSeconds
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(["refresh_token": refresh])
+        let (data, response) = try await URLSession.shared.dataExpectingJSON(for: request, authWallError: AuthError.authWall)
+        try AuthWallDetection.rejectIfLikely(response: response, data: data, throwing: AuthError.authWall)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            throw AuthError.authRejected
+        }
+        guard isCurrentAuthEpoch(epoch), !watchPairingIdentity.isEmpty else { throw AuthError.noCredentials }
+        return try WatchCredentials(serverURL: baseURL.absoluteString, phoneSessionID: companionSessionID,
+                                    tokens: JSONDecoder().decode(TokenResponse.self, from: data))
+    }
+
+    @MainActor
+    func installWatchCredentials(_ credentials: WatchCredentials) throws {
+        guard let url = URL(string: credentials.serverURL),
+              ["https", "http"].contains(url.scheme), url.host != nil,
+              !credentials.phoneSessionID.isEmpty, !credentials.tokens.apiToken.isEmpty,
+              let refresh = credentials.tokens.refreshToken, !refresh.isEmpty,
+              let ttl = credentials.tokens.expiresIn, ttl > 0
+        else { throw AuthError.noCredentials }
+        clearLocalAuthState()
+        guard KeychainHelper.save(key: Keys.apiToken, string: credentials.tokens.apiToken),
+              KeychainHelper.save(key: Keys.refreshToken, string: refresh)
+        else {
+            clearLocalAuthState()
+            throw AuthError.noCredentials
+        }
+        serverURL = credentials.serverURL
+        saveServerURL()
+        UserDefaults.standard.set(ISO8601DateFormatter().string(from: Date().addingTimeInterval(Double(ttl))), forKey: Keys.tokenExpiry)
+        UserDefaults.standard.set(ttl, forKey: Keys.tokenLifetime)
+        isBootstrapping = false
+        isAuthenticated = true
+        setAuthRequired(false)
+    }
 
     /// Return a usable access token, refreshing first when it is due. Components
     /// that send outside ``authorizedRequest`` (such as error reporting) use this
@@ -889,7 +948,7 @@ final class AuthManager {
 
 // MARK: - Supporting Types
 
-struct TokenResponse: Decodable {
+struct TokenResponse: Codable {
     let apiToken: String
     let refreshToken: String?
     let expiresIn: Int?
