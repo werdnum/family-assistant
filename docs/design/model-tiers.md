@@ -375,12 +375,14 @@ Accepted residual behavior, recorded so review does not re-litigate it:
 - Prompt nudges to the Auto classifier are accepted as-is, with no injection filtering: the channel
   cannot select outside `auto_model_tiers`, so a planted nudge steals no authority Auto did not
   already hold (argued in full under "Auto routing").
-- Runs the task worker starts on its own — a tool confirmation answered after its inline wait has
+- A turn whose trigger nobody wrote is never routed: it runs at the profile's default tier. That
+  covers everything the task worker starts on its own — reminders and scheduled callbacks, the turn
+  telling a profile its delegation came back, a tool confirmation answered after its inline wait has
   timed out (which executes the tool and posts a plain completion notice, with no follow-up LLM
-  turn), and application-composed wakes such as reminders and scheduled callbacks — carry no run
-  envelope and are never routed: they run at the profile's default tier. Nobody wrote a request
-  there for Auto to judge, so the default is reasonable behaviour; persisting a selection on those
-  records is not worth its own machinery.
+  turn). Auto would be grading text this application composed, and the default is reasonable
+  behaviour for it. The rule reads the flags such a trigger already carries to be persisted
+  correctly — a system role, an internal row — rather than asking each worker path to hand down an
+  envelope of its own, so a wake added later inherits it.
 
 ## Work plan
 

@@ -87,7 +87,10 @@ if TYPE_CHECKING:
         TurnTaintTracker,
     )
     from family_assistant.services.api_backend import ApiBackend
-    from family_assistant.services.attachment_registry import AttachmentRegistry
+    from family_assistant.services.attachment_registry import (
+        AttachmentMetadata,
+        AttachmentRegistry,
+    )
     from family_assistant.services.oauth_credentials import OAuthCredentialResolver
     from family_assistant.services.tool_call_review import TriggerReviewInput
     from family_assistant.storage.database import Database
@@ -187,6 +190,20 @@ def _attachment_summary(
         f"({attachment.get('mime_type') or 'unknown type'})"
         for attachment in attachments or ()
     ]
+
+
+def _referenced_attachment_metadata(
+    attachment_id: str,
+    metadata: AttachmentMetadata,
+) -> MessageAttachmentMetadata:
+    """Describe an attachment a turn carries only as a content-part reference."""
+    filename = metadata.metadata.get("original_filename")
+    return MessageAttachmentMetadata(
+        type="attachment_reference",
+        attachment_id=attachment_id,
+        mime_type=metadata.mime_type,
+        filename=filename if isinstance(filename, str) and filename else "attachment",
+    )
 
 
 def _response_attachment_references(
@@ -450,6 +467,9 @@ class ProcessingService:
         subconversation_id: str | None,
         trigger_content_parts: list[ContentPartDict],
         trigger_attachments: list[MessageAttachmentMetadata] | None,
+        acting_user_id: str | None,
+        trigger_is_internal: bool,
+        trigger_role: Literal["user", "system"],
         exclude_turn_id: str | None = None,
     ) -> tuple[ResolvedModelSelection, LLMInterface]:
         """Settle which models this turn runs on, Auto routing included.
@@ -458,6 +478,13 @@ class ProcessingService:
         result is frozen for the run, so a tool loop's later iterations cannot
         drift onto another model with different tool representation and
         attachment handling.
+
+        It is also where "somebody asked for this" is decided, from the two
+        flags a turn already carries to be persisted correctly: a wake the
+        application composed is a system-role trigger, an internal one, or
+        both. Reading them here rather than trusting each worker path to also
+        pass a frozen envelope is what keeps a new wake from being routed by
+        having forgotten something.
         """
         routed = await self._auto_routed_selection(
             db_context,
@@ -467,6 +494,10 @@ class ProcessingService:
             subconversation_id=subconversation_id,
             trigger_content_parts=trigger_content_parts,
             trigger_attachments=trigger_attachments,
+            acting_user_id=acting_user_id,
+            trigger_is_authored_request=(
+                trigger_role == "user" and not trigger_is_internal
+            ),
             exclude_turn_id=exclude_turn_id,
         )
         return self._run_binding(routed if routed is not None else selection)
@@ -480,7 +511,7 @@ class ProcessingService:
         conversation_id: str,
         subconversation_id: str | None,
         trigger_content_parts: list[ContentPartDict],
-        trigger_attachments: list[MessageAttachmentMetadata] | None = None,
+        acting_user_id: str | None,
     ) -> ResolvedModelSelection:
         """Route *selection* now, for a run that will execute later.
 
@@ -504,7 +535,14 @@ class ProcessingService:
             conversation_id=conversation_id,
             subconversation_id=subconversation_id,
             trigger_content_parts=trigger_content_parts,
-            trigger_attachments=trigger_attachments,
+            # A queued run's files reach it as content-part references, which
+            # is what the classifier's own resolution reads.
+            trigger_attachments=None,
+            acting_user_id=acting_user_id,
+            # A delegation is a request a model wrote, and each agent boundary
+            # resolves its own tier: the run this routes for executes on a
+            # request, not on a wake the application composed for it.
+            trigger_is_authored_request=True,
             exclude_turn_id=None,
         )
         return routed if routed is not None else selection
@@ -524,8 +562,20 @@ class ProcessingService:
             return "auto"
         return "explicit"
 
-    def _should_auto_route(self, selection: ResolvedModelSelection | None) -> bool:
+    def _should_auto_route(
+        self,
+        selection: ResolvedModelSelection | None,
+        *,
+        trigger_is_authored_request: bool,
+    ) -> bool:
         """Whether Auto gets to decide this turn's tier.
+
+        A run nobody wrote a request for is never routed. Reminders, scheduled
+        and event wakes, and the turn that tells a profile its delegation came
+        back all run on trigger text the application composed, and a classifier
+        weighing that is grading our own prose: it would spend a model call to
+        decide how hard a wake notice is. Those runs take the profile's
+        configured tier, which is the design's recorded simplification.
 
         An explicit selection bypasses routing entirely -- a person or a
         delegating model has already answered the question the classifier
@@ -544,7 +594,8 @@ class ProcessingService:
         disagree.
         """
         return (
-            self._model_router is not None
+            trigger_is_authored_request
+            and self._model_router is not None
             and self.service_config.model_selection == "auto"
             and (
                 selection is None
@@ -562,6 +613,8 @@ class ProcessingService:
         subconversation_id: str | None,
         trigger_content_parts: list[ContentPartDict],
         trigger_attachments: list[MessageAttachmentMetadata] | None,
+        acting_user_id: str | None,
+        trigger_is_authored_request: bool,
         exclude_turn_id: str | None,
     ) -> ResolvedModelSelection | None:
         """The envelope Auto produced for this turn, or ``None`` if it did not run.
@@ -575,7 +628,9 @@ class ProcessingService:
         the envelope -- never silently.
         """
         router = self._model_router
-        if router is None or not self._should_auto_route(selection):
+        if router is None or not self._should_auto_route(
+            selection, trigger_is_authored_request=trigger_is_authored_request
+        ):
             return None
 
         eligibility = self.service_config.tier_eligibility
@@ -587,6 +642,7 @@ class ProcessingService:
             subconversation_id=subconversation_id,
             trigger_content_parts=trigger_content_parts,
             trigger_attachments=trigger_attachments,
+            acting_user_id=acting_user_id,
             exclude_turn_id=exclude_turn_id,
         )
 
@@ -690,6 +746,7 @@ class ProcessingService:
         subconversation_id: str | None,
         trigger_content_parts: list[ContentPartDict],
         trigger_attachments: list[MessageAttachmentMetadata] | None,
+        acting_user_id: str | None,
         exclude_turn_id: str | None,
     ) -> RoutingDecision:
         """Ask the classifier, attributed to the profile it is deciding for.
@@ -707,6 +764,12 @@ class ProcessingService:
             subconversation_id=subconversation_id,
             exclude_turn_id=exclude_turn_id,
         )
+        attachments = await self._described_trigger_attachments(
+            db_context,
+            trigger_content_parts=trigger_content_parts,
+            trigger_attachments=trigger_attachments,
+            acting_user_id=acting_user_id,
+        )
         attribution = CallAttribution(
             profile_id=self.service_config.id,
             model_selection=ROUTER_CALL_SELECTION,
@@ -719,8 +782,55 @@ class ProcessingService:
                 request_text=self._extract_user_content_for_history(
                     trigger_content_parts
                 ),
-                attachment_summary=_attachment_summary(trigger_attachments),
+                attachment_summary=_attachment_summary(attachments),
             )
+
+    async def _described_trigger_attachments(
+        self,
+        db_context: Database,
+        *,
+        trigger_content_parts: list[ContentPartDict],
+        trigger_attachments: list[MessageAttachmentMetadata] | None,
+        acting_user_id: str | None,
+    ) -> list[MessageAttachmentMetadata]:
+        """This turn's files, named and typed, however they arrived.
+
+        Only some ingresses describe a turn's attachments. The rest reference
+        them: a content part carrying an attachment id and nothing readable is
+        what a delegated request, an inbound A2A message and an injected
+        artifact all look like. Both are "analyze this", and neither says what
+        "this" is until the reference is resolved, so it is resolved here --
+        once, for whatever reaches the classifier -- rather than at each
+        ingress, where the next one added would arrive undescribed.
+
+        One bounded lookup, for the ids nothing has already described, and only
+        for metadata: name and type are what a tier decision can use, and
+        reading contents would put every uploaded document through a second
+        model for nothing.
+        """
+        described_ids = {
+            attachment.get("attachment_id") for attachment in trigger_attachments or ()
+        }
+        referenced_ids = [
+            part["attachment_id"]
+            for part in trigger_content_parts
+            if part["type"] == "attachment"
+            and part["attachment_id"] not in described_ids
+        ]
+        registry = self._attachment_registry
+        if not referenced_ids or registry is None:
+            return list(trigger_attachments or ())
+        found = await registry.get_attachments(
+            db_context, referenced_ids, acting_user_id=acting_user_id
+        )
+        return merge_attachment_metadata(
+            trigger_attachments,
+            [
+                _referenced_attachment_metadata(attachment_id, found[attachment_id])
+                for attachment_id in referenced_ids
+                if attachment_id in found
+            ],
+        )
 
     async def _routing_history(
         self,
@@ -1745,6 +1855,9 @@ class ProcessingService:
             subconversation_id=subconversation_id,
             trigger_content_parts=trigger_content_parts,
             trigger_attachments=trigger_attachments,
+            acting_user_id=user_id,
+            trigger_is_internal=trigger_is_internal,
+            trigger_role=trigger_role,
             exclude_turn_id=turn_id if reuse_existing_user_row else None,
         )
 
@@ -1971,6 +2084,12 @@ class ProcessingService:
             subconversation_id=subconversation_id,
             trigger_content_parts=trigger_content_parts,
             trigger_attachments=trigger_attachments,
+            acting_user_id=user_id,
+            # The streaming path serves surfaces a person types at, and has no
+            # system-role or internal-trigger variant to distinguish: every
+            # turn that reaches it is somebody's own request.
+            trigger_is_internal=False,
+            trigger_role="user",
             exclude_turn_id=turn_id if reuse_existing_user_row else None,
         )
 

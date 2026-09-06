@@ -1505,6 +1505,11 @@ async def handle_llm_callback(
             # reviewer's trusted-conversation channel without granting the
             # attacker-controlled content system-role instruction priority.
             trigger_role="user",
+            # Application-generated turn input, matching the row persisted
+            # above: it stays out of user-facing history, and it is what tells
+            # the processing service nobody wrote this request -- so the turn
+            # runs at the profile's configured tier rather than being routed.
+            trigger_is_internal=True,
             # The callback handler persists this row before generation so a
             # retry after an interrupted generation can reuse the same durable
             # trigger instead of creating another visible callback message.
@@ -1524,14 +1529,6 @@ async def handle_llm_callback(
             ),
             trigger_attachments=trigger_attachments,  # Pass attachments from script wake_llm
             tool_call_review_trigger=review_trigger,
-            # A worker-completed continuation carries no run envelope of its
-            # own -- the turn it continues is over -- so it runs at the
-            # profile's configured tier, frozen rather than routed. Its trigger
-            # is an application-composed wake text, not a request somebody
-            # wrote, so there is nothing here for a classifier to weigh.
-            model_selection=ResolvedModelSelection.unselected(
-                processing_service.service_config.tier_eligibility.default_tier
-            ).freeze(),
         )
 
         final_llm_content_to_send = result.text_reply

@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from sqlalchemy.exc import IntegrityError
 
 from family_assistant.llm.content_parts import attachment_content, text_content
-from family_assistant.llm.messages import MessageAttachmentMetadata
 from family_assistant.llm.model_selection import (
     ModelSelectionRequest,
     ModelTierNotPermitted,
@@ -49,7 +48,6 @@ if TYPE_CHECKING:
     from family_assistant.config_models import ToolsConfig
     from family_assistant.llm.content_parts import ContentPartDict
     from family_assistant.processing.protocol import DelegatableService
-    from family_assistant.services.attachment_registry import AttachmentMetadata
     from family_assistant.storage.database import DatabaseTransaction
     from family_assistant.storage.repositories.delegation_runs import (
         DelegationRunDict,
@@ -430,6 +428,12 @@ async def _synchronous_delegation_result(
             trigger_content_parts=content_parts,
             trigger_interface_message_id=None,
             user_name=exec_context.user_name,
+            # The delegated turn acts for the same person the delegating turn
+            # does, as the queued path already records on its run. Without it
+            # the target resolves this request's attachments as an anonymous
+            # actor, which sees only ownerless ones -- so an owned file is
+            # neither described to the target's routing nor injectable.
+            user_id=exec_context.user_id,
             replied_to_interface_id=None,
             chat_interface=exec_context.chat_interface,
             chat_interfaces=exec_context.chat_interfaces,
@@ -884,50 +888,28 @@ async def _confirm_delegation_if_required(
     )
 
 
-def _delegated_attachment_reference(
-    attachment_id: str,
-    metadata: AttachmentMetadata,
-) -> MessageAttachmentMetadata:
-    """Describe one delegated attachment to the target's Auto classifier.
-
-    Name and type only. The classifier is deciding how much reasoning the
-    request deserves, and "analyze this" says nothing without knowing whether
-    "this" is a photo or a contract -- but the file's contents cannot make that
-    decision better, and sending them would put every delegated upload through
-    a second model for nothing.
-    """
-    filename = metadata.metadata.get("original_filename")
-    return MessageAttachmentMetadata(
-        type="attachment_reference",
-        attachment_id=attachment_id,
-        mime_type=metadata.mime_type,
-        filename=filename if isinstance(filename, str) and filename else "attachment",
-    )
-
-
 async def _delegation_content_parts(
     exec_context: ToolExecutionContext,
     *,
     target_service_id: str,
     user_request: str,
     attachment_ids: list[str] | None,
-) -> tuple[list[ContentPartDict], list[MessageAttachmentMetadata], ToolResult | None]:
+) -> tuple[list[ContentPartDict], ToolResult | None]:
     """Build delegated content after validating attachment ownership.
 
-    Returns the content parts, the validated attachments' metadata, and any
-    refusal. The metadata is what the target's routing sees: a delegated turn
-    reaches the classifier as content-part references, which carry an id and
-    nothing a classifier can read, so without it a delegation with an
-    attachment is routed as though it had none.
+    Returns the content parts and any refusal. The parts carry each attachment
+    as a reference: what the target's classifier is told about it is resolved
+    from that reference on the target's side, alongside every other ingress
+    that hands a turn a file it can only name.
     """
     content_parts: list[ContentPartDict] = [text_content(user_request)]
     if not attachment_ids:
-        return content_parts, [], None
+        return content_parts, None
     if not exec_context.attachment_registry:
         logger.warning(
             "Attachment IDs provided but AttachmentRegistry not available - ignoring attachments"
         )
-        return content_parts, [], None
+        return content_parts, None
 
     found = await exec_context.attachment_registry.get_attachments(
         exec_context.db_context,
@@ -940,7 +922,6 @@ async def _delegation_content_parts(
     if missing:
         return (
             content_parts,
-            [],
             ToolResult(
                 text=(
                     f"Error: Cannot delegate to '{target_service_id}': "
@@ -953,14 +934,7 @@ async def _delegation_content_parts(
     content_parts.extend(
         attachment_content(attachment_id) for attachment_id in attachment_ids
     )
-    return (
-        content_parts,
-        [
-            _delegated_attachment_reference(attachment_id, found[attachment_id])
-            for attachment_id in attachment_ids
-        ],
-        None,
-    )
+    return content_parts, None
 
 
 async def _synchronous_result_if_required(
@@ -1391,11 +1365,7 @@ async def delegate_to_service_tool(
     if confirmation_error is not None:
         return confirmation_error
 
-    (
-        content_parts,
-        delegated_attachments,
-        attachment_error,
-    ) = await _delegation_content_parts(
+    content_parts, attachment_error = await _delegation_content_parts(
         exec_context,
         target_service_id=target_service_id,
         user_request=user_request,
@@ -1442,7 +1412,7 @@ async def delegate_to_service_tool(
         conversation_id=exec_context.conversation_id,
         subconversation_id=subconversation_id,
         trigger_content_parts=content_parts,
-        trigger_attachments=delegated_attachments,
+        acting_user_id=exec_context.user_id,
     )
 
     enqueue_result = await _enqueue_delegation(

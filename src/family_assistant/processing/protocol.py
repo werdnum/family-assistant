@@ -81,7 +81,7 @@ class DelegatableService(Protocol):
         conversation_id: str,
         subconversation_id: str | None,
         trigger_content_parts: list[ContentPartDict],
-        trigger_attachments: list[MessageAttachmentMetadata] | None = None,
+        acting_user_id: str | None,
     ) -> ResolvedModelSelection:
         """Settle *selection* for a run that will execute later.
 

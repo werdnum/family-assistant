@@ -163,7 +163,7 @@ class RemoteA2AService:
         conversation_id: str,
         subconversation_id: str | None,
         trigger_content_parts: list[ContentPartDict],
-        trigger_attachments: list[MessageAttachmentMetadata] | None = None,
+        acting_user_id: str | None,
     ) -> ResolvedModelSelection:
         """Unchanged: a remote agent picks its own model, so there is nothing
         here to route. Its eligibility is the pinned one by construction, and
@@ -174,7 +174,7 @@ class RemoteA2AService:
             conversation_id,
             subconversation_id,
             trigger_content_parts,
-            trigger_attachments,
+            acting_user_id,
         )
         return selection
 

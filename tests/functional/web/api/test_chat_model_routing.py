@@ -16,11 +16,13 @@ did not spend a model call" is the property, not "it happened to agree".
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import uuid
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Literal, Protocol, cast
+from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -32,6 +34,7 @@ from family_assistant.config_models import (
     RetryModelConfig,
     ToolsConfig,
 )
+from family_assistant.interfaces import ChatInterface
 from family_assistant.llm import LLMOutput, ToolCallFunction, ToolCallItem
 from family_assistant.llm.call_context import CallAttribution, attributed_call
 from family_assistant.llm.messages import UserMessage
@@ -48,6 +51,12 @@ from family_assistant.llm.model_selection import (
 from family_assistant.observability.metrics import current_call_attribution
 from family_assistant.processing import ProcessingService
 from family_assistant.storage.database import Database
+from family_assistant.task_worker import (
+    DelegatedProfileRunPayload,
+    LlmCallbackPayload,
+    TaskWorker,
+    handle_llm_callback,
+)
 from family_assistant.tools.services import delegate_to_service_tool
 from family_assistant.tools.types import ToolExecutionContext
 from family_assistant.utils.clock import SystemClock
@@ -299,6 +308,7 @@ def _delegating_context(
     *,
     conversation_id: str,
     attachment_registry: AttachmentRegistry | None = None,
+    async_delegation_enabled: bool = True,
 ) -> ToolExecutionContext:
     """A source profile holding *target* in its registry, ready to delegate."""
     source = cast(
@@ -306,7 +316,9 @@ def _delegating_context(
         SimpleNamespace(
             service_config=SimpleNamespace(
                 id=_DELEGATION_SOURCE_ID,
-                tools_config=ToolsConfig(async_delegation_enabled=True),
+                tools_config=ToolsConfig(
+                    async_delegation_enabled=async_delegation_enabled
+                ),
             ),
             processing_services_registry={target.service_config.id: target},
         ),
@@ -336,14 +348,21 @@ async def _completed_prior_delegation(
     conversation_id: str,
     subconversation_id: str,
     target_service_id: str,
+    source_profile_id: str = _DELEGATION_SOURCE_ID,
+    handed_off: bool = False,
 ) -> str:
-    """A finished delegation of this caller's, available to resume."""
+    """A finished delegation of this caller's, available to resume.
+
+    ``handed_off`` is what makes the worker responsible for telling the source
+    profile about it: a run whose caller is still waiting inline is delivered
+    by that caller instead.
+    """
     db = Database(engine=db_engine)
     delegation_id = f"delegation_{uuid.uuid4().hex}"
     await db.delegation_runs.create_run({
         "delegation_id": delegation_id,
         "task_id": f"task_{uuid.uuid4().hex}",
-        "source_profile_id": _DELEGATION_SOURCE_ID,
+        "source_profile_id": source_profile_id,
         "target_service_id": target_service_id,
         "interface_type": "api",
         "conversation_id": conversation_id,
@@ -355,6 +374,8 @@ async def _completed_prior_delegation(
         "request_text": "the first half of this",
         "content_parts_json": [],
     })
+    if handed_off:
+        await db.delegation_runs.mark_handed_off(delegation_id, SystemClock().now())
     await db.delegation_runs.mark_completed(
         delegation_id=delegation_id,
         result_text="done",
@@ -362,6 +383,41 @@ async def _completed_prior_delegation(
         completed_at=SystemClock().now(),
     )
     return delegation_id
+
+
+def _worker_context(
+    db_engine: AsyncEngine,
+    service: ProcessingService,
+    chat_interface: ChatInterface,
+    *,
+    conversation_id: str,
+) -> ToolExecutionContext:
+    """What the task worker hands a handler it is about to run."""
+    return ToolExecutionContext(
+        interface_type="api",
+        conversation_id=conversation_id,
+        user_name="tester",
+        user_id=_DELEGATION_USER_ID,
+        turn_id=str(uuid.uuid4()),
+        db_context=Database(engine=db_engine),
+        processing_service=service,
+        clock=SystemClock(),
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        timezone=ZoneInfo("UTC"),
+        chat_interface=chat_interface,
+        chat_interfaces={"api": chat_interface},
+        credential_resolvers=None,
+        api_backend=None,
+    )
+
+
+def _delivering_chat_interface() -> AsyncMock:
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "sent_message_id"
+    return chat_interface
 
 
 async def _send(client: AsyncClient, conversation_id: str, **body: object) -> str:
@@ -452,6 +508,95 @@ async def test_a_profile_that_selects_explicitly_is_never_routed(
 
     assert reply == "standard served this"
     assert not classifier.get_calls()
+
+
+async def test_a_scheduled_callback_wake_is_not_routed(
+    db_engine: AsyncEngine,
+    build_routed_service: RoutedServiceBuilder,
+    classifier: RuleBasedMockLLMClient,
+    tier_clients: dict[str, RuleBasedMockLLMClient],
+) -> None:
+    """Nobody wrote the reminder's trigger text; we did.
+
+    A wake the application composed is not a request for a classifier to
+    weigh, so it runs at the profile's configured tier -- the design's recorded
+    simplification, which has to keep holding on an Auto profile in active
+    mode. The wake says so with the flags it already carries to be persisted
+    correctly, not by remembering to hand down an envelope of its own.
+    """
+    service = build_routed_service("active")
+    conversation_id = f"routing-callback-wake-{uuid.uuid4()}"
+    payload: LlmCallbackPayload = {
+        "interface_type": "api",
+        "conversation_id": conversation_id,
+        "user_name": "tester",
+        "callback_context": "chase the quote that never came back",
+        "scheduling_timestamp": SystemClock().now().isoformat(),
+    }
+
+    await handle_llm_callback(
+        _worker_context(
+            db_engine,
+            service,
+            _delivering_chat_interface(),
+            conversation_id=conversation_id,
+        ),
+        payload,
+    )
+
+    assert not classifier.get_calls()
+    assert tier_clients["standard"].get_calls()
+    assert not tier_clients["deep"].get_calls()
+
+
+async def test_a_delegation_completion_wake_is_not_routed(
+    db_engine: AsyncEngine,
+    build_routed_service: RoutedServiceBuilder,
+    classifier: RuleBasedMockLLMClient,
+    tier_clients: dict[str, RuleBasedMockLLMClient],
+) -> None:
+    """The worker's other way into a turn, and the same answer.
+
+    The source profile is woken to say its delegation came back, on trigger
+    text this application composed. Routing it would grade our own prose --
+    and, in active mode, run the notice on a stronger model than the request
+    that started it.
+    """
+    source = build_routed_service("active")
+    conversation_id = f"routing-delegation-wake-{uuid.uuid4()}"
+    delegation_id = await _completed_prior_delegation(
+        db_engine,
+        conversation_id=conversation_id,
+        subconversation_id=str(uuid.uuid4()),
+        target_service_id="some_delegated_target",
+        source_profile_id=source.service_config.id,
+        handed_off=True,
+    )
+    chat_interface = _delivering_chat_interface()
+    worker = TaskWorker(
+        processing_service=source,
+        chat_interface=chat_interface,
+        calendar_config={},
+        timezone=ZoneInfo("UTC"),
+        embedding_generator=MagicMock(),
+        engine=db_engine,
+    )
+
+    await worker.handle_delegated_profile_run(
+        _worker_context(
+            db_engine, source, chat_interface, conversation_id=conversation_id
+        ),
+        DelegatedProfileRunPayload(
+            delegation_id=delegation_id,
+            interface_type="api",
+            conversation_id=conversation_id,
+            user_name="tester",
+        ),
+    )
+
+    assert not classifier.get_calls()
+    assert tier_clients["standard"].get_calls()
+    assert not tier_clients["deep"].get_calls()
 
 
 async def test_a_classifier_timeout_runs_the_turn_and_says_so(
@@ -946,6 +1091,103 @@ async def test_a_delegated_attachment_is_described_to_the_classifier(
     assert len(captured) == 1
     prompt = _prompt_text(captured[0])
     assert "quote-b.pdf" in prompt
+    assert "application/pdf" in prompt
+
+
+async def test_a_synchronously_delegated_attachment_is_described_too(
+    db_engine: AsyncEngine,
+    build_routed_service: RoutedServiceBuilder,
+    attachment_registry_fixture: AttachmentRegistry,
+) -> None:
+    """The same request, on the deployment that runs delegations inline.
+
+    Which side of the async flag a delegation lands on is an operator's
+    setting, and it cannot decide whether the target knows what it was sent:
+    the description comes from the reference the request carries, so both
+    paths get it from the same place. The file is the requester's own, as an
+    uploaded one is, so the delegated turn has to act for them to resolve it
+    at all.
+    """
+    captured: list[StructuredMatcherArgs] = []
+    target = build_routed_service(
+        "active", classifier_client=_capturing_classifier(captured)
+    )
+    conversation_id = f"routing-sync-delegated-attachment-{uuid.uuid4()}"
+    attachment = await attachment_registry_fixture.store_and_register_tool_attachment(
+        file_content=b"%PDF-1.4 quote",
+        filename="quote-c.pdf",
+        content_type="application/pdf",
+        tool_name="upload",
+        conversation_id=conversation_id,
+        owner_user_id=_DELEGATION_USER_ID,
+        db_context=Database(engine=db_engine),
+    )
+
+    await delegate_to_service_tool(
+        exec_context=_delegating_context(
+            db_engine,
+            target,
+            conversation_id=conversation_id,
+            attachment_registry=attachment_registry_fixture,
+            async_delegation_enabled=False,
+        ),
+        target_service_id=target.service_config.id,
+        user_request="analyze this",
+        attachment_ids=[attachment.attachment_id],
+    )
+
+    assert len(captured) == 1
+    prompt = _prompt_text(captured[0])
+    assert "quote-c.pdf" in prompt
+    assert "application/pdf" in prompt
+
+
+async def test_an_inbound_a2a_attachment_is_described_to_the_classifier(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+    install_service: RoutedServiceBuilder,
+) -> None:
+    """A peer agent's file arrives as a reference too, and reads the same way.
+
+    An inbound A2A message stores its inline files and hands the turn their
+    ids, so "analyze this" reaches the classifier saying nothing about what
+    "this" is unless the reference is resolved where every ingress meets.
+    """
+    captured: list[StructuredMatcherArgs] = []
+    install_service("active", classifier_client=_capturing_classifier(captured))
+    app_fixture.state.a2a_cancel_events = {}
+
+    response = await api_test_client.post(
+        "/api/a2a",
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "message/send",
+            "params": {
+                "message": {
+                    "role": "user",
+                    "messageId": str(uuid.uuid4()),
+                    "contextId": f"routing-a2a-attachment-{uuid.uuid4()}",
+                    "parts": [
+                        {"kind": "text", "text": "analyze this"},
+                        {
+                            "kind": "file",
+                            "file": {
+                                "bytes": base64.b64encode(b"%PDF-1.4 quote").decode(),
+                                "mimeType": "application/pdf",
+                                "name": "quote-d.pdf",
+                            },
+                        },
+                    ],
+                }
+            },
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert len(captured) == 1
+    prompt = _prompt_text(captured[0])
+    assert "quote-d.pdf" in prompt
     assert "application/pdf" in prompt
 
 
