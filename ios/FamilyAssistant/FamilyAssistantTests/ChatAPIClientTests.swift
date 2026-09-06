@@ -359,6 +359,115 @@ final class ChatAPIClientTests: XCTestCase {
 
         XCTAssertEqual(response.defaultProfileID, "default_assistant")
         XCTAssertEqual(response.profiles.first?.availableTools, ["notes"])
+        XCTAssertEqual(
+            response.profiles.first?.modelTiers,
+            [],
+            "A server that predates tier selection reports none, which reads as a pinned profile."
+        )
+        XCTAssertNil(response.profiles.first?.defaultModelTier)
+        XCTAssertEqual(response.profiles.first?.offersModelTierChoice, false)
+    }
+
+    func testProfilesDecodeSelectableModelTiers() async throws {
+        ChatMockBackendURLProtocol.respond { _ in
+            .json(
+                """
+                {
+                  "profiles": [
+                    {
+                      "id": "default_assistant",
+                      "description": "Default",
+                      "llm_model": null,
+                      "available_tools": [],
+                      "enabled_mcp_servers": [],
+                      "delegation_only": false,
+                      "model_tiers": [
+                        {"id": "standard", "label": "Standard", "description": "Everyday requests"},
+                        {"id": "deep", "label": "Deep", "description": null},
+                        {"id": "frontier", "label": "Max"}
+                      ],
+                      "default_model_tier": "standard"
+                    },
+                    {
+                      "id": "media_analyst",
+                      "description": "Pinned",
+                      "llm_model": "gemini-test",
+                      "available_tools": [],
+                      "enabled_mcp_servers": [],
+                      "delegation_only": true,
+                      "model_tiers": [],
+                      "default_model_tier": null
+                    }
+                  ],
+                  "default_profile_id": "default_assistant"
+                }
+                """
+            )
+        }
+
+        let profiles = try await makeClient().listProfiles().profiles
+
+        XCTAssertEqual(
+            profiles.first?.modelTiers.map(\.id),
+            ["standard", "deep", "frontier"],
+            "Tiers keep configuration order, which is the order the menu offers them in."
+        )
+        XCTAssertEqual(profiles.first?.modelTiers.map(\.label), ["Standard", "Deep", "Max"])
+        XCTAssertEqual(profiles.first?.modelTiers.first?.tierDescription, "Everyday requests")
+        XCTAssertNil(profiles.first?.modelTiers[1].tierDescription)
+        XCTAssertEqual(profiles.first?.defaultModelTier, "standard")
+        XCTAssertEqual(profiles.first?.offersModelTierChoice, true)
+        XCTAssertEqual(
+            profiles.last?.offersModelTierChoice,
+            false,
+            "A profile pinned to one model offers no intelligence control."
+        )
+    }
+
+    func testStartTurnOmitsModelTierWhenTheUserChoseNone() async throws {
+        var payloadKeys: Set<String> = []
+        ChatMockBackendURLProtocol.respond { request in
+            let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+            payloadKeys = Set(payload.keys)
+            return .json(
+                #"{"turn_id":"turn-default","conversation_id":"web_conv_tier","first_seq":0}"#
+            )
+        }
+
+        _ = try await makeClient().startTurn(
+            turnID: "turn-default",
+            prompt: "Hi",
+            conversationID: "web_conv_tier",
+            profileID: "default_assistant",
+            attachments: []
+        )
+
+        XCTAssertFalse(
+            payloadKeys.contains("model_tier"),
+            "No selection must leave the key off entirely so the backend applies its own default."
+        )
+    }
+
+    func testStartTurnSendsSelectedModelTier() async throws {
+        var sentTier: String?
+        ChatMockBackendURLProtocol.respond { request in
+            let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+            sentTier = payload["model_tier"] as? String
+            return .json(
+                #"{"turn_id":"turn-deep","conversation_id":"web_conv_tier","first_seq":0}"#
+            )
+        }
+
+        _ = try await makeClient().startTurn(
+            turnID: "turn-deep",
+            prompt: "Think hard",
+            conversationID: "web_conv_tier",
+            profileID: "default_assistant",
+            attachments: [],
+            modelTier: "deep"
+        )
+
+        XCTAssertEqual(sentTier, "deep")
     }
 
     func testStartTurnSendsWebPayloadAndSubscribeDecodesSSE() async throws {

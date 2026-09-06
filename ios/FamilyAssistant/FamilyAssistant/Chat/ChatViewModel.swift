@@ -14,7 +14,15 @@ final class ChatViewModel {
     // `showNewerMessages()` slide that fixed eager-render window through
     // history. See `visibleGroupedMessages`.
     var displayedMessageNewerOffset = 0
-    var profiles: [ChatProfile] = []
+    var profiles: [ChatProfile] = [] {
+        didSet { modelTierLabels = Self.modelTierLabels(from: profiles) }
+    }
+    /// Tier id to label across every loaded profile, for naming the tier recorded
+    /// on a past message whose profile is not the one now selected. An id with no
+    /// known label (a tier removed since the turn ran) still names what served
+    /// it. Derived from `profiles` at the one place they are assigned, so the
+    /// thread reads a dictionary rather than rebuilding one per bubble.
+    private(set) var modelTierLabels: [String: String] = [:]
     var defaultProfileID = "default_assistant"
     // The profile the active conversation runs under: it drives the picker label
     // and is sent on every turn. The backend partitions a conversation's history
@@ -22,14 +30,38 @@ final class ChatViewModel {
     // under a different profile than the thread was built in loads NONE of its
     // prior history. Opening an existing conversation therefore adopts that
     // conversation's profile rather than carrying over a stale global selection.
-    var selectedProfileID: String
+    var selectedProfileID: String {
+        didSet { clearModelTierChoiceIfScopeChanged(oldValue != selectedProfileID) }
+    }
     // The profile to use for NEW conversations, persisted across launches. Set
     // when the user picks from the profile picker (which starts a new chat). Kept
     // separate from `selectedProfileID` so viewing an existing conversation in a
     // different profile doesn't overwrite the user's preferred profile for new
     // chats.
     @ObservationIgnored private var preferredProfileID: String
-    var conversationID: String?
+    /// The user's intelligence (model tier) selection for the next message.
+    ///
+    /// Nil — the usual state — means the profile's own default tier, and is the
+    /// only state in which a send omits `model_tier` entirely. A choice is
+    /// one-shot: the send that carries it clears it, unless it is pinned, in
+    /// which case it holds for the rest of this conversation.
+    ///
+    /// It is scoped to the conversation and profile it was made in — the
+    /// `didSet` observers on `conversationID` and `selectedProfileID` clear it,
+    /// so no path can carry a spend decision into a conversation or an agent the
+    /// user did not make it for — and is never persisted across launches:
+    /// spending more on a request is a decision about that request, not a
+    /// setting.
+    private(set) var modelTierChoice: ModelTierChoice?
+
+    struct ModelTierChoice: Equatable {
+        let tierID: String
+        /// Whether the choice holds for the conversation rather than one message.
+        let pinned: Bool
+    }
+    var conversationID: String? {
+        didSet { clearModelTierChoiceIfScopeChanged(oldValue != conversationID) }
+    }
     var conversationSelection: String?
     /// The conversation whose persisted messages are currently rendered. This is
     /// intentionally separate from `conversationID`: during a switch the old
@@ -1012,6 +1044,83 @@ final class ChatViewModel {
         startNewConversation(preservingDraft: true)
     }
 
+    /// The profile the active conversation runs under, when the profile list has
+    /// loaded and still describes it.
+    private var selectedProfile: ChatProfile? {
+        profiles.first { $0.id == selectedProfileID }
+    }
+
+    /// The intelligence levels the active profile lets the user choose between,
+    /// in configuration order. Empty for a profile pinned to one model, and while
+    /// the profile list is still loading.
+    var availableModelTiers: [ChatModelTier] {
+        selectedProfile?.modelTiers ?? []
+    }
+
+    /// The tier the active profile runs at when a request names none.
+    var defaultModelTierID: String? {
+        selectedProfile?.defaultModelTier
+    }
+
+    /// Whether the active profile gives the user a decision to make. One tier is
+    /// not a choice, so the intelligence control is hidden rather than dead.
+    var offersModelTierChoice: Bool {
+        selectedProfile?.offersModelTierChoice ?? false
+    }
+
+    private nonisolated static func modelTierLabels(
+        from profiles: [ChatProfile]
+    ) -> [String: String] {
+        var labels: [String: String] = [:]
+        for profile in profiles {
+            for tier in profile.modelTiers where labels[tier.id] == nil {
+                labels[tier.id] = tier.label
+            }
+        }
+        return labels
+    }
+
+    /// Record the user's intelligence selection for the next message.
+    ///
+    /// Choosing the profile's default is choosing nothing: there is no selection
+    /// to send and nothing to pin, so it clears the choice rather than storing a
+    /// selection that happens to name the default. A tier the active profile does
+    /// not offer clears it too — the menu cannot produce one, but a profile whose
+    /// tiers narrowed under a held selection must not keep sending it.
+    func selectModelTier(_ tierID: String?, pinned: Bool) {
+        guard let tierID,
+              tierID != defaultModelTierID,
+              availableModelTiers.contains(where: { $0.id == tierID })
+        else {
+            modelTierChoice = nil
+            return
+        }
+        modelTierChoice = ModelTierChoice(tierID: tierID, pinned: pinned)
+    }
+
+    /// Drop the selection when the conversation or profile it was made in changes.
+    private func clearModelTierChoiceIfScopeChanged(_ scopeChanged: Bool) {
+        guard scopeChanged else {
+            return
+        }
+        modelTierChoice = nil
+    }
+
+    /// Take the tier this send runs at, spending an unpinned choice.
+    ///
+    /// Called once the turn is being built, so a submission rejected before that
+    /// point (an empty draft, an attachment still uploading) does not silently
+    /// consume the user's selection.
+    private func consumeModelTierForSend() -> String? {
+        guard let choice = modelTierChoice else {
+            return nil
+        }
+        if !choice.pinned {
+            modelTierChoice = nil
+        }
+        return choice.tierID
+    }
+
     /// True for a conversation that exists only on this client and holds no turns:
     /// a launch draft or one from `startNewConversation`, before its first send.
     ///
@@ -1640,6 +1749,10 @@ final class ChatViewModel {
         cancelStream()
 
         let turnID = UUID().uuidString
+        // Past every early return: this send is happening, so an unpinned
+        // intelligence selection is spent here and the control returns to the
+        // profile default rather than quietly repricing the rest of the thread.
+        let modelTier = consumeModelTierForSend()
         let uploadedAttachments = draftAttachments.filter { $0.uploadState == .uploaded }
         let userMessage = ChatMessage(
             id: "local_user_\(UUID().uuidString)",
@@ -1702,6 +1815,7 @@ final class ChatViewModel {
             prompt: prompt,
             attachments: uploadedAttachments,
             profileID: selectedProfileID,
+            modelTier: modelTier,
             previousSummary: previousSummary,
             streamToken: streamToken
         )
@@ -1778,6 +1892,7 @@ final class ChatViewModel {
         conversationID: String,
         profileID: String?,
         attachments: [ChatAttachment],
+        modelTier: String?,
         ownerEpoch: Int
     ) async throws -> ChatTurnStart {
         do {
@@ -1786,7 +1901,8 @@ final class ChatViewModel {
                 prompt: prompt,
                 conversationID: conversationID,
                 profileID: profileID,
-                attachments: attachments
+                attachments: attachments,
+                modelTier: modelTier
             )
         } catch let ChatAPIError.server(statusCode, _, _) where statusCode == 401 || statusCode == 403 {
             // First attempt got a 401/403. Try one forced refresh; if it succeeds,
@@ -1824,7 +1940,8 @@ final class ChatViewModel {
                 prompt: prompt,
                 conversationID: conversationID,
                 profileID: profileID,
-                attachments: attachments
+                attachments: attachments,
+                modelTier: modelTier
             )
         }
     }
@@ -1870,6 +1987,7 @@ final class ChatViewModel {
                 conversationID: id,
                 profileID: session.profileID,
                 attachments: attachments,
+                modelTier: session.modelTier,
                 ownerEpoch: startEpoch
             )
             startSucceeded = true
@@ -3761,6 +3879,9 @@ final class ChatViewModel {
         let prompt: String
         let attachments: [ChatAttachment]
         let profileID: String
+        /// The intelligence level the failed turn was sent at, so a retry
+        /// reissues what the user asked for rather than the current selection.
+        let modelTier: String?
         let previousSummary: ChatConversationSummary?
         /// Whether `POST /turns` was accepted before the failure. `false` ⇒ the
         /// prompt was never persisted, so retry re-POSTs the same turn id;
@@ -4501,6 +4622,7 @@ final class ChatViewModel {
             prompt: session.prompt,
             attachments: session.attachments,
             profileID: session.profileID,
+            modelTier: session.modelTier,
             previousSummary: session.previousSummary,
             postAccepted: postAccepted,
             lastAppliedSeq: lastAppliedSeq
@@ -4534,6 +4656,7 @@ final class ChatViewModel {
                 prompt: session.prompt,
                 attachments: session.attachments,
                 profileID: session.profileID,
+                modelTier: session.modelTier,
                 previousSummary: session.previousSummary,
                 postAccepted: true,
                 lastAppliedSeq: session.lastAppliedSeq
@@ -4594,6 +4717,7 @@ final class ChatViewModel {
             prompt: failed.prompt,
             attachments: failed.attachments,
             profileID: failed.profileID,
+            modelTier: failed.modelTier,
             previousSummary: failed.previousSummary,
             streamToken: streamToken,
             lastAppliedSeq: failed.lastAppliedSeq
@@ -4852,7 +4976,9 @@ final class ChatViewModel {
                 status: backend.errorTraceback == nil ? .complete : .failed,
                 processingProfileID: backend.processingProfileID,
                 errorTraceback: backend.errorTraceback,
-                turnID: backend.turnID
+                turnID: backend.turnID,
+                modelTier: backend.reasoningInfo?.modelTier,
+                modelTierSource: backend.reasoningInfo?.modelTierSource
             )
         }
         return rendered

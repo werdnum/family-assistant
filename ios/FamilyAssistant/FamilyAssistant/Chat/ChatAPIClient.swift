@@ -255,6 +255,11 @@ struct ChatAPIClient {
 
     /// Start a chat turn. First step of the two-step resumable-streaming flow.
     ///
+    /// `modelTier` carries the user's intelligence selection when they made one.
+    /// Nil — the usual case — omits the key entirely, so the backend applies the
+    /// profile's own default rather than being told what it already is. A tier
+    /// the profile does not permit is a 400 whose detail names the eligible ones.
+    ///
     /// POSTs `/api/v1/chat/turns` (idempotent on `turnID`: a retried POST returns
     /// the existing turn instead of starting a second producer, so a
     /// network-timed-out send is safe to retry). The returned ``ChatTurnStart``
@@ -266,7 +271,8 @@ struct ChatAPIClient {
         prompt: String,
         conversationID: String,
         profileID: String?,
-        attachments: [ChatAttachment]
+        attachments: [ChatAttachment],
+        modelTier: String? = nil
     ) async throws -> ChatTurnStart {
         var startRequest = try await authManager.authorizedRequest(
             url: apiURL("/api/v1/chat/turns"),
@@ -280,7 +286,8 @@ struct ChatAPIClient {
                 conversationID: conversationID,
                 profileID: profileID,
                 interfaceType: ChatConstants.interfaceType,
-                attachments: attachments.map(ChatStreamAttachment.init(attachment:))
+                attachments: attachments.map(ChatStreamAttachment.init(attachment:)),
+                modelTier: modelTier
             )
         )
         let (startData, startResponse) = try await urlSession.dataExpectingJSON(for: startRequest, authWallError: ChatAPIError.authWall)
@@ -1051,6 +1058,9 @@ private struct ChatStreamRequest: Encodable {
     let profileID: String?
     let interfaceType: String
     let attachments: [ChatStreamAttachment]?
+    /// Omitted from the body when nil (`encodeIfPresent`), which is what tells
+    /// the backend to apply the profile's default tier.
+    let modelTier: String?
 
     enum CodingKeys: String, CodingKey {
         case turnID = "turn_id"
@@ -1059,6 +1069,7 @@ private struct ChatStreamRequest: Encodable {
         case profileID = "profile_id"
         case interfaceType = "interface_type"
         case attachments
+        case modelTier = "model_tier"
     }
 }
 

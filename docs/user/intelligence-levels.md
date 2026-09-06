@@ -26,8 +26,9 @@ why the request is hard: it turns on the answer being *right* rather than merely
 
 ## Choosing a level
 
-**In the web app**, there is a control beside the assistant picker. Pick a level and send your
-message.
+**In the web app and the iOS app**, there is a control beside the assistant picker. Pick a level and
+send your message. On iOS it is the gauge button in the Chat toolbar, which shows the level you
+picked once you have picked one.
 
 **In Telegram**, put a command at the start of the message:
 
@@ -44,9 +45,9 @@ An intelligence level is **one-shot**: it applies to the message you send it wit
 message goes back to the assistant's usual level. That is deliberate — a hard question in the middle
 of an ordinary conversation is a property of that question, not of the conversation.
 
-The web app also lets you pin a level for the current conversation, when you know the whole
-conversation is going to be hard. The pin is visible while it is on, and clears when you start a new
-chat or switch assistants.
+The web app and the iOS app also let you pin a level for the current conversation, when you know the
+whole conversation is going to be hard. The pin is visible while it is on, and clears when you start
+a new chat, open a different conversation, or switch assistants.
 
 Choosing a level never starts a new conversation and never loses your history. The assistant you
 were talking to is still the same assistant, with the same tools and the same access; only how hard
@@ -72,9 +73,10 @@ there is refused with an explanation rather than silently ignored.
 
 ## Seeing what a reply ran at
 
-Message details show the level a reply was produced at, what was asked for, and the model that
-actually served it. If you are wondering whether a disappointing answer was worth re-asking at a
-higher level, that is where to look first.
+In the web app and the iOS app, a reply carries the level it ran at beside the name of the assistant
+that produced it. Web message details add what was asked for and the model that actually served it.
+If you are wondering whether a disappointing answer was worth re-asking at a higher level, that is
+where to look first.
 
 ## Related
 
