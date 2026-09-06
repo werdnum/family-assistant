@@ -18,6 +18,9 @@ from family_assistant.config_models import ToolCallReviewConfig, ToolsConfig
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.llm.messages import UserMessage
+from family_assistant.llm.model_selection import (
+    ModelTierEligibility,
+)
 from family_assistant.processing.types import (
     ChatInteractionResult,
     ChatInteractionStatus,
@@ -212,6 +215,8 @@ class RecordingDelegationTarget:
         self.service_config = SimpleNamespace(
             id="target-profile",
             allowed_delegation_sources=None,
+            # Pinned to one model, so it admits no tier selection.
+            tier_eligibility=ModelTierEligibility(),
         )
 
     async def handle_chat_interaction(self, **_kwargs: object) -> ChatInteractionResult:
@@ -518,6 +523,9 @@ def _processing_service(
         credential_resolvers=credential_resolvers,
         api_backend=api_backend,
         processing_services_registry=None,
+        # The client a tool that calls a model would use. Nothing here does,
+        # but the worker reads it when it builds an execution context.
+        llm_client=None,
     )
     return cast("ProcessingService", service)
 

@@ -13,6 +13,7 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
+from family_assistant.llm.model_selection import ResolvedModelSelection
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.processing.types import MidTurnUserInput
 from family_assistant.security.taint import (
@@ -142,6 +143,8 @@ async def test_mid_turn_input_is_injected_after_tool_result(
         user_name="TestUser",
         turn_id="turn-1",
         chat_interface=None,
+        llm_client=llm_client,
+        model_selection=ResolvedModelSelection.unselected(None),
         mid_turn_input_provider=MidTurnProvider([
             MidTurnUserInput(
                 content=steer_text,

@@ -21,7 +21,7 @@ import {
   StickyNoteIcon,
   SquareIcon,
 } from 'lucide-react';
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import {
   ComposerAddAttachment,
   ComposerAttachments,
@@ -36,31 +36,10 @@ import { useChatControls } from './chatControls';
 import { LOADING_MARKER } from './constants';
 import { DynamicToolUI } from './DynamicToolUI';
 import { MarkdownText } from './MarkdownText';
+import { useProfiles } from './profilesContext';
 import { ToolGroup } from './ToolGroup';
 import { TooltipIconButton } from './TooltipIconButton';
-
-// API endpoints
-const PROFILES_API_ENDPOINT = '/api/v1/profiles';
-
-// Profile context for mapping profile IDs to descriptions
-interface Profile {
-  id: string;
-  description: string;
-}
-
-interface ProfilesContextType {
-  profiles: Record<string, Profile>;
-  isLoading: boolean;
-  error: string | null;
-}
-
-const ProfilesContext = createContext<ProfilesContextType>({
-  profiles: {},
-  isLoading: true,
-  error: null,
-});
-
-const useProfiles = () => useContext(ProfilesContext);
+import type { MessageReasoningInfo } from './types';
 
 const messageContentComponents = {
   Text: MarkdownText,
@@ -72,55 +51,8 @@ const messageContentComponents = {
   },
 };
 
-// ProfilesProvider component to fetch and provide profiles data
-const ProfilesProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [profiles, setProfiles] = useState<Record<string, Profile>>({});
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const fetchProfiles = async () => {
-      try {
-        const response = await fetch(PROFILES_API_ENDPOINT);
-        if (response.ok) {
-          const data = await response.json();
-          const profilesMap: Record<string, Profile> = {};
-          data.profiles.forEach((profile: { id: string; description?: string }) => {
-            profilesMap[profile.id] = {
-              id: profile.id,
-              description: profile.description || profile.id,
-            };
-          });
-          setProfiles(profilesMap);
-          setError(null);
-        } else {
-          setError(`Failed to fetch profiles: ${response.status}`);
-        }
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        setError(`Error fetching profiles: ${errorMessage}`);
-        console.error('Error fetching profiles:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchProfiles();
-  }, []);
-
-  return (
-    <ProfilesContext.Provider value={{ profiles, isLoading, error }}>
-      {children}
-    </ProfilesContext.Provider>
-  );
-};
-
 export const Thread: React.FC = () => {
-  return (
-    <ProfilesProvider>
-      <ThreadContent />
-    </ProfilesProvider>
-  );
+  return <ThreadContent />;
 };
 
 const ThreadContent: React.FC = () => {
@@ -483,7 +415,7 @@ export function hasCopyableAssistantContent(content: unknown): boolean {
 
 const AssistantMessage: React.FC = () => {
   const message = useMessage();
-  const { profiles, error } = useProfiles();
+  const { profilesById, tierLabels, error } = useProfiles();
 
   // Check if message is loading by checking for our special marker
   // The assistant-ui library might not pass through our custom isLoading property
@@ -492,9 +424,19 @@ const AssistantMessage: React.FC = () => {
     message.content.length > 0 &&
     message.content[0]?.text === LOADING_MARKER;
 
-  // Get profile info for this message
-  const profileId = (message as { processing_profile_id?: string })?.processing_profile_id;
-  const profile = profileId ? profiles[profileId] : null;
+  // Which profile answered and what served the turn. assistant-ui reconstructs
+  // each message from the fields it knows, so ours arrive in metadata.custom.
+  const custom = (message?.metadata?.custom ?? {}) as {
+    processing_profile_id?: string;
+    reasoning_info?: MessageReasoningInfo;
+  };
+  const profileId = custom.processing_profile_id;
+  const profile = profileId ? profilesById[profileId] : null;
+  const reasoningInfo = custom.reasoning_info;
+  const tierId = reasoningInfo?.model_tier;
+  // The label comes from the configured tiers; an id with no configured label
+  // (a tier removed since the turn ran) still names what served the turn.
+  const tierLabel = tierId ? (tierLabels[tierId] ?? tierId) : null;
   const hasCopyableContent = hasCopyableAssistantContent(message?.content);
 
   return (
@@ -535,6 +477,21 @@ const AssistantMessage: React.FC = () => {
                 title={`Profile unavailable: ${error}`}
               >
                 Profile Error
+              </Badge>
+            )}
+            {tierLabel && (
+              <Badge
+                variant="secondary"
+                className="text-[10px] px-1.5 py-0 mb-1 ml-1 font-normal"
+                data-testid="model-tier-badge"
+                title={
+                  reasoningInfo?.model ? `${tierLabel} · ${reasoningInfo.model}` : `${tierLabel}`
+                }
+              >
+                {tierLabel}
+                {reasoningInfo?.model_tier_source === 'user' && (
+                  <span className="ml-1 opacity-60">chosen</span>
+                )}
               </Badge>
             )}
             <div className="relative">

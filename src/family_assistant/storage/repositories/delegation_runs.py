@@ -46,6 +46,7 @@ class DelegationRunCreate(TypedDict, total=False):
     request_text: Required[str]
     content_parts_json: Required[list[ContentPartDict]]
     taint_state_json: TaintMetadata | None
+    model_selection_json: dict[str, str | None] | None
     user_id: str | None
     user_name: str | None
     source_turn_id: str | None
@@ -71,6 +72,11 @@ class DelegationRunDict(TypedDict):
     request_text: str
     content_parts_json: list[ContentPartDict]
     taint_state_json: TaintMetadata | None
+    # Whatever the column decoded to, uninterpreted:
+    # `ResolvedModelSelection.from_json` is what decides whether it is an
+    # envelope, and it raises when it is not. Narrowing it here would let a
+    # malformed one read as "no selection" and run at the default tier.
+    model_selection_json: object | None
     handed_off_at: datetime | None
     started_at: datetime | None
     completed_at: datetime | None
@@ -606,6 +612,7 @@ class DelegationRunsRepository(BaseRepository):
             request_text=row["request_text"],
             content_parts_json=self._json_list(row["content_parts_json"]),
             taint_state_json=self._json_mapping(row.get("taint_state_json")),
+            model_selection_json=self._json_value(row.get("model_selection_json")),
             handed_off_at=row.get("handed_off_at"),
             started_at=row.get("started_at"),
             completed_at=row.get("completed_at"),
@@ -648,6 +655,19 @@ class DelegationRunsRepository(BaseRepository):
         if isinstance(value, str):
             value = json.loads(value)
         return cast("TaintMetadata", value) if isinstance(value, dict) else None
+
+    @staticmethod
+    def _json_value(value: Any) -> object | None:  # noqa: ANN401
+        """Decode a JSON column and stop there.
+
+        Deliberately shapes nothing: a payload coerced into the type a caller
+        expects is a malformed payload that has become a plausible one, and the
+        caller then acts on it. Whoever knows what the column means validates
+        it -- and raises.
+        """
+        if isinstance(value, str):
+            return json.loads(value)
+        return value
 
     @staticmethod
     def _json_str_list(value: Any) -> list[str] | None:  # noqa: ANN401

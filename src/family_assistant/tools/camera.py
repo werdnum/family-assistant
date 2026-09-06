@@ -952,20 +952,20 @@ async def scan_camera_frames_tool(
             }
         )
 
-    # Check for LLM client (needed for per-frame analysis)
-    if not exec_context.processing_service:
-        return ToolResult(
-            data={"error": "Processing service not available for frame analysis."}
-        )
-
-    # Create LLM client - use custom model if specified, otherwise use profile's model
+    # A named model overrides; otherwise this runs on the client the turn is
+    # bound to, so the frame analysis is spent at the tier the turn resolved to
+    # rather than at the profile's default one.
     if model:
         from family_assistant.llm import LLMClientFactory  # noqa: PLC0415
 
         llm_client = LLMClientFactory.create_client({"model": model})
         logger.info(f"Using custom model for frame analysis: {model}")
+    elif exec_context.llm_client is not None:
+        llm_client = exec_context.llm_client
     else:
-        llm_client = exec_context.processing_service.llm_client
+        return ToolResult(
+            data={"error": "No LLM client is available for frame analysis."}
+        )
 
     # Parse time range
     try:

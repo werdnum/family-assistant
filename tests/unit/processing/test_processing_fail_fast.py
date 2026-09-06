@@ -30,6 +30,12 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
+from family_assistant.llm.model_selection import (
+    ModelTierClientMissing,
+    ModelTierEligibility,
+    ModelTierOption,
+    ResolvedModelSelection,
+)
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.processing.attachments import (
     AttachmentProcessor,
@@ -102,6 +108,34 @@ def _make_service(
         server_url="http://testserver",
         app_config=AppConfig(),
     )
+
+
+@pytest.mark.asyncio
+async def test_a_tier_with_no_client_built_is_an_internal_error_not_a_refusal(
+    db_engine: AsyncEngine,
+) -> None:
+    """A deployment that admits more tiers than it built is a defect, not a no.
+
+    The gate already admitted this tier, so telling the requester to choose
+    differently would blame them for something only an operator can fix -- and
+    the web layer would render it as a 400 rather than the 500 it is.
+    """
+    service = _make_service()
+    service.service_config.tier_eligibility = ModelTierEligibility(
+        default_tier="standard",
+        selectable=(ModelTierOption(id="standard", label="Standard"),),
+        auto=frozenset({"standard"}),
+    )
+
+    with pytest.raises(ModelTierClientMissing, match="standard"):
+        await service.handle_chat_interaction(
+            db_context=Database(db_engine),
+            interface_type="web",
+            conversation_id="conversation-missing-tier-client",
+            trigger_content_parts=[{"type": "text", "text": "Hello"}],
+            trigger_interface_message_id=None,
+            user_name="Test User",
+        )
 
 
 @pytest.mark.asyncio
@@ -638,11 +672,33 @@ def _registry_with_profiles() -> Any:  # noqa: ANN401 - test stub registry
         {
             "browser_profile": SimpleNamespace(
                 service_config=SimpleNamespace(
-                    id="browser_profile", description="Drives a web browser."
+                    id="browser_profile",
+                    description="Drives a web browser.",
+                    tier_eligibility=ModelTierEligibility(),
+                )
+            ),
+            "tiered_profile": SimpleNamespace(
+                service_config=SimpleNamespace(
+                    id="tiered_profile",
+                    description="Thinks hard.",
+                    tier_eligibility=ModelTierEligibility(
+                        default_tier="standard",
+                        selectable=(
+                            ModelTierOption(id="standard", label="Standard"),
+                            ModelTierOption(
+                                id="deep", label="Deep", description="Hard problems."
+                            ),
+                        ),
+                        auto=frozenset({"standard", "deep"}),
+                    ),
                 )
             ),
             "bare_profile": SimpleNamespace(
-                service_config=SimpleNamespace(id="bare_profile", description="")
+                service_config=SimpleNamespace(
+                    id="bare_profile",
+                    description="",
+                    tier_eligibility=ModelTierEligibility(),
+                )
             ),
         },
     )
@@ -664,6 +720,20 @@ def test_render_available_service_profiles_lists_registry_profiles() -> None:
 
     assert "- ID: browser_profile, Description: Drives a web browser." in rendered
     assert "- ID: bare_profile, Description: No description available." in rendered
+
+
+@pytest.mark.no_db
+def test_the_catalog_advertises_only_tiers_a_delegation_may_actually_ask_for() -> None:
+    """A tier the target would refuse from another profile is not a suggestion."""
+    service = _make_service()
+    service.processing_services_registry = _registry_with_profiles()
+
+    rendered = service.render_available_service_profiles()
+
+    assert "- deep (Deep): Hard problems." in rendered
+    # The target's own default needs no naming, and a pinned profile has none.
+    assert "standard" not in rendered
+    assert "model_tier" not in rendered.split("tiered_profile")[0]
 
 
 @pytest.mark.no_db
@@ -693,7 +763,6 @@ async def test_delegation_catalog_addition_lists_profiles_when_advertised() -> N
 async def test_process_content_parts_missing_attachment_id_raises() -> None:
     processor = AttachmentProcessor(
         attachment_registry=AsyncMock(),
-        llm_client=MagicMock(),
         app_config=AppConfig(),
         clock=SystemClock(),
     )
@@ -704,6 +773,7 @@ async def test_process_content_parts_missing_attachment_id_raises() -> None:
             conversation_id="conv",
             content_parts=cast("list[ContentPartDict]", [{"type": "attachment"}]),
             acting_user_id=None,
+            llm_client=MagicMock(),
         )
 
 
@@ -714,7 +784,6 @@ async def test_process_content_parts_missing_attachment_metadata_raises() -> Non
     mock_registry.get_attachment.return_value = None
     processor = AttachmentProcessor(
         attachment_registry=mock_registry,
-        llm_client=MagicMock(),
         app_config=AppConfig(),
         clock=SystemClock(),
     )
@@ -728,6 +797,7 @@ async def test_process_content_parts_missing_attachment_metadata_raises() -> Non
                 [{"type": "attachment", "attachment_id": "att-1"}],
             ),
             acting_user_id=None,
+            llm_client=MagicMock(),
         )
 
 
@@ -739,7 +809,6 @@ async def test_process_content_parts_missing_attachment_content_raises() -> None
     mock_registry.get_attachment_content.return_value = None
     processor = AttachmentProcessor(
         attachment_registry=mock_registry,
-        llm_client=MagicMock(),
         app_config=AppConfig(),
         clock=SystemClock(),
     )
@@ -753,6 +822,7 @@ async def test_process_content_parts_missing_attachment_content_raises() -> None
                 [{"type": "attachment", "attachment_id": "att-1"}],
             ),
             acting_user_id=None,
+            llm_client=MagicMock(),
         )
 
 
@@ -762,7 +832,6 @@ async def test_convert_urls_to_data_uris_invalid_internal_url_raises() -> None:
     mock_registry = MagicMock()
     processor = AttachmentProcessor(
         attachment_registry=mock_registry,
-        llm_client=MagicMock(),
         app_config=AppConfig(),
         clock=SystemClock(),
     )
@@ -789,7 +858,6 @@ async def test_convert_urls_to_data_uris_missing_file_raises() -> None:
     )
     processor = AttachmentProcessor(
         attachment_registry=mock_registry,
-        llm_client=MagicMock(),
         app_config=AppConfig(),
         clock=SystemClock(),
     )
@@ -818,7 +886,6 @@ async def test_extract_conversation_context_propagates_registry_failures() -> No
     )
     processor = AttachmentProcessor(
         attachment_registry=mock_registry,
-        llm_client=MagicMock(),
         app_config=AppConfig(),
         clock=SystemClock(),
     )
@@ -863,8 +930,7 @@ async def test_stream_done_attachment_metadata_lookup_propagates_failures() -> N
             yield LLMStreamEvent(type="content", content="final answer")
             yield LLMStreamEvent(type="done", metadata={})
 
-    service = _make_service()
-    service.llm_client = cast("Any", TwoStepToolThenContentLLM())
+    service = _make_service(llm_client=cast("Any", TwoStepToolThenContentLLM()))
     service.tool_executor.execute = AsyncMock(  # type: ignore[method-assign]
         return_value=ToolExecutionResult(
             stream_event=LLMStreamEvent(
@@ -899,6 +965,8 @@ async def test_stream_done_attachment_metadata_lookup_propagates_failures() -> N
             user_name="tester",
             turn_id="turn",
             chat_interface=None,
+            llm_client=service.llm_client,
+            model_selection=ResolvedModelSelection.unselected(None),
             processing_service=service,
         ):
             pass
@@ -936,8 +1004,7 @@ async def test_denial_escalation_ends_after_complete_tool_result_batch_without_m
             yield LLMStreamEvent(type="done", metadata={})
 
     llm_client = ModelCallMustNotRepeat()
-    service = _make_service()
-    service.llm_client = cast("Any", llm_client)
+    service = _make_service(llm_client=cast("Any", llm_client))
 
     async def execute_with_terminal_escalation(
         tool_call: ToolCallItem,
@@ -978,6 +1045,8 @@ async def test_denial_escalation_ends_after_complete_tool_result_batch_without_m
         user_name="tester",
         turn_id="turn",
         chat_interface=None,
+        llm_client=service.llm_client,
+        model_selection=ResolvedModelSelection.unselected(None),
         processing_service=service,
     ):
         emitted.append((event, message))
@@ -1046,10 +1115,9 @@ async def test_stream_attachment_selection_failure_uses_capped_auto_queue() -> N
             yield LLMStreamEvent(type="content", content="final answer")
             yield LLMStreamEvent(type="done", metadata={})
 
-    service = _make_service()
+    service = _make_service(llm_client=cast("Any", TwoStepToolThenContentLLM()))
     service.app_config.attachment_selection_threshold = 0
     service.app_config.max_response_attachments = 1
-    service.llm_client = cast("Any", TwoStepToolThenContentLLM())
     service.tool_executor.execute = AsyncMock(  # type: ignore[method-assign]
         side_effect=[
             ToolExecutionResult(
@@ -1098,6 +1166,8 @@ async def test_stream_attachment_selection_failure_uses_capped_auto_queue() -> N
         user_name="tester",
         turn_id="turn",
         chat_interface=None,
+        llm_client=service.llm_client,
+        model_selection=ResolvedModelSelection.unselected(None),
         processing_service=service,
     ):
         if event.type == "done":

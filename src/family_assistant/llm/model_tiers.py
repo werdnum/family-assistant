@@ -137,21 +137,28 @@ def validate_profile_model_tier(
     model instead. Raises ``ValueError`` naming the profile otherwise: an
     unknown tier, a tier on a profile whose runtime is coupled to one provider
     or one API surface, or an eligibility list that does not describe reachable
-    tiers.
+    tiers. Runtime compatibility is judged over every tier the profile may be
+    run on, not just its default, because each of those gets a client built for
+    it and can serve a turn.
     """
     profile_id = profile_conf.id
     processing_config = profile_conf.processing_config
     tier_name = processing_config.model_tier
     allowed = profile_conf.allowed_model_tiers
+    auto = profile_conf.auto_model_tiers
 
     if tier_name is None:
-        if allowed is not None:
-            msg = (
-                f"Profile '{profile_id}' sets allowed_model_tiers without a "
-                "model_tier. A profile that names an inline model runs on that "
-                "model only; selection needs a default tier to fall back to."
-            )
-            raise ValueError(msg)
+        for field, value in (
+            ("allowed_model_tiers", allowed),
+            ("auto_model_tiers", auto),
+        ):
+            if value is not None:
+                msg = (
+                    f"Profile '{profile_id}' sets {field} without a model_tier. "
+                    "A profile that names an inline model runs on that model "
+                    "only; selection needs a default tier to fall back to."
+                )
+                raise ValueError(msg)
         return None
 
     tier = model_tiers.get(tier_name)
@@ -165,20 +172,48 @@ def validate_profile_model_tier(
 
     _reject_tier_on_pinned_runtime(profile_conf, tier_name, tier)
 
-    if allowed is not None:
-        unknown = sorted(set(allowed) - set(model_tiers))
+    for field, value in (("allowed_model_tiers", allowed), ("auto_model_tiers", auto)):
+        if value is None:
+            continue
+        unknown = sorted(set(value) - set(model_tiers))
         if unknown:
             known = ", ".join(sorted(model_tiers)) or "(none configured)"
             msg = (
-                f"Profile '{profile_id}' allows unknown model tier(s): "
+                f"Profile '{profile_id}' lists unknown model tier(s) in {field}: "
                 f"{', '.join(unknown)}. Configured tiers: {known}."
             )
             raise ValueError(msg)
-        if tier_name not in allowed:
+
+    # Every tier the profile may be run on gets a client built for it, so a
+    # runtime the tier system cannot serve is the same defect wherever it is
+    # named -- checking only the default would let an alternate reach a
+    # server-side agent runtime that silently drops the profile's tools and
+    # history.
+    for selectable in sorted({*(allowed or ()), *(auto or ())} - {tier_name}):
+        _reject_interactions_agent_tier(profile_id, selectable, model_tiers[selectable])
+
+    if allowed is not None and tier_name not in allowed:
+        msg = (
+            f"Profile '{profile_id}' has model_tier '{tier_name}', which is "
+            f"not in its allowed_model_tiers ({', '.join(allowed)}). The "
+            "default tier must itself be selectable."
+        )
+        raise ValueError(msg)
+
+    if auto is not None:
+        # A tier a model may pick on its own but a user may not explicitly ask
+        # for describes no coherent policy: automatic selection is the weaker
+        # authority of the two, so it cannot reach further. Absent
+        # allowed_model_tiers means the profile runs on its default tier alone.
+        selectable = allowed if allowed is not None else [tier_name]
+        beyond_allowed = sorted(set(auto) - set(selectable))
+        if beyond_allowed:
             msg = (
-                f"Profile '{profile_id}' has model_tier '{tier_name}', which is "
-                f"not in its allowed_model_tiers ({', '.join(allowed)}). The "
-                "default tier must itself be selectable."
+                f"Profile '{profile_id}' has auto_model_tiers "
+                f"({', '.join(auto)}) reaching tier(s) outside what it may be "
+                f"explicitly run on ({', '.join(selectable)}): "
+                f"{', '.join(beyond_allowed)}. Automatic selection cannot reach "
+                "a tier explicit selection may not."
             )
             raise ValueError(msg)
 
@@ -207,11 +242,20 @@ def _reject_tier_on_pinned_runtime(
             "Google GenAI client."
         )
         raise ValueError(msg)
+    _reject_interactions_agent_tier(profile_id, tier_name, tier)
+
+
+def _reject_interactions_agent_tier(
+    profile_id: str,
+    tier_name: str,
+    tier: ModelTierConfig,
+) -> None:
+    """Refuse a tier whose chain names a model that is not a chat model."""
     agent_models = models_in_chain(tier.chain, is_interactions_agent_model)
     if agent_models:
         msg = (
-            f"Profile '{profile_id}' uses model_tier '{tier_name}', whose chain "
-            f"names Interactions API agent model(s): {', '.join(agent_models)}. "
+            f"Profile '{profile_id}' can run on model_tier '{tier_name}', whose "
+            f"chain names Interactions API agent model(s): {', '.join(agent_models)}. "
             "Those run server-side rather than as chat models, so they are "
             "configured inline on a profile, not as an interchangeable tier."
         )

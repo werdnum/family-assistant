@@ -100,7 +100,6 @@ def make_tool_executor(
     # far below the large-result threshold, so it is a pass-through.
     attachment_processor = AttachmentProcessor(
         attachment_registry=None,
-        llm_client=Mock(),
         app_config=AppConfig(),
         clock=SystemClock(),
     )

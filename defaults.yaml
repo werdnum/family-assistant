@@ -171,6 +171,9 @@ model_tiers:
   deep:
     label: "Deep"
     description: "Multi-stage reasoning, difficult judgement, conflicting evidence."
+    # Per-message chat command: `/deep <request>` runs that one message on this
+    # tier, on whatever profile the conversation is already using.
+    slash_command: "/deep"
     chain:
       # Sol's reasoning_effort comes from the global llm_parameters entry above.
       - provider: "openai"
@@ -180,6 +183,7 @@ model_tiers:
   frontier:
     label: "Max"
     description: "The strongest configured recipe, for the hardest requests."
+    slash_command: "/max"
     chain:
       # No fallback: this tier is chosen for its capability, and a weaker
       # stand-in would answer the request the tier was not chosen for. A future
@@ -809,9 +813,13 @@ service_profiles:
       include_aggregated_context: true
       max_iterations: 50
       model_tier: "standard"
-    # The tiers this profile may be run on. Stage 1 only validates the list;
-    # per-request selection arrives with the model-selection envelope.
+    # The tiers a user may explicitly run this profile on.
     allowed_model_tiers: ["standard", "deep", "frontier"]
+    # The subset a model may select on its own -- a delegate_to_service
+    # `model_tier` argument today. `frontier` is deliberately absent: it is
+    # chosen when somebody decides this request is worth the spend, not
+    # inferred.
+    auto_model_tiers: ["standard", "deep"]
   - id: "email_intake"
     description: "Assistant profile for handling email the user sends or forwards. Replies by email and may propose calendar events, notes, reminders, document indexing, or messages to known users; writes wait for confirmation."
     processing_config:
@@ -1474,7 +1482,7 @@ service_profiles:
       - "/camera"
       - "/investigate"
   - id: "complex_tasks"
-    description: "Advanced reasoning profile using OpenAI GPT-5.6-sol for complex, multi-step tasks that require deep analysis, planning, or sophisticated judgment. Delegates here when the default model struggles with nuanced reasoning."
+    description: "Long-running investigation profile for complex, multi-step work that needs deep analysis, planning or sophisticated judgment. Runs on a stronger model tier with a much higher tool-call budget, so it can keep working on one problem well past the point an ordinary turn would stop."
     processing_config:
       include_aggregated_context: true
       # This profile is a long-task workflow -- distinct guidance and a
@@ -1485,7 +1493,7 @@ service_profiles:
       max_iterations: 100
       prompts:
         system_prompt: |
-          You are an advanced reasoning assistant interacting with {user_name}, powered by OpenAI GPT-5.6-sol. You are invoked for tasks that require deep analysis, multi-step planning, or sophisticated judgment.
+          You are an advanced reasoning assistant interacting with {user_name}. You are invoked for tasks that require deep analysis, multi-step planning, or sophisticated judgment, and you have a much larger tool-call budget than an ordinary turn — use it to keep working a problem rather than stopping at a partial answer.
 
           You have full access to all Family Assistant tools — notes, calendar, documents, Home Assistant, scheduling, and more. Use these tools to gather context and take actions as needed. This is what distinguishes you from spawn_worker, which runs isolated coding agents with NO access to Family Assistant tools or data.
 
@@ -1505,6 +1513,9 @@ service_profiles:
     # `standard` is deliberately absent: a request routed here is one the
     # standard tier was not expected to complete well.
     allowed_model_tiers: ["deep", "frontier"]
+    # Delegating here is already the decision to spend more, so a delegating
+    # model may confirm the default tier but not escalate beyond it.
+    auto_model_tiers: ["deep"]
     tools_config:
       on_demand_local_tools:
         - "render_home_assistant_template"

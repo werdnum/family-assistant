@@ -44,7 +44,7 @@ from family_assistant.tools import (
     ToolPolicyDecision,
 )
 from family_assistant.tools.types import ToolAttachment
-from tests.unit.llm.conftest import shipped_profile
+from tests.unit.conftest import shipped_profile
 
 _HANDOFF_PROFILE_ID = "media_analyst"
 # The profile users send attachments to from Telegram and web chat.

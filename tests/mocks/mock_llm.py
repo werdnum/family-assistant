@@ -7,6 +7,7 @@ import json
 import logging
 import os
 from collections.abc import AsyncIterator, Callable, Sequence
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic import BaseModel
@@ -26,11 +27,14 @@ from family_assistant.llm import (
     UserMessageContentPart,
     UserMessageDict,
 )
+from family_assistant.llm.call_context import current_model_selection
 from family_assistant.llm.messages import (
+    MessageReasoningInfo,
     UserMessage,
     is_turn_scaffolding,
     message_to_json_dict,
 )
+from family_assistant.llm.model_selection import stamp_model_selection
 from family_assistant.storage.database import in_transaction
 from family_assistant.tools.types import ToolDefinition
 
@@ -220,7 +224,7 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
                     i, matcher, response_generator, actual_kwargs
                 )
                 if actual_response_output is not None:
-                    return actual_response_output
+                    return self._with_run_metadata(actual_response_output)
             except Exception as e:
                 # Clarify if error was in matcher or response processing if possible,
                 # but the logged traceback gives the most direct signal.
@@ -244,7 +248,25 @@ class RuleBasedMockLLMClient(BaseLLMClient, LLMInterface):
         logger.warning(
             f"Messages received:\n{json.dumps(sanitized_messages, indent=2)}"
         )
-        return self.default_response
+        return self._with_run_metadata(self.default_response)
+
+    @staticmethod
+    def _with_run_metadata(output: LLMOutput) -> LLMOutput:
+        """Stamp the run's model tier onto the usage, as a real provider does.
+
+        Every real client routes its result through
+        ``LLMCallTelemetry.finalize_usage``, which stamps the turn's resolved
+        selection with the same helper this uses. A fake that skipped it would
+        make every tier assertion above the LLM layer untestable, and would
+        quietly disagree with production about what a reply carries.
+        """
+        selection = current_model_selection()
+        if selection is None:
+            return output
+        reasoning: MessageReasoningInfo = dict(output.reasoning_info or {})  # type: ignore[assignment] - a TypedDict copy is still that TypedDict
+        return replace(
+            output, reasoning_info=stamp_model_selection(reasoning, selection)
+        )
 
     def generate_response_stream(
         self,

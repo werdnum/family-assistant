@@ -32,14 +32,12 @@ _MARKER = "test_statement_cancellation_marker"
 # The revision before head: the test rewinds to it so a migration is actually
 # pending while the tight ceiling is in force. Both this and the head asserted
 # below move with each new migration.
-_PREVIOUS_REVISION = "tool_call_review_audit"
-_HEAD_REVISION = "631e7ea62ec4"
+_PREVIOUS_REVISION = "631e7ea62ec4"
+_HEAD_REVISION = "d7065490c04e"
 # Columns the head revision adds, by table: the test drops them to make the
 # migration genuinely pending, then asserts they came back.
 _HEAD_REVISION_COLUMNS_BY_TABLE = {
-    "event_listeners": ("definition_record",),
-    "schedule_automations": ("definition_record",),
-    "scripts": ("definition_record",),
+    "delegation_runs": ("model_selection_json",),
 }
 
 _alembic_version_table = sa.Table(

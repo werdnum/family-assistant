@@ -8,6 +8,21 @@ const pendingTurnPrompts = new Map<string, string>();
 // turn_id matches the one it sent, so the mock must use the real id (not a
 // fixed placeholder) for the turn_ended terminator to be recognized.
 const pendingTurnIds = new Map<string, string>();
+// Model tier the turn was started with, so the SSE stream can report back which
+// tier served it on turn_ended (as the backend does in reasoning_info).
+const pendingTurnTiers = new Map<string, string | undefined>();
+// Model tier sent with each POST /v1/chat/turns, in call order, so tests can
+// assert what a send selected (or that it selected nothing). `undefined` is a
+// meaningful entry: it means the body omitted `model_tier`.
+export const capturedTurnModelTiers: Array<string | undefined> = [];
+
+// The model tiers the mocked `default_assistant` offers. Exported so tests can
+// assert against the labels without restating them.
+export const MOCK_MODEL_TIERS = [
+  { id: 'standard', label: 'Standard', description: 'Good value for everyday requests.' },
+  { id: 'deep', label: 'Deep', description: 'Stronger reasoning for harder requests.' },
+  { id: 'frontier', label: 'Max', description: 'The strongest configured recipe.' },
+];
 
 export const handlers = [
   // Mock profiles endpoint
@@ -21,6 +36,9 @@ export const handlers = [
           llm_model: null,
           available_tools: [],
           enabled_mcp_servers: [],
+          // Provider-coupled profile: its model is pinned, so no tier choice.
+          model_tiers: [],
+          default_model_tier: null,
         },
         {
           id: 'default_assistant',
@@ -29,6 +47,8 @@ export const handlers = [
           llm_model: null,
           available_tools: [],
           enabled_mcp_servers: [],
+          model_tiers: MOCK_MODEL_TIERS,
+          default_model_tier: 'standard',
         },
         {
           id: 'research',
@@ -37,6 +57,8 @@ export const handlers = [
           llm_model: null,
           available_tools: [],
           enabled_mcp_servers: [],
+          model_tiers: [],
+          default_model_tier: null,
         },
       ],
       default_profile_id: 'default_assistant',
@@ -368,10 +390,13 @@ export const handlers = [
       prompt: string;
       conversation_id?: string;
       profile_id?: string;
+      model_tier?: string;
     };
     const conversationId = body.conversation_id || `web_conv_${Date.now()}`;
     pendingTurnPrompts.set(conversationId, body.prompt);
     pendingTurnIds.set(conversationId, body.turn_id);
+    capturedTurnModelTiers.push(body.model_tier);
+    pendingTurnTiers.set(conversationId, body.model_tier);
     return HttpResponse.json({
       turn_id: body.turn_id,
       conversation_id: conversationId,
@@ -388,6 +413,13 @@ export const handlers = [
     const conversationId = String(params.conversationId);
     const prompt = pendingTurnPrompts.get(conversationId) ?? '';
     const turnId = pendingTurnIds.get(conversationId) ?? 'mock-turn';
+    const requestedTier = pendingTurnTiers.get(conversationId);
+    const reasoningInfo = {
+      model: 'mock-model-1',
+      model_tier: requestedTier ?? 'standard',
+      model_tier_source: requestedTier ? 'user' : 'default',
+      model_tier_requested: requestedTier ?? null,
+    };
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       start(controller) {
@@ -407,7 +439,11 @@ export const handlers = [
               setTimeout(() => {
                 controller.enqueue(
                   encoder.encode(
-                    `event: turn_ended\ndata: ${JSON.stringify({ turn_id: turnId, status: 'complete' })}\n\n`
+                    `event: turn_ended\ndata: ${JSON.stringify({
+                      turn_id: turnId,
+                      status: 'complete',
+                      reasoning_info: reasoningInfo,
+                    })}\n\n`
                   )
                 );
                 controller.close();

@@ -64,6 +64,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.interfaces import ChatInterface
+    from family_assistant.llm.model_selection import ResolvedModelSelection
     from family_assistant.processing import ProcessingService
     from family_assistant.processing.types import MidTurnInputProvider
     from family_assistant.services.attachment_registry import AttachmentRegistry
@@ -132,6 +133,7 @@ async def run_turn_producer(
     initial_history_taint_metadata: TaintMetadata,
     initial_context_taint_metadata: TaintMetadata,
     mid_turn_input_provider: "MidTurnInputProvider | None" = None,
+    model_selection: "ResolvedModelSelection | None" = None,
     ack_grace_seconds: float = DEFAULT_ACK_GRACE_SECONDS,
 ) -> None:
     """Run a single LLM turn end-to-end, publishing events to the hub.
@@ -256,6 +258,9 @@ async def run_turn_producer(
             # this producer, so reuse that row instead of inserting again.
             reuse_existing_user_row=True,
             taint_tracker=live_taint_tracker,
+            # Already admitted by the endpoint, so a refusal reached the client
+            # as a 400 rather than as an error partway through a stream.
+            model_selection=model_selection,
         ):
             reasoning_info = await _publish_llm_event(
                 hub=hub,

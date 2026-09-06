@@ -12,6 +12,10 @@ from typing import TYPE_CHECKING, Literal
 from family_assistant.a2a.client import A2AClientError
 from family_assistant.a2a.result_converter import a2a_task_to_chat_result
 from family_assistant.a2a.types import Task, TaskState
+from family_assistant.llm.model_selection import (
+    ResolvedModelSelection,
+    resolve_model_selection,
+)
 from family_assistant.processing.protocol import (
     PENDING,
     PendingPoll,
@@ -85,6 +89,7 @@ class RemoteA2AService:
         reuse_existing_user_row: bool = False,
         initial_taint_sources: Sequence[TaintSource] | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
+        model_selection: ResolvedModelSelection | None = None,
     ) -> ChatInteractionResult:
         """Send the request to the remote A2A agent and return the result."""
         from family_assistant.processing.types import (  # noqa: PLC0415 - runtime import for .error()
@@ -109,6 +114,15 @@ class RemoteA2AService:
         # Review trigger metadata is local authorization context. Remote A2A
         # agents receive only the delegated request and taint metadata.
         _ = tool_call_review_trigger
+        # Raises for any tier request: the remote picks its own model, and a
+        # caller that asked for one must not be told it was honoured. Its
+        # eligibility is the pinned one by construction, so the shared gate
+        # produces the refusal rather than a remote-specific rule.
+        resolve_model_selection(
+            self._service_config.tier_eligibility,
+            model_selection,
+            profile_id=self._service_config.id,
+        )
 
         metadata: dict[str, object] | None = None
         if initial_taint_sources:

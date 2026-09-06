@@ -272,6 +272,25 @@ const MessageDisplay = ({ message }) => {
                       </div>
                     )}
 
+                    {message.reasoning_info.model_tier && (
+                      <div className={styles.detailField}>
+                        <strong>Model Tier:</strong> {message.reasoning_info.model_tier}
+                      </div>
+                    )}
+
+                    {message.reasoning_info.model_tier_requested && (
+                      <div className={styles.detailField}>
+                        <strong>Requested Tier:</strong>{' '}
+                        {message.reasoning_info.model_tier_requested}
+                      </div>
+                    )}
+
+                    {message.reasoning_info.model_tier_source && (
+                      <div className={styles.detailField}>
+                        <strong>Tier Chosen By:</strong> {message.reasoning_info.model_tier_source}
+                      </div>
+                    )}
+
                     {(message.reasoning_info.prompt_tokens !== undefined ||
                       message.reasoning_info.completion_tokens !== undefined ||
                       message.reasoning_info.total_tokens !== undefined) && (

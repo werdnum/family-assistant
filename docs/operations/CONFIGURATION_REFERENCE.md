@@ -837,6 +837,7 @@ service_profiles:
 | `chain[].llm_parameters` | Request parameters for **this entry only**, overlaid on the global map.     |
 | `label`                  | User-facing name for the tier.                                              |
 | `description`            | One line on when the tier is worth its cost.                                |
+| `slash_command`          | Per-message chat command that runs one request on this tier.                |
 
 Tier names must start with a lowercase letter and contain only lowercase letters, digits and
 underscores. A chain is capped at two entries because that is what the retry client serves: a chain
@@ -856,14 +857,48 @@ the example above, `claude-fable-5` has no global entry at all, so it inherits n
 configuration where it serves as another tier's fallback, and gets adaptive thinking only in
 `frontier`.
 
-#### `model_tier` and `allowed_model_tiers` on a profile
+Tier names must not collide with each other's `slash_command`, with any profile's `slash_commands`,
+or with the bot's own commands (`/start`, `/interrupt`): a chat surface dispatches a leading `/word`
+by looking it up, so a collision means one of the two silently never runs — and against a built-in
+it is always the configured one that loses. Compared case-insensitively, since Telegram treats
+`/Deep` and `/deep` as one command. Shipped: `/deep` and `/max`.
 
-- `processing_config.model_tier` — the tier the profile runs on.
-- `allowed_model_tiers` (top level on the profile, beside `tools_policy`) — the tiers the profile
-  may be run on. Omitted means "only its own `model_tier`". The list is replaced, never merged, when
-  a profile or an operator overrides it, so it can only narrow. Every name must exist in
-  `model_tiers`, the profile's own `model_tier` must appear in it, and setting it on a profile with
-  no `model_tier` is a startup error.
+#### Eligibility: `model_tier`, `allowed_model_tiers`, `auto_model_tiers`
+
+- `processing_config.model_tier` — the tier the profile runs on when a request names none.
+- `allowed_model_tiers` (top level on the profile, beside `tools_policy`) — the tiers **a user** may
+  explicitly run the profile on. Omitted means "only its own `model_tier`".
+- `auto_model_tiers` (likewise top level) — the subset **a model** may select without a
+  confirmation: a `delegate_to_service` `model_tier` argument today, and Auto routing when it lands.
+  Omitted means "only its own `model_tier`".
+
+Both lists are replaced, never merged, when a profile or an operator overrides one, so they can only
+narrow. Every name must exist in `model_tiers`; the profile's own `model_tier` must appear in
+`allowed_model_tiers`; `auto_model_tiers` may not reach past `allowed_model_tiers`, because
+automatic selection is the weaker authority of the two; and setting either on a profile with no
+`model_tier` is a startup error.
+
+The distinction is who authorized the spend. An authenticated person choosing Max on their own
+request *is* the authorization. A model choosing it is not, which is why the shipped
+`default_assistant` allows `standard`, `deep` and `frontier` but admits only `standard` and `deep`
+automatically.
+
+#### Selecting a tier per request
+
+- **Web/API:** `model_tier` on `POST /api/v1/chat/turns` and `POST /api/v1/chat/send_message`. Bound
+  by `allowed_model_tiers`; a tier the profile does not accept is a 400 naming the ones that would
+  have worked. `GET /api/v1/profiles` reports each profile's `model_tiers` and `default_model_tier`,
+  which is what a client renders its intelligence control from — an empty list means the profile is
+  pinned to one model.
+- **Delegation:** `model_tier` on `delegate_to_service`, bound by the *target's* `auto_model_tiers`.
+  The resolved tier is persisted with the queued run and re-applied verbatim when a worker executes
+  it, so a restart or a deployment cannot change the models of a run that was already authorized. A
+  parent's tier never propagates: each delegation decides independently.
+- **Chat commands:** a tier's `slash_command` runs one message on that tier, on whatever profile the
+  conversation is already using.
+
+Selection is one-shot: it applies to the request that carries it and nothing else. The tier a turn
+ran at, what was requested and who chose it are recorded with the reply and on its trace span.
 
 #### Precedence against `retry_config` / `llm_model` / `provider`
 

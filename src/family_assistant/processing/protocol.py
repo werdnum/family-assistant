@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.content_parts import ContentPartDict
     from family_assistant.llm.messages import MessageAttachmentMetadata
+    from family_assistant.llm.model_selection import ResolvedModelSelection
     from family_assistant.processing.types import (
         ChatInteractionResult,
         MidTurnInputProvider,
@@ -68,6 +69,7 @@ class DelegatableService(Protocol):
         reuse_existing_user_row: bool = False,
         initial_taint_sources: Sequence[TaintSource] | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
+        model_selection: ResolvedModelSelection | None = None,
     ) -> ChatInteractionResult: ...
 
 

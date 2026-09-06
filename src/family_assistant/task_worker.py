@@ -35,6 +35,7 @@ from family_assistant.llm.messages import (
     MessageAttachmentMetadata,
     UserMessage,
 )
+from family_assistant.llm.model_selection import ResolvedModelSelection
 from family_assistant.processing import (
     PENDING,
     ChatInteractionResult,
@@ -204,6 +205,22 @@ def _taint_sources_from_delegation_run(
 ) -> tuple[TaintSource, ...]:
     """Return parent taint sources persisted with an async delegation run."""
     return _taint_state_from_delegation_run(run).sources
+
+
+def _model_selection_from_delegation_run(
+    run: DelegationRunDict,
+) -> ResolvedModelSelection | None:
+    """The tier envelope frozen when the run was created, if it carried one.
+
+    Re-applied verbatim rather than re-resolved: the eligibility lists may have
+    moved since, and a deployment must not silently downgrade -- or upgrade --
+    a run somebody already authorized. ``None`` for a run queued before tier
+    selection existed, which resolves to the target's own model.
+    """
+    persisted = run["model_selection_json"]
+    if persisted is None:
+        return None
+    return ResolvedModelSelection.from_json(persisted)
 
 
 def _taint_state_from_delegation_run(run: DelegationRunDict) -> TurnTaintState:
@@ -1864,6 +1881,7 @@ class TaskWorker:
                     active_request_role="user",
                     payload_present=False,
                 ),
+                model_selection=_model_selection_from_delegation_run(run),
             )
         except Exception:
             # A timeout cancellation (CancelledError) is intentionally NOT caught
@@ -4044,6 +4062,11 @@ class TaskWorker:
                     db_context=db_context,
                     # Infrastructure fields (required - no defaults)
                     processing_service=self.processing_service,
+                    # No run binding here: a task is not a turn, so a tool that
+                    # calls a model gets the profile's default tier.
+                    llm_client=self.processing_service.llm_client
+                    if self.processing_service
+                    else None,
                     clock=self.clock,
                     home_assistant_client=self.processing_service.home_assistant_client
                     if self.processing_service
@@ -5532,6 +5555,10 @@ async def _build_confirmation_execution_context(
         turn_id=turn_id,
         db_context=exec_context.db_context,
         processing_service=processing_service,
+        # The originating turn's binding is not available here -- this context
+        # is rebuilt from a persisted confirmation request -- so a tool that
+        # calls a model gets the profile's default tier.
+        llm_client=processing_service.llm_client,
         clock=exec_context.clock,
         home_assistant_client=processing_service.home_assistant_client,
         event_sources=exec_context.event_sources,

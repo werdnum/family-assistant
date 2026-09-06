@@ -23,6 +23,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, TypedDict
 
 from family_assistant.llm.call_context import (
+    CallAttribution,
     reset_processing_profile,
     set_processing_profile,
 )
@@ -312,6 +313,9 @@ class InteractionsAgentProcessingService(ProcessingService):
             turn_id=None,
             db_context=db_context,
             processing_service=self,
+            # An Interactions API agent is configured inline on its profile,
+            # never as an interchangeable tier.
+            llm_client=self.llm_client,
             clock=self.clock,
             home_assistant_client=self.home_assistant_client,
             event_sources=self.event_sources,
@@ -621,7 +625,10 @@ class InteractionsAgentProcessingService(ProcessingService):
         """
         client = self._google_client()
         record_llm_call(
-            profile=self.service_config.id,
+            # An Interactions API agent is configured inline on its profile,
+            # never as an interchangeable tier, so the attribution carries no
+            # model selection.
+            attribution=CallAttribution(profile_id=self.service_config.id),
             provider="google",
             model=client.model_name,
             resolved_model=interaction.model if interaction else None,
@@ -685,7 +692,10 @@ class InteractionsAgentProcessingService(ProcessingService):
             duration_seconds = _interaction_duration_seconds(interaction)
 
         record_llm_call(
-            profile=self.service_config.id,
+            # An Interactions API agent is configured inline on its profile,
+            # never as an interchangeable tier, so the attribution carries no
+            # model selection.
+            attribution=CallAttribution(profile_id=self.service_config.id),
             provider="google",
             model=self._google_client().model_name,
             resolved_model=resolved_model,

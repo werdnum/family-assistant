@@ -9,11 +9,12 @@ just the part you need.
 
 ## Start here
 
-| Guide                                  | Read it when you want to…                                       |
-| -------------------------------------- | --------------------------------------------------------------- |
-| [QUICK_START.md](QUICK_START.md)       | Get going in five minutes with a handful of example requests    |
-| [interfaces.md](interfaces.md)         | Know what Telegram, the web app, and the iOS app each offer     |
-| [slash-commands.md](slash-commands.md) | Look up `/browse`, `/research`, `/engineer` and the other modes |
+| Guide                                            | Read it when you want to…                                       |
+| ------------------------------------------------ | --------------------------------------------------------------- |
+| [QUICK_START.md](QUICK_START.md)                 | Get going in five minutes with a handful of example requests    |
+| [interfaces.md](interfaces.md)                   | Know what Telegram, the web app, and the iOS app each offer     |
+| [slash-commands.md](slash-commands.md)           | Look up `/browse`, `/research`, `/engineer` and the other modes |
+| [intelligence-levels.md](intelligence-levels.md) | Ask for more thinking on a request that deserves it             |
 
 ## Everyday features
 

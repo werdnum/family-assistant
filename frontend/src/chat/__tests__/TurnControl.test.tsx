@@ -2519,7 +2519,7 @@ describe('Web turn control (Stop / Steer)', () => {
         await user.type(screen.getByTestId('chat-input'), 'actually, focus on next week');
 
         // Switching profile cancels that turn and starts a fresh conversation.
-        await user.click(screen.getByRole('combobox'));
+        await user.click(screen.getByRole('combobox', { name: 'Processing profile' }));
         await user.click(await screen.findByRole('option', { name: /research/i }));
 
         // The steer text must not survive into the new, empty thread, where

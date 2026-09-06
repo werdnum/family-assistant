@@ -1,9 +1,9 @@
 """Shared access to the configuration the application actually ships.
 
-Several suites here assert against `defaults.yaml` rather than a fixture file,
-because what they pin is that the shipped profiles and tiers still mean what the
-code assumes. Loading it lives here so the "config path that cannot exist" trick
-that selects defaults-only is written once.
+Several unit suites assert against `defaults.yaml` rather than a fixture file,
+because what they pin is that the shipped profiles, tiers and commands still
+mean what the code assumes. Loading it lives here so the "config path that
+cannot exist" trick that selects defaults-only is written once.
 """
 
 import pytest

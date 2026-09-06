@@ -28,6 +28,7 @@ from family_assistant.config_models import (
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMOutput
 from family_assistant.llm.messages import UserMessage
+from family_assistant.llm.model_selection import ResolvedModelSelection
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.processing.interactions_agent_service import (
     InteractionsAgentProcessingService,
@@ -515,6 +516,7 @@ async def test_an_injected_attachment_carries_its_provenance_into_the_turn(
         "conv-1",
         [{"type": "attachment", "attachment_id": tainted.attachment_id}],
         acting_user_id="user-1",
+        llm_client=service.llm_client,
     )
 
     assert merge_history_taint(processed.messages).max_tier is (
@@ -562,6 +564,8 @@ async def test_taint_carried_by_history_gates_the_turn(
             user_name="Andrew",
             turn_id="turn-1",
             chat_interface=None,
+            llm_client=service.llm_client,
+            model_selection=ResolvedModelSelection.unselected(None),
         )
 
 

@@ -37,6 +37,10 @@ from family_assistant.llm.messages import (
     image_url_content,
     text_content,
 )
+from family_assistant.llm.model_selection import (
+    ModelSelectionRequest,
+    ModelTierNotPermitted,
+)
 from family_assistant.processing import ProcessingService
 from family_assistant.processing.types import MidTurnUserInput
 from family_assistant.services.user_identity import (
@@ -51,6 +55,10 @@ from family_assistant.telegram.chunking import (
     CHUNK_SEND_DELAY_SECONDS,
     TELEGRAM_MAX_MESSAGE_LENGTH,
     split_message_text,
+)
+from family_assistant.telegram.commands import (
+    BUILT_IN_COMMANDS,
+    normalize_slash_command,
 )
 from family_assistant.telegram.markdown_utils import convert_to_telegram_markdown
 from family_assistant.telegram.rich_messages import (
@@ -69,6 +77,8 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from family_assistant.interfaces import ChatInterface
+    from family_assistant.llm.model_selection import ResolvedModelSelection
+    from family_assistant.processing import DelegatableService
     from family_assistant.storage.database import Database
     from family_assistant.telegram.protocols import (
         ConfirmationUIManager,
@@ -80,6 +90,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
+
+
+@dataclass(frozen=True)
+class _SlashCommandInvocation:
+    """One authorized ``/command <request>`` message, before it is dispatched."""
+
+    chat_id: int
+    command: str
+    """The leading word, with its slash, as the command maps are keyed."""
+    request_text: str
+    resolved_user: ResolvedUserIdentity
 
 
 @dataclass
@@ -270,6 +291,37 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             interface_message_id=str(update.message.message_id),
             user_name=user_name,
         )
+
+    @contextlib.asynccontextmanager
+    async def _active_turn(
+        self, chat_id: int
+    ) -> AsyncIterator[TelegramMidTurnController]:
+        """Hold this chat's turn slot for the length of one LLM loop.
+
+        Telegram dispatches updates concurrently, so this registration is the
+        only thing standing between a conversation and two loops reading and
+        writing its history at once. Holding the slot is what makes a message
+        arriving mid-turn steer the running turn rather than start a second one,
+        and what lets ``/interrupt`` find the task to cancel.
+
+        Every path that calls ``handle_chat_interaction`` for a Telegram chat
+        goes through here -- a plain message and a slash command alike.
+        """
+        controller = TelegramMidTurnController()
+        self._active_mid_turns[chat_id] = controller
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            self._active_processing_tasks[chat_id] = current_task
+        try:
+            yield controller
+        finally:
+            if self._active_mid_turns.get(chat_id) is controller:
+                self._active_mid_turns.pop(chat_id, None)
+            if (
+                current_task is not None
+                and self._active_processing_tasks.get(chat_id) is current_task
+            ):
+                self._active_processing_tasks.pop(chat_id, None)
 
     async def _route_mid_turn_update_if_active(
         self,
@@ -612,75 +664,13 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     return
 
                 db_context = self.database
-                thread_root_id_for_turn: int | None = None
-                replied_to_db_msg = None
-
-                if replied_to_interface_id:
-
-                    async def resolve_reply_context() -> None:
-                        nonlocal replied_to_db_msg
-                        nonlocal selected_processing_service
-                        nonlocal thread_root_id_for_turn
-                        assert replied_to_interface_id is not None
-                        replied_to_db_msg = (
-                            await db_context.message_history.get_row_by_interface_id(
-                                interface_type=interface_type,
-                                interface_message_id=replied_to_interface_id,
-                            )
-                        )
-                        if replied_to_db_msg:
-                            thread_root_id_for_turn = replied_to_db_msg.get(
-                                "thread_root_id"
-                            ) or replied_to_db_msg.get("internal_id")
-                            logger.info(
-                                f"Determined thread_root_id {thread_root_id_for_turn} from replied-to message {replied_to_interface_id}"
-                            )
-
-                            original_profile_id = replied_to_db_msg.get(
-                                "processing_profile_id"
-                            )
-                            if original_profile_id:
-                                logger.info(
-                                    f"Replied-to message (ID: {replied_to_interface_id}) has processing_profile_id: {original_profile_id}"
-                                )
-                                profile_specific_service = self.telegram_service.processing_services_registry.get(
-                                    original_profile_id
-                                )
-                                if isinstance(
-                                    profile_specific_service, ProcessingService
-                                ):
-                                    selected_processing_service = (
-                                        profile_specific_service
-                                    )
-                                    logger.info(
-                                        f"Switched to ProcessingService for profile '{original_profile_id}' for this reply."
-                                    )
-                                else:
-                                    logger.warning(
-                                        f"Profile ID '{original_profile_id}' from replied-to message not found in registry. "
-                                        f"Falling back to default processing service ('{selected_processing_service.service_config.id}')."
-                                    )
-                            else:
-                                logger.info(
-                                    f"Replied-to message (ID: {replied_to_interface_id}) does not have a specific profile_id. "
-                                    f"Using default processing service ('{selected_processing_service.service_config.id}')."
-                                )
-                        else:
-                            logger.warning(
-                                f"Could not find replied-to message {replied_to_interface_id} in DB. "
-                                f"Using default processing service ('{selected_processing_service.service_config.id}')."
-                            )
-
-                    try:
-                        await resolve_reply_context()
-                    except Exception as thread_err:
-                        logger.exception(
-                            f"Error determining thread root ID or profile from reply: {thread_err}"
-                        )
-                else:
-                    logger.info(
-                        f"Not a reply. Using default processing service ('{selected_processing_service.service_config.id}')."
-                    )
+                (
+                    selected_processing_service,
+                    thread_root_id_for_turn,
+                ) = await self._reply_context(
+                    interface_type=interface_type,
+                    replied_to_interface_id=replied_to_interface_id,
+                )
 
                 trigger_interface_message_id: str | None = None
 
@@ -757,47 +747,38 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     chat_interfaces = self._get_chat_interfaces()
                     confirmation_ui_managers = self._get_confirmation_ui_managers()
 
-                    mid_turn_controller = TelegramMidTurnController()
-                    self._active_mid_turns[chat_id] = mid_turn_controller
-                    current_task = asyncio.current_task()
-                    if current_task is not None:
-                        self._active_processing_tasks[chat_id] = current_task
-                    try:
-                        result = await selected_processing_service.handle_chat_interaction(
-                            db_context=db_context,
-                            interface_type=interface_type,
-                            conversation_id=conversation_id,
-                            trigger_content_parts=trigger_content_parts,
-                            trigger_interface_message_id=trigger_interface_message_id,
-                            user_name=user_name,
-                            user_id=resolved_user.user_id,
-                            replied_to_interface_id=replied_to_interface_id,
-                            chat_interface=self.telegram_service.chat_interface,
-                            chat_interfaces=chat_interfaces,
-                            confirmation_ui_managers=confirmation_ui_managers,
-                            request_confirmation_callback=confirmation_callback_wrapper,
-                            trigger_attachments=trigger_attachments,  # type: ignore
-                            mid_turn_input_provider=mid_turn_controller,
-                        )
-                    except asyncio.CancelledError:
-                        logger.info(
-                            "Telegram processing turn for chat %s was interrupted.",
-                            chat_id,
-                        )
-                        return
-                    finally:
-                        if self._active_mid_turns.get(chat_id) is mid_turn_controller:
-                            self._active_mid_turns.pop(chat_id, None)
-                        if (
-                            current_task is not None
-                            and self._active_processing_tasks.get(chat_id)
-                            is current_task
-                        ):
-                            self._active_processing_tasks.pop(chat_id, None)
-                        if not mid_turn_controller.should_interrupt():
-                            pending_mid_turn_batch = (
-                                await mid_turn_controller.pop_unconsumed_batch()
+                    async with self._active_turn(chat_id) as mid_turn_controller:
+                        try:
+                            result = await selected_processing_service.handle_chat_interaction(
+                                db_context=db_context,
+                                interface_type=interface_type,
+                                conversation_id=conversation_id,
+                                trigger_content_parts=trigger_content_parts,
+                                trigger_interface_message_id=trigger_interface_message_id,
+                                user_name=user_name,
+                                user_id=resolved_user.user_id,
+                                replied_to_interface_id=replied_to_interface_id,
+                                chat_interface=self.telegram_service.chat_interface,
+                                chat_interfaces=chat_interfaces,
+                                confirmation_ui_managers=confirmation_ui_managers,
+                                request_confirmation_callback=confirmation_callback_wrapper,
+                                trigger_attachments=trigger_attachments,  # type: ignore
+                                mid_turn_input_provider=mid_turn_controller,
                             )
+                        except asyncio.CancelledError:
+                            logger.info(
+                                "Telegram processing turn for chat %s was interrupted.",
+                                chat_id,
+                            )
+                            return
+
+                    # Drained only after the slot is released, so an update that
+                    # arrives in between is batched normally instead of being
+                    # queued onto a controller nobody will read again.
+                    if not mid_turn_controller.should_interrupt():
+                        pending_mid_turn_batch = (
+                            await mid_turn_controller.pop_unconsumed_batch()
+                        )
 
                     final_llm_content_to_send = result.text_reply
                     last_assistant_internal_id = result.assistant_message_internal_id
@@ -1124,8 +1105,14 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
         """Registers the necessary Telegram handlers with the application."""
         application = self.telegram_service.application
 
-        application.add_handler(CommandHandler("start", self.start))
-        application.add_handler(CommandHandler("interrupt", self.interrupt_command))
+        built_in_callbacks = {
+            "start": self.start,
+            "interrupt": self.interrupt_command,
+        }
+        for command_name in BUILT_IN_COMMANDS:
+            application.add_handler(
+                CommandHandler(command_name, built_in_callbacks[command_name])
+            )
 
         if self.telegram_service.slash_command_to_profile_id_map:
             for command_str in self.telegram_service.slash_command_to_profile_id_map:
@@ -1134,6 +1121,18 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     CommandHandler(command_name, self.handle_generic_slash_command)
                 )
                 logger.info(f"Registered CommandHandler for /{command_name}")
+
+        for (
+            command_str,
+            tier_name,
+        ) in self.telegram_service.slash_command_to_model_tier_map.items():
+            command_name = command_str.lstrip("/")
+            application.add_handler(
+                CommandHandler(command_name, self.handle_tier_slash_command)
+            )
+            logger.info(
+                f"Registered CommandHandler for /{command_name} (model tier '{tier_name}')"
+            )
 
         application.add_handler(
             MessageHandler(filters.COMMAND, self.handle_unknown_command)
@@ -1160,23 +1159,27 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             "Telegram handlers registered (start, generic commands, unknown commands, message, error)."
         )
 
-    async def handle_generic_slash_command(
+    async def _authorize_slash_command(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
-    ) -> None:
-        """Handles generic slash commands mapped to processing profiles."""
+    ) -> _SlashCommandInvocation | None:
+        """The parts every command handler needs, or ``None`` if it must stop.
+
+        Shared by the profile commands and the model tier commands: both are a
+        leading ``/word`` from an authorized user followed by a request, and
+        they differ only in what the word selects.
+        """
         if not update.effective_user:
             logger.warning("Slash command: Update has no effective_user.")
-            return
+            return None
         user_id = update.effective_user.id
 
         if not update.effective_chat:
             logger.warning("Slash command: Update has no effective_chat.")
-            return
-        chat_id = update.effective_chat.id
+            return None
 
         if not update.message or not update.message.text:
             logger.warning("Slash command: Update has no message or message text.")
-            return
+            return None
 
         resolved_user = self._resolve_telegram_user(user_id)
         if resolved_user is None:
@@ -1184,11 +1187,26 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             await update.message.reply_text(
                 f"You're not authorized to use this command. User ID: `{user_id}`"
             )
-            return
+            return None
 
-        message_text = update.message.text
-        command_with_slash = message_text.split(maxsplit=1)[0]
-        user_input_for_profile = " ".join(context.args or [])
+        return _SlashCommandInvocation(
+            chat_id=update.effective_chat.id,
+            command=normalize_slash_command(update.message.text),
+            request_text=" ".join(context.args or []),
+            resolved_user=resolved_user,
+        )
+
+    async def handle_generic_slash_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handles generic slash commands mapped to processing profiles."""
+        invocation = await self._authorize_slash_command(update, context)
+        if invocation is None:
+            return
+        assert update.message is not None
+        chat_id = invocation.chat_id
+        command_with_slash = invocation.command
+        user_input_for_profile = invocation.request_text
 
         profile_id = self.telegram_service.slash_command_to_profile_id_map.get(
             command_with_slash
@@ -1229,6 +1247,259 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             f"Handling slash command '{command_with_slash}' for profile '{profile_id}'. User input: '{user_input_for_profile[:50]}...'"
         )
 
+        await self._run_slash_command_turn(
+            update,
+            context,
+            chat_id=chat_id,
+            service=targeted_processing_service,
+            resolved_user=invocation.resolved_user,
+            request_text=user_input_for_profile,
+        )
+
+    async def handle_tier_slash_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Runs one message at a chosen model tier.
+
+        A tier command says how hard to think about this message, not which
+        assistant answers it, so the run goes to the profile the conversation is
+        already on -- the same one a plain message would reach, including the
+        profile a reply adopts. The choice applies to this message only; nothing
+        is pinned.
+        """
+        invocation = await self._authorize_slash_command(update, context)
+        if invocation is None:
+            return
+        assert update.message is not None
+
+        tier = self.telegram_service.slash_command_to_model_tier_map.get(
+            invocation.command
+        )
+        if tier is None:
+            logger.error(
+                f"No model tier found for command '{invocation.command}'. This "
+                "shouldn't happen if CommandHandler is correctly set up."
+            )
+            await update.message.reply_text(
+                f"Error: Command '{invocation.command}' is not configured correctly."
+            )
+            return
+
+        if not invocation.request_text.strip():
+            await update.message.reply_text(
+                f"Send {invocation.command} followed by your request, for example: "
+                f"{invocation.command} compare these two quotes and tell me which is cheaper."
+            )
+            return
+
+        replied_to = update.message.reply_to_message
+        service, thread_root_id = await self._reply_context(
+            interface_type="telegram",
+            replied_to_interface_id=(
+                str(replied_to.message_id) if replied_to is not None else None
+            ),
+        )
+        try:
+            selection = service.resolve_model_selection(
+                ModelSelectionRequest(tier=tier, source="user")
+            )
+        except ModelTierNotPermitted as refusal:
+            logger.info(
+                f"Refused model tier '{tier}' on profile "
+                f"'{service.service_config.id}': {refusal}"
+            )
+            await update.message.reply_text(str(refusal))
+            return
+
+        logger.info(
+            f"Handling tier command '{invocation.command}' at tier '{tier}' on "
+            f"profile '{service.service_config.id}'. User input: "
+            f"'{invocation.request_text[:50]}...'"
+        )
+
+        await self._run_slash_command_turn(
+            update,
+            context,
+            chat_id=invocation.chat_id,
+            service=service,
+            resolved_user=invocation.resolved_user,
+            request_text=invocation.request_text,
+            model_selection=selection,
+            thread_root_id=thread_root_id,
+        )
+
+    async def _reply_context(
+        self,
+        *,
+        interface_type: str,
+        replied_to_interface_id: str | None,
+    ) -> tuple[ProcessingService, int | None]:
+        """The profile a message continues, and the thread it belongs to.
+
+        Replying to a message continues that message's profile *and* its
+        thread. Both come off the same replied-to row, so they are read
+        together: a caller that wanted only one of them would still pay for the
+        lookup, and could drift from the other on what "a reply" means.
+
+        A reply whose context cannot be resolved is logged and falls back to a
+        fresh turn on the default profile: losing the thread is better than
+        losing the message.
+        """
+        if replied_to_interface_id is None:
+            logger.info(
+                "Not a reply. Using default processing service "
+                f"('{self.processing_service.service_config.id}')."
+            )
+            return self.processing_service, None
+        try:
+            replied_to_row = (
+                await self.database.message_history.get_row_by_interface_id(
+                    interface_type=interface_type,
+                    interface_message_id=replied_to_interface_id,
+                )
+            )
+        except Exception:
+            logger.exception(
+                "Error determining thread root ID or profile from reply "
+                f"{replied_to_interface_id}."
+            )
+            return self.processing_service, None
+        if replied_to_row is None:
+            logger.warning(
+                f"Could not find replied-to message {replied_to_interface_id} in DB. "
+                "Using default processing service "
+                f"('{self.processing_service.service_config.id}')."
+            )
+            return self.processing_service, None
+
+        thread_root_id = replied_to_row.get("thread_root_id") or replied_to_row.get(
+            "internal_id"
+        )
+        logger.info(
+            f"Determined thread_root_id {thread_root_id} from replied-to message "
+            f"{replied_to_interface_id}"
+        )
+        original_profile_id = replied_to_row.get("processing_profile_id")
+        adopted = self._local_service_for_profile(original_profile_id)
+        if adopted is not None:
+            logger.info(
+                f"Switched to ProcessingService for profile '{original_profile_id}' "
+                "for this reply."
+            )
+            return adopted, thread_root_id
+        if original_profile_id:
+            logger.warning(
+                f"Profile ID '{original_profile_id}' from replied-to message not "
+                "found in registry. Falling back to default processing service "
+                f"('{self.processing_service.service_config.id}')."
+            )
+        return self.processing_service, thread_root_id
+
+    def _local_service_for_profile(
+        self, profile_id: str | None
+    ) -> ProcessingService | None:
+        """The locally-run service for *profile_id*, if there is one."""
+        if not profile_id:
+            return None
+        service = self.telegram_service.processing_services_registry.get(profile_id)
+        return service if isinstance(service, ProcessingService) else None
+
+    async def _run_slash_command_turn(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        *,
+        chat_id: int,
+        service: DelegatableService,
+        resolved_user: ResolvedUserIdentity,
+        request_text: str,
+        model_selection: ResolvedModelSelection | None = None,
+        thread_root_id: int | None = None,
+    ) -> None:
+        """Run one command's text, and any photo it carries, on *service*.
+
+        The half a profile command and a tier command have in common: they
+        differ in which service, which model tier and which thread they pick,
+        and in nothing that happens afterwards.
+
+        A command is an ordinary turn with a selection attached, so it takes the
+        chat's turn slot like any other message: while it holds the slot, a
+        message arriving mid-turn steers it instead of starting a second loop
+        over the same conversation, and ``/interrupt`` can cancel it.
+
+        A command that arrives while another turn holds the slot is refused
+        rather than folded into that turn: what a command chooses -- a profile
+        or a model tier -- was already settled when the running turn began, so
+        accepting it as steering text would silently drop the choice that was
+        the reason for typing the command.
+        """
+        assert update.message is not None
+
+        if chat_id in self._active_mid_turns:
+            logger.info(
+                "Refusing slash command in chat %s: a turn is already running.",
+                chat_id,
+            )
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    "I'm still working on your previous request. Wait for it to "
+                    "finish, or send /interrupt to stop it."
+                ),
+                reply_to_message_id=update.message.message_id,
+            )
+            return
+
+        async with self._active_turn(chat_id) as mid_turn_controller:
+            try:
+                await self._execute_slash_command_turn(
+                    update,
+                    context,
+                    chat_id=chat_id,
+                    service=service,
+                    resolved_user=resolved_user,
+                    request_text=request_text,
+                    model_selection=model_selection,
+                    thread_root_id=thread_root_id,
+                    mid_turn_controller=mid_turn_controller,
+                )
+            except asyncio.CancelledError:
+                logger.info(
+                    "Telegram slash command turn for chat %s was interrupted.",
+                    chat_id,
+                )
+                return
+
+        if mid_turn_controller.should_interrupt():
+            return
+        follow_up_batch = await mid_turn_controller.pop_unconsumed_batch()
+        if follow_up_batch:
+            logger.info(
+                "Processing %d undrained mid-turn Telegram update(s) as a follow-up "
+                "batch after the slash command turn for chat %s.",
+                len(follow_up_batch),
+                chat_id,
+            )
+            await self.process_batch(
+                chat_id=chat_id, batch=follow_up_batch, context=context
+            )
+
+    async def _execute_slash_command_turn(
+        self,
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE,
+        *,
+        chat_id: int,
+        service: DelegatableService,
+        resolved_user: ResolvedUserIdentity,
+        request_text: str,
+        model_selection: ResolvedModelSelection | None,
+        thread_root_id: int | None,
+        mid_turn_controller: TelegramMidTurnController,
+    ) -> None:
+        """The command turn itself, run while its chat's turn slot is held."""
+        assert update.message is not None
+
         photo_bytes = None
         if update.message.photo:
             logger.info(
@@ -1259,22 +1530,18 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                 )
                 return
 
-        trigger_content_parts_for_profile: list[ContentPartDict] = [
-            text_content(user_input_for_profile)
-        ]
+        trigger_content_parts: list[ContentPartDict] = [text_content(request_text)]
         if photo_bytes:
             try:
                 base64_image = base64.b64encode(photo_bytes).decode("utf-8")
                 mime_type = "image/jpeg"
                 data_url = f"data:{mime_type};base64,{base64_image}"
-                trigger_content_parts_for_profile.append(image_url_content(data_url))
+                trigger_content_parts.append(image_url_content(data_url))
             except Exception as img_err_direct:
                 logger.error(
                     f"Error encoding photo for slash command direct profile call: {img_err_direct}"
                 )
-                trigger_content_parts_for_profile = [
-                    text_content(user_input_for_profile)
-                ]
+                trigger_content_parts = [text_content(request_text)]
 
         reply_to_interface_id_str = (
             str(update.message.reply_to_message.message_id)
@@ -1344,11 +1611,11 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
             confirmation_ui_managers = self._get_confirmation_ui_managers()
 
             async with self._typing_notifications(context, chat_id):
-                result = await targeted_processing_service.handle_chat_interaction(
+                result = await service.handle_chat_interaction(
                     db_context=db_ctx,
                     interface_type="telegram",
                     conversation_id=str(chat_id),
-                    trigger_content_parts=trigger_content_parts_for_profile,
+                    trigger_content_parts=trigger_content_parts,
                     trigger_interface_message_id=str(update.message.message_id),
                     user_name=update.effective_user.full_name
                     if update.effective_user
@@ -1360,6 +1627,9 @@ class TelegramUpdateHandler:  # Renamed from TelegramBotHandler
                     confirmation_ui_managers=confirmation_ui_managers,
                     request_confirmation_callback=confirmation_callback_wrapper,
                     trigger_attachments=None,
+                    model_selection=model_selection,
+                    thread_root_id=thread_root_id,
+                    mid_turn_input_provider=mid_turn_controller,
                 )
 
                 final_llm_content_to_send = result.text_reply

@@ -234,6 +234,7 @@ if TYPE_CHECKING:
     from family_assistant.events.sources import EventSource
     from family_assistant.home_assistant_wrapper import HomeAssistantClientWrapper
     from family_assistant.interfaces import ChatInterface  # Import the new interface
+    from family_assistant.llm import LLMInterface
     from family_assistant.llm.messages import LLMMessage
     from family_assistant.processing import ProcessingService
     from family_assistant.security.definition_records import (
@@ -490,6 +491,15 @@ class ToolExecutionContext:
     processing_profile_id: str | None = (
         None  # Processing profile associated with the request
     )
+    llm_client: LLMInterface | None = None
+    """The client the running turn is bound to, for a tool that calls a model.
+
+    The turn's *resolved model tier* decides this, so a tool must use it rather
+    than reaching for ``processing_service.llm_client``, which is the profile's
+    default tier and would spend at a tier the turn is not running at while
+    telemetry attributes the call to the one it is. ``None`` outside a turn --
+    a script or an API tool call, where there is no run binding to inherit.
+    """
     subconversation_id: str | None = (
         None  # Subconversation ID for delegated conversations, None for main conversation
     )

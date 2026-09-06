@@ -14,6 +14,10 @@ from family_assistant.telegram.batching import (
     DefaultMessageBatcher,
     NoBatchMessageBatcher,
 )
+from family_assistant.telegram.commands import (
+    BUILT_IN_COMMANDS,
+    normalize_slash_command,
+)
 from family_assistant.telegram.handler import TelegramUpdateHandler
 from family_assistant.telegram.interface import TelegramChatInterface
 from family_assistant.telegram.ui import TelegramConfirmationUIManager
@@ -39,6 +43,96 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 TELEGRAM_API_REQUEST_TIMEOUT_SECONDS = 30
+
+MAX_BOT_COMMAND_DESCRIPTION_LENGTH = 255
+
+
+def build_profile_slash_command_map(app_config: AppConfig) -> dict[str, str]:
+    """Map each profile slash command (leading '/' included) to its profile id.
+
+    Keyed by the normalised command, which is what an incoming message is looked
+    up by: Telegram delivers `/Deep` and `/deep@FamilyBot` to the same handler.
+    """
+    command_map: dict[str, str] = {}
+    for profile_config in app_config.service_profiles:
+        profile_id = profile_config.id
+        if not profile_id:
+            continue
+        for command in profile_config.slash_commands:
+            key = normalize_slash_command(command)
+            if key in command_map:
+                logger.warning(
+                    f"Slash command '{command}' is mapped to multiple profile IDs. "
+                    f"Using '{command_map[key]}', "
+                    f"ignoring mapping to '{profile_id}'."
+                )
+            else:
+                command_map[key] = profile_id
+    return command_map
+
+
+def build_tier_slash_command_map(app_config: AppConfig) -> dict[str, str]:
+    """Map each model tier's normalised slash command to its tier name.
+
+    No collision check: `AppConfig` refuses a word two things claim, and a
+    second check here could only ever disagree with it.
+    """
+    return {
+        normalize_slash_command(tier.slash_command): tier_name
+        for tier_name, tier in app_config.model_tiers.items()
+        if tier.slash_command is not None
+    }
+
+
+def build_bot_commands(app_config: AppConfig) -> list[BotCommand]:
+    """The command menu Telegram shows: built-ins, profiles, then model tiers.
+
+    Profile commands choose *which* assistant answers and tier commands choose
+    how hard it thinks about one message, so both belong in the menu, and a
+    tier's description says which of the two a reader is looking at.
+    """
+    commands = [
+        BotCommand(name, description) for name, description in BUILT_IN_COMMANDS.items()
+    ]
+    seen: set[str] = set()
+
+    for profile_config in app_config.service_profiles:
+        for slash_command in profile_config.slash_commands:
+            name = normalize_slash_command(slash_command).removeprefix("/")
+            if name in seen:
+                continue
+            description = (
+                profile_config.description or f"Activate {profile_config.id} mode"
+            )
+            commands.append(
+                BotCommand(name, _bot_command_description(name, description))
+            )
+            seen.add(name)
+
+    for tier_name, tier in app_config.model_tiers.items():
+        if tier.slash_command is None:
+            continue
+        name = normalize_slash_command(tier.slash_command).removeprefix("/")
+        if name in seen:
+            continue
+        label = tier.label or tier_name
+        description = f"{label} — {tier.description}" if tier.description else label
+        commands.append(BotCommand(name, _bot_command_description(name, description)))
+        seen.add(name)
+
+    return commands
+
+
+def _bot_command_description(command_name: str, description: str) -> str:
+    """Telegram caps a command description at 255 characters."""
+    if len(description) <= MAX_BOT_COMMAND_DESCRIPTION_LENGTH:
+        return description
+    logger.warning(
+        f"Command '/{command_name}' description truncated from "
+        f"{len(description)} to {MAX_BOT_COMMAND_DESCRIPTION_LENGTH} characters. "
+        f"Original: {description}"
+    )
+    return description[: MAX_BOT_COMMAND_DESCRIPTION_LENGTH - 3] + "..."
 
 
 class TelegramService:
@@ -122,24 +216,19 @@ class TelegramService:
             "Stored Default ProcessingService instance in application.bot_data."
         )
 
-        # Build slash command to profile ID map
-        self.slash_command_to_profile_id_map: dict[str, str] = {}
-        for profile_config in self.app_config.service_profiles:
-            profile_id = profile_config.id
-            if not profile_id:
-                continue
-            for command in profile_config.slash_commands:
-                if command in self.slash_command_to_profile_id_map:
-                    logger.warning(
-                        f"Slash command '{command}' is mapped to multiple profile IDs. "
-                        f"Using '{self.slash_command_to_profile_id_map[command]}', "
-                        f"ignoring mapping to '{profile_id}'."
-                    )
-                else:
-                    self.slash_command_to_profile_id_map[command] = profile_id
+        self.slash_command_to_profile_id_map = build_profile_slash_command_map(
+            self.app_config
+        )
         if self.slash_command_to_profile_id_map:
             logger.info(
                 f"Initialized slash command to profile ID map: {self.slash_command_to_profile_id_map}"
+            )
+        self.slash_command_to_model_tier_map = build_tier_slash_command_map(
+            self.app_config
+        )
+        if self.slash_command_to_model_tier_map:
+            logger.info(
+                f"Initialized slash command to model tier map: {self.slash_command_to_model_tier_map}"
             )
 
         # Instantiate Confirmation Manager
@@ -252,41 +341,7 @@ class TelegramService:
 
     async def _set_bot_commands(self) -> None:
         """Sets the bot's commands visible in the Telegram interface."""
-        bot_commands_to_set = [
-            BotCommand("start", "Start the bot and get a welcome message"),
-            BotCommand("interrupt", "Stop the current request"),
-        ]
-
-        # Add commands from service profiles
-        # Ensure slash_command_to_profile_id_map keys include the leading slash
-        # BotCommand expects command name without slash
-
-        processed_command_names = set()  # To avoid duplicates if a command maps to multiple profiles (though map prevents this)
-
-        for profile_config in self.app_config.service_profiles:
-            profile_id = profile_config.id
-            profile_name = profile_id  # Use profile ID as name
-
-            for slash_command_str in profile_config.slash_commands:
-                command_name = slash_command_str.lstrip("/")
-                if command_name not in processed_command_names:
-                    description = (
-                        profile_config.description
-                        if profile_config.description
-                        else f"Activate {profile_name} mode"
-                    )
-                    # Telegram has a 255 character limit for command descriptions
-                    if len(description) > 255:
-                        truncated_description = description[:252] + "..."
-                        logger.warning(
-                            f"Command '/{command_name}' description truncated from {len(description)} to 255 characters. "
-                            f"Original: {description}"
-                        )
-                        description = truncated_description
-                    # More specific description if available per command in future
-                    # For now, use profile's name/description.
-                    bot_commands_to_set.append(BotCommand(command_name, description))
-                    processed_command_names.add(command_name)
+        bot_commands_to_set = build_bot_commands(self.app_config)
 
         try:
             await self.application.bot.set_my_commands(

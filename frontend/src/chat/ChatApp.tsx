@@ -12,9 +12,11 @@ import { generateUUID } from '../utils/uuid';
 import { defaultAttachmentAdapter } from './attachmentAdapter';
 import ConversationSidebar from './ConversationSidebar';
 import { LOADING_MARKER } from './constants';
+import IntelligenceSelector from './IntelligenceSelector';
 import { NotificationSettings } from './NotificationSettings';
 import { PendingConfirmationsTray } from './PendingConfirmationsTray';
 import ProfileSelector from './ProfileSelector';
+import { type ModelTier, ProfilesProvider, useProfiles } from './profilesContext';
 import { PushNotificationButton } from './PushNotificationButton';
 import { ShareConversationButton } from './ShareConversationButton';
 import { ChatControlsContext, type SteerResult } from './chatControls';
@@ -29,11 +31,16 @@ import {
   ConversationMessagesResponse,
   Message,
   MessageContent,
+  MessageReasoningInfo,
 } from './types';
 import { useActivityStream } from './useActivityStream';
 import { useLiveMessageUpdates } from './useLiveMessageUpdates';
 import { useNotifications } from './useNotifications';
 import { useStreamingResponse } from './useStreamingResponse';
+
+// Stable empty list for profiles that offer no choice of tier, so the
+// intelligence control's props keep their identity across renders.
+const EMPTY_MODEL_TIERS: ModelTier[] = [];
 
 // Error boundary to catch transient @assistant-ui/store tapClientLookup race
 // condition errors during rendering (assistant-ui/assistant-ui#3395).
@@ -379,7 +386,7 @@ export function confirmationMapsEqual(
   return true;
 }
 
-const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) => {
+const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(window.innerWidth > 768);
@@ -418,6 +425,26 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     const saved = localStorage.getItem('notificationsEnabled');
     return saved === 'true';
   });
+  // The intelligence (model tier) choice for the profile currently selected.
+  // `null` -- the usual state -- means the profile's default tier, and is the
+  // only state in which a send omits `model_tier` entirely. A choice is
+  // one-shot: the next send consumes it and the control returns to the default,
+  // unless it is pinned, in which case it holds for the rest of this
+  // conversation. Nothing about it is persisted: spending more on a request is a
+  // decision about that request, not a setting that should outlive a reload.
+  const [modelTierChoice, setModelTierChoice] = useState<{
+    tierId: string;
+    pinned: boolean;
+  } | null>(null);
+  // Mirror for handleNew, which must not take the choice as a dependency: its
+  // identity feeds the assistant-ui runtime, and picking a tier should not
+  // rebuild the send path mid-conversation.
+  const modelTierChoiceRef = useRef(modelTierChoice);
+  modelTierChoiceRef.current = modelTierChoice;
+  const { profilesById } = useProfiles();
+  const currentProfile = profilesById[currentProfileId];
+  const modelTiers: ModelTier[] = currentProfile?.model_tiers ?? EMPTY_MODEL_TIERS;
+  const defaultModelTier = currentProfile?.default_model_tier ?? null;
   const streamingMessageIdRef = useRef<string | null>(null);
   const activeStreamConversationIdRef = useRef<string | null>(null);
   const toolCallMessageIdRef = useRef<string | null>(null);
@@ -777,6 +804,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       adopted = false,
       kickoffFailed = false,
       reconciledWithoutEnd = false,
+      reasoningInfo = null,
     }: {
       content: string;
       toolCalls: Array<Record<string, unknown>>;
@@ -787,6 +815,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       adopted?: boolean;
       kickoffFailed?: boolean;
       reconciledWithoutEnd?: boolean;
+      reasoningInfo?: MessageReasoningInfo | null;
     }) => {
       // Capture ref values locally to avoid race conditions
       const messageId = streamingMessageIdRef.current;
@@ -923,6 +952,16 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
             prev.map((msg) => (msg.id === messageId ? { ...msg, isLoading: false } : msg))
           );
         }
+      }
+
+      // Record what served this turn on the reply itself, so the thread can
+      // name the tier it ran at without waiting for a history reload.
+      if (messageId && reasoningInfo) {
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === messageId ? { ...msg, reasoning_info: reasoningInfo } : msg
+          )
+        );
       }
 
       // Update tool call message status when streaming completes
@@ -1352,6 +1391,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         interfaceType: string;
         attachments?: Array<{ id: string; type: string; name: string; content: string }>;
         turnId?: string;
+        modelTier?: string;
       }) => Promise<void>;
       cancelStream: () => void;
       stopTurn: () => Promise<boolean>;
@@ -1615,6 +1655,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               content: content,
               createdAt: new Date(msg.timestamp),
               status: { type: 'complete' },
+              reasoning_info: msg.reasoning_info ?? undefined,
             });
             return;
           }
@@ -2014,6 +2055,20 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
   const turnIsRunningRef = useRef(false);
   turnIsRunningRef.current = isLoading || isStreaming;
 
+  // A tier choice belongs to the profile and the conversation it was made in.
+  // A new chat, opening another conversation, and switching profile all return
+  // to the profile default rather than carrying a spend decision into somewhere
+  // the user did not make it.
+  useEffect(() => {
+    setModelTierChoice(null);
+  }, [conversationId, currentProfileId]);
+
+  // The control reports a choice of the profile default as no choice at all, so
+  // whatever is stored here differs from the default and is worth sending.
+  const handleModelTierChange = useCallback((tierId: string | null, pinned: boolean) => {
+    setModelTierChoice(tierId === null ? null : { tierId, pinned });
+  }, []);
+
   // Handle profile changes
   const handleProfileChange = useCallback(
     (newProfileId: string) => {
@@ -2162,6 +2217,14 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
       lastStreamingErrorIsUserFacingRef.current = false;
       selfTurnIdsRef.current.add(turnId);
 
+      // A tier choice applies to this send. An unpinned one is spent here, so
+      // the control returns to the profile default instead of quietly repricing
+      // every later message in the conversation.
+      const tierChoice = modelTierChoiceRef.current;
+      if (tierChoice && !tierChoice.pinned) {
+        setModelTierChoice(null);
+      }
+
       await sendStreamingMessage({
         prompt: message.content[0].text,
         conversationId: targetConversationId,
@@ -2169,6 +2232,7 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
         interfaceType: 'web',
         attachments: processedAttachments,
         turnId,
+        modelTier: tierChoice?.tierId,
       });
     },
     [conversationId, sendStreamingMessage, currentProfileId]
@@ -2221,6 +2285,15 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     const convertedMessage = {
       ...messageWithoutAttachments,
       content,
+      // assistant-ui rebuilds each message from the fields it knows and drops
+      // the rest, so anything of ours the thread has to render — which profile
+      // answered, which model tier served it — travels in metadata.custom.
+      metadata: {
+        custom: {
+          processing_profile_id: message.processing_profile_id,
+          reasoning_info: message.reasoning_info,
+        },
+      },
     };
     if (message.role === 'user' && convertedAttachments && convertedAttachments.length > 0) {
       return { ...convertedMessage, attachments: convertedAttachments };
@@ -2500,12 +2573,20 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               </Button>
               <h2 className="text-xl font-semibold">Chat</h2>
 
-              <div className="flex items-center">
+              <div className="flex items-center gap-2">
                 <ProfileSelector
                   selectedProfileId={currentProfileId}
                   onProfileChange={handleProfileChange}
                   disabled={isLoading}
                   onLoadingChange={setProfilesLoading}
+                />
+                <IntelligenceSelector
+                  tiers={modelTiers}
+                  defaultTierId={defaultModelTier}
+                  selectedTierId={modelTierChoice?.tierId ?? null}
+                  pinned={modelTierChoice?.pinned ?? false}
+                  onChange={handleModelTierChange}
+                  disabled={isLoading}
                 />
               </div>
 
@@ -2574,12 +2655,20 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
               </Button>
               <h2 className="text-xl font-semibold">Chat</h2>
 
-              <div className="flex items-center">
+              <div className="flex items-center gap-2">
                 <ProfileSelector
                   selectedProfileId={currentProfileId}
                   onProfileChange={handleProfileChange}
                   disabled={isLoading}
                   onLoadingChange={setProfilesLoading}
+                />
+                <IntelligenceSelector
+                  tiers={modelTiers}
+                  defaultTierId={defaultModelTier}
+                  selectedTierId={modelTierChoice?.tierId ?? null}
+                  pinned={modelTierChoice?.pinned ?? false}
+                  onChange={handleModelTierChange}
+                  disabled={isLoading}
                 />
               </div>
 
@@ -2646,5 +2735,13 @@ const ChatApp: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) =>
     </TooltipProvider>
   );
 };
+
+// One profile fetch for the whole page: the picker, the intelligence control
+// and the per-message badges in the thread all read the same list.
+const ChatApp: React.FC<ChatAppProps> = (props) => (
+  <ProfilesProvider>
+    <ChatAppContent {...props} />
+  </ProfilesProvider>
+);
 
 export default ChatApp;

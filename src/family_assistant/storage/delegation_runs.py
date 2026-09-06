@@ -60,6 +60,14 @@ delegation_runs_table = Table(
         "content_parts_json", JSON().with_variant(JSONB, "postgresql"), nullable=False
     ),
     Column("taint_state_json", JSON().with_variant(JSONB, "postgresql"), nullable=True),
+    # The model-selection envelope resolved when the run was created. Persisted
+    # rather than re-resolved, so a restart or a configuration deployment cannot
+    # silently change the models of a run somebody already authorized. Null for
+    # runs created before tier selection existed, and for a target that admits
+    # none.
+    Column(
+        "model_selection_json", JSON().with_variant(JSONB, "postgresql"), nullable=True
+    ),
     Column("handed_off_at", DateTime(timezone=True), nullable=True),
     Column("started_at", DateTime(timezone=True), nullable=True),
     Column("completed_at", DateTime(timezone=True), nullable=True),

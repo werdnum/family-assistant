@@ -572,6 +572,17 @@ async def render_delegate_to_service_confirmation(
     ]
     if attachment_ids:
         fields.append(_confirmation_field("Attachments", ", ".join(attachment_ids)))
+    model_tier = str(args.get("model_tier", "")).strip()
+    if model_tier:
+        # Named because it is a spending decision the approver is being asked
+        # to make alongside the delegation itself.
+        fields.append(
+            _confirmation_field(
+                "Intelligence",
+                f"{model_tier} — the target profile runs this request on that "
+                "model tier rather than its usual one.",
+            )
+        )
     resume_delegation_id = str(args.get("resume_delegation_id", "")).strip()
     if resume_delegation_id:
         fields.append(

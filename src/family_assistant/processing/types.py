@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Protocol
 
 from family_assistant.delegation_security import DelegationSecurityLevel
+from family_assistant.llm.model_selection import ModelTierEligibility
 from family_assistant.tools.types import (
     RequestConfirmationCallback as ToolRequestConfirmationCallback,
 )
@@ -251,6 +252,9 @@ class ProcessingServiceConfig:
     # on a profile whose turn is itself a privileged operation (a sandbox that
     # runs code), so reaching the profile at all is gated by the taint matrix.
     taint_sink_class: SinkClass | None = None
+    # Which model tiers this profile may be run on, and by whom. The default is
+    # a profile pinned to an inline model, which admits no selection at all.
+    tier_eligibility: ModelTierEligibility = field(default_factory=ModelTierEligibility)
 
     def __post_init__(self) -> None:
         """Validate runtime invariants for processing config."""
@@ -282,3 +286,7 @@ class RemoteServiceConfig:
     # definitely returned (used by the reaper to recover a stuck NULL-id run
     # without racing an in-flight submit).
     timeout_seconds: float = 300.0
+    # A remote agent chooses its own model, so it is pinned by construction and
+    # admits no tier selection. Present so the delegation gate can ask any
+    # target the same question.
+    tier_eligibility: ModelTierEligibility = field(default_factory=ModelTierEligibility)

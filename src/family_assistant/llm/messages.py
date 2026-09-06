@@ -150,6 +150,17 @@ class MessageReasoningInfo(TypedDict, total=False):
     request_id: str
     """Joins this message to its diagnostics ring-buffer record and to the
     ``llm.request.id`` span attribute."""
+    model_tier: str
+    """The model tier this call ran at. Absent on a profile pinned to an inline
+    model, which has no tier to name."""
+    model_tier_source: str
+    """Who chose that tier: ``user``, ``model``, or ``default`` for the
+    profile's own. What was resolved and who asked for it are separate
+    questions -- the same models can be reached by either."""
+    model_tier_requested: str
+    """The tier that was actually asked for, where one was. Absent when nobody
+    asked, which is what distinguishes a default from a selection that happened
+    to name the default."""
 
 
 # Re-export content part types and helpers for backward compatibility

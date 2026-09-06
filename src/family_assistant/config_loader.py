@@ -762,7 +762,10 @@ PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS: frozenset[str] = frozenset({
 # `model_tier`, so they only mean something to a profile that has one: every rule
 # that drops a tier drops these alongside it, and stating them once is what keeps
 # those rules from diverging as the set grows.
-PROFILE_TIER_ELIGIBILITY_KEYS: tuple[str, ...] = ("allowed_model_tiers",)
+PROFILE_TIER_ELIGIBILITY_KEYS: tuple[str, ...] = (
+    "allowed_model_tiers",
+    "auto_model_tiers",
+)
 
 # Top-level profile keys holding a list that a profile replaces wholesale rather
 # than extending. Each is a closed statement about the profile -- the commands it

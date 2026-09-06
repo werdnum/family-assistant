@@ -73,6 +73,7 @@ if TYPE_CHECKING:
 from .config_sources import DeepMergedYamlSource
 from .delegation_security import DelegationSecurityLevel
 from .security.taint import SinkClass, TaintPolicyConfig
+from .telegram.commands import BUILT_IN_SLASH_COMMANDS, normalize_slash_command
 from .tools.policy import (
     ToolPolicyConfig,
     ToolPolicyDecision,
@@ -106,6 +107,27 @@ class RetryConfig(BaseModel):
 
 
 _TIER_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+_TIER_SLASH_COMMAND_PATTERN = re.compile(r"^/[a-z0-9_]{1,31}$")
+
+
+def _reject_built_in_slash_command(claimant: str, command: str) -> None:
+    """Refuse a configured command the bot already answers itself.
+
+    ``command`` must already be normalised. The built-in handlers are registered
+    before any configured command and Telegram dispatches to the first match, so
+    a configuration claiming one of those names loses every time: the built-in
+    action runs and the thing that was configured never does. Failing at startup
+    says so, rather than advertising a command in the menu that does something
+    else entirely.
+    """
+    if command not in BUILT_IN_SLASH_COMMANDS:
+        return
+    msg = (
+        f"{claimant} uses slash command {command!r}, which the bot answers with "
+        "a built-in command. Built-in handlers are registered first and win, so "
+        "the configured command would never run."
+    )
+    raise ValueError(msg)
 
 
 class ModelTierConfig(BaseModel):
@@ -130,6 +152,22 @@ class ModelTierConfig(BaseModel):
     label: str | None = None
     # One line describing when this tier is worth its cost.
     description: str | None = None
+    # Per-message chat command that runs one request on this tier, on whatever
+    # profile the conversation is already using. A tier command and a profile
+    # command are separate commands rather than a combinatorial set, so a
+    # message carries one or the other.
+    slash_command: str | None = None
+
+    @field_validator("slash_command")
+    @classmethod
+    def validate_slash_command(cls, v: str | None) -> str | None:
+        if v is not None and not _TIER_SLASH_COMMAND_PATTERN.match(v):
+            msg = (
+                f"Invalid model tier slash_command {v!r}. It must start with '/' "
+                "and continue with 1-31 lowercase letters, digits or underscores."
+            )
+            raise ValueError(msg)
+        return v
 
     @field_validator("chain")
     @classmethod
@@ -577,6 +615,12 @@ class ServiceProfile(BaseModel):
     # `model_tier`", which is what a profile pinned to a model or to a
     # provider-coupled runtime stays at.
     allowed_model_tiers: list[str] | None = None
+    # The subset of `allowed_model_tiers` a *model-composed* request may select
+    # without a confirmation -- a `delegate_to_service` `model_tier` argument
+    # today, and Auto routing when it lands. A user's explicit selection is
+    # authorized by `allowed_model_tiers` instead: it is the user's own choice
+    # to spend more, where this is authority handed to a model.
+    auto_model_tiers: list[str] | None = None
 
 
 class DefaultProfileSettings(BaseModel):
@@ -593,6 +637,7 @@ class DefaultProfileSettings(BaseModel):
     slash_commands: list[str] = Field(default_factory=list)
     visibility_grants: list[str] = Field(default_factory=list)
     allowed_model_tiers: list[str] | None = None
+    auto_model_tiers: list[str] | None = None
 
 
 class NotesConfig(BaseModel):
@@ -1794,6 +1839,54 @@ class AppConfig(BaseSettings):
                 f"share a port, and the application is the one that loses."
             )
             raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def validate_model_tier_slash_commands_are_unique(self) -> AppConfig:
+        """Reject a tier command that another command already answers to.
+
+        A chat surface dispatches a leading ``/word`` by looking it up, so two
+        configurations claiming one word means whichever the lookup finds first
+        wins and the other silently never runs. A tier command and a profile
+        command mean different things -- pick the intelligence for this message
+        versus pick the agent -- so a collision between them is the same
+        ambiguity, not a resolvable precedence. The bot's own commands are in
+        the same namespace and are registered ahead of both, so claiming one of
+        those is the same defect with a guaranteed loser.
+
+        Compared on the normalised command, since that is what dispatch keys on:
+        ``/Deep`` and ``/deep`` are one word to Telegram, not two.
+        """
+        owners: dict[str, str] = {}
+        for tier_name, tier in self.model_tiers.items():
+            if tier.slash_command is None:
+                continue
+            command = normalize_slash_command(tier.slash_command)
+            _reject_built_in_slash_command(f"Model tier {tier_name!r}", command)
+            existing = owners.get(command)
+            if existing is not None:
+                msg = (
+                    f"Model tiers {existing!r} and {tier_name!r} both use "
+                    f"slash_command {tier.slash_command!r}. A command names one "
+                    "thing to run."
+                )
+                raise ValueError(msg)
+            owners[command] = tier_name
+
+        for profile in self.service_profiles:
+            for raw_command in profile.slash_commands:
+                command = normalize_slash_command(raw_command)
+                _reject_built_in_slash_command(f"Profile {profile.id!r}", command)
+                tier_name = owners.get(command)
+                if tier_name is not None:
+                    msg = (
+                        f"Profile {profile.id!r} uses slash command "
+                        f"{raw_command!r}, which model tier {tier_name!r} also "
+                        "claims. A tier command selects the intelligence for one "
+                        "message and a profile command selects the agent, so one "
+                        "word cannot mean both."
+                    )
+                    raise ValueError(msg)
         return self
 
     @model_validator(mode="after")

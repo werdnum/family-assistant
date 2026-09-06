@@ -16,6 +16,12 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from sqlalchemy.exc import IntegrityError
 
 from family_assistant.llm.content_parts import attachment_content, text_content
+from family_assistant.llm.model_selection import (
+    ModelSelectionRequest,
+    ModelTierNotPermitted,
+    ResolvedModelSelection,
+    resolve_model_selection,
+)
 from family_assistant.security.taint import TaintMetadata, TaintSource, TurnTaintState
 from family_assistant.services.tool_call_review import (
     TriggerReviewInput,
@@ -392,6 +398,7 @@ async def _synchronous_delegation_result(
     target_service: Any,  # noqa: ANN401 - target is a registry-resolved processing service
     target_service_id: str,
     content_parts: list[ContentPartDict],
+    model_selection: ResolvedModelSelection,
 ) -> ToolResult:
     """Run a delegated request inline and return its result as a tool result.
 
@@ -434,6 +441,7 @@ async def _synchronous_delegation_result(
                 exec_context,
                 definition=json.dumps(content_parts, sort_keys=True),
             ),
+            model_selection=model_selection,
         )
     except Exception as e:
         logger.exception(
@@ -719,6 +727,7 @@ def _confirmation_tool_arguments(
     confirm_delegation: bool,
     attachment_ids: list[str] | None,
     resume_delegation_id: str | None,
+    model_tier: str | None,
 ) -> ToolArguments:
     arguments: ToolArguments = {
         "target_service_id": target_service_id,
@@ -729,6 +738,13 @@ def _confirmation_tool_arguments(
         arguments["attachment_ids"] = attachment_ids
     if resume_delegation_id is not None:
         arguments["resume_delegation_id"] = resume_delegation_id
+    if model_tier is not None:
+        # Only when set, so a stored approval from before tier selection still
+        # matches a call that names no tier. `_durable_authorization_matches`
+        # requires every stored argument to be present and equal in the
+        # effective ones, so an approval that carries a tier can only be
+        # re-used by a call at that same tier.
+        arguments["model_tier"] = model_tier
     return arguments
 
 
@@ -782,6 +798,7 @@ async def _confirm_delegation_if_required(
     handoff_after_seconds: float | None,
     delivery_hint: Literal["auto", "background"],
     resume_delegation_id: str | None,
+    model_tier: str | None,
 ) -> ToolResult | None:
     """Apply delegation-specific confirmation limits and durable authorization."""
     if not confirm_delegation:
@@ -803,6 +820,7 @@ async def _confirm_delegation_if_required(
         confirm_delegation=confirm_delegation,
         attachment_ids=attachment_ids,
         resume_delegation_id=resume_delegation_id,
+        model_tier=model_tier,
     )
     durable_authorization = exec_context.tool_confirmation_authorization
     durable_authorization_matches = _durable_authorization_matches(
@@ -815,6 +833,7 @@ async def _confirm_delegation_if_required(
             "handoff_after_seconds": handoff_after_seconds,
             "delivery_hint": delivery_hint,
             "resume_delegation_id": resume_delegation_id,
+            "model_tier": model_tier,
         },
     )
     matched_authorization = (
@@ -911,6 +930,7 @@ async def _synchronous_result_if_required(
     content_parts: list[ContentPartDict],
     resume_delegation_id: str | None,
     resumed_subconversation_id: str | None,
+    model_selection: ResolvedModelSelection,
 ) -> ToolResult | None:
     """Run inline when async delivery cannot be used, rejecting unsafe resumes."""
     if not (
@@ -934,6 +954,7 @@ async def _synchronous_result_if_required(
         target_service=target_service,
         target_service_id=target_service_id,
         content_parts=content_parts,
+        model_selection=model_selection,
     )
 
 
@@ -948,6 +969,7 @@ async def _enqueue_delegation(
     delivery_hint: Literal["auto", "background"],
     resume_delegation_id: str | None,
     resumed_subconversation_id: str | None,
+    model_selection: ResolvedModelSelection,
 ) -> _QueuedDelegation | ToolResult:
     """Atomically persist a delegated run and its task, including resume claims."""
     delegation_id = f"delegation_{uuid.uuid4().hex}"
@@ -986,6 +1008,10 @@ async def _enqueue_delegation(
             "request_text": user_request,
             "content_parts_json": content_parts,
             "taint_state_json": taint_state_json,
+            # Frozen here rather than re-resolved by the worker: a restart or a
+            # configuration deployment between enqueue and execution must not
+            # change the models of a run that was already authorized.
+            "model_selection_json": model_selection.to_json(),
         })
         await txn.tasks.enqueue(
             task_id=task_id,
@@ -1169,6 +1195,10 @@ SERVICE_TOOLS_DEFINITION: list[ToolDefinition] = [
                         "type": "string",
                         "description": "Optional. Reference ID of a previous finished delegation (from delegate_to_service or list_delegations) to continue instead of starting a fresh conversation. The target profile resumes that delegation's history and retains its context. Must reference a completed or failed delegation to the same target_service_id in this conversation.",
                     },
+                    "model_tier": {
+                        "type": "string",
+                        "description": "Optional. Run the target on a specific model tier (listed with the target profile in your system prompt). Only tiers the target admits without confirmation are accepted; omit to use the target's default.",
+                    },
                 },
                 "required": ["target_service_id", "user_request"],
             },
@@ -1232,6 +1262,7 @@ async def delegate_to_service_tool(
     handoff_after_seconds: float | None = None,
     delivery_hint: Literal["auto", "background"] = "auto",
     resume_delegation_id: str | None = None,
+    model_tier: str | None = None,
 ) -> ToolResult:
     """
     Delegates a user request to another specialized assistant profile (service).
@@ -1248,6 +1279,8 @@ async def delegate_to_service_tool(
             the same target profile. When set, the delegated profile continues that
             delegation's isolated history instead of starting fresh, so it retains
             the earlier exchange's context.
+        model_tier: Optional model tier to run the target on. Only tiers the
+            target admits without a confirmation are accepted.
 
     Returns:
         ToolResult with response text from the target service and any attachments it generated
@@ -1264,6 +1297,27 @@ async def delegate_to_service_tool(
         return target_error
     target_service = cast("DelegatableService", target_service)
     source_service_id = cast("str", source_service_id)
+
+    # Resolved against the *target's* eligibility, before the confirmation
+    # prompt and before any durable run exists: a tier the target does not
+    # admit must not become a question put to the user, nor a queued run that
+    # fails when a worker picks it up.
+    try:
+        model_selection = resolve_model_selection(
+            target_service.service_config.tier_eligibility,
+            ModelSelectionRequest(tier=model_tier, source="model")
+            if model_tier is not None
+            else None,
+            profile_id=target_service.service_config.id,
+        )
+    except ModelTierNotPermitted as refusal:
+        logger.info(
+            "Refusing delegation to '%s' at model tier '%s': %s",
+            target_service_id,
+            model_tier,
+            refusal,
+        )
+        return ToolResult(text=f"Error: {refusal}", attachments=None)
 
     (
         resume_delegation_id,
@@ -1287,6 +1341,7 @@ async def delegate_to_service_tool(
         handoff_after_seconds=handoff_after_seconds,
         delivery_hint=delivery_hint,
         resume_delegation_id=resume_delegation_id,
+        model_tier=model_tier,
     )
     if confirmation_error is not None:
         return confirmation_error
@@ -1307,6 +1362,7 @@ async def delegate_to_service_tool(
         content_parts=content_parts,
         resume_delegation_id=resume_delegation_id,
         resumed_subconversation_id=resumed_subconversation_id,
+        model_selection=model_selection,
     )
     if synchronous_result is not None:
         return synchronous_result
@@ -1327,6 +1383,7 @@ async def delegate_to_service_tool(
         delivery_hint=delivery_hint,
         resume_delegation_id=resume_delegation_id,
         resumed_subconversation_id=resumed_subconversation_id,
+        model_selection=model_selection,
     )
     if isinstance(enqueue_result, ToolResult):
         return enqueue_result

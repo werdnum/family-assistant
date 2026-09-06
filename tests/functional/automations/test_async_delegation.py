@@ -16,6 +16,11 @@ from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.interfaces import ChatDeliveryError, ChatInterface
 from family_assistant.llm.messages import AssistantMessage, SystemMessage, UserMessage
+from family_assistant.llm.model_selection import (
+    ModelTierEligibility,
+    ModelTierOption,
+    ResolvedModelSelection,
+)
 from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.processing import (
     PENDING,
@@ -84,6 +89,9 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
     from family_assistant.processing.service import ProcessingService
+    from family_assistant.storage.repositories.delegation_runs import (
+        DelegationRunCreate,
+    )
     from family_assistant.telegram.protocols import ConfirmationUIManager
 
 TEST_INTERFACE_TYPE = "test_interface"
@@ -97,6 +105,7 @@ class FakeDelegationCall(TypedDict):
     request_confirmation_callback: object
     subconversation_id: object
     tool_call_review_trigger: TriggerReviewInput
+    model_selection: ResolvedModelSelection | None
 
 
 class FakeConfirmationRequest(TypedDict):
@@ -184,10 +193,12 @@ class FakeDelegatableService:
         *,
         request_confirmation: bool = False,
         attachment_registry: AttachmentRegistry | None = None,
+        tier_eligibility: ModelTierEligibility | None = None,
     ) -> None:
         self.service_config = SimpleNamespace(
             id="target_profile",
             allowed_delegation_sources=["source_profile"],
+            tier_eligibility=tier_eligibility or ModelTierEligibility(),
         )
         self.request_confirmation = request_confirmation
         self.attachment_registry = attachment_registry
@@ -658,9 +669,15 @@ async def _create_run(
     interface_type: str = TEST_INTERFACE_TYPE,
     source_subconversation_id: str | None = None,
     taint_state_json: TaintMetadata | None = None,
+    model_selection: ResolvedModelSelection | None = None,
+    model_selection_json: object | None = None,
 ) -> str:
-    """Create a queued delegation run and return its delegation_id."""
-    await db_context.delegation_runs.create_run({
+    """Create a queued delegation run and return its delegation_id.
+
+    ``model_selection_json`` writes the column straight through, so a test can
+    put a payload there that the write side would never produce.
+    """
+    run: DelegationRunCreate = {
         "delegation_id": delegation_id,
         "task_id": f"task_{delegation_id}",
         "source_profile_id": "source_profile",
@@ -675,7 +692,15 @@ async def _create_run(
         "request_text": "do the thing",
         "content_parts_json": [],
         "taint_state_json": taint_state_json,
-    })
+        "model_selection_json": (
+            model_selection.to_json() if model_selection is not None else None
+        ),
+    }
+    if model_selection_json is not None:
+        run["model_selection_json"] = cast(
+            "dict[str, str | None]", model_selection_json
+        )
+    await db_context.delegation_runs.create_run(run)
     return delegation_id
 
 
@@ -703,6 +728,109 @@ def _build_worker(
         engine=db_engine,
         confirmation_ui_managers=confirmation_ui_managers,
     )
+
+
+_TIERED_TARGET = ModelTierEligibility(
+    default_tier="standard",
+    selectable=(
+        ModelTierOption(id="standard", label="Standard"),
+        ModelTierOption(id="deep", label="Deep"),
+    ),
+    auto=frozenset({"standard", "deep"}),
+)
+
+
+@pytest.mark.asyncio
+async def test_the_worker_runs_a_queued_delegation_at_its_persisted_tier(
+    db_engine: AsyncEngine,
+) -> None:
+    """The envelope frozen at enqueue is what the worker applies, verbatim.
+
+    Re-resolving it here would let a configuration deployment between enqueue
+    and execution change the models of a run somebody already authorized.
+    """
+    target_service = FakeDelegatableService(tier_eligibility=_TIERED_TARGET)
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+
+    db_context = Database(engine=db_engine)
+    await _create_run(
+        db_context,
+        delegation_id="delegation_tiered",
+        model_selection=ResolvedModelSelection(
+            tier="deep",
+            requested="deep",
+            source="model",
+        ),
+    )
+
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    await worker.handle_delegated_profile_run(
+        _tool_context(Database(engine=db_engine), processing_service, chat_interface),
+        _payload("delegation_tiered"),
+    )
+
+    assert len(target_service.calls) == 1
+    assert target_service.calls[0]["model_selection"] == ResolvedModelSelection(
+        tier="deep", requested="deep", source="model"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_run_queued_before_tiers_existed_still_runs(
+    db_engine: AsyncEngine,
+) -> None:
+    """A null envelope is "no selection", not a run that cannot be executed."""
+    target_service = FakeDelegatableService(tier_eligibility=_TIERED_TARGET)
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+
+    await _create_run(Database(engine=db_engine), delegation_id="delegation_untiered")
+
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    await worker.handle_delegated_profile_run(
+        _tool_context(Database(engine=db_engine), processing_service, chat_interface),
+        _payload("delegation_untiered"),
+    )
+
+    assert len(target_service.calls) == 1
+    assert target_service.calls[0]["model_selection"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_persisted_envelope_fails_the_run(
+    db_engine: AsyncEngine,
+) -> None:
+    """A payload that is not an envelope is not "no selection".
+
+    Running it at the target's default would silently spend differently from
+    what was authorized, and say nothing about it. The run fails instead.
+    """
+    target_service = FakeDelegatableService(tier_eligibility=_TIERED_TARGET)
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+    chat_interface.send_message.return_value = "external_message_id"
+
+    await _create_run(
+        Database(engine=db_engine),
+        delegation_id="delegation_malformed",
+        # A list, not an object: what a schema change or a hand-edited row
+        # could leave behind.
+        model_selection_json=["deep"],
+    )
+
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+    await worker.handle_delegated_profile_run(
+        _tool_context(Database(engine=db_engine), processing_service, chat_interface),
+        _payload("delegation_malformed"),
+    )
+
+    assert target_service.calls == []
+    db_context = Database(engine=db_engine)
+    run = await db_context.delegation_runs.get_by_delegation_id("delegation_malformed")
+    assert run is not None
+    assert run["status"] == "failed"
+    assert run["error"] is not None
 
 
 @pytest.mark.asyncio
@@ -2409,6 +2537,8 @@ class FakePollableService:
         self.service_config = SimpleNamespace(
             id="target_profile",
             allowed_delegation_sources=["source_profile"],
+            # A remote target picks its own model, so it is pinned.
+            tier_eligibility=ModelTierEligibility(),
         )
         self._poll_results = list(poll_results or [])
         self._submit_terminal = submit_terminal
@@ -3651,6 +3781,7 @@ async def test_resume_delegation_rejects_target_profile_mismatch(
     other_service.service_config = SimpleNamespace(
         id="other_profile",
         allowed_delegation_sources=["source_profile"],
+        tier_eligibility=ModelTierEligibility(),
     )
     processing_service = _source_processing_service(target_service)
     cast("Any", processing_service).processing_services_registry["other_profile"] = (

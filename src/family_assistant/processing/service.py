@@ -23,6 +23,13 @@ from family_assistant.llm.messages import (
     ToolMessage,
     UserMessage,
 )
+from family_assistant.llm.model_selection import (
+    ModelSelectionRequest,
+    ModelTierClientMissing,
+    ModelTierEligibility,
+    ResolvedModelSelection,
+    resolve_model_selection,
+)
 from family_assistant.processing.protocol import TaintedSinkRefusedError
 from family_assistant.security.taint import (
     TaintPolicyConfig,
@@ -134,6 +141,30 @@ def _tool_row_attachment_ids(message: LLMMessage) -> set[str]:
     }
 
 
+def _selectable_tier_lines(eligibility: ModelTierEligibility) -> list[str]:
+    """Catalog lines naming the tiers a delegating model may ask a target for.
+
+    Only the automatic list is advertised: a tier the target admits from a user
+    but not from another profile would be a suggestion the model can only be
+    refused for taking. A target with nothing beyond its default gets no lines
+    at all, which is most of them.
+    """
+    options = [
+        option
+        for option in eligibility.selectable
+        if option.id in eligibility.auto and option.id != eligibility.default_tier
+    ]
+    if not options:
+        return []
+    lines = ["  Optional `model_tier` values for this profile:"]
+    lines.extend(
+        f"  - {option.id} ({option.label})"
+        + (f": {option.description}" if option.description else "")
+        for option in options
+    )
+    return lines
+
+
 def _response_attachment_references(
     response_attachment_ids: Sequence[str] | None,
     *,
@@ -194,8 +225,19 @@ class ProcessingService:
         credential_resolvers: Mapping[str, OAuthCredentialResolver] | None = None,
         api_backend: ApiBackend | None = None,
         taint_policy: TaintPolicyConfig | None = None,
+        tier_llm_clients: Mapping[str, LLMInterface] | None = None,
     ) -> None:
+        """Build a profile's service.
+
+        ``llm_client`` serves a run that selects no tier, and is the client for
+        the profile's own ``model_tier`` where it has one. ``tier_llm_clients``
+        holds one client per tier the profile may be run on, built once at
+        startup: a run binds to one of them for its whole duration rather than
+        rebinding shared state, so two conversations at different tiers cannot
+        take each other's models.
+        """
         self._llm_client = llm_client
+        self._tier_llm_clients: dict[str, LLMInterface] = dict(tier_llm_clients or {})
         self.tools_provider = tools_provider
         self.on_demand_view = on_demand_view
         self.service_config = service_config
@@ -215,9 +257,11 @@ class ProcessingService:
         # taint per tool, inside the tools provider.
         self.taint_policy = taint_policy or TaintPolicyConfig()
 
-        # Compose helpers
+        # Compose helpers. None of them holds a client: the run's client is
+        # passed to the calls that need one, so which model a turn talks to is
+        # a property of that turn rather than of the shared service.
         self.attachment_processor = AttachmentProcessor(
-            attachment_registry, llm_client, app_config, self.clock
+            attachment_registry, app_config, self.clock
         )
         self.context_preparer = ContextPreparer(
             context_providers, service_config, self.clock
@@ -232,7 +276,6 @@ class ProcessingService:
             api_backend=api_backend,
         )
         self.llm_loop = LLMStreamingLoop(
-            llm_client,
             service_config,
             app_config,
             self.tool_executor,
@@ -305,13 +348,65 @@ class ProcessingService:
 
     @property
     def llm_client(self) -> LLMInterface:
+        """The client this profile's DEFAULT tier is served by.
+
+        Not the running turn's client: a turn binds to the client its resolved
+        tier names, which is passed down the call it belongs to. Reaching for
+        this from inside a turn attributes spend to a tier the turn is not
+        running at.
+        """
         return self._llm_client
 
-    @llm_client.setter
-    def llm_client(self, value: LLMInterface) -> None:
-        self._llm_client = value
-        self.llm_loop.llm_client = value
-        self.attachment_processor.llm_client = value
+    def resolve_model_selection(
+        self,
+        request: ModelSelectionRequest | None,
+    ) -> ResolvedModelSelection:
+        """Admit a tier request for this profile, or raise.
+
+        The entry surfaces call this: a slash command, the web selector, the
+        delegation tool's target. Every one of them resolves before the turn is
+        prepared, so a refusal is an answer about the request rather than a
+        failure part-way through it.
+        """
+        return resolve_model_selection(
+            self.service_config.tier_eligibility,
+            request,
+            profile_id=self.service_config.id,
+        )
+
+    def _run_binding(
+        self, selection: ResolvedModelSelection | None
+    ) -> tuple[ResolvedModelSelection, LLMInterface]:
+        """Bind a run to the envelope frozen for it and the client serving it.
+
+        This is also where a queued run's envelope is revalidated: it was
+        resolved at enqueue time and the deployment may have moved underneath
+        it, so the tier has to still have a client. Re-resolving it from scratch
+        would be worse -- a deployment that narrowed the eligibility lists would
+        silently downgrade a run somebody already authorized.
+
+        ``tier is None`` is a profile pinned to an inline model, which has no
+        map to look anything up in.
+        """
+        resolved = selection or ResolvedModelSelection.unselected(
+            self.service_config.tier_eligibility.default_tier
+        )
+        tier = resolved.tier
+        if tier is None:
+            return resolved, self._llm_client
+        client = self._tier_llm_clients.get(tier)
+        if client is None:
+            # Not a refusal: the gate already admitted this tier, so a missing
+            # client is a deployment that built fewer clients than it admits
+            # tiers. Surfacing it as a refusal would tell a user to choose
+            # differently about a defect only an operator can fix.
+            msg = (
+                f"Profile '{self.service_config.id}' admits model tier '{tier}' "
+                "but has no client built for it. Clients here: "
+                f"{', '.join(sorted(self._tier_llm_clients)) or '(none)'}."
+            )
+            raise ModelTierClientMissing(msg)
+        return resolved, client
 
     @property
     def attachment_registry(self) -> AttachmentRegistry | None:
@@ -593,11 +688,15 @@ class ProcessingService:
         registry = self.processing_services_registry
         if not registry:
             return ""
-        lines = [
-            f"- ID: {profile_id}, Description: "
-            f"{service.service_config.description or 'No description available.'}"
-            for profile_id, service in registry.items()
-        ]
+        lines: list[str] = []
+        for profile_id, service in registry.items():
+            description = (
+                service.service_config.description or "No description available."
+            )
+            lines.append(f"- ID: {profile_id}, Description: {description}")
+            lines.extend(
+                _selectable_tier_lines(service.service_config.tier_eligibility)
+            )
         return "\n".join(lines)
 
     async def delegation_catalog_addition(self) -> str:
@@ -901,6 +1000,7 @@ class ProcessingService:
         replied_to_interface_id: str | None,
         trigger_attachments: list[MessageAttachmentMetadata] | None,
         subconversation_id: str | None,
+        llm_client: LLMInterface,
         thread_root_id: int | None = None,
         trigger_is_internal: bool = False,
         pinned_history_message_ids: list[int] | None = None,
@@ -1035,6 +1135,7 @@ class ProcessingService:
             conversation_id,
             trigger_content_parts,
             acting_user_id=user_id,
+            llm_client=llm_client,
         )
         # Before the injection messages are appended, so the block lands on the
         # trigger rather than on the newest injection. An injection built by a
@@ -1076,6 +1177,8 @@ class ProcessingService:
         user_name: str,
         turn_id: str,
         chat_interface: ChatInterface | None,
+        llm_client: LLMInterface,
+        model_selection: ResolvedModelSelection,
         user_id: str | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
         confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
@@ -1088,6 +1191,11 @@ class ProcessingService:
     ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
+
+        The run's binding is a parameter rather than a default, because the only
+        default available here is the shared one -- and a caller that omitted it
+        would silently run the profile's own model while the envelope said
+        otherwise.
 
         Returns:
             A tuple containing:
@@ -1103,6 +1211,8 @@ class ProcessingService:
             user_name=user_name,
             turn_id=turn_id,
             chat_interface=chat_interface,
+            llm_client=llm_client,
+            model_selection=model_selection,
             user_id=user_id,
             chat_interfaces=chat_interfaces,
             confirmation_ui_managers=confirmation_ui_managers,
@@ -1127,6 +1237,8 @@ class ProcessingService:
         user_name: str,
         turn_id: str,
         chat_interface: ChatInterface | None,
+        llm_client: LLMInterface,
+        model_selection: ResolvedModelSelection,
         user_id: str | None = None,
         chat_interfaces: dict[str, ChatInterface] | None = None,
         confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
@@ -1154,6 +1266,8 @@ class ProcessingService:
             user_name=user_name,
             turn_id=turn_id,
             chat_interface=chat_interface,
+            llm_client=llm_client,
+            model_selection=model_selection,
             user_id=user_id,
             chat_interfaces=chat_interfaces,
             confirmation_ui_managers=confirmation_ui_managers,
@@ -1195,6 +1309,7 @@ class ProcessingService:
         reuse_existing_user_row: bool = False,
         initial_taint_sources: Sequence[TaintSource] | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
+        model_selection: ResolvedModelSelection | None = None,
     ) -> ChatInteractionResult:
         """
         Handles a complete chat interaction from user input to final response.
@@ -1240,6 +1355,11 @@ class ProcessingService:
             f"Starting handle_chat_interaction for conversation {conversation_id}, turn {turn_id}"
         )
 
+        # Bound before any model-dependent preparation: attachment injection is
+        # built by the primary adapter, so the binding has to exist before the
+        # turn's messages do.
+        resolved_selection, run_llm_client = self._run_binding(model_selection)
+
         thread_root_id_for_turn: int | None = None
 
         async def interaction_success() -> ChatInteractionResult:
@@ -1267,6 +1387,7 @@ class ProcessingService:
                 trigger_role=trigger_role,
                 reuse_existing_user_row=reuse_existing_user_row,
                 initial_taint_sources=initial_taint_sources,
+                llm_client=run_llm_client,
             )
 
             # --- 3. Call Core LLM Processing (self.process_message) ---
@@ -1283,6 +1404,8 @@ class ProcessingService:
                 user_id=user_id,
                 turn_id=turn_id,
                 chat_interface=chat_interface,
+                llm_client=run_llm_client,
+                model_selection=resolved_selection,
                 chat_interfaces=chat_interfaces,
                 confirmation_ui_managers=confirmation_ui_managers,
                 request_confirmation_callback=request_confirmation_callback,
@@ -1433,6 +1556,7 @@ class ProcessingService:
         initial_taint_sources: Sequence[TaintSource] | None = None,
         taint_tracker: TurnTaintTracker | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
+        model_selection: ResolvedModelSelection | None = None,
     ) -> AsyncIterator[LLMStreamEvent]:
         """
         Streaming version of handle_chat_interaction.
@@ -1448,6 +1572,10 @@ class ProcessingService:
         """
         if turn_id is None:
             turn_id = str(uuid.uuid4())
+
+        # Before the span, and before any model-dependent preparation: the
+        # binding has to exist before the turn's messages do.
+        resolved_selection, run_llm_client = self._run_binding(model_selection)
 
         span = tracer.start_span(
             "conversation.process",
@@ -1492,6 +1620,7 @@ class ProcessingService:
                 trigger_attachments=trigger_attachments,
                 subconversation_id=subconversation_id,
                 reuse_existing_user_row=reuse_existing_user_row,
+                llm_client=run_llm_client,
             )
 
             # --- 3. Stream LLM Processing ---
@@ -1507,6 +1636,8 @@ class ProcessingService:
                 user_id=user_id,
                 turn_id=turn_id,
                 chat_interface=chat_interface,
+                llm_client=run_llm_client,
+                model_selection=resolved_selection,
                 chat_interfaces=chat_interfaces,
                 confirmation_ui_managers=confirmation_ui_managers,
                 request_confirmation_callback=request_confirmation_callback,

@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
 import { vi } from 'vitest';
 import { mockLocalStorage, resetLocalStorageMock } from '../../test/mocks/localStorageMock';
+import { capturedTurnModelTiers } from '../../test/mocks/handlers';
 import { server } from '../../test/setup.js';
 import { renderChatApp } from '../../test/utils/renderChatApp';
 import { waitForMessageSent } from '../../test/utils/waitHelpers';
@@ -158,7 +159,7 @@ describe('ChatApp', () => {
 
     // Check that the profile selector is present
     await waitFor(() => {
-      expect(screen.getByRole('combobox')).toBeInTheDocument();
+      expect(screen.getByRole('combobox', { name: 'Processing profile' })).toBeInTheDocument();
     });
 
     // This tests the basic profile switching functionality
@@ -198,7 +199,7 @@ describe('ChatApp', () => {
     mockLocalStorage.setItem.mock.calls.filter(([key]) => key === 'lastConversationId').length;
 
   const switchProfileToResearch = async (user: ReturnType<typeof userEvent.setup>) => {
-    await user.click(screen.getByRole('combobox'));
+    await user.click(screen.getByRole('combobox', { name: 'Processing profile' }));
     await user.click(await screen.findByRole('option', { name: /research/i }));
     await waitFor(() => {
       expect(mockLocalStorage.setItem).toHaveBeenCalledWith('selectedProfileId', 'research');
@@ -853,6 +854,193 @@ describe('ChatApp', () => {
   //   turn_ended for one of them arrives (preventing the clobber of freshly-streamed state)
   // - The full end-to-end behavior is exercised by the Playwright chat tests in
   //   tests/functional/web/ui/ (e.g. test_chat_basic.py, test_chat_stream_error_recovery.py)
+});
+
+describe('ChatApp intelligence tier selection', () => {
+  beforeEach(() => {
+    resetLocalStorageMock();
+    vi.clearAllMocks();
+    capturedTurnModelTiers.length = 0;
+  });
+
+  // Radix Select relies on pointer-capture and scroll APIs jsdom lacks. Stub
+  // them per-test and restore afterwards, so a later test doesn't silently get
+  // a defined no-op where jsdom has nothing.
+  const selectStubs: Array<() => void> = [];
+  const setupSelectUser = () => {
+    const proto = window.HTMLElement.prototype as unknown as Record<string, unknown>;
+    for (const method of ['hasPointerCapture', 'releasePointerCapture', 'scrollIntoView']) {
+      const hadOwn = Object.prototype.hasOwnProperty.call(proto, method);
+      const original = proto[method];
+      proto[method] = vi.fn();
+      selectStubs.push(() => {
+        if (hadOwn) {
+          proto[method] = original;
+        } else {
+          delete proto[method];
+        }
+      });
+    }
+    return userEvent.setup({ pointerEventsCheck: 0 });
+  };
+
+  afterEach(() => {
+    while (selectStubs.length > 0) {
+      selectStubs.pop()?.();
+    }
+  });
+
+  const chooseTier = async (user: ReturnType<typeof userEvent.setup>, name: RegExp) => {
+    // The control appears with the profile list, which loads after the composer.
+    await user.click(await screen.findByRole('combobox', { name: 'Intelligence' }));
+    await user.click(await screen.findByRole('option', { name }));
+  };
+
+  const sendMessage = async (user: ReturnType<typeof userEvent.setup>, text: string) => {
+    const input = screen.getByTestId('chat-input');
+    await user.click(input);
+    await user.type(input, text);
+    await user.keyboard('{Enter}');
+    await waitForMessageSent(input);
+  };
+
+  // The turn is over, and the composer takes a new message instead of steering
+  // it into the running one, exactly when the thread stops running: that is the
+  // state Enter submits in, and the state that puts the send button back and
+  // returns the placeholder to its idle text.
+  const waitForTurnToSettle = async (expectedTurns: number) => {
+    await waitFor(
+      () => {
+        expect(screen.queryAllByTestId('assistant-message').length).toBe(expectedTurns);
+        expect(screen.getByTestId('send-button')).toBeInTheDocument();
+        expect(screen.getByTestId('chat-input')).toHaveAttribute(
+          'placeholder',
+          'Message Family Assistant...'
+        );
+      },
+      { timeout: 10000 }
+    );
+  };
+
+  it('sends no model_tier while the profile default is in effect', async () => {
+    const user = userEvent.setup();
+    await renderChatApp({ waitForReady: true });
+
+    await sendMessage(user, 'Hello there!');
+
+    await waitFor(() => expect(capturedTurnModelTiers).toEqual([undefined]), { timeout: 10000 });
+  }, 30000);
+
+  it('spends a chosen tier on the next message and then returns to the default', async () => {
+    const user = setupSelectUser();
+    await renderChatApp({ waitForReady: true });
+
+    await chooseTier(user, /Deep/);
+    await sendMessage(user, 'A hard question');
+    await waitFor(() => expect(capturedTurnModelTiers).toEqual(['deep']), { timeout: 10000 });
+
+    // The control is back on the profile default, with nothing left to pin.
+    expect(screen.getByRole('combobox', { name: 'Intelligence' })).toHaveTextContent('Standard');
+    expect(screen.queryByTestId('intelligence-pin')).not.toBeInTheDocument();
+
+    await waitForTurnToSettle(1);
+    await sendMessage(user, 'An easy follow-up');
+    await waitFor(() => expect(capturedTurnModelTiers).toEqual(['deep', undefined]), {
+      timeout: 10000,
+    });
+  }, 60000);
+
+  it('keeps a pinned tier across messages until a new chat clears it', async () => {
+    const user = setupSelectUser();
+    await renderChatApp({ waitForReady: true });
+
+    await chooseTier(user, /Deep/);
+    await user.click(screen.getByTestId('intelligence-pin'));
+    expect(screen.getByTestId('intelligence-pin')).toHaveAttribute('aria-pressed', 'true');
+
+    await sendMessage(user, 'A hard question');
+    await waitFor(() => expect(capturedTurnModelTiers).toEqual(['deep']), { timeout: 10000 });
+    expect(screen.getByRole('combobox', { name: 'Intelligence' })).toHaveTextContent('Deep');
+
+    await waitForTurnToSettle(1);
+    await sendMessage(user, 'Another hard question');
+    await waitFor(() => expect(capturedTurnModelTiers).toEqual(['deep', 'deep']), {
+      timeout: 10000,
+    });
+
+    await waitForTurnToSettle(2);
+    const [newChatButton] = screen.getAllByTestId('new-chat-button');
+    await user.click(newChatButton);
+
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: 'Intelligence' })).toHaveTextContent('Standard');
+    });
+    expect(screen.queryByTestId('intelligence-pin')).not.toBeInTheDocument();
+
+    await sendMessage(user, 'A brand new question');
+    await waitFor(() => expect(capturedTurnModelTiers).toEqual(['deep', 'deep', undefined]), {
+      timeout: 10000,
+    });
+  }, 90000);
+
+  it('clears a pinned tier when the profile changes', async () => {
+    const user = setupSelectUser();
+    await renderChatApp({ waitForReady: true });
+
+    await chooseTier(user, /Deep/);
+    await user.click(screen.getByTestId('intelligence-pin'));
+
+    await user.click(screen.getByRole('combobox', { name: 'Processing profile' }));
+    await user.click(await screen.findByRole('option', { name: /research/i }));
+
+    // The research profile pins its model, so there is no control to show at
+    // all — and the pinned choice made under the assistant is gone with it.
+    await waitFor(() => {
+      expect(screen.queryByRole('combobox', { name: 'Intelligence' })).not.toBeInTheDocument();
+    });
+
+    await sendMessage(user, 'Research this');
+    await waitFor(() => expect(capturedTurnModelTiers).toEqual([undefined]), { timeout: 10000 });
+  }, 30000);
+
+  it('does not start a new conversation when the tier changes', async () => {
+    const user = setupSelectUser();
+    await renderChatApp({ waitForReady: true });
+
+    // Give the conversation a real turn, so a *profile* change here would mint
+    // a new conversation: the tier change must not.
+    await sendMessage(user, 'First message');
+    await waitForTurnToSettle(1);
+
+    const writesBeforeTierChange = mockLocalStorage.setItem.mock.calls.filter(
+      ([key]) => key === 'lastConversationId'
+    ).length;
+    await chooseTier(user, /Deep/);
+
+    expect(
+      mockLocalStorage.setItem.mock.calls.filter(([key]) => key === 'lastConversationId').length
+    ).toBe(writesBeforeTierChange);
+    expect(screen.getByTestId('chat-input')).toHaveValue('');
+    expect(mockLocalStorage.setItem).not.toHaveBeenCalledWith(
+      expect.stringContaining('Tier'),
+      expect.anything()
+    );
+  }, 60000);
+
+  it('names the tier that served the reply on the assistant message', async () => {
+    const user = setupSelectUser();
+    await renderChatApp({ waitForReady: true });
+
+    await chooseTier(user, /Deep/);
+    await sendMessage(user, 'A hard question');
+
+    const badge = await screen.findByTestId('model-tier-badge', undefined, { timeout: 10000 });
+    expect(badge).toHaveTextContent('Deep');
+    // The exact model stays available without dominating the bubble.
+    expect(badge).toHaveAttribute('title', 'Deep · mock-model-1');
+    // ...and an explicit choice is distinguishable from a routed one.
+    expect(badge).toHaveTextContent('chosen');
+  }, 30000);
 });
 
 describe('mergeConsecutiveToolOnlyAssistantMessages', () => {

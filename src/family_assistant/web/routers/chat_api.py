@@ -28,6 +28,11 @@ from family_assistant.llm.messages import (
     image_url_content,
     text_content,
 )
+from family_assistant.llm.model_selection import (
+    ModelSelectionRequest,
+    ModelTierNotPermitted,
+    ResolvedModelSelection,
+)
 from family_assistant.processing import DelegatableService, ProcessingService
 from family_assistant.processing.types import MidTurnUserInput
 from family_assistant.security.taint import (
@@ -613,6 +618,15 @@ class ChatTurnRequest(BaseModel):
     attachments: list["ChatAttachmentRequest"] | None = Field(
         default=None, description="User-supplied attachments"
     )
+    model_tier: str | None = Field(
+        default=None,
+        description=(
+            "Optional model tier to run this turn on, from the profile's "
+            "model_tiers. Omit to use the profile's default. A tier the profile "
+            "does not accept is a 400, so the client can say which choice to "
+            "change rather than showing a generic failure."
+        ),
+    )
 
 
 class ChatTurnResponse(BaseModel):
@@ -742,6 +756,29 @@ def _get_hub(request: Request) -> ConversationStreamHub:
     hub = ConversationStreamHub()
     request.app.state.conversation_stream_hub = hub
     return hub
+
+
+def _resolve_requested_model_tier(
+    service: ProcessingService,
+    model_tier: str | None,
+) -> ResolvedModelSelection:
+    """Admit a client's tier choice, or refuse the request with a 400.
+
+    An authenticated user's explicit selection is its own authorization, within
+    what the profile may be run on -- so the source is ``user`` rather than the
+    narrower ``model``. The refusal text names the eligible tiers, because the
+    client's remedy is to change the choice rather than to retry.
+    """
+    try:
+        return service.resolve_model_selection(
+            ModelSelectionRequest(tier=model_tier, source="user")
+            if model_tier is not None
+            else None
+        )
+    except ModelTierNotPermitted as refusal:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(refusal)
+        ) from refusal
 
 
 def _running_turn_conflict(
@@ -1324,6 +1361,13 @@ async def api_chat_create_turn(
         if candidate:
             selected_processing_service = candidate
 
+    # Resolved here rather than inside the producer: the producer's refusals
+    # can only reach the client as a stream error, and a tier the profile does
+    # not accept is an answer about the request itself.
+    resolved_model_selection = _resolve_requested_model_tier(
+        selected_processing_service, payload.model_tier
+    )
+
     # Process attachments (uses a short-lived DB context just for the upload
     # bookkeeping; the producer task gets its own context for streaming).
     trigger_content_parts: list[ContentPartDict] = [text_content(payload.prompt)]
@@ -1535,6 +1579,7 @@ async def api_chat_create_turn(
             initial_history_taint_metadata=initial_history_taint_metadata,
             initial_context_taint_metadata=initial_context_taint_metadata,
             mid_turn_input_provider=mid_turn_controller,
+            model_selection=resolved_model_selection,
         ),
         name=f"chat-turn:{conversation_id}:{payload.turn_id}",
     )
@@ -2178,12 +2223,38 @@ class ToolConfirmationDetail(BaseModel):
     )
 
 
+class ModelTierSummary(BaseModel):
+    """One intelligence level a profile can be run at, as a client shows it."""
+
+    id: str = Field(..., description="Tier identifier, as sent in model_tier")
+    label: str = Field(
+        ..., description="User-facing name for the tier; falls back to its id"
+    )
+    description: str | None = Field(
+        None, description="One line on when this tier is worth its cost"
+    )
+
+
 class ServiceProfile(BaseModel):
     """Information about an available service profile."""
 
     id: str = Field(..., description="Profile identifier")
     description: str = Field(..., description="Profile description")
     llm_model: str | None = Field(None, description="LLM model used by this profile")
+    model_tiers: list[ModelTierSummary] = Field(
+        default_factory=list,
+        description=(
+            "Tiers this profile may be run at, in configured order. Empty for a "
+            "profile pinned to one model, which is how a client knows to offer "
+            "no intelligence control for it."
+        ),
+    )
+    default_model_tier: str | None = Field(
+        default=None,
+        description=(
+            "The tier used when the request names none. Null for a pinned profile."
+        ),
+    )
     available_tools: list[str] = Field(
         default_factory=list, description="Available tools for this profile"
     )
@@ -2284,6 +2355,10 @@ async def api_chat_send_message(
         logger.info(
             f"API chat request (no profile_id specified). Using default profile: '{default_processing_service.service_config.id}'. Conversation ID: {conversation_id}, Prompt: '{payload.prompt[:100]}...'"
         )
+
+    resolved_model_selection = _resolve_requested_model_tier(
+        selected_processing_service, payload.model_tier
+    )
 
     # One turn at a time per conversation: hold the same hub reservation the
     # streaming path takes, so a non-streaming send (an iOS App Intent, Siri, or
@@ -2397,6 +2472,7 @@ async def api_chat_send_message(
             ),
             trigger_attachments=trigger_attachments,  # Pass attachment metadata
             turn_id=response_turn_id,  # Persist under the (idempotency) turn_id
+            model_selection=resolved_model_selection,
         )
 
         final_reply_content = result.text_reply
@@ -3331,6 +3407,7 @@ async def get_available_profiles(
             else:
                 description = f"AI assistant profile: {profile_id}"
 
+        eligibility = service_config.tier_eligibility
         profiles.append(
             ServiceProfile(
                 id=profile_id,
@@ -3338,6 +3415,18 @@ async def get_available_profiles(
                 llm_model=getattr(service_config, "llm_model", None),
                 available_tools=sorted(available_tools),
                 enabled_mcp_servers=sorted(enabled_mcp_servers),
+                # A user's explicit selection is bounded by what the profile may
+                # be run on, not by the narrower automatic list, so this is the
+                # whole selectable set.
+                model_tiers=[
+                    ModelTierSummary(
+                        id=option.id,
+                        label=option.label,
+                        description=option.description,
+                    )
+                    for option in eligibility.selectable
+                ],
+                default_model_tier=eligibility.default_tier,
             )
         )
 
