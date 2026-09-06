@@ -14,6 +14,13 @@ from family_assistant.config_models import AppConfig, ToolsConfig
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMOutput
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.tools.infrastructure import LocalToolsProvider
+from family_assistant.tools.metadata import (
+    ToolRegistration,
+    ToolTag,
+    make_local_tool_metadata,
+)
+from family_assistant.tools.on_demand import OnDemandToolsView
 from family_assistant.web.routers.gemini_live_api import (
     _convert_json_schema_type_to_gemini,  # noqa: PLC2701 - unit tests need direct access to internal helper
     _convert_properties_to_gemini,  # noqa: PLC2701 - unit tests need direct access to internal helper
@@ -176,3 +183,153 @@ async def test_ephemeral_token_uses_confirmation_aware_tool_advertisement(
     declarations = body["tools"][0]["functionDeclarations"]
     assert [declaration["name"] for declaration in declarations] == ["safe_tool"]
     assert tools_provider.calls == [False]
+
+
+async def _live_noop_tool(**_kwargs: object) -> str:
+    return "ok"
+
+
+def _live_registration(name: str) -> ToolRegistration:
+    return ToolRegistration(
+        definition=cast(
+            "ToolDefinition",
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": f"Description of {name}.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+        ),
+        implementation=_live_noop_tool,
+        metadata=make_local_tool_metadata([
+            ToolTag.READ_ONLY,
+            ToolTag.OUTPUT_TRUSTED,
+        ]),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_ephemeral_token_declares_meta_tools_for_on_demand_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A live session cannot gain declarations later, so it gets the meta-tools.
+
+    The on-demand tool is left out of the declaration list and named in the
+    system instruction instead, which is the only place the model can learn it
+    is worth a ``search_tools`` call.
+    """
+    monkeypatch.setenv("GEMINI_API_KEY", "test-api-key")
+
+    fake_google = cast("Any", types.ModuleType("google"))
+    fake_google.genai = types.SimpleNamespace(Client=_FakeGenAIClient)
+    monkeypatch.setitem(sys.modules, "google", fake_google)
+
+    tools_provider = LocalToolsProvider(
+        registrations=[
+            _live_registration("list_notes"),
+            _live_registration("generate_image"),
+        ]
+    )
+    processing_service = ProcessingService(
+        llm_client=RuleBasedMockLLMClient(
+            rules=[],
+            default_response=LLMOutput(content="ok", tool_calls=None),
+        ),
+        tools_provider=tools_provider,
+        service_config=ProcessingServiceConfig(
+            prompts={"system_prompt": "You are a voice assistant."},
+            timezone=ZoneInfo("UTC"),
+            max_history_messages=5,
+            history_max_age_hours=1,
+            tools_config=ToolsConfig(),
+            delegation_security_level=DelegationSecurityLevel.CONFIRM,
+            id="voice-profile",
+        ),
+        context_providers=[],
+        server_url="http://testserver",
+        app_config=AppConfig(),
+        on_demand_view=OnDemandToolsView(
+            wrapped_provider=tools_provider,
+            on_demand_tool_names={"generate_image"},
+        ),
+    )
+
+    app = FastAPI()
+    app.include_router(gemini_live_router, prefix="/api")
+    app.state.processing_service = processing_service
+    app.state.config = AppConfig()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post("/api/gemini/ephemeral-token", json={})
+
+    assert response.status_code == 200
+    body = response.json()
+    declared = {
+        declaration["name"] for declaration in body["tools"][0]["functionDeclarations"]
+    }
+    assert declared == {"list_notes", "search_tools", "call_tool"}
+    assert "generate_image" in body["system_instruction"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_ephemeral_token_declares_everything_when_on_demand_is_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "test-api-key")
+
+    fake_google = cast("Any", types.ModuleType("google"))
+    fake_google.genai = types.SimpleNamespace(Client=_FakeGenAIClient)
+    monkeypatch.setitem(sys.modules, "google", fake_google)
+
+    tools_provider = LocalToolsProvider(
+        registrations=[
+            _live_registration("list_notes"),
+            _live_registration("generate_image"),
+        ]
+    )
+    processing_service = ProcessingService(
+        llm_client=RuleBasedMockLLMClient(
+            rules=[],
+            default_response=LLMOutput(content="ok", tool_calls=None),
+        ),
+        tools_provider=tools_provider,
+        service_config=ProcessingServiceConfig(
+            prompts={"system_prompt": "You are a voice assistant."},
+            timezone=ZoneInfo("UTC"),
+            max_history_messages=5,
+            history_max_age_hours=1,
+            tools_config=ToolsConfig(),
+            delegation_security_level=DelegationSecurityLevel.CONFIRM,
+            id="voice-profile",
+        ),
+        context_providers=[],
+        server_url="http://testserver",
+        app_config=AppConfig(),
+        on_demand_view=OnDemandToolsView(
+            wrapped_provider=tools_provider,
+            on_demand_tool_names={"generate_image"},
+        ),
+    )
+
+    app = FastAPI()
+    app.include_router(gemini_live_router, prefix="/api")
+    app.state.processing_service = processing_service
+    app.state.config = AppConfig.model_validate({
+        "gemini_live_config": {"tools": {"on_demand": False}}
+    })
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post("/api/gemini/ephemeral-token", json={})
+
+    assert response.status_code == 200
+    declared = {
+        declaration["name"]
+        for declaration in response.json()["tools"][0]["functionDeclarations"]
+    }
+    assert declared == {"list_notes", "generate_image"}

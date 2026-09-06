@@ -209,6 +209,14 @@ model_tiers:
 gemini_live_config:
   # Model to use for Gemini Live voice sessions
   model: "gemini-3.1-flash-live-preview"
+  # How a voice session reaches the profile's tools
+  tools:
+    # A Live session's tool declarations are fixed when the session starts, so
+    # the profile's on-demand tools (tools_config.on_demand_local_tools /
+    # on_demand_mcp_server_ids) are reached through the search_tools and
+    # call_tool meta-tools instead. Set false to declare every advertisable
+    # tool up front. See docs/design/voice-mode-on-demand-tools.md.
+    on_demand: true
   # Voice configuration
   voice:
     # Prebuilt voice name (e.g., "Puck", "Kore", "Charon", "Fenrir", "Aoede")

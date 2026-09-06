@@ -77,6 +77,19 @@ steering box:
 This is the web equivalent of Telegram's `/interrupt` and mid-reply follow-ups. Native iOS Chat has
 the same controls.
 
+### Voice
+
+The **Voice** page holds a spoken conversation with the assistant. It shows a running transcript of
+what you said, what it replied, and the tools it ran along the way.
+
+A voice conversation starts with the assistant's everyday tools ready to use. Anything beyond those
+— running a scene at home, generating an image, working with your scripts and automations — it picks
+up as it needs it: you will see it look a tool up and then run it, which shows in the transcript as
+`search_tools` followed by `call_tool`. Nothing is out of reach that would be reachable in chat, but
+that extra step means an occasional short pause before the assistant acts on an unusual request. The
+exception is anything that would normally ask you to approve it first: a voice conversation has no
+way to show you an approval prompt, so the assistant will ask you to do those in chat instead.
+
 ### Pages
 
 The menu is grouped into **Information**, **Operations**, and **Settings**:

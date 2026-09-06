@@ -91,10 +91,17 @@ class GeminiLiveGreetingConfig(BaseModel):
     wav_path: str | None = None
 
 
+class GeminiLiveToolsConfig(BaseModel):
+    """How a Live session reaches the profile's tools."""
+
+    on_demand: bool = True
+
+
 class GeminiLiveConfig(BaseModel):
     """Full Gemini Live Voice API configuration."""
 
     model: str = "gemini-3.1-flash-live-preview"
+    tools: GeminiLiveToolsConfig = GeminiLiveToolsConfig()
     voice: GeminiLiveVoiceConfig = GeminiLiveVoiceConfig()
     session: GeminiLiveSessionConfig = GeminiLiveSessionConfig()
     transcription: GeminiLiveTranscriptionConfig = GeminiLiveTranscriptionConfig()
@@ -112,6 +119,7 @@ class GeminiLiveConfig(BaseModel):
         """Create a GeminiLiveConfig from a dictionary (e.g., from config.yaml)."""
         return cls(
             model=config_dict.get("model", cls.model_fields["model"].default),
+            tools=GeminiLiveToolsConfig(**config_dict.get("tools", {})),
             voice=GeminiLiveVoiceConfig(**config_dict.get("voice", {})),
             session=GeminiLiveSessionConfig(**config_dict.get("session", {})),
             transcription=GeminiLiveTranscriptionConfig(

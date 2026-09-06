@@ -57,9 +57,13 @@ from family_assistant.processing.turn_context import (
 from family_assistant.security.taint import InMemoryTurnTaintTracker
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import NoteWritePolicy
+from family_assistant.tools.infrastructure import (
+    get_tool_definitions_for_advertisement,
+)
 from family_assistant.tools.types import ToolExecutionContext, ToolResult
 from family_assistant.web.audio_utils import StatefulResampler
 from family_assistant.web.dependencies import get_live_audio_client
+from family_assistant.web.live_tools import resolve_live_tools
 from family_assistant.web.models import GeminiLiveConfig
 from family_assistant.web.voice_client import (  # noqa: TC001 - FastAPI resolves this at runtime for Depends
     LiveAudioClient,
@@ -1346,7 +1350,10 @@ class AsteriskLiveHandler:
                     taint_tracker=self._taint_tracker,
                 )
 
-                result = await self.processing_service.tools_provider.execute_tool(
+                # Dispatch through the live view so `call_tool` resolves; the
+                # context keeps the plain provider, because a script the model
+                # starts must still see every tool policy allows.
+                result = await self.processing_service.live_tools_provider.execute_tool(
                     current_name, current_args, exec_context, current_call_id
                 )
 
@@ -1632,13 +1639,22 @@ async def asterisk_live_endpoint(
                     convert_tools_to_genai_format,
                 )
 
-                raw_tools = (
-                    await telephone_service.tools_provider.get_tool_definitions()
+                # A Live session's declarations are fixed at setup, so on-demand
+                # tools are reached through search_tools/call_tool instead of
+                # being flattened into the list. A call has no confirmation UI,
+                # so nothing gated on confirmation is advertised either.
+                live_provider, tools_addition = await resolve_live_tools(
+                    telephone_service, on_demand=gemini_live_config.tools.on_demand
+                )
+                raw_tools = await get_tool_definitions_for_advertisement(
+                    live_provider, can_confirm=False
                 )
                 tools = cast("ToolListUnion", convert_tools_to_genai_format(raw_tools))
                 logger.info(
                     f"Loaded {len(tools)} tools (Gemini format) for '{profile_id}' profile"
                 )
+                if tools_addition and system_instruction:
+                    system_instruction = f"{system_instruction}\n\n{tools_addition}"
 
             # Override greeting WAV path if profile specifies one
             wav_path = telephone_service.service_config.greeting_wav_path

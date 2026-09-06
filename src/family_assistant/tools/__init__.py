@@ -176,6 +176,14 @@ from family_assistant.tools.infrastructure import (
     find_provider_by_type,
     get_tool_definitions_for_advertisement,
 )
+from family_assistant.tools.live_meta import (
+    CALL_TOOL_DEFINITION,
+    CALL_TOOL_TOOL_NAME,
+    LIVE_META_TOOL_NAMES,
+    SEARCH_TOOLS_DEFINITION,
+    SEARCH_TOOLS_TOOL_NAME,
+    LiveMetaToolsProvider,
+)
 from family_assistant.tools.mcp import MCPToolsProvider
 from family_assistant.tools.media_download import (
     MEDIA_DOWNLOAD_TOOLS_DEFINITION,
@@ -297,6 +305,8 @@ __all__ = [
     "AVAILABLE_FUNCTIONS",
     # Browser DOM (semantic) tools
     "BROWSER_DOM_TOOLS_DEFINITION",
+    "CALL_TOOL_DEFINITION",
+    "CALL_TOOL_TOOL_NAME",
     # Camera tools
     "CAMERA_TOOLS_DEFINITION",
     "COMPUTER_USE_TOOLS_DEFINITION",
@@ -311,6 +321,7 @@ __all__ = [
     "HOME_ASSISTANT_TOOLS_DEFINITION",
     "IMAGE_GENERATION_TOOLS_DEFINITION",
     "IMAGE_TOOLS_DEFINITION",
+    "LIVE_META_TOOL_NAMES",
     "LOCAL_TOOL_DESCRIPTORS",
     "LOCAL_TOOL_METADATA_BY_NAME",
     "LOCAL_TOOL_REGISTRATIONS",
@@ -325,6 +336,8 @@ __all__ = [
     "REPORT_TECHNICAL_PROBLEM_TOOLS_DEFINITION",
     "SCRIPT_TESTING_TOOLS_DEFINITION",
     "SCRIPT_TOOLS_DEFINITION",
+    "SEARCH_TOOLS_DEFINITION",
+    "SEARCH_TOOLS_TOOL_NAME",
     # Shopping/UCP tools
     "SHOPPING_TOOLS_DEFINITION",
     # Stored scripts
@@ -340,6 +353,7 @@ __all__ = [
     "WORKSPACE_TOOLS_DEFINITION",
     "CompositeToolsProvider",
     "ConfirmationCallbackProtocol",
+    "LiveMetaToolsProvider",
     "LocalToolMetadata",
     "LocalToolsProvider",
     "MCPServerConfig",

@@ -124,6 +124,14 @@ async def execute_tool_api(
     selected_tools_provider = (
         processing_service.tools_provider if processing_service else tools_provider
     )
+    # Dispatch through the live view so a voice session's `call_tool` resolves,
+    # while the context keeps the plain provider: a script started from here
+    # must still see every tool policy allows, not the voice declaration list.
+    dispatch_tools_provider = (
+        processing_service.live_tools_provider
+        if processing_service
+        else selected_tools_provider
+    )
     for service in processing_services.values():
         if service.kind == "remote":
             continue
@@ -213,7 +221,7 @@ async def execute_tool_api(
     )
 
     try:
-        result = await selected_tools_provider.execute_tool(
+        result = await dispatch_tools_provider.execute_tool(
             name=tool_name, arguments=payload.arguments, context=execution_context
         )
         logger.info(f"Tool '{tool_name}' executed successfully.")

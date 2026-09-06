@@ -63,21 +63,39 @@ class OnDemandToolCatalog:
 
     entries: list[OnDemandCatalogEntry]
 
-    def render_for_system_prompt(self) -> str:
+    def render_for_system_prompt(
+        self,
+        *,
+        heading: str = "## On-Demand Tools",
+        instruction: str = (
+            "The following tools are available but not yet active. "
+            "Call `activate_tools` with their names to enable them:"
+        ),
+    ) -> str:
         """Render catalog as a system prompt section.
+
+        ``heading`` and ``instruction`` are overridable because the same
+        catalog is presented differently depending on how the caller lets the
+        model reach a hidden tool: the LLM loop activates tools, while a Live
+        (voice) session — whose declaration list is frozen at session setup —
+        calls them through a meta-tool instead.
 
         Returns empty string when there are no on-demand tools.
         """
         if not self.entries:
             return ""
-        lines = [
-            "## On-Demand Tools",
-            "The following tools are available but not yet active. "
-            "Call `activate_tools` with their names to enable them:",
-        ]
+        lines = [heading, instruction]
         for entry in self.entries:
             lines.append(f"- **{entry.name}**: {entry.summary}")
         return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class VisibleDefinitions:
+    """Definitions a caller may declare, plus the on-demand names withheld."""
+
+    definitions: list[ToolDefinition]
+    hidden_names: frozenset[str]
 
 
 @dataclass(frozen=True)
@@ -274,6 +292,41 @@ class OnDemandToolsView:
 
     # --- LLM-loop-facing API ---
 
+    async def get_visible_definitions(
+        self,
+        *,
+        can_confirm: bool = True,
+        activated: Iterable[str] | None = None,
+    ) -> VisibleDefinitions:
+        """Return the definitions the model may call directly, and what is hidden.
+
+        ``hidden_names`` is what the wrapped provider *would* advertise for this
+        interaction but is being withheld as on-demand, which is what tells a
+        caller whether a meta-tool for reaching those is worth declaring at all.
+        A caller that adds its own meta-tool declaration builds on this; the
+        activation presentation is ``get_tool_definitions`` below.
+        """
+        activated_frozen = self._freeze_activated(activated)
+        descriptors = await self._ensure_descriptors()
+        wrapped_defs = await self._fetch_wrapped_definitions(can_confirm=can_confirm)
+
+        on_demand_hidden_names = {
+            d.name for d in descriptors if self._is_on_demand(d, activated_frozen)
+        }
+        advertisable_names = {
+            name
+            for defn in wrapped_defs
+            if (name := defn.get("function", {}).get("name")) is not None
+        }
+        return VisibleDefinitions(
+            definitions=[
+                defn
+                for defn in wrapped_defs
+                if defn.get("function", {}).get("name") not in on_demand_hidden_names
+            ],
+            hidden_names=frozenset(on_demand_hidden_names & advertisable_names),
+        )
+
     async def get_tool_definitions(
         self,
         *,
@@ -288,31 +341,12 @@ class OnDemandToolsView:
         at least one on-demand tool the model could still usefully activate in
         this interaction (after policy filtering).
         """
-        activated_frozen = self._freeze_activated(activated)
-        descriptors = await self._ensure_descriptors()
-        wrapped_defs = await self._fetch_wrapped_definitions(can_confirm=can_confirm)
-
-        on_demand_hidden_names = {
-            d.name for d in descriptors if self._is_on_demand(d, activated_frozen)
-        }
-        eager_and_activated = [
-            defn
-            for defn in wrapped_defs
-            if defn.get("function", {}).get("name") not in on_demand_hidden_names
-        ]
-
-        # Only expose the activate_tools meta-tool if there is at least one
-        # on-demand tool the wrapped provider would still advertise for this
-        # interaction. Otherwise the model could call a meta-tool that can
-        # only ever return "nothing to activate".
-        advertisable_hidden = on_demand_hidden_names & {
-            name
-            for defn in wrapped_defs
-            if (name := defn.get("function", {}).get("name")) is not None
-        }
-        if advertisable_hidden:
-            return [*eager_and_activated, ACTIVATE_TOOLS_DEFINITION]
-        return eager_and_activated
+        visible = await self.get_visible_definitions(
+            can_confirm=can_confirm, activated=activated
+        )
+        if visible.hidden_names:
+            return [*visible.definitions, ACTIVATE_TOOLS_DEFINITION]
+        return visible.definitions
 
     async def get_system_prompt_addition(
         self,

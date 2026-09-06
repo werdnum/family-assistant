@@ -25,6 +25,7 @@ from family_assistant.tools import get_tool_definitions_for_advertisement
 from family_assistant.tools.types import normalize_json_schema_type
 from family_assistant.web.auth import get_user_from_request
 from family_assistant.web.dependencies import get_processing_service
+from family_assistant.web.live_tools import resolve_live_tools
 from family_assistant.web.models import GeminiLiveConfig
 
 logger = logging.getLogger(__name__)
@@ -181,10 +182,14 @@ def convert_tools_to_gemini_format(
 async def _get_formatted_system_prompt(
     request: Request,
     processing_service: ProcessingService,
+    *,
+    tools_addition: str | None = None,
 ) -> str:
     """Get the formatted system prompt with context injected."""
     try:
-        return await _format_system_prompt(request, processing_service)
+        return await _format_system_prompt(
+            request, processing_service, tools_addition=tools_addition
+        )
 
     except Exception as e:
         logger.exception(f"Error getting system prompt: {e}")
@@ -194,6 +199,8 @@ async def _get_formatted_system_prompt(
 async def _format_system_prompt(
     request: Request,
     processing_service: ProcessingService,
+    *,
+    tools_addition: str | None = None,
 ) -> str:
     service_config = processing_service.service_config
 
@@ -221,6 +228,8 @@ async def _format_system_prompt(
     delegation_addition = await processing_service.delegation_catalog_addition()
     if delegation_addition:
         formatted = f"{formatted}\n\n{delegation_addition}"
+    if tools_addition:
+        formatted = f"{formatted}\n\n{tools_addition}"
 
     voice_instruction = (
         "[Voice Mode Active] You are currently in voice conversation mode. "
@@ -321,8 +330,17 @@ async def create_ephemeral_token(
                 f"Profile ID '{profile_id}' not found, using default service"
             )
 
+    # Get Gemini Live configuration from app state
+    gemini_live_config = get_gemini_live_config(request)
+
+    # A Live session cannot be handed a new tool declaration once it has
+    # started, so on-demand tools are reached through search_tools/call_tool
+    # rather than being flattened into the declaration list.
+    live_provider, tools_addition = await resolve_live_tools(
+        target_service, on_demand=gemini_live_config.tools.on_demand
+    )
     tool_definitions = await get_tool_definitions_for_advertisement(
-        target_service.tools_provider,
+        live_provider,
         can_confirm=False,
     )
 
@@ -335,10 +353,9 @@ async def create_ephemeral_token(
     logger.info(f"Converted {tool_count} tools to Gemini format for voice mode")
 
     # Get formatted system prompt with context
-    system_instruction = await _get_formatted_system_prompt(request, target_service)
-
-    # Get Gemini Live configuration from app state
-    gemini_live_config = get_gemini_live_config(request)
+    system_instruction = await _get_formatted_system_prompt(
+        request, target_service, tools_addition=tools_addition
+    )
 
     # Create ephemeral token via Google GenAI SDK
     try:

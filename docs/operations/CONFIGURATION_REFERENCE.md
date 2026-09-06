@@ -1998,6 +1998,35 @@ Comma-separated list of allowed Asterisk extensions.
 
 ______________________________________________________________________
 
+## Voice Mode Tools (`gemini_live_config.tools`)
+
+A Gemini Live session — browser, iOS, watch or a phone call over Asterisk — fixes its tool
+declarations when the session starts and can never be given another one. The progressive disclosure
+the chat assistant uses (`activate_tools`, which works by handing the model a longer tool list on
+the next iteration) therefore cannot work in voice.
+
+```yaml
+gemini_live_config:
+  tools:
+    on_demand: true
+```
+
+With `on_demand: true` (the default) a voice session declares the profile's eager tools plus two
+meta-tools, `search_tools` and `call_tool`. Everything the profile lists in
+`tools_config.on_demand_local_tools` / `on_demand_mcp_server_ids` stays out of the declaration list
+and is named in the system instruction instead; the model looks a tool's argument schema up with
+`search_tools` and runs it with `call_tool`. The inner call is dispatched through the profile's
+ordinary provider chain, so tool policy, taint tracking and tool-call review apply exactly as they
+do for a declared tool.
+
+Set it to `false` to declare every advertisable tool up front, as before. Either way, a voice
+session has no confirmation channel, so tools that require confirmation are never advertised to it
+and `call_tool` refuses them.
+
+See [voice-mode-on-demand-tools.md](../design/voice-mode-on-demand-tools.md).
+
+______________________________________________________________________
+
 ## Advanced Configuration
 
 ### DEFAULT_SERVICE_PROFILE_ID
