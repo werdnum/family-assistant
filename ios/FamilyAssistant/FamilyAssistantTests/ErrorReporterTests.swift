@@ -1,7 +1,6 @@
+@testable import FamilyAssistant
 import Foundation
 import XCTest
-
-@testable import FamilyAssistant
 
 final class ErrorReporterTests: XCTestCase {
     private var spoolDirectory: URL!
@@ -91,12 +90,12 @@ final class ErrorReporterTests: XCTestCase {
         XCTAssertEqual(payload.severity, "error")
     }
 
-    func testDeliverDeduplicatesWithinWindow() async throws {
+    func testDeliverDeduplicatesWithinWindow() async {
         MockErrorURLProtocol.respond { _ in .init(statusCode: 200) }
         let reporter = makeReporter()
         reporter.configure { self.baseURL }
 
-        for _ in 0..<3 {
+        for _ in 0 ..< 3 {
             await reporter.deliver(
                 message: "Same",
                 component: "Chat.messages",
@@ -109,7 +108,7 @@ final class ErrorReporterTests: XCTestCase {
         XCTAssertEqual(MockErrorURLProtocol.requests.count, 1)
     }
 
-    func testDistinctComponentsAreNotDeduplicated() async throws {
+    func testDistinctComponentsAreNotDeduplicated() async {
         MockErrorURLProtocol.respond { _ in .init(statusCode: 200) }
         let reporter = makeReporter()
         reporter.configure { self.baseURL }
@@ -120,7 +119,7 @@ final class ErrorReporterTests: XCTestCase {
         XCTAssertEqual(MockErrorURLProtocol.requests.count, 2)
     }
 
-    func testDeliverPersistsWhenBaseURLUnknown() async throws {
+    func testDeliverPersistsWhenBaseURLUnknown() async {
         MockErrorURLProtocol.respond { _ in .init(statusCode: 200) }
         let reporter = makeReporter()
         // No base URL configured (e.g. error before sign-in).
@@ -137,7 +136,7 @@ final class ErrorReporterTests: XCTestCase {
         XCTAssertEqual(spooledFiles().count, 1)
     }
 
-    func testDeliverPersistsOnServerError() async throws {
+    func testDeliverPersistsOnServerError() async {
         MockErrorURLProtocol.respond { _ in .init(statusCode: 500) }
         let reporter = makeReporter()
         reporter.configure { self.baseURL }
@@ -177,7 +176,29 @@ final class ErrorReporterTests: XCTestCase {
         XCTAssertTrue(spooledFiles().isEmpty)
     }
 
-    func testFlushPersistedKeepsReportsWhenServerStillFailing() async throws {
+    func testRateLimitedVoiceFailureRetainsAttemptMetadataOnRetry() async throws {
+        let recorder = VoiceDiagnosticRecorder()
+        recorder.diagnostics.record("failed", fields: ["stage": "setup"],
+                                    error: NSError(domain: NSPOSIXErrorDomain, code: 57))
+        let record = try XCTUnwrap(recorder.records.first)
+        let reporter = makeReporter()
+        reporter.configure { self.baseURL }
+        MockErrorURLProtocol.respond { _ in .init(statusCode: 429) }
+        await reporter.deliver(message: "Voice connection failed", component: "Voice.connection",
+                               errorType: .handled, stack: nil, extraData: record.1, bypassDedupe: true)
+        XCTAssertEqual(spooledFiles().count, 1)
+
+        MockErrorURLProtocol.respond { _ in .init(statusCode: 200) }
+        await reporter.flushPersisted()
+        let payload = try XCTUnwrap(MockErrorURLProtocol.decodedBodies.last)
+        XCTAssertEqual(payload.severity, "error")
+        XCTAssertEqual(payload.extraData?["attempt_id"], record.1["attempt_id"])
+        XCTAssertEqual(payload.extraData?["occurred_at"], record.1["occurred_at"])
+        XCTAssertEqual(payload.extraData?["error_code"], "57")
+        XCTAssertTrue(spooledFiles().isEmpty)
+    }
+
+    func testFlushPersistedKeepsReportsWhenServerStillFailing() async {
         let reporter = makeReporter()
         await reporter.deliver(
             message: "Queued",
@@ -194,7 +215,7 @@ final class ErrorReporterTests: XCTestCase {
         XCTAssertEqual(spooledFiles().count, 1)
     }
 
-    func testFlushPersistedKeepsReportsWhenSuccessResponseIsAuthWall() async throws {
+    func testFlushPersistedKeepsReportsWhenSuccessResponseIsAuthWall() async {
         let reporter = makeReporter()
         await reporter.deliver(
             message: "Queued",
