@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AA000001 /* WatchAuthentication.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000003 /* WatchAuthentication.swift */; };
+		AA000002 /* WatchAuthentication.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000003 /* WatchAuthentication.swift */; };
 		091DA729DF332A031A84F715 /* VoiceToolRunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B4509B5C94F65C5466E3ADE /* VoiceToolRunnerTests.swift */; };
 		0EDDFD68E249EC73AF8D69CB /* GeminiLiveClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AC88843A54F47BA1012348A /* GeminiLiveClient.swift */; };
 		213AE766AAD6238AEA08C2A9 /* PCMConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B274147B0BE9AA6A6ADDF78 /* PCMConverter.swift */; };
@@ -175,6 +177,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		AA000003 /* WatchAuthentication.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchAuthentication.swift; sourceTree = "<group>"; };
 		0352FE40C799700EBD09C620 /* Info.plist */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		03E11DABDDB4EA90D97100D9 /* VoiceTranscript.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceTranscript.swift; sourceTree = "<group>"; };
 		099C971A1946B0E892D9358A /* GeminiLiveCodec.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GeminiLiveCodec.swift; sourceTree = "<group>"; };
@@ -317,6 +320,7 @@
 			isa = PBXGroup;
 			children = (
 				CD8CC65944118C6E3E926B2B /* WatchVoiceLaunch.swift */,
+				AA000003 /* WatchAuthentication.swift */,
 			);
 			name = WatchShared;
 			path = WatchShared;
@@ -768,6 +772,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10001 /* FamilyAssistantApp.swift in Sources */,
+				AA000001 /* WatchAuthentication.swift in Sources */,
 				A10002 /* ContentView.swift in Sources */,
 				A10003 /* KeychainHelper.swift in Sources */,
 				A10004 /* AuthManager.swift in Sources */,
@@ -868,6 +873,7 @@
 			files = (
 				3AAF8A1EFDACC0F131CA1D26 /* NetworkGeminiLiveSocket.swift in Sources */,
 				EC7941766A2B06553B0F745C /* WatchVoiceApp.swift in Sources */,
+				AA000002 /* WatchAuthentication.swift in Sources */,
 				3F7C16D73246C8539945CC09 /* WatchVoiceView.swift in Sources */,
 				74326E9F6665A624A2FA75E4 /* WatchVoiceLaunch.swift in Sources */,
 				70F3914DA7B408BFA3ED8A1E /* AuthManager.swift in Sources */,

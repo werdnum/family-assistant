@@ -252,6 +252,116 @@ class TestRefreshToken:
         assert response.status_code == 401
 
 
+class TestWatchCredentials:
+    @pytest_asyncio.fixture(params=[False, True], ids=["opaque", "jwt"])
+    async def phone_credentials(
+        self,
+        api_test_client: AsyncClient,
+        app_fixture: FastAPI,
+        monkeypatch: pytest.MonkeyPatch,
+        request: pytest.FixtureRequest,
+    ) -> dict[str, str]:
+        if request.param:
+            key = ec.generate_private_key(ec.SECP256R1())
+            monkeypatch.setenv(
+                "JWT_SIGNING_KEY",
+                key.private_bytes(
+                    serialization.Encoding.PEM,
+                    serialization.PrivateFormat.PKCS8,
+                    serialization.NoEncryption(),
+                ).decode("ascii"),
+            )
+            service = jwt_tokens_module.JWTTokenService.from_environment()
+            monkeypatch.setattr(app_fixture.state, "jwt_token_service", service)
+            monkeypatch.setattr(app_fixture.state.auth_service, "jwt_tokens", service)
+        monkeypatch.setattr(app_fixture.state.auth_service, "auth_enabled", True)
+        verifier, challenge = _create_pkce_pair()
+        code = _seed_auth_code(challenge)
+        response = await api_test_client.post(
+            "/api/auth/exchange", json={"code": code, "code_verifier": verifier}
+        )
+        assert response.status_code == 200
+        return response.json()
+
+    @pytest.mark.asyncio
+    async def test_watch_has_independent_refresh_and_bounded_lifetime(
+        self,
+        api_test_client: AsyncClient,
+        phone_credentials: dict[str, str],
+        db_engine: AsyncEngine,
+    ) -> None:
+        response = await api_test_client.post(
+            "/api/auth/watch-credentials",
+            headers={"Authorization": f"Bearer {phone_credentials['api_token']}"},
+            json={"refresh_token": phone_credentials["refresh_token"]},
+        )
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
+        watch = response.json()
+        assert watch["api_token"] != phone_credentials["api_token"]
+        assert watch["refresh_token"] != phone_credentials["refresh_token"]
+        db = Database(db_engine)
+        phone_refresh = await api_tokens_storage.validate_token_by_value(
+            db, phone_credentials["refresh_token"], expected_type="refresh"
+        )
+        watch_refresh = await api_tokens_storage.validate_token_by_value(
+            db, watch["refresh_token"], expected_type="refresh"
+        )
+        assert phone_refresh and watch_refresh
+        assert watch_refresh["parent_token_id"] != phone_refresh["parent_token_id"]
+        assert watch_refresh["expires_at"] == phone_refresh["expires_at"]
+        refreshed = await api_test_client.post(
+            "/api/auth/refresh", json={"refresh_token": watch["refresh_token"]}
+        )
+        assert refreshed.status_code == 200
+        phone_row = await db.fetch_one(
+            select(api_tokens_table).where(
+                api_tokens_table.c.id == phone_refresh["parent_token_id"]
+            )
+        )
+        assert phone_row and not phone_row["is_revoked"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("credential", ["missing", "invalid", "refresh"])
+    async def test_watch_rejects_missing_or_non_access_auth(
+        self,
+        api_test_client: AsyncClient,
+        phone_credentials: dict[str, str],
+        credential: str,
+    ) -> None:
+        headers = (
+            {}
+            if credential == "missing"
+            else {
+                "Authorization": f"Bearer {phone_credentials['refresh_token'] if credential == 'refresh' else 'invalid'}"
+            }
+        )
+        response = await api_test_client.post(
+            "/api/auth/watch-credentials",
+            headers=headers,
+            json={"refresh_token": phone_credentials["refresh_token"]},
+        )
+        assert response.status_code in {401, 403}
+
+    @pytest.mark.asyncio
+    async def test_watch_rejects_another_sessions_refresh(
+        self,
+        api_test_client: AsyncClient,
+        phone_credentials: dict[str, str],
+    ) -> None:
+        verifier, challenge = _create_pkce_pair()
+        code = _seed_auth_code(challenge)
+        other = await api_test_client.post(
+            "/api/auth/exchange", json={"code": code, "code_verifier": verifier}
+        )
+        response = await api_test_client.post(
+            "/api/auth/watch-credentials",
+            headers={"Authorization": f"Bearer {phone_credentials['api_token']}"},
+            json={"refresh_token": other.json()["refresh_token"]},
+        )
+        assert response.status_code == 403
+
+
 class TestTokenSession:
     @pytest_asyncio.fixture
     async def session_client(

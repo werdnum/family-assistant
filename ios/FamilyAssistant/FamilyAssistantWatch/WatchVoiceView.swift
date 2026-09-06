@@ -2,6 +2,7 @@ import SwiftUI
 
 struct WatchVoiceView: View {
     @Environment(AuthManager.self) private var auth
+    @Environment(WatchAuthentication.self) private var watchAuthentication
     @Environment(\.scenePhase) private var scenePhase
     @State private var session: VoiceSessionViewModel?
     @State private var startRequested = false
@@ -25,8 +26,6 @@ struct WatchVoiceView: View {
                         Button("Start Voice", systemImage: "mic.fill") { begin() }
                             .buttonStyle(.borderedProminent)
                         Text("Voice chats aren't saved to history.")
-                            .font(.footnote)
-                        Button("Sign Out") { Task { await auth.logout() } }
                             .font(.footnote)
                     }
                 }
@@ -55,23 +54,15 @@ struct WatchVoiceView: View {
     }
 
     private var setup: some View {
-        @Bindable var auth = auth
-        return VStack(spacing: 12) {
-            Text("Sign in to Family Assistant on your watch.")
+        VStack(spacing: 12) {
+            Image(systemName: "iphone.and.arrow.forward").font(.title)
+            Text("Sign in to Family Assistant on your paired iPhone.")
                 .font(.footnote)
-            TextField("Server URL", text: $auth.serverURL)
-                .textContentType(.URL)
-                .autocorrectionDisabled()
-                .textInputAutocapitalization(.never)
-                .disabled(auth.isLoading)
-            Button("Sign In") {
-                auth.saveServerURL()
-                auth.login()
-            }
-            .disabled(auth.isLoading || auth.serverURL.isEmpty)
-            if auth.isLoading { ProgressView() }
-            if let error = auth.errorMessage {
-                Text(error).font(.footnote).foregroundStyle(.red)
+            Button("Set up with iPhone") { watchAuthentication.connect() }
+                .disabled(watchAuthentication.isConnecting)
+            if watchAuthentication.isConnecting { ProgressView("Connecting to iPhone…") }
+            if let message = watchAuthentication.message {
+                Text(message).font(.footnote)
             }
         }
     }

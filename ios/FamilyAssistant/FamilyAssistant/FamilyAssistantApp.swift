@@ -5,6 +5,7 @@ struct FamilyAssistantApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var authManager: AuthManager
     @State private var notificationManager: NotificationManager
+    @State private var watchAuthentication: WatchAuthentication
     @State private var sharedAttachmentInbox = SharedAttachmentInbox()
 
     init() {
@@ -17,6 +18,7 @@ struct FamilyAssistantApp: App {
         let authManager = AuthManager()
         #endif
         _authManager = State(initialValue: authManager)
+        _watchAuthentication = State(initialValue: WatchAuthentication(auth: authManager))
         _notificationManager = State(initialValue: NotificationManager())
 
         ErrorReporter.shared.configure(
@@ -52,8 +54,12 @@ struct FamilyAssistantApp: App {
             .environment(notificationManager)
             .environment(sharedAttachmentInbox)
             .onAppear {
+                watchAuthentication.activate()
                 appDelegate.notificationManager = notificationManager
                 notificationManager.bind(authManager: authManager)
+            }
+            .onChange(of: authManager.watchPairingIdentity) {
+                watchAuthentication.publishPhoneState()
             }
             .task {
                 await ErrorReporter.shared.flushPersisted()

@@ -33,7 +33,11 @@ The shipped identifiers are `dev.andrewgarrett.assistant.watchkitapp` and
 `dev.andrewgarrett.assistant.watchkitapp.complications`.
 
 The watch shares native auth, backend API and voice-session sources with iOS. It uses its own
-Keychain credentials, Network framework WebSockets and asynchronous audio activation. See
+Keychain credentials, Network framework WebSockets and asynchronous audio activation. Setup uses
+WatchConnectivity to request a separate credential pair through the signed-in iPhone; deploy the
+backend with `POST /api/auth/watch-credentials` before distributing this client. No shared Keychain,
+App Groups or additional portal capabilities are required. The phone's refresh token is used only
+with the backend, never transferred to the watch. See
 [watchOS design](../../docs/design/watchos-voice.md) and
 [user setup](../../docs/user/interfaces.md#apple-watch). Check microphone capture, speaker or
 Bluetooth playback, sign-in and calling without the phone on a physical watch before release.
