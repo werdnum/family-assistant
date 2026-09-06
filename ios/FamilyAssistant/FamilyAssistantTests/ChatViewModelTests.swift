@@ -11915,6 +11915,43 @@ final class ChatViewModelTests: XCTestCase {
         XCTAssertEqual(recorder.tiers, ["deep", "deep"])
     }
 
+    func testIntelligenceControlIsUnavailableWhileATurnRuns() async throws {
+        let recorder = respondRecordingModelTiers(conversationID: "web_conv_tier_streaming")
+        let model = makeViewModel(conversationID: "web_conv_tier_streaming")
+        model.profiles = [Self.tieredProfile()]
+
+        XCTAssertTrue(model.canSelectModelTier)
+
+        model.draftText = "First"
+        await model.sendDraft()
+
+        // Mid-turn the composer is the steer box: what the user sends next folds
+        // into the running turn at its frozen tier, so there is no message a
+        // selection made here could apply to.
+        XCTAssertTrue(model.isStreaming)
+        XCTAssertFalse(model.canSelectModelTier)
+
+        try await waitUntil { !model.isStreaming }
+
+        XCTAssertTrue(model.canSelectModelTier)
+        XCTAssertEqual(recorder.tiers, [nil])
+    }
+
+    func testIntelligenceControlIsUnavailableWithoutAChoiceToMake() {
+        let model = makeViewModel(conversationID: "web_conv_tier_pinned_profile")
+        model.profiles = [
+            Self.tieredProfile(
+                tiers: [ChatModelTier(id: "standard", label: "Standard", tierDescription: nil)],
+                defaultTier: "standard"
+            ),
+        ]
+
+        XCTAssertFalse(
+            model.canSelectModelTier,
+            "One tier is not a choice, so the control is hidden rather than shown dead."
+        )
+    }
+
     func testChangingProfileClearsAPinnedModelTier() {
         let model = makeViewModel(conversationID: "web_conv_tier_profile")
         model.profiles = [Self.tieredProfile(), Self.tieredProfile(id: "engineer")]

@@ -1326,7 +1326,9 @@ private struct ProfilePickerView: View {
 ///
 /// Renders nothing where the active profile offers no choice — one pinned to a
 /// single model, or a profile list that has not loaded — rather than a dead
-/// control the user can open and find nothing to decide in.
+/// control the user can open and find nothing to decide in. It is disabled while
+/// a turn runs, where the next submission steers that turn at its already-frozen
+/// tier instead of starting one this choice could apply to.
 ///
 /// The label is icon-only while the profile's own default is in force, and names
 /// the tier once the user has chosen one: a selection is the state that has to be
@@ -1368,6 +1370,7 @@ private struct IntelligencePickerView: View {
             } label: {
                 label
             }
+            .disabled(!viewModel.canSelectModelTier)
             .accessibilityIdentifier("intelligence-picker")
             .accessibilityLabel(accessibilityLabel)
         }

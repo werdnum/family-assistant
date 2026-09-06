@@ -1080,6 +1080,19 @@ final class ChatViewModel {
         return labels
     }
 
+    /// Whether the intelligence control accepts a choice right now.
+    ///
+    /// It does not while a turn runs. The composer doubles as the steer box in
+    /// that state, so the next thing the user sends folds into the running turn —
+    /// whose tier was frozen when it started and cannot be changed — rather than
+    /// starting a turn the selection could apply to. Offering a live control
+    /// there would let "applies to your next message" mean a message that ran at
+    /// the old tier. The profile picker is unavailable mid-turn for the same
+    /// reason.
+    var canSelectModelTier: Bool {
+        offersModelTierChoice && !isStreaming
+    }
+
     /// Record the user's intelligence selection for the next message.
     ///
     /// Choosing the profile's default is choosing nothing: there is no selection

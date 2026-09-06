@@ -43,6 +43,13 @@ visible, is what earns the label.
 built, so every path that starts a turn spends it exactly once, and a submission that is rejected
 before a turn exists (an empty draft, an attachment still uploading) does not silently eat it.
 
+**The control is unavailable while a turn runs.** The composer doubles as the steer box in that
+state, so the next thing the user sends folds into the running turn — whose tier was frozen when it
+started — rather than starting a turn the selection could apply to. A live control there would let
+"applies to your next message" mean a message that ran at the old tier. The profile picker is
+already unavailable mid-turn for the same reason, and the web selector likewise disables while a
+turn is in flight.
+
 **A tier choice is scoped to the conversation and profile it was made in.** Switching profile,
 opening another conversation, and starting a new chat all clear it. This is the same rule the web
 applies, and it matters more here: `changeProfile` starts a fresh conversation, so a surviving pin
@@ -85,6 +92,8 @@ Unit tests, in the bundle CI already runs:
 - One-shot: the choice is cleared by the send that spent it; a pinned choice survives and is sent
   again by the following turn.
 - Reset: switching profile and opening another conversation both clear the choice, pinned or not.
+- Availability: the control accepts a choice only where the profile offers more than one tier and no
+  turn is running.
 - Retry: a failed send retried reissues the tier it was sent under.
 - The tier recorded on a persisted assistant message reaches the rendered bubble, and survives the
   tool-call grouping the thread renders through.
