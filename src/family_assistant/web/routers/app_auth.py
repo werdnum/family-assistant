@@ -519,7 +519,7 @@ async def refresh_token(
         api_token_id = await api_tokens_storage.add_api_token(
             db_context=txn,
             user_identifier=user_identifier,
-            name="iOS App",
+            name=token_row["name"].removesuffix(" (refresh)"),
             hashed_token=api_minted.hashed_secret,
             prefix=api_minted.prefix,
             created_at=api_minted.created_at,

@@ -320,6 +320,16 @@ class TestWatchCredentials:
             )
         )
         assert phone_row and not phone_row["is_revoked"]
+        active_refresh = await api_tokens_storage.validate_token_by_value(
+            db, watch["refresh_token"], expected_type="refresh"
+        )
+        assert active_refresh
+        active_watch = await db.fetch_one(
+            select(api_tokens_table).where(
+                api_tokens_table.c.id == active_refresh["parent_token_id"]
+            )
+        )
+        assert active_watch and active_watch["name"] == "Apple Watch"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("credential", ["missing", "invalid", "refresh"])
