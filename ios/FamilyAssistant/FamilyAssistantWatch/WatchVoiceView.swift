@@ -24,7 +24,7 @@ struct WatchVoiceView: View {
                     } else {
                         Button("Start Voice", systemImage: "mic.fill") { begin() }
                             .buttonStyle(.borderedProminent)
-                        Text("Talk to your Family Assistant")
+                        Text("Voice chats aren't saved to history.")
                             .font(.footnote)
                         Button("Sign Out") { Task { await auth.logout() } }
                             .font(.footnote)
@@ -114,7 +114,7 @@ struct WatchVoiceView: View {
     private func begin() {
         guard session == nil || session?.isTerminal == true else { return }
         let api = ChatAPIClient(authManager: auth)
-        let model = VoiceSessionViewModel(tokenProvider: api, toolExecutor: api, transcriptStore: api)
+        let model = VoiceSessionViewModel(tokenProvider: api, toolExecutor: api)
         session = model
         Task { await model.start() }
     }

@@ -14,7 +14,8 @@ credential-transfer protocol or sharing rotating refresh tokens with the phone.
 watchOS needs asynchronous audio-session activation before opening a streaming connection. Use
 Network framework WebSockets on watchOS, retaining the existing injectable socket boundary. The
 watch UI shows actual microphone activity, connection failures, mute and end controls, and the
-latest transcript. Completed transcripts use the existing conversation persistence API.
+latest transcript. Watch transcripts are live captions only; they are not saved to conversation
+history.
 
 The complication is a launcher. Tapping it opens the app and requests a voice session; microphone
 permission and sign-in still apply. Merely displaying the complication never starts recording. An
@@ -35,6 +36,9 @@ automatic reconnection are outside this change.
 ## Deliberate simplifications
 
 - The watch has its own sign-in and sign-out. Signing out of the phone does not sign out the watch.
+- Watch voice provides live conversation and captions without transcript persistence. Reliable
+  history across watch suspension requires durable delivery, which is outside the requested voice
+  launcher feature. The watch therefore does not initiate best-effort transcript uploads.
 - Use the default voice profile. Profile selection and browsing conversation history remain in the
   phone and web apps.
 - Request a normal audio route; system routing and hardware determine speaker or Bluetooth output.

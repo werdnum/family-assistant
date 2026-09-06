@@ -159,7 +159,7 @@ out the other.
 
 Tap **Start Voice**, allow microphone access, and speak. The screen shows microphone activity and
 the latest transcription. Use **Mute** to pause your microphone or **End** to finish. Leaving the
-app ends the session. Voice conversations are saved to your chat history.
+app ends the session. Watch voice conversations are not saved to your chat history.
 
 To start from your watch face, edit the face, choose a complication slot, and select **Family
 Assistant Voice**. Tapping its microphone opens the app and starts voice mode once you are signed
