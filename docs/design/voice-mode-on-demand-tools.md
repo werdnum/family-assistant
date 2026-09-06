@@ -79,8 +79,9 @@ endpoint's behaviour for existing callers is unchanged.
   the description — precisely what a declared tool would have given the model.
 - **Recursion.** `call_tool` refuses the meta tool names.
 - **Kill switch.** `gemini_live_config.tools.on_demand` (default `true`) turns the whole mechanism
-  off, restoring flat declaration of every advertisable tool;
-  `gemini_live_config.tools.search_result_limit` caps a search response.
+  off, restoring flat declaration of every advertisable tool. How many tools a search returns is a
+  constant, not a setting: the model passes its own `limit` when it wants fewer, and an operator has
+  no reason to tune it.
 
 ## Deliberate simplifications
 

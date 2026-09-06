@@ -24,7 +24,10 @@ from family_assistant.tools.metadata import (
     ToolTag,
     make_local_tool_metadata,
 )
-from family_assistant.tools.on_demand import OnDemandToolsView
+from family_assistant.tools.on_demand import (
+    RESERVED_META_TOOL_NAMES,
+    OnDemandToolsView,
+)
 from family_assistant.tools.types import ToolResult
 
 if TYPE_CHECKING:
@@ -120,6 +123,30 @@ async def test_declarations_replace_on_demand_tools_with_meta_tools() -> None:
     }
 
     assert names == {"list_notes", SEARCH_TOOLS_TOOL_NAME, CALL_TOOL_TOOL_NAME}
+
+
+@pytest.mark.asyncio
+async def test_meta_tools_survive_an_mcp_server_that_is_down_at_setup() -> None:
+    """Configured on-demand capability decides, not present availability.
+
+    A live session declares once. If the only on-demand tools belong to an MCP
+    server that is down at setup, omitting the meta-tools would cost the whole
+    session its route to that server even after the health loop reconnects it.
+    """
+    empty_provider = LocalToolsProvider(registrations=[])
+    view = OnDemandToolsView(
+        wrapped_provider=empty_provider,
+        on_demand_tool_names=set(),
+        on_demand_mcp_server_ids={"homeassistant"},
+    )
+    provider = LiveMetaToolsProvider(view)
+
+    names = {
+        definition["function"]["name"]
+        for definition in await provider.get_tool_definitions()
+    }
+
+    assert names == {SEARCH_TOOLS_TOOL_NAME, CALL_TOOL_TOOL_NAME}
 
 
 @pytest.mark.asyncio
@@ -314,3 +341,26 @@ async def test_non_meta_names_are_delegated_unchanged() -> None:
 
     assert result == "done"
     assert CALLS == [("called", {})]
+
+
+@pytest.mark.parametrize("reserved", ["search_tools", "call_tool", "activate_tools"])
+def test_a_real_tool_may_not_take_a_meta_tool_name(reserved: str) -> None:
+    """A shadowed tool fails loudly rather than being silently intercepted."""
+    assert reserved in RESERVED_META_TOOL_NAMES
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reserved", ["search_tools", "call_tool", "activate_tools"])
+async def test_wrapping_a_provider_that_shadows_a_meta_tool_raises(
+    reserved: str,
+) -> None:
+    local_provider = LocalToolsProvider(
+        registrations=[_registration(reserved, description="A real tool.")]
+    )
+    view = OnDemandToolsView(
+        wrapped_provider=local_provider,
+        on_demand_tool_names={reserved},
+    )
+
+    with pytest.raises(ValueError, match="reserved"):
+        await LiveMetaToolsProvider(view).get_tool_definitions()

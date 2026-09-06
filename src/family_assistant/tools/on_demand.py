@@ -31,6 +31,7 @@ from family_assistant.tools.infrastructure import (
     ToolsProvider,
     resolve_descriptors_version,
 )
+from family_assistant.tools.live_meta import LIVE_META_TOOL_NAMES
 from family_assistant.tools.metadata import ToolDescriptor, extract_tool_summary
 
 if TYPE_CHECKING:
@@ -42,6 +43,14 @@ logger = logging.getLogger(__name__)
 
 
 _EMPTY_ACTIVATED: frozenset[str] = frozenset()
+
+ACTIVATE_TOOLS_TOOL_NAME = "activate_tools"
+
+# Names a real tool may not take, because a consumer intercepts them before
+# dispatch reaches the wrapped provider.
+RESERVED_META_TOOL_NAMES: frozenset[str] = LIVE_META_TOOL_NAMES | {
+    ACTIVATE_TOOLS_TOOL_NAME
+}
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +122,7 @@ class OnDemandActivationResult:
 ACTIVATE_TOOLS_DEFINITION: ToolDefinition = {
     "type": "function",
     "function": {
-        "name": "activate_tools",
+        "name": ACTIVATE_TOOLS_TOOL_NAME,
         "description": (
             "Activate on-demand tools so you can use them in this conversation. "
             "Call with specific tool names from the on-demand catalog, search "
@@ -228,10 +237,14 @@ class OnDemandToolsView:
     async def _ensure_descriptors(self) -> list[ToolDescriptor]:
         """Populate the descriptor cache from the wrapped provider on first access.
 
-        The LLM loop intercepts any tool call named ``activate_tools`` as the
-        meta-tool. If the wrapped provider already exposes a real tool with
-        that name it would be silently shadowed, so refuse to wrap such a
-        provider and fail loudly instead.
+        A meta-tool name is intercepted before dispatch reaches the wrapped
+        provider — ``activate_tools`` by the LLM loop, ``search_tools`` and
+        ``call_tool`` by the Live meta-tools provider. A real tool carrying one
+        of those names would be silently shadowed, and would additionally be
+        declared twice to a Live session, so refuse to wrap such a provider and
+        fail loudly instead. All three are reserved here rather than per
+        consumer, because one view serves both and any profile may be reached
+        by voice.
 
         The cache is rebuilt when the wrapped descriptor set changes (an MCP
         server connecting, reconnecting, or disconnecting), so on-demand
@@ -244,12 +257,14 @@ class OnDemandToolsView:
             or current_version != self._descriptors_version
         ):
             descriptors = await self._descriptor_provider.get_tool_descriptors()
-            collisions = [d for d in descriptors if d.name == "activate_tools"]
+            collisions = sorted(
+                d.name for d in descriptors if d.name in RESERVED_META_TOOL_NAMES
+            )
             if collisions:
                 msg = (
-                    "OnDemandToolsView cannot wrap a provider that "
-                    "already exposes a tool named 'activate_tools'; this name "
-                    "is reserved for the on-demand meta-tool."
+                    "OnDemandToolsView cannot wrap a provider that already "
+                    f"exposes {', '.join(repr(name) for name in collisions)}; "
+                    "these names are reserved for the on-demand meta-tools."
                 )
                 raise ValueError(msg)
             self._all_descriptors = descriptors

@@ -173,9 +173,18 @@ class LiveMetaToolsProvider:
     # --- Declarations -----------------------------------------------------
 
     async def get_tool_definitions(self) -> list[ToolDefinition]:
-        """Return the eager tools plus the meta-tools, if anything is hidden."""
+        """Return the eager tools plus the meta-tools, if any are configured.
+
+        The test is what the profile *configures* as on-demand, not what is
+        reachable right now. A live session declares once and cannot be given a
+        declaration later, so an MCP server that happens to be down at session
+        setup would otherwise cost the session its only route to that server's
+        tools for good — the descriptor cache recovers when the health loop
+        reconnects, but the declaration list never does. The LLM loop can
+        afford the tighter test because it rebuilds its list every turn.
+        """
         visible = await self._view.get_visible_definitions(can_confirm=False)
-        if not visible.hidden_names:
+        if not self._view.has_on_demand_tools():
             return visible.definitions
         return [*visible.definitions, SEARCH_TOOLS_DEFINITION, CALL_TOOL_DEFINITION]
 
