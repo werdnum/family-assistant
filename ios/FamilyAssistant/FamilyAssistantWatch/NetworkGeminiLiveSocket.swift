@@ -27,21 +27,27 @@ final class NetworkGeminiLiveSocket: GeminiLiveSocket {
         }
     }
 
-    func receive() async throws -> Data {
+    func receive() async throws -> Data? {
         while true {
-            let (data, opcode) = try await receiveFrame()
-            switch opcode {
+            let (data, metadata) = try await receiveFrame()
+            switch metadata.opcode {
             case .text, .binary:
                 return data
             case .ping, .pong:
                 continue
+            case .close:
+                guard metadata.closeCode == .protocolCode(.normalClosure)
+                    || metadata.closeCode == .protocolCode(.goingAway) else {
+                    throw GeminiLiveError.notConnected
+                }
+                return nil
             default:
                 throw GeminiLiveError.notConnected
             }
         }
     }
 
-    private func receiveFrame() async throws -> (Data, NWProtocolWebSocket.Opcode) {
+    private func receiveFrame() async throws -> (Data, NWProtocolWebSocket.Metadata) {
         try await withCheckedThrowingContinuation { continuation in
             connection.receiveMessage { data, context, _, error in
                 if let error {
@@ -49,7 +55,7 @@ final class NetworkGeminiLiveSocket: GeminiLiveSocket {
                 } else if let metadata = context?.protocolMetadata(definition: NWProtocolWebSocket.definition)
                     as? NWProtocolWebSocket.Metadata
                 {
-                    continuation.resume(returning: (data ?? Data(), metadata.opcode))
+                    continuation.resume(returning: (data ?? Data(), metadata))
                 } else {
                     continuation.resume(throwing: GeminiLiveError.notConnected)
                 }

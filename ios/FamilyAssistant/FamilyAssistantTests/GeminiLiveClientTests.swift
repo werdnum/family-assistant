@@ -11,8 +11,8 @@ final class FakeGeminiLiveSocket: GeminiLiveSocket, @unchecked Sendable {
     private(set) var sentFrames: [String] = []
     private(set) var didClose = false
 
-    private var buffered: [Result<Data, Error>] = []
-    private var waiter: CheckedContinuation<Data, Error>?
+    private var buffered: [Result<Data?, Error>] = []
+    private var waiter: CheckedContinuation<Data?, Error>?
     var suspendSend = false
     var onSendSuspended: (() -> Void)?
     private var sendWaiter: CheckedContinuation<Void, Error>?
@@ -27,7 +27,7 @@ final class FakeGeminiLiveSocket: GeminiLiveSocket, @unchecked Sendable {
         }
     }
 
-    func receive() async throws -> Data {
+    func receive() async throws -> Data? {
         if !buffered.isEmpty {
             return try buffered.removeFirst().get()
         }
@@ -54,6 +54,15 @@ final class FakeGeminiLiveSocket: GeminiLiveSocket, @unchecked Sendable {
             waiter.resume(returning: data)
         } else {
             buffered.append(.success(data))
+        }
+    }
+
+    func finish() {
+        if let waiter {
+            self.waiter = nil
+            waiter.resume(returning: nil)
+        } else {
+            buffered.append(.success(nil))
         }
     }
 
@@ -89,6 +98,7 @@ final class GeminiLiveClientTests: XCTestCase {
     /// Collects events from the client's stream on a background task.
     private final class EventCollector {
         private(set) var events: [GeminiLiveServerEvent] = []
+        private(set) var finished = false
         private var task: Task<Void, Never>?
 
         func start(_ client: GeminiLiveClient) {
@@ -96,6 +106,7 @@ final class GeminiLiveClientTests: XCTestCase {
                 for await event in client.events {
                     self.events.append(event)
                 }
+                self.finished = true
             }
         }
 
@@ -216,6 +227,20 @@ final class GeminiLiveClientTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? GeminiLiveError, .notConnected)
         }
+    }
+
+    func testCleanSocketEndFinishesStreamWithoutError() async throws {
+        let socket = FakeGeminiLiveSocket()
+        let client = GeminiLiveClient(socketFactory: { _ in socket })
+        let collector = EventCollector()
+        collector.start(client)
+        socket.finish()
+
+        try await client.connect(token: makeToken())
+        try await waitUntil { collector.finished }
+
+        XCTAssertNil(client.lastError)
+        XCTAssertTrue(socket.didClose)
     }
 
     func testSocketFailureFinishesStreamAndRecordsError() async throws {

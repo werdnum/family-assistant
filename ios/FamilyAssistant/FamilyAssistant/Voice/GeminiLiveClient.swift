@@ -108,9 +108,10 @@ final class GeminiLiveClient {
     }
 
     private func runReceiveLoop(socket: GeminiLiveSocket) async {
+        defer { socket.close() }
         do {
             while !Task.isCancelled {
-                let data = try await socket.receive()
+                guard let data = try await socket.receive() else { break }
                 // A frame that fails to decode is a protocol violation, not noise:
                 // let it throw so the session ends with lastError set rather than
                 // hanging while the UI waits for events that will never arrive.
