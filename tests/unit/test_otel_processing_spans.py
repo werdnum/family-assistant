@@ -25,6 +25,7 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm import LLMStreamEvent
 from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
+from family_assistant.storage.tasks import TaskPriority
 from family_assistant.storage.types import TaskDict
 from family_assistant.tools import ToolNotFoundError
 
@@ -169,6 +170,7 @@ def _make_task_dict(
         max_retries=3,
         recurrence_rule=None,
         original_task_id=None,
+        priority=TaskPriority.INTERACTIVE,
     )
 
 
