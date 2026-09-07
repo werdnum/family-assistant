@@ -1522,6 +1522,12 @@ class Assistant:
                 on_demand_mcp_server_ids=on_demand_mcp_ids,
             )
         await profile_tools_provider.get_tool_definitions()
+        if profile_on_demand_view is not None:
+            # A tool carrying a meta-tool's name is a registry or MCP-server
+            # misconfiguration, and every consumer of this view intercepts
+            # those names before dispatch. Fail the boot rather than the first
+            # conversation or call that happens to reach one.
+            await profile_on_demand_view.ensure_no_reserved_name_collisions()
         return profile_tools_provider, profile_on_demand_view
 
     def _create_profile_llm_clients(

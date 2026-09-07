@@ -1685,7 +1685,17 @@ async def asterisk_live_endpoint(
         if not await load_profile_configuration():
             return
     except Exception as e:
+        # Continuing here would answer the call with whatever partial state had
+        # been assigned -- typically no tools and no system prompt -- so the
+        # caller talks to an assistant that silently cannot do anything. A
+        # rejected call is a fault the operator can see. The profile-not-found
+        # path above returns False instead of raising, so the deliberate
+        # unconfigured-defaults fallback is unaffected.
         logger.exception(f"Error loading profile '{profile_id}' configuration: {e}")
+        await websocket.close(
+            code=1011, reason=f"Profile '{profile_id}' configuration failed to load"
+        )
+        return
 
     chat_interfaces = getattr(websocket.app.state, "chat_interfaces", None)
     confirmation_ui_managers = getattr(
