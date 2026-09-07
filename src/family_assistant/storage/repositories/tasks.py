@@ -2,6 +2,7 @@
 
 import logging
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
@@ -12,12 +13,14 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.sql import functions as func
 from sqlalchemy.sql.elements import ColumnElement
 
+from family_assistant.observability.metrics import record_task_enqueued
 from family_assistant.security.definition_records import (
     CreationDisposition,
     GateProvenance,
     definition_record_from_row,
 )
 from family_assistant.storage.database import DatabaseTransaction
+from family_assistant.storage.datetime_utils import normalize_datetime
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.tasks import notify_workers, tasks_table
 from family_assistant.storage.types import TaskDict
@@ -27,6 +30,11 @@ logger = logging.getLogger(__name__)
 # Statuses a system task's row can be in when it has finished with the
 # occurrence it holds, and so can be handed the next one.
 TERMINAL_TASK_STATUSES = ("done", "failed")
+
+# How long a task may sit in `processing` before dequeue treats its worker as
+# dead and reclaims it. Must be well above the handler timeout (300s), or a
+# running worker is reclaimed out from under itself.
+STALE_TASK_TIMEOUT_MINUTES = 15
 
 
 def _revive_if_terminal(
@@ -59,6 +67,44 @@ def _revived_occurrence_values() -> dict[str, ColumnElement[Any]]:
         "locked_at": _revive_if_terminal("locked_at", null()),
         "error": _revive_if_terminal("error", null()),
     }
+
+
+@dataclass(frozen=True)
+class TaskQueueSnapshot:
+    """One reading of what the queue holds, for the queue-state metrics.
+
+    Counts only rows the queue still owns. A ``done`` or ``failed`` row is
+    history, and the processed counter has it.
+    """
+
+    scheduled: int
+    """Pending, with a ``scheduled_at`` still in the future."""
+
+    due: int
+    """Pending, eligible to run, and not yet claimed by a worker."""
+
+    processing: int
+    """Claimed by a worker that is still within the reclaim window."""
+
+    stalled: int
+    """Claimed longer ago than the reclaim cutoff -- the worker likely died."""
+
+    exhausted: int
+    """Pending with its retries spent, which dequeue will never pick up."""
+
+    due_latency_seconds: float
+    """Age of the oldest task in :attr:`due`; zero when nothing is due."""
+
+
+def _due_at() -> ColumnElement[Any]:
+    """When a task became eligible to run.
+
+    A task with no ``scheduled_at`` is not "before everything"; it is due at the
+    moment it was created. Ordering by this expression instead of by
+    ``scheduled_at`` NULLS FIRST stops a stream of immediate tasks from starving
+    work that has been due for hours.
+    """
+    return func.coalesce(tasks_table.c.scheduled_at, tasks_table.c.created_at)
 
 
 class TasksRepository(BaseRepository):
@@ -210,15 +256,18 @@ class TasksRepository(BaseRepository):
             # If task is immediate, wake all workers in the pool. Fanning out to
             # every registered per-worker wake event (plus the legacy global event)
             # avoids one worker's event.clear() swallowing the wakeup for siblings.
-            # Defer the wake to transaction commit (mirroring
-            # storage.tasks.enqueue_task): when enqueue runs inside an open
-            # transaction, waking before commit can let an idle sibling poll an
-            # empty queue, clear its event, and then miss the not-yet-visible row
-            # until the next 5s poll.
+            # Defer the wake to transaction commit: when enqueue runs inside an
+            # open transaction, waking before commit can let an idle sibling poll
+            # an empty queue, clear its event, and then miss the not-yet-visible
+            # row until the next 5s poll.
             if not processed_scheduled_at or processed_scheduled_at <= datetime.now(
                 UTC
             ):
                 txn.on_commit(notify_workers)
+
+            # Counted on commit rather than here, so a row a rollback removes
+            # is not counted as queued work that never runs.
+            txn.on_commit(lambda: record_task_enqueued(task_type))
 
             logger.info(
                 f"Successfully enqueued task: {task_id} (type: {task_type}, scheduled: {processed_scheduled_at})"
@@ -279,11 +328,7 @@ class TasksRepository(BaseRepository):
             f"DEQUEUE START: Worker {worker_id} searching for tasks of types {task_types} at {current_time}"
         )
 
-        # Task timeout: tasks stuck in processing state for longer than this will be reclaimed
-        # Must be significantly larger than TASK_HANDLER_TIMEOUT (300s/5m) to prevent
-        # race conditions where a running worker is treated as stalled.
-        task_timeout_minutes = 15
-        stale_task_cutoff = current_time - timedelta(minutes=task_timeout_minutes)
+        stale_task_cutoff = current_time - timedelta(minutes=STALE_TASK_TIMEOUT_MINUTES)
 
         async def _claim(txn: DatabaseTransaction) -> TaskDict | None:
             """Select a task and lock it, atomically -- the lock *is* the claim."""
@@ -308,11 +353,7 @@ class TasksRepository(BaseRepository):
                         ),
                         tasks_table.c.retry_count <= tasks_table.c.max_retries,
                     )
-                    .order_by(
-                        tasks_table.c.scheduled_at.asc().nullsfirst(),
-                        tasks_table.c.retry_count.asc(),
-                        tasks_table.c.created_at.asc(),
-                    )
+                    .order_by(_due_at().asc(), tasks_table.c.id.asc())
                     .limit(1)
                     .with_for_update(skip_locked=True)
                 )
@@ -383,11 +424,7 @@ class TasksRepository(BaseRepository):
                             ),
                             tasks_table.c.retry_count <= tasks_table.c.max_retries,
                         )
-                        .order_by(
-                            tasks_table.c.scheduled_at.asc().nullsfirst(),
-                            tasks_table.c.retry_count.asc(),
-                            tasks_table.c.created_at.asc(),
-                        )
+                        .order_by(_due_at().asc(), tasks_table.c.id.asc())
                         .limit(1)
                         .scalar_subquery(),
                     )
@@ -416,6 +453,72 @@ class TasksRepository(BaseRepository):
                 return None
 
         return await self._db.atomic(_claim)
+
+    async def queue_state_snapshot(self, now: datetime) -> TaskQueueSnapshot:
+        """Read what the queue holds right now, in one grouped query.
+
+        Sampled by the worker pool's health monitor rather than by each worker,
+        so the states are one consistent reading. The due latency is derived in
+        Python from the oldest due row's timestamp: database interval arithmetic
+        differs between SQLite and PostgreSQL, and the subtraction does not need
+        the database.
+        """
+        stale_task_cutoff = now - timedelta(minutes=STALE_TASK_TIMEOUT_MINUTES)
+        eligible = or_(
+            tasks_table.c.scheduled_at.is_(None),
+            tasks_table.c.scheduled_at <= now,
+        )
+        state = case(
+            (
+                and_(
+                    tasks_table.c.status == "pending",
+                    tasks_table.c.retry_count > tasks_table.c.max_retries,
+                ),
+                "exhausted",
+            ),
+            (and_(tasks_table.c.status == "pending", eligible), "due"),
+            (tasks_table.c.status == "pending", "scheduled"),
+            (
+                and_(
+                    tasks_table.c.status == "processing",
+                    tasks_table.c.locked_at <= stale_task_cutoff,
+                ),
+                "stalled",
+            ),
+            (tasks_table.c.status == "processing", "processing"),
+        ).label("state")
+
+        rows = await self._db.fetch_all(
+            select(
+                state,
+                func.count().label("count"),
+                func.min(_due_at()).label("oldest_due"),
+            )
+            .where(tasks_table.c.status.in_(("pending", "processing")))
+            .group_by(state)
+        )
+
+        counts = {row["state"]: row["count"] for row in rows}
+        oldest_due = next(
+            (
+                normalize_datetime(row["oldest_due"])
+                for row in rows
+                if row["state"] == "due"
+            ),
+            None,
+        )
+        return TaskQueueSnapshot(
+            scheduled=counts.get("scheduled", 0),
+            due=counts.get("due", 0),
+            processing=counts.get("processing", 0),
+            stalled=counts.get("stalled", 0),
+            exhausted=counts.get("exhausted", 0),
+            due_latency_seconds=(
+                max(0.0, (now - oldest_due).total_seconds())
+                if oldest_due is not None
+                else 0.0
+            ),
+        )
 
     async def attach_definition_verdict(
         self,
@@ -600,11 +703,8 @@ class TasksRepository(BaseRepository):
             # Newest first (reverse chronological)
             stmt = stmt.order_by(tasks_table.c.created_at.desc())
         else:
-            # Oldest first (chronological) - original behavior
-            stmt = stmt.order_by(
-                tasks_table.c.scheduled_at.asc().nullsfirst(),
-                tasks_table.c.created_at.asc(),
-            )
+            # Oldest first, by when each task became due
+            stmt = stmt.order_by(_due_at().asc(), tasks_table.c.id.asc())
 
         stmt = stmt.limit(limit)
 

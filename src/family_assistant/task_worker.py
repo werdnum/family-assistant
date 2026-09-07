@@ -10,6 +10,7 @@ import json
 import logging
 import random
 import shutil
+import time
 import traceback
 import uuid
 from dataclasses import dataclass, replace
@@ -36,6 +37,7 @@ from family_assistant.llm.messages import (
     UserMessage,
 )
 from family_assistant.llm.model_selection import ResolvedModelSelection
+from family_assistant.observability.metrics import record_task_processed
 from family_assistant.processing import (
     PENDING,
     ChatInteractionResult,
@@ -135,7 +137,6 @@ from family_assistant.storage.database import (
 )
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.tasks import (
-    enqueue_task,
     notify_other_workers,
     register_worker_wake_event,
     tasks_table,
@@ -4011,7 +4012,15 @@ class TaskWorker:
                 status="failed",
                 error=f"No handler registered for type {task['task_type']}",
             )
+            record_task_processed(
+                task_type=task["task_type"], outcome="failed", duration_seconds=None
+            )
             return None  # Stop processing this task
+
+        # Filled in by the handler execution below and read by both the success
+        # and the failure path, so a task's duration is what its handler ran for
+        # rather than what the surrounding bookkeeping took.
+        handler_seconds = 0.0
 
         with tracer.start_as_current_span(
             f"task.process.{task['task_type']}",
@@ -4022,6 +4031,7 @@ class TaskWorker:
         ) as span:
 
             async def process_task() -> ScheduleAutomationAdvanceRequest | None:
+                nonlocal handler_seconds
                 # --- Create Execution Context ---
                 # Extract interface identifiers from payload
                 # Need to define these *before* using them in logging etc.
@@ -4042,6 +4052,11 @@ class TaskWorker:
                             task_id=task["task_id"],
                             status="failed",
                             error="Missing interface_type or conversation_id in payload for llm_callback",
+                        )
+                        record_task_processed(
+                            task_type=task["task_type"],
+                            outcome="failed",
+                            duration_seconds=None,
                         )
                         return None  # Stop processing
                     final_interface_type = raw_interface_type
@@ -4159,6 +4174,7 @@ class TaskWorker:
                 # timeout may be overridden per task type (e.g. delegated runs that
                 # park on a human confirmation get a longer budget).
                 effective_timeout = self._timeout_for_task_type(task["task_type"])
+                handler_started = time.monotonic()
                 try:
                     await asyncio.wait_for(
                         handler(exec_context, task["payload"]),
@@ -4173,6 +4189,8 @@ class TaskWorker:
                     )
                     # Re-raise to trigger retry logic in _handle_task_failure
                     raise
+                finally:
+                    handler_seconds = time.monotonic() - handler_started
 
                 # Task details for logging
                 task_id = task["task_id"]
@@ -4202,6 +4220,11 @@ class TaskWorker:
                     await self._handle_recurrence(txn, task)
 
                 await db_context.atomic(_complete)
+                record_task_processed(
+                    task_type=task["task_type"],
+                    outcome="completed",
+                    duration_seconds=handler_seconds,
+                )
                 span.set_attribute("task.status", "success")
                 logger.info(
                     f"PROCESS SUCCESS: Worker {self.worker_id} completed task {task_id} (Original: {original_task_id})"
@@ -4214,13 +4237,16 @@ class TaskWorker:
                 span.set_status(StatusCode.ERROR, str(handler_exc))
                 span.record_exception(handler_exc)
                 span.set_attribute("task.status", "error")
-                return await self._handle_task_failure(db_context, task, handler_exc)
+                return await self._handle_task_failure(
+                    db_context, task, handler_exc, handler_seconds
+                )
 
     async def _handle_task_failure(
         self,
         db_context: Database,
         task: TaskDict,
         handler_exc: Exception,
+        handler_seconds: float,
     ) -> ScheduleAutomationAdvanceRequest | None:
         """Handles logging, retries, and marking tasks as failed."""
         current_retry = task.get("retry_count", 0)
@@ -4275,7 +4301,17 @@ class TaskWorker:
                         advance_request,
                     ),
                 )
+                record_task_processed(
+                    task_type=task["task_type"],
+                    outcome="failed",
+                    duration_seconds=handler_seconds,
+                )
                 return advance_request
+            record_task_processed(
+                task_type=task["task_type"],
+                outcome="retried",
+                duration_seconds=handler_seconds,
+            )
             return None
         else:
             if isinstance(handler_exc, NonRetryableTaskError):
@@ -4309,6 +4345,11 @@ class TaskWorker:
                 await self._handle_recurrence(txn, task)
 
             await db_context.atomic(_fail)
+            record_task_processed(
+                task_type=task["task_type"],
+                outcome="failed",
+                duration_seconds=handler_seconds,
+            )
             # Notify user about script execution failures
             if task["task_type"] == "script_execution":
                 await self._enqueue_script_error_notification(
@@ -4472,8 +4513,7 @@ class TaskWorker:
             notification_payload["processing_profile_id"] = script_profile_id
 
         try:
-            await enqueue_task(
-                db_context=db_context,
+            await db_context.tasks.enqueue(
                 task_id=notification_task_id,
                 task_type="llm_callback",
                 payload=notification_payload,

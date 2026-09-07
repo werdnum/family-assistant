@@ -85,6 +85,7 @@ from family_assistant.llm.providers.google_genai_client import (
     is_interactions_agent_model,
 )
 from family_assistant.observability.exporter import start_metrics_exporter
+from family_assistant.observability.metrics import record_task_queue_state
 from family_assistant.paths import PACKAGE_ROOT
 from family_assistant.processing import (
     DelegatableService,
@@ -2504,6 +2505,7 @@ class Assistant:
                     continue
 
                 await self._check_and_restart_workers()
+                await self._sample_task_queue_state()
 
             except asyncio.CancelledError:
                 # Shutdown requested
@@ -2513,6 +2515,24 @@ class Assistant:
                 await asyncio.sleep(HEALTH_CHECK_INTERVAL)
 
         logger.info("Task worker health monitor stopped")
+
+    async def _sample_task_queue_state(self) -> None:
+        """Publish the queue-state and due-latency gauges for the whole pool.
+
+        Sampled here, once per health-check period, rather than by each worker
+        on each poll: the gauges describe the queue, not a worker, and several
+        workers publishing interleaved readings of the same numbers would make
+        the series depend on how many happened to poll last.
+        """
+        snapshot = await self._database().tasks.queue_state_snapshot(datetime.now(UTC))
+        record_task_queue_state(
+            scheduled=snapshot.scheduled,
+            due=snapshot.due,
+            processing=snapshot.processing,
+            stalled=snapshot.stalled,
+            exhausted=snapshot.exhausted,
+            due_latency_seconds=snapshot.due_latency_seconds,
+        )
 
     async def stop_services(self) -> None:
         """Gracefully stops all managed services."""

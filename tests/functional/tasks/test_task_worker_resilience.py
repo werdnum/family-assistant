@@ -661,6 +661,7 @@ async def test_schedule_advance_enqueued_when_retry_reschedule_fails(
         db_context,
         original_task,
         RuntimeError("handler failed"),
+        0.0,
     )
     assert advance_request is not None
 
