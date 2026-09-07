@@ -60,6 +60,17 @@ def _revived_occurrence_values() -> dict[str, ColumnElement[Any]]:
     }
 
 
+def _due_at() -> ColumnElement[Any]:
+    """When a task became eligible to run.
+
+    A task with no ``scheduled_at`` is not "before everything"; it is due at the
+    moment it was created. Ordering by this expression instead of by
+    ``scheduled_at`` NULLS FIRST stops a stream of immediate tasks from starving
+    work that has been due for hours.
+    """
+    return func.coalesce(tasks_table.c.scheduled_at, tasks_table.c.created_at)
+
+
 class TasksRepository(BaseRepository):
     """Repository for managing background tasks in the database queue."""
 
@@ -259,11 +270,7 @@ class TasksRepository(BaseRepository):
                         ),
                         tasks_table.c.retry_count <= tasks_table.c.max_retries,
                     )
-                    .order_by(
-                        tasks_table.c.scheduled_at.asc().nullsfirst(),
-                        tasks_table.c.retry_count.asc(),
-                        tasks_table.c.created_at.asc(),
-                    )
+                    .order_by(_due_at().asc(), tasks_table.c.id.asc())
                     .limit(1)
                     .with_for_update(skip_locked=True)
                 )
@@ -334,11 +341,7 @@ class TasksRepository(BaseRepository):
                             ),
                             tasks_table.c.retry_count <= tasks_table.c.max_retries,
                         )
-                        .order_by(
-                            tasks_table.c.scheduled_at.asc().nullsfirst(),
-                            tasks_table.c.retry_count.asc(),
-                            tasks_table.c.created_at.asc(),
-                        )
+                        .order_by(_due_at().asc(), tasks_table.c.id.asc())
                         .limit(1)
                         .scalar_subquery(),
                     )
@@ -551,11 +554,8 @@ class TasksRepository(BaseRepository):
             # Newest first (reverse chronological)
             stmt = stmt.order_by(tasks_table.c.created_at.desc())
         else:
-            # Oldest first (chronological) - original behavior
-            stmt = stmt.order_by(
-                tasks_table.c.scheduled_at.asc().nullsfirst(),
-                tasks_table.c.created_at.asc(),
-            )
+            # Oldest first, by when each task became due
+            stmt = stmt.order_by(_due_at().asc(), tasks_table.c.id.asc())
 
         stmt = stmt.limit(limit)
 
