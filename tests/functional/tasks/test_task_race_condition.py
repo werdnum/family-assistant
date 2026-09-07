@@ -14,6 +14,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage.database import Database
+from family_assistant.storage.tasks import TaskPriority
 from family_assistant.task_worker import TaskWorker
 from family_assistant.tools import ToolExecutionContext
 from family_assistant.utils.clock import MockClock
@@ -83,6 +84,7 @@ async def test_stale_task_pickup_prevented_by_timeout_buffer(
         task_id="race_task_prevented",
         task_type="race_test",
         payload={},
+        priority=TaskPriority.INTERACTIVE,
     )
 
     # Handler for Worker A

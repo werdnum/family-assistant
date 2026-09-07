@@ -27,7 +27,7 @@ from family_assistant.storage.database import DatabaseExecutor, DatabaseTransact
 from family_assistant.storage.datetime_utils import normalize_datetime
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.schedule_automations import schedule_automations_table
-from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.storage.types import (
     ActionConfig,
     ScheduleAutomationDict,
@@ -355,6 +355,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                 task_type=task_type,
                 payload=payload,
                 scheduled_at=next_scheduled_at,
+                priority=TaskPriority.INTERACTIVE,
             )
 
             self._logger.info(
@@ -611,6 +612,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                     task_type=task_type,
                     payload=enqueue_payload,
                     scheduled_at=next_scheduled_at,
+                    priority=TaskPriority.INTERACTIVE,
                 )
 
                 stmt = (
@@ -1162,6 +1164,7 @@ class ScheduleAutomationsRepository(BaseRepository):
             task_type=task_type,
             payload=payload,
             scheduled_at=next_scheduled_at,
+            priority=TaskPriority.INTERACTIVE,
         )
 
         self._logger.info(
@@ -1311,6 +1314,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                 task_type=task_type,
                 payload=recur_payload,
                 scheduled_at=next_scheduled_at,
+                priority=TaskPriority.INTERACTIVE,
             )
 
             self._logger.info(

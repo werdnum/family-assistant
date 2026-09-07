@@ -38,6 +38,7 @@ from family_assistant.services.user_identity import (
 )
 from family_assistant.storage.database import Database
 from family_assistant.storage.email import AttachmentData, ParsedEmailData
+from family_assistant.storage.tasks import TaskPriority
 from family_assistant.web.dependencies import get_db
 from family_assistant.web.models import WebhookEventPayload
 
@@ -499,6 +500,7 @@ async def handle_mail_webhook(
                     },
                     original_task_id=f"email_intake_action_{email_db_id}",
                     max_retries_override=0,
+                    priority=TaskPriority.INTERACTIVE,
                 )
             return email_db_id
 

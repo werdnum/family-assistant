@@ -46,7 +46,7 @@ from family_assistant.services.deferred_tool_confirmation import (
 )
 from family_assistant.services.tool_call_review import ToolCallReviewer
 from family_assistant.storage.database import Database
-from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.task_worker import TaskWorker, handle_confirmation_tool_execution
 from family_assistant.tools.infrastructure import (
     PolicyEnforcingToolsProvider,
@@ -1344,6 +1344,7 @@ async def test_confirmation_task_skips_non_approved_request(
         task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
         payload={"confirmation_request_id": request_id},
         max_retries_override=0,
+        priority=TaskPriority.INTERACTIVE,
     )
 
     await _run_worker_until_task_finishes(

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import filetype  # type: ignore[import-untyped]
 
 from family_assistant.indexing.types import IngestionResult
+from family_assistant.storage.tasks import TaskPriority
 
 # storage functions now accessed via Database
 if TYPE_CHECKING:
@@ -231,6 +232,7 @@ async def _process_document_ingestion_request(
                 "original_filename": original_filename_for_task,
                 "url_to_scrape": url_to_scrape,
             },
+            priority=TaskPriority.INTERACTIVE,
         )
         return document_id, task_id
 

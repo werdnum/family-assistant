@@ -25,6 +25,7 @@ from family_assistant.indexing.message_history_indexer import (
     MESSAGE_HISTORY_SOURCE_TYPE,
 )
 from family_assistant.storage.database import Database
+from family_assistant.storage.tasks import TaskPriority
 from family_assistant.storage.vector import DocumentRecord, get_document_by_id
 from family_assistant.web.dependencies import get_db
 from family_assistant.web.models import DocumentUploadResponse
@@ -278,6 +279,7 @@ async def reindex_document(
         task_id=f"reindex_document_{document_id}_{uuid.uuid4()}",
         task_type="reindex_document",
         payload={"document_id": document_id},
+        priority=TaskPriority.INTERACTIVE,
     )
     return {"message": "Re-indexing task enqueued."}
 

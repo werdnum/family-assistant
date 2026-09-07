@@ -32,6 +32,7 @@ from family_assistant.assistant import Assistant
 from family_assistant.config_models import AppConfig
 from family_assistant.storage.database import Database
 from family_assistant.storage.tasks import (
+    TaskPriority,
     register_worker_wake_event,
     tasks_table,
     unregister_worker_wake_event,
@@ -153,10 +154,18 @@ async def test_two_workers_process_tasks_concurrently(
     try:
         db_context = Database(engine=db_engine)
         await db_context.tasks.enqueue(
-            task_id="slow-1", task_type="slow", payload={}, max_retries_override=0
+            task_id="slow-1",
+            task_type="slow",
+            payload={},
+            max_retries_override=0,
+            priority=TaskPriority.INTERACTIVE,
         )
         await db_context.tasks.enqueue(
-            task_id="slow-2", task_type="slow", payload={}, max_retries_override=0
+            task_id="slow-2",
+            task_type="slow",
+            payload={},
+            max_retries_override=0,
+            priority=TaskPriority.INTERACTIVE,
         )
 
         # Both handlers must be in-flight simultaneously: if the pool serialized
@@ -216,6 +225,7 @@ async def test_parked_worker_unblocked_by_sibling(
             task_type="waiter",
             payload={},
             max_retries_override=0,
+            priority=TaskPriority.INTERACTIVE,
         )
 
         # Let one worker pick up and park on the waiter task.
@@ -227,6 +237,7 @@ async def test_parked_worker_unblocked_by_sibling(
             task_type="resolver",
             payload={},
             max_retries_override=0,
+            priority=TaskPriority.INTERACTIVE,
         )
 
         # If only one worker existed, the resolver could never run and the future
@@ -275,6 +286,7 @@ async def test_per_task_type_timeout_override_applied(
             task_type="long",
             payload={},
             max_retries_override=0,
+            priority=TaskPriority.INTERACTIVE,
         )
 
         await wait_for_tasks_to_complete(
@@ -319,6 +331,7 @@ async def test_default_timeout_still_applies_without_override(
             task_type="hang",
             payload={},
             max_retries_override=0,
+            priority=TaskPriority.INTERACTIVE,
         )
 
         await wait_for_tasks_to_complete(
@@ -370,6 +383,7 @@ async def test_enqueue_wakes_idle_sibling_promptly(
             task_type="quick",
             payload={},
             max_retries_override=0,
+            priority=TaskPriority.INTERACTIVE,
         )
 
         # Much shorter than the 5s poll interval: must be the wake event firing.
@@ -398,6 +412,7 @@ async def test_enqueue_wakes_workers_only_once_the_row_is_visible(
             task_type="quick",
             payload={},
             max_retries_override=0,
+            priority=TaskPriority.INTERACTIVE,
         )
 
         assert wake_event.is_set()

@@ -20,6 +20,7 @@ from family_assistant.security.definition_records import (
 )
 from family_assistant.security.taint import TurnTaintTracker
 from family_assistant.storage.database import Database
+from family_assistant.storage.tasks import TaskPriority
 
 if TYPE_CHECKING:
     from family_assistant.task_worker import LlmCallbackPayload
@@ -199,6 +200,7 @@ async def execute_action(
             payload=payload,
             scheduled_at=scheduled_at,
             recurrence_rule=recurrence_rule,
+            priority=TaskPriority.INTERACTIVE,
         )
 
     elif action_type == ActionType.SCRIPT:
@@ -246,6 +248,7 @@ async def execute_action(
             payload=script_payload,
             scheduled_at=scheduled_at,
             recurrence_rule=recurrence_rule,
+            priority=TaskPriority.INTERACTIVE,
         )
     else:
         raise ValueError(f"Unknown action type: {action_type}")

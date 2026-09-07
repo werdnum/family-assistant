@@ -21,7 +21,11 @@ from family_assistant.security.definition_records import (
 from family_assistant.storage.database import DatabaseTransaction
 from family_assistant.storage.datetime_utils import normalize_datetime
 from family_assistant.storage.repositories.base import BaseRepository
-from family_assistant.storage.tasks import notify_workers, tasks_table
+from family_assistant.storage.tasks import (
+    TaskPriority,
+    notify_workers,
+    tasks_table,
+)
 from family_assistant.storage.types import TaskDict
 
 logger = logging.getLogger(__name__)
@@ -69,8 +73,8 @@ def _revived_occurrence_values() -> dict[str, ColumnElement[Any]]:
 
 
 @dataclass(frozen=True)
-class TaskQueueSnapshot:
-    """One reading of what the queue holds, for the queue-state metrics.
+class TaskLaneSnapshot:
+    """One lane's share of what the queue holds.
 
     Counts only rows the queue still owns. A ``done`` or ``failed`` row is
     history, and the processed counter has it.
@@ -93,6 +97,17 @@ class TaskQueueSnapshot:
 
     due_latency_seconds: float
     """Age of the oldest task in :attr:`due`; zero when nothing is due."""
+
+
+@dataclass(frozen=True)
+class TaskQueueSnapshot:
+    """One reading of what the queue holds, lane by lane.
+
+    Every lane is present on every reading, so a gauge for a lane that has gone
+    quiet is published as zero rather than left at its last non-zero value.
+    """
+
+    lanes: Mapping[TaskPriority, TaskLaneSnapshot]
 
 
 def _due_at() -> ColumnElement[Any]:
@@ -119,8 +134,18 @@ class TasksRepository(BaseRepository):
         max_retries_override: int | None = None,
         recurrence_rule: str | None = None,
         original_task_id: str | None = None,
+        *,
+        priority: TaskPriority,
     ) -> None:
         """Adds a task to the queue with automatic notification for immediate tasks.
+
+        ``priority`` has no default on purpose: it is the one decision the queue
+        cannot make for a producer, and a defaulted parameter would put every
+        new producer in whichever lane happened to be the default without a
+        reviewer ever seeing the choice. Work enqueued from inside a handler
+        inherits the running task's lane through
+        :meth:`~family_assistant.tools.types.ToolExecutionContext.inherited_task_priority`
+        rather than naming one again.
 
         Args:
             task_id: Unique identifier for the task
@@ -130,6 +155,7 @@ class TasksRepository(BaseRepository):
             max_retries_override: Override default max retries
             recurrence_rule: Optional recurrence rule for repeating tasks
             original_task_id: ID of the original task if this is a recurrence
+            priority: Which lane the task runs in
         """
         processed_scheduled_at = scheduled_at
         if processed_scheduled_at:
@@ -156,6 +182,7 @@ class TasksRepository(BaseRepository):
             "max_retries": max_task_retries,
             "recurrence_rule": recurrence_rule,
             "original_task_id": original_task_id if original_task_id else task_id,
+            "priority": priority.value,
         }
         # Filter out None values unless they are allowed (payload, error)
         values_to_insert = {
@@ -185,6 +212,9 @@ class TasksRepository(BaseRepository):
                         "payload": stmt.excluded.payload,
                         "max_retries": stmt.excluded.max_retries,
                         "recurrence_rule": stmt.excluded.recurrence_rule,
+                        # A re-seeded system task keeps the lane the seeding
+                        # caller chose, not the one its first seeding did.
+                        "priority": stmt.excluded.priority,
                         **_revived_occurrence_values(),
                     }
                     stmt = stmt.on_conflict_do_update(
@@ -201,6 +231,7 @@ class TasksRepository(BaseRepository):
                             payload=payload,
                             max_retries=max_task_retries,
                             recurrence_rule=recurrence_rule,
+                            priority=priority.value,
                             **_revived_occurrence_values(),
                         )
                     )
@@ -232,7 +263,7 @@ class TasksRepository(BaseRepository):
 
             # Counted on commit rather than here, so a row a rollback removes
             # is not counted as queued work that never runs.
-            txn.on_commit(lambda: record_task_enqueued(task_type))
+            txn.on_commit(lambda: record_task_enqueued(task_type, priority.label))
 
             logger.info(
                 f"Successfully enqueued task: {task_id} (type: {task_type}, scheduled: {processed_scheduled_at})"
@@ -304,7 +335,11 @@ class TasksRepository(BaseRepository):
                         ),
                         tasks_table.c.retry_count <= tasks_table.c.max_retries,
                     )
-                    .order_by(_due_at().asc(), tasks_table.c.id.asc())
+                    .order_by(
+                        tasks_table.c.priority.desc(),
+                        _due_at().asc(),
+                        tasks_table.c.id.asc(),
+                    )
                     .limit(1)
                     .with_for_update(skip_locked=True)
                 )
@@ -375,7 +410,11 @@ class TasksRepository(BaseRepository):
                             ),
                             tasks_table.c.retry_count <= tasks_table.c.max_retries,
                         )
-                        .order_by(_due_at().asc(), tasks_table.c.id.asc())
+                        .order_by(
+                            tasks_table.c.priority.desc(),
+                            _due_at().asc(),
+                            tasks_table.c.id.asc(),
+                        )
                         .limit(1)
                         .scalar_subquery(),
                     )
@@ -441,34 +480,39 @@ class TasksRepository(BaseRepository):
 
         rows = await self._db.fetch_all(
             select(
+                tasks_table.c.priority,
                 state,
                 func.count().label("count"),
                 func.min(_due_at()).label("oldest_due"),
             )
             .where(tasks_table.c.status.in_(("pending", "processing")))
-            .group_by(state)
+            .group_by(tasks_table.c.priority, state)
         )
 
-        counts = {row["state"]: row["count"] for row in rows}
-        oldest_due = next(
-            (
-                normalize_datetime(row["oldest_due"])
-                for row in rows
-                if row["state"] == "due"
-            ),
-            None,
-        )
+        counts = {(row["priority"], row["state"]): row["count"] for row in rows}
+        oldest_due = {
+            row["priority"]: normalize_datetime(row["oldest_due"])
+            for row in rows
+            if row["state"] == "due"
+        }
+
+        def lane(priority: TaskPriority) -> TaskLaneSnapshot:
+            due_since = oldest_due.get(priority.value)
+            return TaskLaneSnapshot(
+                scheduled=counts.get((priority.value, "scheduled"), 0),
+                due=counts.get((priority.value, "due"), 0),
+                processing=counts.get((priority.value, "processing"), 0),
+                stalled=counts.get((priority.value, "stalled"), 0),
+                exhausted=counts.get((priority.value, "exhausted"), 0),
+                due_latency_seconds=(
+                    max(0.0, (now - due_since).total_seconds())
+                    if due_since is not None
+                    else 0.0
+                ),
+            )
+
         return TaskQueueSnapshot(
-            scheduled=counts.get("scheduled", 0),
-            due=counts.get("due", 0),
-            processing=counts.get("processing", 0),
-            stalled=counts.get("stalled", 0),
-            exhausted=counts.get("exhausted", 0),
-            due_latency_seconds=(
-                max(0.0, (now - oldest_due).total_seconds())
-                if oldest_due is not None
-                else 0.0
-            ),
+            lanes={priority: lane(priority) for priority in TaskPriority}
         )
 
     async def attach_definition_verdict(
@@ -654,8 +698,13 @@ class TasksRepository(BaseRepository):
             # Newest first (reverse chronological)
             stmt = stmt.order_by(tasks_table.c.created_at.desc())
         else:
-            # Oldest first, by when each task became due
-            stmt = stmt.order_by(_due_at().asc(), tasks_table.c.id.asc())
+            # The order the queue will run them in: lane first, then by when
+            # each task became due.
+            stmt = stmt.order_by(
+                tasks_table.c.priority.desc(),
+                _due_at().asc(),
+                tasks_table.c.id.asc(),
+            )
 
         stmt = stmt.limit(limit)
 

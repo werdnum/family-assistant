@@ -30,7 +30,7 @@ from family_assistant.indexing.processors.metadata_processors import TitleExtrac
 from family_assistant.indexing.processors.text_processors import TextChunker
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.storage.database import Database
-from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.storage.vector import (
     Document as DocumentProtocol,
 )
@@ -240,6 +240,7 @@ async def test_indexing_pipeline_e2e(
             user_name="IndexingTestUser",  # Added
             turn_id=str(uuid.uuid4()),  # ADDED turn_id
             db_context=db_context_for_pipeline,
+            task_priority=TaskPriority.INTERACTIVE,
             processing_service=None,
             clock=None,
             home_assistant_client=None,
@@ -458,6 +459,7 @@ async def test_indexing_pipeline_pdf_processing(
             user_name="PDFIndexingTestUser",  # Added
             turn_id=str(uuid.uuid4()),  # ADDED turn_id
             db_context=db_context_for_pipeline,
+            task_priority=TaskPriority.INTERACTIVE,
             processing_service=None,
             clock=None,
             home_assistant_client=None,

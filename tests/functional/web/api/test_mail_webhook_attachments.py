@@ -33,7 +33,7 @@ from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.base import attachment_metadata_table
 from family_assistant.storage.database import Database
 from family_assistant.storage.email import AttachmentData, received_emails_table
-from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.tools.documents import (
     get_full_document_content_tool,
     reindex_email_tool,
@@ -1021,6 +1021,7 @@ async def test_reindex_email_tool_syncs_indexing_task_id_when_already_in_flight(
         task_id=in_flight_task_id,
         task_type="index_email",
         payload={"email_db_id": email_db_id},
+        priority=TaskPriority.INTERACTIVE,
     )
 
     registry = AttachmentRegistry(
@@ -1307,6 +1308,7 @@ async def test_reindex_email_tool_does_not_match_similar_email_ids(
         task_id=sibling_task_id,
         task_type="index_email",
         payload={"email_db_id": sibling_id},
+        priority=TaskPriority.INTERACTIVE,
     )
 
     # Register a document row for the target email so

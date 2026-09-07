@@ -11,6 +11,7 @@ from family_assistant.services.notifier import (
     CONFIRMATION_CATEGORY,
     NotificationMetadata,
 )
+from family_assistant.storage.tasks import TaskPriority
 
 if TYPE_CHECKING:
     from family_assistant.security.taint import TaintMetadata
@@ -270,6 +271,7 @@ class ConfirmationService:
                     payload={"confirmation_request_id": request_id},
                     original_task_id=execution_task_id,
                     max_retries_override=0,
+                    priority=TaskPriority.INTERACTIVE,
                 )
             return approved
 

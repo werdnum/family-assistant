@@ -29,7 +29,7 @@ from family_assistant.indexing.tasks import (
 )
 from family_assistant.storage import Database
 from family_assistant.storage.events import recent_events_table
-from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.storage.vector import add_document
 from family_assistant.tools.types import ToolExecutionContext
 
@@ -199,6 +199,7 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                     }
                 ],
             },
+            priority=TaskPriority.INTERACTIVE,
         )
 
         # Content chunk embedding tasks
@@ -218,6 +219,7 @@ async def test_document_ready_event_emitted(db_engine: AsyncEngine) -> None:
                         }
                     ],
                 },
+                priority=TaskPriority.INTERACTIVE,
             )
 
         # Process all embedding tasks
@@ -323,6 +325,7 @@ async def test_document_ready_not_emitted_with_pending_tasks(
                 }
             ],
         },
+        priority=TaskPriority.INTERACTIVE,
     )
 
     await db_ctx.tasks.enqueue(
@@ -340,6 +343,7 @@ async def test_document_ready_not_emitted_with_pending_tasks(
                 }
             ],
         },
+        priority=TaskPriority.INTERACTIVE,
     )
 
     # Process only the first task
@@ -468,6 +472,7 @@ async def test_indexing_event_listener_integration(db_engine: AsyncEngine) -> No
                 }
             ],
         },
+        priority=TaskPriority.INTERACTIVE,
     )
 
     # Process the task which should trigger the event
@@ -601,6 +606,7 @@ async def test_document_ready_event_includes_rich_metadata(
                 }
             ],
         },
+        priority=TaskPriority.INTERACTIVE,
     )
 
     # Process the task
@@ -729,6 +735,7 @@ async def test_document_ready_event_handles_none_metadata(
                 }
             ],
         },
+        priority=TaskPriority.INTERACTIVE,
     )
 
     # Process the task
@@ -810,6 +817,7 @@ async def test_json_extraction_compatibility(db_engine: AsyncEngine) -> None:
             task_id=f"test_json_{i}",
             task_type="embed_and_store_batch",
             payload={"document_id": test_doc_id if i < 2 else 888},
+            priority=TaskPriority.INTERACTIVE,
         )
 
     # Import the function to test
@@ -845,6 +853,7 @@ async def test_json_extraction_cross_database(db_engine: AsyncEngine) -> None:
         task_id="test_json_extract_1",
         task_type="embed_and_store_batch",
         payload={"document_id": test_doc_id, "other_field": "test"},
+        priority=TaskPriority.INTERACTIVE,
     )
 
     # Verify our cross-database JSON extraction implementation works

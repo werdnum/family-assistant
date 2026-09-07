@@ -50,6 +50,7 @@ from family_assistant.security.taint import (
 from family_assistant.storage.database import DatabaseExecutor, DatabaseTransaction
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.base import BaseRepository
+from family_assistant.storage.tasks import TaskPriority
 from family_assistant.storage.types import ConversationSummaryRow, MessageHistoryRow
 
 logger = logging.getLogger(__name__)
@@ -1265,6 +1266,7 @@ class MessageHistoryRepository(BaseRepository):
             task_id=f"index_message_history_{uuid.uuid4()}",
             task_type="index_message_history_batch",
             payload=payload,
+            priority=TaskPriority.BACKGROUND,
         )
 
     async def get_recent(

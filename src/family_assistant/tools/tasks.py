@@ -27,6 +27,7 @@ from family_assistant.security.definition_records import (
     register_definition_write,
     stamp_callback_definition,
 )
+from family_assistant.storage.tasks import TaskPriority
 from family_assistant.tools.automations import validate_action_scripts
 from family_assistant.tools.stored_scripts import validate_script_action_config
 from family_assistant.utils.clock import SystemClock
@@ -378,6 +379,7 @@ async def schedule_reminder_tool(
             task_type="llm_callback",
             payload=payload,
             scheduled_at=scheduled_dt,
+            priority=TaskPriority.INTERACTIVE,
         )
     except Exception as e:
         logger.exception(f"Failed to schedule reminder: {e}")
@@ -483,6 +485,7 @@ async def schedule_future_callback_tool(
             task_type="llm_callback",
             payload=payload,
             scheduled_at=scheduled_dt,
+            priority=TaskPriority.INTERACTIVE,
         )
     except Exception as e:
         logger.exception(f"Failed to schedule callback task: {e}")

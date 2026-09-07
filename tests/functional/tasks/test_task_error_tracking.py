@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage.database import Database
+from family_assistant.storage.tasks import TaskPriority
 
 
 @pytest.mark.asyncio
@@ -20,6 +21,7 @@ async def test_reschedule_for_retry_uses_correct_error_column(
         task_id=task_id,
         task_type="test_task",
         payload={"test": "data"},
+        priority=TaskPriority.INTERACTIVE,
     )
 
     # Reschedule it for retry with an error message
@@ -57,6 +59,7 @@ async def test_manually_retry_clears_error_column(db_engine: AsyncEngine) -> Non
         task_type="test_task",
         payload={"test": "data"},
         max_retries_override=0,  # No automatic retries
+        priority=TaskPriority.INTERACTIVE,
     )
 
     # Mark it as failed with an error

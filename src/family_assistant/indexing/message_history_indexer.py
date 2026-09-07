@@ -9,6 +9,7 @@ import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypedDict
 
+from family_assistant.storage.tasks import TaskPriority
 from family_assistant.storage.vector import add_document, add_embedding
 
 if TYPE_CHECKING:
@@ -63,6 +64,7 @@ async def enqueue_message_history_backfill_task(
         task_type="index_message_history_batch",
         payload={"limit": limit},
         max_retries_override=5,
+        priority=TaskPriority.BACKGROUND,
     )
 
 
@@ -172,6 +174,7 @@ async def handle_index_message_history_batch(
                 "after_internal_id": next_after_internal_id,
                 "limit": limit,
             },
+            priority=exec_context.inherited_task_priority(),
         )
 
 

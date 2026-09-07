@@ -15,7 +15,7 @@ from family_assistant.storage.database import Database, DatabaseExecutor
 from family_assistant.storage.repositories.schedule_automations import (
     ScheduleAutomationsRepository,
 )
-from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.task_worker import (
     SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY,
     SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE,
@@ -1233,11 +1233,13 @@ class TestTaskQueueSync:
                 "source_task_id": scheduled_task_id,
                 "execution_time": datetime(2026, 6, 22, 4, 28, tzinfo=UTC).isoformat(),
             },
+            priority=TaskPriority.INTERACTIVE,
         )
         await db_context.tasks.enqueue(
             task_id=source_outbox_task_id,
             task_type="script_execution",
             payload=source_outbox_payload,
+            priority=TaskPriority.INTERACTIVE,
         )
         await db_context.tasks.update_status(
             source_outbox_task_id,

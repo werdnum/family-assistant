@@ -12,6 +12,7 @@ from prometheus_client import REGISTRY
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.storage.database import Database
+from family_assistant.storage.tasks import TaskPriority
 from family_assistant.task_worker import TaskWorker
 from family_assistant.tools import ToolExecutionContext
 
@@ -51,11 +52,18 @@ async def test_enqueue_counts_the_task_it_wrote(
     """Every producer is counted, because every producer goes through enqueue."""
     db = Database(db_engine)
 
-    await db.tasks.enqueue(task_id=f"{task_type}_1", task_type=task_type)
-    await db.tasks.enqueue(task_id=f"{task_type}_2", task_type=task_type)
+    await db.tasks.enqueue(
+        task_id=f"{task_type}_1", task_type=task_type, priority=TaskPriority.INTERACTIVE
+    )
+    await db.tasks.enqueue(
+        task_id=f"{task_type}_2", task_type=task_type, priority=TaskPriority.INTERACTIVE
+    )
 
     assert (
-        _sample("family_assistant_tasks_enqueued_total", {"task_type": task_type})
+        _sample(
+            "family_assistant_tasks_enqueued_total",
+            {"task_type": task_type, "priority": "interactive"},
+        )
         == 2.0
     )
 
@@ -77,7 +85,9 @@ async def test_a_task_that_ran_is_counted_as_completed(
         return None
 
     worker.register_task_handler(task_type, handler)
-    await db.tasks.enqueue(task_id=task_type, task_type=task_type)
+    await db.tasks.enqueue(
+        task_id=task_type, task_type=task_type, priority=TaskPriority.INTERACTIVE
+    )
     task = await db.tasks.dequeue(
         worker_id="worker",
         task_types=[task_type],
@@ -90,13 +100,14 @@ async def test_a_task_that_ran_is_counted_as_completed(
     assert (
         _sample(
             "family_assistant_tasks_processed_total",
-            {"task_type": task_type, "outcome": "completed"},
+            {"task_type": task_type, "priority": "interactive", "outcome": "completed"},
         )
         == 1.0
     )
     assert (
         _sample(
-            "family_assistant_task_duration_seconds_count", {"task_type": task_type}
+            "family_assistant_task_duration_seconds_count",
+            {"task_type": task_type, "priority": "interactive"},
         )
         == 1.0
     )
@@ -119,7 +130,9 @@ async def test_a_failing_task_with_retries_left_is_counted_as_retried(
         raise RuntimeError("transient")
 
     worker.register_task_handler(task_type, handler)
-    await db.tasks.enqueue(task_id=task_type, task_type=task_type)
+    await db.tasks.enqueue(
+        task_id=task_type, task_type=task_type, priority=TaskPriority.INTERACTIVE
+    )
     task = await db.tasks.dequeue(
         worker_id="worker",
         task_types=[task_type],
@@ -132,7 +145,7 @@ async def test_a_failing_task_with_retries_left_is_counted_as_retried(
     assert (
         _sample(
             "family_assistant_tasks_processed_total",
-            {"task_type": task_type, "outcome": "retried"},
+            {"task_type": task_type, "priority": "interactive", "outcome": "retried"},
         )
         == 1.0
     )
@@ -156,7 +169,10 @@ async def test_a_failing_task_out_of_retries_is_counted_as_failed(
 
     worker.register_task_handler(task_type, handler)
     await db.tasks.enqueue(
-        task_id=task_type, task_type=task_type, max_retries_override=0
+        task_id=task_type,
+        task_type=task_type,
+        max_retries_override=0,
+        priority=TaskPriority.INTERACTIVE,
     )
     task = await db.tasks.dequeue(
         worker_id="worker",
@@ -170,7 +186,7 @@ async def test_a_failing_task_out_of_retries_is_counted_as_failed(
     assert (
         _sample(
             "family_assistant_tasks_processed_total",
-            {"task_type": task_type, "outcome": "failed"},
+            {"task_type": task_type, "priority": "interactive", "outcome": "failed"},
         )
         == 1.0
     )

@@ -33,6 +33,7 @@ from family_assistant.storage.base import metadata  # Keep metadata
 
 # Remove get_engine import
 from family_assistant.storage.database import DatabaseExecutor
+from family_assistant.storage.tasks import TaskPriority
 from family_assistant.storage.vector import Document  # Import Document protocol
 
 logger = logging.getLogger(__name__)
@@ -350,6 +351,7 @@ async def _enqueue_note_indexing_task(db_context: DatabaseExecutor, title: str) 
                 task_id=f"index_note_{note_row['id']}_{uuid.uuid4()}",
                 task_type="index_note",
                 payload={"note_id": note_row["id"]},
+                priority=TaskPriority.BACKGROUND,
             )
             logger.info(
                 f"Enqueued indexing task for note ID {note_row['id']} (title: {title})"

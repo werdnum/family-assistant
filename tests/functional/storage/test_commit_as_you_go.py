@@ -23,6 +23,7 @@ from family_assistant.storage.database import (
 )
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.repositories.notes import NoteWritePolicy
+from family_assistant.storage.tasks import TaskPriority
 
 
 async def _note_titles(db: Database) -> list[str]:
@@ -191,6 +192,7 @@ async def test_on_commit_fires_once_after_the_commit_that_succeeded(
                 task_id="on-commit-rollback",
                 task_type="quick",
                 scheduled_at=datetime(2030, 1, 1, tzinfo=UTC),
+                priority=TaskPriority.INTERACTIVE,
             )
             raise RuntimeError("deliberate")
 
