@@ -61,3 +61,9 @@ The baseline CI run on main at `56f4ca4d4` was
 elapsed times were 1,280 seconds for SQLite and 1,602 seconds for PostgreSQL. Aggregated test setup
 time was 1,530 and 3,173 seconds respectively, exceeding test-call time (471 and 782 seconds). These
 totals overlap across workers and are not elapsed time.
+
+The complete local `poe test --db all` run finished in 520 seconds (8m40s): 7,550 Python tests
+passed, four were skipped, and all 490 frontend tests passed. Backend and frontend type checks and
+frontend lint passed. The command exits nonzero only for existing Pylint W0012/W0231 warnings in
+untouched test files; the required `scripts/format-and-lint.sh` checks pass. This is a full-run
+measurement of the final configuration, not a before/after comparison against a full main run.
