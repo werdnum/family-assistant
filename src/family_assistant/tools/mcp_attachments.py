@@ -192,43 +192,90 @@ def overlay_attachment_parameters(
         )
 
 
-def reject_unresolvable_attachment_arguments(
+def _attachment_ids_in(
+    candidate: object, parameter_name: str
+) -> list[str | ScriptAttachment]:
+    """Reduce one supplied value to the attachment(s) it names.
+
+    The script API hands attachments around as dictionaries -- ``{"id": ...}``
+    from ``attachment_create()``, and ``{"attachments": [...]}`` from a tool
+    result -- and a script reaches an MCP tool with those dictionaries intact,
+    because the script layer's raw-definition lookup covers only local tools and
+    so cannot tell that this parameter takes an attachment. Both shapes are
+    accepted here and reduced to ids; every id is checked, so nothing is
+    expanded away silently.
+
+    Raises:
+        ValueError: If the value names no attachment, or names a malformed one.
+    """
+
+    def reject(offender: object) -> ValueError:
+        return ValueError(
+            f"Parameter '{parameter_name}' takes an attachment, but "
+            f"{offender!r} is not an attachment UUID. Attachment IDs are "
+            f"shown in tool result messages as '[Attachment ID: ...]'."
+        )
+
+    if isinstance(candidate, ScriptAttachment):
+        return [candidate]
+    if isinstance(candidate, str):
+        if not is_attachment_id(candidate):
+            raise reject(candidate)
+        return [candidate]
+    if isinstance(candidate, Mapping):
+        nested = candidate.get("attachments")
+        if isinstance(nested, list):
+            ids: list[str | ScriptAttachment] = []
+            for entry in nested:
+                ids.extend(_attachment_ids_in(entry, parameter_name))
+            return ids
+        attachment_id = candidate.get("id")
+        if isinstance(attachment_id, str) and is_attachment_id(attachment_id):
+            return [attachment_id]
+    raise reject(candidate)
+
+
+def normalise_attachment_arguments(
     # ast-grep-ignore: no-dict-any - MCP tool arguments are untyped per the MCP protocol
     arguments: Mapping[str, Any],
     parameters: Mapping[str, MCPAttachmentMode],
-) -> None:
-    """Refuse anything but an attachment for a configured parameter, before resolving.
+    # ast-grep-ignore: no-dict-any - MCP tool arguments are untyped per the MCP protocol
+) -> dict[str, Any]:
+    """Reduce every configured parameter to the attachments it names, or fail.
 
-    Resolution is not a validator: ``process_attachment_arguments`` expands a
-    ``ScriptToolResult``-shaped wrapper into the attachments it names and
-    silently drops the entries it cannot use, so a malformed id inside one
-    would leave a shortened -- possibly empty -- array and the call would go
-    through as if nothing were wrong. Checking the arguments as the caller gave
-    them is what makes that visible, and it is the only place the original
-    entry still exists to complain about.
-
-    A script resolves its own attachments before dispatch, so an already-resolved
-    ``ScriptAttachment`` is accepted here too.
+    Runs before resolution, because resolution is not a validator:
+    ``process_attachment_arguments`` expands a wrapper into the attachments it
+    names and silently drops the entries it cannot use, so a malformed id would
+    leave a shortened -- possibly empty -- array and the call would go through
+    as if nothing were wrong. Here the offending entry still exists to complain
+    about.
 
     Raises:
-        ValueError: If a configured parameter holds anything else.
+        ValueError: If a configured parameter holds anything but attachments.
     """
+    # ast-grep-ignore: no-dict-any - MCP tool arguments are untyped per the MCP protocol
+    normalised: dict[str, Any] = dict(arguments)
     for parameter_name in parameters:
-        value = arguments.get(parameter_name)
+        value = normalised.get(parameter_name)
         if value is None:
             continue
-        candidates = value if isinstance(value, list) else [value]
-        for candidate in candidates:
-            if isinstance(candidate, ScriptAttachment):
-                continue
-            if isinstance(candidate, str) and is_attachment_id(candidate):
-                continue
-            msg = (
-                f"Parameter '{parameter_name}' takes an attachment, but "
-                f"{candidate!r} is not an attachment UUID. Attachment IDs are "
-                f"shown in tool result messages as '[Attachment ID: ...]'."
-            )
-            raise ValueError(msg)
+        if isinstance(value, list):
+            expanded: list[str | ScriptAttachment] = []
+            for candidate in value:
+                expanded.extend(_attachment_ids_in(candidate, parameter_name))
+            normalised[parameter_name] = expanded
+        else:
+            named = _attachment_ids_in(value, parameter_name)
+            # A wrapper naming several attachments cannot fill a single-valued
+            # parameter, and quietly taking the first would send the wrong one.
+            if len(named) != 1:
+                msg = (
+                    f"Parameter '{parameter_name}' takes one attachment, but "
+                    f"{value!r} names {len(named)}."
+                )
+                raise ValueError(msg)
+            normalised[parameter_name] = named[0]
+    return normalised
 
 
 def _write_attachment_file(

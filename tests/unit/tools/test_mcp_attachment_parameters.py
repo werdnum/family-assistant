@@ -704,7 +704,7 @@ async def test_a_wrapper_with_a_bad_id_is_refused_not_silently_emptied() -> None
 
 @pytest.mark.asyncio
 async def test_attachments_a_script_already_resolved_are_accepted() -> None:
-    """A script resolves its own attachments before dispatch, so they arrive resolved."""
+    """A ScriptAttachment object is taken as the attachment it already is."""
     attachment = _attachment()
     provider, calls = await _connected_provider(
         {"meshy_image_to_3d": {"image_url": "data_uri"}}, [_image_tool()]
@@ -723,3 +723,76 @@ async def test_attachments_a_script_already_resolved_are_accepted() -> None:
             + base64.b64encode(IMAGE_BYTES).decode("ascii")
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_the_dict_attachment_create_returns_is_accepted() -> None:
+    """A script reaches an MCP tool with the script API's own dict, not a UUID.
+
+    ``MontyEngine._get_raw_tool_definitions_sync`` collects raw definitions from
+    local providers only, so the script layer cannot tell that an MCP parameter
+    takes an attachment and leaves ``attachment_create()``'s result untouched.
+    """
+    attachment = _attachment()
+    provider, calls = await _connected_provider(
+        {"meshy_image_to_3d": {"image_url": "data_uri"}}, [_image_tool()]
+    )
+
+    result = await provider.execute_tool(
+        "meshy_image_to_3d",
+        {"image_url": {"id": attachment.get_id(), "filename": "photo.png"}},
+        _execution_context(_registry_serving(attachment)),
+    )
+
+    assert result == "ok"
+    assert calls == [
+        {
+            "image_url": "data:image/png;base64,"
+            + base64.b64encode(IMAGE_BYTES).decode("ascii")
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_tool_result_wrapper_names_its_attachments() -> None:
+    attachment = _attachment()
+    provider, calls = await _connected_provider(
+        {"meshy_multi_image_to_3d": {"image_urls": "data_uri"}},
+        [_multi_image_tool()],
+    )
+
+    result = await provider.execute_tool(
+        "meshy_multi_image_to_3d",
+        {"image_urls": [{"attachments": [{"id": attachment.get_id()}]}]},
+        _execution_context(_registry_serving(attachment)),
+    )
+
+    assert result == "ok"
+    assert calls[0]["image_urls"] == [
+        "data:image/png;base64," + base64.b64encode(IMAGE_BYTES).decode("ascii")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_wrapper_naming_several_cannot_fill_a_single_parameter() -> None:
+    """Taking the first would send an attachment the caller did not choose."""
+    attachment = _attachment()
+    provider, calls = await _connected_provider(
+        {"meshy_image_to_3d": {"image_url": "data_uri"}}, [_image_tool()]
+    )
+
+    result = await provider.execute_tool(
+        "meshy_image_to_3d",
+        {
+            "image_url": {
+                "attachments": [
+                    {"id": attachment.get_id()},
+                    {"id": str(uuid.uuid4())},
+                ]
+            }
+        },
+        _execution_context(_registry_serving(attachment)),
+    )
+
+    assert "names 2" in result
+    assert calls == []

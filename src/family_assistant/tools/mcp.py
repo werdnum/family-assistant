@@ -32,9 +32,9 @@ from family_assistant.tools.infrastructure import translate_attachment_schemas_f
 from family_assistant.tools.mcp_attachments import (
     MCPAttachmentMode,
     materialised_attachment_arguments,
+    normalise_attachment_arguments,
     normalize_attachment_parameters,
     overlay_attachment_parameters,
-    reject_unresolvable_attachment_arguments,
 )
 from family_assistant.tools.metadata import (
     ToolDescriptor,
@@ -1305,7 +1305,7 @@ class MCPToolsProvider:
         so the same ownership and access checks every other provider's
         attachment parameters go through apply here too.
         """
-        reject_unresolvable_attachment_arguments(
+        arguments = normalise_attachment_arguments(
             arguments, self._attachment_parameters_for_tool(server_id, name)
         )
         definition = next(
