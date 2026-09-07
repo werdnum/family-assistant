@@ -394,6 +394,16 @@ indexing_pipeline_config:
 #     transport: "streamable_http"
 #     url: "${MCP_HTTP_ORIGIN}/mcp"
 #     token: "$MY_MCP_TOKEN"
+#
+# A server whose tools take images or documents can declare which parameters carry
+# an attachment, so the model supplies an attachment ID and the runtime renders the
+# bytes in the form the server wants (`data_uri` anywhere, `file_path` for stdio
+# servers only). See docs/operations/CONFIGURATION_REFERENCE.md.
+#
+#   meshy:
+#     attachment_parameters:
+#       meshy_image_to_3d:
+#         image_url: data_uri
 mcp_config:
   mcpServers:
     time:

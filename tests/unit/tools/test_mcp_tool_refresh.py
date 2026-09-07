@@ -76,7 +76,7 @@ def _register(
     provider: MCPToolsProvider, server_id: str, tools: Sequence[Tool]
 ) -> None:
     """Seed the provider with the tools a server reported at connect time."""
-    definitions = provider._format_mcp_definitions_to_dicts(list(tools))
+    definitions = provider._format_mcp_definitions_to_dicts(list(tools), server_id)
     provider._register_server_tools(
         server_id,
         definitions,

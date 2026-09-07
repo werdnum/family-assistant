@@ -73,6 +73,10 @@ from .config_sources import DeepMergedYamlSource
 from .delegation_security import DelegationSecurityLevel
 from .security.taint import SinkClass, TaintPolicyConfig
 from .telegram.commands import BUILT_IN_SLASH_COMMANDS, normalize_slash_command
+from .tools.mcp_attachments import (
+    MCPAttachmentMode,
+    file_path_mode_is_supported,
+)
 from .tools.policy import (
     ToolPolicyConfig,
     ToolPolicyDecision,
@@ -1275,11 +1279,48 @@ class MCPServerConfig(BaseModel):
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
     tool_metadata: dict[str, list[str]] = Field(default_factory=dict)
+    # Maps tool name -> parameter name -> how the attachment should reach the
+    # server. See docs/operations/CONFIGURATION_REFERENCE.md.
+    attachment_parameters: dict[str, dict[str, MCPAttachmentMode]] = Field(
+        default_factory=dict
+    )
     # Declared (rather than left to extra="allow") so diagnostic dumps mask it
     # by type. `env` values cannot be declared this way -- their keys are
     # operator-chosen environment variable names -- so they are redacted
     # structurally by config_inspection instead.
     token: SecretStr | None = None
+
+    @model_validator(mode="after")
+    def validate_attachment_parameters(self) -> MCPServerConfig:
+        """Reject ``file_path`` materialisation on a transport that cannot use it.
+
+        ``file_path`` writes the attachment into our own filesystem and hands
+        the server the path, which only means anything to a stdio server we
+        spawned ourselves. Configuring it for a remote server would send a path
+        the server cannot open, so it fails at load rather than at the first
+        tool call.
+        """
+        if not self.attachment_parameters:
+            return self
+        transport = str(
+            (self.__pydantic_extra__ or {}).get("transport") or "stdio"
+        ).lower()
+        if file_path_mode_is_supported(transport):
+            return self
+        offenders = sorted(
+            f"{tool_name}.{parameter_name}"
+            for tool_name, parameters in self.attachment_parameters.items()
+            for parameter_name, mode in parameters.items()
+            if mode == "file_path"
+        )
+        if offenders:
+            msg = (
+                f"attachment_parameters mode 'file_path' requires a stdio MCP "
+                f"server, but transport is {transport!r}: {', '.join(offenders)}. "
+                f"Use 'data_uri' instead."
+            )
+            raise ValueError(msg)
+        return self
 
 
 class MCPConfig(BaseModel):

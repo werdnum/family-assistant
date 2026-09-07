@@ -2713,6 +2713,40 @@ A server that fails to start does not make the application unhealthy — it is l
 `failed`, and its tools are simply absent. Run `poe check-mcp` (or
 `python scripts/check_mcp_servers.py <server-id>`) to get a verdict per server.
 
+#### attachment_parameters (passing attachments to a server)
+
+An MCP server knows nothing about our attachments: a tool that takes an image expects a `string`
+holding a data URI or a filesystem path, not one of our attachment UUIDs. `attachment_parameters`
+names which parameters of which tools carry an attachment and in what form the server wants it,
+keyed by tool name the same way `tool_metadata` is:
+
+```yaml
+meshy:
+  attachment_parameters:
+    meshy_image_to_3d:
+      image_url: data_uri
+    meshy_multi_image_to_3d:
+      image_urls: data_uri
+```
+
+A named parameter is advertised to the model as an attachment UUID — the same shape a built-in tool
+that takes an attachment uses — rather than as whatever string format the server declared. At call
+time the UUID is resolved under the acting user's own access (an attachment they cannot reach is an
+error, and nothing is sent to the server) and rendered in the configured mode:
+
+- `data_uri` — the attachment's bytes inline as `data:<mime>;base64,...`. Works for every transport.
+- `file_path` — the bytes are written to a temporary file and its path is passed. The file is
+  deleted as soon as the call returns.
+
+An array parameter is marked on its items, so the model supplies a list of attachment UUIDs.
+
+`file_path` only means something to a **stdio** server, which we spawn ourselves and which therefore
+shares our filesystem. Configuring it for an `sse` or Streamable HTTP server fails at configuration
+load — a remote server would receive a path it cannot open — so use `data_uri` there.
+
+A configured parameter the server's schema does not have is logged and ignored, so a tool that
+renames a parameter degrades to its own schema rather than being called with one the server rejects.
+
 #### tool_metadata (taint classification)
 
 Configure `tool_metadata` for MCP servers whose protocol annotations do not describe their security
