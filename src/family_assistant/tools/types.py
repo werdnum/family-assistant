@@ -256,6 +256,7 @@ if TYPE_CHECKING:
     from family_assistant.skills.registry import NoteRegistry
     from family_assistant.storage.database import Database
     from family_assistant.storage.repositories.notes import NoteWritePolicy
+    from family_assistant.storage.tasks import TaskPriority
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools.infrastructure import ToolsProvider
     from family_assistant.utils.clock import Clock
@@ -500,6 +501,15 @@ class ToolExecutionContext:
     telemetry attributes the call to the one it is. ``None`` outside a turn --
     a script or an API tool call, where there is no run binding to inherit.
     """
+    task_priority: TaskPriority | None = None
+    """The queue lane of the task this context is running under.
+
+    Set by the task worker from the dequeued row, and the only place a running
+    task's lane is known. ``None`` when there is no task: a chat turn, an HTTP
+    request, a script run from the API. Read it through
+    :meth:`inherited_task_priority` when enqueueing further work of the same
+    kind.
+    """
     subconversation_id: str | None = (
         None  # Subconversation ID for delegated conversations, None for main conversation
     )
@@ -559,6 +569,22 @@ class ToolExecutionContext:
     performs. A call no gate examined leaves it ``None``, which resolves as an
     absent disposition -- the fail-closed state.
     """
+
+    def inherited_task_priority(self) -> TaskPriority:
+        """The lane work enqueued by this handler stays in.
+
+        A handler that enqueues more of its own kind of work -- a backfill
+        continuation, an embedding batch, the next poll of a delegated run --
+        passes this rather than naming a lane, so the lane its producer chose
+        survives however many hops the work takes. Raises outside a task, where
+        there is no lane to inherit; a caller there is a producer and chooses.
+        """
+        if self.task_priority is None:
+            raise RuntimeError(
+                "No task priority to inherit: this context is not a task's. "
+                "A producer outside the queue chooses a lane explicitly."
+            )
+        return self.task_priority
 
     def note_write_policy(self) -> NoteWritePolicy:
         """Derive the note write policy for the active profile from this context.

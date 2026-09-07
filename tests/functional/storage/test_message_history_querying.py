@@ -41,7 +41,7 @@ from family_assistant.storage.repositories.message_history import (
     MessageHistoryQuery,
 )
 from family_assistant.storage.repositories.tasks import TasksRepository
-from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.storage.vector import DocumentEmbeddingRecord, DocumentRecord
 from family_assistant.storage.vector_search import VectorSearchQuery, query_vector_store
 from family_assistant.tools.communication import (
@@ -1462,6 +1462,9 @@ def _build_exec_context(
         user_id="user-a",
         turn_id="turn-current",
         db_context=db,
+        # The message-history indexing handler runs under a background task; a
+        # test calling it directly stands in for the worker that says so.
+        task_priority=TaskPriority.BACKGROUND,
         processing_service=None,
         clock=None,
         home_assistant_client=None,

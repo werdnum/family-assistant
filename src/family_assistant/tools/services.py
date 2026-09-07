@@ -28,6 +28,7 @@ from family_assistant.services.tool_call_review import (
     build_delegation_review_trigger,
 )
 from family_assistant.storage.delegation_runs import TERMINAL_DELEGATION_STATUSES
+from family_assistant.storage.tasks import TaskPriority
 from family_assistant.tools.confirmation import (
     MAX_DELEGATION_REQUEST_CHARS,
     over_length_delegation_block_reason,
@@ -1042,6 +1043,7 @@ async def _enqueue_delegation(
                 "user_name": exec_context.user_name,
             },
             max_retries_override=1,
+            priority=TaskPriority.INTERACTIVE,
         )
 
     try:

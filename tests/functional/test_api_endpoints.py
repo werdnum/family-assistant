@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.embeddings import MockEmbeddingGenerator
 from family_assistant.storage.database import Database
+from family_assistant.storage.tasks import TaskPriority
 from family_assistant.web.app_creator import app as fastapi_app
 from family_assistant.web.dependencies import get_db
 
@@ -145,7 +146,9 @@ async def test_tasks_api_list(
     api_client: httpx.AsyncClient, db_engine: AsyncEngine
 ) -> None:
     db = Database(engine=db_engine)
-    await db.tasks.enqueue(task_id="t1", task_type="demo", payload={})
+    await db.tasks.enqueue(
+        task_id="t1", task_type="demo", payload={}, priority=TaskPriority.INTERACTIVE
+    )
 
     resp = await api_client.get("/api/tasks/")
     assert resp.status_code == 200
@@ -160,7 +163,12 @@ async def test_tasks_api_cancel_pending(
     """Test successfully cancelling a pending task."""
     # Create a pending task
     db = Database(engine=db_engine)
-    await db.tasks.enqueue(task_id="t_cancel", task_type="demo", payload={})
+    await db.tasks.enqueue(
+        task_id="t_cancel",
+        task_type="demo",
+        payload={},
+        priority=TaskPriority.INTERACTIVE,
+    )
 
     # Get the task to find its internal ID
     resp = await api_client.get("/api/tasks/")
@@ -188,7 +196,12 @@ async def test_tasks_api_cancel_non_pending(
     """Test that cancelling a non-pending task fails."""
     # Create a task and mark it as done
     db = Database(engine=db_engine)
-    await db.tasks.enqueue(task_id="t_done", task_type="demo", payload={})
+    await db.tasks.enqueue(
+        task_id="t_done",
+        task_type="demo",
+        payload={},
+        priority=TaskPriority.INTERACTIVE,
+    )
     await db.tasks.update_status(task_id="t_done", status="done")
 
     # Get the task to find its internal ID

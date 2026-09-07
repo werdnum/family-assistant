@@ -51,6 +51,7 @@ from family_assistant.security.taint import (
 from family_assistant.storage.database import DatabaseExecutor, DatabaseTransaction
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.base import BaseRepository
+from family_assistant.storage.tasks import TaskPriority
 from family_assistant.storage.types import ConversationSummaryRow, MessageHistoryRow
 
 logger = logging.getLogger(__name__)
@@ -1296,6 +1297,7 @@ class MessageHistoryRepository(BaseRepository):
             + timedelta(
                 seconds=random.uniform(0, MESSAGE_HISTORY_INDEX_JITTER.total_seconds())
             ),
+            priority=TaskPriority.BACKGROUND,
         )
 
     async def get_recent(

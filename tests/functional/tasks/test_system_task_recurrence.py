@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy import select
 
 from family_assistant.storage.database import Database
-from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.tasks import TaskPriority, tasks_table
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -33,6 +33,7 @@ async def _enqueue_probe(db_context: Database, *, scheduled_at: datetime) -> Non
         scheduled_at=scheduled_at,
         recurrence_rule=RECURRENCE,
         max_retries_override=5,
+        priority=TaskPriority.INTERACTIVE,
     )
 
 

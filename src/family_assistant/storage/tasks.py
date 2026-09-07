@@ -10,6 +10,7 @@ import asyncio
 import logging
 from asyncio import Event
 from datetime import UTC, datetime
+from enum import IntEnum
 
 from sqlalchemy import (
     JSON,
@@ -96,6 +97,34 @@ def notify_other_workers(except_event: Event) -> None:
             event.set()
 
 
+class TaskPriority(IntEnum):
+    """Which lane of the queue a task runs in.
+
+    The members are ordered: the queue hands out the highest priority that is
+    due before any lower one, however long the lower one has waited.
+    """
+
+    BACKGROUND = 0
+    """Nobody is waiting; the work catches up when the house is quiet.
+
+    Message-history indexing (per turn and backfill), note indexing, and every
+    cleanup and reaper task.
+    """
+
+    INTERACTIVE = 1
+    """Somebody is waiting, or expects it at a particular time.
+
+    Reminders and future callbacks, confirmation-gated tool executions,
+    delegated runs and their polls, automation and event-listener scripts,
+    email-intake actions, and user-initiated document work.
+    """
+
+    @property
+    def label(self) -> str:
+        """This lane's name where a string is wanted: metrics, the admin API."""
+        return self.name.lower()
+
+
 # Define the tasks table for the message queue
 tasks_table = Table(
     "tasks",
@@ -119,4 +148,13 @@ tasks_table = Table(
     Column("max_retries", Integer, default=3, nullable=False),
     Column("recurrence_rule", String, nullable=True),
     Column("original_task_id", String, nullable=True, index=True),
+    # Server default only, no Python-side default: every producer chooses a lane
+    # through the repository's required parameter, and the default exists for
+    # the rows the migration adds the column to.
+    Column(
+        "priority",
+        Integer,
+        nullable=False,
+        server_default=str(TaskPriority.BACKGROUND.value),
+    ),
 )

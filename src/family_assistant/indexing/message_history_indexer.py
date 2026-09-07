@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from family_assistant.observability.metrics import record_indexing_documents
+from family_assistant.storage.tasks import TaskPriority
 from family_assistant.storage.vector import (
     add_document,
     add_embedding,
@@ -102,6 +103,7 @@ async def enqueue_message_history_backfill_task(
         max_retries_override=5,
         only_if_absent=True,
         scheduled_at=_background_index_due_now(),
+        priority=TaskPriority.BACKGROUND,
     )
 
 
@@ -340,6 +342,7 @@ async def handle_index_message_history_batch(
             },
             max_retries_override=5,
             scheduled_at=_background_index_due_now(),
+            priority=exec_context.inherited_task_priority(),
         )
 
 

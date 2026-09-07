@@ -20,6 +20,7 @@ from family_assistant.storage.base import metadata  # Keep metadata
 
 # Remove get_engine import
 from family_assistant.storage.database import DatabaseExecutor
+from family_assistant.storage.tasks import TaskPriority
 
 
 # --- Pydantic Models for Parsed Email Data ---
@@ -278,6 +279,7 @@ async def store_incoming_email(
             task_id=task_id,
             task_type="index_email",
             payload={"email_db_id": email_db_id},
+            priority=TaskPriority.INTERACTIVE,
         )
     except SQLAlchemyError as e:
         logger.exception(

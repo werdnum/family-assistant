@@ -120,6 +120,7 @@ class TaskDict(TypedDict):
     max_retries: int
     recurrence_rule: str | None
     original_task_id: str | None
+    priority: int
 
 
 class ErrorLogRow(TypedDict):

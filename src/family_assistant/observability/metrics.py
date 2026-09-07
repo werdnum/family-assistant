@@ -289,8 +289,8 @@ _TASK_DURATION_BUCKETS: Final = (
 
 TASKS_ENQUEUED = Counter(
     "family_assistant_tasks_enqueued",
-    "Tasks written to the queue, by type.",
-    ("task_type",),
+    "Tasks written to the queue, by type and lane.",
+    ("task_type", "priority"),
 )
 
 TASKS_PROCESSED = Counter(
@@ -299,32 +299,33 @@ TASKS_PROCESSED = Counter(
         "Task executions, by how the execution ended -- completed, retried or "
         "failed. A retried execution is counted again when it runs."
     ),
-    ("task_type", "outcome"),
+    ("task_type", "priority", "outcome"),
 )
 
 TASK_DURATION = Histogram(
     "family_assistant_task_duration_seconds",
     "Wall-clock duration of a task handler execution.",
-    ("task_type",),
+    ("task_type", "priority"),
     buckets=_TASK_DURATION_BUCKETS,
 )
 
 TASKS_QUEUED = Gauge(
     "family_assistant_tasks_queued",
     (
-        "Tasks waiting or running, by state -- scheduled, due, processing, "
-        "stalled or exhausted. Terminal rows are history, not queue state, and "
-        "the processed counter already has them."
+        "Tasks waiting or running, by lane and state -- scheduled, due, "
+        "processing, stalled or exhausted. Terminal rows are history, not queue "
+        "state, and the processed counter already has them."
     ),
-    ("state",),
+    ("priority", "state"),
 )
 
 TASK_DUE_LATENCY = Gauge(
     "family_assistant_task_due_latency_seconds",
     (
-        "Age of the oldest task that is eligible to run and has not been "
-        "claimed. Zero when nothing is due."
+        "Age of the oldest task in a lane that is eligible to run and has not "
+        "been claimed. Zero when nothing in the lane is due."
     ),
+    ("priority",),
 )
 
 
@@ -534,7 +535,7 @@ def record_tool_call(
         logger.debug("Failed to record tool call metrics", exc_info=True)
 
 
-def record_task_enqueued(task_type: str) -> None:
+def record_task_enqueued(task_type: str, priority: str) -> None:
     """Count one task written to the queue. Never raises.
 
     Recorded where the row is written rather than where the caller decided to
@@ -544,7 +545,7 @@ def record_task_enqueued(task_type: str) -> None:
     regenerating itself, which no depth metric can show.
     """
     try:
-        TASKS_ENQUEUED.labels(task_type).inc()
+        TASKS_ENQUEUED.labels(task_type, priority).inc()
     except Exception:
         logger.debug("Failed to record task enqueue metrics", exc_info=True)
 
@@ -552,6 +553,7 @@ def record_task_enqueued(task_type: str) -> None:
 def record_task_processed(
     *,
     task_type: str,
+    priority: str,
     outcome: str,
     duration_seconds: float | None,
 ) -> None:
@@ -567,15 +569,16 @@ def record_task_processed(
     carry, but a zero-length observation would misdescribe the histogram.
     """
     try:
-        TASKS_PROCESSED.labels(task_type, outcome).inc()
+        TASKS_PROCESSED.labels(task_type, priority, outcome).inc()
         if duration_seconds is not None:
-            TASK_DURATION.labels(task_type).observe(duration_seconds)
+            TASK_DURATION.labels(task_type, priority).observe(duration_seconds)
     except Exception:
         logger.debug("Failed to record task processing metrics", exc_info=True)
 
 
 def record_task_queue_state(
     *,
+    priority: str,
     scheduled: int,
     due: int,
     processing: int,
@@ -583,13 +586,14 @@ def record_task_queue_state(
     exhausted: int,
     due_latency_seconds: float,
 ) -> None:
-    """Publish one sample of the queue's shape. Never raises.
+    """Publish one sample of one lane's share of the queue. Never raises.
 
     Sampled from one place -- the worker pool's health monitor -- rather than by
     every worker on every poll, so the numbers are one consistent reading of the
-    queue instead of several interleaved ones. Every state is set on every
-    sample, zeroes included, so a series does not go stale at its last non-zero
-    value when the condition it reports clears.
+    queue instead of several interleaved ones. The caller reports every lane on
+    every sample and every state within it, zeroes included, so a series does
+    not go stale at its last non-zero value when the condition it reports
+    clears.
     """
     states = (
         ("scheduled", scheduled),
@@ -600,8 +604,8 @@ def record_task_queue_state(
     )
     try:
         for state, count in states:
-            TASKS_QUEUED.labels(state).set(count)
-        TASK_DUE_LATENCY.set(due_latency_seconds)
+            TASKS_QUEUED.labels(priority, state).set(count)
+        TASK_DUE_LATENCY.labels(priority).set(due_latency_seconds)
     except Exception:
         logger.debug("Failed to record task queue state metrics", exc_info=True)
 

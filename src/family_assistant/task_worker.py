@@ -137,6 +137,7 @@ from family_assistant.storage.database import (
 )
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.tasks import (
+    TaskPriority,
     notify_other_workers,
     register_worker_wake_event,
     tasks_table,
@@ -1042,6 +1043,7 @@ async def _schedule_reminder_follow_up(
         task_type="llm_callback",
         payload=payload,
         scheduled_at=next_reminder_time,
+        priority=exec_context.inherited_task_priority(),
     )
 
     logger.info(
@@ -1822,6 +1824,7 @@ class TaskWorker:
                     await self._enqueue_delegation_poll(
                         exec_context,
                         run,
+                        exec_context.inherited_task_priority(),
                         delay_seconds=_poll_interval_for(target_service),
                     )
                 else:
@@ -2089,6 +2092,7 @@ class TaskWorker:
             await self._enqueue_delegation_poll(
                 exec_context,
                 run,
+                exec_context.inherited_task_priority(),
                 delay_seconds=poll_delay_seconds
                 if poll_delay_seconds is not None
                 else _poll_interval_for(target_service),
@@ -2225,6 +2229,7 @@ class TaskWorker:
         await self._enqueue_delegation_poll(
             exec_context,
             run,
+            exec_context.inherited_task_priority(),
             delay_seconds=poll_delay_seconds
             if poll_delay_seconds is not None
             else _poll_interval_for(target_service),
@@ -2234,10 +2239,17 @@ class TaskWorker:
         self,
         exec_context: ToolExecutionContext,
         run: DelegationRunDict,
+        priority: TaskPriority,
         *,
         delay_seconds: float = DELEGATION_POLL_INTERVAL_SECONDS,
     ) -> None:
-        """Enqueue a single delegation_poll task for an awaiting_remote run."""
+        """Enqueue a single delegation_poll task for an awaiting_remote run.
+
+        The lane is a parameter rather than read from ``exec_context`` here: the
+        stale-run reaper re-enqueues a lost poll from a background cleanup task,
+        and the poll it recovers still belongs to the run somebody is waiting
+        on.
+        """
         clock = exec_context.clock or self.clock
         task_id = f"{DELEGATION_POLL_TASK_TYPE}_{uuid.uuid4().hex}"
         payload: DelegationPollPayload = {
@@ -2252,6 +2264,7 @@ class TaskWorker:
             payload=payload,
             scheduled_at=clock.now() + timedelta(seconds=delay_seconds),
             max_retries_override=3,
+            priority=priority,
         )
 
     async def handle_delegation_poll(
@@ -2435,6 +2448,7 @@ class TaskWorker:
             await self._enqueue_delegation_poll(
                 exec_context,
                 run,
+                exec_context.inherited_task_priority(),
                 delay_seconds=_delegation_poll_backoff(
                     attempts or 1, _poll_interval_for(target_service)
                 ),
@@ -2587,7 +2601,13 @@ class TaskWorker:
                         "Re-enqueuing a lost poll for awaiting_remote delegation %s.",
                         run["delegation_id"],
                     )
-                    await self._enqueue_delegation_poll(exec_context, run)
+                    await self._enqueue_delegation_poll(
+                        exec_context,
+                        run,
+                        # The reaper runs in the background lane; the run it is
+                        # recovering is not background work.
+                        TaskPriority.INTERACTIVE,
+                    )
                 continue
             # Fail FIRST via the non-terminal CAS so we never clobber a terminal
             # result a live poll has just written; only if we won the transition
@@ -3763,6 +3783,7 @@ class TaskWorker:
                     max_retries_override=task_max_retries,
                     recurrence_rule=recurrence_rule_str,
                     original_task_id=original_task_id,
+                    priority=TaskPriority(task["priority"]),
                 )
                 logger.info(
                     f"RECURRENCE SUCCESS: Successfully enqueued next recurring task instance {next_task_id} for original {original_task_id}."
@@ -3849,8 +3870,13 @@ class TaskWorker:
         self,
         db_context: DatabaseExecutor,
         request: ScheduleAutomationAdvanceRequest,
+        priority: TaskPriority,
     ) -> None:
-        """Persist retryable work to advance a terminal schedule automation task."""
+        """Persist retryable work to advance a terminal schedule automation task.
+
+        The lane comes from the automation task that finished: advancing it is
+        the same piece of work, one step further on.
+        """
         await db_context.tasks.enqueue(
             task_id=f"sched_auto_advance_{request.source_task_id}",
             task_type=SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE,
@@ -3861,6 +3887,7 @@ class TaskWorker:
                 schedule_next=request.schedule_next,
             ),
             max_retries_override=5,
+            priority=priority,
         )
         logger.info(
             f"Enqueued schedule automation advancement for automation "
@@ -3896,7 +3923,9 @@ class TaskWorker:
             fails, the advance gets enqueued twice. If the payload-clear
             succeeds but enqueue fails, the outbox entry is lost.
             """
-            await self._enqueue_schedule_automation_advance(txn, request)
+            await self._enqueue_schedule_automation_advance(
+                txn, request, TaskPriority(task["priority"])
+            )
             updated_payload = dict(payload)
             updated_payload.pop(SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY, None)
             await txn.execute(
@@ -3957,7 +3986,9 @@ class TaskWorker:
         request = self._schedule_automation_advance_request_for_task(task)
         if request is None:
             return
-        await self._enqueue_schedule_automation_advance(db_context, request)
+        await self._enqueue_schedule_automation_advance(
+            db_context, request, TaskPriority(task["priority"])
+        )
 
     async def handle_schedule_automation_advance(
         self,
@@ -4013,7 +4044,10 @@ class TaskWorker:
                 error=f"No handler registered for type {task['task_type']}",
             )
             record_task_processed(
-                task_type=task["task_type"], outcome="failed", duration_seconds=None
+                task_type=task["task_type"],
+                priority=TaskPriority(task["priority"]).label,
+                outcome="failed",
+                duration_seconds=None,
             )
             return None  # Stop processing this task
 
@@ -4055,6 +4089,7 @@ class TaskWorker:
                         )
                         record_task_processed(
                             task_type=task["task_type"],
+                            priority=TaskPriority(task["priority"]).label,
                             outcome="failed",
                             duration_seconds=None,
                         )
@@ -4088,6 +4123,7 @@ class TaskWorker:
                     # attempt already persisted.
                     turn_id=_turn_id_for_task(task["task_id"]),
                     db_context=db_context,
+                    task_priority=TaskPriority(task["priority"]),
                     # Infrastructure fields (required - no defaults)
                     processing_service=self.processing_service,
                     # No run binding here: a task is not a turn, so a tool that
@@ -4222,6 +4258,7 @@ class TaskWorker:
                 await db_context.atomic(_complete)
                 record_task_processed(
                     task_type=task["task_type"],
+                    priority=TaskPriority(task["priority"]).label,
                     outcome="completed",
                     duration_seconds=handler_seconds,
                 )
@@ -4303,12 +4340,14 @@ class TaskWorker:
                 )
                 record_task_processed(
                     task_type=task["task_type"],
+                    priority=TaskPriority(task["priority"]).label,
                     outcome="failed",
                     duration_seconds=handler_seconds,
                 )
                 return advance_request
             record_task_processed(
                 task_type=task["task_type"],
+                priority=TaskPriority(task["priority"]).label,
                 outcome="retried",
                 duration_seconds=handler_seconds,
             )
@@ -4347,6 +4386,7 @@ class TaskWorker:
             await db_context.atomic(_fail)
             record_task_processed(
                 task_type=task["task_type"],
+                priority=TaskPriority(task["priority"]).label,
                 outcome="failed",
                 duration_seconds=handler_seconds,
             )
@@ -4518,6 +4558,9 @@ class TaskWorker:
                 task_type="llm_callback",
                 payload=notification_payload,
                 max_retries_override=1,
+                # Named rather than inherited: whatever lane the script ran in,
+                # telling the user its automation broke is work someone waits on.
+                priority=TaskPriority.INTERACTIVE,
             )
             logger.info(
                 f"Enqueued error notification {notification_task_id} "
@@ -5092,6 +5135,9 @@ async def _process_script_wake_llm(
         task_id=callback_task_id,
         task_type="llm_callback",
         payload=payload,
+        # Waking the assistant is always work somebody is waiting on, and a
+        # script run from the API has no task row to inherit a lane from.
+        priority=TaskPriority.INTERACTIVE,
     )
 
     logger.info(
@@ -6115,6 +6161,7 @@ async def handle_reindex_document(
             task_id=f"reindex-doc-{doc_record.id}-{uuid.uuid4()}",
             task_type="process_uploaded_document",
             payload=task_payload,
+            priority=exec_context.inherited_task_priority(),
         )
 
     await db_context.atomic(_reindex)

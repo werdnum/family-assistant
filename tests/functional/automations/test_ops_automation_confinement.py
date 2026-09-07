@@ -28,7 +28,7 @@ from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
 from family_assistant.storage.message_history import message_history_table
-from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.task_worker import (
     TaskWorker,
     _process_script_wake_llm,  # noqa: PLC2701  # testing the script wake_llm guard
@@ -430,6 +430,7 @@ async def test_queued_wake_refused_for_confined_profile(
             "processing_profile_id": "ops_automation",
         },
         max_retries_override=0,
+        priority=TaskPriority.INTERACTIVE,
     )
     new_task_event.set()
 
@@ -473,6 +474,7 @@ async def test_routed_wake_renders_trigger_in_routed_profile_timezone(
             "processing_profile_id": "complex_tasks",
         },
         max_retries_override=0,
+        priority=TaskPriority.INTERACTIVE,
     )
     new_task_event.set()
 

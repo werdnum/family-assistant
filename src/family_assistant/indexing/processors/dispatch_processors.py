@@ -145,6 +145,10 @@ class EmbeddingDispatchProcessor(ContentProcessor):
                 task_id=task_id,
                 task_type="embed_and_store_batch",
                 payload=task_payload,
+                # The pipeline does not know which handler ran it, so the lane
+                # comes from the task that did: an upload's batches are
+                # interactive, a bulk re-index's are not.
+                priority=context.inherited_task_priority(),
             )
             logger.info(
                 f"[{self.name}/{doc_id_for_log}] Successfully enqueued 'embed_and_store_batch' task (ID: {task_id}) for document ID {document_id} with {len(texts_to_embed_list)} items."

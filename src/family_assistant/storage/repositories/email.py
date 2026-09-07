@@ -11,6 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from family_assistant.storage.database import DatabaseTransaction
 from family_assistant.storage.email import ParsedEmailData, received_emails_table
 from family_assistant.storage.repositories.base import BaseRepository
+from family_assistant.storage.tasks import TaskPriority
 
 
 class EmailRepository(BaseRepository):
@@ -106,6 +107,7 @@ class EmailRepository(BaseRepository):
                 task_id=task_id,
                 task_type="index_email",
                 payload={"email_db_id": email_db_id},
+                priority=TaskPriority.INTERACTIVE,
             )
             self._logger.info(
                 f"Enqueued indexing task {task_id} for email DB ID {email_db_id}"

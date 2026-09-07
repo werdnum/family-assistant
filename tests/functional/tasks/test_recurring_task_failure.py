@@ -8,7 +8,7 @@ import pytest
 from sqlalchemy import select
 
 from family_assistant.storage.database import Database
-from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.task_worker import TaskWorker
 from family_assistant.tools import ToolExecutionContext
 from tests.helpers import wait_for_condition
@@ -49,6 +49,7 @@ async def test_recurring_task_failure_continues_recurrence(
         payload={},
         max_retries_override=0,  # Fail immediately
         recurrence_rule="FREQ=MINUTELY;INTERVAL=1",
+        priority=TaskPriority.INTERACTIVE,
     )
 
     # Give time for task to be committed to database

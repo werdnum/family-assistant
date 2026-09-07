@@ -127,6 +127,7 @@ from family_assistant.storage.database import (
     Database,
     set_engine_history_taint_epoch,
 )
+from family_assistant.storage.tasks import TaskPriority
 from family_assistant.task_worker import (
     SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE,
     ReindexDocumentPayload,
@@ -2214,6 +2215,7 @@ class Assistant:
                     scheduled_at=next_3am_utc,
                     recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
                     max_retries_override=5,  # Higher retry count for system tasks
+                    priority=TaskPriority.BACKGROUND,
                 )
                 logger.info(
                     f"System event cleanup task scheduled for {next_3am_local} ({local_tz})"
@@ -2236,6 +2238,7 @@ class Assistant:
                     scheduled_at=next_3am_utc,
                     recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
                     max_retries_override=5,  # Higher retry count for system tasks
+                    priority=TaskPriority.BACKGROUND,
                 )
                 logger.info(
                     f"System error log cleanup task scheduled for {next_3am_local} ({local_tz}) with {error_log_retention_days} day retention"
@@ -2253,6 +2256,7 @@ class Assistant:
                     scheduled_at=next_3am_utc,
                     recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
                     max_retries_override=5,
+                    priority=TaskPriority.BACKGROUND,
                 )
                 logger.info(
                     f"Worker task cleanup task scheduled for {next_3am_local} ({local_tz})"
@@ -2270,6 +2274,7 @@ class Assistant:
                     scheduled_at=datetime.now(UTC),
                     recurrence_rule="FREQ=HOURLY;BYMINUTE=0",
                     max_retries_override=5,
+                    priority=TaskPriority.BACKGROUND,
                 )
                 logger.info("Delegation run cleanup task scheduled (hourly)")
             except Exception as e:
@@ -2284,6 +2289,7 @@ class Assistant:
                     scheduled_at=next_3am_utc,
                     recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
                     max_retries_override=5,
+                    priority=TaskPriority.BACKGROUND,
                 )
                 logger.info(
                     f"Completed automation cleanup task scheduled for {next_3am_local} ({local_tz})"
@@ -2302,6 +2308,7 @@ class Assistant:
                     scheduled_at=next_3am_utc,
                     recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
                     max_retries_override=5,
+                    priority=TaskPriority.BACKGROUND,
                 )
                 logger.info(
                     f"Attachment cleanup task scheduled for {next_3am_local} ({local_tz})"
@@ -2525,14 +2532,16 @@ class Assistant:
         the series depend on how many happened to poll last.
         """
         snapshot = await self._database().tasks.queue_state_snapshot(datetime.now(UTC))
-        record_task_queue_state(
-            scheduled=snapshot.scheduled,
-            due=snapshot.due,
-            processing=snapshot.processing,
-            stalled=snapshot.stalled,
-            exhausted=snapshot.exhausted,
-            due_latency_seconds=snapshot.due_latency_seconds,
-        )
+        for priority, lane in snapshot.lanes.items():
+            record_task_queue_state(
+                priority=priority.label,
+                scheduled=lane.scheduled,
+                due=lane.due,
+                processing=lane.processing,
+                stalled=lane.stalled,
+                exhausted=lane.exhausted,
+                due_latency_seconds=lane.due_latency_seconds,
+            )
 
     async def stop_services(self) -> None:
         """Gracefully stops all managed services."""

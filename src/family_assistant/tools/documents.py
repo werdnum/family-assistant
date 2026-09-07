@@ -24,7 +24,7 @@ from family_assistant.storage.email import (
     parse_attachment_infos,
     received_emails_table,
 )
-from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.storage.vector_search import (
     VectorSearchQuery,
     query_vector_store,
@@ -740,6 +740,7 @@ async def reindex_email_tool(
             task_id=task_id,
             task_type="index_email",
             payload={"email_db_id": email_db_id},
+            priority=TaskPriority.INTERACTIVE,
         )
     except Exception as err:
         logger.warning(

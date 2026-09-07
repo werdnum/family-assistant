@@ -20,7 +20,7 @@ from family_assistant.llm.messages import UserMessage
 from family_assistant.storage.database import Database
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.tasks import TasksRepository
-from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.storage.types import ActionConfig, TaskDict
 from family_assistant.task_worker import (
     SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY,
@@ -202,6 +202,7 @@ async def test_task_handler_timeout(
         task_type="hang",
         payload={},
         max_retries_override=0,  # No retries to avoid retry delays in test
+        priority=TaskPriority.INTERACTIVE,
     )
     logger.info("Created test task with ID: timeout_test")
 
@@ -280,6 +281,7 @@ async def test_successful_handler_completes(
         task_id="success_test",
         task_type="quick",
         payload={},
+        priority=TaskPriority.INTERACTIVE,
     )
 
     # Small delay to ensure task is committed (important for postgres)
@@ -334,6 +336,7 @@ async def test_task_worker_context_includes_taint_tracker(
         task_id="taint_context_test",
         task_type="captures_context",
         payload={},
+        priority=TaskPriority.INTERACTIVE,
     )
 
     # ast-grep-ignore: no-asyncio-sleep-in-tests - Testing task worker timing behavior
@@ -383,6 +386,7 @@ async def test_retry_exhaustion_leads_to_failure(
         task_type="timeout",
         payload={},
         max_retries_override=0,  # No retries
+        priority=TaskPriority.INTERACTIVE,
     )
 
     # Small delay to ensure task is committed (important for postgres)
@@ -745,6 +749,8 @@ async def test_schedule_advance_enqueue_failure_does_not_retry_completed_action(
         max_retries_override: int | None = None,
         recurrence_rule: str | None = None,
         original_task_id: str | None = None,
+        *,
+        priority: TaskPriority,
     ) -> None:
         if task_type == SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE:
             advance_enqueue_attempted.set()
@@ -758,6 +764,7 @@ async def test_schedule_advance_enqueue_failure_does_not_retry_completed_action(
             max_retries_override,
             recurrence_rule,
             original_task_id,
+            priority=priority,
         )
 
     monkeypatch.setattr(TasksRepository, "enqueue", fail_advance_enqueue)
@@ -834,6 +841,8 @@ async def test_schedule_advance_enqueue_failure_preserves_failed_source_status(
         max_retries_override: int | None = None,
         recurrence_rule: str | None = None,
         original_task_id: str | None = None,
+        *,
+        priority: TaskPriority,
     ) -> None:
         if task_type == SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE:
             advance_enqueue_attempted.set()
@@ -847,6 +856,7 @@ async def test_schedule_advance_enqueue_failure_preserves_failed_source_status(
             max_retries_override,
             recurrence_rule,
             original_task_id,
+            priority=priority,
         )
 
     monkeypatch.setattr(TasksRepository, "enqueue", fail_advance_enqueue)
@@ -987,6 +997,7 @@ async def test_schedule_advance_outbox_drain_finds_buried_entries(
             task_id=task_id,
             task_type="script_execution",
             payload={"noise": index},
+            priority=TaskPriority.INTERACTIVE,
         )
         await db_context.tasks.update_status(
             task_id=task_id,
@@ -1044,6 +1055,7 @@ async def test_schedule_advance_uses_source_execution_time(
             "execution_time": source_execution_time.isoformat(),
         },
         max_retries_override=0,
+        priority=TaskPriority.INTERACTIVE,
     )
 
     new_task_event.set()
@@ -1154,6 +1166,7 @@ async def test_follow_up_reminder_retry_distinguishes_trigger_from_user_response
         user_name="Reminder User",
         turn_id=callback_turn_id,
         db_context=db_context,
+        task_priority=TaskPriority.INTERACTIVE,
         processing_service=processing_service,
         clock=mock_clock,
         home_assistant_client=None,
@@ -1266,6 +1279,7 @@ async def test_worker_activity_tracking(db_engine: AsyncEngine) -> None:
         task_id="activity_test",
         task_type="simple",
         payload={},
+        priority=TaskPriority.INTERACTIVE,
     )
 
     # Small delay to ensure task is committed (important for postgres)

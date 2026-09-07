@@ -15,7 +15,7 @@ from sqlalchemy import select
 
 from family_assistant.storage.database import Database
 from family_assistant.storage.email import ParsedEmailData, received_emails_table
-from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.tasks import TaskPriority, tasks_table
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -75,6 +75,7 @@ async def test_duplicate_delivery_inside_a_transaction_does_not_abort_it(
             task_id="after-duplicate",
             task_type="index_email",
             payload={"email_db_id": first_id},
+            priority=TaskPriority.INTERACTIVE,
         )
 
     rows = await db.fetch_all(

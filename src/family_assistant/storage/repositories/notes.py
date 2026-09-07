@@ -19,6 +19,7 @@ from family_assistant.skills.frontmatter import parse_frontmatter
 from family_assistant.storage.database import DatabaseExecutor, DatabaseTransaction
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.repositories.base import BaseRepository
+from family_assistant.storage.tasks import TaskPriority
 
 
 class NoteModel(BaseModel):
@@ -863,6 +864,7 @@ class NotesRepository(BaseRepository):
                     task_id=f"index_note_{note_row['id']}_{uuid.uuid4()}",
                     task_type="index_note",
                     payload={"note_id": note_row["id"]},
+                    priority=TaskPriority.BACKGROUND,
                 )
                 self._logger.info(
                     f"Enqueued indexing task for note ID {note_row['id']} (title: {title})"

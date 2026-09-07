@@ -25,6 +25,7 @@ from family_assistant.storage.repositories.confirmation_requests import (
     ConfirmationRequestRow,
     ConfirmationRequestsRepository,
 )
+from family_assistant.storage.tasks import TaskPriority
 from family_assistant.tools.types import (
     ToolArgumentsView,
     ToolCallReviewAuthorization,
@@ -141,6 +142,7 @@ class _RacingConfirmationRequestsRepository:
                     task_type=CONFIRMATION_TOOL_EXECUTION_TASK_TYPE,
                     payload={"confirmation_request_id": request_id},
                     original_task_id=execution_task_id,
+                    priority=TaskPriority.INTERACTIVE,
                 )
         if self._race_mode == "expire_before_reject":
             await self._expire_request(request_id=request_id, now=now)
@@ -728,6 +730,7 @@ async def test_enqueue_failure_rolls_back_approval(db_engine: AsyncEngine) -> No
         task_id=execution_task_id,
         task_type="preexisting_task",
         payload={"reason": "force duplicate task id"},
+        priority=TaskPriority.INTERACTIVE,
     )
 
     with pytest.raises(RuntimeError, match="already exists"):

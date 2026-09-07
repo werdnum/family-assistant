@@ -39,7 +39,7 @@ from family_assistant.security.taint import (
 )
 from family_assistant.storage.database import Database
 from family_assistant.storage.schedule_automations import schedule_automations_table
-from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.tasks import TaskPriority, tasks_table
 
 if TYPE_CHECKING:
     from family_assistant.storage.types import ActionConfig
@@ -219,6 +219,7 @@ async def test_a_verdict_reaches_a_one_shot_callbacks_payload(
             "callback_context": message,
             "tool_call_review_definition_record": record,
         },
+        priority=TaskPriority.INTERACTIVE,
     )
     pending.register(
         DefinitionWriteRef(
@@ -351,6 +352,7 @@ async def test_a_verdict_never_reverts_an_edit_it_did_not_read(
                 original, tracker=None, gate_outcome=gate
             ),
         },
+        priority=TaskPriority.INTERACTIVE,
     )
     pending.register(
         DefinitionWriteRef(

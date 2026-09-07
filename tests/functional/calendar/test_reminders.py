@@ -27,7 +27,7 @@ from family_assistant.processing import ProcessingService, ProcessingServiceConf
 from family_assistant.storage.database import Database
 
 # Import tasks_table for querying
-from family_assistant.storage.tasks import tasks_table
+from family_assistant.storage.tasks import TaskPriority, tasks_table
 
 # Import TaskWorker, events, and the specific handler needed for registration
 from family_assistant.task_worker import (
@@ -1436,6 +1436,7 @@ async def test_list_pending_callbacks(db_engine: AsyncEngine) -> None:
             "scheduling_timestamp": initial_time.isoformat(),
         },
         scheduled_at=callback_dt_1,
+        priority=TaskPriority.INTERACTIVE,
     )
 
     await db_context.tasks.enqueue(
@@ -1448,6 +1449,7 @@ async def test_list_pending_callbacks(db_engine: AsyncEngine) -> None:
             "scheduling_timestamp": initial_time.isoformat(),
         },
         scheduled_at=callback_dt_2,
+        priority=TaskPriority.INTERACTIVE,
     )
 
     # Schedule one callback for different conversation
@@ -1461,6 +1463,7 @@ async def test_list_pending_callbacks(db_engine: AsyncEngine) -> None:
             "scheduling_timestamp": initial_time.isoformat(),
         },
         scheduled_at=callback_dt_3,
+        priority=TaskPriority.INTERACTIVE,
     )
 
     logger.info("Test callbacks created")

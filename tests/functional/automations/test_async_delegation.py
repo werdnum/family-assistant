@@ -58,6 +58,7 @@ from family_assistant.services.tool_call_review import (
 from family_assistant.storage import message_history_table
 from family_assistant.storage.database import Database
 from family_assistant.storage.delegation_runs import delegation_runs_table
+from family_assistant.storage.tasks import TaskPriority
 from family_assistant.task_worker import (
     DelegatedProfileRunPayload,
     DelegationNotificationError,
@@ -512,6 +513,9 @@ def _tool_context(
         user_id="async-delegation-user",
         turn_id="turn_async_delegation",
         db_context=db_context,
+        # These tests call the delegation handlers directly, standing in for the
+        # worker that would otherwise put the dequeued row's lane here.
+        task_priority=TaskPriority.INTERACTIVE,
         processing_service=processing_service,
         clock=SystemClock(),
         home_assistant_client=None,
