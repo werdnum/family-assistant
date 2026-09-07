@@ -12,6 +12,9 @@ These tests verify the configuration loading hierarchy:
 
 from __future__ import annotations
 
+import copy
+import json
+import logging
 import os
 import subprocess
 import sys
@@ -27,6 +30,7 @@ from family_assistant.config_loader import (
     PROFILE_OVERRIDABLE_PROCESSING_KEYS,
     PROFILE_SPECIALLY_HANDLED_PROCESSING_KEYS,
     USER_IDENTITIES_FILE_ENV_VAR,
+    _log_config,  # noqa: PLC2701 - testing startup logging redaction helper directly
     apply_calendar_env_vars,
     apply_env_var_overrides,
     apply_user_identity_file,
@@ -3315,3 +3319,277 @@ def test_remote_profile_inherits_no_operator_default_model(tmp_path: Path) -> No
     profile = next(p for p in config.service_profiles if p.id == "k8s_agent")
     assert profile.processing_config.provider is None
     assert profile.processing_config.llm_model is None
+
+
+class TestStartupConfigRedaction:
+    """Regression tests for startup configuration redaction in load_config and _log_config."""
+
+    def test_startup_log_redacts_mcp_config_env_vars_with_sentinel_brave_api_key(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """MCP env variables expanded at startup are redacted in startup logs."""
+        mcp_file = tmp_path / "mcp_servers.json"
+        mcp_file.write_text(
+            json.dumps({
+                "mcpServers": {
+                    "brave": {
+                        "command": "brave-search-mcp-server",
+                        "args": ["--transport", "stdio"],
+                        "env": {
+                            "BRAVE_API_KEY": "$BRAVE_API_KEY",
+                            "AUTHORIZATION": "Bearer ${BRAVE_AUTH_TOKEN}",
+                        },
+                    }
+                }
+            })
+        )
+        monkeypatch.setenv("BRAVE_API_KEY", "sentinel-brave-secret-key-98765")
+        monkeypatch.setenv("BRAVE_AUTH_TOKEN", "sentinel-brave-auth-token-43210")
+        monkeypatch.setenv("MCP_CONFIG_PATH", str(mcp_file))
+
+        with caplog.at_level(logging.INFO, logger="family_assistant.config_loader"):
+            config = load_config(
+                defaults_file_path=str(tmp_path / "nonexistent_defaults.yaml"),
+                config_file_path=str(tmp_path / "nonexistent_config.yaml"),
+                prompts_file_path=str(tmp_path / "nonexistent_prompts.yaml"),
+                load_dotenv_file=False,
+            )
+
+        # Ensure secrets are not present in logs
+        assert "sentinel-brave-secret-key-98765" not in caplog.text
+        assert "sentinel-brave-auth-token-43210" not in caplog.text
+
+        # Ensure key names are diagnostically visible with [REDACTED] markers
+        assert "BRAVE_API_KEY" in caplog.text
+        assert "AUTHORIZATION" in caplog.text
+        assert '"BRAVE_API_KEY": "[REDACTED]"' in caplog.text
+        assert '"AUTHORIZATION": "[REDACTED]"' in caplog.text
+
+        # Verify the actual loaded config has the real expanded credentials
+        brave_env = config.mcp_config.mcpServers["brave"].env
+        assert brave_env["BRAVE_API_KEY"] == "sentinel-brave-secret-key-98765"
+        assert brave_env["AUTHORIZATION"] == "Bearer sentinel-brave-auth-token-43210"
+
+    def test_startup_log_redacts_yaml_and_config_model_credentials(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Declared credential fields and embedded DSN passwords in YAML are redacted."""
+        config_yaml = """
+telegram_token: "secret-bot-token-1234"
+openai_api_key: "sk-proj-supersecretkey5678"
+database_url: "postgresql+asyncpg://app_user:db-secret-password-999@db.internal:5432/appdb"
+calendar_config:
+  caldav:
+    username: "caluser"
+    password: "caldav-secret-password"
+    calendar_urls:
+      - "https://cal.example.com/dav"
+pwa_config:
+  vapid_public_key: "pub-key-123"
+  vapid_private_key: "vapid-secret-private-key"
+  vapid_contact_email: "admin@example.com"
+apns:
+  team_id: "TEAM123"
+  key_id: "KEY123"
+  auth_key: "apns-auth-key-secret"
+  bundle_id: "com.example.app"
+google_integration:
+  oauth_client_id: "client-id-xyz"
+  oauth_client_secret: "google-secret-client-secret"
+  credential_encryption_key: "encryption-key-secret"
+mqtt_config:
+  broker_host: "mqtt.internal"
+  password: "mqtt-secret-password"
+keychute_config:
+  token: "keychute-secret-token"
+"""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(config_yaml)
+
+        with caplog.at_level(logging.INFO, logger="family_assistant.config_loader"):
+            config = load_config(
+                defaults_file_path=str(tmp_path / "nonexistent_defaults.yaml"),
+                config_file_path=str(config_file),
+                prompts_file_path=str(tmp_path / "nonexistent_prompts.yaml"),
+                load_dotenv_file=False,
+            )
+
+        # None of the secret values must appear in the logs
+        for secret in (
+            "secret-bot-token-1234",
+            "sk-proj-supersecretkey5678",
+            "db-secret-password-999",
+            "caldav-secret-password",
+            "vapid-secret-private-key",
+            "apns-auth-key-secret",
+            "google-secret-client-secret",
+            "encryption-key-secret",
+            "mqtt-secret-password",
+            "keychute-secret-token",
+        ):
+            assert secret not in caplog.text, f"Secret {secret} leaked in logs!"
+
+        # Key names and non-secret metadata must remain visible
+        assert "telegram_token" in caplog.text
+        assert "openai_api_key" in caplog.text
+        assert "database_url" in caplog.text
+        assert "vapid_private_key" in caplog.text
+        assert "auth_key" in caplog.text
+        assert "oauth_client_secret" in caplog.text
+        assert "credential_encryption_key" in caplog.text
+        assert "mqtt_config" in caplog.text
+        assert "keychute_config" in caplog.text
+
+        # DSN password is redacted
+        assert (
+            "postgresql+asyncpg://app_user:[REDACTED]@db.internal:5432/appdb"
+            in caplog.text
+        )
+        # SecretStr fields are masked
+        assert '"telegram_token": "**********"' in caplog.text
+        assert '"openai_api_key": "**********"' in caplog.text
+
+        # Real values remain intact on the validated AppConfig model
+        assert config.telegram_token is not None
+        assert config.telegram_token.get_secret_value() == "secret-bot-token-1234"
+        assert config.openai_api_key is not None
+        assert config.openai_api_key.get_secret_value() == "sk-proj-supersecretkey5678"
+
+    def test_startup_log_validation_failure_omits_config_dump_and_does_not_leak_secrets(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Validation failures omit whole-config dump and do not leak any secrets."""
+        mcp_file = tmp_path / "mcp_servers.json"
+        mcp_file.write_text(
+            json.dumps({
+                "mcpServers": {
+                    "brave": {
+                        "command": "brave-search-mcp-server",
+                        "env": {
+                            "BRAVE_API_KEY": "$BRAVE_API_KEY",
+                        },
+                    }
+                }
+            })
+        )
+        monkeypatch.setenv("BRAVE_API_KEY", "sentinel-failure-mcp-secret-key")
+        monkeypatch.setenv("MCP_CONFIG_PATH", str(mcp_file))
+        monkeypatch.setenv("TIMEZONE", "Invalid/Timezone")
+        monkeypatch.setenv(
+            "DATABASE_URL",
+            "postgresql+asyncpg://user:fail-dsn-password@db.internal:5432/faildb",
+        )
+        monkeypatch.setenv("TELEGRAM_TOKEN", "sentinel-fail-telegram-secret")
+        monkeypatch.setenv("OPENAI_API_KEY", "sentinel-fail-openai-secret")
+
+        with (
+            caplog.at_level(logging.INFO, logger="family_assistant.config_loader"),
+            pytest.raises(ValidationError),
+        ):
+            load_config(
+                defaults_file_path=str(tmp_path / "nonexistent_defaults.yaml"),
+                config_file_path=str(tmp_path / "nonexistent_config.yaml"),
+                prompts_file_path=str(tmp_path / "nonexistent_prompts.yaml"),
+                load_dotenv_file=False,
+            )
+
+        # Whole-config dump must NOT be logged on validation failure
+        assert "Final configuration (excluding secrets):" not in caplog.text
+        # Validation failure error must be logged
+        assert "Configuration validation failed:" in caplog.text
+
+        # Verify no secrets were leaked into the logs
+        assert "sentinel-failure-mcp-secret-key" not in caplog.text
+        assert "fail-dsn-password" not in caplog.text
+        assert "sentinel-fail-telegram-secret" not in caplog.text
+        assert "sentinel-fail-openai-secret" not in caplog.text
+
+    def test_log_config_does_not_mutate_input_data(self) -> None:
+        """_log_config must not mutate the configuration dictionary passed to it."""
+        raw_config: dict[str, Any] = {
+            "database_url": "postgresql+asyncpg://user:password123@host:5432/db",
+            "mcp_config": {
+                "mcpServers": {
+                    "custom": {
+                        "command": "run.sh",
+                        "env": {
+                            "API_KEY": "secret-key-val",
+                            "AUTH_TOKEN": "token-val",
+                        },
+                    }
+                }
+            },
+            "service_profiles": [
+                {
+                    "id": "profile1",
+                    "processing_config": {
+                        "home_assistant_token": SecretStr("ha-token-secret"),
+                    },
+                }
+            ],
+        }
+        original_snapshot = copy.deepcopy(raw_config)
+
+        _log_config(raw_config)
+
+        assert raw_config == original_snapshot
+
+    def test_startup_log_broad_nested_credentials(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Broad nested credentials across service profiles, camera, and webhook are redacted."""
+        config_yaml = """
+service_profiles:
+  - id: "camera_profile"
+    description: "Camera analyst"
+    processing_config:
+      home_assistant_token: "ha-secret-token-nested"
+      camera_config:
+        backend: "reolink"
+        cameras_config:
+          front_door:
+            host: "192.168.1.100"
+            username: "admin"
+            password: "cam-password-secret-123"
+event_system:
+  enabled: true
+  sources:
+    webhook:
+      enabled: true
+      secrets:
+        source1: "webhook-secret-key-abc"
+ucp_config:
+  signing_private_key: "ucp-private-signing-key-secret"
+"""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(config_yaml)
+
+        with caplog.at_level(logging.INFO, logger="family_assistant.config_loader"):
+            load_config(
+                defaults_file_path=str(tmp_path / "nonexistent_defaults.yaml"),
+                config_file_path=str(config_file),
+                prompts_file_path=str(tmp_path / "nonexistent_prompts.yaml"),
+                load_dotenv_file=False,
+            )
+
+        for secret in (
+            "ha-secret-token-nested",
+            "cam-password-secret-123",
+            "webhook-secret-key-abc",
+            "ucp-private-signing-key-secret",
+        ):
+            assert secret not in caplog.text, f"Secret {secret} leaked in logs!"
+
+        assert "front_door" in caplog.text
+        assert "webhook" in caplog.text
+        assert "signing_private_key" in caplog.text

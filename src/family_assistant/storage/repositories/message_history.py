@@ -2,6 +2,7 @@
 
 import json
 import logging
+import random
 import uuid
 from collections import OrderedDict
 from collections.abc import Mapping
@@ -58,6 +59,23 @@ _MAX_ASSISTANT_ROWS_PER_TOOL_EXAMPLE = 20
 _DEFAULT_MESSAGE_HISTORY_LIMIT = 20
 _MAX_MESSAGE_HISTORY_LIMIT = 100
 _MAX_CONTEXT_MESSAGES_PER_SIDE = 10
+
+MESSAGE_HISTORY_INDEX_DELAY = timedelta(minutes=2)
+"""How long a persisted row waits before its turn is indexed.
+
+Long enough that an ordinary turn -- including its tool calls -- has finished
+by the time the first of its indexing tasks runs, and short enough that a turn
+becomes semantically searchable while the conversation is still going on.
+"""
+
+MESSAGE_HISTORY_INDEX_JITTER = timedelta(seconds=60)
+"""Spread applied on top of the delay, so a turn's tasks do not come due at once.
+
+The tasks of one turn are identical, and the first to run is what saves the
+rest a provider call -- but only if it has finished before they start. Rows
+that landed together would otherwise become due together and be handed to
+different workers in the same instant.
+"""
 
 MessageHistoryScope = Literal["current_conversation", "same_user", "all_accessible"]
 MessageHistorySearchMode = Literal["structured", "semantic", "hybrid"]
@@ -1254,7 +1272,15 @@ class MessageHistoryRepository(BaseRepository):
         turn_id: str | None,
         db: DatabaseExecutor | None = None,
     ) -> None:
-        """Queue indexing for newly persisted message history."""
+        """Queue indexing for newly persisted message history.
+
+        Every row of a turn queues one of these, and each indexes the whole
+        turn, so running them as the rows land embeds the same conversation
+        once per row over a growing prefix of itself. The delay lets the turn
+        finish first: the task that runs first covers the completed turn, and
+        its siblings find their content already indexed and skip without a
+        provider call.
+        """
         payload: dict[str, object] = {"limit": 50}
         if turn_id:
             payload["turn_id"] = turn_id
@@ -1265,6 +1291,11 @@ class MessageHistoryRepository(BaseRepository):
             task_id=f"index_message_history_{uuid.uuid4()}",
             task_type="index_message_history_batch",
             payload=payload,
+            scheduled_at=datetime.now(UTC)
+            + MESSAGE_HISTORY_INDEX_DELAY
+            + timedelta(
+                seconds=random.uniform(0, MESSAGE_HISTORY_INDEX_JITTER.total_seconds())
+            ),
         )
 
     async def get_recent(

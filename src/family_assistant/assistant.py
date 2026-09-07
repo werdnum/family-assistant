@@ -2240,11 +2240,20 @@ class Assistant:
                 # leaves the reaper with no caller until the next restart.
                 logger.exception("Attachment cleanup task setup failed")
 
-            try:
-                await enqueue_message_history_backfill_task(db_ctx)
-                logger.info("Message history backfill task scheduled")
-            except Exception as e:
-                logger.warning(f"Message history backfill task setup: {e}")
+            if self.embedding_generator is None:
+                logger.info(
+                    "No embedding generator configured; skipping the message "
+                    "history backfill, which has nothing to index with."
+                )
+            else:
+                try:
+                    await enqueue_message_history_backfill_task(
+                        db_ctx,
+                        embedding_model=self.embedding_generator.model_name,
+                    )
+                    logger.info("Message history backfill task scheduled")
+                except Exception as e:
+                    logger.warning(f"Message history backfill task setup: {e}")
 
         try:
             await setup_tasks()
