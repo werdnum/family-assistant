@@ -203,7 +203,24 @@ def test_eligibility_presents_tiers_in_configured_order_with_labels() -> None:
 def test_a_resolved_selection_survives_a_json_round_trip() -> None:
     selection = ResolvedModelSelection(tier="deep", requested="deep", source="model")
 
-    assert ResolvedModelSelection.from_json(selection.to_json()) == selection
+    assert ResolvedModelSelection.from_json(selection.to_json()) == selection.freeze()
+
+
+def test_what_comes_back_out_of_storage_is_frozen() -> None:
+    """The run it belongs to was decided when it was created.
+
+    A property of the envelope rather than an argument each caller remembers to
+    pass: this is what stops a worker re-routing a run somebody already
+    authorized, at whatever the deployment looks like when it gets to it.
+    """
+    loaded = ResolvedModelSelection.from_json({
+        "tier": "standard",
+        "requested": None,
+        "source": "default",
+    })
+
+    assert loaded.frozen
+    assert not ResolvedModelSelection.unselected("standard").frozen
 
 
 def test_a_persisted_selection_with_an_unknown_source_is_refused() -> None:
@@ -215,16 +232,90 @@ def test_a_persisted_selection_with_an_unknown_source_is_refused() -> None:
 def test_a_persisted_selection_ignores_a_key_it_does_not_know() -> None:
     """A row written by a deployment that records more still has to load.
 
-    Auto routing will record its outcome here; a run enqueued by the newer
-    deployment must not fail on the older one that picks it up.
+    A run enqueued by a newer deployment must not fail on the older one that
+    picks it up: the models it should run on are stated by the keys both
+    understand.
     """
     loaded = ResolvedModelSelection.from_json({
         "tier": "deep",
         "requested": "deep",
         "source": "user",
-        "routing_outcome": "decided",
+        "something_a_later_deployment_records": "whatever",
     })
 
     assert loaded == ResolvedModelSelection(
-        tier="deep", requested="deep", source="user"
+        tier="deep", requested="deep", source="user", frozen=True
     )
+
+
+def test_a_persisted_selection_without_routing_fields_loads_as_unrouted() -> None:
+    """Which is what a run enqueued before Auto existed was."""
+    loaded = ResolvedModelSelection.from_json({
+        "tier": "standard",
+        "requested": None,
+        "source": "default",
+    })
+
+    assert loaded.routing_outcome is None
+    assert loaded.routing_would_choose is None
+    assert loaded.classifier_model is None
+
+
+def test_a_persisted_routing_outcome_round_trips() -> None:
+    """The envelope is how a queued run carries what Auto decided for it."""
+    original = ResolvedModelSelection(
+        tier="standard",
+        requested=None,
+        source="default",
+        routing_outcome="decided",
+        routing_would_choose="deep",
+        classifier_model="gemini-3.8-flash",
+    )
+
+    assert ResolvedModelSelection.from_json(original.to_json()) == original.freeze()
+
+
+def test_a_persisted_selection_refuses_an_outcome_that_is_not_one() -> None:
+    """A half-understood envelope is a run whose models are unknown."""
+    with pytest.raises(ValueError, match="routing outcome"):
+        ResolvedModelSelection.from_json({
+            "tier": "standard",
+            "requested": None,
+            "source": "default",
+            "routing_outcome": "probably_fine",
+        })
+
+
+def test_auto_is_bounded_by_the_same_list_a_delegating_model_is() -> None:
+    """Choosing Auto authorizes that range; it does not widen it.
+
+    `frontier` stays an explicit human choice, so the classifier cannot reach
+    it however the request is phrased.
+    """
+    eligibility = _eligibility(
+        allowed=["standard", "deep", "frontier"], auto=["standard", "deep"]
+    )
+    resolved = resolve_model_selection(
+        eligibility,
+        ModelSelectionRequest(tier="deep", source="auto"),
+        profile_id="test_profile",
+    )
+    assert resolved.tier == "deep"
+    assert resolved.source == "auto"
+
+    with pytest.raises(ModelTierNotPermitted) as refusal:
+        resolve_model_selection(
+            eligibility,
+            ModelSelectionRequest(tier="frontier", source="auto"),
+            profile_id="test_profile",
+        )
+    assert refusal.value.eligible_tiers == ("standard", "deep")
+
+
+def test_the_automatic_options_are_the_selectable_ones_the_list_names() -> None:
+    """One derivation, so the classifier's offer and the gate cannot disagree."""
+    eligibility = _eligibility(
+        allowed=["standard", "deep", "frontier"], auto=["standard", "deep"]
+    )
+
+    assert [option.id for option in eligibility.auto_options] == ["standard", "deep"]

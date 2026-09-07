@@ -844,6 +844,13 @@ underscores. A chain is capped at two entries because that is what the retry cli
 answers "what if the selected model is unavailable", never "the cheap model's answer was poor, run
 it again on the expensive one".
 
+**Write the map cheapest and weakest first.** Insertion order is the one order every surface
+presents tiers in — the profile listing a composer builds its intelligence control from, the tier
+catalog `delegate_to_service` advertises, and the list the Auto classifier is shown, whose prompt
+tells it these are ordered cheapest first and to prefer the least expensive that will do. Nothing
+validates the ordering, because "cheaper" is not a property this configuration can see; a map
+written in some other order will simply be presented, and routed on, in that order.
+
 #### Per-entry `llm_parameters`
 
 The global `llm_parameters` map stays the source of model defaults. An entry's own block is merged
@@ -869,8 +876,8 @@ it is always the configured one that loses. Compared case-insensitively, since T
 - `allowed_model_tiers` (top level on the profile, beside `tools_policy`) — the tiers **a user** may
   explicitly run the profile on. Omitted means "only its own `model_tier`".
 - `auto_model_tiers` (likewise top level) — the subset **a model** may select without a
-  confirmation: a `delegate_to_service` `model_tier` argument today, and Auto routing when it lands.
-  Omitted means "only its own `model_tier`".
+  confirmation: a `delegate_to_service` `model_tier` argument, and the Auto classifier. Omitted
+  means "only its own `model_tier`".
 
 Both lists are replaced, never merged, when a profile or an operator overrides one, so they can only
 narrow. Every name must exist in `model_tiers`; the profile's own `model_tier` must appear in
@@ -889,7 +896,10 @@ automatically.
   by `allowed_model_tiers`; a tier the profile does not accept is a 400 naming the ones that would
   have worked. `GET /api/v1/profiles` reports each profile's `model_tiers` and `default_model_tier`,
   which is what a client renders its intelligence control from — an empty list means the profile is
-  pinned to one model.
+  pinned to one model — plus `model_selection`, which says whether a request naming no tier gets
+  `default_model_tier` or gets one chosen for it. `model_selection` reports **effective** behaviour:
+  a profile configured for Auto reads as `explicit` while `model_routing.mode` is `off` or `shadow`,
+  because that is what its requests actually do.
 - **Delegation:** `model_tier` on `delegate_to_service`, bound by the *target's* `auto_model_tiers`.
   The resolved tier is persisted with the queued run and re-applied verbatim when a worker executes
   it, so a restart or a deployment cannot change the models of a run that was already authorized. A
@@ -899,6 +909,70 @@ automatically.
 
 Selection is one-shot: it applies to the request that carries it and nothing else. The tier a turn
 ran at, what was requested and who chose it are recorded with the reply and on its trace span.
+
+#### Auto routing: `model_routing` and `processing_config.model_selection`
+
+When nobody names a tier, a profile can have one chosen per request instead of always taking its
+default. Auto is a routing policy over tiers, not a tier: a cheap classifier runs once before the
+turn, picks from the profile's `auto_model_tiers`, and the choice is frozen for the whole run.
+
+```yaml
+model_routing:
+  mode: "shadow" # off | shadow | active
+  classifier:
+    provider: "google"
+    model: "gemini-3.8-flash"
+  timeout_seconds: 10
+  history_messages: 6
+```
+
+- **`mode`** — `off` never calls the classifier. `shadow` calls it and records what it would have
+  chosen while the run executes on the profile's configured tier, which is how Auto is evaluated
+  against real outcomes before anything acts on it. `active` lets the decision pick the tier.
+  Shipped as `shadow`. **Shadow is not free:** it is a serial classifier call, up to
+  `timeout_seconds` of it, in front of every turn on an auto profile, and it changes nothing about
+  what that turn runs on — the cost is the price of the evaluation data.
+- **`classifier`** — one classifier for the whole deployment, in the same `provider`/`model` shape
+  as a `retry_config` entry. What varies per request is the tier list and the profile's guidance,
+  both of which travel with the call. Required whenever `mode` is not `off`; omitting it is a
+  startup error rather than a run of failures that look like a provider outage.
+- **`timeout_seconds`** — a classification that has not answered by here is abandoned and the run
+  continues on the configured tier. A lost turn is worse than a weaker one.
+- **`history_messages`** — how many recent messages of the conversation the classifier sees,
+  alongside the current request and the names and types (never the contents) of its attachments.
+
+Two settings turn it on for a profile:
+
+- **`processing_config.model_selection`** — `explicit` (default) or `auto`. `auto` requires a
+  `model_tier` and a non-empty `auto_model_tiers`; both are startup errors otherwise, because a
+  classifier with nothing to choose from would spend a call to say so.
+- **`auto_routing_guidance`** (top level on the profile) — where this agent's routing threshold
+  sits, in the classifier's own words. Replaced wholesale rather than merged when a profile
+  overrides it. The classifier's shared instructions live in `prompts.yaml` under
+  `model_routing_prompt`.
+
+Routing runs only when nothing else has decided: an explicit user selection, a slash command, or a
+`delegate_to_service` `model_tier` bypasses the classifier entirely, and a queued run replays the
+envelope frozen when it was created rather than being routed again. A delegation that named *no*
+tier **is** routed, because each agent boundary decides its own — routed against the target profile
+when the delegation is created, so the persisted envelope a worker later replays is already a routed
+one.
+
+**A routing failure is visible, never a silent decision.** The run continues on the configured tier
+and the outcome is recorded beside it, so a classifier outage cannot read as a run of confident
+`Auto → Standard` decisions. Every routed turn's assistant row records `model_tier_routing_outcome`
+(`decided`, `timeout`, `invalid` or `error`) and `model_tier_classifier_model` in
+`message_history.reasoning_info`, and a shadow-mode row also records `model_tier_would_choose` —
+together the shadow evaluation dataset, queryable directly against that column, and durable in a way
+traces are not. Routing is also on the trace span as `llm.model_tier.routing_outcome`,
+`llm.model_tier.would_choose` and `llm.model_tier.classifier_model`, and on the
+`family_assistant_model_routing_decisions` and `family_assistant_model_routing_latency_seconds`
+metrics. The classifier's own token spend is attributed to the profile it routed for, under the tier
+label `router` rather than under the tier the turn then ran at.
+
+Shipped: `default_assistant` is `auto` over `standard` and `deep`, with `mode: shadow`, so nothing
+routes yet. `frontier` stays outside the automatic range — a classifier false positive there has
+asymmetric cost, so reaching Max remains a person's explicit choice.
 
 #### Precedence against `retry_config` / `llm_model` / `provider`
 

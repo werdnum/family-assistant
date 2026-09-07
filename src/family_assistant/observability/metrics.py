@@ -48,6 +48,8 @@ __all__ = [
     "LLM_CALL_DURATION",
     "LLM_TIME_TO_FIRST_OUTPUT",
     "LLM_TOKENS",
+    "MODEL_ROUTING_DECISIONS",
+    "MODEL_ROUTING_LATENCY",
     "TASKS_ENQUEUED",
     "TASKS_PROCESSED",
     "TASKS_QUEUED",
@@ -60,11 +62,13 @@ __all__ = [
     "TURN_DURATION",
     "UNATTRIBUTED_PROFILE",
     "UNKNOWN_TOOL",
+    "UNROUTED_TIER",
     "TurnMetrics",
     "instrumented_llm_request",
     "normalized_token_buckets",
     "record_indexing_documents",
     "record_llm_call",
+    "record_model_routing",
     "record_task_enqueued",
     "record_task_processed",
     "record_task_queue_state",
@@ -93,6 +97,13 @@ UNTIERED_CALL: Final = "none"
 
 Distinct from a tier named ``none`` only by convention; tier names must start
 with a letter, so no configured tier can collide with it."""
+
+UNROUTED_TIER: Final = "none"
+"""Label for a routing decision that named no tier, which is every failed one.
+
+Counted rather than dropped: the ratio of these to decided ones is the health
+of the classifier, and a decision that vanished from the counter would make an
+outage look like a quiet period."""
 
 _LLM_LABELS: Final = (
     "profile",
@@ -141,6 +152,12 @@ _TOOL_DURATION_BUCKETS: Final = (
 
 # A turn is one or more provider calls plus every tool in between, so it is
 # bounded by max_iterations rather than by any single call.
+# A classification is one short call on a cheap model and its whole point is to
+# be much faster than the turn it precedes, so the resolution that matters is
+# sub-second. The top bucket sits above the shipped 10s timeout, which is where
+# a timeout lands.
+_ROUTING_LATENCY_BUCKETS: Final = (0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 15.0)
+
 _TURN_DURATION_BUCKETS: Final = (
     1.0,
     2.5,
@@ -229,6 +246,27 @@ INDEXING_DOCUMENTS = Counter(
         "`embedded` means selection has come loose from what is stored."
     ),
     ("source_type", "outcome"),
+)
+
+MODEL_ROUTING_DECISIONS = Counter(
+    "family_assistant_model_routing_decisions",
+    (
+        "Auto classifier decisions, by outcome and chosen tier. In shadow mode "
+        "`tier` is what Auto would have chosen while the run executed on the "
+        "profile's configured tier; in active mode it is what the run used."
+    ),
+    ("profile", "mode", "outcome", "tier"),
+)
+
+MODEL_ROUTING_LATENCY = Histogram(
+    "family_assistant_model_routing_latency_seconds",
+    (
+        "Wall-clock for one Auto classification, timeouts included. This is "
+        "latency added in front of every routed turn, so it is the cost side "
+        "of the routing decision."
+    ),
+    ("profile", "outcome"),
+    buckets=_ROUTING_LATENCY_BUCKETS,
 )
 
 
@@ -447,6 +485,30 @@ def record_indexing_documents(
         INDEXING_DOCUMENTS.labels(source_type, outcome).inc(count)
     except Exception:
         logger.debug("Failed to record indexing metrics", exc_info=True)
+
+
+def record_model_routing(
+    *,
+    profile: str,
+    mode: str,
+    outcome: str,
+    tier: str | None,
+    latency_seconds: float,
+) -> None:
+    """Count one Auto classification. Never raises.
+
+    ``mode`` rides on the counter because shadow and active decisions are not
+    comparable: a shadow ``deep`` is a recommendation nothing acted on, an
+    active one is spend. A deployment mid-rollout has both, and a series that
+    conflated them would show the flip as a change in the model's behaviour.
+    """
+    try:
+        MODEL_ROUTING_DECISIONS.labels(
+            profile, mode, outcome, tier or UNROUTED_TIER
+        ).inc()
+        MODEL_ROUTING_LATENCY.labels(profile, outcome).observe(latency_seconds)
+    except Exception:
+        logger.debug("Failed to record model routing metrics", exc_info=True)
 
 
 def record_tool_call(

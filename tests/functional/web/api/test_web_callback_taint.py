@@ -21,6 +21,7 @@ from sqlalchemy import select
 
 from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.llm.messages import AssistantMessage, UserMessage
+from family_assistant.llm.model_selection import ModelTierEligibility
 from family_assistant.processing.types import ChatInteractionResult
 from family_assistant.security.taint import (
     SourceTrustTier,
@@ -61,7 +62,10 @@ class TaintedReplyService:
 
     def __init__(self) -> None:
         self.service_config = SimpleNamespace(
-            id="callback_profile", allow_wake_llm=True
+            id="callback_profile",
+            allow_wake_llm=True,
+            # Pinned to one model, so the continuation takes it and is not routed.
+            tier_eligibility=ModelTierEligibility(),
         )
         self.processing_services_registry: dict[str, object] = {}
         self.call_count = 0

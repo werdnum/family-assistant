@@ -1506,6 +1506,11 @@ async def handle_llm_callback(
             # reviewer's trusted-conversation channel without granting the
             # attacker-controlled content system-role instruction priority.
             trigger_role="user",
+            # Application-generated turn input, matching the row persisted
+            # above: it stays out of user-facing history, and it is what tells
+            # the processing service nobody wrote this request -- so the turn
+            # runs at the profile's configured tier rather than being routed.
+            trigger_is_internal=True,
             # The callback handler persists this row before generation so a
             # retry after an interrupted generation can reuse the same durable
             # trigger instead of creating another visible callback message.
@@ -1858,9 +1863,8 @@ class TaskWorker:
             request_confirmation_callback = (
                 self._build_delegation_confirmation_callback(exec_context, run)
             )
-            result = await cast(
-                "ProcessingService", target_service
-            ).handle_chat_interaction(
+            local_target = cast("ProcessingService", target_service)
+            result = await local_target.handle_chat_interaction(
                 db_context=exec_context.db_context,
                 interface_type=run["interface_type"],
                 conversation_id=run["conversation_id"],
@@ -1882,7 +1886,16 @@ class TaskWorker:
                     active_request_role="user",
                     payload_present=False,
                 ),
-                model_selection=_model_selection_from_delegation_run(run),
+                # Resolved, and routed, when the run was created, and frozen by
+                # the load: deciding the models of an already-authorized run
+                # from whatever the deployment looks like at execution time is
+                # the drift persisting the envelope prevents. A run queued
+                # before envelopes existed carries none, and takes the target's
+                # own tier -- frozen, so it is not routed here either.
+                model_selection=_model_selection_from_delegation_run(run)
+                or ResolvedModelSelection.unselected(
+                    local_target.service_config.tier_eligibility.default_tier
+                ).freeze(),
             )
         except Exception:
             # A timeout cancellation (CancelledError) is intentionally NOT caught

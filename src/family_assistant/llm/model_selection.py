@@ -25,30 +25,64 @@ inline model instead of a tier admits no selection at all.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Self
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Literal, Self, get_args
 
 if TYPE_CHECKING:
     from family_assistant.config_models import ModelTierConfig, ServiceProfile
     from family_assistant.llm.messages import MessageReasoningInfo
 
 __all__ = [
+    "ROUTING_OUTCOMES",
     "ModelSelectionRequest",
     "ModelTierClientMissing",
     "ModelTierEligibility",
     "ModelTierNotPermitted",
     "ModelTierOption",
     "ResolvedModelSelection",
+    "RoutingOutcome",
     "SelectionSource",
     "resolve_model_selection",
     "stamp_model_selection",
 ]
 
-type SelectionSource = Literal["user", "model", "default"]
+type SelectionSource = Literal["user", "model", "default", "auto"]
 """Who chose the tier. ``"user"`` is an authenticated person's own selection,
-``"model"`` a selection composed by a model (a delegation argument), and
-``"default"`` no selection at all -- the profile's configured tier. Auto routing
-adds ``"auto"`` here."""
+``"model"`` a selection composed by a model (a delegation argument), ``"auto"``
+the routing classifier's, and ``"default"`` no selection at all -- the profile's
+configured tier.
+
+``"auto"`` and ``"model"`` are separate sources bounded by the same list: both
+are selections a model made rather than a person, but "the router chose Deep"
+and "another profile asked for Deep" are different things to see in a run
+record, and only one of them can be evaluated against a routing prompt."""
+
+_PERSISTABLE_SOURCES: frozenset[str] = frozenset(get_args(SelectionSource.__value__))
+"""``SelectionSource``'s members, for validating a value read from storage.
+
+Derived rather than written out again, for the same reason
+:data:`ROUTING_OUTCOMES` is: a second hand-written list would be free to drift
+from the type until a row this deployment itself wrote failed to load."""
+
+type RoutingOutcome = Literal["decided", "timeout", "invalid", "error"]
+"""How an Auto classification went, separately from what the run resolved to.
+
+``decided`` is a usable answer. ``timeout`` is the classifier not answering in
+time, ``invalid`` an answer that is not one of the offered tiers, and ``error``
+anything else the provider did. The last three all resolve to the profile's
+configured tier, and are distinguished because they fail for different reasons
+and a deployment needs to know which it has.
+
+Declared here rather than beside the router because it is part of the
+envelope's vocabulary: a persisted run carries the outcome, and this module is
+what has to be able to read one back."""
+
+ROUTING_OUTCOMES: frozenset[str] = frozenset(get_args(RoutingOutcome.__value__))
+"""``RoutingOutcome``'s members, for validating a value read from storage.
+
+Derived rather than written out again: a ``Literal`` alias has no runtime
+membership of its own, and a second hand-written list would be free to drift
+from the type until a row this deployment itself wrote failed to load."""
 
 
 class ModelTierClientMissing(RuntimeError):
@@ -121,6 +155,18 @@ class ModelTierEligibility:
     def selectable_ids(self) -> tuple[str, ...]:
         return tuple(option.id for option in self.selectable)
 
+    @property
+    def auto_options(self) -> tuple[ModelTierOption, ...]:
+        """The tiers Auto may choose between, as the classifier is shown them.
+
+        Derived from ``selectable`` rather than from ``auto`` alone so that the
+        list the classifier is offered and the list the admission gate accepts
+        are the same list, in the same order. Two derivations would be two
+        places to disagree, and the disagreement would surface as a routing
+        decision refused after the model had already made it.
+        """
+        return tuple(option for option in self.selectable if option.id in self.auto)
+
     @classmethod
     def from_profile(
         cls,
@@ -181,21 +227,57 @@ class ResolvedModelSelection:
     requested: str | None
     source: SelectionSource
 
+    routing_outcome: RoutingOutcome | None = None
+    """How the Auto classifier's call went, where one was made. ``None`` means
+    the run was not routed at all, which is every run on a profile whose
+    ``model_selection`` is ``explicit`` and every run somebody selected a tier
+    for. Recorded apart from ``tier`` so that a classifier outage cannot
+    masquerade as a run of confident decisions."""
+    routing_would_choose: str | None = None
+    """What Auto would have run this turn at, while shadow mode runs it at the
+    profile's configured tier anyway. ``None`` in active mode, where the
+    decision is in ``tier``, and on any failed outcome, which chose nothing."""
+    classifier_model: str | None = None
+    """Which model made the routing call, so a change in decision quality can
+    be attributed to a change of classifier."""
+
+    frozen: bool = False
+    """Whether this envelope is settled, so Auto must not revisit it.
+
+    A property of the envelope rather than a flag each caller passes down: an
+    envelope read back from storage was resolved when its run was created, and
+    routing it again at execution time would decide the models of an
+    already-authorized run from whatever the deployment looks like whenever a
+    worker got to it. :meth:`from_json` therefore freezes what it loads, and a
+    caller that means "this turn takes the default, full stop" says so with
+    :meth:`freeze` rather than by being trusted to pass an argument."""
+
     @classmethod
     def unselected(cls, default_tier: str | None) -> Self:
         """The profile's own tier, chosen by nobody."""
         return cls(tier=default_tier, requested=None, source="default")
+
+    def freeze(self) -> Self:
+        """This envelope, settled: Auto will not revisit it."""
+        return replace(self, frozen=True)
 
     def to_json(self) -> dict[str, str | None]:
         """Serialize for persistence on a queued run.
 
         A queued run persists the selection so a restart or a configuration
         deployment cannot silently change the models of a run already created.
+
+        ``frozen`` is not among the keys: everything read back from storage is
+        frozen by :meth:`from_json`, so persisting the flag would only create
+        the possibility of a stored row saying otherwise.
         """
         return {
             "tier": self.tier,
             "requested": self.requested,
             "source": self.source,
+            "routing_outcome": self.routing_outcome,
+            "routing_would_choose": self.routing_would_choose,
+            "classifier_model": self.classifier_model,
         }
 
     @classmethod
@@ -210,15 +292,19 @@ class ResolvedModelSelection:
         caller has already shaped into a mapping: shaping it is where a payload
         that is not an envelope quietly becomes an empty one.
 
-        Keys it does not know are ignored, so a row written by a deployment
-        that records more than this one -- an Auto routing outcome, say -- still
-        loads here.
+        Keys it does not know are ignored, and the routing fields are optional,
+        so a row written before Auto existed loads as a run that was not routed
+        -- which is what it was.
+
+        What comes back is frozen. The run it belongs to was resolved, and
+        routed, when it was created; deciding it again now would be the drift
+        persisting the envelope exists to prevent.
         """
         if not isinstance(data, Mapping):
             msg = f"Persisted model selection is {type(data).__name__}, not an object."
             raise ValueError(msg)
         source = data.get("source")
-        if source not in {"user", "model", "default"}:
+        if source not in _PERSISTABLE_SOURCES:
             msg = f"Persisted model selection has unknown source {source!r}."
             raise ValueError(msg)
         tier = data.get("tier")
@@ -228,7 +314,26 @@ class ResolvedModelSelection:
         ):
             msg = "Persisted model selection has a non-string tier."
             raise ValueError(msg)
-        return cls(tier=tier, requested=requested, source=source)
+        outcome = data.get("routing_outcome")
+        if outcome is not None and outcome not in ROUTING_OUTCOMES:
+            msg = f"Persisted model selection has unknown routing outcome {outcome!r}."
+            raise ValueError(msg)
+        would_choose = data.get("routing_would_choose")
+        classifier_model = data.get("classifier_model")
+        if not (would_choose is None or isinstance(would_choose, str)) or not (
+            classifier_model is None or isinstance(classifier_model, str)
+        ):
+            msg = "Persisted model selection has a non-string routing field."
+            raise ValueError(msg)
+        return cls(
+            tier=tier,
+            requested=requested,
+            source=source,
+            routing_outcome=outcome,
+            routing_would_choose=would_choose,
+            classifier_model=classifier_model,
+            frozen=True,
+        )
 
 
 def resolve_model_selection(
@@ -294,9 +399,10 @@ def stamp_model_selection(
     at -- an assertion above the LLM layer would then pass against a fake and
     mean nothing about production.
 
-    Auto's routing outcome is deliberately absent: while it can only say "not
-    requested" it is a constant on every row, and adding it when it can vary is
-    cheaper than removing it once history is full of it.
+    The routing fields are written only for a run that was actually routed. On
+    every other run they would carry one value on every row, which is noise in
+    history and in every query over it; absent means "not routed", which is
+    what the great majority of rows are.
     """
     if selection is None:
         return reasoning
@@ -305,6 +411,16 @@ def stamp_model_selection(
     if selection.requested is not None:
         reasoning["model_tier_requested"] = selection.requested
     reasoning["model_tier_source"] = selection.source
+    if selection.routing_outcome is not None:
+        reasoning["model_tier_routing_outcome"] = selection.routing_outcome
+    if selection.routing_would_choose is not None:
+        reasoning["model_tier_would_choose"] = selection.routing_would_choose
+    if selection.classifier_model is not None:
+        # Persisted rather than left to the trace span: the shadow evaluation
+        # reads `message_history.reasoning_info`, and a decision whose
+        # classifier can no longer be identified is a decision that cannot be
+        # attributed to the model that made it once the traces have expired.
+        reasoning["model_tier_classifier_model"] = selection.classifier_model
     return reasoning
 
 
@@ -315,12 +431,11 @@ def _eligible_tiers(
     """The tiers a request from *source* may name."""
     if source == "user":
         return eligibility.selectable_ids
-    if source == "model":
-        return tuple(
-            option.id
-            for option in eligibility.selectable
-            if option.id in eligibility.auto
-        )
+    if source in {"model", "auto"}:
+        # Auto and a delegation argument are both selections a model made, so
+        # both are bounded by the automatic list. Choosing Auto authorizes that
+        # range once; nothing inside it is confirmed again per turn.
+        return tuple(option.id for option in eligibility.auto_options)
     # A "default"-sourced request naming a tier is only coherent when it names
     # the default; anything else is a selection claiming to be no selection.
     return () if eligibility.default_tier is None else (eligibility.default_tier,)

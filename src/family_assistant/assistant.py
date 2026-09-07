@@ -67,6 +67,11 @@ from family_assistant.indexing.notes_indexer import NotesIndexer
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.interfaces import ChatDeliveryError
 from family_assistant.llm.factory import LLMClientFactory
+from family_assistant.llm.model_routing import (
+    MODEL_ROUTING_PROMPT_KEY,
+    ModelRouter,
+    validate_routing_prompt_renders,
+)
 from family_assistant.llm.model_selection import ModelTierEligibility
 from family_assistant.llm.model_tiers import (
     models_in_chain,
@@ -1083,12 +1088,14 @@ class Assistant:
         }
         tool_call_reviewer = self._create_tool_call_reviewer()
         self._tool_call_reviewer = tool_call_reviewer
+        model_router = self._create_model_router()
         for profile_conf in resolved_profiles:
             await self._setup_processing_profile(
                 profile_conf,
                 note_registry,
                 delegation_sink_classes,
                 tool_call_reviewer,
+                model_router,
             )
 
         if not self.processing_services_registry:
@@ -1165,12 +1172,73 @@ class Assistant:
                 tool_call_reviewer = ToolCallReviewer(review_llm_client, review_config)
         return tool_call_reviewer
 
+    def _create_model_router(self) -> ModelRouter | None:
+        """Build the deployment's single Auto classifier, if routing is on.
+
+        One router for every profile: what differs per request is the tier list
+        and the profile's guidance, both of which travel with the call. Its
+        client is its own, never a profile's -- classification runs on a cheap
+        model precisely so that deciding how much to spend does not cost what
+        spending it would.
+        """
+        routing = self.config.model_routing
+        if routing.mode == "off":
+            return None
+
+        override = self.llm_client_overrides.get("__model_router__")
+        if override is None and self.llm_client_overrides:
+            # Overrides exist to keep tests and embedded callers off external
+            # providers. Reaching a real one here because nobody named the
+            # router specifically would make routing the one call a test cannot
+            # stop -- and it now runs on every turn of an auto profile.
+            override = next(iter(self.llm_client_overrides.values()))
+        prompt_template = (
+            self.config.default_profile_settings.processing_config.prompts.get(
+                MODEL_ROUTING_PROMPT_KEY
+            )
+        )
+        if not prompt_template:
+            raise SystemExit(
+                f"model_routing.mode is '{routing.mode}' but prompts.yaml has no "
+                f"'{MODEL_ROUTING_PROMPT_KEY}'. The classifier's instructions are "
+                "what it routes on, so there is nothing to run without them."
+            )
+        try:
+            # Rendered once here for the same reason a profile's system prompt
+            # is: an operator template with a stray brace would otherwise fail
+            # once per turn, as a run of routing errors that read like a
+            # provider outage.
+            validate_routing_prompt_renders(prompt_template)
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
+        classifier_model = routing.classifier.model
+        assert classifier_model is not None  # AppConfig validates this with the mode
+        llm_client = override or LLMClientFactory.create_client(
+            config=resolve_entry_client_config(
+                routing.classifier, self.config.llm_parameters
+            )
+        )
+        logger.info(
+            "Model routing enabled in '%s' mode, classifier %s via %s.",
+            routing.mode,
+            classifier_model,
+            type(llm_client).__name__,
+        )
+        return ModelRouter(
+            llm_client,
+            prompt_template=prompt_template,
+            classifier_model=classifier_model,
+            timeout_seconds=routing.timeout_seconds,
+            history_messages=routing.history_messages,
+        )
+
     async def _setup_processing_profile(
         self,
         profile_conf: ServiceProfile,
         note_registry: NoteRegistry | None,
         delegation_sink_classes: dict[str, SinkClass],
         tool_call_reviewer: ToolCallReviewer | None,
+        model_router: ModelRouter | None = None,
     ) -> None:
         """Build and register one configured processing service."""
         profile_id = profile_conf.id
@@ -1246,6 +1314,8 @@ class Assistant:
             poll_interval_seconds=profile_proc_conf.poll_interval_seconds,
             max_async_seconds=profile_proc_conf.max_async_seconds,
             tier_eligibility=tier_eligibility,
+            model_selection=profile_proc_conf.model_selection,
+            auto_routing_guidance=profile_conf.auto_routing_guidance,
         )
 
         home_assistant_client_for_profile = self.home_assistant_clients.get(profile_id)
@@ -1283,6 +1353,7 @@ class Assistant:
             api_backend=self.api_backend,
             taint_policy=merged_taint_policy,
             tier_llm_clients=tier_llm_clients,
+            model_router=model_router,
         )
 
         # Render once now so a template referencing a placeholder that no

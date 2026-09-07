@@ -161,6 +161,22 @@ class MessageReasoningInfo(TypedDict, total=False):
     """The tier that was actually asked for, where one was. Absent when nobody
     asked, which is what distinguishes a default from a selection that happened
     to name the default."""
+    model_tier_routing_outcome: str
+    """How the Auto classifier's call went: ``decided``, ``timeout``,
+    ``invalid`` or ``error``. Absent on a run that was not routed, which is
+    every run on a profile that selects its tier explicitly. Recorded apart
+    from the resolved tier so a classifier outage is visible rather than
+    reading as a run of confident decisions."""
+    model_tier_would_choose: str
+    """The tier Auto would have used, on a shadow-mode run that executed at the
+    profile's configured tier anyway. This is the evaluation record: comparing
+    it against what the run actually did is how Auto is judged before it is
+    trusted to decide."""
+    model_tier_classifier_model: str
+    """Which model made the routing decision on this row. Recorded here and not
+    only on the trace span because the evaluation dataset is this column and
+    traces expire: a decision whose classifier is unidentifiable cannot be
+    re-judged after the classifier has been changed."""
 
 
 # Re-export content part types and helpers for backward compatibility
