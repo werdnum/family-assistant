@@ -26,6 +26,15 @@ often they bite:
    a worker until it finishes and pushes every scheduled task to the back of the queue. This is the
    mechanism that made #1192's re-embedding storm delay everything else.
 
+The incident that produced #1192 showed the third consequence in its pure form. On one pod with two
+workers, over 95 minutes, the workers dequeued 1,993 unscheduled indexing tasks and not one
+scheduled task of any type: two delegation polls sat pending and unlocked with due times 40 and 83
+minutes in the past, the hourly delegation-run cleanup did not fire, and a completed delegation's
+result went uncollected for the whole window. The chain drained only because the walk happened to
+hit a run of fast batches and a gap opened. Throughout, the pending count for the indexing task type
+sampled at zero: the chain holds exactly one row and regenerates it at the moment a worker looks, so
+queue depth read as perfectly healthy while starvation was total.
+
 #1192 works around the third consequence by scheduling per-row indexing tasks two minutes out with a
 jitter. That moves them into the scheduled group, where they compete with reminders on due time
 rather than jumping ahead of them, and it also serves as a debounce so a turn is indexed once it has
@@ -48,6 +57,12 @@ A task with no `scheduled_at` is not "before everything"; it is due at the momen
 The dequeue order becomes `COALESCE(scheduled_at, created_at) ASC, id ASC`, and the same expression
 replaces the NULLS-FIRST ordering in the UI listing. Eligibility is unchanged
 (`scheduled_at IS NULL OR scheduled_at <= now`).
+
+This alone bounds the failure that actually happened. Under due-time ordering, a poll due at 01:55
+beats every continuation created after it; it loses at most one round, to a continuation created
+seconds before it came due, and then wins. Starvation goes from unbounded to bounded by one batch
+before any priority column or reserved worker exists, which is why this is the first milestone and
+not merely a self-contained one.
 
 `retry_count` leaves the ordering. Its intent, fresh work before retried work, is now carried by the
 due time: a retry's backoff *is* a later due time, and once it is due it has waited its turn like
@@ -117,8 +132,34 @@ The reserved count is configuration alongside `task_worker_count`, which is not 
 With the lanes in place, the two-minute delay on per-turn indexing does exactly one job: it lets a
 turn finish before the first of its tasks embeds it. Its jitter no longer needs to spread tasks
 across workers to keep them off the interactive path, and the docstrings that justify it on those
-grounds should say only what is still true. The backfill continuation and the per-turn tasks are
-both enqueued as background work, so the walk proceeds only while nothing interactive is due.
+grounds should say only what is still true. The walk's own enqueues move lanes too, not just the
+per-row ones: as merged, #1192 delays only the per-row site, and the backfill seed and each
+continuation are still enqueued with no `scheduled_at`, which is the exact shape that starved the
+pod. Under this design the seed, the continuations and the per-turn tasks are all background work,
+so the walk proceeds only while nothing interactive is due.
+
+## Observability
+
+Queue depth cannot see this failure. A self-perpetuating chain never builds a backlog, so a
+pending-count metric or alert reads healthy throughout, and there is no task-queue metric of any
+shape in `observability/metrics.py` today.
+
+The signal that would have caught the incident is **due latency**: the age of the oldest task that
+is eligible to run but has not been claimed.
+
+```sql
+SELECT max(now() - COALESCE(scheduled_at, created_at))
+  FROM tasks
+ WHERE status = 'pending'
+   AND (scheduled_at IS NULL OR scheduled_at <= now());
+```
+
+It reached 83 minutes during the incident and sits near zero when the queue is healthy. Once the
+priority column lands it is reported per lane, and interactive due latency is then the quantity the
+reserved worker exists to bound, so the same gauge is the service-level indicator for that
+milestone. It is sampled from the workers' poll loop and documented in
+`docs/operations/MONITORING.md` with an alert threshold, and it stays meaningful after this design
+because it measures the promise rather than the mechanism.
 
 ## Alternatives considered
 
@@ -164,10 +205,10 @@ both enqueued as background work, so the walk proceeds only while nothing intera
 
 1. **Due-time ordering.** Replace the NULLS-FIRST ordering in both dequeue paths and the UI listing
    with the COALESCE expression, drop `retry_count` from the order, fold
-   `storage.tasks.enqueue_task` into the repository and delete `storage.tasks.dequeue_task`.
-   Verified by tests on both backends: a scheduled task that came due before an immediate task was
-   created is dequeued first; a retried task whose backoff has elapsed is not pushed behind
-   immediate tasks created after it.
+   `storage.tasks.enqueue_task` into the repository, delete `storage.tasks.dequeue_task`, and add
+   the due-latency gauge with its monitoring entry. Verified by tests on both backends: a scheduled
+   task that came due before an immediate task was created is dequeued first; a retried task whose
+   backoff has elapsed is not pushed behind immediate tasks created after it.
 2. **Priority column.** Add the column with a migration that classifies existing rows by task type
    so in-flight reminders are not demoted, make the enqueue parameter required and classify every
    call site, record the dequeued row's priority on the execution context the worker builds and read
@@ -175,10 +216,11 @@ both enqueued as background work, so the walk proceeds only while nothing intera
    Verified on both backends: with a backlog of due background tasks, a newly enqueued interactive
    task is the next one dequeued; an upload's embedding batches carry the upload's priority.
 3. **Reserved workers.** Add the minimum-priority filter to `TaskWorker` and the claim query, the
-   configuration for the reserved count, the pool construction, and the operations documentation for
-   both counts. Verified with the pool test fixtures: with every general worker parked on a
-   background task, an interactive task starts within the wake latency; a reserved worker never
-   claims a background task; the deadlock test still passes with the default configuration.
+   configuration for the reserved count, the pool construction, the operations documentation for
+   both counts, and the lane label on the due-latency gauge. Verified with the pool test fixtures:
+   with every general worker parked on a background task, an interactive task starts within the wake
+   latency; a reserved worker never claims a background task; the deadlock test still passes with
+   the default configuration.
 4. **Retire the workaround's fairness role.** Reword the #1192 delay and jitter to their debounce
    purpose, and update `docs/design/multi-task-worker-pool.md`, which describes the workers as
    interchangeable.
