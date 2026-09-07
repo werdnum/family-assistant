@@ -1,6 +1,7 @@
 import asyncio
 import contextlib
 import hashlib
+import json
 import logging
 import os
 import pathlib
@@ -105,6 +106,10 @@ def attachment_registry_fixture(
 def pytest_addoption(parser: pytest.Parser) -> None:
     """Add custom command line options for pytest."""
     parser.addoption(
+        "--adaptive-nodeids-file",
+        help="Write selected nodeids and browser markers for the adaptive runner",
+    )
+    parser.addoption(
         "--postgres",
         action="store_true",
         default=False,
@@ -174,6 +179,23 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
         else:
             # Regular tests get all selected backends
             metafunc.parametrize("db_engine", db_backends, indirect=True)
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    """Export the final selection without parsing pytest terminal output."""
+    output_file = session.config.getoption("--adaptive-nodeids-file")
+    if output_file:
+        pathlib.Path(output_file).write_text(
+            json.dumps({
+                "nodeids": [item.nodeid for item in session.items],
+                "playwright_nodeids": [
+                    item.nodeid
+                    for item in session.items
+                    if item.get_closest_marker("playwright") is not None
+                ],
+            }),
+            encoding="utf-8",
+        )
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:

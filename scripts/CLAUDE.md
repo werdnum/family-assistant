@@ -56,9 +56,12 @@ v2 memory usage. Use `scripts/run-tests.sh --xdist-pytest` or
 Useful environment variables:
 
 - `GNU_PARALLEL`: path to GNU Parallel when `parallel` is not on `PATH`
-- `PYTEST_ADAPTIVE_BATCH_SIZE`: target nodeids per shard (whole modules stay together). Defaults to
-  at least `25`, growing with the collection to target four shards per worker and amortize Python
-  imports and session fixtures. Set this explicitly to tune the startup/load-balancing tradeoff.
+- `PYTEST_ADAPTIVE_BATCH_SIZE`: target backend nodeids per shard (whole modules stay together).
+  Defaults to at least `25`, growing with the collection to target four shards per worker and
+  amortize Python imports and session fixtures. Set this explicitly to tune the
+  startup/load-balancing tradeoff. Tests marked `playwright` run first in batches capped at `25` so
+  browser work remains distributed even in large modules. Markers and nodeids come from the final
+  pytest collection, including selections made with `-m` and `-k`.
 - `PYTEST_ADAPTIVE_JOBS`: maximum concurrent pytest shards, defaults to `12`
 - `PYTEST_ADAPTIVE_MEM_THRESHOLD`: cgroup memory ratio that stops new shards, defaults to `0.80`
 - `PYTEST_ADAPTIVE_LOAD`: GNU Parallel `--load` value, defaults to `100%`

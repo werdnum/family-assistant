@@ -130,3 +130,33 @@ def test_shard_manifest_executes_exact_selection_and_propagates_failure(
 
     assert result.returncode == int(fails), result.stdout + result.stderr
     assert ("1 failed" if fails else "1 passed") in result.stdout
+
+
+def test_browser_batches_remain_small_in_a_large_mixed_collection() -> None:
+    runner = _load_runner_module()
+    backend = [f"tests/test_mixed.py::test_backend[{index}]" for index in range(160)]
+    browser = [f"tests/test_mixed.py::test_browser[{index}]" for index in range(60)]
+    other_backend = ["tests/test_playwright_name_only.py::test_backend"]
+    nodeids = backend + browser + other_backend
+
+    batches = runner._batch_nodeids(nodeids, 150, set(browser))
+
+    assert batches == [
+        browser[:25],
+        browser[25:50],
+        browser[50:],
+        backend,
+        other_backend,
+    ]
+    assert sorted(nodeid for batch in batches for nodeid in batch) == sorted(nodeids)
+
+
+def test_browser_batches_respect_a_smaller_explicit_target() -> None:
+    runner = _load_runner_module()
+    nodeids = [f"tests/test_browser.py::test_case[{index}]" for index in range(5)]
+
+    assert runner._batch_nodeids(nodeids, 2, set(nodeids)) == [
+        nodeids[:2],
+        nodeids[2:4],
+        nodeids[4:],
+    ]
