@@ -135,7 +135,6 @@ from family_assistant.storage.database import (
 )
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.tasks import (
-    enqueue_task,
     notify_other_workers,
     register_worker_wake_event,
     tasks_table,
@@ -4459,8 +4458,7 @@ class TaskWorker:
             notification_payload["processing_profile_id"] = script_profile_id
 
         try:
-            await enqueue_task(
-                db_context=db_context,
+            await db_context.tasks.enqueue(
                 task_id=notification_task_id,
                 task_type="llm_callback",
                 payload=notification_payload,
