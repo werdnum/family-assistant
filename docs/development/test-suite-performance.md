@@ -1,11 +1,12 @@
 # Test suite performance
 
 The default `poe test` runner and the backend CI jobs use the same adaptive pytest runner. It
-collects the selected tests once, groups whole modules into shards, and starts serial pytest
-processes through GNU Parallel. The batch target grows with the suite size to leave roughly four
-scheduling waves per configured job slot. Small selections retain a minimum target of 25 tests; a
-module larger than the target stays intact. This amortizes Python imports and session fixtures while
-retaining independent processes and the existing CPU-load and memory gates.
+collects selected tests and their browser markers once, then starts serial pytest processes through
+GNU Parallel. Backend shards keep complete modules together; their target grows with the suite size
+to leave roughly four scheduling waves per configured job slot, with a minimum target of 25 tests. A
+backend module larger than the target stays intact. Browser tests start first in shards of at most
+25 tests so their slower per-test work stays parallel in large collections. The existing CPU-load
+and memory gates still control shard admission.
 
 Use `PYTEST_ADAPTIVE_BATCH_SIZE` to override the target or `PYTEST_ADAPTIVE_JOBS` to bound
 concurrent shards. More workers can increase contention rather than reduce elapsed time. Direct
@@ -21,6 +22,11 @@ a test-only work factor of four; expensive password verification is not the beha
 Frontend streaming tests override the existing retry-timing configuration to exercise retries
 without waiting through production backoff. Retry counts and failure assertions remain intact. Chat
 tests wait for the send action to become available instead of sleeping after a reply.
+
+Shared task polling reads pending and failed counts in one database snapshot. Separate reads could
+misreport success when a worker failed a task between them. Notification tests wait for their
+specific task IDs, and the reconnection test scopes its asyncio stub to the event-source module
+rather than changing asyncio for every task in the session.
 
 ## Measuring changes
 
