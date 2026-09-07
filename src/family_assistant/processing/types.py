@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.llm.model_selection import ModelTierEligibility
@@ -255,6 +255,12 @@ class ProcessingServiceConfig:
     # Which model tiers this profile may be run on, and by whom. The default is
     # a profile pinned to an inline model, which admits no selection at all.
     tier_eligibility: ModelTierEligibility = field(default_factory=ModelTierEligibility)
+    # Whether a run that named no tier takes the profile's default (`explicit`)
+    # or is routed by the Auto classifier (`auto`).
+    model_selection: Literal["explicit", "auto"] = "explicit"
+    # Where this profile's routing threshold sits, in the classifier's own
+    # words. Only read when model_selection is `auto`.
+    auto_routing_guidance: str | None = None
 
     def __post_init__(self) -> None:
         """Validate runtime invariants for processing config."""

@@ -21,6 +21,18 @@ def shipped_config_fixture() -> AppConfig:
     )
 
 
+@pytest.fixture(name="provider_api_keys")
+def provider_api_keys_fixture(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Credentials for every provider the shipped configuration names.
+
+    Constructing a client reads its provider's key from the environment, so a
+    test that builds real clients needs all three present. They are never sent
+    anywhere: nothing here issues a request.
+    """
+    for env_var in ("GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.setenv(env_var, f"fake-{env_var.lower()}-for-tests")
+
+
 def shipped_profile(config: AppConfig, profile_id: str) -> ServiceProfile:
     """One profile from a loaded configuration, failing if it is not shipped."""
     matches = [p for p in config.service_profiles if p.id == profile_id]

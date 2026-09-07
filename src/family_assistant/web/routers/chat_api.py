@@ -2255,6 +2255,16 @@ class ServiceProfile(BaseModel):
             "The tier used when the request names none. Null for a pinned profile."
         ),
     )
+    model_selection: Literal["explicit", "auto"] = Field(
+        default="explicit",
+        description=(
+            "Whether a request that names no tier runs on default_model_tier "
+            "('explicit') or has one chosen for it per request ('auto'). "
+            "Reports effective behaviour: a profile configured for Auto while "
+            "the deployment's routing is in shadow mode reads as 'explicit', "
+            "because that is what its requests do."
+        ),
+    )
     available_tools: list[str] = Field(
         default_factory=list, description="Available tools for this profile"
     )
@@ -3427,6 +3437,12 @@ async def get_available_profiles(
                     for option in eligibility.selectable
                 ],
                 default_model_tier=eligibility.default_tier,
+                # What this deployment will actually do, not what the profile
+                # asked for: a profile configured `auto` while routing is in
+                # shadow mode still runs every request on its configured tier,
+                # so advertising Auto would offer a control that changes
+                # nothing.
+                model_selection=service.effective_model_selection,
             )
         )
 

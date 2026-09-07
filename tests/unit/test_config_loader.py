@@ -1587,6 +1587,44 @@ class TestResolveServiceProfile:
             is None
         )
 
+    def test_a_profile_naming_a_model_inherits_no_auto_routing(self) -> None:
+        """An inherited routing policy means nothing without an inherited tier.
+
+        The profile's own model displaces the defaults block's tier, so the
+        policy that qualified it goes too: Auto would otherwise run a classifier
+        before every turn to choose between tiers this profile does not use.
+        """
+        default_settings: dict[str, Any] = {
+            "processing_config": {
+                "timezone": "UTC",
+                "model_tier": "standard",
+                "model_selection": "auto",
+            },
+            "tools_config": {},
+            "chat_id_to_name_map": {},
+            "slash_commands": [],
+            "auto_model_tiers": ["standard"],
+            "auto_routing_guidance": "Prefer standard.",
+        }
+        profile_def = {
+            "id": "pinned_profile",
+            "processing_config": {"llm_model": "some-model"},
+        }
+
+        result = resolve_service_profile(profile_def, default_settings, {})
+
+        assert result["processing_config"]["model_tier"] is None
+        assert result["processing_config"]["model_selection"] == "explicit"
+        assert result["auto_model_tiers"] is None
+        assert result["auto_routing_guidance"] is None
+        assert (
+            validate_profile_model_tier(
+                ServiceProfile.model_validate(result),
+                {"standard": ModelTierConfig(chain=[RetryModelConfig(model="m")])},
+            )
+            is None
+        )
+
     def test_remote_a2a_absent_when_not_in_profile(self) -> None:
         """Test that remote_a2a is not added when not in profile definition."""
         default_settings: dict[str, Any] = {
@@ -2852,6 +2890,7 @@ def test_every_service_profile_field_is_accounted_for() -> None:
         "remote_a2a",
         "allowed_model_tiers",
         "auto_model_tiers",
+        "auto_routing_guidance",
         # Set from the profile definition directly rather than merged.
         "id",
         "description",
@@ -3148,6 +3187,79 @@ def test_operator_eligibility_list_beside_an_inline_model_is_still_refused(
         validate_profile_model_tier(profile, config.model_tiers)
 
 
+def test_operator_retry_chain_drops_the_shipped_auto_routing(tmp_path: Path) -> None:
+    """A superseded shipped tier takes the routing policy that qualified it.
+
+    `default_assistant` ships `model_selection: auto` and the guidance the
+    classifier routes by. Both survived the merge by ID and read as the
+    operator's own, so the merged profile asked Auto to choose a tier for a
+    profile that no longer had one, and `validate_profile_model_tier` refused to
+    boot.
+    """
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        "      retry_config:\n"
+        '        primary: {provider: "anthropic", model: "claude-sonnet-5"}\n',
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "default_assistant")
+    assert profile.processing_config.model_selection == "explicit"
+    assert profile.auto_routing_guidance is None
+    assert validate_profile_model_tier(profile, config.model_tiers) is None
+
+
+def test_operator_model_tier_keeps_the_shipped_auto_routing(tmp_path: Path) -> None:
+    """An operator's own tier supersedes nothing the routing policy qualifies.
+
+    The profile still has a tier, so Auto still has a decision to make and the
+    shipped guidance still describes where its threshold sits.
+    """
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      model_tier: "deep"\n',
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "default_assistant")
+    assert profile.processing_config.model_selection == "auto"
+    assert profile.auto_model_tiers == ["standard", "deep"]
+    assert profile.auto_routing_guidance is not None
+    assert validate_profile_model_tier(profile, config.model_tiers) is not None
+
+
+def test_operator_stated_auto_beside_an_inline_model_is_still_refused(
+    tmp_path: Path,
+) -> None:
+    """Only the shipped policy goes; one the operator stated stays and fails.
+
+    Asking Auto to route a profile pinned to one inline model is a
+    misconfiguration, and it is the operator's to fix -- so it is refused by
+    name rather than resolved away.
+    """
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      provider: "anthropic"\n'
+        '      llm_model: "claude-sonnet-5"\n'
+        '      model_selection: "auto"\n',
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "default_assistant")
+    assert profile.processing_config.model_selection == "auto"
+
+    with pytest.raises(
+        ValueError, match="sets model_selection 'auto' without a model_tier"
+    ):
+        validate_profile_model_tier(profile, config.model_tiers)
+
+
 def _default_settings_and_heir(
     config: AppConfig,
 ) -> tuple[ProcessingConfig, ProcessingConfig]:
@@ -3243,6 +3355,57 @@ def test_null_retry_config_in_default_settings_keeps_the_shipped_tier(
     assert heir.model_tier == "standard"
 
 
+def test_operator_default_model_drops_the_shipped_default_auto_routing(
+    tmp_path: Path,
+) -> None:
+    """The defaults block's routing policy goes with its tier as well.
+
+    The shipped block selects `explicit` today, so this states the rule rather
+    than the current file: every profile that names no model of its own inherits
+    this block, and a routing policy left behind by a tier the operator
+    superseded would ask Auto to choose for all of them.
+    """
+    defaults_file = tmp_path / "defaults.yaml"
+    defaults_file.write_text(
+        yaml.dump({
+            "model_tiers": {"standard": {"chain": [{"model": "tier-model"}]}},
+            "default_profile_settings": {
+                "processing_config": {
+                    "model_tier": "standard",
+                    "model_selection": "auto",
+                },
+                "auto_model_tiers": ["standard"],
+                "auto_routing_guidance": "Prefer standard.",
+            },
+            "service_profiles": [
+                {"id": "heir", "description": "Selects no model of its own"}
+            ],
+        })
+    )
+    config_file = tmp_path / "config.yaml"
+    config_file.write_text(
+        "default_profile_settings:\n"
+        "  processing_config:\n"
+        '    llm_model: "claude-sonnet-5"\n'
+    )
+
+    config = load_config(
+        defaults_file_path=str(defaults_file),
+        config_file_path=str(config_file),
+        load_dotenv_file=False,
+    )
+
+    defaults = config.default_profile_settings
+    assert defaults.processing_config.model_selection == "explicit"
+    assert defaults.auto_model_tiers is None
+    assert defaults.auto_routing_guidance is None
+
+    heir = next(p for p in config.service_profiles if p.id == "heir")
+    assert heir.processing_config.model_selection == "explicit"
+    assert heir.processing_config.llm_model == "claude-sonnet-5"
+    assert validate_profile_model_tier(heir, config.model_tiers) is None
+
+
 def test_default_settings_declaring_both_selections_is_still_refused(
     tmp_path: Path,
 ) -> None:
@@ -3319,6 +3482,30 @@ def test_remote_profile_inherits_no_operator_default_model(tmp_path: Path) -> No
     profile = next(p for p in config.service_profiles if p.id == "k8s_agent")
     assert profile.processing_config.provider is None
     assert profile.processing_config.llm_model is None
+
+
+def test_remote_profile_inherits_no_auto_routing(tmp_path: Path) -> None:
+    """A remote agent runs no routing policy of ours.
+
+    An inherited `model_selection: auto` would ask the classifier to choose a
+    tier for a profile that has none by construction, which
+    `validate_profile_model_tier` refuses -- so every remote profile in a
+    deployment whose defaults route would fail startup.
+    """
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "default_profile_settings:\n"
+        "  processing_config:\n"
+        '    model_selection: "auto"\n'
+        '  auto_model_tiers: ["standard"]\n'
+        '  auto_routing_guidance: "Prefer standard."\n' + _REMOTE_PROFILE_YAML,
+    )
+
+    profile = next(p for p in config.service_profiles if p.id == "k8s_agent")
+    assert profile.processing_config.model_selection == "explicit"
+    assert profile.auto_model_tiers is None
+    assert profile.auto_routing_guidance is None
+    assert validate_profile_model_tier(profile, config.model_tiers) is None
 
 
 class TestStartupConfigRedaction:
@@ -3593,3 +3780,54 @@ ucp_config:
         assert "front_door" in caplog.text
         assert "webhook" in caplog.text
         assert "signing_private_key" in caplog.text
+
+
+def test_a_profile_overriding_model_selection_actually_gets_it(tmp_path: Path) -> None:
+    """A gate that fails open silently is what the key list exists to prevent.
+
+    `model_selection` decides whether a classifier runs before every turn on
+    the profile, so a value that parsed and was then dropped would leave an
+    operator's "do not route this one" with no effect at all.
+    """
+    processing_config = _resolved_default_assistant(
+        tmp_path,
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        "    processing_config:\n"
+        '      model_selection: "explicit"\n',
+    )
+
+    assert processing_config.model_selection == "explicit"
+
+
+def test_a_profile_replaces_the_inherited_routing_guidance(tmp_path: Path) -> None:
+    """Guidance describes one agent's threshold; merging two describes neither."""
+    config = _loaded_with_operator_config(
+        tmp_path,
+        "default_profile_settings:\n"
+        '  auto_routing_guidance: "Everything is easy."\n'
+        "service_profiles:\n"
+        '  - id: "default_assistant"\n'
+        '    auto_routing_guidance: "Reach for deep when evidence conflicts."\n'
+        '  - id: "email_intake"\n',
+    )
+
+    assistant = next(p for p in config.service_profiles if p.id == "default_assistant")
+    inheritor = next(p for p in config.service_profiles if p.id == "email_intake")
+    assert assistant.auto_routing_guidance == "Reach for deep when evidence conflicts."
+    assert inheritor.auto_routing_guidance == "Everything is easy."
+
+
+def test_routing_switched_on_without_a_classifier_is_a_startup_error() -> None:
+    """Otherwise the omission surfaces as errors that look like a provider outage."""
+    with pytest.raises(ValidationError, match="names no model"):
+        AppConfig.model_validate({
+            "model_routing": {"mode": "active", "classifier": {"provider": "google"}}
+        })
+
+
+def test_routing_left_off_needs_no_classifier() -> None:
+    """A deployment that never routes should not have to configure a router."""
+    config = AppConfig.model_validate({"model_routing": {"mode": "off"}})
+
+    assert config.model_routing.classifier.model is None

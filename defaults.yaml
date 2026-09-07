@@ -204,6 +204,36 @@ model_tiers:
           output_config:
             effort: "xhigh"
           max_tokens: 16000
+
+# The Auto classifier: a cheap call before the turn that picks which of a
+# profile's `auto_model_tiers` the request deserves. It runs only for profiles
+# whose `processing_config.model_selection` is `auto`, and never when a person
+# or a delegating model named a tier themselves.
+model_routing:
+  # `shadow` records what Auto would have chosen while the run executes on the
+  # profile's configured tier -- the decisions land in
+  # `message_history.reasoning_info` as `model_tier_would_choose`, so they can
+  # be judged against real outcomes before anything acts on them. `active` is
+  # the flip that lets the decision pick the tier; `off` never calls the
+  # classifier at all.
+  mode: "shadow"
+  # One classifier for every profile. What varies per request is the tier list
+  # and the profile's `auto_routing_guidance`, both of which travel with the
+  # call, so a second classifier would be another model to evaluate for no
+  # decision it could make better. Flash because routing must cost far less
+  # than the difference between the tiers it is choosing between.
+  classifier:
+    provider: "google"
+    model: "gemini-3.8-flash"
+  # A classification that has not answered by here is abandoned and the run
+  # continues on the profile's configured tier: a lost turn is worse than a
+  # weaker one. The outcome is recorded either way.
+  timeout_seconds: 10
+  # How much of the conversation the classifier reads. Enough to tell a
+  # follow-up from a fresh request, not enough to make the routing call cost
+  # what the turn costs.
+  history_messages: 6
+
 # Gemini Live Voice API Configuration
 # See: https://ai.google.dev/gemini-api/docs/live
 gemini_live_config:
@@ -821,13 +851,22 @@ service_profiles:
       include_aggregated_context: true
       max_iterations: 50
       model_tier: "standard"
+      # Auto is the normal state on the profile users talk to. Under
+      # `model_routing.mode: shadow` this records what Auto would have chosen
+      # while every turn still runs on `standard`.
+      model_selection: "auto"
     # The tiers a user may explicitly run this profile on.
     allowed_model_tiers: ["standard", "deep", "frontier"]
     # The subset a model may select on its own -- a delegate_to_service
-    # `model_tier` argument today. `frontier` is deliberately absent: it is
-    # chosen when somebody decides this request is worth the spend, not
-    # inferred.
+    # `model_tier` argument, and the Auto classifier. `frontier` is
+    # deliberately absent: it is chosen when somebody decides this request is
+    # worth the spend, not inferred.
     auto_model_tiers: ["standard", "deep"]
+    auto_routing_guidance: |
+      Prefer standard for routine conversation, retrieval and straightforward
+      tool use. Choose deep where substantial ambiguity, multi-stage reasoning,
+      difficult judgement or conflicting evidence makes stronger reasoning
+      materially more likely to improve the result.
   - id: "email_intake"
     description: "Assistant profile for handling email the user sends or forwards. Replies by email and may propose calendar events, notes, reminders, document indexing, or messages to known users; writes wait for confirmation."
     processing_config:

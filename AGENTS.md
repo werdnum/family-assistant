@@ -294,8 +294,11 @@ supervision requirements based on input trust level:
    iterations. Which models a tier names is configured in the top-level `model_tiers` map, not on
    the profile, and a tier is **selectable per request** — a `model_tier` on the chat API or on
    `delegate_to_service`, bounded by the profile's `allowed_model_tiers` (a user) or
-   `auto_model_tiers` (a model), so `Assistant + Deep` no longer needs this profile. What survives
-   here is the workflow: the long-investigation guidance and the iteration ceiling. See
+   `auto_model_tiers` (a model), so `Assistant + Deep` no longer needs this profile. When a request
+   names no tier, `default_assistant` runs the Auto classifier in **shadow mode**: it records which
+   tier it would have chosen while the turn still executes on `standard`, so Auto is evaluated
+   against real outcomes before it decides anything. What survives here is the workflow: the
+   long-investigation guidance and the iteration ceiling. See
    [docs/operations/CONFIGURATION_REFERENCE.md](docs/operations/CONFIGURATION_REFERENCE.md) and
    [docs/design/model-tiers.md](docs/design/model-tiers.md). **Not to be confused with
    `spawn_worker`**, which launches isolated coding agents (Claude Code / Gemini CLI) in sandboxed

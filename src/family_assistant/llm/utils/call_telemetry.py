@@ -192,6 +192,14 @@ class LLMCallTelemetry:
                 "llm.model_tier.requested": selection.requested or "",
                 "llm.model_tier.source": selection.source,
             })
+            if selection.routing_outcome is not None:
+                # Only for a run Auto actually routed: on every other run these
+                # would be one constant value on every span of the deployment.
+                self.span.set_attributes({
+                    "llm.model_tier.routing_outcome": selection.routing_outcome,
+                    "llm.model_tier.would_choose": selection.routing_would_choose or "",
+                    "llm.model_tier.classifier_model": selection.classifier_model or "",
+                })
 
     @property
     def elapsed_ms(self) -> float:
