@@ -79,6 +79,15 @@ class _Namespace:
     def __init__(self, **kwargs: Any) -> None:  # noqa: ANN401 - test helper
         self.__dict__.update(kwargs)
 
+    async def resolve_model_selection_for_run(
+        self,
+        selection: ResolvedModelSelection,
+        **kwargs: Any,  # noqa: ANN401 - test double accepts the routing keyword surface
+    ) -> ResolvedModelSelection:
+        """Unrouted: these doubles have no classifier to route with."""
+        _ = kwargs
+        return selection
+
 
 class _SynchronousRemoteClient:
     """Minimal remote client that completes inline without network access."""
@@ -563,7 +572,7 @@ async def test_a_queued_delegation_persists_its_resolved_tier(
     persisted = run["model_selection_json"]
     assert persisted is not None
     assert ResolvedModelSelection.from_json(persisted) == ResolvedModelSelection(
-        tier="deep", requested="deep", source="model"
+        tier="deep", requested="deep", source="model", frozen=True
     )
 
 

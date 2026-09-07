@@ -428,6 +428,12 @@ async def _synchronous_delegation_result(
             trigger_content_parts=content_parts,
             trigger_interface_message_id=None,
             user_name=exec_context.user_name,
+            # The delegated turn acts for the same person the delegating turn
+            # does, as the queued path already records on its run. Without it
+            # the target resolves this request's attachments as an anonymous
+            # actor, which sees only ownerless ones -- so an owned file is
+            # neither described to the target's routing nor injectable.
+            user_id=exec_context.user_id,
             replied_to_interface_id=None,
             chat_interface=exec_context.chat_interface,
             chat_interfaces=exec_context.chat_interfaces,
@@ -889,7 +895,13 @@ async def _delegation_content_parts(
     user_request: str,
     attachment_ids: list[str] | None,
 ) -> tuple[list[ContentPartDict], ToolResult | None]:
-    """Build delegated content after validating attachment ownership."""
+    """Build delegated content after validating attachment ownership.
+
+    Returns the content parts and any refusal. The parts carry each attachment
+    as a reference: what the target's classifier is told about it is resolved
+    from that reference on the target's side, alongside every other ingress
+    that hands a turn a file it can only name.
+    """
     content_parts: list[ContentPartDict] = [text_content(user_request)]
     if not attachment_ids:
         return content_parts, None
@@ -908,13 +920,16 @@ async def _delegation_content_parts(
         attachment_id for attachment_id in attachment_ids if attachment_id not in found
     ]
     if missing:
-        return content_parts, ToolResult(
-            text=(
-                f"Error: Cannot delegate to '{target_service_id}': "
-                f"attachment(s) {', '.join(missing)} do not exist or "
-                "belong to another user."
+        return (
+            content_parts,
+            ToolResult(
+                text=(
+                    f"Error: Cannot delegate to '{target_service_id}': "
+                    f"attachment(s) {', '.join(missing)} do not exist or "
+                    "belong to another user."
+                ),
+                attachments=None,
             ),
-            attachments=None,
         )
     content_parts.extend(
         attachment_content(attachment_id) for attachment_id in attachment_ids
@@ -968,13 +983,17 @@ async def _enqueue_delegation(
     handoff_after_seconds: float | None,
     delivery_hint: Literal["auto", "background"],
     resume_delegation_id: str | None,
-    resumed_subconversation_id: str | None,
+    subconversation_id: str,
     model_selection: ResolvedModelSelection,
 ) -> _QueuedDelegation | ToolResult:
-    """Atomically persist a delegated run and its task, including resume claims."""
+    """Atomically persist a delegated run and its task, including resume claims.
+
+    ``subconversation_id`` is allocated by the caller rather than here, because
+    the target is routed against the history that id selects before the run
+    exists; minting it here would route one history and run another.
+    """
     delegation_id = f"delegation_{uuid.uuid4().hex}"
     task_id = f"{DELEGATED_PROFILE_RUN_TASK_TYPE}_{uuid.uuid4().hex}"
-    subconversation_id = resumed_subconversation_id or str(uuid.uuid4())
     wait_seconds = _resolve_handoff_wait_seconds(
         exec_context,
         handoff_after_seconds,
@@ -1028,14 +1047,14 @@ async def _enqueue_delegation(
     try:
         await exec_context.db_context.atomic(_enqueue_delegated_run)
     except IntegrityError:
-        if resumed_subconversation_id is not None:
+        if resume_delegation_id is not None:
             logger.info(
                 "Concurrent resume of delegation %s rejected by the unique "
                 "active-subconversation constraint (subconversation=%s).",
                 resume_delegation_id,
                 subconversation_id,
             )
-            return _resume_already_in_progress_result(cast("str", resume_delegation_id))
+            return _resume_already_in_progress_result(resume_delegation_id)
         logger.exception(
             "Failed to delegate request to service '%s' due to a constraint violation.",
             target_service_id,
@@ -1373,6 +1392,29 @@ async def delegate_to_service_tool(
             attachments=None,
         )
 
+    # Allocated before routing, not inside the enqueue: the classifier reads
+    # the history this id selects, and `None` selects the main conversation
+    # rather than nothing -- so a fresh delegation routed under it would be
+    # decided on the target's unrelated direct-chat turns and then run on the
+    # empty history of a subconversation minted afterwards. One id, allocated
+    # once, routed and persisted.
+    subconversation_id = resumed_subconversation_id or str(uuid.uuid4())
+
+    # Routed here, before the run row exists, rather than when a worker picks
+    # it up: the persisted envelope is the run's authorization, so a run
+    # enqueued unrouted reaches the worker with nothing to replay and takes the
+    # target's default silently -- while the synchronous path, which routes
+    # inside the turn, would have routed the same request.
+    model_selection = await target_service.resolve_model_selection_for_run(
+        model_selection,
+        db_context=exec_context.db_context,
+        interface_type=exec_context.interface_type,
+        conversation_id=exec_context.conversation_id,
+        subconversation_id=subconversation_id,
+        trigger_content_parts=content_parts,
+        acting_user_id=exec_context.user_id,
+    )
+
     enqueue_result = await _enqueue_delegation(
         exec_context,
         source_service_id=source_service_id,
@@ -1382,7 +1424,7 @@ async def delegate_to_service_tool(
         handoff_after_seconds=handoff_after_seconds,
         delivery_hint=delivery_hint,
         resume_delegation_id=resume_delegation_id,
-        resumed_subconversation_id=resumed_subconversation_id,
+        subconversation_id=subconversation_id,
         model_selection=model_selection,
     )
     if isinstance(enqueue_result, ToolResult):

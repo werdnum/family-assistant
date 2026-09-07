@@ -194,6 +194,7 @@ class FakeDelegatableService:
         request_confirmation: bool = False,
         attachment_registry: AttachmentRegistry | None = None,
         tier_eligibility: ModelTierEligibility | None = None,
+        routes_to: ResolvedModelSelection | None = None,
     ) -> None:
         self.service_config = SimpleNamespace(
             id="target_profile",
@@ -203,6 +204,18 @@ class FakeDelegatableService:
         self.request_confirmation = request_confirmation
         self.attachment_registry = attachment_registry
         self.calls: list[FakeDelegationCall] = []
+        self.routes_to = routes_to
+        """What this target's Auto decides, if it routes at all."""
+        # ast-grep-ignore: no-dict-any - records the routing keyword surface verbatim
+        self.routing_calls: list[dict[str, Any]] = []
+
+    async def resolve_model_selection_for_run(
+        self,
+        selection: ResolvedModelSelection,
+        **kwargs: Any,  # noqa: ANN401 - test fake accepts the routing keyword surface
+    ) -> ResolvedModelSelection:
+        self.routing_calls.append(kwargs)
+        return self.routes_to if self.routes_to is not None else selection
 
     async def handle_chat_interaction(self, **kwargs: Any) -> ChatInteractionResult:  # noqa: ANN401 - test fake accepts the ProcessingService keyword surface
         self.calls.append(cast("FakeDelegationCall", kwargs))
@@ -284,6 +297,7 @@ class TaintReadingDelegatableService:
         self.service_config = SimpleNamespace(
             id="target_profile",
             allowed_delegation_sources=["source_profile"],
+            tier_eligibility=ModelTierEligibility(),
         )
         self.calls: list[FakeDelegationCall] = []
 
@@ -772,7 +786,7 @@ async def test_the_worker_runs_a_queued_delegation_at_its_persisted_tier(
 
     assert len(target_service.calls) == 1
     assert target_service.calls[0]["model_selection"] == ResolvedModelSelection(
-        tier="deep", requested="deep", source="model"
+        tier="deep", requested="deep", source="model", frozen=True
     )
 
 
@@ -780,7 +794,12 @@ async def test_the_worker_runs_a_queued_delegation_at_its_persisted_tier(
 async def test_a_run_queued_before_tiers_existed_still_runs(
     db_engine: AsyncEngine,
 ) -> None:
-    """A null envelope is "no selection", not a run that cannot be executed."""
+    """A null envelope is "no selection", not a run that cannot be executed.
+
+    It still arrives frozen: the run was created before there was anything to
+    route it with, and deciding it now would be the execution-time drift the
+    persisted envelope exists to prevent.
+    """
     target_service = FakeDelegatableService(tier_eligibility=_TIERED_TARGET)
     processing_service = _source_processing_service(target_service)
     chat_interface = AsyncMock(spec=ChatInterface)
@@ -794,7 +813,64 @@ async def test_a_run_queued_before_tiers_existed_still_runs(
     )
 
     assert len(target_service.calls) == 1
-    assert target_service.calls[0]["model_selection"] is None
+    assert target_service.calls[0]["model_selection"] == ResolvedModelSelection(
+        tier="standard", requested=None, source="default", frozen=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_enqueued_delegation_is_routed_before_it_is_persisted(
+    db_engine: AsyncEngine,
+) -> None:
+    """The persisted envelope is the authorization, so it has to be the routed one.
+
+    Routed at the target, against the target's own eligibility, before the run
+    row exists: enqueued unrouted, the run would reach a worker with nothing to
+    replay and quietly take the target's default, while the same request sent
+    down the synchronous path would have been routed.
+    """
+    routed = ResolvedModelSelection(
+        tier="deep",
+        requested=None,
+        source="auto",
+        routing_outcome="decided",
+        classifier_model="mock-classifier",
+    )
+    target_service = FakeDelegatableService(
+        tier_eligibility=_TIERED_TARGET, routes_to=routed
+    )
+    processing_service = _source_processing_service(target_service)
+    chat_interface = AsyncMock(spec=ChatInterface)
+
+    await delegate_to_service_tool(
+        exec_context=_tool_context(
+            Database(engine=db_engine), processing_service, chat_interface
+        ),
+        target_service_id="target_profile",
+        user_request="weigh these two quotes against each other",
+        delivery_hint="background",
+    )
+
+    assert len(target_service.routing_calls) == 1
+    db_context = Database(engine=db_engine)
+    runs = await db_context.delegation_runs.list_for_conversation(
+        conversation_id=TEST_CONVERSATION_ID,
+        interface_type=TEST_INTERFACE_TYPE,
+        status=None,
+        limit=10,
+    )
+    assert len(runs) == 1
+    assert (
+        ResolvedModelSelection.from_json(runs[0]["model_selection_json"])
+        == routed.freeze()
+    )
+    # Routed under the subconversation the run is persisted with, so the
+    # classifier read the history the run will execute on. `None` would not
+    # mean "no history": it selects the main conversation.
+    assert (
+        target_service.routing_calls[0]["subconversation_id"]
+        == runs[0]["subconversation_id"]
+    )
 
 
 @pytest.mark.asyncio
@@ -2566,6 +2642,15 @@ class FakePollableService:
         _ = kwargs
         self.inline_calls += 1
         raise AssertionError("a pollable target must not run inline")
+
+    async def resolve_model_selection_for_run(
+        self,
+        selection: ResolvedModelSelection,
+        **kwargs: object,
+    ) -> ResolvedModelSelection:
+        """Unchanged: a remote target picks its own model."""
+        _ = kwargs
+        return selection
 
     def remote_context_id(
         self, conversation_id: str, subconversation_id: str | None
