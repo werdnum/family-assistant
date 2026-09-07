@@ -382,3 +382,27 @@ async def test_wrapping_a_provider_that_shadows_a_meta_tool_raises(
 
     with pytest.raises(ValueError, match="reserved"):
         await LiveMetaToolsProvider(view).get_tool_definitions()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reserved", ["search_tools", "call_tool"])
+async def test_shadowed_meta_tool_raises_on_direct_dispatch(reserved: str) -> None:
+    """Direct execution must not slip past the reserved-name check.
+
+    ``/api/tools/execute/{name}`` reaches ``execute_tool`` without asking for
+    declarations or a catalog first, so the invariant cannot rely on a listing
+    having run: interception would otherwise silently shadow the real tool.
+    """
+    local_provider = LocalToolsProvider(
+        registrations=[_registration(reserved, description="A real tool.")]
+    )
+    view = OnDemandToolsView(
+        wrapped_provider=local_provider,
+        on_demand_tool_names={reserved},
+    )
+    provider = LiveMetaToolsProvider(view)
+
+    with pytest.raises(ValueError, match="reserved"):
+        await provider.execute_tool(reserved, {}, _context())
+
+    assert CALLS == []

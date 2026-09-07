@@ -238,6 +238,16 @@ class OnDemandToolsView:
         """
         return frozenset(self._on_demand_mcp_server_ids)
 
+    async def ensure_no_reserved_name_collisions(self) -> None:
+        """Raise if the wrapped provider exposes a reserved meta-tool name.
+
+        The check itself lives with the descriptor cache, which every listing
+        path populates. A consumer that intercepts a meta-tool name before
+        dispatch — and can therefore be reached without having asked for a
+        listing first — calls this so the invariant holds on that path too.
+        """
+        await self._ensure_descriptors()
+
     def has_on_demand_tools(self) -> bool:
         """Return True if there are any on-demand tool names configured."""
         return bool(self._on_demand_tool_names) or bool(self._on_demand_mcp_server_ids)

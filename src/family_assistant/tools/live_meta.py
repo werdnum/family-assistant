@@ -216,9 +216,15 @@ class LiveMetaToolsProvider:
         call_id: str | None = None,
     ) -> str | ToolResult:
         """Handle the meta-tools; delegate every other name unchanged."""
-        if name == SEARCH_TOOLS_TOOL_NAME:
-            return await self._search_tools(arguments)
-        if name == CALL_TOOL_TOOL_NAME:
+        if name in LIVE_META_TOOL_NAMES:
+            # Interception shadows whatever the wrapped provider has under this
+            # name, so the reserved-name invariant has to hold before we take
+            # the branch. Declaring and searching reach the check through the
+            # view's descriptor cache, but a direct /api/tools/execute call
+            # arrives here having asked for neither.
+            await self._view.ensure_no_reserved_name_collisions()
+            if name == SEARCH_TOOLS_TOOL_NAME:
+                return await self._search_tools(arguments)
             return await self._call_tool(arguments, context, call_id)
         return await self._wrapped_provider.execute_tool(
             name, arguments, context, call_id
