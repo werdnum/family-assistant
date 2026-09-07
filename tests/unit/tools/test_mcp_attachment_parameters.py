@@ -87,15 +87,15 @@ def _multi_image_tool() -> Tool:
 
 def _provider(
     # ast-grep-ignore: no-dict-any - Test configuration mirrors untyped MCP config
-    attachment_parameters: Mapping[str, Any] | None = None,
+    parameter_overrides: Mapping[str, Any] | None = None,
     transport: str = "stdio",
 ) -> MCPToolsProvider:
     config: MCPServerConfig = cast(
         "MCPServerConfig",
         {"transport": transport, "command": "echo"},
     )
-    if attachment_parameters is not None:
-        cast("dict[str, Any]", config)["attachment_parameters"] = attachment_parameters
+    if parameter_overrides is not None:
+        cast("dict[str, Any]", config)["parameter_overrides"] = parameter_overrides
     return MCPToolsProvider({SERVER_ID: config})
 
 
@@ -284,7 +284,7 @@ def test_file_path_mode_is_refused_for_a_remote_server() -> None:
         MCPServerConfigModel.model_validate({
             "transport": "sse",
             "url": "https://example.invalid/mcp",
-            "attachment_parameters": {"meshy_image_to_3d": {"image_url": "file_path"}},
+            "parameter_overrides": {"meshy_image_to_3d": {"image_url": "file_path"}},
         })
 
 
@@ -292,19 +292,19 @@ def test_data_uri_mode_is_allowed_for_a_remote_server() -> None:
     config = MCPServerConfigModel.model_validate({
         "transport": "streamable_http",
         "url": "https://example.invalid/mcp",
-        "attachment_parameters": {"meshy_image_to_3d": {"image_url": "data_uri"}},
+        "parameter_overrides": {"meshy_image_to_3d": {"image_url": "data_uri"}},
     })
 
-    assert config.attachment_parameters == {
+    assert config.parameter_overrides == {
         "meshy_image_to_3d": {"image_url": "data_uri"}
     }
 
 
 def test_an_unknown_mode_is_refused() -> None:
-    with pytest.raises(ValueError, match="attachment_parameters"):
+    with pytest.raises(ValueError, match="parameter_overrides"):
         MCPServerConfigModel.model_validate({
             "command": "echo",
-            "attachment_parameters": {"meshy_image_to_3d": {"image_url": "ftp"}},
+            "parameter_overrides": {"meshy_image_to_3d": {"image_url": "ftp"}},
         })
 
 
@@ -367,10 +367,10 @@ def _recording_session() -> tuple[ClientSession, list[MCPArguments]]:
 
 async def _connected_provider(
     # ast-grep-ignore: no-dict-any - Test configuration mirrors untyped MCP config
-    attachment_parameters: Mapping[str, Any],
+    parameter_overrides: Mapping[str, Any],
     tools: list[Tool],
 ) -> tuple[MCPToolsProvider, list[MCPArguments]]:
-    provider = _provider(attachment_parameters)
+    provider = _provider(parameter_overrides)
     definitions = provider._format_mcp_definitions_to_dicts(tools, SERVER_ID)
     provider._register_server_tools(
         SERVER_ID,
@@ -931,7 +931,7 @@ def test_a_file_path_mapping_is_still_refused_for_a_remote_server() -> None:
         MCPServerConfigModel.model_validate({
             "transport": "sse",
             "url": "https://example.invalid/mcp",
-            "attachment_parameters": {
+            "parameter_overrides": {
                 "t": {"p": {"mode": "file_path", "description": "x"}}
             },
         })
@@ -977,3 +977,101 @@ def test_an_attachment_outside_an_attachment_slot_is_not_collected() -> None:
         )
         == set()
     )
+
+
+def test_a_dropped_parameter_is_not_advertised() -> None:
+    """A server's other way in pulls the model away from the attachment.
+
+    Meshy takes an image as `image_url` or `file_path` and calls the latter
+    "PREFERRED for local files", so leaving it advertised argues against the
+    parameter we just wired to an attachment.
+    """
+    provider = _provider({
+        "meshy_image_to_3d": {"image_url": "data_uri", "file_path": "drop"}
+    })
+    tool = Tool(
+        name="meshy_image_to_3d",
+        description="Turn an image into a 3D model",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "image_url": {"type": "string"},
+                "file_path": {
+                    "type": "string",
+                    "description": "PREFERRED for local files",
+                },
+                "should_texture": {"type": "boolean"},
+            },
+        },
+    )
+
+    properties = _properties(
+        provider._format_mcp_definitions_to_dicts([tool], SERVER_ID),
+        "meshy_image_to_3d",
+    )
+
+    assert "file_path" not in properties
+    assert properties["image_url"]["type"] == "attachment"
+    # Untouched parameters are left exactly as the server declared them.
+    assert properties["should_texture"] == {"type": "boolean"}
+
+
+def test_dropping_a_required_parameter_takes_its_required_entry_too() -> None:
+    """Demanding a parameter the model cannot see is a schema nothing satisfies."""
+    provider = _provider({"t": {"gone": "drop"}})
+    tool = Tool(
+        name="t",
+        description="d",
+        inputSchema={
+            "type": "object",
+            "properties": {"gone": {"type": "string"}, "kept": {"type": "string"}},
+            "required": ["gone", "kept"],
+        },
+    )
+
+    definitions = provider._format_mcp_definitions_to_dicts([tool], SERVER_ID)
+
+    # ast-grep-ignore: no-dict-any - Tool schemas are untyped JSON
+    parameters = cast("dict[str, Any]", definitions[0]["function"]["parameters"])
+    assert "gone" not in parameters["properties"]
+    assert parameters["required"] == ["kept"]
+
+
+def test_dropping_a_parameter_the_server_lacks_is_ignored() -> None:
+    provider = _provider({"t": {"absent": "drop"}})
+    tool = Tool(
+        name="t",
+        description="d",
+        inputSchema={"type": "object", "properties": {"kept": {"type": "string"}}},
+    )
+
+    definitions = provider._format_mcp_definitions_to_dicts([tool], SERVER_ID)
+
+    assert _properties(definitions, "t") == {"kept": {"type": "string"}}
+
+
+@pytest.mark.asyncio
+async def test_a_dropped_parameter_needs_no_execution_handling() -> None:
+    """Only attachment parameters reach materialisation; drops never arrive."""
+    attachment = _attachment()
+    provider, calls = await _connected_provider(
+        {"meshy_image_to_3d": {"image_url": "data_uri", "should_texture": "drop"}},
+        [_image_tool()],
+    )
+
+    result = await provider.execute_tool(
+        "meshy_image_to_3d",
+        {"image_url": attachment.get_id()},
+        _execution_context(_registry_serving(attachment)),
+    )
+
+    assert result == "ok"
+    assert calls[0]["image_url"].startswith("data:image/png;base64,")
+
+
+def test_an_unknown_override_is_refused() -> None:
+    with pytest.raises(ValueError, match="parameter_overrides"):
+        MCPServerConfigModel.model_validate({
+            "command": "echo",
+            "parameter_overrides": {"t": {"p": "delete"}},
+        })

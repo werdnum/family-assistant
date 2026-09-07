@@ -1294,11 +1294,15 @@ class MCPServerConfig(BaseModel):
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
     tool_metadata: dict[str, list[str]] = Field(default_factory=dict)
-    # Maps tool name -> parameter name -> how the attachment should reach the
-    # server, either as a bare mode or as a mapping carrying an operator
-    # description. See docs/operations/CONFIGURATION_REFERENCE.md.
-    attachment_parameters: dict[
-        str, dict[str, MCPAttachmentMode | MCPAttachmentParameterConfig]
+    # Maps tool name -> parameter name -> how this deployment wants that
+    # parameter adapted: an attachment mode (bare, or with a description), or
+    # "drop" to hide it. See docs/operations/CONFIGURATION_REFERENCE.md.
+    parameter_overrides: dict[
+        str,
+        dict[
+            str,
+            MCPAttachmentMode | Literal["drop"] | MCPAttachmentParameterConfig,
+        ],
     ] = Field(default_factory=dict)
     # Declared (rather than left to extra="allow") so diagnostic dumps mask it
     # by type. `env` values cannot be declared this way -- their keys are
@@ -1307,7 +1311,7 @@ class MCPServerConfig(BaseModel):
     token: SecretStr | None = None
 
     @model_validator(mode="after")
-    def validate_attachment_parameters(self) -> MCPServerConfig:
+    def validate_parameter_overrides(self) -> MCPServerConfig:
         """Reject ``file_path`` materialisation on a transport that cannot use it.
 
         ``file_path`` writes the attachment into our own filesystem and hands
@@ -1316,7 +1320,7 @@ class MCPServerConfig(BaseModel):
         the server cannot open, so it fails at load rather than at the first
         tool call.
         """
-        if not self.attachment_parameters:
+        if not self.parameter_overrides:
             return self
         transport = str(
             (self.__pydantic_extra__ or {}).get("transport") or "stdio"
@@ -1325,7 +1329,7 @@ class MCPServerConfig(BaseModel):
             return self
         offenders = sorted(
             f"{tool_name}.{parameter_name}"
-            for tool_name, parameters in self.attachment_parameters.items()
+            for tool_name, parameters in self.parameter_overrides.items()
             for parameter_name, parameter in parameters.items()
             if (
                 parameter.mode
@@ -1336,7 +1340,7 @@ class MCPServerConfig(BaseModel):
         )
         if offenders:
             msg = (
-                f"attachment_parameters mode 'file_path' requires a stdio MCP "
+                f"parameter_overrides mode 'file_path' requires a stdio MCP "
                 f"server, but transport is {transport!r}: {', '.join(offenders)}. "
                 f"Use 'data_uri' instead."
             )

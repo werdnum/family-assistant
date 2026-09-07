@@ -54,7 +54,7 @@ class MCPServerStdIOConfig(TypedDict, total=False):
     args: list[str]
     env: dict[str, str]
     tool_metadata: dict[str, list[str]]
-    attachment_parameters: dict[str, dict[str, str]]
+    parameter_overrides: dict[str, dict[str, object]]
 
 
 class MCPServerSSEConfig(TypedDict):
@@ -64,7 +64,7 @@ class MCPServerSSEConfig(TypedDict):
     url: str
     token: NotRequired[str | None]
     tool_metadata: NotRequired[dict[str, list[str]]]
-    attachment_parameters: NotRequired[dict[str, dict[str, str]]]
+    parameter_overrides: NotRequired[dict[str, dict[str, object]]]
 
 
 class MCPServerStreamableHTTPConfig(TypedDict):
@@ -78,7 +78,7 @@ class MCPServerStreamableHTTPConfig(TypedDict):
     url: str
     token: NotRequired[str | None]
     tool_metadata: NotRequired[dict[str, list[str]]]
-    attachment_parameters: NotRequired[dict[str, dict[str, str]]]
+    parameter_overrides: NotRequired[dict[str, dict[str, object]]]
 
 
 class MCPServerGenericConfig(TypedDict, total=False):
@@ -91,7 +91,7 @@ class MCPServerGenericConfig(TypedDict, total=False):
     url: str
     token: str
     tool_metadata: dict[str, list[str]]
-    attachment_parameters: dict[str, dict[str, str]]
+    parameter_overrides: dict[str, dict[str, object]]
 
 
 # Use a Union to represent the allowed MCP server configurations.

@@ -395,19 +395,22 @@ indexing_pipeline_config:
 #     url: "${MCP_HTTP_ORIGIN}/mcp"
 #     token: "$MY_MCP_TOKEN"
 #
-# A server whose tools take images or documents can declare which parameters carry
-# an attachment, so the model supplies an attachment ID and the runtime renders the
-# bytes in the form the server wants (`data_uri` anywhere, `file_path` for stdio
-# servers only). See docs/operations/CONFIGURATION_REFERENCE.md.
+# A server's parameters can be adapted per tool: one carrying an image or
+# document can be filled from an attachment instead (`data_uri` anywhere,
+# `file_path` for stdio servers only), and a parameter the model should not see
+# can be dropped. See docs/operations/CONFIGURATION_REFERENCE.md.
 #
 #   meshy:
-#     attachment_parameters:
+#     parameter_overrides:
 #       meshy_image_to_3d:
 #         image_url:
 #           mode: data_uri
 #           # The server's own description is dropped (it describes the URL it
 #           # used to want); this is where to put something accurate back.
 #           description: "The image to build the model from."
+#         # Meshy calls this "PREFERRED for local files", which argues against
+#         # the attachment we just wired up.
+#         file_path: drop
 mcp_config:
   mcpServers:
     time:

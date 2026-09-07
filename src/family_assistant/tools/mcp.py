@@ -31,10 +31,12 @@ from family_assistant.tools.attachment_utils import process_attachment_arguments
 from family_assistant.tools.infrastructure import translate_attachment_schemas_for_llm
 from family_assistant.tools.mcp_attachments import (
     AttachmentParameter,
+    ParameterOverride,
+    apply_parameter_overrides,
+    attachment_parameters_only,
     materialised_attachment_arguments,
     normalise_attachment_arguments,
-    normalize_attachment_parameters,
-    overlay_attachment_parameters,
+    normalize_parameter_overrides,
 )
 from family_assistant.tools.metadata import (
     ToolDescriptor,
@@ -194,12 +196,10 @@ class MCPToolsProvider:
         self._mcp_server_configs = dict(mcp_server_configs)
         # Validated here so a malformed block fails at startup rather than at
         # the first tool call that would have used it.
-        self._attachment_parameters: dict[
-            str, dict[str, dict[str, AttachmentParameter]]
+        self._parameter_overrides: dict[
+            str, dict[str, dict[str, ParameterOverride]]
         ] = {
-            server_id: normalize_attachment_parameters(
-                config.get("attachment_parameters")
-            )
+            server_id: normalize_parameter_overrides(config.get("parameter_overrides"))
             for server_id, config in self._mcp_server_configs.items()
         }
         self._initialization_timeout_seconds = initialization_timeout_seconds
@@ -795,7 +795,9 @@ class MCPToolsProvider:
         self, server_id: str, tool_name: str
     ) -> dict[str, AttachmentParameter]:
         """Return the attachment parameters configured for one tool."""
-        return self._attachment_parameters.get(server_id, {}).get(tool_name, {})
+        return attachment_parameters_only(
+            self._parameter_overrides.get(server_id, {}).get(tool_name, {})
+        )
 
     def _format_mcp_definitions_to_dicts(
         # self, definitions: List[Dict[str, Any]] # Original signature
@@ -808,12 +810,13 @@ class MCPToolsProvider:
         Converts MCP Tool objects to OpenAI-like dictionary format.
         Sanitization (removing unsupported formats) is handled by the LLM client layer.
 
-        Parameters the server's ``attachment_parameters`` block names are marked
-        ``type: attachment`` here, so the definitions this provider holds carry
-        the same internal shape as a local tool's and the LLM-facing translation
-        applies to both alike.
+        The server's ``parameter_overrides`` block is applied here: an
+        attachment parameter is marked ``type: attachment``, so the definitions
+        this provider holds carry the same internal shape as a local tool's and
+        the LLM-facing translation applies to both alike, and a dropped
+        parameter is removed.
         """
-        attachment_parameters = self._attachment_parameters.get(server_id, {})
+        parameter_overrides = self._parameter_overrides.get(server_id, {})
         formatted_defs = []
         for tool in definitions:  # Iterate MCP Tool objects
             try:
@@ -836,11 +839,11 @@ class MCPToolsProvider:
                 # --- Sanitization logic removed from here ---
                 # The 'format' field might still be present in the 'parameters' dict
 
-                tool_attachment_parameters = attachment_parameters.get(tool.name)
-                if tool_attachment_parameters:
-                    overlay_attachment_parameters(
+                tool_overrides = parameter_overrides.get(tool.name)
+                if tool_overrides:
+                    apply_parameter_overrides(
                         cast("ToolDefinition", tool_dict),
-                        tool_attachment_parameters,
+                        tool_overrides,
                         server_id=server_id,
                     )
 

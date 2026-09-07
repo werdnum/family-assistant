@@ -2,9 +2,9 @@
 
 MCP servers speak their own schemas: an image parameter is a `string` holding a
 data URI or a filesystem path, never one of our attachment UUIDs. This module
-bridges the two, driven by a per-server ``attachment_parameters`` block that
-names which parameters of which tools carry an attachment and in what form the
-server wants it.
+bridges the two, driven by a per-server ``parameter_overrides`` block that says
+how this deployment wants a tool's parameters adapted: which carry an
+attachment and in what form, and which to hide from the model entirely.
 
 Two hooks, matching the two points where every other provider handles
 attachments:
@@ -43,10 +43,12 @@ logger = logging.getLogger(__name__)
 
 type MCPAttachmentMode = Literal["data_uri", "file_path"]
 
+DROP = "drop"
+
 
 @dataclass(frozen=True, slots=True)
 class AttachmentParameter:
-    """How one configured parameter carries its attachment.
+    """Fill this parameter with an attachment, in the given form.
 
     ``description`` is the operator's, not the server's. A server describes the
     string it used to want, which can contradict the attachment outright --
@@ -58,6 +60,21 @@ class AttachmentParameter:
 
     mode: MCPAttachmentMode
     description: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DroppedParameter:
+    """Hide this parameter from the model.
+
+    A server often offers several ways in and describes each as though the
+    others did not exist. Meshy takes an image as `image_url` *or* `file_path`,
+    and calls the latter "PREFERRED for local files" -- so once `image_url`
+    carries the attachment, the untouched `file_path` actively pulls the model
+    towards the input we want ignored. Dropping it leaves one way in.
+    """
+
+
+type ParameterOverride = AttachmentParameter | DroppedParameter
 
 
 MCP_ATTACHMENT_MODES: frozenset[str] = frozenset({"data_uri", "file_path"})
@@ -73,16 +90,23 @@ FILE_PATH_TRANSPORTS: frozenset[str] = frozenset({"stdio"})
 _UNION_KEYWORDS = ("anyOf", "oneOf")
 
 
-def _parameter_from_config(
+def _override_from_config(
     raw: object, tool_name: str, parameter_name: str
-) -> AttachmentParameter:
-    """Read one parameter entry: a bare mode, or a mapping carrying one."""
+) -> ParameterOverride:
+    """Read one parameter entry.
+
+    Either a bare word -- an attachment mode, or ``drop`` -- or a mapping
+    carrying a mode and an operator description.
+    """
+    if raw == DROP:
+        return DroppedParameter()
+
     description: str | None = None
     if isinstance(raw, Mapping):
         description = raw.get("description")
         if description is not None and not isinstance(description, str):
             msg = (
-                f"attachment_parameters description for "
+                f"parameter_overrides description for "
                 f"{tool_name}.{parameter_name} must be a string"
             )
             raise TypeError(msg)
@@ -91,8 +115,9 @@ def _parameter_from_config(
         mode = raw
     if mode not in MCP_ATTACHMENT_MODES:
         msg = (
-            f"Unknown attachment mode {mode!r} for {tool_name}.{parameter_name}. "
-            f"Expected one of: {', '.join(sorted(MCP_ATTACHMENT_MODES))}."
+            f"Unknown parameter override {mode!r} for "
+            f"{tool_name}.{parameter_name}. Expected one of: "
+            f"{', '.join([*sorted(MCP_ATTACHMENT_MODES), DROP])}."
         )
         raise ValueError(msg)
     return AttachmentParameter(
@@ -100,34 +125,42 @@ def _parameter_from_config(
     )
 
 
-def normalize_attachment_parameters(
+def normalize_parameter_overrides(
     # ast-grep-ignore: no-dict-any - Raw MCP server config is untyped JSON
-    attachment_parameters: Mapping[str, Any] | None,
-) -> dict[str, dict[str, AttachmentParameter]]:
-    """Validate a server's ``attachment_parameters`` block.
-
-    Each parameter is either a bare mode (``image_url: data_uri``) or a mapping
-    carrying that mode and an operator description.
+    parameter_overrides: Mapping[str, Any] | None,
+) -> dict[str, dict[str, ParameterOverride]]:
+    """Validate a server's ``parameter_overrides`` block.
 
     Raises:
-        ValueError: If the block is malformed or names an unknown mode.
+        ValueError: If the block is malformed or names an unknown override.
     """
-    if not attachment_parameters:
+    if not parameter_overrides:
         return {}
 
-    normalized: dict[str, dict[str, AttachmentParameter]] = {}
-    for tool_name, raw_parameters in attachment_parameters.items():
+    normalized: dict[str, dict[str, ParameterOverride]] = {}
+    for tool_name, raw_parameters in parameter_overrides.items():
         if not isinstance(raw_parameters, Mapping):
             msg = (
-                f"attachment_parameters for tool {tool_name!r} must map parameter "
-                f"names to modes, got {type(raw_parameters).__name__}"
+                f"parameter_overrides for tool {tool_name!r} must map parameter "
+                f"names to overrides, got {type(raw_parameters).__name__}"
             )
             raise TypeError(msg)
         normalized[tool_name] = {
-            parameter_name: _parameter_from_config(raw, tool_name, parameter_name)
+            parameter_name: _override_from_config(raw, tool_name, parameter_name)
             for parameter_name, raw in raw_parameters.items()
         }
     return normalized
+
+
+def attachment_parameters_only(
+    overrides: Mapping[str, ParameterOverride],
+) -> dict[str, AttachmentParameter]:
+    """The subset execution cares about: dropped parameters never arrive."""
+    return {
+        name: override
+        for name, override in overrides.items()
+        if isinstance(override, AttachmentParameter)
+    }
 
 
 def file_path_mode_is_supported(transport: str) -> bool:
@@ -170,15 +203,20 @@ def _array_branch(
 _ARRAY_CONSTRAINTS = ("minItems", "maxItems")
 
 
-def overlay_attachment_parameters(
+def apply_parameter_overrides(
     definition: ToolDefinition,
-    parameters: Mapping[str, AttachmentParameter],
+    overrides: Mapping[str, ParameterOverride],
     *,
     server_id: str,
 ) -> None:
-    """Declare configured parameters of ``definition`` attachment-typed, in place.
+    """Adapt a tool's parameters to what this deployment wants, in place.
 
-    The parameter's schema is **replaced**, not decorated: the operator has said
+    A dropped parameter is removed outright, taking any ``required`` entry with
+    it -- advertising a mandatory parameter the model cannot see would leave a
+    schema nothing can satisfy. Whether the *server* still wants it is the
+    operator's call, so this warns rather than refuses.
+
+    For an attachment parameter the schema is **replaced**, not decorated: the operator has said
     this parameter takes an attachment, which makes everything the server
     declared about the string it used to want (a ``format: uri``, a pattern, an
     optional's union) describe a value the model is no longer being asked for.
@@ -202,19 +240,38 @@ def overlay_attachment_parameters(
     tool_name = definition.get("function", {}).get("name", "<unnamed>")
     parameters_schema = definition.get("function", {}).get("parameters", {})
     properties = parameters_schema.get("properties", {})
+    required = parameters_schema.get("required")
 
-    for parameter_name, parameter in parameters.items():
+    for parameter_name, override in overrides.items():
         parameter_schema = properties.get(parameter_name)
         if not isinstance(parameter_schema, Mapping):
             logger.warning(
-                "MCP server %r configures attachment parameter %r on tool %r, "
-                "but the server's schema has no such parameter. Ignoring it.",
+                "MCP server %r overrides parameter %r on tool %r, but the "
+                "server's schema has no such parameter. Ignoring it.",
                 server_id,
                 parameter_name,
                 tool_name,
             )
             continue
 
+        if isinstance(override, DroppedParameter):
+            del properties[parameter_name]
+            if isinstance(required, list) and parameter_name in required:
+                required.remove(parameter_name)
+                logger.warning(
+                    "MCP server %r drops parameter %r on tool %r, which the "
+                    "server marks required. The tool may reject calls that "
+                    "omit it.",
+                    server_id,
+                    parameter_name,
+                    tool_name,
+                )
+            logger.debug(
+                "Dropped %s.%s for MCP server %r", tool_name, parameter_name, server_id
+            )
+            continue
+
+        parameter = override
         array_branch = _array_branch(parameter_schema)
         replacement: ToolPropertySchema = (
             {"type": "attachment"}
