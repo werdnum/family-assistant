@@ -114,15 +114,26 @@ required parameter a chokepoint rather than a convention.
 The pool gains a second kind of worker. A **general** worker dequeues any priority, highest first,
 as today. A **reserved** worker dequeues interactive tasks only. `TaskWorker` already restricts its
 dequeue by the task types it handles; a minimum priority is the same kind of filter, one more
-predicate in the claim query. Reserved workers are built by the same builder with the same handler
-set, so the health monitor's in-place restart works unchanged.
+predicate in the claim query. Reserved workers are built by the same builder, so the health
+monitor's in-place restart works unchanged.
 
-The default becomes two general workers and one reserved worker. Interactive work can use all three;
-background work is confined to the two it has today, so its throughput does not change. The
-in-process deadlock fix that motivated the pool (a delegated run parked on a confirmation, resolved
-by a sibling running the confirmation task) needs at least two workers that can run interactive
-tasks, which any configuration with a general count of at least one and a reserved count of at least
-one satisfies.
+A reserved worker must never be occupied by work that is itself waiting on the queue. A delegated
+profile run can park for up to ten minutes on a human confirmation, and what unparks it is a
+separate `confirmation_tool_execution` task that some worker has to claim; a reserved worker holding
+the parked run could run neither that confirmation nor a reminder that came due meanwhile, and the
+reservation would guarantee nothing. So a reserved worker's handler set is the interactive handlers
+minus those that can park on another queued task. That fact is already declared once, in the
+handler-timeout override table that gives the delegated run its longer budget for exactly this
+reason; the reservation reads the same declaration rather than keeping a second list, so a future
+parking handler gets its timeout and its exclusion together. Parked runs can then occupy only
+general workers, and the reserved worker is always free to run the confirmation that releases them.
+
+The default becomes two general workers and one reserved worker. Interactive work that does not park
+can use all three; parking work and background work are confined to the two general workers, so
+neither loses throughput against today. With both general workers parked on delegated runs and a
+background batch waiting, the reserved worker runs the confirmations that unpark them; the
+in-process deadlock the pool was built to fix therefore stays fixed in every configuration with at
+least one general and one reserved worker.
 
 The reserved count is configuration alongside `task_worker_count`, which is not yet documented in
 `docs/operations/CONFIGURATION_REFERENCE.md` and should be when its sibling is added.
@@ -209,6 +220,10 @@ all.
   aging, no boost.
 - **No preemption.** A background task that holds a general worker keeps it until it finishes or
   times out. Interactive latency is bounded by the reserved worker, not by interrupting anything.
+- **A parked run does not release its worker.** Releasing the slot while waiting would need the run
+  to be resumable from a persisted state, which is a lifecycle the durable-confirmation work may
+  bring for its own reasons. Until then a parked run holds a general worker, and keeping it off the
+  reserved worker is what bounds the damage.
 - **Two levels, not a scale.** The column is an integer so a third level would be a code change
   rather than a migration, but nothing today needs one. A "system" level above interactive, or a
   "bulk" level below background, is machinery for a scenario that has not happened.
@@ -241,8 +256,9 @@ all.
    configuration for the reserved count, the pool construction, the operations documentation for
    both counts, and the lane label on every queue metric. Verified with the pool test fixtures: with
    every general worker parked on a background task, an interactive task starts within the wake
-   latency; a reserved worker never claims a background task; the deadlock test still passes with
-   the default configuration.
+   latency; a reserved worker never claims a background task or a parking one; with every general
+   worker parked on a delegated run, the confirmation that releases one runs on the reserved worker;
+   the deadlock test still passes with the default configuration.
 4. **Retire the workaround's fairness role.** Reword the #1192 delay and jitter to their debounce
    purpose, and update `docs/design/multi-task-worker-pool.md`, which describes the workers as
    interchangeable.
