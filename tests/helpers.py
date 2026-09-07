@@ -46,14 +46,33 @@ async def _tasks_are_complete(
         tasks_table.c.status == "failed",
         tasks_table.c.error.is_not(None),
     )
-    failed_query = select(sql_count(tasks_table.c.id)).where(failure_condition)
+    time_with_fudge = datetime.now(UTC) + timedelta(seconds=30)
+    pending_condition = sa.and_(
+        tasks_table.c.status.notin_(TERMINAL_TASK_STATUSES),
+        sa.or_(
+            tasks_table.c.recurrence_rule.is_(None),
+            sa.and_(
+                tasks_table.c.recurrence_rule.is_not(None),
+                sa.or_(
+                    tasks_table.c.scheduled_at <= time_with_fudge,
+                    tasks_table.c.scheduled_at.is_(None),
+                ),
+            ),
+        ),
+    )
+    # Read both counts in one snapshot: a task can fail between separate reads.
+    query = select(
+        sql_count(tasks_table.c.id).filter(failure_condition).label("failed_count"),
+        sql_count(tasks_table.c.id).filter(pending_condition).label("pending_count"),
+    )
     if task_ids:
-        failed_query = failed_query.where(tasks_table.c.task_id.in_(task_ids))
+        query = query.where(tasks_table.c.task_id.in_(task_ids))
     if task_types:
-        failed_query = failed_query.where(tasks_table.c.task_type.in_(task_types))
-
-    failed_result = await db.execute(failed_query)
-    failed_count = failed_result.scalar_one_or_none()
+        query = query.where(tasks_table.c.task_type.in_(task_types))
+    result = await db.execute(query)
+    counts = result.one()
+    failed_count = counts["failed_count"]
+    pending_count = counts["pending_count"]
 
     if failed_count and failed_count > 0 and not allow_failures:
         failed_task_details_query = select(
@@ -80,46 +99,10 @@ async def _tasks_are_complete(
             f"{failed_count} task(s) failed, but could not retrieve specific error details."
         )
 
-    current_time = datetime.now(UTC)
-    time_with_fudge = current_time + timedelta(seconds=30)
-    query = select(sql_count(tasks_table.c.id)).where(
-        sa.and_(
-            tasks_table.c.status.notin_(TERMINAL_TASK_STATUSES),
-            sa.or_(
-                tasks_table.c.recurrence_rule.is_(None),
-                sa.and_(
-                    tasks_table.c.recurrence_rule.is_not(None),
-                    sa.or_(
-                        tasks_table.c.scheduled_at <= time_with_fudge,
-                        tasks_table.c.scheduled_at.is_(None),
-                    ),
-                ),
-            ),
-        )
-    )
-    if task_ids:
-        query = query.where(tasks_table.c.task_id.in_(task_ids))
-    if task_types:
-        query = query.where(tasks_table.c.task_type.in_(task_types))
-
-    result = await db.execute(query)
-    pending_count = result.scalar_one_or_none()
-
     if pending_count == 0:
         elapsed = (datetime.now(UTC) - start_time).total_seconds()
         logger.info(f"All relevant tasks completed after {elapsed:.2f}s.")
         return True
-    if pending_count is None:
-        if task_ids:
-            logger.info(
-                f"Task count query returned None for specific task IDs {task_ids}. Assuming completion."
-            )
-        else:
-            logger.warning(
-                "Task count query returned None when checking all tasks. Assuming completion or empty table."
-            )
-        return True
-
     logger.debug(f"Waiting for {pending_count} tasks to complete...")
     return False
 
