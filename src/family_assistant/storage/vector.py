@@ -394,6 +394,34 @@ async def get_indexed_content_fingerprints(
     }
 
 
+async def has_embeddings_outside_model(
+    db_context: DatabaseExecutor,
+    *,
+    embedding_type: str,
+    embedding_model: str,
+) -> bool:
+    """Whether stored embeddings of this type were made by some other model.
+
+    Search matches ``embedding_model`` exactly, so a row under a retired model
+    answers nothing. This is how a caller learns that the stored corpus and
+    the configured model have diverged -- after a migration, or after a
+    rollback to a model the corpus has since been re-embedded away from.
+    """
+    stmt = (
+        select(DocumentEmbeddingRecord.id)
+        .where(
+            DocumentEmbeddingRecord.embedding_type == embedding_type,
+            DocumentEmbeddingRecord.embedding_model != embedding_model,
+        )
+        .limit(1)
+    )
+    try:
+        return await db_context.fetch_one(stmt) is not None
+    except SQLAlchemyError as e:
+        logger.exception(f"Database error checking for foreign embeddings: {e}")
+        raise
+
+
 async def get_document_by_id(
     db_context: DatabaseExecutor,
     document_id: int,  # Added context and id

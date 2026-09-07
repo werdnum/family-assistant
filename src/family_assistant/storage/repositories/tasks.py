@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
-from sqlalchemy import and_, case, insert, null, or_, select, update
+from sqlalchemy import and_, case, delete, insert, null, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -242,6 +242,20 @@ class TasksRepository(BaseRepository):
         except SQLAlchemyError as e:
             logger.exception(f"Database error enqueueing task {task_id}: {e}")
             raise
+
+    async def delete_finished(self, task_id: str) -> bool:
+        """Remove a task row only if its occurrence is over.
+
+        Pairs with ``only_if_absent``: seeding is idempotent because the row
+        exists, so a caller that genuinely needs the work redone clears the
+        finished row first. A pending or running occurrence is left alone --
+        it is already doing the work, and deleting it would lose its cursor.
+        """
+        stmt = delete(tasks_table).where(
+            tasks_table.c.task_id == task_id,
+            tasks_table.c.status.in_(TERMINAL_TASK_STATUSES),
+        )
+        return (await self._db.execute(stmt)).rowcount > 0
 
     async def dequeue(
         self,

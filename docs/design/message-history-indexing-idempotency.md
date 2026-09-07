@@ -44,11 +44,15 @@ per-turn task, a retry, a future caller — costs a database read instead of an 
 upstream has to be careful.
 
 Including `embedding_model` in the identity is what makes a model migration work, and it has to
-reach the backfill's seed as well as the fingerprint. Search matches `embedding_model` exactly, so
-turns embedded under a retired model stop answering queries; a seed-once backfill that ignored the
-model would leave that history silently unsearchable with nothing queued to repair it. The seed's id
-therefore carries the model, so configuring a new one seeds a new walk that finds every fingerprint
-stale and re-indexes the corpus under it.
+reach the backfill as well as the fingerprint — see below. Search matches `embedding_model` exactly,
+so turns embedded under a retired model answer nothing.
+
+The identity is only as good as what that column records, which is the model's *name*. A
+configuration that moves the embedding space while keeping the name — changing
+`EMBEDDING_DIMENSIONS`, say — is invisible to it, and to everything else keyed on that column: the
+document, email and note indexers share the gap. Recording the space rather than the name is the
+real fix, and it is a change to a stored value with a corpus-wide re-index behind it, so it belongs
+in its own change. Until then `force` (below) is the supported way to rebuild.
 
 ### The backfill is seeded once, not on every start
 
@@ -61,8 +65,34 @@ The cursor then needs no separate home. A batch enqueues its own continuation ca
 and the next process picks it up. Retries re-run the same batch rather than the whole history, and
 with content identity in place a re-run of an already-indexed batch is free.
 
-Re-indexing after a change to the *indexed text* — which the seed id does not carry — is then an
-explicit act: delete the task row.
+What decides whether the walk runs again is the corpus, not a count of how many times it has run. If
+any stored turn was embedded by a model other than the configured one, that turn answers no query,
+and a *finished* seed is cleared so the walk runs again; a pending or running one is never touched,
+so a restart mid-migration resumes rather than rewinding. Reading the state is what makes a rollback
+work — returning to a model the corpus has since been re-embedded away from needs the same repair as
+moving to a new one, and a seed keyed on the model name would call that already done.
+
+For the changes the model name cannot show — the indexed text, or an embedding space that moved
+under a name that stayed put — the walk takes `force`, which skips the fingerprint and re-embeds
+what it visits. That is the supported way to rebuild the corpus.
+
+Neither the seed nor its continuations are enqueued *unscheduled*. Dequeue orders by `scheduled_at`
+with nulls first, so an unscheduled task outranks every scheduled one however long that one has been
+due — and because a batch enqueues its continuation from inside its predecessor's handler, the chain
+keeps such a row in front of the queue for the whole walk. In one incident that held every scheduled
+task for 96 minutes with no backlog to see, since the chain regenerates exactly one row at exactly
+the moment it matters.
+
+They are scheduled for *now*, not for later. Carrying a timestamp is what takes them out of the
+nulls-first group; delaying them would multiply, because the walk is a chain — thirty seconds across
+a corpus that re-embeds in four thousand batches is a day and a half. Due-now tasks run at full
+speed and take their turn by due time, which is what lets a poll that has been due for forty minutes
+go first.
+
+This is a stopgap confined to the enqueue sites here. Ordering the whole queue by due time and
+giving it priority lanes is [task-queue-priority-lanes.md](task-queue-priority-lanes.md), which
+retires the fairness role of these timestamps and of the per-row delay, leaving the latter its
+debounce purpose.
 
 ### Per-turn indexing waits for the turn to finish
 
@@ -91,6 +121,12 @@ two workers both find it empty rather than closing it.
   ratio cannot show it either — a stopped walk emits no samples, which reads exactly like an idle
   deployment. What is bounded is the damage: the per-turn tasks keep indexing new conversations, so
   a dead chain costs coverage of old history, not of anything current.
+- **A configuration change that keeps the model's name is not detected.** The fingerprint and the
+  corpus check both compare `embedding_model`, which holds a name, not an embedding space. Changing
+  `EMBEDDING_DIMENSIONS` alone therefore leaves stored vectors looking current, and pgvector raises
+  a dimension error on query until the corpus is rebuilt with `force`. The failure is loud rather
+  than silent, and the gap predates this change and is shared by every indexer; closing it means
+  recording the space in the stored column, which is a migration of its own.
 - **Embedding requests are still one text per call.** Batching reduces request overhead but not
   billed units, and the per-provider batch limits are a live failure risk; it is a throughput change
   to make on its own evidence, not part of this fix.
@@ -99,9 +135,13 @@ two workers both find it empty rather than closing it.
 
 - Indexing the same turn twice issues one embedding call; changing the turn's content issues a
   second.
-- Changing the embedding model re-embeds content whose text did not change, and seeds a distinct
-  backfill rather than reusing the finished one.
-- A second startup seed leaves an existing backfill task's payload and status untouched.
+- Changing the embedding model re-embeds content whose text did not change, and clears a finished
+  backfill so the corpus is re-indexed under it — including on a rollback to an earlier model.
+- A second startup seed leaves an existing backfill task's payload and status untouched, and one
+  issued mid-migration does not rewind the walk's cursor.
+- Every background indexing task carries a `scheduled_at`, so none of them can outrank scheduled
+  work.
+- `force` re-embeds a turn the fingerprint considers current.
 - A generator whose result disagrees with its own `model_name` fails the batch loudly, rather than
   re-embedding the corpus on every pass because no fingerprint can match.
 - `family_assistant_indexing_documents{source_type, outcome}` counts `embedded` against

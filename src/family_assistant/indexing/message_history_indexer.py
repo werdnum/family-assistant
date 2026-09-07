@@ -7,6 +7,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from family_assistant.observability.metrics import record_indexing_documents
@@ -14,11 +15,10 @@ from family_assistant.storage.vector import (
     add_document,
     add_embedding,
     get_indexed_content_fingerprints,
+    has_embeddings_outside_model,
 )
 
 if TYPE_CHECKING:
-    from datetime import datetime
-
     from family_assistant.storage.database import Database, DatabaseTransaction
     from family_assistant.storage.types import MessageHistoryRow
     from family_assistant.tools.types import ToolExecutionContext
@@ -39,6 +39,7 @@ class MessageHistoryIndexBatchPayload(TypedDict, total=False):
     internal_id: int
     after_internal_id: int
     limit: int
+    force: bool
 
 
 @dataclass(frozen=True)
@@ -57,27 +58,13 @@ class MessageHistoryDocument:
     id: int | None = None
 
 
-def message_history_backfill_task_id(embedding_model: str) -> str:
-    """The backfill seed's id, which carries the model it will index under.
-
-    The model is part of the seed's identity for the same reason it is part of
-    a stored embedding's: search matches on ``embedding_model`` exactly, so
-    turns embedded under a retired model stop answering queries. Keying the
-    seed this way means configuring a new model seeds a new walk, which finds
-    every fingerprint stale and re-indexes the corpus under it. Without that,
-    a seed-once backfill would leave old history silently unsearchable with
-    nothing queued to repair it.
-    """
-    return f"{MESSAGE_HISTORY_BACKFILL_TASK_ID}_{embedding_model}"
-
-
 async def enqueue_message_history_backfill_task(
     db_context: Database,
     *,
     embedding_model: str,
     limit: int = DEFAULT_MESSAGE_HISTORY_INDEX_BATCH_SIZE,
 ) -> None:
-    """Ensure existing message history gets a one-time semantic-search backfill.
+    """Ensure existing message history gets a semantic-search backfill.
 
     Seeded, not upserted. The walk carries its cursor forward in the payload of
     the continuation it enqueues for itself, so the default system-task upsert
@@ -85,17 +72,62 @@ async def enqueue_message_history_backfill_task(
     the whole corpus on every process start, and a deployment would pay to
     re-embed history it had already embedded.
 
-    A change to the *model* re-seeds on its own, because the model is part of
-    the seed's id. A change to the indexed text does not, and re-running the
-    walk for one means removing this task row.
+    What decides whether the walk runs again is the corpus, not a count of how
+    many times it has run: if any stored turn was embedded by a different model
+    than the one configured now, that turn answers no query, and a finished
+    walk is cleared so it runs again. Reading the state rather than encoding
+    the model in the seed's identity is what makes a rollback work -- returning
+    to a model the corpus has since been re-embedded away from needs the same
+    repair as moving to a new one, and an id keyed on the model would call it
+    already done.
+
+    An occurrence that is still pending or running is never disturbed, so a
+    restart mid-migration resumes rather than rewinding.
     """
+    if await has_embeddings_outside_model(
+        db_context,
+        embedding_type=MESSAGE_TURN_EMBEDDING_TYPE,
+        embedding_model=embedding_model,
+    ) and await db_context.tasks.delete_finished(MESSAGE_HISTORY_BACKFILL_TASK_ID):
+        logger.info(
+            "Message history holds turns embedded by a model other than "
+            "%s; queueing the backfill to re-index them.",
+            embedding_model,
+        )
+
     await db_context.tasks.enqueue(
-        task_id=message_history_backfill_task_id(embedding_model),
+        task_id=MESSAGE_HISTORY_BACKFILL_TASK_ID,
         task_type="index_message_history_batch",
         payload={"limit": limit},
         max_retries_override=5,
         only_if_absent=True,
+        scheduled_at=_background_index_due_now(),
     )
+
+
+def _background_index_due_now() -> datetime:
+    """Due immediately, but *scheduled* -- which is not the same thing here.
+
+    Dequeue orders by ``scheduled_at`` with nulls first, so an unscheduled task
+    outranks every scheduled one however long that one has been due. A backfill
+    enqueues its own continuation from inside its predecessor's handler, so the
+    chain keeps a null-scheduled row in front of the queue for the whole walk:
+    in one incident that held every scheduled task -- delegation polls, the
+    hourly cleanup -- for 96 minutes, with no backlog to see, because the chain
+    regenerates exactly one row at exactly the moment it matters.
+
+    Carrying a timestamp is the whole fix; delaying is not. The walk is a
+    chain, so any per-batch delay multiplies -- thirty seconds across a corpus
+    that re-embeds in four thousand batches is a day and a half. A task due now
+    runs at full speed and simply takes its turn by due time, which is what
+    lets a poll that has been due for forty minutes go first.
+
+    This is a stopgap for the enqueue sites this change touches. Ordering the
+    queue by due time and giving it priority lanes is
+    docs/design/task-queue-priority-lanes.md, which retires the fairness role
+    of these timestamps and of the per-row delay.
+    """
+    return datetime.now(UTC)
 
 
 @dataclass(frozen=True)
@@ -145,6 +177,8 @@ async def _select_candidates_needing_embedding(
     db_context: Database,
     candidates: list[_TurnIndexCandidate],
     embedding_model: str,
+    *,
+    force: bool = False,
 ) -> list[_TurnIndexCandidate]:
     """Drop candidates whose stored embedding already covers this text and model.
 
@@ -158,11 +192,20 @@ async def _select_candidates_needing_embedding(
     sibling tasks close enough together both see no fingerprint and both
     embed, which bounds the waste at the number of workers rather than
     eliminating it -- see the design doc's deliberate simplifications.
+
+    ``force`` is the operator's way past the check, for the changes it cannot
+    see: the fingerprint compares the model's name, so a rebuild after the
+    indexed text changes, or after the embedding space moves under a name that
+    stayed the same, has to be asked for.
     """
-    fingerprints = await get_indexed_content_fingerprints(
-        db_context,
-        source_ids=[candidate.source_id for candidate in candidates],
-        embedding_type=MESSAGE_TURN_EMBEDDING_TYPE,
+    fingerprints = (
+        {}
+        if force
+        else await get_indexed_content_fingerprints(
+            db_context,
+            source_ids=[candidate.source_id for candidate in candidates],
+            embedding_type=MESSAGE_TURN_EMBEDDING_TYPE,
+        )
     )
     stale: list[_TurnIndexCandidate] = []
     for candidate in candidates:
@@ -254,6 +297,7 @@ async def handle_index_message_history_batch(
         db_context,
         candidates,
         embedding_generator.model_name,
+        force=payload.get("force", False),
     ):
         # Generate embeddings BEFORE the transaction block — this is a network
         # call and must not hold a database transaction.
@@ -292,8 +336,10 @@ async def handle_index_message_history_batch(
             payload={
                 "after_internal_id": next_after_internal_id,
                 "limit": limit,
+                "force": payload.get("force", False),
             },
             max_retries_override=5,
+            scheduled_at=_background_index_due_now(),
         )
 
 

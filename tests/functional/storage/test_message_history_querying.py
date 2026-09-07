@@ -16,9 +16,9 @@ from family_assistant.embeddings import (
     MockEmbeddingGenerator,
 )
 from family_assistant.indexing.message_history_indexer import (
+    MESSAGE_HISTORY_BACKFILL_TASK_ID,
     enqueue_message_history_backfill_task,
     handle_index_message_history_batch,
-    message_history_backfill_task_id,
 )
 from family_assistant.llm.messages import (
     AssistantMessage,
@@ -995,7 +995,7 @@ async def test_message_history_backfill_task_is_seeded_as_system_task(
 
     task_row = await db.fetch_one(
         select(tasks_table).where(
-            tasks_table.c.task_id == message_history_backfill_task_id("embedding-v1")
+            tasks_table.c.task_id == MESSAGE_HISTORY_BACKFILL_TASK_ID
         )
     )
 
@@ -1017,7 +1017,7 @@ async def test_message_history_backfill_seed_leaves_a_walk_in_progress_alone(
     re-embed all of it -- which is what the embedding bill showed.
     """
     db = Database(engine=db_engine)
-    task_id = message_history_backfill_task_id("embedding-v1")
+    task_id = MESSAGE_HISTORY_BACKFILL_TASK_ID
     await enqueue_message_history_backfill_task(
         db, embedding_model="embedding-v1", limit=17
     )
@@ -1041,36 +1041,142 @@ async def test_message_history_backfill_seed_leaves_a_walk_in_progress_alone(
 
 
 @pytest.mark.asyncio
-async def test_message_history_backfill_reseeds_under_a_new_embedding_model(
+async def test_message_history_backfill_reruns_when_the_corpus_uses_another_model(
     db_engine: AsyncEngine,
 ) -> None:
-    """A model change seeds its own walk, so old history is re-indexed under it.
+    """A finished walk is cleared when stored turns answer to a different model.
 
-    Semantic search matches `embedding_model` exactly. Left to the finished
-    seed alone, turns embedded under the retired model would stop answering
-    queries with nothing queued to repair them.
+    Search matches `embedding_model` exactly, so those turns answer nothing.
+    Reading the corpus rather than keying the seed on the model is what makes
+    a rollback work too: returning to a model the corpus has since been
+    re-embedded away from needs the same repair as moving to a new one.
     """
     db = Database(engine=db_engine)
+    await _store_user_message(
+        db,
+        conversation_id="current",
+        user_id="user-a",
+        content="Indexed under the old model",
+        timestamp=datetime.now(UTC),
+        turn_id="turn-migrated",
+    )
+    await _index_turn(db, _CountingEmbeddingGenerator("embedding-v1"), "turn-migrated")
+
     await enqueue_message_history_backfill_task(db, embedding_model="embedding-v1")
     await db.execute(
         tasks_table
         .update()
-        .where(
-            tasks_table.c.task_id == message_history_backfill_task_id("embedding-v1")
-        )
-        .values(status="done")
+        .where(tasks_table.c.task_id == MESSAGE_HISTORY_BACKFILL_TASK_ID)
+        .values(status="done", payload={"limit": 50, "after_internal_id": 4200})
     )
 
     await enqueue_message_history_backfill_task(db, embedding_model="embedding-v2")
 
-    successor = await db.fetch_one(
+    task_row = await db.fetch_one(
         select(tasks_table).where(
-            tasks_table.c.task_id == message_history_backfill_task_id("embedding-v2")
+            tasks_table.c.task_id == MESSAGE_HISTORY_BACKFILL_TASK_ID
         )
     )
-    assert successor is not None
-    assert successor["status"] == "pending"
-    assert successor["payload"] == {"limit": 50}
+    assert task_row is not None
+    assert task_row["status"] == "pending"
+    assert task_row["payload"] == {"limit": 50}, "the walk restarts from the top"
+
+
+@pytest.mark.asyncio
+async def test_message_history_backfill_leaves_a_running_migration_alone(
+    db_engine: AsyncEngine,
+) -> None:
+    """A restart mid-migration resumes the walk rather than rewinding it."""
+    db = Database(engine=db_engine)
+    await _store_user_message(
+        db,
+        conversation_id="current",
+        user_id="user-a",
+        content="Indexed under the old model",
+        timestamp=datetime.now(UTC),
+        turn_id="turn-migrating",
+    )
+    await _index_turn(db, _CountingEmbeddingGenerator("embedding-v1"), "turn-migrating")
+
+    await enqueue_message_history_backfill_task(db, embedding_model="embedding-v2")
+    await db.execute(
+        tasks_table
+        .update()
+        .where(tasks_table.c.task_id == MESSAGE_HISTORY_BACKFILL_TASK_ID)
+        .values(payload={"limit": 50, "after_internal_id": 4200})
+    )
+
+    await enqueue_message_history_backfill_task(db, embedding_model="embedding-v2")
+
+    task_row = await db.fetch_one(
+        select(tasks_table).where(
+            tasks_table.c.task_id == MESSAGE_HISTORY_BACKFILL_TASK_ID
+        )
+    )
+    assert task_row is not None
+    assert task_row["payload"] == {"limit": 50, "after_internal_id": 4200}
+
+
+@pytest.mark.asyncio
+async def test_background_indexing_never_enqueues_ahead_of_scheduled_work(
+    db_engine: AsyncEngine,
+) -> None:
+    """Backfill tasks carry a scheduled time so they cannot starve the queue.
+
+    Dequeue orders by `scheduled_at` with nulls first, so an unscheduled task
+    outranks every scheduled one. A backfill is a long chain of them, and left
+    unscheduled it would sit in front of reminders and automations for as long
+    as the walk lasts.
+    """
+    db = Database(engine=db_engine)
+    await _store_user_message(
+        db,
+        conversation_id="current",
+        user_id="user-a",
+        content="Seed content",
+        timestamp=datetime.now(UTC),
+        turn_id="turn-scheduled",
+    )
+    await enqueue_message_history_backfill_task(db, embedding_model="embedding-v1")
+    await handle_index_message_history_batch(
+        _build_exec_context(db, embedding_generator=_CountingEmbeddingGenerator()),
+        {"limit": 50},
+    )
+
+    rows = await db.fetch_all(
+        select(tasks_table).where(
+            tasks_table.c.task_type == "index_message_history_batch"
+        )
+    )
+    assert rows
+    assert all(row["scheduled_at"] is not None for row in rows), (
+        "every background indexing task must be scheduled, never immediate"
+    )
+
+
+@pytest.mark.asyncio
+async def test_forced_backfill_reembeds_content_the_fingerprint_calls_current(
+    db_engine: AsyncEngine,
+) -> None:
+    """`force` is the way to rebuild after a change the fingerprint cannot see."""
+    db = Database(engine=db_engine)
+    await _store_user_message(
+        db,
+        conversation_id="current",
+        user_id="user-a",
+        content="Where are the passports?",
+        timestamp=datetime.now(UTC),
+        turn_id="turn-forced",
+    )
+    generator = _CountingEmbeddingGenerator()
+    await _index_turn(db, generator, "turn-forced")
+
+    await handle_index_message_history_batch(
+        _build_exec_context(db, embedding_generator=generator),
+        {"turn_id": "turn-forced", "force": True},
+    )
+
+    assert len(generator.embedded_texts) == 2
 
 
 @pytest.mark.asyncio
