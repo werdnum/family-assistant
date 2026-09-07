@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import base64
+import tempfile
 import uuid
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
+from unittest import mock
 from zoneinfo import ZoneInfo
 
 import anyio
@@ -142,6 +144,7 @@ def test_configured_parameter_is_advertised_as_an_attachment_uuid() -> None:
     assert image_url["type"] == "attachment"
     # A `format: uri` left in place would contradict the UUID we now ask for.
     assert "format" not in image_url
+    assert image_url["description"] == "Image to convert"
     assert _properties(definitions, "meshy_image_to_3d")["should_texture"] == {
         "type": "boolean"
     }
@@ -462,3 +465,138 @@ async def test_a_file_path_is_still_readable_while_the_server_is_called() -> Non
 
     assert seen
     assert not await seen[0].exists()
+
+
+def _optional_list_tool() -> Tool:
+    """What FastMCP emits for an optional `list[str]`: a union, with no outer type."""
+    return Tool(
+        name="meshy_multi_image_to_3d",
+        description="Turn several images into a 3D model",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "image_urls": {
+                    "anyOf": [
+                        {"type": "array", "items": {"type": "string"}},
+                        {"type": "null"},
+                    ],
+                    "default": None,
+                }
+            },
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_optional_array_stays_a_satisfiable_schema() -> None:
+    """A union-wrapped array must not end up advertised as a string AND an array."""
+    provider = _provider({"meshy_multi_image_to_3d": {"image_urls": "data_uri"}})
+    tools = [_optional_list_tool()]
+    definitions = provider._format_mcp_definitions_to_dicts(tools, SERVER_ID)
+    provider._register_server_tools(
+        SERVER_ID,
+        definitions,
+        provider._build_mcp_descriptors(
+            server_id=SERVER_ID, definitions=definitions, discovered_tools=tools
+        ),
+    )
+    provider._initialized = True
+
+    advertised = _properties(
+        list(await provider.get_tool_definitions()), "meshy_multi_image_to_3d"
+    )["image_urls"]
+
+    assert advertised["type"] == "array"
+    assert advertised["items"]["type"] == "string"
+    # The union described the string the server used to want; keeping it beside
+    # the array we now ask for would leave the model nothing it could satisfy.
+    assert "anyOf" not in advertised
+
+
+def test_the_list_form_of_a_nullable_type_is_read_as_an_array() -> None:
+    """`type: ["array", "null"]` is the other legal spelling of an optional list."""
+    provider = _provider({"t": {"p": "data_uri"}})
+    tool = Tool(
+        name="t",
+        description="d",
+        inputSchema={
+            "type": "object",
+            "properties": {"p": {"type": ["array", "null"], "items": {}}},
+        },
+    )
+
+    definitions = provider._format_mcp_definitions_to_dicts([tool], SERVER_ID)
+
+    parameter = _properties(definitions, "t")["p"]
+    assert parameter["type"] == "array"
+    assert parameter["items"]["type"] == "attachment"
+
+
+@pytest.mark.asyncio
+async def test_a_non_attachment_in_an_array_is_refused() -> None:
+    """An unresolved element must not reach the server as the string it is."""
+    with pytest.raises(ValueError, match="not a valid attachment UUID"):
+        async with materialised_attachment_arguments(
+            {"image_urls": [_attachment(), "https://attacker.invalid/x.png"]},
+            {"image_urls": "data_uri"},
+        ):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_a_non_attachment_scalar_is_refused() -> None:
+    with pytest.raises(ValueError, match="not a valid attachment UUID"):
+        async with materialised_attachment_arguments(
+            {"image_url": "https://attacker.invalid/x.png"},
+            {"image_url": "data_uri"},
+        ):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_a_null_optional_attachment_passes_through() -> None:
+    """Declining to pass an optional attachment is the server's business."""
+    async with materialised_attachment_arguments(
+        {"image_url": None}, {"image_url": "data_uri"}
+    ) as materialised:
+        assert materialised == {"image_url": None}
+
+
+@pytest.mark.asyncio
+async def test_data_uri_mode_touches_no_filesystem() -> None:
+    """The mode that needs no files must not create (and then remove) a directory."""
+    attachment = _attachment()
+    created: list[str] = []
+    real_mkdtemp = tempfile.mkdtemp
+
+    def recording_mkdtemp(*args: object, **kwargs: object) -> str:
+        path = real_mkdtemp(*args, **kwargs)  # type: ignore[arg-type]
+        created.append(path)
+        return path
+
+    with mock.patch.object(tempfile, "mkdtemp", recording_mkdtemp):
+        async with materialised_attachment_arguments(
+            {"image_url": attachment}, {"image_url": "data_uri"}
+        ) as materialised:
+            assert materialised["image_url"].startswith("data:image/png;base64,")
+
+    assert created == []
+
+
+@pytest.mark.asyncio
+async def test_an_unresolved_array_element_is_reported_not_forwarded() -> None:
+    """The whole call fails; nothing partial reaches the server."""
+    attachment = _attachment()
+    provider, calls = await _connected_provider(
+        {"meshy_multi_image_to_3d": {"image_urls": "data_uri"}},
+        [_multi_image_tool()],
+    )
+
+    result = await provider.execute_tool(
+        "meshy_multi_image_to_3d",
+        {"image_urls": [attachment.get_id(), "https://attacker.invalid/x.png"]},
+        _execution_context(_registry_serving(attachment)),
+    )
+
+    assert "Error" in result
+    assert calls == []

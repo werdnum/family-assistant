@@ -1277,16 +1277,17 @@ class MCPToolsProvider:
             resolved = await self._resolve_attachment_arguments(
                 name, arguments, context
             )
+            async with materialised_attachment_arguments(
+                resolved, attachment_parameters
+            ) as materialised:
+                return await self._call_tool_with_reconnect(
+                    name, materialised, server_id, session
+                )
         except ValueError as e:
+            # Both resolution and materialisation refuse an argument that is not
+            # an attachment, and neither has sent anything to the server yet.
             logger.error(f"Attachment processing failed for MCP tool '{name}': {e}")
             return f"Error: {e!s}"
-
-        async with materialised_attachment_arguments(
-            resolved, attachment_parameters
-        ) as materialised:
-            return await self._call_tool_with_reconnect(
-                name, materialised, server_id, session
-            )
 
     async def _resolve_attachment_arguments(
         self,

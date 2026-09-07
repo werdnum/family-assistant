@@ -2730,9 +2730,15 @@ meshy:
 ```
 
 A named parameter is advertised to the model as an attachment UUID — the same shape a built-in tool
-that takes an attachment uses — rather than as whatever string format the server declared. At call
-time the UUID is resolved under the acting user's own access (an attachment they cannot reach is an
-error, and nothing is sent to the server) and rendered in the configured mode:
+that takes an attachment uses. Its schema is **replaced**, not decorated: whatever the server
+declared about the string it used to want (a `format: uri`, a pattern, an optional's `anyOf`) no
+longer describes the value the model supplies, and only the description and the shape (one
+attachment or a list of them) carry over. Optionality is unaffected — that lives in the schema's
+`required` list.
+
+At call time the UUID is resolved under the acting user's own access and rendered in the configured
+mode. Anything that is not an attachment the user can reach is an error, and the call is not made: a
+parameter configured as an attachment never forwards a model-supplied string to the server.
 
 - `data_uri` — the attachment's bytes inline as `data:<mime>;base64,...`. Works for every transport.
 - `file_path` — the bytes are written to a temporary file and its path is passed. The file is
