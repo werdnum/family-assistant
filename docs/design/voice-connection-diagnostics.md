@@ -8,9 +8,9 @@ the existing error reporter: lifecycle observations use the telemetry lane; fail
 lane. A startup deadline covers token retrieval through setup acknowledgement, but not the user's
 microphone permission decision. API version, tools and voice protocol remain unchanged.
 
-Transport adapters observe their native connection callbacks. iOS records WebSocket open/close, HTTP
-response status when available, and structured error codes. watchOS records Network framework states
-and received close frames. Setup size and function count are numbers, never setup contents.
+Transport adapters observe their native connection callbacks. Both iOS and watchOS use
+`URLSessionGeminiLiveSocket` to record WebSocket open/close, HTTP response status when available,
+and structured error codes. Setup size and function count are numbers, never setup contents.
 
 ## Privacy and deliberate limits
 

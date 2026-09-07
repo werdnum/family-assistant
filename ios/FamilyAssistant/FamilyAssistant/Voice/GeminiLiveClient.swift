@@ -50,12 +50,12 @@ final class GeminiLiveClient {
     ) {
         self.diagnostics = diagnostics
         self.host = host
+        // watchOS included: low-level Network framework connections are denied by
+        // policy on the watch unless the app qualifies for the streaming-audio
+        // exception, and they are never carried over the companion iPhone link.
+        // URLSession is the transport watchOS proxies and permits.
         self.socketFactory = socketFactory ?? { url in
-            #if os(watchOS)
-                NetworkGeminiLiveSocket(url: url, diagnostics: diagnostics)
-            #else
-                URLSessionGeminiLiveSocket(url: url, diagnostics: diagnostics)
-            #endif
+            URLSessionGeminiLiveSocket(url: url, diagnostics: diagnostics)
         }
         (events, continuation) = AsyncStream.makeStream(of: GeminiLiveServerEvent.self)
     }
