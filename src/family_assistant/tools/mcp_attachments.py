@@ -30,8 +30,6 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-import anyio
-
 from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.tools.attachment_utils import is_attachment_id
 
@@ -233,13 +231,25 @@ def reject_unresolvable_attachment_arguments(
             raise ValueError(msg)
 
 
-def _suffix_for(attachment: ScriptAttachment) -> str:
-    filename = attachment.get_filename()
-    if filename:
-        suffix = Path(filename).suffix
-        if suffix:
-            return suffix
-    return mimetypes.guess_extension(attachment.get_mime_type()) or ""
+def _write_attachment_file(
+    directory: str,
+    attachment_id: str,
+    filename: str | None,
+    mime_type: str,
+    content: bytes,
+) -> str:
+    """Name and write the attachment's file. Runs in a worker thread.
+
+    Both halves are filesystem work and belong on the same hop off the event
+    loop: ``mimetypes.guess_extension`` initialises its database on first use by
+    reading the system MIME files, and the write is a write.
+    """
+    suffix = Path(filename).suffix if filename else ""
+    if not suffix:
+        suffix = mimetypes.guess_extension(mime_type) or ""
+    path = Path(directory) / f"{attachment_id}{suffix}"
+    path.write_bytes(content)
+    return str(path)
 
 
 def _encode_data_uri(mime_type: str, content: bytes) -> str:
@@ -258,12 +268,12 @@ class _TempDirectory:
     def __init__(self) -> None:
         self._path: str | None = None
 
-    async def path(self) -> anyio.Path:
+    async def path(self) -> str:
         if self._path is None:
             self._path = await asyncio.to_thread(
                 tempfile.mkdtemp, prefix="fa-mcp-attachment-"
             )
-        return anyio.Path(self._path)
+        return self._path
 
     async def cleanup(self) -> None:
         """Remove the directory, reporting rather than hiding a failure.
@@ -300,9 +310,14 @@ async def _materialise(
         return await asyncio.to_thread(
             _encode_data_uri, attachment.get_mime_type(), content
         )
-    path = await directory.path() / f"{attachment.get_id()}{_suffix_for(attachment)}"
-    await path.write_bytes(content)
-    return str(path)
+    return await asyncio.to_thread(
+        _write_attachment_file,
+        await directory.path(),
+        attachment.get_id(),
+        attachment.get_filename(),
+        attachment.get_mime_type(),
+        content,
+    )
 
 
 def _reject_unresolved(
