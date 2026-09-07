@@ -31,6 +31,7 @@ just the part you need.
 | [automations.md](automations.md)                     | Automations that react to events or run on a schedule                    |
 | [research-and-browsing.md](research-and-browsing.md) | Web search, page summaries, browsing sites, and deep research            |
 | [media.md](media.md)                                 | Analysing photos, and generating or editing images and video             |
+| [3d-models.md](3d-models.md)                         | Generating 3D models from text or photos, and preparing them to print    |
 | [shopping.md](shopping.md)                           | Finding products online and getting a checkout link                      |
 
 ## Deeper dives

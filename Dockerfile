@@ -34,6 +34,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 ARG BRAVE_SEARCH_MCP_VERSION=2.1.3
 RUN npm install --global "@brave/brave-search-mcp-server@${BRAVE_SEARCH_MCP_VERSION}"
 
+# Install the Meshy AI 3D-generation MCP server, pinned for the same reason as the Brave
+# server above: `npx @meshy-ai/meshy-mcp-server` would resolve the package from npm inside
+# the MCP initialization timeout, on every startup.
+ARG MESHY_MCP_VERSION=0.5.1
+RUN npm install --global "@meshy-ai/meshy-mcp-server@${MESHY_MCP_VERSION}"
+
 # Set working directory and prepare directories with proper permissions
 WORKDIR /app
 

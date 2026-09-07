@@ -426,6 +426,32 @@ mcp_config:
         - "npm:@modelcontextprotocol/server-google-maps"
       env:
         GOOGLE_MAPS_API_KEY: "$GOOGLE_MAPS_API_KEY"
+    meshy:
+      # Meshy AI text/image-to-3D generation. As for brave, invoke the globally installed,
+      # pinned entry point (see Dockerfile) rather than resolving the package at MCP
+      # startup, which would pick up whatever version is current on npm inside the MCP
+      # initialization timeout.
+      #
+      # This server validates MESHY_API_KEY against api.meshy.ai during initialization and
+      # exits if it is missing or rejected, so a deployment without the key reports the
+      # server as failed rather than failing at the first tool call.
+      command: "meshy-mcp-server"
+      env:
+        MESHY_API_KEY: "$MESHY_API_KEY"
+      # Almost every tool here starts a job that spends Meshy credits, so the wildcard
+      # baseline is the paying one and the confirm rule below keys off it: a tool a future
+      # Meshy release adds confirms rather than silently billing. The generation tools take
+      # a prompt and a style against a fixed vendor endpoint with no recipient argument,
+      # which is what low_bandwidth_external denotes -- the same shape as the built-in
+      # generate_image. A deployment overrides individual tools by name (an exact name wins
+      # over "*"); see the family-assistant block in kube-config for the free reads and for
+      # the three tools that take a model-supplied image_url and are external_comm.
+      tool_metadata:
+        "*":
+          - "state_changing"
+          - "low_bandwidth_external"
+          - "media"
+          - "output_untrusted"
 # --- Notes Configuration ---
 # Controls default visibility labels applied to new notes.
 notes_config:
@@ -681,6 +707,7 @@ default_profile_settings:
       - "ucp_transfer_checkout_to_human"
     on_demand_mcp_server_ids:
       - "homeassistant"
+      - "meshy"
   tools_policy:
     default_decision: "deny"
     rules:
@@ -762,8 +789,19 @@ default_profile_settings:
             - "brave"
             - "homeassistant"
             - "google-maps"
+            - "meshy"
         decision: "allow"
         priority: 10
+      # A Meshy tool that changes something also spends credits (1 for a convert or resize,
+      # 10 for a topology repair, more for a generation), so confirm those; the status,
+      # listing and balance reads a deployment retags read_only stay on the allow above.
+      - match:
+          mcp_server_ids:
+            - "meshy"
+          tags_any:
+            - "state_changing"
+        decision: "confirm"
+        priority: 20
       - match:
           names:
             - "delegate_to_service"

@@ -1995,6 +1995,25 @@ Used by the Google Maps MCP server.
 
 ______________________________________________________________________
 
+### MESHY_API_KEY
+
+Meshy AI API key for 3D model generation.
+
+| Property  | Value               |
+| --------- | ------------------- |
+| Required  | Yes (for Meshy MCP) |
+| Default   | None                |
+| Sensitive | **Yes**             |
+| Example   | `msy_...`           |
+
+Used by the Meshy MCP server. Unlike the other MCP keys, this one is validated against
+`api.meshy.ai` while MCP servers initialize: without it — or with a rejected key — the server exits
+and reports as failed, rather than failing at the first tool call. Its 24 tools are worth listing in
+`on_demand_mcp_server_ids`, and all but the status, listing and balance tools spend Meshy credits,
+so a `confirm` rule matching `state_changing` on the `meshy` server is the usual deployment.
+
+______________________________________________________________________
+
 ### WILLYWEATHER_API_KEY
 
 WillyWeather API key for Australian weather data.
@@ -2753,6 +2772,7 @@ VAPID_CONTACT_EMAIL=mailto:admin@example.com
 # External Services
 BRAVE_API_KEY=your-brave-key
 GOOGLE_MAPS_API_KEY=your-maps-key
+MESHY_API_KEY=msy_your-meshy-key
 ```
 
 ______________________________________________________________________
