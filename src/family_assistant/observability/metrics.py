@@ -461,7 +461,7 @@ def record_task_processed(
     *,
     task_type: str,
     outcome: str,
-    duration_seconds: float,
+    duration_seconds: float | None,
 ) -> None:
     """Count one task execution and how long its handler ran. Never raises.
 
@@ -469,10 +469,15 @@ def record_task_processed(
     execution that ended in an error the queue will try again, so a task that
     eventually succeeds contributes one ``completed`` and one ``retried`` per
     failed attempt.
+
+    ``duration_seconds`` is ``None`` when no handler ran -- a task the worker
+    rejected before dispatch is still a terminal outcome the counter must
+    carry, but a zero-length observation would misdescribe the histogram.
     """
     try:
         TASKS_PROCESSED.labels(task_type, outcome).inc()
-        TASK_DURATION.labels(task_type).observe(duration_seconds)
+        if duration_seconds is not None:
+            TASK_DURATION.labels(task_type).observe(duration_seconds)
     except Exception:
         logger.debug("Failed to record task processing metrics", exc_info=True)
 

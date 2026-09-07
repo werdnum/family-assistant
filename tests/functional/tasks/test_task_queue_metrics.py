@@ -174,3 +174,61 @@ async def test_a_failing_task_out_of_retries_is_counted_as_failed(
         )
         == 1.0
     )
+
+
+@pytest.mark.asyncio
+async def test_a_task_rejected_before_its_handler_runs_is_counted_as_failed(
+    db_engine: AsyncEngine,
+) -> None:
+    """A terminal outcome the worker decides without dispatching still counts.
+
+    An ``llm_callback`` with no interface or conversation is marked failed
+    before any handler runs. The counter must carry it, or enqueued and
+    processed drift apart for a task that is over; the histogram must not,
+    because nothing ran.
+    """
+    db = Database(db_engine)
+    worker = _worker(db_engine)
+    task_id = f"metrics_probe_{uuid.uuid4().hex[:8]}"
+    failed_before = _sample(
+        "family_assistant_tasks_processed_total",
+        {"task_type": "llm_callback", "outcome": "failed"},
+    )
+    observed_before = _sample(
+        "family_assistant_task_duration_seconds_count",
+        {"task_type": "llm_callback"},
+    )
+
+    async def handler(
+        # ast-grep-ignore: no-dict-any - task handler context has dynamic external dependency fields
+        exec_context: ToolExecutionContext,
+        # ast-grep-ignore: no-dict-any - task payload has dynamic mixed-type fields
+        payload: dict[str, Any],
+    ) -> None:
+        raise AssertionError("the handler must not run for a rejected task")
+
+    worker.register_task_handler("llm_callback", handler)
+    await db.tasks.enqueue(task_id=task_id, task_type="llm_callback", payload={})
+    task = await db.tasks.dequeue(
+        worker_id="worker",
+        task_types=["llm_callback"],
+        current_time=worker.clock.now(),
+    )
+    assert task is not None
+
+    await worker._process_task(db, task, asyncio.Event())
+
+    assert (
+        _sample(
+            "family_assistant_tasks_processed_total",
+            {"task_type": "llm_callback", "outcome": "failed"},
+        )
+        == failed_before + 1.0
+    )
+    assert (
+        _sample(
+            "family_assistant_task_duration_seconds_count",
+            {"task_type": "llm_callback"},
+        )
+        == observed_before
+    )

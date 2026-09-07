@@ -417,8 +417,13 @@ available:
 SELECT max(now() - COALESCE(scheduled_at, created_at))
   FROM tasks
  WHERE status = 'pending'
+   AND retry_count <= max_retries
    AND (scheduled_at IS NULL OR scheduled_at <= now());
 ```
+
+The retry predicate matters: a pending row whose retries are spent is `exhausted`, not `due`, and
+without it an old exhausted row reports an arbitrarily high latency while the exported gauge reads
+zero.
 
 A task type that regenerates itself — its enqueue rate tracks its completion rate one for one while
 the queue never grows:
