@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
-from sqlalchemy import and_, case, delete, insert, null, or_, select, update
+from sqlalchemy import and_, case, delete, insert, null, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -342,6 +342,7 @@ class TasksRepository(BaseRepository):
         worker_id: str,
         task_types: list[str],
         current_time: datetime,
+        min_priority: TaskPriority | None = None,
     ) -> TaskDict | None:
         """
         Atomically dequeues the next available task for a worker.
@@ -350,6 +351,9 @@ class TasksRepository(BaseRepository):
             worker_id: Unique identifier for the worker
             task_types: List of task types this worker can handle
             current_time: Current time for scheduling checks
+            min_priority: Lowest lane this worker claims from, or None for any.
+                A reserved worker passes ``TaskPriority.INTERACTIVE`` so its
+                capacity stays available for work somebody is waiting on.
 
         Returns:
             Task data if a task was dequeued, None if no tasks available
@@ -360,6 +364,9 @@ class TasksRepository(BaseRepository):
         )
 
         stale_task_cutoff = current_time - timedelta(minutes=STALE_TASK_TIMEOUT_MINUTES)
+        priority_floor = (
+            true() if min_priority is None else tasks_table.c.priority >= min_priority
+        )
 
         async def _claim(txn: DatabaseTransaction) -> TaskDict | None:
             """Select a task and lock it, atomically -- the lock *is* the claim."""
@@ -383,6 +390,7 @@ class TasksRepository(BaseRepository):
                             tasks_table.c.scheduled_at <= current_time,
                         ),
                         tasks_table.c.retry_count <= tasks_table.c.max_retries,
+                        priority_floor,
                     )
                     .order_by(
                         tasks_table.c.priority.desc(),
@@ -439,6 +447,7 @@ class TasksRepository(BaseRepository):
                             tasks_table.c.scheduled_at <= current_time,
                         ),
                         tasks_table.c.retry_count <= tasks_table.c.max_retries,
+                        priority_floor,
                         # Use a subquery to enforce ordering and limit to first task
                         tasks_table.c.id
                         == select(tasks_table.c.id)
@@ -458,6 +467,7 @@ class TasksRepository(BaseRepository):
                                 tasks_table.c.scheduled_at <= current_time,
                             ),
                             tasks_table.c.retry_count <= tasks_table.c.max_retries,
+                            priority_floor,
                         )
                         .order_by(
                             tasks_table.c.priority.desc(),
