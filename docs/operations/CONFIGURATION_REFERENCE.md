@@ -184,10 +184,12 @@ confirmation), because holding one would occupy the capacity that has to run the
 | Sensitive | No    |
 | Example   | `2`   |
 
-**Deadlock constraint:** a delegated run parked on a confirmation is released by a *separate* queued
-task, which some other worker has to claim. The pool therefore needs either at least one general and
-one reserved worker (the default), or at least two general workers. A single general worker with no
-reserved worker deadlocks any confirmation-gated delegated run until its handler times out.
+**Capacity caveat:** a delegated run that asks for a human confirmation holds its worker until the
+decision arrives (up to its handler timeout), and its approval resumes that same handler rather than
+queueing separate work. So a pool of one general worker and no reserved worker does not deadlock,
+but everything else in the queue waits behind the pending decision for as long as it takes. The
+default of two general workers and one reserved worker keeps the rest of the queue moving while a
+run is parked.
 
 ______________________________________________________________________
 
