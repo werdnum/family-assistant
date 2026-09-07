@@ -145,14 +145,16 @@ if [ ${#PYTHON_FILES[@]} -gt 0 ]; then
         fi
     fi
     
-    # Pylint (errors only)
+    # Pylint. Runs the full .pylintrc ruleset (errors plus the curated warning
+    # set), matching what scripts/run-tests.sh runs, so `poe lint`, `poe test`
+    # and the CI lint job all agree on what pylint accepts.
     if [ $HAS_ERRORS -eq 0 ]; then
         echo -n "${BLUE}  ▸ Running pylint...${NC}"
         timer_start
-        if ! "${VIRTUAL_ENV:-.venv}"/bin/pylint --errors-only "${PYTHON_FILES[@]}" 2>&1; then
+        if ! "${VIRTUAL_ENV:-.venv}"/bin/pylint "${PYTHON_FILES[@]}" 2>&1; then
             timer_end
             echo ""
-            echo "${RED}❌ pylint found errors${NC}"
+            echo "${RED}❌ pylint found problems${NC}"
             HAS_ERRORS=1
         else
             echo -n "${GREEN} ✓${NC}"

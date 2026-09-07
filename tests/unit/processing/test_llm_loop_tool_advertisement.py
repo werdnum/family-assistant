@@ -26,7 +26,7 @@ from family_assistant.tools.metadata import (
 )
 from family_assistant.tools.on_demand import OnDemandToolsView
 from family_assistant.tools.types import ToolResult
-from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module - note: pylint cannot resolve the implicit `tests` namespace package
+from tests.mocks.mock_llm import (
     MatcherArgs,
     RuleBasedMockLLMClient,
 )

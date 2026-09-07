@@ -2,6 +2,12 @@
 # Use multiple processes to speed up Pylint.
 jobs=0
 
+# Import roots. `src` is the package root; `.` lets pylint resolve the
+# implicit `tests` namespace package. pylint reads only the first config it
+# finds, so this file is the whole pylint configuration -- pyproject.toml
+# settings would be ignored.
+source-roots=src,.
+
 # Pickle collected data for later comparisons.
 persistent=yes
 

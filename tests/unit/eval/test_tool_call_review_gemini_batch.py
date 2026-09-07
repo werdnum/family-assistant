@@ -78,7 +78,9 @@ class _FakeBatches:
 
 
 class _FakeClient(GeminiBatchClient):
-    def __init__(self) -> None:
+    # The base __init__ constructs a real Gemini client; this fake substitutes
+    # its own stub namespaces instead.
+    def __init__(self) -> None:  # pylint: disable=super-init-not-called
         self.aio = SimpleNamespace(files=_FakeFiles(), batches=_FakeBatches())
 
     async def close(self) -> None:

@@ -383,9 +383,6 @@ known-first-party = ["family_assistant"]
 
 
 
-[tool.pylint.main]
-source-roots = ["src", "."]
-
 [tool.pydantic]
 # Enable Pydantic v2 behaviors
 validate_default = false

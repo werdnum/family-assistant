@@ -215,7 +215,8 @@ async def test_sync_and_stream_share_error_persistence_helper() -> None:
     async def fake_process_message_stream(
         **kwargs: object,
     ) -> AsyncIterator[tuple[LLMStreamEvent, AssistantMessage | None]]:
-        if False:  # pragma: no cover - keeps this as an async generator
+        # An unreachable yield is what makes this an async generator.
+        if False:  # pylint: disable=using-constant-test
             yield (LLMStreamEvent(type="done"), None)
         raise RuntimeError("stream boom")
 
@@ -287,7 +288,8 @@ async def test_stream_persists_errors_as_error_messages(db_engine: AsyncEngine) 
     async def fake_process_message_stream(
         **kwargs: object,
     ) -> AsyncIterator[tuple[LLMStreamEvent, AssistantMessage | None]]:
-        if False:  # pragma: no cover - keeps this as an async generator
+        # An unreachable yield is what makes this an async generator.
+        if False:  # pylint: disable=using-constant-test
             yield (LLMStreamEvent(type="done"), None)
         raise RuntimeError("stream boom")
 
