@@ -21,7 +21,7 @@ from family_assistant.services.attachment_registry import (
     AttachmentMetadata,
     AttachmentRegistry,
 )
-from family_assistant.tools import MCPServerConfig, MCPToolsProvider
+from family_assistant.tools import MCPServerConfig, MCPToolsProvider, infrastructure
 from family_assistant.tools.mcp_attachments import (
     AttachmentParameter,
     MCPAttachmentMode,
@@ -935,3 +935,45 @@ def test_a_file_path_mapping_is_still_refused_for_a_remote_server() -> None:
                 "t": {"p": {"mode": "file_path", "description": "x"}}
             },
         })
+
+
+def test_a_resolved_attachment_still_yields_its_id_to_the_taint_gate() -> None:
+    """The policy gate runs before this provider, on whatever the caller passed.
+
+    A script resolves its own attachment arguments before dispatch, so the
+    argument reaching the collector is the object rather
+    than the id. Reading nothing off it would evaluate an externally
+    communicating call without the attachment's provenance.
+    """
+    attachment = _attachment()
+
+    scalar = infrastructure._collect_attachment_argument_ids(
+        {"image_url": attachment},
+        schema={
+            "type": "object",
+            "properties": {"image_url": {"type": "attachment"}},
+        },
+    )
+    array = infrastructure._collect_attachment_argument_ids(
+        {"image_urls": [attachment]},
+        schema={
+            "type": "object",
+            "properties": {
+                "image_urls": {"type": "array", "items": {"type": "attachment"}}
+            },
+        },
+    )
+
+    assert scalar == {attachment.get_id()}
+    assert array == {attachment.get_id()}
+
+
+def test_an_attachment_outside_an_attachment_slot_is_not_collected() -> None:
+    """The slot still decides; the object does not make any parameter one."""
+    assert (
+        infrastructure._collect_attachment_argument_ids(
+            {"other": _attachment()},
+            schema={"type": "object", "properties": {"other": {"type": "string"}}},
+        )
+        == set()
+    )
