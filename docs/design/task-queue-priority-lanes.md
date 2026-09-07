@@ -232,6 +232,11 @@ all.
   review-visible bug at one call site rather than a silent one. A conformance rule banning explicit
   lanes inside handlers would also ban the legitimate lane change above, so the choice stays a
   reviewed one.
+- **The migration classifies existing rows by task type.** The rows pending at upgrade are a
+  one-time population that drains within minutes, and every producer of the one type that serves
+  both lanes, `embed_and_store_batch`, is user-initiated today, so type is the right answer for the
+  rows that can actually exist. A payload-aware rule would be machinery for a bulk producer that
+  does not exist yet and, when it arrives, will write the lane itself.
 - **No per-type concurrency limits.** Two background workers can both be inside the backfill walk.
   The fingerprint check from #1192 makes that a bounded duplicate rather than duplicated spend.
 - **The reserved worker idles most of the time.** That is the point: it is capacity held back for
@@ -247,11 +252,12 @@ all.
    task that came due before an immediate task was created is dequeued first; a retried task whose
    backoff has elapsed is not pushed behind immediate tasks created after it.
 2. **Priority column.** Add the column with a migration that classifies existing rows by task type
-   so in-flight reminders are not demoted, make the enqueue parameter required and classify every
-   call site, record the dequeued row's priority on the execution context the worker builds and read
-   it in the indexing pipeline's embedding dispatch, and put `priority` first in the dequeue order.
-   Verified on both backends: with a backlog of due background tasks, a newly enqueued interactive
-   task is the next one dequeued; an upload's embedding batches carry the upload's priority.
+   so in-flight reminders are not demoted (the one shared type goes interactive, see the deliberate
+   simplifications), make the enqueue parameter required and classify every call site, record the
+   dequeued row's priority on the execution context the worker builds and read it in the indexing
+   pipeline's embedding dispatch, and put `priority` first in the dequeue order. Verified on both
+   backends: with a backlog of due background tasks, a newly enqueued interactive task is the next
+   one dequeued; an upload's embedding batches carry the upload's priority.
 3. **Reserved workers.** Add the minimum-priority filter to `TaskWorker` and the claim query, the
    configuration for the reserved count, the pool construction, the operations documentation for
    both counts, and the lane label on every queue metric. Verified with the pool test fixtures: with
