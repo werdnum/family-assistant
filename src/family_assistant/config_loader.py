@@ -1499,7 +1499,6 @@ def load_config(
         _log_config(validated_config.model_dump(mode="json"))
         return validated_config
     except ValidationError as e:
-        _log_config(config_data)
         logger.error("Configuration validation failed: %s", e)
         raise
 

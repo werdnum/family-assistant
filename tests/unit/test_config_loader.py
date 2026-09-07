@@ -3460,13 +3460,13 @@ keychute_config:
         assert config.openai_api_key is not None
         assert config.openai_api_key.get_secret_value() == "sk-proj-supersecretkey5678"
 
-    def test_startup_log_redacts_on_validation_failure(
+    def test_startup_log_validation_failure_omits_config_dump_and_does_not_leak_secrets(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Validation failures still log safely redacted raw configuration."""
+        """Validation failures omit whole-config dump and do not leak any secrets."""
         mcp_file = tmp_path / "mcp_servers.json"
         mcp_file.write_text(
             json.dumps({
@@ -3480,13 +3480,15 @@ keychute_config:
                 }
             })
         )
-        monkeypatch.setenv("BRAVE_API_KEY", "sentinel-failure-secret-key")
+        monkeypatch.setenv("BRAVE_API_KEY", "sentinel-failure-mcp-secret-key")
         monkeypatch.setenv("MCP_CONFIG_PATH", str(mcp_file))
         monkeypatch.setenv("TIMEZONE", "Invalid/Timezone")
         monkeypatch.setenv(
             "DATABASE_URL",
-            "postgresql+asyncpg://user:fail-password@db.internal:5432/faildb",
+            "postgresql+asyncpg://user:fail-dsn-password@db.internal:5432/faildb",
         )
+        monkeypatch.setenv("TELEGRAM_TOKEN", "sentinel-fail-telegram-secret")
+        monkeypatch.setenv("OPENAI_API_KEY", "sentinel-fail-openai-secret")
 
         with (
             caplog.at_level(logging.INFO, logger="family_assistant.config_loader"),
@@ -3499,20 +3501,16 @@ keychute_config:
                 load_dotenv_file=False,
             )
 
-        # Verify _log_config logged before validation error
-        assert "Final configuration (excluding secrets):" in caplog.text
+        # Whole-config dump must NOT be logged on validation failure
+        assert "Final configuration (excluding secrets):" not in caplog.text
+        # Validation failure error must be logged
         assert "Configuration validation failed:" in caplog.text
 
-        # Verify secrets were not leaked
-        assert "sentinel-failure-secret-key" not in caplog.text
-        assert "fail-password" not in caplog.text
-
-        # Verify redactions applied
-        assert '"BRAVE_API_KEY": "[REDACTED]"' in caplog.text
-        assert (
-            "postgresql+asyncpg://user:[REDACTED]@db.internal:5432/faildb"
-            in caplog.text
-        )
+        # Verify no secrets were leaked into the logs
+        assert "sentinel-failure-mcp-secret-key" not in caplog.text
+        assert "fail-dsn-password" not in caplog.text
+        assert "sentinel-fail-telegram-secret" not in caplog.text
+        assert "sentinel-fail-openai-secret" not in caplog.text
 
     def test_log_config_does_not_mutate_input_data(self) -> None:
         """_log_config must not mutate the configuration dictionary passed to it."""
