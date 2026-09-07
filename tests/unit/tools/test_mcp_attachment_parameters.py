@@ -1075,3 +1075,143 @@ def test_an_unknown_override_is_refused() -> None:
             "command": "echo",
             "parameter_overrides": {"t": {"p": "delete"}},
         })
+
+
+def test_a_referenced_array_schema_is_read_as_an_array() -> None:
+    """Pydantic lifts a nested model into `$defs` and leaves a `$ref` behind.
+
+    FastMCP renders `RootModel[list[str]]` that way, so reading the reference
+    as-is would call the parameter scalar and send one data URI to a server
+    validating a list.
+    """
+    provider = _provider({"t": {"image_urls": "data_uri"}})
+    tool = Tool(
+        name="t",
+        description="d",
+        inputSchema={
+            "type": "object",
+            "$defs": {
+                "Images": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 2,
+                }
+            },
+            "properties": {"image_urls": {"$ref": "#/$defs/Images"}},
+        },
+    )
+
+    parameter = _properties(
+        provider._format_mcp_definitions_to_dicts([tool], SERVER_ID), "t"
+    )["image_urls"]
+
+    assert parameter["type"] == "array"
+    assert parameter["items"] == {"type": "attachment"}
+    # Constraints come from the referenced schema too.
+    assert parameter["minItems"] == 2
+
+
+def test_a_self_referencing_schema_terminates() -> None:
+    """A model that references itself names no array, and must not loop."""
+    provider = _provider({"t": {"p": "data_uri"}})
+    tool = Tool(
+        name="t",
+        description="d",
+        inputSchema={
+            "type": "object",
+            "$defs": {"Loop": {"$ref": "#/$defs/Loop"}},
+            "properties": {"p": {"$ref": "#/$defs/Loop"}},
+        },
+    )
+
+    parameter = _properties(
+        provider._format_mcp_definitions_to_dicts([tool], SERVER_ID), "t"
+    )["p"]
+
+    assert parameter["type"] == "attachment"
+
+
+@pytest.mark.asyncio
+async def test_an_array_parameter_takes_a_wrapper_naming_several() -> None:
+    """The parameter's shape decides, not the shape of what the caller passed.
+
+    A script hands a tool result straight to an array parameter; reading
+    cardinality off that value would reject it as naming too many.
+    """
+    attachment = _attachment()
+    provider, calls = await _connected_provider(
+        {"meshy_multi_image_to_3d": {"image_urls": "data_uri"}},
+        [_multi_image_tool()],
+    )
+
+    result = await provider.execute_tool(
+        "meshy_multi_image_to_3d",
+        {
+            "image_urls": {
+                "attachments": [
+                    {"id": attachment.get_id()},
+                    {"id": attachment.get_id()},
+                ]
+            }
+        },
+        _execution_context(_registry_serving(attachment)),
+    )
+
+    assert result == "ok"
+    assert len(calls[0]["image_urls"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_an_array_parameter_given_one_attachment_still_sends_a_list() -> None:
+    """A one-attachment wrapper reduced to a scalar is a call the server rejects."""
+    attachment = _attachment()
+    provider, calls = await _connected_provider(
+        {"meshy_multi_image_to_3d": {"image_urls": "data_uri"}},
+        [_multi_image_tool()],
+    )
+
+    result = await provider.execute_tool(
+        "meshy_multi_image_to_3d",
+        {"image_urls": attachment.get_id()},
+        _execution_context(_registry_serving(attachment)),
+    )
+
+    assert result == "ok"
+    assert calls[0]["image_urls"] == [
+        "data:image/png;base64," + base64.b64encode(IMAGE_BYTES).decode("ascii")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_scalar_parameter_unwraps_a_single_element_list() -> None:
+    """Forwarding the list would send an array to a parameter that takes one."""
+    attachment = _attachment()
+    provider, calls = await _connected_provider(
+        {"meshy_image_to_3d": {"image_url": "data_uri"}}, [_image_tool()]
+    )
+
+    result = await provider.execute_tool(
+        "meshy_image_to_3d",
+        {"image_url": [attachment.get_id()]},
+        _execution_context(_registry_serving(attachment)),
+    )
+
+    assert result == "ok"
+    assert isinstance(calls[0]["image_url"], str)
+
+
+@pytest.mark.asyncio
+async def test_a_scalar_parameter_still_refuses_several() -> None:
+    attachment = _attachment()
+    provider, calls = await _connected_provider(
+        {"meshy_image_to_3d": {"image_url": "data_uri"}}, [_image_tool()]
+    )
+
+    result = await provider.execute_tool(
+        "meshy_image_to_3d",
+        {"image_url": [attachment.get_id(), attachment.get_id()]},
+        _execution_context(_registry_serving(attachment)),
+    )
+
+    assert "names 2" in result
+    assert calls == []

@@ -26,7 +26,7 @@ import logging
 import mimetypes
 import shutil
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Container, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -88,6 +88,9 @@ FILE_PATH_TRANSPORTS: frozenset[str] = frozenset({"stdio"})
 # `anyOf` of the array and null branches, with no outer `type`), so the shape we
 # need to read is one level down.
 _UNION_KEYWORDS = ("anyOf", "oneOf")
+
+# Where pydantic puts a nested model it lifted out of the parameter schema.
+_LOCAL_REF_PREFIX = "#/$defs/"
 
 
 def _override_from_config(
@@ -168,18 +171,52 @@ def file_path_mode_is_supported(transport: str) -> bool:
     return transport.lower() in FILE_PATH_TRANSPORTS
 
 
+def _resolve_ref(
+    # ast-grep-ignore: no-dict-any - JSON Schema is untyped by nature
+    schema: Mapping[str, Any],
+    # ast-grep-ignore: no-dict-any - JSON Schema is untyped by nature
+    defs: Mapping[str, Any],
+    seen: frozenset[str],
+    # ast-grep-ignore: no-dict-any - JSON Schema is untyped by nature
+) -> Mapping[str, Any]:
+    """Follow a local ``$ref`` to the schema it names.
+
+    Pydantic lifts a nested model out into ``$defs`` and leaves a reference
+    behind, so FastMCP renders ``RootModel[list[str]]`` as a bare ``$ref`` with
+    the array shape elsewhere. Reading the reference as-is would call that
+    parameter scalar and send one data URI to a server expecting a list.
+    """
+    ref = schema.get("$ref")
+    if not isinstance(ref, str) or not ref.startswith(_LOCAL_REF_PREFIX):
+        return schema
+    name = ref[len(_LOCAL_REF_PREFIX) :]
+    if name in seen:
+        # A model that references itself has no attachment shape to find, and
+        # following it again would not terminate.
+        return schema
+    target = defs.get(name)
+    if not isinstance(target, Mapping):
+        return schema
+    return _resolve_ref(target, defs, seen | {name})
+
+
 def _array_branch(
     # ast-grep-ignore: no-dict-any - JSON Schema is untyped by nature
     schema: Mapping[str, Any],
+    # ast-grep-ignore: no-dict-any - JSON Schema is untyped by nature
+    defs: Mapping[str, Any] | None = None,
     # ast-grep-ignore: no-dict-any - JSON Schema is untyped by nature
 ) -> Mapping[str, Any] | None:
     """The part of ``schema`` that describes a list, or ``None`` if it is scalar.
 
     An optional parameter can spell its union three ways -- ``anyOf``/``oneOf``
-    branches, or the list form of ``type`` -- and the array is the meaningful
-    branch in all of them. Returning the branch rather than a yes/no lets the
-    caller read the list's own constraints off it, wherever they live.
+    branches, or the list form of ``type`` -- and a nested model arrives as a
+    ``$ref`` into ``$defs``. The array is the meaningful branch through all of
+    them. Returning the branch rather than a yes/no lets the caller read the
+    list's own constraints off it, wherever they live.
     """
+    defs = defs or {}
+    schema = _resolve_ref(schema, defs, frozenset())
     declared_type = schema.get("type")
     if declared_type == "array" or (
         isinstance(declared_type, list) and "array" in declared_type
@@ -191,7 +228,7 @@ def _array_branch(
             continue
         for branch in branches:
             if isinstance(branch, Mapping):
-                found = _array_branch(branch)
+                found = _array_branch(branch, defs)
                 if found is not None:
                     return found
     return None
@@ -241,6 +278,7 @@ def apply_parameter_overrides(
     parameters_schema = definition.get("function", {}).get("parameters", {})
     properties = parameters_schema.get("properties", {})
     required = parameters_schema.get("required")
+    defs = parameters_schema.get("$defs", {})
 
     for parameter_name, override in overrides.items():
         parameter_schema = properties.get(parameter_name)
@@ -272,7 +310,7 @@ def apply_parameter_overrides(
             continue
 
         parameter = override
-        array_branch = _array_branch(parameter_schema)
+        array_branch = _array_branch(parameter_schema, defs)
         replacement: ToolPropertySchema = (
             {"type": "attachment"}
             if array_branch is None
@@ -348,6 +386,8 @@ def normalise_attachment_arguments(
     # ast-grep-ignore: no-dict-any - MCP tool arguments are untyped per the MCP protocol
     arguments: Mapping[str, Any],
     parameters: Mapping[str, AttachmentParameter],
+    *,
+    array_parameters: Container[str],
     # ast-grep-ignore: no-dict-any - MCP tool arguments are untyped per the MCP protocol
 ) -> dict[str, Any]:
     """Reduce every configured parameter to the attachments it names, or fail.
@@ -359,8 +399,15 @@ def normalise_attachment_arguments(
     as if nothing were wrong. Here the offending entry still exists to complain
     about.
 
+    The parameter's declared shape decides the result, not the caller's: a
+    script can hand an array parameter a single tool-result wrapper naming
+    several attachments, and a model can hand a scalar parameter a one-element
+    list. Reading cardinality off the value would reject the first and forward
+    the second to a server that wants neither.
+
     Raises:
-        ValueError: If a configured parameter holds anything but attachments.
+        ValueError: If a configured parameter holds anything but attachments,
+            or names a number of them its shape cannot hold.
     """
     # ast-grep-ignore: no-dict-any - MCP tool arguments are untyped per the MCP protocol
     normalised: dict[str, Any] = dict(arguments)
@@ -368,22 +415,20 @@ def normalise_attachment_arguments(
         value = normalised.get(parameter_name)
         if value is None:
             continue
-        if isinstance(value, list):
-            expanded: list[str | ScriptAttachment] = []
-            for candidate in value:
-                expanded.extend(_attachment_ids_in(candidate, parameter_name))
-            normalised[parameter_name] = expanded
-        else:
-            named = _attachment_ids_in(value, parameter_name)
-            # A wrapper naming several attachments cannot fill a single-valued
-            # parameter, and quietly taking the first would send the wrong one.
-            if len(named) != 1:
-                msg = (
-                    f"Parameter '{parameter_name}' takes one attachment, but "
-                    f"{value!r} names {len(named)}."
-                )
-                raise ValueError(msg)
-            normalised[parameter_name] = named[0]
+        supplied = value if isinstance(value, list) else [value]
+        named: list[str | ScriptAttachment] = []
+        for candidate in supplied:
+            named.extend(_attachment_ids_in(candidate, parameter_name))
+        if parameter_name in array_parameters:
+            normalised[parameter_name] = named
+            continue
+        if len(named) != 1:
+            msg = (
+                f"Parameter '{parameter_name}' takes one attachment, but "
+                f"{value!r} names {len(named)}."
+            )
+            raise ValueError(msg)
+        normalised[parameter_name] = named[0]
     return normalised
 
 

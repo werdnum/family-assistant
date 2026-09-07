@@ -149,6 +149,25 @@ class _ReconnectBackoff:
     next_attempt_at: float = 0.0
 
 
+def _array_parameter_names(definition: ToolDefinition | None) -> frozenset[str]:
+    """Which of a tool's parameters the overlay decided hold a list.
+
+    The overlay already resolved that from the server's schema -- through
+    unions and ``$ref``s -- so execution reads its answer rather than guessing
+    again from the value it was handed.
+    """
+    if definition is None:
+        return frozenset()
+    properties = (
+        definition.get("function", {}).get("parameters", {}).get("properties", {})
+    )
+    return frozenset(
+        name
+        for name, schema in properties.items()
+        if isinstance(schema, dict) and schema.get("type") == "array"
+    )
+
+
 class MCPServerStatus(TypedDict):
     """Diagnostic snapshot describing one MCP server's connection state.
 
@@ -1310,9 +1329,6 @@ class MCPToolsProvider:
         so the same ownership and access checks every other provider's
         attachment parameters go through apply here too.
         """
-        arguments = normalise_attachment_arguments(
-            arguments, self._attachment_parameters_for_tool(server_id, name)
-        )
         definition = next(
             (
                 candidate
@@ -1320,6 +1336,11 @@ class MCPToolsProvider:
                 if candidate.get("function", {}).get("name") == name
             ),
             None,
+        )
+        arguments = normalise_attachment_arguments(
+            arguments,
+            self._attachment_parameters_for_tool(server_id, name),
+            array_parameters=_array_parameter_names(definition),
         )
         return await process_attachment_arguments(arguments, context, definition)
 
