@@ -11,7 +11,7 @@ import sys  # Import sys module
 import tempfile
 import time
 import uuid
-from collections.abc import AsyncGenerator, Callable, Generator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Generator
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any, Protocol
 from zoneinfo import ZoneInfo
@@ -281,9 +281,35 @@ async def check_db_engine_invariants(engine: AsyncEngine, test_name: str) -> Non
     logger.warning(report)
 
 
+@pytest.fixture(scope="session")
+def sqlite_schema_template(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> Callable[[], Awaitable[pathlib.Path]]:
+    """Build one closed SQLite schema per worker, without sharing test state."""
+    template_dir = tmp_path_factory.mktemp("sqlite_schema")
+    template_path = template_dir / "schema.sqlite"
+
+    async def get_template() -> pathlib.Path:
+        if not template_path.exists():
+            building_path = template_dir / "building.sqlite"
+            engine = create_engine_with_sqlite_optimizations(
+                f"sqlite+aiosqlite:///{building_path}", instrument=True
+            )
+            try:
+                await init_db(engine)
+            finally:
+                # Closing every connection checkpoints the WAL before the copy.
+                await engine.dispose()
+            building_path.replace(template_path)
+        return template_path
+
+    return get_template
+
+
 @pytest_asyncio.fixture(scope="function")
 async def db_engine(
     request: pytest.FixtureRequest,
+    sqlite_schema_template: Callable[[], Awaitable[pathlib.Path]],
 ) -> AsyncGenerator[AsyncEngine]:
     """
     Provides a parameterized database engine (SQLite or PostgreSQL).
@@ -319,6 +345,7 @@ async def db_engine(
             prefix="fa_test_", suffix=".sqlite", delete=False
         ) as tmp_file:
             tmp_name = tmp_file.name
+        shutil.copyfile(await sqlite_schema_template(), tmp_name)
         engine = create_engine_with_sqlite_optimizations(
             f"sqlite+aiosqlite:///{tmp_name}", instrument=True
         )
@@ -400,7 +427,8 @@ async def db_engine(
     try:
         # Initialize the database schema using the test engine
         # Pass the engine to init_db for dependency injection
-        await init_db(engine)
+        if db_backend == "postgres":
+            await init_db(engine)
         logger.info("Database schema initialized.")
 
         # Yield control to the test function
@@ -416,17 +444,6 @@ async def db_engine(
 
         # Force close all connections before disposing
         await engine.dispose()
-
-        # For PostgreSQL, ensure all connections are truly closed
-        if db_backend == "postgres":
-            # PostgreSQL connections may take a moment to fully close after engine.dispose()
-            # This sleep helps prevent "database is being accessed by other users" errors
-            # when dropping the test database. This is particularly important when using
-            # a session-scoped event loop where many tests run in sequence.
-            # TODO: Investigate if asyncpg or SQLAlchemy provides a more deterministic way
-            # to wait for all connections to be closed.
-            # ast-grep-ignore: no-asyncio-sleep-in-tests - Database connection cleanup delay
-            await asyncio.sleep(0.1)
 
         logger.info("Test engine disposed.")
         if db_backend == "sqlite" and tmp_name:
@@ -756,23 +773,6 @@ async def cleanup_task_worker(
         with contextlib.suppress(asyncio.CancelledError):
             await worker_task
 
-    # Give a moment for database connections to fully close
-    # This is crucial when using PostgreSQL to avoid "database is being accessed by other users" errors
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - PostgreSQL connection cleanup delay
-    await asyncio.sleep(0.5)
-
-    # Force all pending tasks to complete
-    pending = [
-        task
-        for task in asyncio.all_tasks()
-        if not task.done() and task != asyncio.current_task()
-    ]
-    if pending:
-        logger.warning(f"Found {len(pending)} pending tasks after {label} cleanup")
-        # Give them a moment to complete
-        # ast-grep-ignore: no-asyncio-sleep-in-tests - Pending task cleanup delay
-        await asyncio.sleep(0.1)
-
 
 @pytest.fixture(scope="function")
 def mock_clock() -> MockClock:
@@ -873,7 +873,8 @@ def radicale_server_session() -> Generator[tuple[str, str, str]]:
     base_url = f"http://127.0.0.1:{port}"
 
     # Create htpasswd file
-    hashed_password = bcrypt.hash(RADICALE_TEST_PASS)
+    # Exercise real authentication without production password-hardening cost.
+    hashed_password = bcrypt.hash(RADICALE_TEST_PASS, rounds=4)
     with open(htpasswd_file_path, "w", encoding="utf-8") as f:
         f.write(f"{RADICALE_TEST_USER}:{hashed_password}\n")
 
@@ -937,10 +938,6 @@ backtrace_on_debug = True
             pytest.fail(
                 f"Radicale server did not start on port {port} within {max_wait_time} seconds."
             )
-
-        # Give Radicale a moment more to settle after port is open
-        # ast-grep-ignore: no-time-sleep-in-tests - Radicale server initialization delay
-        time.sleep(2)  # Added delay
 
         # Session fixture no longer creates a default calendar.
         # It only ensures the server is running and the user exists.
