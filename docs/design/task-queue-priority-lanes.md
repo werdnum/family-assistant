@@ -157,9 +157,30 @@ SELECT max(now() - COALESCE(scheduled_at, created_at))
 It reached 83 minutes during the incident and sits near zero when the queue is healthy. Once the
 priority column lands it is reported per lane, and interactive due latency is then the quantity the
 reserved worker exists to bound, so the same gauge is the service-level indicator for that
-milestone. It is sampled from the workers' poll loop and documented in
-`docs/operations/MONITORING.md` with an alert threshold, and it stays meaningful after this design
-because it measures the promise rather than the mechanism.
+milestone. It stays meaningful after this design because it measures the promise rather than the
+mechanism.
+
+Due latency says *that* the queue is unhealthy. Three more series, following the conventions in
+`docs/design/prometheus-metrics.md`, say *why*, and each is fed from a chokepoint that already
+exists or that milestone 1 creates:
+
+- **Tasks enqueued**, a counter by task type and lane, fed from the repository's `enqueue` once the
+  legacy path is folded into it. This is what makes a chain visible: a type whose enqueue rate
+  matches its completion rate one-for-one, with a depth that never rises, is regenerating itself.
+- **Tasks processed**, a counter by task type, lane and outcome (`completed`, `retried`, `failed`),
+  with a companion duration histogram by type, fed from the worker's single processing path. The
+  histogram is what explains a due-latency spike after the lanes land: a background type whose
+  batches take minutes is the reason both general workers were busy.
+- **Tasks queued**, a gauge by lane and state: `scheduled` (pending, not yet due), `due` (eligible
+  and unclaimed), `processing`, `stalled` (processing past the reclaim cutoff) and `exhausted`
+  (pending with its retries spent, which nothing will ever dequeue). Terminal rows are history, not
+  queue state; the processed counter has them. There is no `overdue` count: any such count needs a
+  threshold, and the due-latency gauge carries the same information without one.
+
+The gauges are sampled by the pool's health monitor, one query per period from one place, rather
+than by every worker on every poll. All of it is documented in `docs/operations/MONITORING.md` with
+alert rules: interactive due latency above a few minutes, and any `stalled` or `exhausted` row at
+all.
 
 ## Alternatives considered
 
@@ -206,7 +227,8 @@ because it measures the promise rather than the mechanism.
 1. **Due-time ordering.** Replace the NULLS-FIRST ordering in both dequeue paths and the UI listing
    with the COALESCE expression, drop `retry_count` from the order, fold
    `storage.tasks.enqueue_task` into the repository, delete `storage.tasks.dequeue_task`, and add
-   the due-latency gauge with its monitoring entry. Verified by tests on both backends: a scheduled
+   the due-latency gauge, the enqueued and processed counters, the duration histogram and the
+   queue-state gauge with their monitoring entries. Verified by tests on both backends: a scheduled
    task that came due before an immediate task was created is dequeued first; a retried task whose
    backoff has elapsed is not pushed behind immediate tasks created after it.
 2. **Priority column.** Add the column with a migration that classifies existing rows by task type
@@ -217,8 +239,8 @@ because it measures the promise rather than the mechanism.
    task is the next one dequeued; an upload's embedding batches carry the upload's priority.
 3. **Reserved workers.** Add the minimum-priority filter to `TaskWorker` and the claim query, the
    configuration for the reserved count, the pool construction, the operations documentation for
-   both counts, and the lane label on the due-latency gauge. Verified with the pool test fixtures:
-   with every general worker parked on a background task, an interactive task starts within the wake
+   both counts, and the lane label on every queue metric. Verified with the pool test fixtures: with
+   every general worker parked on a background task, an interactive task starts within the wake
    latency; a reserved worker never claims a background task; the deadlock test still passes with
    the default configuration.
 4. **Retire the workaround's fairness role.** Reword the #1192 delay and jitter to their debounce
