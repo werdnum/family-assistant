@@ -1,84 +1,91 @@
-"""The two pylint entry points must stay in agreement.
+"""The lint entry points must reach pylint through one shared invocation.
 
 `scripts/format-and-lint.sh` is what `poe lint` and the CI lint job run;
-`scripts/run-tests.sh` is what `poe test` runs. When one of them filters pylint
-messages and the other does not, CI can be green while `poe test` is red (or the
-reverse), and the difference is invisible until someone runs both. Both must
-therefore hand pylint the whole `.pylintrc` ruleset.
+`scripts/run-tests.sh` is what `poe test` runs. When the two invoke pylint
+differently, CI can be green while `poe test` is red (or the reverse), and the
+difference is invisible until someone runs both.
+
+`scripts/run-pylint.sh` is the chokepoint that makes them agree: it takes paths
+only and refuses every option, so the ruleset always comes from `.pylintrc`.
+These tests hold that shape in place -- that both entry points route through the
+wrapper rather than calling pylint themselves, and that the wrapper really does
+refuse options. Which options exist is then pylint's business, not a list this
+file has to keep complete.
 """
 
 from __future__ import annotations
 
 import re
+import subprocess
 
 import pytest
 
 from family_assistant.paths import PROJECT_ROOT
 
-# Matches a pylint invocation and captures everything up to the end of the
-# command, e.g. `"${VIRTUAL_ENV:-.venv}"/bin/pylint -j0 src tests &`.
-_PYLINT_INVOCATION = re.compile(r"/bin/pylint\s+(?P<args>[^\n&|]*)")
-
-# Options that narrow what pylint reports, and so would make one entry point
-# accept code the other rejects. Every spelling pylint accepts has to match:
-# the long forms take a value either as `--disable all` or attached as
-# `--disable=all`, and the short forms either as `-d all` or attached as
-# `-dall`.
-_MESSAGE_FILTERING_OPTION = re.compile(
-    r"""^(?:
-        --errors-only
-      | --(?:disable|enable)(?:=.*)?
-      | -[Ede]
-    )""",
-    re.VERBOSE,
-)
-
 _LINT_SCRIPTS = ("format-and-lint.sh", "run-tests.sh")
 
+_WRAPPER = PROJECT_ROOT / "scripts" / "run-pylint.sh"
 
-def _pylint_invocations(script_name: str) -> list[str]:
-    script = (PROJECT_ROOT / "scripts" / script_name).read_text()
-    return [
-        match.group("args").strip() for match in _PYLINT_INVOCATION.finditer(script)
+# A pylint executable being run, rather than the word "pylint" inside a message
+# or a comment: `.venv/bin/pylint ...`, or `pylint ...` in command position.
+_DIRECT_PYLINT_CALL = re.compile(
+    r"(?:/bin/pylint|^\s*pylint|[;&|(]\s*pylint)\s", re.MULTILINE
+)
+
+
+def _script_body(script_name: str) -> str:
+    return (PROJECT_ROOT / "scripts" / script_name).read_text()
+
+
+@pytest.mark.parametrize("script_name", _LINT_SCRIPTS)
+def test_lint_entry_point_uses_the_shared_pylint_wrapper(script_name: str) -> None:
+    assert "run-pylint.sh" in _script_body(script_name)
+
+
+@pytest.mark.parametrize("script_name", _LINT_SCRIPTS)
+def test_lint_entry_point_does_not_invoke_pylint_itself(script_name: str) -> None:
+    body = _script_body(script_name)
+    offenders = [
+        line.strip()
+        for line in body.splitlines()
+        if _DIRECT_PYLINT_CALL.search(line) and "run-pylint.sh" not in line
     ]
-
-
-@pytest.mark.parametrize("script_name", _LINT_SCRIPTS)
-def test_lint_entry_point_invokes_pylint_exactly_once(script_name: str) -> None:
-    assert len(_pylint_invocations(script_name)) == 1
-
-
-@pytest.mark.parametrize("script_name", _LINT_SCRIPTS)
-def test_lint_entry_point_does_not_filter_pylint_messages(script_name: str) -> None:
-    for args in _pylint_invocations(script_name):
-        offenders = [
-            token for token in args.split() if _MESSAGE_FILTERING_OPTION.match(token)
-        ]
-        assert not offenders, (
-            f"{script_name} narrows pylint with {offenders}; that would let it "
-            "disagree with the other lint entry point. Change .pylintrc instead."
-        )
+    assert not offenders, (
+        f"{script_name} invokes pylint directly: {offenders}. Go through "
+        "scripts/run-pylint.sh so both lint entry points enforce one ruleset."
+    )
 
 
 @pytest.mark.parametrize(
-    "token",
-    [
-        "--errors-only",
-        "-E",
-        "--disable",
-        "--disable=all",
-        "-d",
-        "-dall",
-        "--enable",
-        "--enable=similarities",
-        "-e",
-        "-esimilarities",
-    ],
+    "option",
+    ["--errors-only", "-E", "--disable=all", "-dall", "--enable=similarities"],
 )
-def test_message_filtering_options_are_recognized(token: str) -> None:
-    assert _MESSAGE_FILTERING_OPTION.match(token)
+def test_wrapper_refuses_options_that_would_narrow_the_ruleset(option: str) -> None:
+    result = subprocess.run(
+        [str(_WRAPPER), option, "src"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "takes paths only" in result.stderr
 
 
-@pytest.mark.parametrize("token", ["-j0", "--jobs=0", "src", "tests", "--rcfile=x"])
-def test_harmless_arguments_are_not_flagged(token: str) -> None:
-    assert not _MESSAGE_FILTERING_OPTION.match(token)
+def test_wrapper_refuses_an_alternate_rcfile() -> None:
+    """An rcfile swaps the ruleset wholesale, so it breaks alignment too."""
+    result = subprocess.run(
+        [str(_WRAPPER), "--rcfile=/dev/null", "src"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    assert "takes paths only" in result.stderr
+
+
+def test_wrapper_requires_at_least_one_path() -> None:
+    result = subprocess.run(
+        [str(_WRAPPER)], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 2
+    assert "usage:" in result.stderr

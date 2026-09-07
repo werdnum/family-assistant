@@ -12,6 +12,15 @@ argument by extension rather than accepting Python only: `.py` to ruff/basedpyri
 `.sh/.bash` to shellcheck. Pass frontend, documentation and script changes to it too — they are
 checked, not ignored.
 
+### `run-pylint.sh`
+
+The single pylint invocation. `format-and-lint.sh` and `run-tests.sh` both go through it, so
+`poe lint`, `poe test` and the CI lint job cannot enforce different rulesets -- they once did, with
+`--errors-only` on one side only, which kept CI green while `poe test` failed. It takes paths and
+refuses every option, so pylint is configured in `.pylintrc` and nowhere else. `.pylintrc` is the
+whole configuration: pylint reads only the first config file it finds, so `[tool.pylint]` settings
+in `pyproject.toml` are silently ignored.
+
 ### `check_suppression_budget.py`
 
 Enforces the shrink-only lint suppression budgets in `.lint-budget.toml`. For each budgeted rule it

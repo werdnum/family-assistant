@@ -5,8 +5,8 @@ Utility scripts for developing, testing, and deploying the Family Assistant. Rou
 - **Workspace setup** — `setup-workspace.sh` bootstraps a development environment;
   `install-parallel.sh` and `install-shellcheck.sh` fetch tools that setup depends on.
 - **Lint and conformance** — `format-and-lint.sh` (ruff, basedpyright, pylint, conformance),
-  `check-conformance.sh` for the ast-grep rules alone, and `audit-conformance-exemptions.sh` to list
-  active exemptions.
+  `run-pylint.sh` as the single pylint invocation shared with `run-tests.sh`, `check-conformance.sh`
+  for the ast-grep rules alone, and `audit-conformance-exemptions.sh` to list active exemptions.
 - **Test running** — `run-tests.sh` is the entry point; `run_pytest_adaptive.py`,
   `run_pytest_shard.py`, `cgroup_memory_gate.py`, and `run_with_memory_limit.sh` implement the load-
   and memory-aware parallel runner. `failing-test-summary.sh` digests a JSON test report.
