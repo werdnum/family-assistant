@@ -448,6 +448,12 @@ async def persist_stopped_reply(
     prompt looking unanswered. Uses its own short DB context because the
     streaming transaction is being torn down by the cancellation. Best-effort —
     failing to persist must not mask the stop.
+
+    Deliberately carries no model-tier record. The envelope the endpoint
+    admitted is not the one the turn ran on -- Auto settles that inside
+    ``handle_chat_interaction_stream``, which a cancelled turn never returns
+    from -- so stamping what is reachable here would record a tier the run may
+    not have used. Absent is readable; wrong is not.
     """
     content = reply_text.strip() or "_Stopped._"
 

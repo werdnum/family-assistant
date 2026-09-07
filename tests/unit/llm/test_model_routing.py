@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 from family_assistant.llm.messages import AssistantMessage, UserMessage
 from family_assistant.llm.model_routing import (
+    _REQUEST_CHARS,  # noqa: PLC2701 - asserting a bound means naming the bound the module applies
     ModelRouter,
     validate_routing_prompt_renders,
 )
@@ -177,6 +178,47 @@ async def test_recent_history_and_attachment_names_reach_the_classifier() -> Non
     assert "the first is cheaper but excludes labour" in prompt
     assert "quote.pdf (application/pdf)" in prompt
     assert "which should I take" in prompt
+
+
+async def test_a_request_too_long_to_show_whole_keeps_its_ending() -> None:
+    """The ask usually comes last: pasted material, then what to do with it.
+
+    A bound that kept only the opening would route on the paperwork and never
+    see the question -- and in shadow mode record that as the request the
+    decision was made about.
+    """
+    captured: list[StructuredMatcherArgs] = []
+    question = "So: should I refinance?"
+    request = ("the mortgage paperwork, clause by clause. " * 400) + question
+
+    await _route(_capturing_client(captured), request_text=request)
+
+    prompt = _prompt_text(captured[0])
+    rendered = prompt.split("<request>\n", 1)[1].split("\n</request>", 1)[0]
+    assert rendered.startswith("the mortgage paperwork")
+    assert rendered.endswith(question)
+    assert "characters elided" in rendered
+    assert len(rendered) <= _REQUEST_CHARS
+
+
+async def test_a_long_history_message_keeps_both_of_its_ends_too() -> None:
+    """The same shape, for the conversation the request continues.
+
+    A long tool result or a pasted document in history ends with what the
+    conversation then did about it, which is what makes the next request
+    legible.
+    """
+    captured: list[StructuredMatcherArgs] = []
+    conclusion = "which is why the claim was refused"
+
+    await _route(
+        _capturing_client(captured),
+        history=[UserMessage(content=("the policy schedule. " * 200) + conclusion)],
+    )
+
+    prompt = _prompt_text(captured[0])
+    assert prompt.count(conclusion) == 1
+    assert "characters elided" in prompt
 
 
 async def test_a_classifier_that_does_not_answer_in_time_is_a_timeout() -> None:

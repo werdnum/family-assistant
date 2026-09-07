@@ -78,12 +78,50 @@ _HISTORY_CHARS_PER_MESSAGE = 600
 """How much of one historical message the classifier sees.
 
 The decision is about the shape of the request, not its detail, so a long tool
-result contributes its opening rather than its whole body -- which also keeps
-the classifier's own cost bounded by the window size rather than by whatever
-the conversation happened to contain.
+result contributes its ends rather than its whole body -- which also keeps the
+classifier's own cost bounded by the window size rather than by whatever the
+conversation happened to contain.
 """
 
 _REQUEST_CHARS = 4000
+"""How much of the request itself the classifier sees."""
+
+_ELISION_MARKER = " [... {count} characters elided ...] "
+"""What stands in for the middle of anything too long to show whole.
+
+Visible rather than silent: the classifier is judging how hard a request is,
+and text that stops mid-sentence with no explanation reads as a request that
+was abandoned rather than one that was abridged. Written on one line so that
+eliding the middle of a history message cannot split it into what looks like
+two messages.
+"""
+
+
+def _bounded(text: str, budget: int) -> str:
+    """*text* within *budget* characters, keeping both of its ends.
+
+    A prefix is the wrong thing to keep. The common shape of a long request is
+    pasted material -- a document, a log, an email thread -- followed by the
+    instruction that is actually being asked about ("so: should I refinance?"),
+    so a bound that drops the suffix routes on the context while discarding the
+    task, and records that as the request in shadow mode.
+
+    The head gets two thirds of the budget and the tail the rest: the opening
+    establishes what the material is, and the ending carries the ask.
+    """
+    if len(text) <= budget:
+        return text
+    # Sized against the largest count that could be printed, so the marker can
+    # only come in shorter than reserved and the result stays inside *budget*.
+    reserved = len(_ELISION_MARKER.format(count=len(text)))
+    keep = budget - reserved
+    if keep <= 0:
+        return text[:budget]
+    head = keep * 2 // 3
+    tail = keep - head
+    marker = _ELISION_MARKER.format(count=len(text) - keep)
+    return f"{text[:head]}{marker}{text[len(text) - tail :]}"
+
 
 ROUTER_CALL_TIER = "router"
 """Tier label the classifier's own call is counted under.
@@ -187,7 +225,7 @@ def _render_history(history: Sequence[LLMMessage]) -> str:
         text = _message_text(message).strip()
         if not text:
             continue
-        lines.append(f"{message.role}: {text[:_HISTORY_CHARS_PER_MESSAGE]}")
+        lines.append(f"{message.role}: {_bounded(text, _HISTORY_CHARS_PER_MESSAGE)}")
     return "\n".join(lines)
 
 
@@ -344,7 +382,9 @@ class ModelRouter:
             sections.append(
                 "<attachments>\n" + "\n".join(attachment_summary) + "\n</attachments>"
             )
-        sections.append(f"<request>\n{request_text[:_REQUEST_CHARS]}\n</request>")
+        sections.append(
+            f"<request>\n{_bounded(request_text, _REQUEST_CHARS)}\n</request>"
+        )
         return [
             SystemMessage(content=instructions),
             UserMessage(content="\n\n".join(sections)),

@@ -74,6 +74,7 @@ if TYPE_CHECKING:
     from family_assistant.llm import LLMInterface
     from family_assistant.llm.messages import LLMMessage, MessageReasoningInfo
     from family_assistant.services.attachment_registry import AttachmentRegistry
+    from family_assistant.tools.types import ToolDefinition
     from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
         MatcherArgs,
         StructuredMatcherArgs,
@@ -95,6 +96,26 @@ _ROUTING_PROMPT = "Choose a tier from:\n{tiers}\nGuidance:\n{guidance}"
 
 def _client_saying(reply: str) -> RuleBasedMockLLMClient:
     return RuleBasedMockLLMClient(rules=[], default_response=LLMOutput(content=reply))
+
+
+class _FailingClient(RuleBasedMockLLMClient):
+    """A tier client whose provider call fails, as an outage does.
+
+    A subclass rather than a rule: the rule evaluator catches whatever a rule
+    raises and falls through to the default response, so a rule cannot express
+    "the provider was unavailable".
+    """
+
+    def __init__(self) -> None:
+        super().__init__(rules=[], default_response=LLMOutput(content="unreachable"))
+
+    async def generate_response(
+        self,
+        messages: list[LLMMessage],
+        tools: list[ToolDefinition] | None = None,
+        tool_choice: str | None = "auto",
+    ) -> LLMOutput:
+        raise RuntimeError("the provider is unavailable")
 
 
 def _classifier_choosing(tier: str) -> RuleBasedMockLLMClient:
@@ -284,18 +305,40 @@ def install_service_fixture(
     return install
 
 
-async def _assistant_reasoning_info(
-    db_engine: AsyncEngine, conversation_id: str, interface_type: str = "api"
+async def _row_reasoning_info(
+    db_engine: AsyncEngine,
+    conversation_id: str,
+    *,
+    role: str,
+    interface_type: str = "api",
 ) -> MessageReasoningInfo:
+    """What the turn's last *role* row recorded about the call behind it."""
     db = Database(engine=db_engine)
     rows = await db.message_history.get_recent_with_metadata(
         interface_type=interface_type, conversation_id=conversation_id, limit=10
     )
-    assistant_rows = [row for row in rows if row["role"] == "assistant"]
-    assert assistant_rows, "the turn persisted no assistant reply"
-    reasoning = assistant_rows[-1]["reasoning_info"]
+    matching = [row for row in rows if row["role"] == role]
+    assert matching, f"the turn persisted no {role} row"
+    reasoning = matching[-1]["reasoning_info"]
     assert reasoning is not None
     return cast("MessageReasoningInfo", reasoning)
+
+
+async def _assistant_reasoning_info(
+    db_engine: AsyncEngine, conversation_id: str, interface_type: str = "api"
+) -> MessageReasoningInfo:
+    return await _row_reasoning_info(
+        db_engine, conversation_id, role="assistant", interface_type=interface_type
+    )
+
+
+async def _error_reasoning_info(
+    db_engine: AsyncEngine, conversation_id: str, interface_type: str = "api"
+) -> MessageReasoningInfo:
+    """The same, for a turn that ended in an error instead of a reply."""
+    return await _row_reasoning_info(
+        db_engine, conversation_id, role="error", interface_type=interface_type
+    )
 
 
 _DELEGATION_USER_ID = "routing-delegation-user"
@@ -451,6 +494,36 @@ async def test_a_shadow_decision_is_recorded_while_the_turn_runs_on_the_default(
     # The evaluation reads this column after the traces have expired, so the
     # decision has to say which model made it.
     assert reasoning.get("model_tier_classifier_model") == "mock-classifier"
+
+
+async def test_a_routed_turn_that_fails_records_its_decision_too(
+    api_test_client: AsyncClient,
+    db_engine: AsyncEngine,
+    install_service: RoutedServiceBuilder,
+    tier_clients: dict[str, RuleBasedMockLLMClient],
+) -> None:
+    """A turn that produced no reply still produced a routing decision.
+
+    The evaluation reads `message_history.reasoning_info`, so a decision
+    recorded only on replies would give it a population with every failed turn
+    removed from it -- and a tier that fails more often would read as one that
+    never failed.
+    """
+    tier_clients["standard"] = _FailingClient()
+    install_service("shadow")
+    conversation_id = f"routing-failed-{uuid.uuid4()}"
+
+    failed = await api_test_client.post(
+        "/api/v1/chat/send_message",
+        json={"prompt": "hello", "conversation_id": conversation_id},
+    )
+
+    assert failed.status_code == 500, failed.text
+    reasoning = await _error_reasoning_info(db_engine, conversation_id)
+    assert reasoning.get("model_tier") == "standard"
+    assert reasoning.get("model_tier_source") == "default"
+    assert reasoning.get("model_tier_would_choose") == "deep"
+    assert reasoning.get("model_tier_routing_outcome") == "decided"
 
 
 async def test_the_same_turn_in_active_mode_runs_on_the_tier_auto_chose(

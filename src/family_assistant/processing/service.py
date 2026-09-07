@@ -33,6 +33,7 @@ from family_assistant.llm.model_selection import (
     ModelTierNotPermitted,
     ResolvedModelSelection,
     resolve_model_selection,
+    stamp_model_selection,
 )
 from family_assistant.observability.metrics import record_model_routing
 from family_assistant.processing.protocol import TaintedSinkRefusedError
@@ -1451,8 +1452,19 @@ class ProcessingService:
         thread_root_id: int | None,
         subconversation_id: str | None,
         user_id: str | None,
+        model_selection: ResolvedModelSelection | None,
     ) -> int | None:
-        """Persist a processing error message."""
+        """Persist a processing error message, stamped with the run's tier.
+
+        The tier fields go on the error row for the same reason they go on a
+        reply: this row is what the turn produced. Without them the persisted
+        record of a routed turn would exist only for turns that succeeded, so
+        the shadow evaluation would read ``would_choose`` against a population
+        with every failure removed from it -- and a tier that fails more often
+        would look better for it.
+        """
+        reasoning_info: MessageReasoningInfo = {}
+        stamp_model_selection(reasoning_info, model_selection)
         try:
             return await self._save_history_message(
                 db_context,
@@ -1467,6 +1479,7 @@ class ProcessingService:
                 thread_root_id=thread_root_id,
                 subconversation_id=subconversation_id,
                 user_id=user_id,
+                reasoning_info=reasoning_info or None,
             )
         except Exception:
             logger.exception("Failed to save error message to history")
@@ -2027,6 +2040,7 @@ class ProcessingService:
                 thread_root_id=thread_root_id_for_turn,
                 subconversation_id=subconversation_id,
                 user_id=user_id,
+                model_selection=resolved_selection,
             )
 
             return ChatInteractionResult.error(
@@ -2276,6 +2290,7 @@ class ProcessingService:
                     thread_root_id=thread_root_id_for_turn,
                     subconversation_id=subconversation_id,
                     user_id=user_id,
+                    model_selection=resolved_selection,
                 )
                 error_event = LLMStreamEvent(
                     type="error",
