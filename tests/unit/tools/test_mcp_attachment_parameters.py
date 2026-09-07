@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import shutil
 import tempfile
 import uuid
 from types import SimpleNamespace
@@ -600,3 +601,83 @@ async def test_an_unresolved_array_element_is_reported_not_forwarded() -> None:
 
     assert "Error" in result
     assert calls == []
+
+
+def test_array_cardinality_constraints_survive_the_overlay() -> None:
+    """How many attachments the server wants is unaffected by what each one is."""
+    provider = _provider({"t": {"p": "data_uri"}})
+    tool = Tool(
+        name="t",
+        description="d",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "p": {
+                    "type": "array",
+                    "items": {"type": "string", "format": "uri"},
+                    "minItems": 2,
+                    "maxItems": 4,
+                }
+            },
+        },
+    )
+
+    parameter = _properties(
+        provider._format_mcp_definitions_to_dicts([tool], SERVER_ID), "t"
+    )["p"]
+
+    assert parameter["minItems"] == 2
+    assert parameter["maxItems"] == 4
+    assert parameter["items"] == {"type": "attachment"}
+
+
+def test_cardinality_is_read_from_inside_a_union() -> None:
+    """An optional array carries its constraints on the array branch, not outside."""
+    provider = _provider({"t": {"p": "data_uri"}})
+    tool = Tool(
+        name="t",
+        description="d",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "p": {
+                    "anyOf": [
+                        {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "minItems": 2,
+                        },
+                        {"type": "null"},
+                    ]
+                }
+            },
+        },
+    )
+
+    parameter = _properties(
+        provider._format_mcp_definitions_to_dicts([tool], SERVER_ID), "t"
+    )["p"]
+
+    assert parameter["minItems"] == 2
+
+
+@pytest.mark.asyncio
+async def test_a_failed_cleanup_is_reported_and_does_not_mask_the_result(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A leftover copy of the user's attachment must not look like a clean call."""
+    attachment = _attachment()
+
+    def failing_rmtree(path: str) -> None:
+        raise OSError(13, "Permission denied")
+
+    with mock.patch.object(shutil, "rmtree", failing_rmtree):
+        async with materialised_attachment_arguments(
+            {"image_url": attachment}, {"image_url": "file_path"}
+        ) as materialised:
+            result = materialised["image_url"]
+
+    # The call's own outcome survives; the leak is loud in the error log.
+    assert result
+    assert "may remain on disk" in caplog.text
+    assert any(record.levelname == "ERROR" for record in caplog.records)

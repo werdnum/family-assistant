@@ -95,32 +95,39 @@ def file_path_mode_is_supported(transport: str) -> bool:
     return transport.lower() in FILE_PATH_TRANSPORTS
 
 
-def _declares_an_array(
+def _array_branch(
     # ast-grep-ignore: no-dict-any - JSON Schema is untyped by nature
     schema: Mapping[str, Any],
-) -> bool:
-    """Whether ``schema`` describes a list, seeing through an optional's union.
+    # ast-grep-ignore: no-dict-any - JSON Schema is untyped by nature
+) -> Mapping[str, Any] | None:
+    """The part of ``schema`` that describes a list, or ``None`` if it is scalar.
 
-    Only the shape matters here: everything else the server said about the
-    parameter is about the string it wanted, which is not what it is being
-    given any more. An optional parameter can spell its union three ways --
-    ``anyOf``/``oneOf`` branches, or the list form of ``type`` -- and the array
-    is the meaningful branch in all of them.
+    An optional parameter can spell its union three ways -- ``anyOf``/``oneOf``
+    branches, or the list form of ``type`` -- and the array is the meaningful
+    branch in all of them. Returning the branch rather than a yes/no lets the
+    caller read the list's own constraints off it, wherever they live.
     """
     declared_type = schema.get("type")
-    if declared_type == "array":
-        return True
-    if isinstance(declared_type, list) and "array" in declared_type:
-        return True
+    if declared_type == "array" or (
+        isinstance(declared_type, list) and "array" in declared_type
+    ):
+        return schema
     for keyword in _UNION_KEYWORDS:
         branches = schema.get(keyword)
         if not isinstance(branches, list):
             continue
-        return any(
-            isinstance(branch, Mapping) and _declares_an_array(branch)
-            for branch in branches
-        )
-    return False
+        for branch in branches:
+            if isinstance(branch, Mapping):
+                found = _array_branch(branch)
+                if found is not None:
+                    return found
+    return None
+
+
+# Constraints on the list itself rather than on the strings it used to hold, so
+# they still describe what the server will accept once the items are
+# attachments. A multi-image tool that needs two of them still needs two.
+_ARRAY_CONSTRAINTS = ("minItems", "maxItems")
 
 
 def overlay_attachment_parameters(
@@ -137,8 +144,10 @@ def overlay_attachment_parameters(
     optional's union) describe a value the model is no longer being asked for.
     Leaving any of it in place would contradict the UUID the model must supply —
     a ``type: string`` beside an ``anyOf`` of array and null cannot be satisfied
-    at all. Only the description survives, and only the shape (one attachment or
-    a list of them) is read off the original.
+    at all. What survives is what still describes the new value: the
+    description, the shape (one attachment or a list of them), and a list's own
+    cardinality constraints, which bound how many attachments the server wants
+    and are unaffected by what each one is.
 
     Optionality is unaffected: it lives in the schema's ``required`` list, which
     this does not touch.
@@ -159,11 +168,17 @@ def overlay_attachment_parameters(
             )
             continue
 
+        array_branch = _array_branch(parameter_schema)
         replacement: ToolPropertySchema = (
-            {"type": "array", "items": {"type": "attachment"}}
-            if _declares_an_array(parameter_schema)
-            else {"type": "attachment"}
+            {"type": "attachment"}
+            if array_branch is None
+            else {"type": "array", "items": {"type": "attachment"}}
         )
+        if array_branch is not None:
+            for constraint in _ARRAY_CONSTRAINTS:
+                value = array_branch.get(constraint)
+                if isinstance(value, int):
+                    replacement[constraint] = value
         description = parameter_schema.get("description")
         if description:
             replacement["description"] = description
@@ -211,9 +226,26 @@ class _TempDirectory:
         return anyio.Path(self._path)
 
     async def cleanup(self) -> None:
-        if self._path is not None:
-            await asyncio.to_thread(shutil.rmtree, self._path, True)
-            self._path = None
+        """Remove the directory, reporting rather than hiding a failure.
+
+        Logged rather than raised: this runs in a ``finally``, where raising
+        would replace the call's own outcome (or its exception) with a failure
+        the caller can do nothing about, and would not remove the file either.
+        An ERROR reaches the persistent error log the diagnostics endpoints
+        surface, which is where a leftover copy of a user's attachment needs to
+        show up.
+        """
+        if self._path is None:
+            return
+        path, self._path = self._path, None
+        try:
+            await asyncio.to_thread(shutil.rmtree, path)
+        except OSError:
+            logger.exception(
+                "Failed to remove temporary attachment directory %s. A copy of "
+                "the user's attachment may remain on disk.",
+                path,
+            )
 
 
 async def _materialise(
