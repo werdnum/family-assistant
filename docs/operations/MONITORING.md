@@ -307,6 +307,44 @@ nothing can tell the two apart. Treat a tool error rate as counting executions t
 not tasks that went wrong. Turn `outcome` is `success`, `error`, or `cancelled` — a browser that
 navigated away mid-turn is not a failure.
 
+### Task queue
+
+The background task queue's health, from the two chokepoints every task passes through: the
+repository's `enqueue` and the worker's processing path.
+
+| Metric                                      | Type      | Labels                 |
+| ------------------------------------------- | --------- | ---------------------- |
+| `family_assistant_tasks_enqueued_total`     | Counter   | `task_type`            |
+| `family_assistant_tasks_processed_total`    | Counter   | `task_type`, `outcome` |
+| `family_assistant_task_duration_seconds`    | Histogram | `task_type`            |
+| `family_assistant_tasks_queued`             | Gauge     | `state`                |
+| `family_assistant_task_due_latency_seconds` | Gauge     | —                      |
+
+Task `outcome` is how the *execution* ended: `completed`, `retried` (it failed and the queue will
+try again) or `failed` (it failed and the queue has given up). A task that succeeds on its third
+attempt therefore records two `retried` and one `completed`. The duration histogram times the
+handler alone, not the bookkeeping around it, so it answers which task types hold a worker long
+enough to delay everything behind them.
+
+`family_assistant_tasks_queued` counts what the queue still owns; `done` and `failed` rows are
+history, and the processed counter has them:
+
+| `state`      | Meaning                                                         |
+| ------------ | --------------------------------------------------------------- |
+| `scheduled`  | Pending, with a scheduled time still in the future              |
+| `due`        | Eligible to run and not yet claimed by a worker                 |
+| `processing` | Claimed by a worker that is still within the reclaim window     |
+| `stalled`    | Claimed more than 15 minutes ago — the worker probably died     |
+| `exhausted`  | Pending with its retries spent, so nothing will ever dequeue it |
+
+**`family_assistant_task_due_latency_seconds` is the metric to alert on.** It is the age of the
+oldest task that is eligible to run and has not been claimed, and it is near zero on a healthy
+queue. Depth cannot replace it: a task type that enqueues its own continuation holds exactly one row
+at a time, so a chain that starves everything else for an hour still reads as a depth of zero. Both
+gauges are sampled once per health-check period by the worker pool's health monitor, not by each
+worker. See [docs/design/task-queue-priority-lanes.md](../design/task-queue-priority-lanes.md) for
+the ordering rules these numbers describe.
+
 ### Useful queries
 
 Token spend per profile, in tokens per second:
@@ -372,6 +410,32 @@ sum by (profile) (
 )
 ```
 
+How long the oldest due task has been waiting, straight from the database when the exporter is not
+available:
+
+```sql
+SELECT max(now() - COALESCE(scheduled_at, created_at))
+  FROM tasks
+ WHERE status = 'pending'
+   AND (scheduled_at IS NULL OR scheduled_at <= now());
+```
+
+A task type that regenerates itself — its enqueue rate tracks its completion rate one for one while
+the queue never grows:
+
+```promql
+sum by (task_type) (rate(family_assistant_tasks_enqueued_total[15m]))
+```
+
+Which task types are holding workers:
+
+```promql
+histogram_quantile(
+  0.95,
+  sum by (le, task_type) (rate(family_assistant_task_duration_seconds_bucket[1h]))
+)
+```
+
 ______________________________________________________________________
 
 ## Alerting Recommendations
@@ -392,13 +456,14 @@ These require immediate attention:
 
 These indicate potential issues:
 
-| Condition             | Threshold     | Suggested Action           |
-| --------------------- | ------------- | -------------------------- |
-| LLM request latency   | p95 > 30s     | Review model selection     |
-| HTTP request latency  | p95 > 5s      | Investigate slow endpoints |
-| Error rate            | > 5%          | Review error logs          |
-| Background task queue | > 100 pending | Check worker capacity      |
-| Disk usage            | > 80%         | Clean up or expand storage |
+| Condition                  | Threshold | Suggested Action           |
+| -------------------------- | --------- | -------------------------- |
+| LLM request latency        | p95 > 30s | Review model selection     |
+| HTTP request latency       | p95 > 5s  | Investigate slow endpoints |
+| Error rate                 | > 5%      | Review error logs          |
+| Task due latency           | > 5 min   | Check worker capacity      |
+| Stalled or exhausted tasks | Any       | Investigate the task type  |
+| Disk usage                 | > 80%     | Clean up or expand storage |
 
 ### Example Prometheus Alert Rules
 
@@ -437,6 +502,30 @@ groups:
           severity: warning
         annotations:
           summary: "Over 10% of {{ $labels.provider }} LLM calls are failing"
+
+      - alert: TaskQueueDueLatency
+        expr: family_assistant_task_due_latency_seconds > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Oldest due task has been waiting over 5 minutes"
+
+      - alert: StalledTasks
+        expr: family_assistant_tasks_queued{state="stalled"} > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tasks are stuck in processing past the reclaim cutoff"
+
+      - alert: ExhaustedTasks
+        expr: family_assistant_tasks_queued{state="exhausted"} > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Tasks are pending with their retries spent and will never run"
 
       - alert: HighErrorRate
         expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05

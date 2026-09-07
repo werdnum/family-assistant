@@ -110,3 +110,74 @@ async def test_get_all_ascending_orders_by_due_time(db_engine: AsyncEngine) -> N
         "immediate",
         "due_later",
     ]
+
+
+@pytest.mark.asyncio
+async def test_queue_state_snapshot_classifies_every_state(
+    db_engine: AsyncEngine,
+) -> None:
+    """Each row lands in the state the queue would treat it as being in."""
+    db = Database(db_engine)
+    now = datetime.now(UTC)
+
+    await db.tasks.enqueue(
+        task_id="scheduled",
+        task_type=TASK_TYPE,
+        scheduled_at=now + timedelta(minutes=30),
+    )
+    await db.tasks.enqueue(
+        task_id="due",
+        task_type=TASK_TYPE,
+        scheduled_at=now - timedelta(minutes=4),
+    )
+    # Claimed through their own task types, so each dequeue takes the row it is
+    # meant to and not whichever pending row happens to be due first.
+    await db.tasks.enqueue(task_id="processing", task_type="claimed_probe")
+    await db.tasks.dequeue(
+        worker_id="worker",
+        task_types=["claimed_probe"],
+        current_time=now,
+    )
+    await db.tasks.enqueue(task_id="stalled", task_type="stalled_probe")
+    await db.tasks.dequeue(
+        worker_id="crashed_worker",
+        task_types=["stalled_probe"],
+        current_time=now - timedelta(minutes=20),
+    )
+    await db.tasks.enqueue(
+        task_id="exhausted", task_type=TASK_TYPE, max_retries_override=1
+    )
+    await db.tasks.reschedule_for_retry(
+        task_id="exhausted",
+        next_scheduled_at=now - timedelta(minutes=1),
+        new_retry_count=2,
+        error="gave up",
+    )
+    await db.tasks.enqueue(task_id="finished", task_type=TASK_TYPE)
+    await db.tasks.update_status(task_id="finished", status="done")
+
+    snapshot = await db.tasks.queue_state_snapshot(now)
+
+    assert (snapshot.scheduled, snapshot.due, snapshot.processing) == (1, 1, 1)
+    assert (snapshot.stalled, snapshot.exhausted) == (1, 1)
+    assert snapshot.due_latency_seconds == pytest.approx(240, abs=30)
+
+
+@pytest.mark.asyncio
+async def test_queue_state_snapshot_reports_no_latency_when_nothing_is_due(
+    db_engine: AsyncEngine,
+) -> None:
+    """An empty queue reports zero rather than an absent or NaN latency."""
+    db = Database(db_engine)
+    now = datetime.now(UTC)
+
+    await db.tasks.enqueue(
+        task_id="not_yet_due",
+        task_type=TASK_TYPE,
+        scheduled_at=now + timedelta(hours=1),
+    )
+
+    snapshot = await db.tasks.queue_state_snapshot(now)
+
+    assert snapshot.due == 0
+    assert snapshot.due_latency_seconds == 0.0
