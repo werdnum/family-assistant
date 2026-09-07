@@ -30,7 +30,7 @@ from family_assistant.config_inspection import redact_sensitive_text
 from family_assistant.tools.attachment_utils import process_attachment_arguments
 from family_assistant.tools.infrastructure import translate_attachment_schemas_for_llm
 from family_assistant.tools.mcp_attachments import (
-    MCPAttachmentMode,
+    AttachmentParameter,
     materialised_attachment_arguments,
     normalise_attachment_arguments,
     normalize_attachment_parameters,
@@ -194,7 +194,9 @@ class MCPToolsProvider:
         self._mcp_server_configs = dict(mcp_server_configs)
         # Validated here so a malformed block fails at startup rather than at
         # the first tool call that would have used it.
-        self._attachment_parameters = {
+        self._attachment_parameters: dict[
+            str, dict[str, dict[str, AttachmentParameter]]
+        ] = {
             server_id: normalize_attachment_parameters(
                 config.get("attachment_parameters")
             )
@@ -791,7 +793,7 @@ class MCPToolsProvider:
 
     def _attachment_parameters_for_tool(
         self, server_id: str, tool_name: str
-    ) -> dict[str, MCPAttachmentMode]:
+    ) -> dict[str, AttachmentParameter]:
         """Return the attachment parameters configured for one tool."""
         return self._attachment_parameters.get(server_id, {}).get(tool_name, {})
 

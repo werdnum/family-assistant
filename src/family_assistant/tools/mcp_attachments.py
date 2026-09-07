@@ -27,8 +27,9 @@ import mimetypes
 import shutil
 import tempfile
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.tools.attachment_utils import is_attachment_id
@@ -41,6 +42,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 type MCPAttachmentMode = Literal["data_uri", "file_path"]
+
+
+@dataclass(frozen=True, slots=True)
+class AttachmentParameter:
+    """How one configured parameter carries its attachment.
+
+    ``description`` is the operator's, not the server's. A server describes the
+    string it used to want, which can contradict the attachment outright --
+    Meshy's `image_url` reads "PUBLIC image URL (https://...). ... NEVER
+    manually base64-encode", which is the opposite of what this adapter does --
+    so the server's text is dropped on replacement and this is the way to put
+    something useful back.
+    """
+
+    mode: MCPAttachmentMode
+    description: str | None = None
+
 
 MCP_ATTACHMENT_MODES: frozenset[str] = frozenset({"data_uri", "file_path"})
 
@@ -55,11 +73,41 @@ FILE_PATH_TRANSPORTS: frozenset[str] = frozenset({"stdio"})
 _UNION_KEYWORDS = ("anyOf", "oneOf")
 
 
+def _parameter_from_config(
+    raw: object, tool_name: str, parameter_name: str
+) -> AttachmentParameter:
+    """Read one parameter entry: a bare mode, or a mapping carrying one."""
+    description: str | None = None
+    if isinstance(raw, Mapping):
+        description = raw.get("description")
+        if description is not None and not isinstance(description, str):
+            msg = (
+                f"attachment_parameters description for "
+                f"{tool_name}.{parameter_name} must be a string"
+            )
+            raise TypeError(msg)
+        mode = raw.get("mode")
+    else:
+        mode = raw
+    if mode not in MCP_ATTACHMENT_MODES:
+        msg = (
+            f"Unknown attachment mode {mode!r} for {tool_name}.{parameter_name}. "
+            f"Expected one of: {', '.join(sorted(MCP_ATTACHMENT_MODES))}."
+        )
+        raise ValueError(msg)
+    return AttachmentParameter(
+        mode=cast("MCPAttachmentMode", mode), description=description
+    )
+
+
 def normalize_attachment_parameters(
     # ast-grep-ignore: no-dict-any - Raw MCP server config is untyped JSON
     attachment_parameters: Mapping[str, Any] | None,
-) -> dict[str, dict[str, MCPAttachmentMode]]:
+) -> dict[str, dict[str, AttachmentParameter]]:
     """Validate a server's ``attachment_parameters`` block.
+
+    Each parameter is either a bare mode (``image_url: data_uri``) or a mapping
+    carrying that mode and an operator description.
 
     Raises:
         ValueError: If the block is malformed or names an unknown mode.
@@ -67,7 +115,7 @@ def normalize_attachment_parameters(
     if not attachment_parameters:
         return {}
 
-    normalized: dict[str, dict[str, MCPAttachmentMode]] = {}
+    normalized: dict[str, dict[str, AttachmentParameter]] = {}
     for tool_name, raw_parameters in attachment_parameters.items():
         if not isinstance(raw_parameters, Mapping):
             msg = (
@@ -75,17 +123,10 @@ def normalize_attachment_parameters(
                 f"names to modes, got {type(raw_parameters).__name__}"
             )
             raise TypeError(msg)
-        parameters: dict[str, MCPAttachmentMode] = {}
-        for parameter_name, raw_mode in raw_parameters.items():
-            if raw_mode not in MCP_ATTACHMENT_MODES:
-                msg = (
-                    f"Unknown attachment mode {raw_mode!r} for "
-                    f"{tool_name}.{parameter_name}. Expected one of: "
-                    f"{', '.join(sorted(MCP_ATTACHMENT_MODES))}."
-                )
-                raise ValueError(msg)
-            parameters[parameter_name] = raw_mode
-        normalized[tool_name] = parameters
+        normalized[tool_name] = {
+            parameter_name: _parameter_from_config(raw, tool_name, parameter_name)
+            for parameter_name, raw in raw_parameters.items()
+        }
     return normalized
 
 
@@ -131,7 +172,7 @@ _ARRAY_CONSTRAINTS = ("minItems", "maxItems")
 
 def overlay_attachment_parameters(
     definition: ToolDefinition,
-    parameters: Mapping[str, MCPAttachmentMode],
+    parameters: Mapping[str, AttachmentParameter],
     *,
     server_id: str,
 ) -> None:
@@ -143,10 +184,17 @@ def overlay_attachment_parameters(
     optional's union) describe a value the model is no longer being asked for.
     Leaving any of it in place would contradict the UUID the model must supply —
     a ``type: string`` beside an ``anyOf`` of array and null cannot be satisfied
-    at all. What survives is what still describes the new value: the
-    description, the shape (one attachment or a list of them), and a list's own
-    cardinality constraints, which bound how many attachments the server wants
-    and are unaffected by what each one is.
+    at all. That includes the server's own description, which describes the
+    string rather than the parameter -- Meshy's `image_url` says "PUBLIC image
+    URL (https://...). ... NEVER manually base64-encode", which the translation
+    would prefix with "UUID of the attachment." and hand the model two
+    contradictory instructions in one sentence. The operator supplies a
+    description instead, if one is wanted.
+
+    What survives is what still describes the new value: the shape (one
+    attachment or a list of them) and a list's own cardinality constraints,
+    which bound how many attachments the server wants and are unaffected by
+    what each one is.
 
     Optionality is unaffected: it lives in the schema's ``required`` list, which
     this does not touch.
@@ -155,7 +203,7 @@ def overlay_attachment_parameters(
     parameters_schema = definition.get("function", {}).get("parameters", {})
     properties = parameters_schema.get("properties", {})
 
-    for parameter_name, mode in parameters.items():
+    for parameter_name, parameter in parameters.items():
         parameter_schema = properties.get(parameter_name)
         if not isinstance(parameter_schema, Mapping):
             logger.warning(
@@ -178,16 +226,15 @@ def overlay_attachment_parameters(
                 value = array_branch.get(constraint)
                 if isinstance(value, int):
                     replacement[constraint] = value
-        description = parameter_schema.get("description")
-        if description:
-            replacement["description"] = description
+        if parameter.description:
+            replacement["description"] = parameter.description
         properties[parameter_name] = replacement
 
         logger.debug(
             "Marked %s.%s as an attachment parameter (%s) for MCP server %r",
             tool_name,
             parameter_name,
-            mode,
+            parameter.mode,
             server_id,
         )
 
@@ -243,7 +290,7 @@ def _attachment_ids_in(
 def normalise_attachment_arguments(
     # ast-grep-ignore: no-dict-any - MCP tool arguments are untyped per the MCP protocol
     arguments: Mapping[str, Any],
-    parameters: Mapping[str, MCPAttachmentMode],
+    parameters: Mapping[str, AttachmentParameter],
     # ast-grep-ignore: no-dict-any - MCP tool arguments are untyped per the MCP protocol
 ) -> dict[str, Any]:
     """Reduce every configured parameter to the attachments it names, or fail.
@@ -402,7 +449,7 @@ def _reject_unresolved(
 async def materialised_attachment_arguments(
     # ast-grep-ignore: no-dict-any - MCP tool arguments are untyped per the MCP protocol
     arguments: dict[str, Any],
-    parameters: Mapping[str, MCPAttachmentMode],
+    parameters: Mapping[str, AttachmentParameter],
     # ast-grep-ignore: no-dict-any - MCP tool arguments are untyped per the MCP protocol
 ) -> AsyncIterator[dict[str, Any]]:
     """Yield ``arguments`` with resolved attachments rendered for the server.
@@ -424,7 +471,8 @@ async def materialised_attachment_arguments(
         # ast-grep-ignore: no-dict-any - MCP tool arguments are untyped per the MCP protocol
         materialised: dict[str, Any] = {}
         for key, value in arguments.items():
-            mode = parameters.get(key)
+            parameter = parameters.get(key)
+            mode = parameter.mode if parameter is not None else None
             if mode is None or value is None:
                 # A null for an optional attachment is the model declining to
                 # pass one, which is the server's business, not ours.

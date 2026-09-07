@@ -1267,6 +1267,21 @@ class LoggingConfig(BaseModel):
     )
 
 
+class MCPAttachmentParameterConfig(BaseModel):
+    """One attachment parameter, when a bare mode is not enough.
+
+    The server's own description is dropped when the parameter's schema is
+    replaced -- it describes the string the server used to want, which can
+    contradict the attachment outright -- so this is where an operator puts
+    back something useful for the model to read.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: MCPAttachmentMode
+    description: str | None = None
+
+
 class MCPServerConfig(BaseModel):
     """Configuration for a single MCP server.
 
@@ -1280,10 +1295,11 @@ class MCPServerConfig(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     tool_metadata: dict[str, list[str]] = Field(default_factory=dict)
     # Maps tool name -> parameter name -> how the attachment should reach the
-    # server. See docs/operations/CONFIGURATION_REFERENCE.md.
-    attachment_parameters: dict[str, dict[str, MCPAttachmentMode]] = Field(
-        default_factory=dict
-    )
+    # server, either as a bare mode or as a mapping carrying an operator
+    # description. See docs/operations/CONFIGURATION_REFERENCE.md.
+    attachment_parameters: dict[
+        str, dict[str, MCPAttachmentMode | MCPAttachmentParameterConfig]
+    ] = Field(default_factory=dict)
     # Declared (rather than left to extra="allow") so diagnostic dumps mask it
     # by type. `env` values cannot be declared this way -- their keys are
     # operator-chosen environment variable names -- so they are redacted
@@ -1310,8 +1326,13 @@ class MCPServerConfig(BaseModel):
         offenders = sorted(
             f"{tool_name}.{parameter_name}"
             for tool_name, parameters in self.attachment_parameters.items()
-            for parameter_name, mode in parameters.items()
-            if mode == "file_path"
+            for parameter_name, parameter in parameters.items()
+            if (
+                parameter.mode
+                if isinstance(parameter, MCPAttachmentParameterConfig)
+                else parameter
+            )
+            == "file_path"
         )
         if offenders:
             msg = (

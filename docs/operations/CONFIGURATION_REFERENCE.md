@@ -2732,9 +2732,27 @@ meshy:
 A named parameter is advertised to the model as an attachment UUID — the same shape a built-in tool
 that takes an attachment uses. Its schema is **replaced**, not decorated: whatever the server
 declared about the string it used to want (a `format: uri`, a pattern, an optional's `anyOf`) no
-longer describes the value the model supplies, and only the description and the shape (one
-attachment or a list of them) carry over. Optionality is unaffected — that lives in the schema's
+longer describes the value the model supplies. Only the shape (one attachment or a list of them) and
+a list's `minItems`/`maxItems` carry over. Optionality is unaffected — that lives in the schema's
 `required` list.
+
+**The server's description goes too**, because it describes that string rather than the parameter.
+Meshy's `image_url`, for instance, reads *"PUBLIC image URL (https://...). Use ONLY for remote
+images. ... NEVER manually base64-encode"* — advertised alongside a request for an attachment ID,
+that is two contradictory instructions in one sentence. Give the parameter a description of your own
+by writing it as a mapping instead of a bare mode:
+
+```yaml
+meshy:
+  attachment_parameters:
+    meshy_image_to_3d:
+      image_url:
+        mode: data_uri
+        description: "The image to build the model from."
+```
+
+Both forms are accepted; the bare mode simply leaves the parameter with the generic "UUID of the
+attachment" text the translation supplies.
 
 At call time the UUID is resolved under the acting user's own access and rendered in the configured
 mode. Anything that is not an attachment the user can reach is an error, and the call is not made: a

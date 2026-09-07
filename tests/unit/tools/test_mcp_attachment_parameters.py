@@ -22,7 +22,11 @@ from family_assistant.services.attachment_registry import (
     AttachmentRegistry,
 )
 from family_assistant.tools import MCPServerConfig, MCPToolsProvider
-from family_assistant.tools.mcp_attachments import materialised_attachment_arguments
+from family_assistant.tools.mcp_attachments import (
+    AttachmentParameter,
+    MCPAttachmentMode,
+    materialised_attachment_arguments,
+)
 from family_assistant.tools.types import ToolExecutionContext
 
 if TYPE_CHECKING:
@@ -36,6 +40,12 @@ if TYPE_CHECKING:
 type MCPArguments = dict[str, Any]
 
 SERVER_ID = "meshy"
+
+
+def _mode(mode: MCPAttachmentMode) -> AttachmentParameter:
+    """The low-level helpers take resolved parameters, not raw config."""
+    return AttachmentParameter(mode=mode)
+
 
 IMAGE_BYTES = b"\x89PNG\r\n\x1a\nfake"
 
@@ -145,7 +155,9 @@ def test_configured_parameter_is_advertised_as_an_attachment_uuid() -> None:
     assert image_url["type"] == "attachment"
     # A `format: uri` left in place would contradict the UUID we now ask for.
     assert "format" not in image_url
-    assert image_url["description"] == "Image to convert"
+    # The server's description describes the string it used to want, so it goes
+    # with the rest of that schema.
+    assert "description" not in image_url
     assert _properties(definitions, "meshy_image_to_3d")["should_texture"] == {
         "type": "boolean"
     }
@@ -219,7 +231,7 @@ async def test_data_uri_mode_inlines_the_attachment_bytes() -> None:
 
     async with materialised_attachment_arguments(
         {"image_url": attachment, "should_texture": True},
-        {"image_url": "data_uri"},
+        {"image_url": _mode("data_uri")},
     ) as materialised:
         assert materialised["should_texture"] is True
         assert materialised["image_url"] == (
@@ -232,7 +244,7 @@ async def test_data_uri_mode_handles_a_list_of_attachments() -> None:
     attachments = [_attachment(), _attachment()]
 
     async with materialised_attachment_arguments(
-        {"image_urls": attachments}, {"image_urls": "data_uri"}
+        {"image_urls": attachments}, {"image_urls": _mode("data_uri")}
     ) as materialised:
         assert len(materialised["image_urls"]) == 2
         assert all(
@@ -246,7 +258,7 @@ async def test_file_path_mode_writes_a_readable_file_and_cleans_it_up() -> None:
     attachment = _attachment()
 
     async with materialised_attachment_arguments(
-        {"image_url": attachment}, {"image_url": "file_path"}
+        {"image_url": attachment}, {"image_url": _mode("file_path")}
     ) as materialised:
         path = anyio.Path(materialised["image_url"])
         assert path.suffix == ".png"
@@ -261,7 +273,7 @@ async def test_file_path_mode_falls_back_to_the_mime_type_for_a_suffix() -> None
     attachment = _attachment(filename=None, mime_type="image/jpeg")
 
     async with materialised_attachment_arguments(
-        {"image_url": attachment}, {"image_url": "file_path"}
+        {"image_url": attachment}, {"image_url": _mode("file_path")}
     ) as materialised:
         assert anyio.Path(materialised["image_url"]).suffix in {".jpg", ".jpeg"}
 
@@ -539,7 +551,7 @@ async def test_a_non_attachment_in_an_array_is_refused() -> None:
     with pytest.raises(ValueError, match="not a valid attachment UUID"):
         async with materialised_attachment_arguments(
             {"image_urls": [_attachment(), "https://attacker.invalid/x.png"]},
-            {"image_urls": "data_uri"},
+            {"image_urls": _mode("data_uri")},
         ):
             pass
 
@@ -549,7 +561,7 @@ async def test_a_non_attachment_scalar_is_refused() -> None:
     with pytest.raises(ValueError, match="not a valid attachment UUID"):
         async with materialised_attachment_arguments(
             {"image_url": "https://attacker.invalid/x.png"},
-            {"image_url": "data_uri"},
+            {"image_url": _mode("data_uri")},
         ):
             pass
 
@@ -558,7 +570,7 @@ async def test_a_non_attachment_scalar_is_refused() -> None:
 async def test_a_null_optional_attachment_passes_through() -> None:
     """Declining to pass an optional attachment is the server's business."""
     async with materialised_attachment_arguments(
-        {"image_url": None}, {"image_url": "data_uri"}
+        {"image_url": None}, {"image_url": _mode("data_uri")}
     ) as materialised:
         assert materialised == {"image_url": None}
 
@@ -574,7 +586,7 @@ async def test_data_uri_mode_touches_no_filesystem() -> None:
 
     with mock.patch.object(tempfile, "mkdtemp", refuse_mkdtemp):
         async with materialised_attachment_arguments(
-            {"image_url": attachment}, {"image_url": "data_uri"}
+            {"image_url": attachment}, {"image_url": _mode("data_uri")}
         ) as materialised:
             assert materialised["image_url"].startswith("data:image/png;base64,")
 
@@ -668,7 +680,7 @@ async def test_a_failed_cleanup_is_reported_and_does_not_mask_the_result(
 
     with mock.patch.object(shutil, "rmtree", failing_rmtree):
         async with materialised_attachment_arguments(
-            {"image_url": attachment}, {"image_url": "file_path"}
+            {"image_url": attachment}, {"image_url": _mode("file_path")}
         ) as materialised:
             result = materialised["image_url"]
 
@@ -815,3 +827,111 @@ async def test_a_wrapper_naming_no_attachments_is_refused() -> None:
 
     assert "Error" in result
     assert calls == []
+
+
+MESHY_IMAGE_URL_DESCRIPTION = (
+    "PUBLIC image URL (https://...). Use ONLY for remote images. For local "
+    "files use file_path instead. NEVER manually base64-encode."
+)
+
+
+def _meshy_shaped_tool() -> Tool:
+    """Meshy's real `image_url`: text that contradicts what we now send."""
+    return Tool(
+        name="meshy_image_to_3d",
+        description="Turn an image into a 3D model",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "image_url": {
+                    "type": "string",
+                    "description": MESHY_IMAGE_URL_DESCRIPTION,
+                }
+            },
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_server_description_does_not_reach_the_model() -> None:
+    """Meshy tells the model to send a URL and never base64-encode.
+
+    Prefixed with "UUID of the attachment.", that is two contradictory
+    instructions in one sentence, so the server's text goes with the rest of
+    the schema it described.
+    """
+    provider = _provider({"meshy_image_to_3d": {"image_url": "data_uri"}})
+    tools = [_meshy_shaped_tool()]
+    definitions = provider._format_mcp_definitions_to_dicts(tools, SERVER_ID)
+    provider._register_server_tools(
+        SERVER_ID,
+        definitions,
+        provider._build_mcp_descriptors(
+            server_id=SERVER_ID, definitions=definitions, discovered_tools=tools
+        ),
+    )
+    provider._initialized = True
+
+    advertised = _properties(
+        list(await provider.get_tool_definitions()), "meshy_image_to_3d"
+    )["image_url"]
+
+    assert "NEVER manually base64-encode" not in advertised["description"]
+    assert "PUBLIC image URL" not in advertised["description"]
+    assert "UUID" in advertised["description"]
+
+
+def test_an_operator_description_replaces_the_server_s() -> None:
+    """Dropping the server's text leaves a place for something accurate."""
+    provider = _provider({
+        "meshy_image_to_3d": {
+            "image_url": {
+                "mode": "data_uri",
+                "description": "The image to build the model from.",
+            }
+        }
+    })
+
+    definitions = provider._format_mcp_definitions_to_dicts(
+        [_meshy_shaped_tool()], SERVER_ID
+    )
+
+    assert (
+        _properties(definitions, "meshy_image_to_3d")["image_url"]["description"]
+        == "The image to build the model from."
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_mapping_form_carries_its_mode() -> None:
+    """A description does not change how the attachment reaches the server."""
+    attachment = _attachment()
+    provider, calls = await _connected_provider(
+        {
+            "meshy_image_to_3d": {
+                "image_url": {"mode": "data_uri", "description": "The image."}
+            }
+        },
+        [_image_tool()],
+    )
+
+    result = await provider.execute_tool(
+        "meshy_image_to_3d",
+        {"image_url": attachment.get_id()},
+        _execution_context(_registry_serving(attachment)),
+    )
+
+    assert result == "ok"
+    assert calls[0]["image_url"].startswith("data:image/png;base64,")
+
+
+def test_a_file_path_mapping_is_still_refused_for_a_remote_server() -> None:
+    """The transport rule reads the mode wherever the operator wrote it."""
+    with pytest.raises(ValueError, match="requires a stdio MCP server"):
+        MCPServerConfigModel.model_validate({
+            "transport": "sse",
+            "url": "https://example.invalid/mcp",
+            "attachment_parameters": {
+                "t": {"p": {"mode": "file_path", "description": "x"}}
+            },
+        })

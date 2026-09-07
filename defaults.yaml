@@ -403,7 +403,11 @@ indexing_pipeline_config:
 #   meshy:
 #     attachment_parameters:
 #       meshy_image_to_3d:
-#         image_url: data_uri
+#         image_url:
+#           mode: data_uri
+#           # The server's own description is dropped (it describes the URL it
+#           # used to want); this is where to put something accurate back.
+#           description: "The image to build the model from."
 mcp_config:
   mcpServers:
     time:
