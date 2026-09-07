@@ -150,6 +150,49 @@ Enables development-specific features like hot reloading and debug endpoints.
 
 ______________________________________________________________________
 
+## Task Worker Pool
+
+Background work -- reminders, delegated runs, automations, indexing and the nightly cleanups -- runs
+on a pool of in-process task workers. The pool has two kinds of worker, and each is sized
+separately. See [docs/design/task-queue-priority-lanes.md](../design/task-queue-priority-lanes.md)
+for the lanes themselves.
+
+### task_worker_count
+
+Number of **general** workers. A general worker runs any queued task it has a handler for, taking
+interactive work (reminders, confirmations, delegated runs, automations) ahead of background work
+(indexing, cleanups) whenever both are due.
+
+| Property  | Value |
+| --------- | ----- |
+| Required  | No    |
+| Default   | `2`   |
+| Sensitive | No    |
+| Example   | `4`   |
+
+### reserved_task_worker_count
+
+Number of **reserved** workers, in addition to the general ones. A reserved worker runs interactive
+tasks only, so a burst of background work cannot delay a reminder or a confirmation. It also never
+runs a handler that parks waiting on another queued task (a delegated run waiting on a human
+confirmation), because holding one would occupy the capacity that has to run the task releasing it.
+
+| Property  | Value |
+| --------- | ----- |
+| Required  | No    |
+| Default   | `1`   |
+| Sensitive | No    |
+| Example   | `2`   |
+
+**Capacity caveat:** a delegated run that asks for a human confirmation holds its worker until the
+decision arrives (up to its handler timeout), and its approval resumes that same handler rather than
+queueing separate work. So a pool of one general worker and no reserved worker does not deadlock,
+but everything else in the queue waits behind the pending decision for as long as it takes. The
+default of two general workers and one reserved worker keeps the rest of the queue moving while a
+run is parked.
+
+______________________________________________________________________
+
 ## Privacy Policy Page
 
 Every deployment serves a privacy policy at `/privacy`. The path is in `PUBLIC_PATHS`, so it renders

@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposed. Motivated by the message-history re-embedding incident fixed in
+Implemented, in three milestones: due-time ordering with the queue metrics, the priority column, and
+the reserved workers. Motivated by the message-history re-embedding incident fixed in
 [#1192](https://github.com/werdnum/family-assistant/pull/1192), whose workaround this design
 replaces with a queue-level fix.
 

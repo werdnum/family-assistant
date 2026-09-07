@@ -1889,6 +1889,13 @@ class AppConfig(BaseSettings):
     # single event loop and cannot span processes.
     task_worker_count: int = Field(default=2, ge=1)
 
+    # Number of additional in-process TaskWorker instances reserved for
+    # interactive work. A reserved worker claims only tasks in the interactive
+    # lane, and never a handler that parks on another queued task, so a burst of
+    # background work on the general workers cannot delay a reminder or a
+    # confirmation. Set to 0 to run general workers only.
+    reserved_task_worker_count: int = Field(default=1, ge=0)
+
     # Attachment selection thresholds (global)
     attachment_selection_threshold: int = 3  # Trigger selection when > this many
     max_response_attachments: int = 6  # Max attachments per response

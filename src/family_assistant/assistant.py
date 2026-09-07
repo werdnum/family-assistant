@@ -2086,24 +2086,31 @@ class Assistant:
 
         worker_timezone = ZoneInfo(default_profile_conf.processing_config.timezone)
 
-        # Build a pool of identically-configured in-process workers. Multiple
-        # workers are required so a handler that parks on an in-process future
-        # (e.g. a confirmation-gated delegated run) is unblocked by a sibling that
-        # services the task resolving it; in-process only, since workers share
-        # in-memory futures and registries within this event loop.
+        # Build a pool of in-process workers. Multiple workers are required so a
+        # handler that parks on an in-process future (e.g. a confirmation-gated
+        # delegated run) is unblocked by a sibling that services the task resolving
+        # it; in-process only, since workers share in-memory futures and registries
+        # within this event loop. The reserved workers additionally keep capacity
+        # free for interactive work while the general ones are busy.
         worker_count = self.config.task_worker_count
+        reserved_worker_count = self.config.reserved_task_worker_count
+        worker_lanes: list[TaskPriority | None] = [None] * worker_count + [
+            TaskPriority.INTERACTIVE
+        ] * reserved_worker_count
         self.task_workers = [
             self._build_task_worker(
                 default_timezone=worker_timezone,
                 engine=self._require_database_engine(),
+                min_priority=min_priority,
             )
-            for _ in range(worker_count)
+            for min_priority in worker_lanes
         ]
         self.task_worker_tasks = [
             asyncio.create_task(worker.run()) for worker in self.task_workers
         ]
         logger.info(
-            f"Started task worker pool with {worker_count} worker(s): "
+            f"Started task worker pool with {worker_count} general and "
+            f"{reserved_worker_count} reserved worker(s): "
             f"{[w.worker_id for w in self.task_workers]}"
         )
 
@@ -2347,15 +2354,20 @@ class Assistant:
             logger.error(f"Failed to setup system tasks: {e}")
 
     def _build_task_worker(
-        self, default_timezone: ZoneInfo, engine: AsyncEngine
+        self,
+        default_timezone: ZoneInfo,
+        engine: AsyncEngine,
+        min_priority: TaskPriority | None = None,
     ) -> TaskWorker:
         """Construct and fully configure a single TaskWorker for the pool.
 
         Every worker in the pool is built here so they share an identical handler
         set and the same shared dependencies (processing service, confirmation
-        waiters/managers, etc.). They are interchangeable: any worker can pick up
-        any queued task, and they share the application engine -- one database,
-        one engine, one connection pool.
+        waiters/managers, etc.), and they share the application engine -- one
+        database, one engine, one connection pool. ``min_priority`` is what makes
+        a worker reserved: it decides which of those handlers the worker actually
+        dequeues for, so a general worker (``None``) picks up any queued task
+        while a reserved one takes only interactive, non-parking work.
         """
         if self.default_processing_service is None:
             raise RuntimeError("default_processing_service must be set before workers")
@@ -2384,6 +2396,7 @@ class Assistant:
             confirmation_ui_managers=self.fastapi_app.state.confirmation_ui_managers,
             notification_dispatcher=self.notification_dispatcher,
             stream_hub=self.fastapi_app.state.conversation_stream_hub,
+            min_priority=min_priority,
         )
         worker.register_task_handler("log_message", task_wrapper_handle_log_message)
         if self.document_indexer:

@@ -1057,19 +1057,63 @@ TASK_POLLING_INTERVAL = 5  # Seconds to wait between polling for tasks
 TASK_HANDLER_TIMEOUT = 300  # Seconds to wait for task handler execution (5 minutes)
 CONFIRMATION_CANCELLATION_CLEANUP_TIMEOUT = 5.0
 
-# Per-task-type handler timeout overrides (seconds). Task types not listed here
-# fall back to ``handler_timeout`` (TASK_HANDLER_TIMEOUT). A delegated profile run
-# can park waiting on a human confirmation far longer than 300s; raising its timeout
-# is safe now that a pool of workers keeps servicing the queue (the confirmation
-# approval enqueues a separate task that a sibling worker runs), so the parked run
-# is unblocked rather than starving other background work.
+
+@dataclass(frozen=True)
+class TaskHandlerBudget:
+    """What a task type needs beyond the default handler budget.
+
+    ``parks_on_queued_work`` marks a handler that can spend most of its budget
+    waiting for another task on the same queue to run. Such a handler needs the
+    longer timeout *because* it parks, so the two facts are declared together:
+    the timeout override and the reserved workers' exclusion are both derived
+    from this table, and a future parking handler gets them both at once.
+    """
+
+    timeout: float
+    parks_on_queued_work: bool = False
+
+
+# Task types whose handler needs more than ``handler_timeout`` (TASK_HANDLER_TIMEOUT).
+# A delegated profile run can park waiting on a human confirmation far longer than
+# 300s; raising its timeout is safe because a pool of workers keeps servicing the
+# queue (the confirmation approval enqueues a separate task that a sibling worker
+# runs), so the parked run is unblocked rather than starving other background work.
 #
 # Note: ``delegated_profile_run`` is registered on a feature branch and may not exist
 # on every deployment yet. Listing it here is forward-compatible and harmless: the
-# override only applies when a task of that type is actually processed.
-DEFAULT_TASK_HANDLER_TIMEOUT_OVERRIDES: dict[str, float] = {
-    "delegated_profile_run": 600,  # 10 minutes for confirmation-gated delegated runs
+# entry only applies when a task of that type is actually processed.
+DEFAULT_TASK_HANDLER_BUDGETS: dict[str, TaskHandlerBudget] = {
+    "delegated_profile_run": TaskHandlerBudget(
+        timeout=600,  # 10 minutes for confirmation-gated delegated runs
+        parks_on_queued_work=True,
+    ),
 }
+
+
+def handler_timeouts_from_budgets(
+    budgets: Mapping[str, TaskHandlerBudget],
+) -> dict[str, float]:
+    """Per-task-type handler timeouts declared by ``budgets``."""
+    return {task_type: budget.timeout for task_type, budget in budgets.items()}
+
+
+def parking_task_types_from_budgets(
+    budgets: Mapping[str, TaskHandlerBudget],
+) -> frozenset[str]:
+    """Task types whose handler can park on another task of the same queue."""
+    return frozenset(
+        task_type
+        for task_type, budget in budgets.items()
+        if budget.parks_on_queued_work
+    )
+
+
+DEFAULT_TASK_HANDLER_TIMEOUT_OVERRIDES: dict[str, float] = (
+    handler_timeouts_from_budgets(DEFAULT_TASK_HANDLER_BUDGETS)
+)
+PARKING_TASK_TYPES: frozenset[str] = parking_task_types_from_budgets(
+    DEFAULT_TASK_HANDLER_BUDGETS
+)
 
 # --- Events for coordination (can remain module-level) ---
 # Note: shutdown_event removed - each TaskWorker instance now has its own
@@ -1652,8 +1696,17 @@ class TaskWorker:
         confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None,
         notification_dispatcher: Notifier | None = None,
         stream_hub: ConversationStreamHub | None = None,
+        min_priority: TaskPriority | None = None,
     ) -> None:
-        """Initializes the TaskWorker with its dependencies."""
+        """Initializes the TaskWorker with its dependencies.
+
+        ``min_priority`` reserves this worker for tasks at or above that lane: it
+        claims nothing below it, and it also skips the handlers that can park on
+        another queued task, since holding one would occupy the very capacity
+        that has to run the task releasing it. A worker with no ``min_priority``
+        is a general worker and claims any task it has a handler for.
+        """
+        self.min_priority = min_priority
         self.processing_service = processing_service
         self.chat_interface = chat_interface
         self.chat_interfaces = chat_interfaces
@@ -1731,6 +1784,20 @@ class TaskWorker:
     ) -> dict[str, Callable[[ToolExecutionContext, Any], Awaitable[None]]]:
         """Return the current task handlers dictionary for this worker."""
         return self.task_handlers
+
+    def dequeued_task_types(self) -> list[str]:
+        """The task types this worker claims from the queue.
+
+        The registered handlers, minus the ones that park on queued work when
+        this worker is reserved.
+        """
+        if self.min_priority is None:
+            return list(self.task_handlers)
+        return [
+            task_type
+            for task_type in self.task_handlers
+            if task_type not in PARKING_TASK_TYPES
+        ]
 
     async def handle_delegated_profile_run(
         self,
@@ -4620,11 +4687,11 @@ class TaskWorker:
     async def _run_loop(self, wake_up_event: asyncio.Event) -> None:
         """The task-processing loop body, run with a registered wake event."""
         logger.info(f"Task worker {self.worker_id} run loop started.")
-        # Get task types handled by *this specific instance*
-        task_types_handled = list(self.task_handlers.keys())
+        # Get task types dequeued by *this specific instance*
+        task_types_handled = self.dequeued_task_types()
         if not task_types_handled:
             logger.warning(
-                f"Task worker {self.worker_id} has no registered handlers. Exiting loop."
+                f"Task worker {self.worker_id} has no task types to dequeue. Exiting loop."
             )
             return
 
@@ -4666,6 +4733,7 @@ class TaskWorker:
                         worker_id=self.worker_id,
                         task_types=task_types_handled,
                         current_time=self.clock.now(),  # Pass current time from worker's clock
+                        min_priority=self.min_priority,
                     )
                 except Exception as e:
                     logger.exception(
