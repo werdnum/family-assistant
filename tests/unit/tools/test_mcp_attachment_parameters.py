@@ -796,3 +796,22 @@ async def test_a_wrapper_naming_several_cannot_fill_a_single_parameter() -> None
 
     assert "names 2" in result
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_wrapper_naming_no_attachments_is_refused() -> None:
+    """An empty wrapper would delete the caller's element from the array."""
+    attachment = _attachment()
+    provider, calls = await _connected_provider(
+        {"meshy_multi_image_to_3d": {"image_urls": "data_uri"}},
+        [_multi_image_tool()],
+    )
+
+    result = await provider.execute_tool(
+        "meshy_multi_image_to_3d",
+        {"image_urls": [{"attachments": []}]},
+        _execution_context(_registry_serving(attachment)),
+    )
+
+    assert "Error" in result
+    assert calls == []

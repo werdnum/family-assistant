@@ -202,8 +202,8 @@ def _attachment_ids_in(
     result -- and a script reaches an MCP tool with those dictionaries intact,
     because the script layer's raw-definition lookup covers only local tools and
     so cannot tell that this parameter takes an attachment. Both shapes are
-    accepted here and reduced to ids; every id is checked, so nothing is
-    expanded away silently.
+    accepted here and reduced to ids; every id is checked and a wrapper that
+    names none is refused, so nothing is expanded away silently.
 
     Raises:
         ValueError: If the value names no attachment, or names a malformed one.
@@ -228,6 +228,11 @@ def _attachment_ids_in(
             ids: list[str | ScriptAttachment] = []
             for entry in nested:
                 ids.extend(_attachment_ids_in(entry, parameter_name))
+            if not ids:
+                # A wrapper carrying no attachments names none, and letting it
+                # expand to nothing would delete the caller's element from the
+                # array -- the same silent shortening a malformed id would.
+                raise reject(candidate)
             return ids
         attachment_id = candidate.get("id")
         if isinstance(attachment_id, str) and is_attachment_id(attachment_id):
