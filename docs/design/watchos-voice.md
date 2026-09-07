@@ -65,13 +65,13 @@ automatic reconnection are outside this change.
 - Support watchOS 10 and later, matching the shared code's Observation and microphone APIs.
 - Apple's guidance for streaming audio on watchOS prefers a Network framework WebSocket over
   `URLSession`. A `NWConnection` transport shipped first and, on a real watch, never reached
-  `.ready`: it parked in `.waiting` with `ECONNABORTED` — the policy denial — until setup timed
-  out. Two conditions can produce that denial and neither is under the app's control: the
-  recording session this feature needs uses `playAndRecord`, which cannot carry the
-  `longFormAudio` route sharing policy the exception is granted against, and the low-level path
-  is unavailable whenever the watch reaches the network through the paired iPhone. `URLSession`
-  is subject to neither, so voice takes the transport that is always permitted rather than the
-  one that is faster where it is allowed.
+  `.ready`: it parked in `.waiting` with `ECONNABORTED` — the policy denial — until setup timed out.
+  Two conditions can produce that denial and neither is under the app's control: the recording
+  session this feature needs uses `playAndRecord`, which cannot carry the `longFormAudio` route
+  sharing policy the exception is granted against, and the low-level path is unavailable whenever
+  the watch reaches the network through the paired iPhone. `URLSession` is subject to neither, so
+  voice takes the transport that is always permitted rather than the one that is faster where it is
+  allowed.
 
 ## Platform references
 

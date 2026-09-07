@@ -181,11 +181,11 @@ and tap **Set up with iPhone** while your paired iPhone is nearby and signed in 
 There is no server address or password to enter on the watch. If setup cannot connect, open Family
 Assistant on the iPhone and try again.
 
-After setup, voice works over whatever connection the watch has: its own Wi-Fi or cellular when
-your iPhone is away, or the paired iPhone's connection when it is nearby.
-If sign-in expires, use **Set up with iPhone** again. Signing out or changing accounts on the phone
-clears the watch's sign-in when the devices next exchange updates; this is not immediate while
-disconnected. You can also revoke the watch's credentials in API token settings.
+After setup, voice works over whatever connection the watch has: its own Wi-Fi or cellular when your
+iPhone is away, or the paired iPhone's connection when it is nearby. If sign-in expires, use **Set
+up with iPhone** again. Signing out or changing accounts on the phone clears the watch's sign-in
+when the devices next exchange updates; this is not immediate while disconnected. You can also
+revoke the watch's credentials in API token settings.
 
 Tap **Start Voice**, allow microphone access, and speak. The screen shows microphone activity and
 the latest transcription. Use **Mute** to pause your microphone or **End** to finish. Leaving the
