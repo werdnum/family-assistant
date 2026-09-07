@@ -34,6 +34,7 @@ from family_assistant.tools.mcp_attachments import (
     materialised_attachment_arguments,
     normalize_attachment_parameters,
     overlay_attachment_parameters,
+    reject_unresolvable_attachment_arguments,
 )
 from family_assistant.tools.metadata import (
     ToolDescriptor,
@@ -1275,7 +1276,7 @@ class MCPToolsProvider:
 
         try:
             resolved = await self._resolve_attachment_arguments(
-                name, arguments, context
+                name, server_id, arguments, context
             )
             async with materialised_attachment_arguments(
                 resolved, attachment_parameters
@@ -1292,6 +1293,7 @@ class MCPToolsProvider:
     async def _resolve_attachment_arguments(
         self,
         name: str,
+        server_id: str,
         # ast-grep-ignore: no-dict-any - MCP tool arguments are untyped per the MCP protocol
         arguments: dict[str, Any],
         context: ToolExecutionContext,
@@ -1303,6 +1305,9 @@ class MCPToolsProvider:
         so the same ownership and access checks every other provider's
         attachment parameters go through apply here too.
         """
+        reject_unresolvable_attachment_arguments(
+            arguments, self._attachment_parameters_for_tool(server_id, name)
+        )
         definition = next(
             (
                 candidate

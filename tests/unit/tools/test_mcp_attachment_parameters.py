@@ -676,3 +676,50 @@ async def test_a_failed_cleanup_is_reported_and_does_not_mask_the_result(
     assert result
     assert "may remain on disk" in caplog.text
     assert any(record.levelname == "ERROR" for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_a_wrapper_with_a_bad_id_is_refused_not_silently_emptied() -> None:
+    """Resolution drops entries it cannot use; the call must not go anyway.
+
+    ``process_attachment_arguments`` expands a ScriptToolResult-shaped wrapper
+    and discards a nested id that is not a UUID, which would leave an empty
+    array and a call that looks successful.
+    """
+    attachment = _attachment()
+    provider, calls = await _connected_provider(
+        {"meshy_multi_image_to_3d": {"image_urls": "data_uri"}},
+        [_multi_image_tool()],
+    )
+
+    result = await provider.execute_tool(
+        "meshy_multi_image_to_3d",
+        {"image_urls": [{"attachments": [{"id": "not-a-uuid"}]}]},
+        _execution_context(_registry_serving(attachment)),
+    )
+
+    assert "Error" in result
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_attachments_a_script_already_resolved_are_accepted() -> None:
+    """A script resolves its own attachments before dispatch, so they arrive resolved."""
+    attachment = _attachment()
+    provider, calls = await _connected_provider(
+        {"meshy_image_to_3d": {"image_url": "data_uri"}}, [_image_tool()]
+    )
+
+    result = await provider.execute_tool(
+        "meshy_image_to_3d",
+        {"image_url": attachment},
+        _execution_context(_registry_serving(attachment)),
+    )
+
+    assert result == "ok"
+    assert calls == [
+        {
+            "image_url": "data:image/png;base64,"
+            + base64.b64encode(IMAGE_BYTES).decode("ascii")
+        }
+    ]

@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING, Any, Literal
 import anyio
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
+from family_assistant.tools.attachment_utils import is_attachment_id
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -191,6 +192,45 @@ def overlay_attachment_parameters(
             mode,
             server_id,
         )
+
+
+def reject_unresolvable_attachment_arguments(
+    # ast-grep-ignore: no-dict-any - MCP tool arguments are untyped per the MCP protocol
+    arguments: Mapping[str, Any],
+    parameters: Mapping[str, MCPAttachmentMode],
+) -> None:
+    """Refuse anything but an attachment for a configured parameter, before resolving.
+
+    Resolution is not a validator: ``process_attachment_arguments`` expands a
+    ``ScriptToolResult``-shaped wrapper into the attachments it names and
+    silently drops the entries it cannot use, so a malformed id inside one
+    would leave a shortened -- possibly empty -- array and the call would go
+    through as if nothing were wrong. Checking the arguments as the caller gave
+    them is what makes that visible, and it is the only place the original
+    entry still exists to complain about.
+
+    A script resolves its own attachments before dispatch, so an already-resolved
+    ``ScriptAttachment`` is accepted here too.
+
+    Raises:
+        ValueError: If a configured parameter holds anything else.
+    """
+    for parameter_name in parameters:
+        value = arguments.get(parameter_name)
+        if value is None:
+            continue
+        candidates = value if isinstance(value, list) else [value]
+        for candidate in candidates:
+            if isinstance(candidate, ScriptAttachment):
+                continue
+            if isinstance(candidate, str) and is_attachment_id(candidate):
+                continue
+            msg = (
+                f"Parameter '{parameter_name}' takes an attachment, but "
+                f"{candidate!r} is not an attachment UUID. Attachment IDs are "
+                f"shown in tool result messages as '[Attachment ID: ...]'."
+            )
+            raise ValueError(msg)
 
 
 def _suffix_for(attachment: ScriptAttachment) -> str:
