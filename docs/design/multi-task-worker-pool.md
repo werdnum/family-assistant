@@ -35,9 +35,19 @@ workers are therefore **not** viable for this mechanism, and are out of scope.
 `AppConfig.task_worker_count` (integer, **default 2**, validated `>= 1`) controls how many workers
 start. `Assistant` builds N identically-configured workers from a single `_build_task_worker(...)`
 builder so every worker gets the same handler set and shared dependencies (processing service,
-confirmation waiters/managers, etc.). The workers are interchangeable: any worker can pick up any
-queued task. Their `run()` tasks are tracked in `Assistant.task_worker_tasks` (index-aligned with
-`Assistant.task_workers`).
+confirmation waiters/managers, etc.). Their `run()` tasks are tracked in
+`Assistant.task_worker_tasks` (index-aligned with `Assistant.task_workers`).
+
+### General and reserved workers
+
+The workers are no longer interchangeable. A **general** worker picks up any queued task, as
+described above; a **reserved** worker (`AppConfig.reserved_task_worker_count`, **default 1**) takes
+only interactive work, and only the part of it that cannot park on another queued task, so a burst
+of background work cannot delay a reminder or the confirmation that releases a parked delegated run.
+Both kinds come from the same builder and differ only by a minimum priority, which keeps the
+health-monitor restart below unchanged. See
+[task-queue-priority-lanes.md](task-queue-priority-lanes.md) for the lanes and for why the
+reservation excludes parking handlers.
 
 ### Dedicated engine per worker
 

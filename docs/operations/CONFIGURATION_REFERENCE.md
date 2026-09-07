@@ -150,6 +150,47 @@ Enables development-specific features like hot reloading and debug endpoints.
 
 ______________________________________________________________________
 
+## Task Worker Pool
+
+Background work -- reminders, delegated runs, automations, indexing and the nightly cleanups -- runs
+on a pool of in-process task workers. The pool has two kinds of worker, and each is sized
+separately. See [docs/design/task-queue-priority-lanes.md](../design/task-queue-priority-lanes.md)
+for the lanes themselves.
+
+### task_worker_count
+
+Number of **general** workers. A general worker runs any queued task it has a handler for, taking
+interactive work (reminders, confirmations, delegated runs, automations) ahead of background work
+(indexing, cleanups) whenever both are due.
+
+| Property  | Value |
+| --------- | ----- |
+| Required  | No    |
+| Default   | `2`   |
+| Sensitive | No    |
+| Example   | `4`   |
+
+### reserved_task_worker_count
+
+Number of **reserved** workers, in addition to the general ones. A reserved worker runs interactive
+tasks only, so a burst of background work cannot delay a reminder or a confirmation. It also never
+runs a handler that parks waiting on another queued task (a delegated run waiting on a human
+confirmation), because holding one would occupy the capacity that has to run the task releasing it.
+
+| Property  | Value |
+| --------- | ----- |
+| Required  | No    |
+| Default   | `1`   |
+| Sensitive | No    |
+| Example   | `2`   |
+
+**Deadlock constraint:** a delegated run parked on a confirmation is released by a *separate* queued
+task, which some other worker has to claim. The pool therefore needs either at least one general and
+one reserved worker (the default), or at least two general workers. A single general worker with no
+reserved worker deadlocks any confirmation-gated delegated run until its handler times out.
+
+______________________________________________________________________
+
 ## Privacy Policy Page
 
 Every deployment serves a privacy policy at `/privacy`. The path is in `PUBLIC_PATHS`, so it renders
