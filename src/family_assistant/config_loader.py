@@ -27,6 +27,7 @@ import yaml
 from dotenv import find_dotenv, load_dotenv
 from pydantic import SecretStr, ValidationError
 
+from .config_inspection import redact_sensitive_config
 from .config_models import AppConfig
 from .config_sources import deep_merge_dicts, load_yaml_file
 
@@ -1491,16 +1492,15 @@ def load_config(
         config_data, service_profile_prompts
     )
 
-    # 7. Log final config (excluding secrets)
-    _log_config(config_data)
-
-    # 8. Final validation
+    # 7. Final validation and logging
     try:
         validated_config = AppConfig.model_validate(config_data)
         logger.info("Configuration validated successfully.")
+        _log_config(validated_config.model_dump(mode="json"))
         return validated_config
     except ValidationError as e:
-        logger.error(f"Configuration validation failed: {e}")
+        _log_config(config_data)
+        logger.error("Configuration validation failed: %s", e)
         raise
 
 
@@ -1512,53 +1512,8 @@ def _log_config(
     Args:
         config_data: The configuration dictionary to log
     """
-    # Keys to exclude from logging
-    secret_keys = {
-        "telegram_token",
-        "openrouter_api_key",
-        "gemini_api_key",
-        "openai_api_key",
-        "embedding_api_key",
-        "willyweather_api_key",
-        "database_url",
-    }
-
-    loggable = copy.deepcopy({
-        k: v for k, v in config_data.items() if k not in secret_keys
-    })
-
-    # Remove password from calendar_config
-    if "calendar_config" in loggable and loggable["calendar_config"].get("caldav"):
-        loggable["calendar_config"]["caldav"].pop("password", None)
-
-    # Remove VAPID private key
-    if "pwa_config" in loggable:
-        loggable["pwa_config"] = {
-            k: v for k, v in loggable["pwa_config"].items() if k != "vapid_private_key"
-        }
-
-    # Remove APNs private key material
-    if "apns" in loggable:
-        loggable["apns"] = {
-            k: v for k, v in loggable["apns"].items() if k != "auth_key"
-        }
-
-    # Remove Google integration secret material
-    if "google_integration" in loggable:
-        loggable["google_integration"] = {
-            k: v
-            for k, v in loggable["google_integration"].items()
-            if k not in {"oauth_client_secret", "credential_encryption_key"}
-        }
-
-    # Remove UCP private key material
-    if "ucp_config" in loggable:
-        loggable["ucp_config"] = {
-            k: v
-            for k, v in loggable["ucp_config"].items()
-            if k != "signing_private_key"
-        }
-
+    redacted = redact_sensitive_config(config_data)
     logger.info(
-        f"Final configuration (excluding secrets): {json.dumps(loggable, indent=2, default=str)}"
+        "Final configuration (excluding secrets): %s",
+        json.dumps(redacted, indent=2, default=str),
     )
