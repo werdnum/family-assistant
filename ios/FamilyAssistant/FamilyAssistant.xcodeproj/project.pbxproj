@@ -22,7 +22,6 @@
 		321751B615B790F311E52249 /* VoiceToolRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89532A21EDFEC837F0AB3A5C /* VoiceToolRunner.swift */; };
 		369AFB32F99C2B9FB565EEE3 /* ChatLayoutBudgetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A272834699FEDEC1F4899A5 /* ChatLayoutBudgetTests.swift */; };
 		3978075EB8BA2ED6AC63E7FC /* KeychainHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10003 /* KeychainHelper.swift */; };
-		3AAF8A1EFDACC0F131CA1D26 /* NetworkGeminiLiveSocket.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88C7E932EB1DEB14FCB40ECA /* NetworkGeminiLiveSocket.swift */; };
 		3ED19B4DB96F7326A74A511D /* EphemeralTokenTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E3A27173FF16F5E7DBC2003 /* EphemeralTokenTests.swift */; };
 		3F7C16D73246C8539945CC09 /* WatchVoiceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CC90A11C08AE322E041E550 /* WatchVoiceView.swift */; };
 		404C176C1E45A62B8FC2758C /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 7A1C0FE3D24B8915C0770002 /* PrivacyInfo.xcprivacy */; };
@@ -198,7 +197,6 @@
 		6A272834699FEDEC1F4899A5 /* ChatLayoutBudgetTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ChatLayoutBudgetTests.swift; sourceTree = "<group>"; };
 		6D663DEDC405191D0833C9B6 /* VoiceJSONValue.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceJSONValue.swift; sourceTree = "<group>"; };
 		7A1C0FE3D24B8915C0770002 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
-		88C7E932EB1DEB14FCB40ECA /* NetworkGeminiLiveSocket.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = NetworkGeminiLiveSocket.swift; sourceTree = "<group>"; };
 		89532A21EDFEC837F0AB3A5C /* VoiceToolRunner.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceToolRunner.swift; sourceTree = "<group>"; };
 		8FA1B325D85B6E7199DC1AFA /* WatchVoiceApp.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = WatchVoiceApp.swift; sourceTree = "<group>"; };
 		9D5A200966EBAD61C16887A4 /* VoiceSessionViewModelTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceSessionViewModelTests.swift; sourceTree = "<group>"; };
@@ -557,7 +555,6 @@
 			isa = PBXGroup;
 			children = (
 				0352FE40C799700EBD09C620 /* Info.plist */,
-				88C7E932EB1DEB14FCB40ECA /* NetworkGeminiLiveSocket.swift */,
 				8FA1B325D85B6E7199DC1AFA /* WatchVoiceApp.swift */,
 				1CC90A11C08AE322E041E550 /* WatchVoiceView.swift */,
 			);
@@ -871,7 +868,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				3AAF8A1EFDACC0F131CA1D26 /* NetworkGeminiLiveSocket.swift in Sources */,
 				EC7941766A2B06553B0F745C /* WatchVoiceApp.swift in Sources */,
 				AA000002 /* WatchAuthentication.swift in Sources */,
 				3F7C16D73246C8539945CC09 /* WatchVoiceView.swift in Sources */,

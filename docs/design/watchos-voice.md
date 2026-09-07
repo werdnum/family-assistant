@@ -18,11 +18,13 @@ the user back to that flow. A non-secret phone-session identity is synchronized 
 sign-out and account changes; credentials only travel in an interactive reply, never queued context.
 Late replies must not install credentials after the phone or watch setup session has changed.
 
-watchOS needs asynchronous audio-session activation before opening a streaming connection. Use
-Network framework WebSockets on watchOS, retaining the existing injectable socket boundary. The
-watch UI shows actual microphone activity, connection failures, mute and end controls, and the
-latest transcript. Watch transcripts are live captions only; they are not saved to conversation
-history.
+watchOS needs asynchronous audio-session activation before the microphone will run. Voice uses the
+same `URLSession` WebSocket transport as the phone, through the existing injectable socket boundary:
+watchOS denies low-level Network framework connections unless the app qualifies for the
+streaming-audio exception, and it never carries them over the companion iPhone link, so a watch
+whose only route is the paired phone cannot open one at all. The watch UI shows actual microphone
+activity, connection failures, mute and end controls, and the latest transcript. Watch transcripts
+are live captions only; they are not saved to conversation history.
 
 The complication is a launcher. Tapping it opens the app and requests a voice session; microphone
 permission and sign-in still apply. Merely displaying the complication never starts recording. An
@@ -61,6 +63,15 @@ automatic reconnection are outside this change.
   phone and web apps.
 - Request a normal audio route; system routing and hardware determine speaker or Bluetooth output.
 - Support watchOS 10 and later, matching the shared code's Observation and microphone APIs.
+- Apple's guidance for streaming audio on watchOS prefers a Network framework WebSocket over
+  `URLSession`. A `NWConnection` transport shipped first and, on a real watch, never reached
+  `.ready`: it parked in `.waiting` with `ECONNABORTED` — the policy denial — until setup timed
+  out. Two conditions can produce that denial and neither is under the app's control: the
+  recording session this feature needs uses `playAndRecord`, which cannot carry the
+  `longFormAudio` route sharing policy the exception is granted against, and the low-level path
+  is unavailable whenever the watch reaches the network through the paired iPhone. `URLSession`
+  is subject to neither, so voice takes the transport that is always permitted rather than the
+  one that is faster where it is allowed.
 
 ## Platform references
 
