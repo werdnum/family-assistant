@@ -73,6 +73,10 @@ from .config_sources import DeepMergedYamlSource
 from .delegation_security import DelegationSecurityLevel
 from .security.taint import SinkClass, TaintPolicyConfig
 from .telegram.commands import BUILT_IN_SLASH_COMMANDS, normalize_slash_command
+from .tools.mcp_attachments import (
+    MCPAttachmentMode,
+    file_path_mode_is_supported,
+)
 from .tools.policy import (
     ToolPolicyConfig,
     ToolPolicyDecision,
@@ -1263,6 +1267,21 @@ class LoggingConfig(BaseModel):
     )
 
 
+class MCPAttachmentParameterConfig(BaseModel):
+    """One attachment parameter, when a bare mode is not enough.
+
+    The server's own description is dropped when the parameter's schema is
+    replaced -- it describes the string the server used to want, which can
+    contradict the attachment outright -- so this is where an operator puts
+    back something useful for the model to read.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: MCPAttachmentMode
+    description: str | None = None
+
+
 class MCPServerConfig(BaseModel):
     """Configuration for a single MCP server.
 
@@ -1275,11 +1294,58 @@ class MCPServerConfig(BaseModel):
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
     tool_metadata: dict[str, list[str]] = Field(default_factory=dict)
+    # Maps tool name -> parameter name -> how this deployment wants that
+    # parameter adapted: an attachment mode (bare, or with a description), or
+    # "drop" to hide it. See docs/operations/CONFIGURATION_REFERENCE.md.
+    parameter_overrides: dict[
+        str,
+        dict[
+            str,
+            MCPAttachmentMode | Literal["drop"] | MCPAttachmentParameterConfig,
+        ],
+    ] = Field(default_factory=dict)
     # Declared (rather than left to extra="allow") so diagnostic dumps mask it
     # by type. `env` values cannot be declared this way -- their keys are
     # operator-chosen environment variable names -- so they are redacted
     # structurally by config_inspection instead.
     token: SecretStr | None = None
+
+    @model_validator(mode="after")
+    def validate_parameter_overrides(self) -> MCPServerConfig:
+        """Reject ``file_path`` materialisation on a transport that cannot use it.
+
+        ``file_path`` writes the attachment into our own filesystem and hands
+        the server the path, which only means anything to a stdio server we
+        spawned ourselves. Configuring it for a remote server would send a path
+        the server cannot open, so it fails at load rather than at the first
+        tool call.
+        """
+        if not self.parameter_overrides:
+            return self
+        transport = str(
+            (self.__pydantic_extra__ or {}).get("transport") or "stdio"
+        ).lower()
+        if file_path_mode_is_supported(transport):
+            return self
+        offenders = sorted(
+            f"{tool_name}.{parameter_name}"
+            for tool_name, parameters in self.parameter_overrides.items()
+            for parameter_name, parameter in parameters.items()
+            if (
+                parameter.mode
+                if isinstance(parameter, MCPAttachmentParameterConfig)
+                else parameter
+            )
+            == "file_path"
+        )
+        if offenders:
+            msg = (
+                f"parameter_overrides mode 'file_path' requires a stdio MCP "
+                f"server, but transport is {transport!r}: {', '.join(offenders)}. "
+                f"Use 'data_uri' instead."
+            )
+            raise ValueError(msg)
+        return self
 
 
 class MCPConfig(BaseModel):

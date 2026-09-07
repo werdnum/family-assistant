@@ -35,6 +35,7 @@ from family_assistant.observability.metrics import (
     UNKNOWN_TOOL,
     record_tool_call,
 )
+from family_assistant.scripting.apis.attachments import ScriptAttachment
 from family_assistant.security.definition_records import (
     CreationDisposition,
     DefinitionGateOutcome,
@@ -1364,8 +1365,15 @@ def _collect_attachment_argument_ids(
                 )
             )
         return attachment_ids
-    if in_attachment_slot and is_attachment_id(value):
-        return {cast("str", value)}
+    if in_attachment_slot:
+        if isinstance(value, ScriptAttachment):
+            # A script resolves its own attachment arguments before dispatch, so
+            # what reaches the policy gate is the object rather than the id it
+            # was named by. Reading the id off it keeps the attachment's
+            # provenance in the evaluation instead of silently dropping it.
+            return {value.get_id()}
+        if is_attachment_id(value):
+            return {cast("str", value)}
     return set()
 
 

@@ -2713,6 +2713,74 @@ A server that fails to start does not make the application unhealthy — it is l
 `failed`, and its tools are simply absent. Run `poe check-mcp` (or
 `python scripts/check_mcp_servers.py <server-id>`) to get a verdict per server.
 
+#### parameter_overrides (adapting a tool's parameters)
+
+An MCP server declares its parameters for its own callers, which is not always what this deployment
+wants the model to see. `parameter_overrides` says how to adapt them, keyed by tool name the same
+way `tool_metadata` is. Each parameter takes one override:
+
+```yaml
+meshy:
+  parameter_overrides:
+    meshy_image_to_3d:
+      image_url:
+        mode: data_uri
+        description: "The image to build the model from."
+      file_path: drop
+    meshy_multi_image_to_3d:
+      image_urls: data_uri
+      file_paths: drop
+```
+
+##### `data_uri` / `file_path` — fill this parameter with an attachment
+
+The server knows nothing about our attachments: a tool that takes an image expects a `string`
+holding a data URI or a filesystem path, not one of our attachment UUIDs. Naming a mode makes the
+parameter carry an attachment instead.
+
+The parameter is advertised to the model as an attachment UUID — the same shape a built-in tool that
+takes an attachment uses — and its schema is **replaced**, not decorated. Whatever the server
+declared about the string it used to want (a `format: uri`, a pattern, an optional's `anyOf`, and
+its description) no longer describes the value the model supplies. Only the shape (one attachment or
+a list) and a list's `minItems`/`maxItems` carry over. Optionality is unaffected — that lives in the
+schema's `required` list.
+
+**The server's description goes too**, because it describes that string rather than the parameter.
+Meshy's `image_url`, for instance, reads *"PUBLIC image URL (https://...). Use ONLY for remote
+images. ... NEVER manually base64-encode"* — advertised alongside a request for an attachment ID,
+that is two contradictory instructions in one sentence. Write the parameter as a mapping to give it
+a description of your own; a bare mode leaves the generic "UUID of the attachment" text.
+
+At call time the UUID is resolved under the acting user's own access and rendered in the configured
+mode:
+
+- `data_uri` — the attachment's bytes inline as `data:<mime>;base64,...`. Works for every transport.
+- `file_path` — the bytes are written to a temporary file and its path is passed. The file is
+  deleted as soon as the call returns.
+
+Anything that is not an attachment the user can reach is an error, and the call is not made: a
+parameter configured as an attachment never forwards a model-supplied string to the server.
+
+`file_path` only means something to a **stdio** server, which we spawn ourselves and which therefore
+shares our filesystem. Configuring it for an `sse` or Streamable HTTP server fails at configuration
+load — a remote server would receive a path it cannot open — so use `data_uri` there.
+
+##### `drop` — hide this parameter from the model
+
+A server often offers several ways in and describes each as though the others did not exist. Meshy
+takes an image as `image_url` **or** `file_path`, and calls the latter *"PREFERRED for local files"*
+— so once `image_url` carries an attachment, the untouched `file_path` actively argues for the input
+you want ignored. `drop` removes the parameter from what the model sees.
+
+If the server marks a dropped parameter `required`, its `required` entry is removed too (a mandatory
+parameter the model cannot see is a schema nothing can satisfy) and a warning is logged: the server
+may still reject calls that omit it, and whether that is acceptable is your call.
+
+##### Both
+
+A configured parameter the server's schema does not have is logged and ignored, so a tool that
+renames a parameter degrades to its own schema rather than being called with one the server rejects.
+
 #### tool_metadata (taint classification)
 
 Configure `tool_metadata` for MCP servers whose protocol annotations do not describe their security

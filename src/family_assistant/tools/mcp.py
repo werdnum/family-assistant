@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import logging
 import os  # Import os for environment variable resolution
 import random
@@ -11,6 +12,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     TypedDict,
+    cast,
 )  # Added Tuple
 
 import anyio
@@ -25,6 +27,17 @@ from mcp.client.streamable_http import streamablehttp_client
 from mcp.types import TextContent  # Import TextContent from mcp.types
 
 from family_assistant.config_inspection import redact_sensitive_text
+from family_assistant.tools.attachment_utils import process_attachment_arguments
+from family_assistant.tools.infrastructure import translate_attachment_schemas_for_llm
+from family_assistant.tools.mcp_attachments import (
+    AttachmentParameter,
+    ParameterOverride,
+    apply_parameter_overrides,
+    attachment_parameters_only,
+    materialised_attachment_arguments,
+    normalise_attachment_arguments,
+    normalize_parameter_overrides,
+)
 from family_assistant.tools.metadata import (
     ToolDescriptor,
     build_tool_descriptor,
@@ -136,6 +149,25 @@ class _ReconnectBackoff:
     next_attempt_at: float = 0.0
 
 
+def _array_parameter_names(definition: ToolDefinition | None) -> frozenset[str]:
+    """Which of a tool's parameters the overlay decided hold a list.
+
+    The overlay already resolved that from the server's schema -- through
+    unions and ``$ref``s -- so execution reads its answer rather than guessing
+    again from the value it was handed.
+    """
+    if definition is None:
+        return frozenset()
+    properties = (
+        definition.get("function", {}).get("parameters", {}).get("properties", {})
+    )
+    return frozenset(
+        name
+        for name, schema in properties.items()
+        if isinstance(schema, dict) and schema.get("type") == "array"
+    )
+
+
 class MCPServerStatus(TypedDict):
     """Diagnostic snapshot describing one MCP server's connection state.
 
@@ -181,6 +213,14 @@ class MCPToolsProvider:
         reconnect_backoff_max_seconds: float = DEFAULT_RECONNECT_BACKOFF_MAX_SECONDS,
     ) -> None:
         self._mcp_server_configs = dict(mcp_server_configs)
+        # Validated here so a malformed block fails at startup rather than at
+        # the first tool call that would have used it.
+        self._parameter_overrides: dict[
+            str, dict[str, dict[str, ParameterOverride]]
+        ] = {
+            server_id: normalize_parameter_overrides(config.get("parameter_overrides"))
+            for server_id, config in self._mcp_server_configs.items()
+        }
         self._initialization_timeout_seconds = initialization_timeout_seconds
         self._health_check_interval_seconds = health_check_interval_seconds
         self._reconnect_backoff_base_seconds = reconnect_backoff_base_seconds
@@ -555,7 +595,9 @@ class MCPToolsProvider:
             logger.info(f"Server '{server_id}' provides {len(server_tools)} tools.")
 
             # Format MCP tools to OpenAI dict format (sanitization moved to LLM layer)
-            sanitized_tools = self._format_mcp_definitions_to_dicts(server_tools)
+            sanitized_tools = self._format_mcp_definitions_to_dicts(
+                server_tools, server_id
+            )
             discovered_tools.extend(sanitized_tools)
 
             for tool_def in sanitized_tools:  # Iterate sanitized definitions
@@ -768,16 +810,32 @@ class MCPToolsProvider:
             self._health_check_task = asyncio.create_task(self._health_check_loop())
             logger.info("Started MCP server health check task")
 
+    def _attachment_parameters_for_tool(
+        self, server_id: str, tool_name: str
+    ) -> dict[str, AttachmentParameter]:
+        """Return the attachment parameters configured for one tool."""
+        return attachment_parameters_only(
+            self._parameter_overrides.get(server_id, {}).get(tool_name, {})
+        )
+
     def _format_mcp_definitions_to_dicts(
         # self, definitions: List[Dict[str, Any]] # Original signature
         self,
         definitions: Sequence[Any],  # MCP list_tools returns Tool objects
+        server_id: str,
     ) -> list[ToolDefinition]:
         """
         Accepts a list of MCP Tool objects.
         Converts MCP Tool objects to OpenAI-like dictionary format.
         Sanitization (removing unsupported formats) is handled by the LLM client layer.
+
+        The server's ``parameter_overrides`` block is applied here: an
+        attachment parameter is marked ``type: attachment``, so the definitions
+        this provider holds carry the same internal shape as a local tool's and
+        the LLM-facing translation applies to both alike, and a dropped
+        parameter is removed.
         """
+        parameter_overrides = self._parameter_overrides.get(server_id, {})
         formatted_defs = []
         for tool in definitions:  # Iterate MCP Tool objects
             try:
@@ -791,11 +849,22 @@ class MCPToolsProvider:
                         "description": (
                             tool.description
                         ),  # Assuming these attributes exist
-                        "parameters": tool.inputSchema,
+                        # Deep-copied because the overlay below rewrites the
+                        # schema, and the MCP Tool object it came from is reused
+                        # by descriptor building and the refresh comparison.
+                        "parameters": copy.deepcopy(tool.inputSchema),
                     },
                 }
                 # --- Sanitization logic removed from here ---
                 # The 'format' field might still be present in the 'parameters' dict
+
+                tool_overrides = parameter_overrides.get(tool.name)
+                if tool_overrides:
+                    apply_parameter_overrides(
+                        cast("ToolDefinition", tool_dict),
+                        tool_overrides,
+                        server_id=server_id,
+                    )
 
                 formatted_defs.append(tool_dict)  # Add the formatted dict
             except Exception as e:
@@ -808,10 +877,16 @@ class MCPToolsProvider:
     async def get_tool_definitions(
         self,
     ) -> list[ToolDefinition]:
-        """Returns the aggregated and sanitized tool definitions from all connected servers."""
+        """Returns the aggregated and sanitized tool definitions from all connected servers.
+
+        Attachment-typed parameters are translated to their LLM-facing form
+        (a string holding an attachment UUID) here, the same way
+        ``LocalToolsProvider`` does it, while ``self._definitions`` keeps the
+        internal ``type: attachment`` that execution needs.
+        """
         if not self._initialized:
             await self.initialize()
-        return self._definitions
+        return translate_attachment_schemas_for_llm(self._definitions)
 
     @property
     def descriptors_version(self) -> int:
@@ -1081,7 +1156,7 @@ class MCPToolsProvider:
         nothing else re-reads its tools. The health check already asks for that
         list, so it is also what keeps the cache honest.
         """
-        definitions = self._format_mcp_definitions_to_dicts(server_tools)
+        definitions = self._format_mcp_definitions_to_dicts(server_tools, server_id)
         descriptors = self._build_mcp_descriptors(
             server_id=server_id,
             definitions=definitions,
@@ -1217,6 +1292,68 @@ class MCPToolsProvider:
             f"Executing MCP tool '{name}' on server '{server_id}' with args: {arguments}"
         )
 
+        attachment_parameters = self._attachment_parameters_for_tool(server_id, name)
+        if not attachment_parameters:
+            return await self._call_tool_with_reconnect(
+                name, arguments, server_id, session
+            )
+
+        try:
+            resolved = await self._resolve_attachment_arguments(
+                name, server_id, arguments, context
+            )
+            async with materialised_attachment_arguments(
+                resolved, attachment_parameters
+            ) as materialised:
+                return await self._call_tool_with_reconnect(
+                    name, materialised, server_id, session
+                )
+        except ValueError as e:
+            # Both resolution and materialisation refuse an argument that is not
+            # an attachment, and neither has sent anything to the server yet.
+            logger.error(f"Attachment processing failed for MCP tool '{name}': {e}")
+            return f"Error: {e!s}"
+
+    async def _resolve_attachment_arguments(
+        self,
+        name: str,
+        server_id: str,
+        # ast-grep-ignore: no-dict-any - MCP tool arguments are untyped per the MCP protocol
+        arguments: dict[str, Any],
+        context: ToolExecutionContext,
+        # ast-grep-ignore: no-dict-any - MCP tool arguments are untyped per the MCP protocol
+    ) -> dict[str, Any]:
+        """Resolve attachment UUIDs in ``arguments`` to attachment objects.
+
+        Uses the internal definition (the one carrying ``type: attachment``),
+        so the same ownership and access checks every other provider's
+        attachment parameters go through apply here too.
+        """
+        definition = next(
+            (
+                candidate
+                for candidate in self._definitions
+                if candidate.get("function", {}).get("name") == name
+            ),
+            None,
+        )
+        arguments = normalise_attachment_arguments(
+            arguments,
+            self._attachment_parameters_for_tool(server_id, name),
+            array_parameters=_array_parameter_names(definition),
+        )
+        return await process_attachment_arguments(arguments, context, definition)
+
+    async def _call_tool_with_reconnect(
+        self,
+        name: str,
+        # ast-grep-ignore: no-dict-any - MCP tool arguments are untyped per the MCP protocol
+        arguments: dict[str, Any],
+        server_id: str,
+        session: ClientSession,
+    ) -> str:
+        """Call an MCP tool, reconnecting once if the transport went away."""
+        active = session
         # Try to execute the tool, with one reconnection attempt on failure
         for attempt in range(2):
 
@@ -1251,7 +1388,7 @@ class MCPToolsProvider:
                     return result_str
 
             try:
-                return await call_tool_result(session)
+                return await call_tool_result(active)
             except Exception as e:
                 if attempt == 0:
                     # First attempt failed, try to reconnect
@@ -1265,8 +1402,9 @@ class MCPToolsProvider:
                         reconnected = await self._reconnect_server(server_id)
                         if reconnected:
                             # Update session reference after reconnection
-                            session = self._sessions.get(server_id)
-                            if session:
+                            reconnected_session = self._sessions.get(server_id)
+                            if reconnected_session:
+                                active = reconnected_session
                                 logger.info(
                                     f"Retrying tool '{name}' after successful reconnection..."
                                 )
