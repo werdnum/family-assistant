@@ -431,7 +431,7 @@ sum by (profile) (
 ```
 
 How long the oldest due task has been waiting, straight from the database when the exporter is not
-available:
+available. On PostgreSQL:
 
 ```sql
 SELECT max(now() - COALESCE(scheduled_at, created_at))
@@ -439,6 +439,16 @@ SELECT max(now() - COALESCE(scheduled_at, created_at))
  WHERE status = 'pending'
    AND retry_count <= max_retries
    AND (scheduled_at IS NULL OR scheduled_at <= now());
+```
+
+On SQLite, which has no `now()` and no interval arithmetic, the same reading in seconds:
+
+```sql
+SELECT max((julianday('now') - julianday(COALESCE(scheduled_at, created_at))) * 86400)
+  FROM tasks
+ WHERE status = 'pending'
+   AND retry_count <= max_retries
+   AND (scheduled_at IS NULL OR scheduled_at <= strftime('%Y-%m-%d %H:%M:%f', 'now'));
 ```
 
 The retry predicate matters: a pending row whose retries are spent is `exhausted`, not `due`, and
