@@ -567,21 +567,16 @@ async def test_a_null_optional_attachment_passes_through() -> None:
 async def test_data_uri_mode_touches_no_filesystem() -> None:
     """The mode that needs no files must not create (and then remove) a directory."""
     attachment = _attachment()
-    created: list[str] = []
-    real_mkdtemp = tempfile.mkdtemp
 
-    def recording_mkdtemp(*args: object, **kwargs: object) -> str:
-        path = real_mkdtemp(*args, **kwargs)  # type: ignore[arg-type]
-        created.append(path)
-        return path
+    def refuse_mkdtemp(*args: object, **kwargs: object) -> str:
+        msg = "data_uri materialisation created a temporary directory"
+        raise AssertionError(msg)
 
-    with mock.patch.object(tempfile, "mkdtemp", recording_mkdtemp):
+    with mock.patch.object(tempfile, "mkdtemp", refuse_mkdtemp):
         async with materialised_attachment_arguments(
             {"image_url": attachment}, {"image_url": "data_uri"}
         ) as materialised:
             assert materialised["image_url"].startswith("data:image/png;base64,")
-
-    assert created == []
 
 
 @pytest.mark.asyncio
