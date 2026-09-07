@@ -23,7 +23,7 @@ from family_assistant.delegation_security import DelegationSecurityLevel
 from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
-from family_assistant.storage.tasks import enqueue_task, tasks_table
+from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.types import TaskDict
 from family_assistant.task_worker import (
     TaskWorker,
@@ -139,8 +139,7 @@ async def test_script_failure_notification_is_processable(
     # so it fails immediately without retrying
     task_id = f"test_fail_{uuid.uuid4().hex[:8]}"
     db_ctx = Database(engine=db_engine)
-    await enqueue_task(
-        db_context=db_ctx,
+    await db_ctx.tasks.enqueue(
         task_id=task_id,
         task_type="script_execution",
         payload={
@@ -214,8 +213,7 @@ async def test_notify_on_failure_false_suppresses_notification(
 
     task_id = f"test_nonotify_{uuid.uuid4().hex[:8]}"
     db_ctx = Database(engine=db_engine)
-    await enqueue_task(
-        db_context=db_ctx,
+    await db_ctx.tasks.enqueue(
         task_id=task_id,
         task_type="script_execution",
         payload={
@@ -270,8 +268,7 @@ async def test_llm_callback_failure_does_not_trigger_notification(
 
     task_id = f"test_llm_fail_{uuid.uuid4().hex[:8]}"
     db_ctx = Database(engine=db_engine)
-    await enqueue_task(
-        db_context=db_ctx,
+    await db_ctx.tasks.enqueue(
         task_id=task_id,
         task_type="llm_callback",
         payload={
@@ -318,8 +315,7 @@ async def test_notification_contains_event_data(
 
     task_id = f"test_evdata_{uuid.uuid4().hex[:8]}"
     db_ctx = Database(engine=db_engine)
-    await enqueue_task(
-        db_context=db_ctx,
+    await db_ctx.tasks.enqueue(
         task_id=task_id,
         task_type="script_execution",
         payload={
@@ -383,8 +379,7 @@ async def test_confined_profile_failure_skips_llm_notification(
 
     task_id = f"test_confined_{uuid.uuid4().hex[:8]}"
     db_ctx = Database(engine=db_engine)
-    await enqueue_task(
-        db_context=db_ctx,
+    await db_ctx.tasks.enqueue(
         task_id=task_id,
         task_type="script_execution",
         payload={
@@ -441,8 +436,7 @@ async def test_stamped_profile_carried_into_notification(
 
     task_id = f"test_stamped_{uuid.uuid4().hex[:8]}"
     db_ctx = Database(engine=db_engine)
-    await enqueue_task(
-        db_context=db_ctx,
+    await db_ctx.tasks.enqueue(
         task_id=task_id,
         task_type="script_execution",
         payload={

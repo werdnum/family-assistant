@@ -2,13 +2,15 @@
 
 Spans already record what a single turn did. These metrics record what the
 deployment has spent in aggregate -- per processing profile, per model, per
-provider -- which a sampled, short-retention trace store cannot answer. See
+provider -- plus the health of the background task queue, which a sampled,
+short-retention trace store cannot answer. See
 :doc:`/docs/design/prometheus-metrics`.
 
 Everything here is fed from a small number of chokepoints
 (:class:`~family_assistant.llm.utils.call_telemetry.LLMCallTelemetry`, the tool
-executor, the streaming loop) so that a provider or tool added later is counted
-by construction rather than by remembering to count it.
+executor, the streaming loop, the task queue's repository and worker) so that a
+provider, tool or task type added later is counted by construction rather than
+by remembering to count it.
 
 **Token accounting is normalised here, once.** Providers disagree about what
 their own prompt and completion counts include, so the exported buckets are
@@ -46,6 +48,11 @@ __all__ = [
     "LLM_CALL_DURATION",
     "LLM_TIME_TO_FIRST_OUTPUT",
     "LLM_TOKENS",
+    "TASKS_ENQUEUED",
+    "TASKS_PROCESSED",
+    "TASKS_QUEUED",
+    "TASK_DUE_LATENCY",
+    "TASK_DURATION",
     "TOOL_CALLS",
     "TOOL_DURATION",
     "TURNS",
@@ -58,6 +65,9 @@ __all__ = [
     "normalized_token_buckets",
     "record_indexing_documents",
     "record_llm_call",
+    "record_task_enqueued",
+    "record_task_processed",
+    "record_task_queue_state",
     "record_tool_call",
 ]
 
@@ -219,6 +229,64 @@ INDEXING_DOCUMENTS = Counter(
         "`embedded` means selection has come loose from what is stored."
     ),
     ("source_type", "outcome"),
+)
+
+
+# A task handler runs anything from a single row insert to a multi-minute
+# embedding batch, and the interesting question is which types hold a worker
+# long enough to delay everything behind them, so the buckets reach past the
+# handler timeout rather than crowding around a second.
+_TASK_DURATION_BUCKETS: Final = (
+    0.1,
+    0.5,
+    1.0,
+    5.0,
+    15.0,
+    30.0,
+    60.0,
+    120.0,
+    300.0,
+    600.0,
+)
+
+TASKS_ENQUEUED = Counter(
+    "family_assistant_tasks_enqueued",
+    "Tasks written to the queue, by type.",
+    ("task_type",),
+)
+
+TASKS_PROCESSED = Counter(
+    "family_assistant_tasks_processed",
+    (
+        "Task executions, by how the execution ended -- completed, retried or "
+        "failed. A retried execution is counted again when it runs."
+    ),
+    ("task_type", "outcome"),
+)
+
+TASK_DURATION = Histogram(
+    "family_assistant_task_duration_seconds",
+    "Wall-clock duration of a task handler execution.",
+    ("task_type",),
+    buckets=_TASK_DURATION_BUCKETS,
+)
+
+TASKS_QUEUED = Gauge(
+    "family_assistant_tasks_queued",
+    (
+        "Tasks waiting or running, by state -- scheduled, due, processing, "
+        "stalled or exhausted. Terminal rows are history, not queue state, and "
+        "the processed counter already has them."
+    ),
+    ("state",),
+)
+
+TASK_DUE_LATENCY = Gauge(
+    "family_assistant_task_due_latency_seconds",
+    (
+        "Age of the oldest task that is eligible to run and has not been "
+        "claimed. Zero when nothing is due."
+    ),
 )
 
 
@@ -402,6 +470,78 @@ def record_tool_call(
         TOOL_DURATION.labels(profile, tool).observe(duration_seconds)
     except Exception:
         logger.debug("Failed to record tool call metrics", exc_info=True)
+
+
+def record_task_enqueued(task_type: str) -> None:
+    """Count one task written to the queue. Never raises.
+
+    Recorded where the row is written rather than where the caller decided to
+    write it, so a producer added later is counted by construction. This is the
+    counter that makes a self-perpetuating chain visible: a type whose enqueue
+    rate tracks its completion rate one-for-one while its depth never rises is
+    regenerating itself, which no depth metric can show.
+    """
+    try:
+        TASKS_ENQUEUED.labels(task_type).inc()
+    except Exception:
+        logger.debug("Failed to record task enqueue metrics", exc_info=True)
+
+
+def record_task_processed(
+    *,
+    task_type: str,
+    outcome: str,
+    duration_seconds: float | None,
+) -> None:
+    """Count one task execution and how long its handler ran. Never raises.
+
+    ``outcome`` is ``completed``, ``retried`` or ``failed``. ``retried`` is an
+    execution that ended in an error the queue will try again, so a task that
+    eventually succeeds contributes one ``completed`` and one ``retried`` per
+    failed attempt.
+
+    ``duration_seconds`` is ``None`` when no handler ran -- a task the worker
+    rejected before dispatch is still a terminal outcome the counter must
+    carry, but a zero-length observation would misdescribe the histogram.
+    """
+    try:
+        TASKS_PROCESSED.labels(task_type, outcome).inc()
+        if duration_seconds is not None:
+            TASK_DURATION.labels(task_type).observe(duration_seconds)
+    except Exception:
+        logger.debug("Failed to record task processing metrics", exc_info=True)
+
+
+def record_task_queue_state(
+    *,
+    scheduled: int,
+    due: int,
+    processing: int,
+    stalled: int,
+    exhausted: int,
+    due_latency_seconds: float,
+) -> None:
+    """Publish one sample of the queue's shape. Never raises.
+
+    Sampled from one place -- the worker pool's health monitor -- rather than by
+    every worker on every poll, so the numbers are one consistent reading of the
+    queue instead of several interleaved ones. Every state is set on every
+    sample, zeroes included, so a series does not go stale at its last non-zero
+    value when the condition it reports clears.
+    """
+    states = (
+        ("scheduled", scheduled),
+        ("due", due),
+        ("processing", processing),
+        ("stalled", stalled),
+        ("exhausted", exhausted),
+    )
+    try:
+        for state, count in states:
+            TASKS_QUEUED.labels(state).set(count)
+        TASK_DUE_LATENCY.set(due_latency_seconds)
+    except Exception:
+        logger.debug("Failed to record task queue state metrics", exc_info=True)
 
 
 class TurnMetrics:

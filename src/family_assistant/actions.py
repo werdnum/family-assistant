@@ -20,7 +20,6 @@ from family_assistant.security.definition_records import (
 )
 from family_assistant.security.taint import TurnTaintTracker
 from family_assistant.storage.database import Database
-from family_assistant.storage.tasks import enqueue_task
 
 if TYPE_CHECKING:
     from family_assistant.task_worker import LlmCallbackPayload
@@ -194,8 +193,7 @@ async def execute_action(
             kind=DefinitionArtifactKind.TASK_PAYLOAD,
             artifact_id=task_id,
         )
-        await enqueue_task(
-            db_context=db_ctx,
+        await db_ctx.tasks.enqueue(
             task_id=task_id,
             task_type="llm_callback",
             payload=payload,
@@ -242,8 +240,7 @@ async def execute_action(
             kind=DefinitionArtifactKind.TASK_PAYLOAD,
             artifact_id=task_id,
         )
-        await enqueue_task(
-            db_context=db_ctx,
+        await db_ctx.tasks.enqueue(
             task_id=task_id,
             task_type="script_execution",
             payload=script_payload,

@@ -691,7 +691,7 @@ async def modify_pending_callback_tool(
         return f"Error: Failed to modify callback task. {e}"
 
     if result and result.rowcount > 0:  # type: ignore
-        # Notification happens automatically in enqueue_task when tasks are updated
+        # Notification happens automatically when a task is enqueued or updated
         return f"Callback task '{task_id}' modified successfully."
 
     # This case should ideally not be reached if fetch_one found the task

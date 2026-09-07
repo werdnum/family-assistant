@@ -27,7 +27,7 @@ from family_assistant.storage.database import DatabaseExecutor, DatabaseTransact
 from family_assistant.storage.datetime_utils import normalize_datetime
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.schedule_automations import schedule_automations_table
-from family_assistant.storage.tasks import enqueue_task, tasks_table
+from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.types import (
     ActionConfig,
     ScheduleAutomationDict,
@@ -350,8 +350,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                     created_by_user_id=created_by_user_id,
                 )
 
-            await enqueue_task(
-                db_context=txn,
+            await txn.tasks.enqueue(
                 task_id=task_id,
                 task_type=task_type,
                 payload=payload,
@@ -607,8 +606,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                         created_by_user_id=automation.get("created_by_user_id"),
                     )
 
-                await enqueue_task(
-                    db_context=txn,
+                await txn.tasks.enqueue(
                     task_id=task_id,
                     task_type=task_type,
                     payload=enqueue_payload,
@@ -1159,8 +1157,7 @@ class ScheduleAutomationsRepository(BaseRepository):
                 created_by_user_id=automation.get("created_by_user_id"),
             )
 
-        await enqueue_task(
-            db_context=executor,
+        await executor.tasks.enqueue(
             task_id=task_id,
             task_type=task_type,
             payload=payload,
@@ -1309,8 +1306,7 @@ class ScheduleAutomationsRepository(BaseRepository):
             # Note: We do NOT pass recurrence_rule here because recurrence
             # is managed manually via after_task_execution callback, not
             # by the task worker's automatic recurrence system
-            await enqueue_task(
-                db_context=txn,
+            await txn.tasks.enqueue(
                 task_id=task_id,
                 task_type=task_type,
                 payload=recur_payload,

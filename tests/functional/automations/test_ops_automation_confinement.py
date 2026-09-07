@@ -28,7 +28,7 @@ from family_assistant.interfaces import ChatInterface
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.storage.database import Database
 from family_assistant.storage.message_history import message_history_table
-from family_assistant.storage.tasks import enqueue_task, tasks_table
+from family_assistant.storage.tasks import tasks_table
 from family_assistant.task_worker import (
     TaskWorker,
     _process_script_wake_llm,  # noqa: PLC2701  # testing the script wake_llm guard
@@ -419,8 +419,7 @@ async def test_queued_wake_refused_for_confined_profile(
 
     task_id = f"queued_wake_{uuid.uuid4().hex[:8]}"
     db_ctx = Database(engine=db_engine)
-    await enqueue_task(
-        db_context=db_ctx,
+    await db_ctx.tasks.enqueue(
         task_id=task_id,
         task_type="llm_callback",
         payload={
@@ -463,8 +462,7 @@ async def test_routed_wake_renders_trigger_in_routed_profile_timezone(
 
     task_id = f"routed_wake_{uuid.uuid4().hex[:8]}"
     db_ctx = Database(engine=db_engine)
-    await enqueue_task(
-        db_context=db_ctx,
+    await db_ctx.tasks.enqueue(
         task_id=task_id,
         task_type="llm_callback",
         payload={
