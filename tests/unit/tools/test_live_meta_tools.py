@@ -175,6 +175,24 @@ async def test_catalog_lists_the_reachable_tools() -> None:
 
 
 @pytest.mark.asyncio
+async def test_catalog_carries_names_without_summaries() -> None:
+    """A summary here would be paid for twice.
+
+    Every session's system instruction carries this catalog for its whole life,
+    and ``search_tools`` returns the full description anyway when the model asks
+    for one. The names are what the catalog is for: they let the model search a
+    name it has already seen instead of guessing a keyword.
+    """
+    provider = _build_provider()
+
+    addition = await provider.get_system_prompt_addition()
+
+    assert addition is not None
+    assert "Run a Home Assistant action on an entity." not in addition
+    assert "Draw a picture from a prompt." not in addition
+
+
+@pytest.mark.asyncio
 async def test_search_returns_the_full_argument_schema() -> None:
     provider = _build_provider()
 

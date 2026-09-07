@@ -48,10 +48,16 @@ DEFAULT_SEARCH_RESULT_LIMIT = 5
 MAX_SEARCH_RESULT_LIMIT = 15
 
 CATALOG_HEADING = "## Tools you can reach with search_tools"
+# Names only, no summaries: `search_tools` returns each tool's full description
+# alongside its schema, so a summary here would be paid for twice — once in
+# every session's system instruction and again in the search result the model
+# needs anyway. The names are what make the search reliable, because the model
+# then searches a name it has already seen rather than guessing a keyword.
 CATALOG_INSTRUCTION = (
     "These tools exist but are not declared in this session. Call "
-    "`search_tools` to get one's argument schema, then run it with "
-    "`call_tool`. Do not guess a tool's arguments without searching first."
+    "`search_tools` with one of these names to get its description and "
+    "argument schema, then run it with `call_tool`. Do not guess a tool's "
+    "arguments without searching first."
 )
 
 SEARCH_TOOLS_DEFINITION: ToolDefinition = {
@@ -194,7 +200,9 @@ class LiveMetaToolsProvider:
         if not catalog.entries:
             return None
         return catalog.render_for_system_prompt(
-            heading=CATALOG_HEADING, instruction=CATALOG_INSTRUCTION
+            heading=CATALOG_HEADING,
+            instruction=CATALOG_INSTRUCTION,
+            include_summaries=False,
         )
 
     # --- Execution --------------------------------------------------------

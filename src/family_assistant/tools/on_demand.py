@@ -80,6 +80,7 @@ class OnDemandToolCatalog:
             "The following tools are available but not yet active. "
             "Call `activate_tools` with their names to enable them:"
         ),
+        include_summaries: bool = True,
     ) -> str:
         """Render catalog as a system prompt section.
 
@@ -89,10 +90,19 @@ class OnDemandToolCatalog:
         (voice) session — whose declaration list is frozen at session setup —
         calls them through a meta-tool instead.
 
+        ``include_summaries`` drops to a bare name list, which costs about a
+        fifth of the tokens. It suits a caller whose disclosure mechanism hands
+        the model the description anyway when it asks for one, so a summary
+        here would only be paid for twice; a caller whose mechanism activates a
+        tool by name has no such second chance and keeps them.
+
         Returns empty string when there are no on-demand tools.
         """
         if not self.entries:
             return ""
+        if not include_summaries:
+            names = ", ".join(entry.name for entry in self.entries)
+            return f"{heading}\n{instruction}\n{names}"
         lines = [heading, instruction]
         for entry in self.entries:
             lines.append(f"- **{entry.name}**: {entry.summary}")

@@ -35,9 +35,16 @@ only how it is reached. A Live session declares
   - **`call_tool(name, arguments_json)`** — runs one of them.
 
 Because the declaration list is static, nothing needs to be injected mid-session: the schema the
-model needs arrives as tool *output* rather than as a new declaration. The names and one-line
-summaries of the hidden tools go into the system instruction as a catalog, the same information the
-chat path puts there, so the model knows what is worth searching for.
+model needs arrives as tool *output* rather than as a new declaration. The **names** of the hidden
+tools go into the system instruction as a catalog, so the model knows what is worth searching for.
+
+Names only, without the summaries the chat path's catalog carries. A live session holds its system
+instruction for the session's whole life and `search_tools` returns the full description anyway, so
+a summary here would be paid for twice; the catalog says what exists, search says how to use it.
+Names rather than something cheaper still (capability areas, say) because they are what makes the
+search reliable — the model searches a name it has already seen instead of guessing a keyword. For
+the shipped default profile that is roughly 215 tokens of names standing in for roughly 11,200
+tokens of declarations.
 
 ## Headroom
 
