@@ -30,7 +30,9 @@ if TYPE_CHECKING:
 
 
 class _FakeBatchClient(BatchClient):
-    def __init__(self) -> None:
+    # The base __init__ requires provider credentials and opens a real HTTP
+    # session; this fake substitutes its own recording state instead.
+    def __init__(self) -> None:  # pylint: disable=super-init-not-called
         self.submitted: list[dict[str, object]] = []
 
     async def close(self) -> None:

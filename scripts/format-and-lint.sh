@@ -25,6 +25,7 @@ if [ "$1" = "--fast" ]; then
     shift # Remove --fast from arguments
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_BIN="${VIRTUAL_ENV:-.venv}/bin"
 PYTHON_BIN="${VENV_BIN}/python"
 if [ ! -x "$PYTHON_BIN" ]; then
@@ -145,14 +146,14 @@ if [ ${#PYTHON_FILES[@]} -gt 0 ]; then
         fi
     fi
     
-    # Pylint (errors only)
+    # Pylint, through the shared entry point so this agrees with scripts/run-tests.sh.
     if [ $HAS_ERRORS -eq 0 ]; then
         echo -n "${BLUE}  ▸ Running pylint...${NC}"
         timer_start
-        if ! "${VIRTUAL_ENV:-.venv}"/bin/pylint --errors-only "${PYTHON_FILES[@]}" 2>&1; then
+        if ! "$SCRIPT_DIR/run-pylint.sh" "${PYTHON_FILES[@]}" 2>&1; then
             timer_end
             echo ""
-            echo "${RED}❌ pylint found errors${NC}"
+            echo "${RED}❌ pylint found problems${NC}"
             HAS_ERRORS=1
         else
             echo -n "${GREEN} ✓${NC}"
