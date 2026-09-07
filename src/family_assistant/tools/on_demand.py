@@ -31,6 +31,7 @@ from family_assistant.tools.infrastructure import (
     ToolsProvider,
     resolve_descriptors_version,
 )
+from family_assistant.tools.live_meta import LIVE_META_TOOL_NAMES
 from family_assistant.tools.metadata import ToolDescriptor, extract_tool_summary
 
 if TYPE_CHECKING:
@@ -42,6 +43,14 @@ logger = logging.getLogger(__name__)
 
 
 _EMPTY_ACTIVATED: frozenset[str] = frozenset()
+
+ACTIVATE_TOOLS_TOOL_NAME = "activate_tools"
+
+# Names a real tool may not take, because a consumer intercepts them before
+# dispatch reaches the wrapped provider.
+RESERVED_META_TOOL_NAMES: frozenset[str] = LIVE_META_TOOL_NAMES | {
+    ACTIVATE_TOOLS_TOOL_NAME
+}
 
 
 # ---------------------------------------------------------------------------
@@ -63,21 +72,49 @@ class OnDemandToolCatalog:
 
     entries: list[OnDemandCatalogEntry]
 
-    def render_for_system_prompt(self) -> str:
+    def render_for_system_prompt(
+        self,
+        *,
+        heading: str = "## On-Demand Tools",
+        instruction: str = (
+            "The following tools are available but not yet active. "
+            "Call `activate_tools` with their names to enable them:"
+        ),
+        include_summaries: bool = True,
+    ) -> str:
         """Render catalog as a system prompt section.
+
+        ``heading`` and ``instruction`` are overridable because the same
+        catalog is presented differently depending on how the caller lets the
+        model reach a hidden tool: the LLM loop activates tools, while a Live
+        (voice) session — whose declaration list is frozen at session setup —
+        calls them through a meta-tool instead.
+
+        ``include_summaries`` drops to a bare name list, which costs about a
+        fifth of the tokens. It suits a caller whose disclosure mechanism hands
+        the model the description anyway when it asks for one, so a summary
+        here would only be paid for twice; a caller whose mechanism activates a
+        tool by name has no such second chance and keeps them.
 
         Returns empty string when there are no on-demand tools.
         """
         if not self.entries:
             return ""
-        lines = [
-            "## On-Demand Tools",
-            "The following tools are available but not yet active. "
-            "Call `activate_tools` with their names to enable them:",
-        ]
+        if not include_summaries:
+            names = ", ".join(entry.name for entry in self.entries)
+            return f"{heading}\n{instruction}\n{names}"
+        lines = [heading, instruction]
         for entry in self.entries:
             lines.append(f"- **{entry.name}**: {entry.summary}")
         return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class VisibleDefinitions:
+    """Definitions a caller may declare, plus the on-demand names withheld."""
+
+    definitions: list[ToolDefinition]
+    hidden_names: frozenset[str]
 
 
 @dataclass(frozen=True)
@@ -95,7 +132,7 @@ class OnDemandActivationResult:
 ACTIVATE_TOOLS_DEFINITION: ToolDefinition = {
     "type": "function",
     "function": {
-        "name": "activate_tools",
+        "name": ACTIVATE_TOOLS_TOOL_NAME,
         "description": (
             "Activate on-demand tools so you can use them in this conversation. "
             "Call with specific tool names from the on-demand catalog, search "
@@ -201,6 +238,16 @@ class OnDemandToolsView:
         """
         return frozenset(self._on_demand_mcp_server_ids)
 
+    async def ensure_no_reserved_name_collisions(self) -> None:
+        """Raise if the wrapped provider exposes a reserved meta-tool name.
+
+        The check itself lives with the descriptor cache, which every listing
+        path populates. A consumer that intercepts a meta-tool name before
+        dispatch — and can therefore be reached without having asked for a
+        listing first — calls this so the invariant holds on that path too.
+        """
+        await self._ensure_descriptors()
+
     def has_on_demand_tools(self) -> bool:
         """Return True if there are any on-demand tool names configured."""
         return bool(self._on_demand_tool_names) or bool(self._on_demand_mcp_server_ids)
@@ -210,10 +257,14 @@ class OnDemandToolsView:
     async def _ensure_descriptors(self) -> list[ToolDescriptor]:
         """Populate the descriptor cache from the wrapped provider on first access.
 
-        The LLM loop intercepts any tool call named ``activate_tools`` as the
-        meta-tool. If the wrapped provider already exposes a real tool with
-        that name it would be silently shadowed, so refuse to wrap such a
-        provider and fail loudly instead.
+        A meta-tool name is intercepted before dispatch reaches the wrapped
+        provider — ``activate_tools`` by the LLM loop, ``search_tools`` and
+        ``call_tool`` by the Live meta-tools provider. A real tool carrying one
+        of those names would be silently shadowed, and would additionally be
+        declared twice to a Live session, so refuse to wrap such a provider and
+        fail loudly instead. All three are reserved here rather than per
+        consumer, because one view serves both and any profile may be reached
+        by voice.
 
         The cache is rebuilt when the wrapped descriptor set changes (an MCP
         server connecting, reconnecting, or disconnecting), so on-demand
@@ -226,12 +277,14 @@ class OnDemandToolsView:
             or current_version != self._descriptors_version
         ):
             descriptors = await self._descriptor_provider.get_tool_descriptors()
-            collisions = [d for d in descriptors if d.name == "activate_tools"]
+            collisions = sorted(
+                d.name for d in descriptors if d.name in RESERVED_META_TOOL_NAMES
+            )
             if collisions:
                 msg = (
-                    "OnDemandToolsView cannot wrap a provider that "
-                    "already exposes a tool named 'activate_tools'; this name "
-                    "is reserved for the on-demand meta-tool."
+                    "OnDemandToolsView cannot wrap a provider that already "
+                    f"exposes {', '.join(repr(name) for name in collisions)}; "
+                    "these names are reserved for the on-demand meta-tools."
                 )
                 raise ValueError(msg)
             self._all_descriptors = descriptors
@@ -274,6 +327,41 @@ class OnDemandToolsView:
 
     # --- LLM-loop-facing API ---
 
+    async def get_visible_definitions(
+        self,
+        *,
+        can_confirm: bool = True,
+        activated: Iterable[str] | None = None,
+    ) -> VisibleDefinitions:
+        """Return the definitions the model may call directly, and what is hidden.
+
+        ``hidden_names`` is what the wrapped provider *would* advertise for this
+        interaction but is being withheld as on-demand, which is what tells a
+        caller whether a meta-tool for reaching those is worth declaring at all.
+        A caller that adds its own meta-tool declaration builds on this; the
+        activation presentation is ``get_tool_definitions`` below.
+        """
+        activated_frozen = self._freeze_activated(activated)
+        descriptors = await self._ensure_descriptors()
+        wrapped_defs = await self._fetch_wrapped_definitions(can_confirm=can_confirm)
+
+        on_demand_hidden_names = {
+            d.name for d in descriptors if self._is_on_demand(d, activated_frozen)
+        }
+        advertisable_names = {
+            name
+            for defn in wrapped_defs
+            if (name := defn.get("function", {}).get("name")) is not None
+        }
+        return VisibleDefinitions(
+            definitions=[
+                defn
+                for defn in wrapped_defs
+                if defn.get("function", {}).get("name") not in on_demand_hidden_names
+            ],
+            hidden_names=frozenset(on_demand_hidden_names & advertisable_names),
+        )
+
     async def get_tool_definitions(
         self,
         *,
@@ -288,31 +376,12 @@ class OnDemandToolsView:
         at least one on-demand tool the model could still usefully activate in
         this interaction (after policy filtering).
         """
-        activated_frozen = self._freeze_activated(activated)
-        descriptors = await self._ensure_descriptors()
-        wrapped_defs = await self._fetch_wrapped_definitions(can_confirm=can_confirm)
-
-        on_demand_hidden_names = {
-            d.name for d in descriptors if self._is_on_demand(d, activated_frozen)
-        }
-        eager_and_activated = [
-            defn
-            for defn in wrapped_defs
-            if defn.get("function", {}).get("name") not in on_demand_hidden_names
-        ]
-
-        # Only expose the activate_tools meta-tool if there is at least one
-        # on-demand tool the wrapped provider would still advertise for this
-        # interaction. Otherwise the model could call a meta-tool that can
-        # only ever return "nothing to activate".
-        advertisable_hidden = on_demand_hidden_names & {
-            name
-            for defn in wrapped_defs
-            if (name := defn.get("function", {}).get("name")) is not None
-        }
-        if advertisable_hidden:
-            return [*eager_and_activated, ACTIVATE_TOOLS_DEFINITION]
-        return eager_and_activated
+        visible = await self.get_visible_definitions(
+            can_confirm=can_confirm, activated=activated
+        )
+        if visible.hidden_names:
+            return [*visible.definitions, ACTIVATE_TOOLS_DEFINITION]
+        return visible.definitions
 
     async def get_system_prompt_addition(
         self,

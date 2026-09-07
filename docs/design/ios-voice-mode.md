@@ -11,7 +11,11 @@ web-backed `/voice` destination with a first-class native experience. It superse
 - A native, full-screen, hands-free voice conversation with the assistant.
 - Realtime, low-latency, barge-in-capable audio (speak over the assistant to interrupt).
 - Continues running while backgrounded / screen-locked (audio background mode).
-- Same assistant tools as text chat (minus confirmation-gated tools, which voice cannot approve).
+- Same assistant tools as text chat (minus confirmation-gated tools, which voice cannot approve). A
+  session's declaration list cannot change once it has started, so the profile's on-demand tools are
+  reached through `search_tools`/`call_tool` rather than declared up front; the client needs no
+  change for this, both meta-tools execute over the same endpoint. See
+  [voice-mode-on-demand-tools.md](voice-mode-on-demand-tools.md).
 - Voice sessions are captured as their own conversation in chat history (transcript), so the user
   can review what was said.
 - Designed so CallKit + CarPlay can be layered on later without re-architecting.

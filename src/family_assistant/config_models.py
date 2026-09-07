@@ -865,12 +865,29 @@ class TelephoneOverrides(BaseModel):
     greeting: TelephoneGreetingConfig = Field(default_factory=TelephoneGreetingConfig)
 
 
+class GeminiLiveToolsConfig(BaseModel):
+    """How a Live session reaches the profile's tools."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    on_demand: bool = True
+    """Reach on-demand tools through ``search_tools``/``call_tool``.
+
+    A Live session cannot be handed new tool declarations mid-session, so the
+    profile's on-demand tools are declared as two meta-tools instead of being
+    flattened into the declaration list. Turning this off declares every
+    advertisable tool up front. See
+    docs/design/voice-mode-on-demand-tools.md.
+    """
+
+
 class GeminiLiveConfig(BaseModel):
     """Gemini Live Voice API configuration."""
 
     model_config = ConfigDict(extra="forbid")
 
     model: str = "gemini-3.1-flash-live-preview"
+    tools: GeminiLiveToolsConfig = Field(default_factory=GeminiLiveToolsConfig)
     voice: GeminiVoiceConfig = Field(default_factory=GeminiVoiceConfig)
     session: GeminiSessionConfig = Field(default_factory=GeminiSessionConfig)
     transcription: GeminiTranscriptionConfig = Field(

@@ -240,6 +240,7 @@ class ProcessingService:
         self._tier_llm_clients: dict[str, LLMInterface] = dict(tier_llm_clients or {})
         self.tools_provider = tools_provider
         self.on_demand_view = on_demand_view
+        self._live_tools_provider: ToolsProvider | None = None
         self.service_config = service_config
         self.context_providers = context_providers
         self.server_url = server_url or "http://localhost:8000"
@@ -698,6 +699,30 @@ class ProcessingService:
                 _selectable_tier_lines(service.service_config.tier_eligibility)
             )
         return "\n".join(lines)
+
+    @property
+    def live_tools_provider(self) -> ToolsProvider:
+        """Tools provider for a Live (voice) session.
+
+        A Live session's tool declarations are frozen at session setup, so the
+        activation mechanism the LLM loop uses cannot reach an on-demand tool
+        there. This provider declares the eager tools plus ``search_tools`` and
+        ``call_tool``, and dispatches the latter back through the profile's
+        ordinary chain so policy, taint and review still apply. A profile with
+        nothing on-demand has nothing to disclose progressively and gets the
+        ordinary provider.
+
+        See docs/design/voice-mode-on-demand-tools.md.
+        """
+        if self.on_demand_view is None:
+            return self.tools_provider
+        if self._live_tools_provider is None:
+            from family_assistant.tools.live_meta import (  # noqa: PLC0415 - avoids a cycle through tools/__init__
+                LiveMetaToolsProvider,
+            )
+
+            self._live_tools_provider = LiveMetaToolsProvider(self.on_demand_view)
+        return self._live_tools_provider
 
     async def delegation_catalog_addition(self) -> str:
         """Return a system-prompt section listing delegation targets, or "".

@@ -338,3 +338,38 @@ async def test_asterisk_passes_extension_and_channel_to_handler(
         await wait_for_condition(lambda: mock_client_class.called)
         # Connection should succeed - extension and channel_id are informational
         assert mock_client_class.called
+
+
+@pytest.mark.no_db
+def test_asterisk_rejects_call_when_profile_configuration_fails(
+    mock_gemini_client: tuple[MagicMock, MagicMock],
+    asterisk_env_cleanup: None,
+) -> None:
+    """A call must not be answered by an assistant that silently has no tools.
+
+    Continuing past a configuration failure would hand the caller a session
+    built from whatever partial state had been assigned — no tools, and
+    possibly no system prompt — with nothing to tell them or the operator that
+    anything is wrong.
+    """
+    telephone_service = MagicMock()
+    telephone_service.kind = "local"
+    telephone_service.service_config.prompts = {}
+
+    with TestClient(app) as client:
+        original_services = getattr(app.state, "processing_services", {})
+        app.state.processing_services = {"telephone": telephone_service}
+        try:
+            with (
+                patch(
+                    "family_assistant.web.routers.asterisk_live_api.resolve_live_tools",
+                    side_effect=ValueError("reserved tool name collision"),
+                ),
+                pytest.raises(WebSocketDisconnect) as exc_info,
+                client.websocket_connect("/api/asterisk/live"),
+            ):
+                pass
+        finally:
+            app.state.processing_services = original_services
+
+    assert exc_info.value.code == 1011
