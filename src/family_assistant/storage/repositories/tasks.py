@@ -5,8 +5,9 @@ from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
-from sqlalchemy import and_, case, insert, null, or_, select, update
+from sqlalchemy import and_, case, delete, insert, null, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.sql import functions as func
 from sqlalchemy.sql.elements import ColumnElement
@@ -73,6 +74,7 @@ class TasksRepository(BaseRepository):
         max_retries_override: int | None = None,
         recurrence_rule: str | None = None,
         original_task_id: str | None = None,
+        only_if_absent: bool = False,
     ) -> None:
         """Adds a task to the queue with automatic notification for immediate tasks.
 
@@ -84,7 +86,19 @@ class TasksRepository(BaseRepository):
             max_retries_override: Override default max retries
             recurrence_rule: Optional recurrence rule for repeating tasks
             original_task_id: ID of the original task if this is a recurrence
+            only_if_absent: Seed the row and leave an existing one alone, rather
+                than upserting it. System tasks only -- a non-system enqueue
+                already fails on a duplicate id. Use this where the row's
+                payload carries progress the caller does not have: the default
+                upsert overwrites the payload and revives a finished
+                occurrence, which rewinds a cursor back to its starting value
+                every time the seeding caller runs.
         """
+        if only_if_absent and not task_id.startswith("system_"):
+            raise ValueError(
+                "only_if_absent applies to system tasks, which upsert on their "
+                f"task_id; '{task_id}' is not one."
+            )
         processed_scheduled_at = scheduled_at
         if processed_scheduled_at:
             if processed_scheduled_at.tzinfo is None:
@@ -128,7 +142,28 @@ class TasksRepository(BaseRepository):
             before the row is visible -- an idle sibling would poll an empty
             queue, clear its event, and miss the row until the next 5s poll.
             """
-            if is_system_task:
+            if only_if_absent:
+                # Seed-only: the existing row owns its payload and status.
+                insert_fn = (
+                    pg_insert if txn.dialect_name == "postgresql" else sqlite_insert
+                )
+                seed_stmt = (
+                    insert_fn(tasks_table)
+                    .values(**values_to_insert)
+                    .on_conflict_do_nothing(index_elements=["task_id"])
+                )
+                # A driver may report -1 for an unknown rowcount. Treat that as
+                # seeded: an extra worker wake costs one empty poll, while a
+                # missed one leaves a fresh row sitting until the next 5s tick.
+                seeded = (await txn.execute(seed_stmt)).rowcount != 0
+                if not seeded:
+                    logger.info(
+                        f"Task {task_id} already seeded; leaving its payload and "
+                        "status as they stand."
+                    )
+                    return
+                stmt = None
+            elif is_system_task:
                 # For system tasks, do an upsert to handle re-scheduling
                 if txn.dialect_name == "postgresql":
                     # PostgreSQL: Use ON CONFLICT DO UPDATE
@@ -207,6 +242,20 @@ class TasksRepository(BaseRepository):
         except SQLAlchemyError as e:
             logger.exception(f"Database error enqueueing task {task_id}: {e}")
             raise
+
+    async def delete_finished(self, task_id: str) -> bool:
+        """Remove a task row only if its occurrence is over.
+
+        Pairs with ``only_if_absent``: seeding is idempotent because the row
+        exists, so a caller that genuinely needs the work redone clears the
+        finished row first. A pending or running occurrence is left alone --
+        it is already doing the work, and deleting it would lose its cursor.
+        """
+        stmt = delete(tasks_table).where(
+            tasks_table.c.task_id == task_id,
+            tasks_table.c.status.in_(TERMINAL_TASK_STATUSES),
+        )
+        return (await self._db.execute(stmt)).rowcount > 0
 
     async def dequeue(
         self,

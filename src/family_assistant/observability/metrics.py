@@ -41,6 +41,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "INDEXING_DOCUMENTS",
     "LLM_CALLS",
     "LLM_CALL_DURATION",
     "LLM_TIME_TO_FIRST_OUTPUT",
@@ -55,6 +56,7 @@ __all__ = [
     "TurnMetrics",
     "instrumented_llm_request",
     "normalized_token_buckets",
+    "record_indexing_documents",
     "record_llm_call",
     "record_tool_call",
 ]
@@ -206,6 +208,19 @@ TURNS_IN_PROGRESS = Gauge(
     ("profile",),
 )
 
+INDEXING_DOCUMENTS = Counter(
+    "family_assistant_indexing_documents",
+    (
+        "Documents an indexing pass resolved, by what it did with them. "
+        "`embedded` paid for a provider call; `skipped_unchanged` found the "
+        "stored embedding already covered that text under that model. Their "
+        "ratio is the health signal: a corpus that is not growing should "
+        "settle at almost all `skipped_unchanged`, and a sustained run of "
+        "`embedded` means selection has come loose from what is stored."
+    ),
+    ("source_type", "outcome"),
+)
+
 
 # Anthropic reports uncached, cache-read and cache-write as three disjoint
 # buckets, so its prompt_tokens is only the uncached remainder. Everyone else
@@ -349,6 +364,21 @@ def record_llm_call(
             LLM_TOKENS.labels(*labels, kind).inc(count)
     except Exception:
         logger.debug("Failed to record LLM call metrics", exc_info=True)
+
+
+def record_indexing_documents(
+    *,
+    source_type: str,
+    outcome: str,
+    count: int,
+) -> None:
+    """Count documents an indexing pass embedded or skipped. Never raises."""
+    if count <= 0:
+        return
+    try:
+        INDEXING_DOCUMENTS.labels(source_type, outcome).inc(count)
+    except Exception:
+        logger.debug("Failed to record indexing metrics", exc_info=True)
 
 
 def record_tool_call(

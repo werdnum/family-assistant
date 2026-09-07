@@ -307,6 +307,17 @@ nothing can tell the two apart. Treat a tool error rate as counting executions t
 not tasks that went wrong. Turn `outcome` is `success`, `error`, or `cancelled` — a browser that
 navigated away mid-turn is not a failure.
 
+### Indexing
+
+| Metric                                      | Type    | Labels                   |
+| ------------------------------------------- | ------- | ------------------------ |
+| `family_assistant_indexing_documents_total` | Counter | `source_type`, `outcome` |
+
+`outcome` is `embedded` (an embedding provider call was made and billed) or `skipped_unchanged` (the
+stored embedding already covered that text under that model, so no call was made). The ratio is the
+health signal, not either count on its own: indexing is enqueued redundantly by design — a backfill
+walk, one task per row of a turn, task retries — and the skip is what keeps that from costing money.
+
 ### Useful queries
 
 Token spend per profile, in tokens per second:
@@ -342,6 +353,15 @@ Whether a profile is being served by its configured model or by a fallback:
 
 ```promql
 sum by (profile, model, resolved_model) (rate(family_assistant_llm_calls_total[1h]))
+```
+
+What fraction of indexing passes are paying for an embedding. On a corpus that is not growing this
+should sit near zero; a sustained rise means indexing has come loose from what is already stored,
+and the embedding bill will follow:
+
+```promql
+sum by (source_type) (rate(family_assistant_indexing_documents_total{outcome="embedded"}[1h]))
+  / sum by (source_type) (rate(family_assistant_indexing_documents_total[1h]))
 ```
 
 LLM calls per turn, which is where a runaway tool loop shows up. Scoped to `operation="chat"`,
