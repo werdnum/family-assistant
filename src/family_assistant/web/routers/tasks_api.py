@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from family_assistant.storage.database import Database
+from family_assistant.storage.tasks import TaskPriority
 from family_assistant.web.dependencies import get_db
 
 tasks_api_router = APIRouter()
@@ -14,6 +15,7 @@ class TaskModel(BaseModel):
     id: int
     task_id: str
     task_type: str
+    priority: str
     payload: dict | None = None
     status: str
     created_at: datetime
@@ -52,9 +54,12 @@ async def list_tasks(
     )
     task_models = []
     for task in tasks:
+        # The lane reaches the UI by name rather than as the stored integer,
+        # which means nothing to a reader of the task list.
+        row = {**task, "priority": TaskPriority(task["priority"]).label}
         # basedpyright complains about 'error' key vs 'error_message' field even with alias
         # so we use type: ignore to bypass the unpacking check
-        task_models.append(TaskModel(**task))  # type: ignore[reportCallIssue]
+        task_models.append(TaskModel(**row))  # type: ignore[reportCallIssue]
     return TaskListResponse(tasks=task_models)
 
 

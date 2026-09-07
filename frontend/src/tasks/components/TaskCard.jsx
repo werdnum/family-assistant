@@ -111,6 +111,12 @@ const TaskCard = ({ task, onRetry, onCancel }) => {
           <div className={`${styles.detailValue} ${styles.detailMonospace}`}>{task.task_type}</div>
         </div>
 
+        {/* Priority lane */}
+        <div className={styles.detailItem}>
+          <div className={styles.detailLabel}>Priority:</div>
+          <div className={styles.detailValue}>{task.priority}</div>
+        </div>
+
         {/* Created At */}
         <div className={styles.detailItem}>
           <div className={styles.detailLabel}>Created:</div>

@@ -312,13 +312,18 @@ navigated away mid-turn is not a failure.
 The background task queue's health, from the two chokepoints every task passes through: the
 repository's `enqueue` and the worker's processing path.
 
-| Metric                                      | Type      | Labels                 |
-| ------------------------------------------- | --------- | ---------------------- |
-| `family_assistant_tasks_enqueued_total`     | Counter   | `task_type`            |
-| `family_assistant_tasks_processed_total`    | Counter   | `task_type`, `outcome` |
-| `family_assistant_task_duration_seconds`    | Histogram | `task_type`            |
-| `family_assistant_tasks_queued`             | Gauge     | `state`                |
-| `family_assistant_task_due_latency_seconds` | Gauge     | —                      |
+| Metric                                      | Type      | Labels                             |
+| ------------------------------------------- | --------- | ---------------------------------- |
+| `family_assistant_tasks_enqueued_total`     | Counter   | `task_type`, `priority`            |
+| `family_assistant_tasks_processed_total`    | Counter   | `task_type`, `priority`, `outcome` |
+| `family_assistant_task_duration_seconds`    | Histogram | `task_type`, `priority`            |
+| `family_assistant_tasks_queued`             | Gauge     | `priority`, `state`                |
+| `family_assistant_task_due_latency_seconds` | Gauge     | `priority`                         |
+
+`priority` is the queue lane the task runs in: `interactive` for work somebody is waiting on or
+expects at a particular time, `background` for work that catches up when nothing interactive is due.
+The queue always takes a due interactive task before any background one, so the two lanes have
+different expectations and are worth reading apart.
 
 Task `outcome` is how the *execution* ended: `completed`, `retried` (it failed and the queue will
 try again) or `failed` (it failed and the queue has given up). A task that succeeds on its third
@@ -337,13 +342,15 @@ history, and the processed counter has them:
 | `stalled`    | Claimed more than 15 minutes ago — the worker probably died     |
 | `exhausted`  | Pending with its retries spent, so nothing will ever dequeue it |
 
-**`family_assistant_task_due_latency_seconds` is the metric to alert on.** It is the age of the
-oldest task that is eligible to run and has not been claimed, and it is near zero on a healthy
-queue. Depth cannot replace it: a task type that enqueues its own continuation holds exactly one row
-at a time, so a chain that starves everything else for an hour still reads as a depth of zero. Both
-gauges are sampled once per health-check period by the worker pool's health monitor, not by each
-worker. See [docs/design/task-queue-priority-lanes.md](../design/task-queue-priority-lanes.md) for
-the ordering rules these numbers describe.
+**`family_assistant_task_due_latency_seconds{priority="interactive"}` is the metric to alert on.**
+It is the age of the oldest task in the lane that is eligible to run and has not been claimed, and
+it is near zero on a healthy queue. Background latency is expected to rise while interactive work is
+being served, which is the design working, not a fault. Depth cannot replace it: a task type that
+enqueues its own continuation holds exactly one row at a time, so a chain that starves everything
+else for an hour still reads as a depth of zero. Both gauges are sampled once per health-check
+period by the worker pool's health monitor, not by each worker. See
+[docs/design/task-queue-priority-lanes.md](../design/task-queue-priority-lanes.md) for the ordering
+rules these numbers describe.
 
 ### Useful queries
 
@@ -414,10 +421,11 @@ How long the oldest due task has been waiting, straight from the database when t
 available:
 
 ```sql
-SELECT max(now() - COALESCE(scheduled_at, created_at))
+SELECT priority, max(now() - COALESCE(scheduled_at, created_at))
   FROM tasks
  WHERE status = 'pending'
-   AND (scheduled_at IS NULL OR scheduled_at <= now());
+   AND (scheduled_at IS NULL OR scheduled_at <= now())
+ GROUP BY priority;
 ```
 
 A task type that regenerates itself — its enqueue rate tracks its completion rate one for one while
@@ -504,12 +512,12 @@ groups:
           summary: "Over 10% of {{ $labels.provider }} LLM calls are failing"
 
       - alert: TaskQueueDueLatency
-        expr: family_assistant_task_due_latency_seconds > 300
+        expr: family_assistant_task_due_latency_seconds{priority="interactive"} > 300
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "Oldest due task has been waiting over 5 minutes"
+          summary: "Oldest due interactive task has been waiting over 5 minutes"
 
       - alert: StalledTasks
         expr: family_assistant_tasks_queued{state="stalled"} > 0
