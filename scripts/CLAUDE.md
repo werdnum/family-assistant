@@ -48,15 +48,20 @@ Runs a built image, waits for `/health`, then verifies the MCP servers in `$MCP_
 
 ### `run_pytest_adaptive.py`
 
-Default pytest runner used by `scripts/run-tests.sh`. It collects nodeids, runs serial pytest shards
-through GNU Parallel, and gates new shards on CPU load plus cgroup v2 memory usage. Use
-`scripts/run-tests.sh --xdist-pytest` or `PYTEST_RUNNER=xdist scripts/run-tests.sh` to use direct
-pytest-xdist instead.
+Default pytest runner used by `scripts/run-tests.sh`. It collects nodeids, groups complete test
+modules into serial pytest shards through GNU Parallel, and gates new shards on CPU load plus cgroup
+v2 memory usage. Use `scripts/run-tests.sh --xdist-pytest` or
+`PYTEST_RUNNER=xdist scripts/run-tests.sh` to use direct pytest-xdist instead.
 
 Useful environment variables:
 
 - `GNU_PARALLEL`: path to GNU Parallel when `parallel` is not on `PATH`
-- `PYTEST_ADAPTIVE_BATCH_SIZE`: nodeids per shard, defaults to `25`
+- `PYTEST_ADAPTIVE_BATCH_SIZE`: target backend nodeids per shard (whole modules stay together).
+  Defaults to at least `25`, growing with the collection to target four shards per worker and
+  amortize Python imports and session fixtures. Set this explicitly to tune the
+  startup/load-balancing tradeoff. Tests marked `playwright` run first in batches capped at `25` so
+  browser work remains distributed even in large modules. Markers and nodeids come from the final
+  pytest collection, including selections made with `-m` and `-k`.
 - `PYTEST_ADAPTIVE_JOBS`: maximum concurrent pytest shards, defaults to `12`
 - `PYTEST_ADAPTIVE_MEM_THRESHOLD`: cgroup memory ratio that stops new shards, defaults to `0.80`
 - `PYTEST_ADAPTIVE_LOAD`: GNU Parallel `--load` value, defaults to `100%`

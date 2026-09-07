@@ -296,21 +296,15 @@ describe('ChatApp', () => {
       expect(input).toHaveValue('');
     });
 
-    // NOTE: This delay is necessary for @assistant-ui/react's internal state to fully settle
-    // after streaming completes. Even though the input appears enabled and empty, the library
-    // needs additional time before it can successfully accept and submit a new message.
-    // The Playwright tests have a 3000ms wait in send_message after pressing Enter, which gives
-    // the library time to process the response before the next message starts.
-    // Without sufficient delay, pressing Enter after typing doesn't submit the message.
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    // The send action appears only after the stream has finished.
+    await screen.findByTestId('send-button');
 
     // Get a fresh reference and send second message
     const input2 = screen.getByPlaceholderText('Message Family Assistant...');
     await user.click(input2);
     await user.type(input2, 'Second message');
 
-    // Wait for input processing before pressing Enter (matches Playwright send_message pattern)
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await waitFor(() => expect(screen.getByTestId('send-button')).toBeEnabled());
     await user.keyboard('{Enter}');
 
     // Wait for second message to be sent

@@ -5,7 +5,8 @@ Test Home Assistant event source reconnection and health checking.
 import asyncio
 import contextlib
 import time
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -43,43 +44,32 @@ async def test_exponential_backoff_reconnection() -> None:
     assert source._reconnect_delay == source._base_reconnect_delay
     assert source._reconnect_attempts == 0
 
-    # Track sleep calls
-    sleep_calls = []
-    original_sleep = asyncio.sleep
+    sleep_calls: list[float] = []
+    observed_retries = asyncio.Event()
 
     async def mock_sleep(delay: float) -> None:
         sleep_calls.append(delay)
-        # Only intercept the reconnect delays, not the short test sleeps
-        if delay >= source._base_reconnect_delay:
-            # Don't actually sleep the full delay, just a short time
-            await original_sleep(0.01)
-        else:
-            await original_sleep(delay)
+        if len(sleep_calls) >= 2:
+            observed_retries.set()
+        # Yield to the observer without waiting through the production backoff.
+        await original_sleep(0)
 
-    # Simulate multiple failed connection attempts
-    with (
-        patch(
-            "family_assistant.events.home_assistant_source.asyncio.to_thread",
-            side_effect=Exception("Connection failed"),
-        ),
-        patch("asyncio.sleep", mock_sleep),
-    ):
-        # Run the loop for a bit
+    original_sleep = asyncio.sleep
+    source_asyncio = SimpleNamespace(
+        sleep=mock_sleep,
+        to_thread=AsyncMock(side_effect=RuntimeError("Connection failed")),
+    )
+    # Patch only the source's module reference, leaving other session tasks alone.
+    with patch("family_assistant.events.home_assistant_source.asyncio", source_asyncio):
         source._running = True
         task = asyncio.create_task(source._websocket_loop())
-
-        # Give time for at least 2 reconnection attempts
-        for _ in range(20):
-            await original_sleep(0.01)
-            if source._reconnect_attempts >= 2:
-                break
-
-        # Stop the loop
-        source._running = False
-        task.cancel()
-
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        try:
+            await asyncio.wait_for(observed_retries.wait(), timeout=5)
+        finally:
+            source._running = False
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
         # Verify exponential backoff was applied
         # At least one reconnection attempt should have been made

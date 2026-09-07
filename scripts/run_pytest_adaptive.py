@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import shlex
 import shutil
@@ -178,8 +179,7 @@ def _collect_nodeids(
     command = [
         pytest_bin,
         "--collect-only",
-        "--json-report",
-        f"--json-report-file={collect_report}",
+        f"--adaptive-nodeids-file={collect_report}",
         "-q",
         "-n0",
         *pytest_args,
@@ -198,13 +198,66 @@ def _collect_nodeids(
         print(result.stdout, end="")
         return result.returncode
 
-    nodeids = [line for line in result.stdout.splitlines() if "::" in line]
+    collection = json.loads(collect_report.read_text(encoding="utf-8"))
+    nodeids = collection["nodeids"]
     nodeids_file.write_text(
         "\n".join(nodeids) + ("\n" if nodeids else ""),
         encoding="utf-8",
     )
     print(f"Collected {len(nodeids)} pytest nodeids.")
     return 0
+
+
+def _batch_nodeids(
+    nodeids: list[str], batch_size: int, playwright_nodeids: set[str] | None = None
+) -> list[list[str]]:
+    """Amortize backend setup while keeping slow browser work parallelizable."""
+    if batch_size < 1:
+        raise ValueError("PYTEST_ADAPTIVE_BATCH_SIZE must be positive")
+    browser_ids = playwright_nodeids or set()
+    browser_nodeids = [nodeid for nodeid in nodeids if nodeid in browser_ids]
+    modules: dict[str, list[str]] = {}
+    for nodeid in nodeids:
+        if nodeid not in browser_ids:
+            modules.setdefault(nodeid.split("::", 1)[0], []).append(nodeid)
+
+    # Browser tests are substantially slower per nodeid. Start them first and cap
+    # their batches even when a single module exceeds the normal backend target.
+    browser_batch_size = min(batch_size, 25)
+    batches = [
+        browser_nodeids[index : index + browser_batch_size]
+        for index in range(0, len(browser_nodeids), browser_batch_size)
+    ]
+    current: list[str] = []
+    for module_nodeids in modules.values():
+        if current and len(current) + len(module_nodeids) > batch_size:
+            batches.append(current)
+            current = []
+        current.extend(module_nodeids)
+    if current:
+        batches.append(current)
+    return batches
+
+
+def _write_shard_manifests(
+    nodeids_file: Path,
+    batch_size: int,
+    work_dir: Path,
+    playwright_nodeids: set[str] | None = None,
+) -> Path:
+    nodeids = nodeids_file.read_text(encoding="utf-8").splitlines()
+    batches = _batch_nodeids(nodeids, batch_size, playwright_nodeids)
+    manifests_dir = work_dir / "shards"
+    manifests_dir.mkdir()
+    manifest_paths: list[str] = []
+    for index, batch in enumerate(batches):
+        manifest = manifests_dir / f"shard-{index}.json"
+        manifest.write_text(json.dumps(batch), encoding="utf-8")
+        manifest_paths.append(str(manifest))
+    shards_file = work_dir / "shards.txt"
+    shards_file.write_text("\n".join(manifest_paths) + "\n", encoding="utf-8")
+    print(f"Packed {len(nodeids)} nodeids into {len(batches)} shards.")
+    return shards_file
 
 
 def _merge_summary(reports: list[JsonObject], exit_code: int) -> JsonObject:
@@ -288,11 +341,24 @@ def main() -> int:
         print("No pytest nodeids collected.")
         return PYTEST_EXIT_NO_TESTS_COLLECTED
 
-    batch_size = os.environ.get("PYTEST_ADAPTIVE_BATCH_SIZE", "25")
+    jobs = os.environ.get("PYTEST_ADAPTIVE_JOBS", "12")
+    nodeid_count = len(nodeids_file.read_text(encoding="utf-8").splitlines())
+    # Leave several scheduling waves for load balancing, without restarting pytest
+    # hundreds of times for a large suite. GNU Parallel also accepts nonnumeric jobs.
+    default_batch_size = max(
+        25,
+        math.ceil(nodeid_count / (max(1, int(jobs)) * 4)) if jobs.isdecimal() else 25,
+    )
+    batch_size = int(os.environ.get("PYTEST_ADAPTIVE_BATCH_SIZE", default_batch_size))
+    collection = json.loads(
+        nodeids_file.with_suffix(".json").read_text(encoding="utf-8")
+    )
+    shards_file = _write_shard_manifests(
+        nodeids_file, batch_size, work_dir, set(collection["playwright_nodeids"])
+    )
     load_limit = os.environ.get("PYTEST_ADAPTIVE_LOAD", "100%")
     mem_threshold = os.environ.get("PYTEST_ADAPTIVE_MEM_THRESHOLD", "0.80")
     delay = os.environ.get("PYTEST_ADAPTIVE_DELAY", "0.2")
-    jobs = os.environ.get("PYTEST_ADAPTIVE_JOBS", "12")
     joblog = work_dir / "joblog.tsv"
     results_dir = work_dir / "results" / "{#}"
     shard_reports_dir = work_dir / "json-reports"
@@ -323,7 +389,7 @@ def main() -> int:
         "--delimiter",
         "\n",
         "-N",
-        batch_size,
+        "1",
         "--jobs",
         jobs,
         "--load",
@@ -339,8 +405,10 @@ def main() -> int:
         "--line-buffer",
         shlex.quote(sys.executable),
         shlex.quote(str(shard_runner)),
+        "--adaptive-manifest",
+        "{}",
         "::::",
-        str(nodeids_file),
+        str(shards_file),
     ]
 
     print(

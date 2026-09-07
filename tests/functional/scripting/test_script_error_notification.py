@@ -160,7 +160,7 @@ async def test_script_failure_notification_is_processable(
     # Wait for the script task to fail
     with pytest.raises(RuntimeError, match="Task.*failed"):
         await wait_for_tasks_to_complete(
-            db_engine, task_types={"script_execution"}, timeout_seconds=15
+            db_engine, task_ids={task_id}, timeout_seconds=15
         )
 
     # Wait for the notification task to appear
@@ -190,7 +190,7 @@ async def test_script_failure_notification_is_processable(
     # scheduling_timestamp), handle_llm_callback will raise and the task will fail.
     new_task_event.set()
     await wait_for_tasks_to_complete(
-        db_engine, task_types={"llm_callback"}, timeout_seconds=15
+        db_engine, task_ids={notif["task_id"]}, timeout_seconds=15
     )
 
 
@@ -231,7 +231,7 @@ async def test_notify_on_failure_false_suppresses_notification(
 
     with pytest.raises(RuntimeError, match="Task.*failed"):
         await wait_for_tasks_to_complete(
-            db_engine, task_types={"script_execution"}, timeout_seconds=15
+            db_engine, task_ids={task_id}, timeout_seconds=15
         )
 
     # Give a brief window for any notification to appear (it shouldn't)
@@ -286,7 +286,7 @@ async def test_llm_callback_failure_does_not_trigger_notification(
 
     with pytest.raises(RuntimeError, match="Task.*failed"):
         await wait_for_tasks_to_complete(
-            db_engine, task_types={"llm_callback"}, timeout_seconds=15
+            db_engine, task_ids={task_id}, timeout_seconds=15
         )
 
     # Give a brief window for any notification to appear (it shouldn't)
@@ -341,7 +341,7 @@ async def test_notification_contains_event_data(
 
     with pytest.raises(RuntimeError, match="Task.*failed"):
         await wait_for_tasks_to_complete(
-            db_engine, task_types={"script_execution"}, timeout_seconds=15
+            db_engine, task_ids={task_id}, timeout_seconds=15
         )
 
     notification_tasks = await _wait_for_notification_tasks(db_engine)
@@ -401,7 +401,7 @@ async def test_confined_profile_failure_skips_llm_notification(
 
     with pytest.raises(RuntimeError, match="Task.*failed"):
         await wait_for_tasks_to_complete(
-            db_engine, task_types={"script_execution"}, timeout_seconds=15
+            db_engine, task_ids={task_id}, timeout_seconds=15
         )
 
     notification_tasks = await _wait_for_notification_tasks(
@@ -459,7 +459,7 @@ async def test_stamped_profile_carried_into_notification(
 
     with pytest.raises(RuntimeError, match="Task.*failed"):
         await wait_for_tasks_to_complete(
-            db_engine, task_types={"script_execution"}, timeout_seconds=15
+            db_engine, task_ids={task_id}, timeout_seconds=15
         )
 
     notification_tasks = await _wait_for_notification_tasks(db_engine)

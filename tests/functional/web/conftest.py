@@ -1300,11 +1300,6 @@ async def app_fixture(
         stream_hub=app.state.conversation_stream_hub,
     )
 
-    # Ensure database is initialized for this app instance
-    temp_db_ctx = Database(engine=db_engine)
-    await init_db(db_engine)  # Initialize main schema
-    await temp_db_ctx.init_vector_db()  # Initialize vector schema
-
     return app
 
 
