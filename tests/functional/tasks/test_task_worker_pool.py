@@ -10,6 +10,9 @@ in-process worker:
   deadlock the pool fixes).
 - Per-task-type handler timeout overrides are honoured.
 - Per-worker wake events: enqueueing a task promptly wakes an idle sibling.
+- Reserved workers keep interactive capacity free: they claim neither background
+  tasks nor handlers that park on queued work, so they still serve the queue
+  while every general worker is parked.
 
 The DB-touching tests run on both SQLite and PostgreSQL via the ``db_engine``
 fixture so the added concurrency is validated on the production backend too.
@@ -37,7 +40,7 @@ from family_assistant.storage.tasks import (
     tasks_table,
     unregister_worker_wake_event,
 )
-from family_assistant.task_worker import TaskWorker
+from family_assistant.task_worker import PARKING_TASK_TYPES, TaskWorker
 from family_assistant.tools import ToolExecutionContext
 from tests.conftest import cleanup_task_worker
 from tests.helpers import wait_for_condition, wait_for_tasks_to_complete
@@ -479,6 +482,283 @@ async def test_health_monitor_restarts_dead_worker_among_pool(
         for index in (0, 2):
             assert assistant.task_worker_tasks[index] is original_tasks[index]
             assert not assistant.task_worker_tasks[index].done()
+    finally:
+        shutdown_event.set()
+        for task in assistant.task_worker_tasks:
+            await cleanup_task_worker(task, shutdown_event)
+        for worker in workers:
+            await _dispose_worker_engine(worker, db_engine)
+
+
+def _make_reserved_worker(
+    db_engine: AsyncEngine, shutdown_event: asyncio.Event
+) -> TaskWorker:
+    """Build a worker reserved for the interactive lane."""
+    return _make_worker(
+        db_engine, shutdown_event, min_priority=TaskPriority.INTERACTIVE
+    )
+
+
+@pytest.mark.asyncio
+async def test_reserved_worker_never_claims_a_background_task(
+    db_engine: AsyncEngine, shutdown_event: asyncio.Event
+) -> None:
+    """A background task is left alone even when it is the only one due."""
+    processed: list[str] = []
+
+    async def recording_handler(
+        exec_context: ToolExecutionContext,
+        payload: TaskPayload,
+    ) -> None:
+        processed.append(str(payload["name"]))
+
+    worker = _make_reserved_worker(db_engine, shutdown_event)
+    worker.register_task_handler("recorded", recording_handler)
+    worker_task = asyncio.create_task(worker.run())
+
+    try:
+        db_context = Database(engine=db_engine)
+        await db_context.tasks.enqueue(
+            task_id="background-task",
+            task_type="recorded",
+            payload={"name": "background"},
+            max_retries_override=0,
+            priority=TaskPriority.BACKGROUND,
+        )
+        # The interactive task is the reserved worker's only permitted work, so
+        # its completion is the point by which the background one would have run.
+        await db_context.tasks.enqueue(
+            task_id="interactive-task",
+            task_type="recorded",
+            payload={"name": "interactive"},
+            max_retries_override=0,
+            priority=TaskPriority.INTERACTIVE,
+        )
+
+        await wait_for_tasks_to_complete(
+            engine=db_engine,
+            task_ids={"interactive-task"},
+            timeout_seconds=10.0,
+        )
+        assert processed == ["interactive"]
+        assert await _task_status(db_engine, "background-task") == "pending"
+    finally:
+        await cleanup_task_worker(worker_task, shutdown_event)
+        await _dispose_worker_engine(worker, db_engine)
+
+
+@pytest.mark.asyncio
+async def test_reserved_worker_never_claims_a_parking_task_type(
+    db_engine: AsyncEngine, shutdown_event: asyncio.Event
+) -> None:
+    """An interactive task whose handler parks on queued work is left alone."""
+    parking_type = next(iter(PARKING_TASK_TYPES))
+    ran: list[str] = []
+
+    async def recording_handler(
+        exec_context: ToolExecutionContext,
+        payload: TaskPayload,
+    ) -> None:
+        ran.append(str(payload["name"]))
+
+    worker = _make_reserved_worker(db_engine, shutdown_event)
+    worker.register_task_handler(parking_type, recording_handler)
+    worker.register_task_handler("sentinel", recording_handler)
+    assert parking_type not in worker.dequeued_task_types()
+    worker_task = asyncio.create_task(worker.run())
+
+    try:
+        db_context = Database(engine=db_engine)
+        await db_context.tasks.enqueue(
+            task_id="parking-task",
+            task_type=parking_type,
+            payload={"name": "parking"},
+            max_retries_override=0,
+            priority=TaskPriority.INTERACTIVE,
+        )
+        await db_context.tasks.enqueue(
+            task_id="sentinel-task",
+            task_type="sentinel",
+            payload={"name": "sentinel"},
+            max_retries_override=0,
+            priority=TaskPriority.INTERACTIVE,
+        )
+
+        await wait_for_tasks_to_complete(
+            engine=db_engine,
+            task_ids={"sentinel-task"},
+            timeout_seconds=10.0,
+        )
+        assert ran == ["sentinel"]
+        assert await _task_status(db_engine, "parking-task") == "pending"
+    finally:
+        await cleanup_task_worker(worker_task, shutdown_event)
+        await _dispose_worker_engine(worker, db_engine)
+
+
+@pytest.mark.asyncio
+async def test_reserved_worker_serves_the_queue_while_general_workers_park(
+    db_engine: AsyncEngine, shutdown_event: asyncio.Event
+) -> None:
+    """With every general worker parked, the reserved worker keeps working.
+
+    The parked handlers stand in for confirmation-gated delegated runs: each
+    waits on an in-process future that only another queued task resolves. Under
+    the default pool shape the reserved worker runs both the interactive task
+    that came due meanwhile and the task that releases the parked runs.
+    """
+    config = AppConfig()
+    parking_type = next(iter(PARKING_TASK_TYPES))
+    release: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+    parked_count = 0
+    all_parked = asyncio.Event()
+    ran_on: dict[str, str] = {}
+
+    async def parking_handler(
+        exec_context: ToolExecutionContext,
+        payload: TaskPayload,
+    ) -> None:
+        nonlocal parked_count
+        parked_count += 1
+        if parked_count >= config.task_worker_count:
+            all_parked.set()
+        await release
+
+    def make_recording_handler(
+        worker_id: str,
+    ) -> Any:  # noqa: ANN401 - handler signature is declared on registration
+        async def handler(
+            exec_context: ToolExecutionContext,
+            payload: TaskPayload,
+        ) -> None:
+            ran_on[str(payload["name"])] = worker_id
+            if payload["name"] == "release" and not release.done():
+                release.set_result("released")
+
+        return handler
+
+    general_workers = [
+        _make_worker(db_engine, shutdown_event) for _ in range(config.task_worker_count)
+    ]
+    reserved_workers = [
+        _make_reserved_worker(db_engine, shutdown_event)
+        for _ in range(config.reserved_task_worker_count)
+    ]
+    workers = general_workers + reserved_workers
+    for worker in workers:
+        worker.register_task_handler(parking_type, parking_handler)
+        recording_handler = make_recording_handler(worker.worker_id)
+        worker.register_task_handler("ping", recording_handler)
+        worker.register_task_handler("release", recording_handler)
+    pool = _Pool(workers, shutdown_event, db_engine)
+
+    try:
+        db_context = Database(engine=db_engine)
+        for index in range(config.task_worker_count):
+            await db_context.tasks.enqueue(
+                task_id=f"parked-{index}",
+                task_type=parking_type,
+                payload={},
+                max_retries_override=0,
+                priority=TaskPriority.INTERACTIVE,
+            )
+
+        await asyncio.wait_for(all_parked.wait(), timeout=10.0)
+
+        await db_context.tasks.enqueue(
+            task_id="ping-task",
+            task_type="ping",
+            payload={"name": "ping"},
+            max_retries_override=0,
+            priority=TaskPriority.INTERACTIVE,
+        )
+        await db_context.tasks.enqueue(
+            task_id="release-task",
+            task_type="release",
+            payload={"name": "release"},
+            max_retries_override=0,
+            priority=TaskPriority.INTERACTIVE,
+        )
+
+        # Well inside the 5s poll interval: the reserved worker is woken by the
+        # enqueue rather than finding the work on its next poll.
+        await wait_for_tasks_to_complete(
+            engine=db_engine,
+            task_ids={"ping-task", "release-task"},
+            timeout_seconds=4.0,
+            poll_interval_seconds=0.1,
+        )
+        reserved_ids = {worker.worker_id for worker in reserved_workers}
+        assert set(ran_on) == {"ping", "release"}
+        assert set(ran_on.values()) <= reserved_ids
+
+        # Releasing the future lets the parked runs finish on their own workers.
+        await wait_for_tasks_to_complete(
+            engine=db_engine,
+            task_ids={f"parked-{index}" for index in range(config.task_worker_count)},
+            timeout_seconds=10.0,
+        )
+    finally:
+        if not release.done():
+            release.set_result("cleanup")
+        await pool.stop()
+
+
+def test_reserved_task_worker_count_defaults_to_one() -> None:
+    """One worker is held back for interactive work by default."""
+    assert AppConfig().reserved_task_worker_count == 1
+    assert AppConfig(reserved_task_worker_count=3).reserved_task_worker_count == 3
+
+
+def test_reserved_task_worker_count_may_be_zero_but_not_negative() -> None:
+    """Reserving nothing is a valid choice; a negative count is not."""
+    assert AppConfig(reserved_task_worker_count=0).reserved_task_worker_count == 0
+    with pytest.raises(ValidationError):
+        AppConfig(reserved_task_worker_count=-1)
+
+
+@pytest.mark.asyncio
+async def test_health_monitor_restarts_a_reserved_worker_as_reserved(
+    db_engine: AsyncEngine, shutdown_event: asyncio.Event
+) -> None:
+    """A restarted reserved worker keeps its lane: the instance is reused."""
+    workers = [
+        _make_worker(db_engine, shutdown_event),
+        _make_worker(db_engine, shutdown_event),
+        _make_reserved_worker(db_engine, shutdown_event),
+    ]
+    for worker in workers:
+        worker.register_task_handler("noop", _noop_handler)
+
+    assistant = Assistant.__new__(Assistant)
+    assistant.task_workers = workers
+    assistant.task_worker_tasks = [
+        asyncio.create_task(worker.run()) for worker in workers
+    ]
+
+    try:
+        await wait_for_condition(
+            lambda: all(w.last_activity is not None for w in workers),
+            timeout=2.0,
+            description="workers to start",
+        )
+
+        reserved_index = 2
+        original_tasks = list(assistant.task_worker_tasks)
+        original_tasks[reserved_index].cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await original_tasks[reserved_index]
+
+        await assistant._check_and_restart_workers()
+
+        restarted = assistant.task_workers[reserved_index]
+        assert restarted is workers[reserved_index]
+        assert restarted.min_priority == TaskPriority.INTERACTIVE
+        assert (
+            assistant.task_worker_tasks[reserved_index]
+            is not original_tasks[reserved_index]
+        )
+        assert not assistant.task_worker_tasks[reserved_index].done()
     finally:
         shutdown_event.set()
         for task in assistant.task_worker_tasks:
