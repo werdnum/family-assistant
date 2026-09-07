@@ -74,13 +74,21 @@ The dequeue order is `priority DESC, COALESCE(scheduled_at, created_at) ASC, id 
 interactive task is always taken before any background task, however long the background task has
 waited.
 
-Priority is chosen at the enqueue site, not looked up from the task type, and the parameter is
-**required** rather than defaulted. Two reasons. One handler can serve both lanes: an
-`embed_and_store_batch` produced by a user's upload is interactive, and one produced by a future
-bulk re-index is not, so the type cannot decide. And a required parameter is the enforcement
-chokepoint: the type checker refuses a call site that has not made the choice, so a new producer
-cannot land in the wrong lane by omission. A task's children inherit its priority; the indexing
-pipeline carries it from the handler that ran it to the processor that dispatches embedding batches.
+Priority is chosen where work enters the queue from outside it -- a chat turn, an HTTP request,
+startup -- and is carried, not re-decided, once inside. The parameter is **required** rather than
+defaulted, so the type checker refuses a producer that has not made the choice, and it lives on the
+task rather than the type because one handler can serve both lanes: an `embed_and_store_batch`
+produced by a user's upload is interactive, and one produced by a future bulk re-index is not.
+
+Inside the queue, inheritance has one source. The worker builds a `ToolExecutionContext` for every
+handler it runs, in one place, from the dequeued row; that context gains the row's priority, which
+is the only place a running task's priority is known. A handler that enqueues further work passes
+that value on, and the indexing pipeline's dispatch processor, which already receives the execution
+context, reads it from there, so an upload's embedding batches carry the upload's lane without the
+pipeline knowing which handler ran it. Recurrence copies the row and a retry reuses it, so both
+inherit by construction. A handler that deliberately changes lane -- a background walk that needs to
+tell someone something -- names the new lane explicitly, and that is the review-visible exception
+rather than the norm.
 
 The module-level `storage.tasks.enqueue_task` still has seven callers alongside the repository's
 `enqueue`, and `storage.tasks.dequeue_task` has none. Both go: one enqueue path is what makes the
@@ -142,6 +150,11 @@ both enqueued as background work, so the walk proceeds only while nothing intera
 - **Two levels, not a scale.** The column is an integer so a third level would be a code change
   rather than a migration, but nothing today needs one. A "system" level above interactive, or a
   "bulk" level below background, is machinery for a scenario that has not happened.
+- **A handler can still name a lane by hand.** The execution context makes the inherited value
+  available; nothing stops a handler passing a constant instead, and a wrong constant is a
+  review-visible bug at one call site rather than a silent one. A conformance rule banning explicit
+  lanes inside handlers would also ban the legitimate lane change above, so the choice stays a
+  reviewed one.
 - **No per-type concurrency limits.** Two background workers can both be inside the backfill walk.
   The fingerprint check from #1192 makes that a bounded duplicate rather than duplicated spend.
 - **The reserved worker idles most of the time.** That is the point: it is capacity held back for
@@ -157,10 +170,10 @@ both enqueued as background work, so the walk proceeds only while nothing intera
    immediate tasks created after it.
 2. **Priority column.** Add the column with a migration that classifies existing rows by task type
    so in-flight reminders are not demoted, make the enqueue parameter required and classify every
-   call site, thread the priority through the indexing pipeline to the embedding dispatch, and put
-   `priority` first in the dequeue order. Verified on both backends: with a backlog of due
-   background tasks, a newly enqueued interactive task is the next one dequeued; an upload's
-   embedding batches carry the upload's priority.
+   call site, record the dequeued row's priority on the execution context the worker builds and read
+   it in the indexing pipeline's embedding dispatch, and put `priority` first in the dequeue order.
+   Verified on both backends: with a backlog of due background tasks, a newly enqueued interactive
+   task is the next one dequeued; an upload's embedding batches carry the upload's priority.
 3. **Reserved workers.** Add the minimum-priority filter to `TaskWorker` and the claim query, the
    configuration for the reserved count, the pool construction, and the operations documentation for
    both counts. Verified with the pool test fixtures: with every general worker parked on a
