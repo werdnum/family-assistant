@@ -10,11 +10,15 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
-from family_assistant.embeddings import EmbeddingGenerator, MockEmbeddingGenerator
+from family_assistant.embeddings import (
+    EmbeddingGenerator,
+    EmbeddingResult,
+    MockEmbeddingGenerator,
+)
 from family_assistant.indexing.message_history_indexer import (
-    MESSAGE_HISTORY_BACKFILL_TASK_ID,
     enqueue_message_history_backfill_task,
     handle_index_message_history_batch,
+    message_history_backfill_task_id,
 )
 from family_assistant.llm.messages import (
     AssistantMessage,
@@ -32,6 +36,7 @@ from family_assistant.security.taint import (
 from family_assistant.storage.database import Database
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.message_history import (
+    MESSAGE_HISTORY_INDEX_DELAY,
     MessageHistoryAccessDeniedError,
     MessageHistoryQuery,
 )
@@ -984,11 +989,13 @@ async def test_message_history_backfill_task_is_seeded_as_system_task(
 ) -> None:
     """Startup can seed a one-time backfill for preexisting message history."""
     db = Database(engine=db_engine)
-    await enqueue_message_history_backfill_task(db, limit=17)
+    await enqueue_message_history_backfill_task(
+        db, embedding_model="embedding-v1", limit=17
+    )
 
     task_row = await db.fetch_one(
         select(tasks_table).where(
-            tasks_table.c.task_id == MESSAGE_HISTORY_BACKFILL_TASK_ID
+            tasks_table.c.task_id == message_history_backfill_task_id("embedding-v1")
         )
     )
 
@@ -996,6 +1003,102 @@ async def test_message_history_backfill_task_is_seeded_as_system_task(
     assert task_row["task_type"] == "index_message_history_batch"
     assert task_row["payload"] == {"limit": 17}
     assert task_row["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_message_history_backfill_seed_leaves_a_walk_in_progress_alone(
+    db_engine: AsyncEngine,
+) -> None:
+    """A restart must not rewind the cursor of a backfill already under way.
+
+    The seed is a system task, and a system-task enqueue upserts: it overwrites
+    the payload and revives a finished row. Left at that, every process start
+    would restart the walk at the beginning of a corpus that only grows, and
+    re-embed all of it -- which is what the embedding bill showed.
+    """
+    db = Database(engine=db_engine)
+    task_id = message_history_backfill_task_id("embedding-v1")
+    await enqueue_message_history_backfill_task(
+        db, embedding_model="embedding-v1", limit=17
+    )
+    await db.execute(
+        tasks_table
+        .update()
+        .where(tasks_table.c.task_id == task_id)
+        .values(payload={"limit": 17, "after_internal_id": 4200}, status="done")
+    )
+
+    await enqueue_message_history_backfill_task(
+        db, embedding_model="embedding-v1", limit=17
+    )
+
+    task_row = await db.fetch_one(
+        select(tasks_table).where(tasks_table.c.task_id == task_id)
+    )
+    assert task_row is not None
+    assert task_row["payload"] == {"limit": 17, "after_internal_id": 4200}
+    assert task_row["status"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_message_history_backfill_reseeds_under_a_new_embedding_model(
+    db_engine: AsyncEngine,
+) -> None:
+    """A model change seeds its own walk, so old history is re-indexed under it.
+
+    Semantic search matches `embedding_model` exactly. Left to the finished
+    seed alone, turns embedded under the retired model would stop answering
+    queries with nothing queued to repair them.
+    """
+    db = Database(engine=db_engine)
+    await enqueue_message_history_backfill_task(db, embedding_model="embedding-v1")
+    await db.execute(
+        tasks_table
+        .update()
+        .where(
+            tasks_table.c.task_id == message_history_backfill_task_id("embedding-v1")
+        )
+        .values(status="done")
+    )
+
+    await enqueue_message_history_backfill_task(db, embedding_model="embedding-v2")
+
+    successor = await db.fetch_one(
+        select(tasks_table).where(
+            tasks_table.c.task_id == message_history_backfill_task_id("embedding-v2")
+        )
+    )
+    assert successor is not None
+    assert successor["status"] == "pending"
+    assert successor["payload"] == {"limit": 50}
+
+
+@pytest.mark.asyncio
+async def test_persisted_message_defers_its_turn_indexing_task(
+    db_engine: AsyncEngine,
+) -> None:
+    """Indexing waits for the turn, so the turn is embedded once rather than per row."""
+    db = Database(engine=db_engine)
+    before = datetime.now(UTC)
+    await _store_user_message(
+        db,
+        conversation_id="current",
+        user_id="user-a",
+        content="Deferred indexing",
+        timestamp=before,
+        turn_id="turn-deferred",
+    )
+
+    task_row = await db.fetch_one(
+        select(tasks_table).where(
+            tasks_table.c.task_type == "index_message_history_batch"
+        )
+    )
+    assert task_row is not None
+    scheduled_at = task_row["scheduled_at"]
+    if scheduled_at.tzinfo is None:
+        scheduled_at = scheduled_at.replace(tzinfo=UTC)
+    assert scheduled_at >= before + MESSAGE_HISTORY_INDEX_DELAY
 
 
 @pytest.mark.asyncio
@@ -1122,10 +1225,128 @@ async def _store_user_message(
     )
 
 
+class _CountingEmbeddingGenerator:
+    """Wraps a generator and records every text it was asked to embed.
+
+    The cost this guards is the provider call, not the row it writes: the
+    vector store upserts, so a redundant pass leaves the database identical and
+    only the call count tells you it happened.
+    """
+
+    def __init__(self, model_name: str = "mock-embedding-model") -> None:
+        self._inner = MockEmbeddingGenerator(model_name=model_name, dimensions=3)
+        self.embedded_texts: list[str] = []
+
+    @property
+    def model_name(self) -> str:
+        return self._inner.model_name
+
+    async def generate_embeddings(self, texts: list[str]) -> EmbeddingResult:
+        self.embedded_texts.extend(texts)
+        return await self._inner.generate_embeddings(texts)
+
+
+async def _index_turn(
+    db: Database,
+    generator: _CountingEmbeddingGenerator,
+    turn_id: str,
+) -> None:
+    await handle_index_message_history_batch(
+        _build_exec_context(db, embedding_generator=generator),
+        {"turn_id": turn_id},
+    )
+
+
+@pytest.mark.asyncio
+async def test_message_history_indexer_skips_content_it_already_embedded(
+    db_engine: AsyncEngine,
+) -> None:
+    """Re-indexing an unchanged turn costs a database read, not a provider call."""
+    db = Database(engine=db_engine)
+    await _store_user_message(
+        db,
+        conversation_id="current",
+        user_id="user-a",
+        content="Where are the passports?",
+        timestamp=datetime.now(UTC),
+        turn_id="turn-repeat",
+    )
+    generator = _CountingEmbeddingGenerator()
+
+    await _index_turn(db, generator, "turn-repeat")
+    await _index_turn(db, generator, "turn-repeat")
+    await _index_turn(db, generator, "turn-repeat")
+
+    assert len(generator.embedded_texts) == 1
+
+
+@pytest.mark.asyncio
+async def test_message_history_indexer_reembeds_a_turn_whose_content_grew(
+    db_engine: AsyncEngine,
+) -> None:
+    """A turn that gained a message is genuinely different, so it is embedded again."""
+    db = Database(engine=db_engine)
+    timestamp = datetime.now(UTC)
+    await _store_user_message(
+        db,
+        conversation_id="current",
+        user_id="user-a",
+        content="Where are the passports?",
+        timestamp=timestamp,
+        turn_id="turn-grows",
+    )
+    generator = _CountingEmbeddingGenerator()
+    await _index_turn(db, generator, "turn-grows")
+
+    await db.message_history.add_message(
+        AssistantMessage(content="In the blue folder."),
+        interface_type="test",
+        conversation_id="current",
+        timestamp=timestamp + timedelta(seconds=1),
+        turn_id="turn-grows",
+        user_id="user-a",
+        processing_profile_id="default",
+    )
+    await _index_turn(db, generator, "turn-grows")
+
+    assert len(generator.embedded_texts) == 2
+    assert "blue folder" in generator.embedded_texts[1]
+
+
+@pytest.mark.asyncio
+async def test_message_history_indexer_reembeds_when_the_model_changes(
+    db_engine: AsyncEngine,
+) -> None:
+    """Identity includes the model, so a migration re-indexes unchanged content."""
+    db = Database(engine=db_engine)
+    await _store_user_message(
+        db,
+        conversation_id="current",
+        user_id="user-a",
+        content="Where are the passports?",
+        timestamp=datetime.now(UTC),
+        turn_id="turn-remodel",
+    )
+    await _index_turn(db, _CountingEmbeddingGenerator("embedding-v1"), "turn-remodel")
+
+    successor = _CountingEmbeddingGenerator("embedding-v2")
+    await _index_turn(db, successor, "turn-remodel")
+
+    assert len(successor.embedded_texts) == 1
+    stored = await db.fetch_one(
+        select(DocumentEmbeddingRecord.embedding_model).join(
+            DocumentRecord,
+            DocumentEmbeddingRecord.document_id == DocumentRecord.id,
+        )
+    )
+    assert stored is not None
+    assert stored["embedding_model"] == "embedding-v2"
+
+
 def _build_exec_context(
     db: Database,
     *,
-    embedding_generator: MockEmbeddingGenerator | None = None,
+    embedding_generator: EmbeddingGenerator | None = None,
     taint_tracker: InMemoryTurnTaintTracker | None = None,
 ) -> ToolExecutionContext:
     return ToolExecutionContext(
