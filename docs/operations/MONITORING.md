@@ -352,6 +352,17 @@ period by the worker pool's health monitor, not by each worker. See
 [docs/design/task-queue-priority-lanes.md](../design/task-queue-priority-lanes.md) for the ordering
 rules these numbers describe.
 
+### Indexing
+
+| Metric                                      | Type    | Labels                   |
+| ------------------------------------------- | ------- | ------------------------ |
+| `family_assistant_indexing_documents_total` | Counter | `source_type`, `outcome` |
+
+`outcome` is `embedded` (an embedding provider call was made and billed) or `skipped_unchanged` (the
+stored embedding already covered that text under that model, so no call was made). The ratio is the
+health signal, not either count on its own: indexing is enqueued redundantly by design — a backfill
+walk, one task per row of a turn, task retries — and the skip is what keeps that from costing money.
+
 ### Useful queries
 
 Token spend per profile, in tokens per second:
@@ -389,6 +400,15 @@ Whether a profile is being served by its configured model or by a fallback:
 sum by (profile, model, resolved_model) (rate(family_assistant_llm_calls_total[1h]))
 ```
 
+What fraction of indexing passes are paying for an embedding. On a corpus that is not growing this
+should sit near zero; a sustained rise means indexing has come loose from what is already stored,
+and the embedding bill will follow:
+
+```promql
+sum by (source_type) (rate(family_assistant_indexing_documents_total{outcome="embedded"}[1h]))
+  / sum by (source_type) (rate(family_assistant_indexing_documents_total[1h]))
+```
+
 LLM calls per turn, which is where a runaway tool loop shows up. Scoped to `operation="chat"`,
 because the iteration cap counts model turns: structured output adds a call per reviewed tool call,
 and a delegated `coder` or Deep Research run increments the numerator without ever entering the
@@ -418,15 +438,32 @@ sum by (profile) (
 ```
 
 How long the oldest due task has been waiting, straight from the database when the exporter is not
-available:
+available. On PostgreSQL:
 
 ```sql
 SELECT priority, max(now() - COALESCE(scheduled_at, created_at))
   FROM tasks
  WHERE status = 'pending'
+   AND retry_count <= max_retries
    AND (scheduled_at IS NULL OR scheduled_at <= now())
  GROUP BY priority;
 ```
+
+On SQLite, which has no `now()` and no interval arithmetic, the same reading in seconds:
+
+```sql
+SELECT priority,
+       max((julianday('now') - julianday(COALESCE(scheduled_at, created_at))) * 86400)
+  FROM tasks
+ WHERE status = 'pending'
+   AND retry_count <= max_retries
+   AND (scheduled_at IS NULL OR scheduled_at <= strftime('%Y-%m-%d %H:%M:%f', 'now'))
+ GROUP BY priority;
+```
+
+The retry predicate matters: a pending row whose retries are spent is `exhausted`, not `due`, and
+without it an old exhausted row reports an arbitrarily high latency while the exported gauge reads
+zero.
 
 A task type that regenerates itself — its enqueue rate tracks its completion rate one for one while
 the queue never grows:

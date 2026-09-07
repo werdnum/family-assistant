@@ -69,6 +69,10 @@ also search semantically for fuzzy references. Results are scoped to your own hi
 The **History** page in the web interface shows the same conversations across Telegram, web, and
 email, with filtering.
 
+Semantic search over a conversation catches up a couple of minutes after the exchange finishes, so a
+reply you just received may not be findable by a fuzzy description straight away. Exact-field
+filtering and the History page see it immediately.
+
 ## Troubleshooting
 
 - **A document isn't turning up in search.** Indexing runs in the background; give a large upload a

@@ -4030,6 +4030,12 @@ class TaskWorker:
                 status="failed",
                 error=f"No handler registered for type {task['task_type']}",
             )
+            record_task_processed(
+                task_type=task["task_type"],
+                priority=TaskPriority(task["priority"]).label,
+                outcome="failed",
+                duration_seconds=None,
+            )
             return None  # Stop processing this task
 
         # Filled in by the handler execution below and read by both the success
@@ -4067,6 +4073,12 @@ class TaskWorker:
                             task_id=task["task_id"],
                             status="failed",
                             error="Missing interface_type or conversation_id in payload for llm_callback",
+                        )
+                        record_task_processed(
+                            task_type=task["task_type"],
+                            priority=TaskPriority(task["priority"]).label,
+                            outcome="failed",
+                            duration_seconds=None,
                         )
                         return None  # Stop processing
                     final_interface_type = raw_interface_type

@@ -43,6 +43,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "INDEXING_DOCUMENTS",
     "LLM_CALLS",
     "LLM_CALL_DURATION",
     "LLM_TIME_TO_FIRST_OUTPUT",
@@ -62,6 +63,7 @@ __all__ = [
     "TurnMetrics",
     "instrumented_llm_request",
     "normalized_token_buckets",
+    "record_indexing_documents",
     "record_llm_call",
     "record_task_enqueued",
     "record_task_processed",
@@ -214,6 +216,19 @@ TURNS_IN_PROGRESS = Gauge(
     "family_assistant_turns_in_progress",
     "Processing turns currently running.",
     ("profile",),
+)
+
+INDEXING_DOCUMENTS = Counter(
+    "family_assistant_indexing_documents",
+    (
+        "Documents an indexing pass resolved, by what it did with them. "
+        "`embedded` paid for a provider call; `skipped_unchanged` found the "
+        "stored embedding already covered that text under that model. Their "
+        "ratio is the health signal: a corpus that is not growing should "
+        "settle at almost all `skipped_unchanged`, and a sustained run of "
+        "`embedded` means selection has come loose from what is stored."
+    ),
+    ("source_type", "outcome"),
 )
 
 
@@ -420,6 +435,21 @@ def record_llm_call(
         logger.debug("Failed to record LLM call metrics", exc_info=True)
 
 
+def record_indexing_documents(
+    *,
+    source_type: str,
+    outcome: str,
+    count: int,
+) -> None:
+    """Count documents an indexing pass embedded or skipped. Never raises."""
+    if count <= 0:
+        return
+    try:
+        INDEXING_DOCUMENTS.labels(source_type, outcome).inc(count)
+    except Exception:
+        logger.debug("Failed to record indexing metrics", exc_info=True)
+
+
 def record_tool_call(
     *,
     profile: str,
@@ -463,7 +493,7 @@ def record_task_processed(
     task_type: str,
     priority: str,
     outcome: str,
-    duration_seconds: float,
+    duration_seconds: float | None,
 ) -> None:
     """Count one task execution and how long its handler ran. Never raises.
 
@@ -471,10 +501,15 @@ def record_task_processed(
     execution that ended in an error the queue will try again, so a task that
     eventually succeeds contributes one ``completed`` and one ``retried`` per
     failed attempt.
+
+    ``duration_seconds`` is ``None`` when no handler ran -- a task the worker
+    rejected before dispatch is still a terminal outcome the counter must
+    carry, but a zero-length observation would misdescribe the histogram.
     """
     try:
         TASKS_PROCESSED.labels(task_type, priority, outcome).inc()
-        TASK_DURATION.labels(task_type, priority).observe(duration_seconds)
+        if duration_seconds is not None:
+            TASK_DURATION.labels(task_type, priority).observe(duration_seconds)
     except Exception:
         logger.debug("Failed to record task processing metrics", exc_info=True)
 

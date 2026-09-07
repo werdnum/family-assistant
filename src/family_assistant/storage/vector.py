@@ -7,9 +7,11 @@ Provides functions for adding, retrieving, deleting, and querying documents and 
 
 import json
 import logging  # Import the logging module
+from collections.abc import Sequence
 from datetime import datetime
 from typing import (
     Any,
+    NamedTuple,
     Protocol,
 )
 
@@ -333,6 +335,90 @@ async def get_document_by_source_id(
         logger.exception(
             f"Database error retrieving document with source_id {source_id}: {e}"
         )
+        raise
+
+
+class IndexedContentFingerprint(NamedTuple):
+    """What a stored embedding was made from, for a re-index decision."""
+
+    content_hash: str | None
+    embedding_model: str
+
+
+async def get_indexed_content_fingerprints(
+    db_context: DatabaseExecutor,
+    *,
+    source_ids: Sequence[str],
+    embedding_type: str,
+    chunk_index: int = 0,
+) -> dict[str, IndexedContentFingerprint]:
+    """Return, per source ID, what the stored embedding was generated from.
+
+    An indexer compares this against the text and model it is about to send.
+    The write side already upserts on ``source_id``, so re-indexing unchanged
+    content produces no duplicate rows -- but the provider call that produces
+    the vector is billed whether or not the row that follows is new. This is
+    the read that lets a caller skip the call.
+    """
+    if not source_ids:
+        return {}
+
+    stmt = (
+        select(
+            DocumentRecord.source_id,
+            DocumentEmbeddingRecord.content_hash,
+            DocumentEmbeddingRecord.embedding_model,
+        )
+        .join(
+            DocumentEmbeddingRecord,
+            DocumentEmbeddingRecord.document_id == DocumentRecord.id,
+        )
+        .where(
+            DocumentRecord.source_id.in_(source_ids),
+            DocumentEmbeddingRecord.embedding_type == embedding_type,
+            DocumentEmbeddingRecord.chunk_index == chunk_index,
+        )
+    )
+    try:
+        rows = await db_context.fetch_all(stmt)
+    except SQLAlchemyError as e:
+        logger.exception(f"Database error reading indexed content fingerprints: {e}")
+        raise
+
+    return {
+        row["source_id"]: IndexedContentFingerprint(
+            content_hash=row["content_hash"],
+            embedding_model=row["embedding_model"],
+        )
+        for row in rows
+    }
+
+
+async def has_embeddings_outside_model(
+    db_context: DatabaseExecutor,
+    *,
+    embedding_type: str,
+    embedding_model: str,
+) -> bool:
+    """Whether stored embeddings of this type were made by some other model.
+
+    Search matches ``embedding_model`` exactly, so a row under a retired model
+    answers nothing. This is how a caller learns that the stored corpus and
+    the configured model have diverged -- after a migration, or after a
+    rollback to a model the corpus has since been re-embedded away from.
+    """
+    stmt = (
+        select(DocumentEmbeddingRecord.id)
+        .where(
+            DocumentEmbeddingRecord.embedding_type == embedding_type,
+            DocumentEmbeddingRecord.embedding_model != embedding_model,
+        )
+        .limit(1)
+    )
+    try:
+        return await db_context.fetch_one(stmt) is not None
+    except SQLAlchemyError as e:
+        logger.exception(f"Database error checking for foreign embeddings: {e}")
         raise
 
 

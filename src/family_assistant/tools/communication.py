@@ -44,7 +44,8 @@ COMMUNICATION_TOOLS_DEFINITION: list[ToolDefinition] = [
             "name": "get_message_history",
             "description": (
                 "Structured and semantic lookup against past conversation history. Use structured mode for exact filters like dates, roles, tools, attachments, or errors; semantic mode for fuzzy recall; and hybrid mode when both are useful. "
-                "Returns compact message summaries (each with a stable message_id, timestamp, role, content, and optional neighboring context), or an empty list when nothing matches."
+                "Returns compact message summaries (each with a stable message_id, timestamp, role, content, and optional neighboring context), or an empty list when nothing matches. "
+                "Semantic recall lags the conversation by a couple of minutes because a turn is indexed once it has finished, so use structured mode to look up something said in the last few exchanges."
             ),
             "parameters": {
                 "type": "object",

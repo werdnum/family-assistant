@@ -20,13 +20,12 @@ Type a credential-bearing field ``SecretStr``. Pydantic then masks it in
 and the guarantee is enforced by the type rather than by anything guessing from
 the field's name.
 
-The guarantee starts at validation, so it does not cover startup logging:
-``_log_config`` in ``config_loader`` runs on the raw dict *before*
-``AppConfig.model_validate``, and keeps its own hand-maintained exclusion list.
-A credential supplied through an environment variable is a plain string at that
-point. Read the value with
-``.get_secret_value()`` at the point of use; the type checker will point out
-every place that needs it.
+Startup logging in ``config_loader`` routes whole-config logs through
+:func:`family_assistant.config_inspection.redact_sensitive_config` using
+``model_dump(mode="json")`` on successful validation (omitting whole-config
+logging on validation failure to prevent leaking pre-validation raw secrets).
+Read the value with ``.get_secret_value()`` at the point of use; the type
+checker will point out every place that needs it.
 
 Two things this cannot express, handled in
 :mod:`family_assistant.config_inspection` instead:
