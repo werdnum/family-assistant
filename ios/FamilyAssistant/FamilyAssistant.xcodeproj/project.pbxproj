@@ -7,6 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		CE000020 /* IntentHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE000010 /* IntentHandler.swift */; };
+		CE000021 /* StartCallIntentHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE000011 /* StartCallIntentHandler.swift */; };
+		CE000022 /* AssistantCallHandle.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE000014 /* AssistantCallHandle.swift */; };
+		CE000023 /* AssistantCallHandle.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE000014 /* AssistantCallHandle.swift */; };
+		CE000024 /* FamilyAssistantIntents.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = CE000001 /* FamilyAssistantIntents.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		AA000001 /* WatchAuthentication.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000003 /* WatchAuthentication.swift */; };
 		AA000002 /* WatchAuthentication.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA000003 /* WatchAuthentication.swift */; };
 		091DA729DF332A031A84F715 /* VoiceToolRunnerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B4509B5C94F65C5466E3ADE /* VoiceToolRunnerTests.swift */; };
@@ -132,6 +137,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		CE000055 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E10002 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CE000050;
+			remoteInfo = FamilyAssistantIntents;
+		};
 		6C5211901A2BF9C49DC0FD63 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = E10002 /* Project object */;
@@ -172,6 +184,17 @@
 				6F4544A126780EA5BF36A201 /* FamilyAssistantWatch.app in Embed Watch Content */,
 			);
 			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CE000043 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				CE000024 /* FamilyAssistantIntents.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		8BDACD07ADD5B72DE9379D11 /* Embed App Extensions */ = {
@@ -232,6 +255,12 @@
 		B10006 /* WebViewContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebViewContainer.swift; sourceTree = "<group>"; };
 		B10008 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B10009 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		CE000001 /* FamilyAssistantIntents.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = FamilyAssistantIntents.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		CE000010 /* IntentHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntentHandler.swift; sourceTree = "<group>"; };
+		CE000011 /* StartCallIntentHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StartCallIntentHandler.swift; sourceTree = "<group>"; };
+		CE000012 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		CE000013 /* FamilyAssistantIntents.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FamilyAssistantIntents.entitlements; sourceTree = "<group>"; };
+		CE000014 /* AssistantCallHandle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantCallHandle.swift; sourceTree = "<group>"; };
 		B10010 /* FamilyAssistant.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FamilyAssistant.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		B10011 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		B10012 /* NotificationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationManager.swift; sourceTree = "<group>"; };
@@ -312,6 +341,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CE000041 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		C10001 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -337,6 +373,25 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		CE000030 /* FamilyAssistantIntents */ = {
+			isa = PBXGroup;
+			children = (
+				CE000010 /* IntentHandler.swift */,
+				CE000011 /* StartCallIntentHandler.swift */,
+				CE000012 /* Info.plist */,
+				CE000013 /* FamilyAssistantIntents.entitlements */,
+			);
+			path = FamilyAssistantIntents;
+			sourceTree = "<group>";
+		};
+		CE000031 /* CallShared */ = {
+			isa = PBXGroup;
+			children = (
+				CE000014 /* AssistantCallHandle.swift */,
+			);
+			path = CallShared;
+			sourceTree = "<group>";
+		};
 		0161073B5D928E69C9BE8A59 /* WatchShared */ = {
 			isa = PBXGroup;
 			children = (
@@ -419,6 +474,8 @@
 				E793C50F493C089BB836D5DB /* FamilyAssistantWatch */,
 				1EB47F450B3915C648A08649 /* FamilyAssistantWatchComplications */,
 				0161073B5D928E69C9BE8A59 /* WatchShared */,
+				CE000030 /* FamilyAssistantIntents */,
+				CE000031 /* CallShared */,
 			);
 			sourceTree = "<group>";
 		};
@@ -474,6 +531,7 @@
 				B30001 /* FamilyAssistantUITests.xctest */,
 				B1AAF72545947EFDE2F39529 /* FamilyAssistantWatch.app */,
 				B906A08EA1A23FA933CF471F /* FamilyAssistantWatchComplications.appex */,
+				CE000001 /* FamilyAssistantIntents.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -652,11 +710,13 @@
 				C10001 /* Frameworks */,
 				C10003 /* Resources */,
 				1CB59A5670B98B0C068B8A8C /* Embed Watch Content */,
+				CE000043 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				F7810DB8F916B6F18B6C3252 /* PBXTargetDependency */,
+				CE000054 /* PBXTargetDependency */,
 			);
 			name = FamilyAssistant;
 			packageProductDependencies = (
@@ -665,6 +725,23 @@
 			productName = FamilyAssistant;
 			productReference = B10010 /* FamilyAssistant.app */;
 			productType = "com.apple.product-type.application";
+		};
+		CE000050 /* FamilyAssistantIntents */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CE000051 /* Build configuration list for PBXNativeTarget "FamilyAssistantIntents" */;
+			buildPhases = (
+				CE000040 /* Sources */,
+				CE000041 /* Frameworks */,
+				CE000042 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = FamilyAssistantIntents;
+			productName = FamilyAssistantIntents;
+			productReference = CE000001 /* FamilyAssistantIntents.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 		E20001 /* FamilyAssistantTests */ = {
 			isa = PBXNativeTarget;
@@ -751,11 +828,19 @@
 				E30001 /* FamilyAssistantUITests */,
 				8519706530FD3EFF6BB81D3F /* FamilyAssistantWatch */,
 				DD79D5694D10068D69CF5529 /* FamilyAssistantWatchComplications */,
+				CE000050 /* FamilyAssistantIntents */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		CE000042 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		0D0358A3720D194D6C42B26A /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -807,10 +892,21 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		CE000040 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CE000020 /* IntentHandler.swift in Sources */,
+				CE000021 /* StartCallIntentHandler.swift in Sources */,
+				CE000022 /* AssistantCallHandle.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		C10002 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				CE000023 /* AssistantCallHandle.swift in Sources */,
 				A10001 /* FamilyAssistantApp.swift in Sources */,
 				AA000001 /* WatchAuthentication.swift in Sources */,
 				A10002 /* ContentView.swift in Sources */,
@@ -949,6 +1045,12 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		CE000054 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = FamilyAssistantIntents;
+			target = CE000050 /* FamilyAssistantIntents */;
+			targetProxy = CE000055 /* PBXContainerItemProxy */;
+		};
 		150AD76174DDD75654440E1B /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			name = FamilyAssistantWatchComplications;
@@ -974,6 +1076,61 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		CE000052 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = FamilyAssistantIntents/FamilyAssistantIntents.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = H7NBC2S52X;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = FamilyAssistantIntents/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Family Assistant";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.1;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.andrewgarrett.assistant.intents;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		CE000053 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = FamilyAssistantIntents/FamilyAssistantIntents.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = H7NBC2S52X;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = FamilyAssistantIntents/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Family Assistant";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.1;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.andrewgarrett.assistant.intents;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 		693C7B514EEE93F894D21035 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -1340,6 +1497,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		CE000051 /* Build configuration list for PBXNativeTarget "FamilyAssistantIntents" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CE000052 /* Debug */,
+				CE000053 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		346F14286D6544635E6E871A /* Build configuration list for PBXNativeTarget "FamilyAssistantWatchComplications" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

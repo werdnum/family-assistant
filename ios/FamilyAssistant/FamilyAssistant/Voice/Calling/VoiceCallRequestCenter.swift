@@ -43,31 +43,7 @@ final class VoiceCallRequestCenter {
     /// talking to the assistant.
     static func isAssistantStartCallActivity(_ activity: NSUserActivity) -> Bool {
         activity.activityType == startCallActivityType
-            && isAddressedToAssistant(activity.interaction?.intent as? INStartCallIntent)
-    }
-
-    /// Siri also resolves "call Bob using Family Assistant" into a start-call
-    /// intent for this app, where the destination is Bob and starting an
-    /// assistant conversation would answer a question nobody asked. An intent
-    /// that names contacts must therefore name ours.
-    ///
-    /// An intent naming nobody, or an activity carrying no intent payload at
-    /// all, is accepted: Siri resolved this app as the destination, and the
-    /// payload shape on the paths that matter — a locked phone, a CarPlay head
-    /// unit — is not something that can be verified from here, so refusing on a
-    /// missing payload would break the primary path to guard a case that has
-    /// not been seen.
-    static func isAddressedToAssistant(_ intent: INStartCallIntent?) -> Bool {
-        guard let contacts = intent?.contacts, !contacts.isEmpty else { return true }
-        return contacts.contains(where: isAssistant)
-    }
-
-    private static func isAssistant(_ person: INPerson) -> Bool {
-        let names = [person.personHandle?.value, person.customIdentifier, person.displayName]
-        return names.contains { name in
-            name?.trimmingCharacters(in: .whitespacesAndNewlines)
-                .caseInsensitiveCompare(VoiceCallCoordinator.assistantHandleValue) == .orderedSame
-        }
+            && AssistantCallHandle.isAddressedToAssistant(activity.interaction?.intent as? INStartCallIntent)
     }
 
     /// Install what acts on requests, draining anything already buffered

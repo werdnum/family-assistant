@@ -240,7 +240,7 @@ final class VoiceCallCoordinatorTests: XCTestCase {
         XCTAssertEqual(controller.startRequests.count, 1)
         let handle = try XCTUnwrap(controller.startRequests.first?.handle)
         XCTAssertEqual(handle.type, .generic)
-        XCTAssertEqual(handle.value, VoiceCallCoordinator.assistantHandleValue)
+        XCTAssertEqual(handle.value, AssistantCallHandle.value)
         XCTAssertTrue(coordinator.isCallActive)
     }
 
