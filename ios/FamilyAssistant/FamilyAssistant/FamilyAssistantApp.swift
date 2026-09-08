@@ -84,9 +84,11 @@ struct FamilyAssistantApp: App {
             // Signing in is the only prerequisite for "Hey Siri, call Family
             // Assistant", so the handle Siri resolves is donated here rather
             // than from the Voice tab, on a launch that is already signed in
-            // and on a sign-in that happens later.
+            // and on a sign-in that happens later. Signing out is where a call
+            // running at process scope has to be ended.
             .onChange(of: authManager.isAuthenticated) {
                 donateAssistantCallHandle()
+                voiceCallStarter.signedInStateChanged(to: authManager.isAuthenticated)
             }
             .task {
                 await ErrorReporter.shared.flushPersisted()

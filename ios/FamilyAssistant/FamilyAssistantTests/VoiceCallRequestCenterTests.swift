@@ -13,7 +13,11 @@ private final class RecordingCallController: CallRequesting {
         startRequests.append(uuid)
     }
 
-    func requestEndCall(uuid _: UUID) async throws {}
+    private(set) var endRequests: [UUID] = []
+
+    func requestEndCall(uuid: UUID) async throws {
+        endRequests.append(uuid)
+    }
 }
 
 @MainActor
@@ -307,6 +311,37 @@ final class VoiceCallRequestCenterTests: XCTestCase {
         await settleMainActor()
 
         XCTAssertTrue(center.pendingRequests.isEmpty)
+    }
+
+    /// The call is owned at process scope and outlives the authenticated UI, so
+    /// signing out has to end it rather than leave it listening on revoked
+    /// credentials.
+    func testSigningOutEndsARunningCall() async {
+        let center = VoiceCallRequestCenter()
+        let factory = CoordinatorFactory()
+        let starter = VoiceCallStarter(isAuthenticated: { true }, makeCoordinator: factory.make)
+        starter.install(into: center)
+        center.receiveStartCallRequest()
+        await settleMainActor()
+
+        starter.signedInStateChanged(to: false)
+        await settleMainActor()
+
+        XCTAssertEqual(factory.controller.endRequests, factory.controller.startRequests)
+    }
+
+    func testStayingSignedInLeavesARunningCallAlone() async {
+        let center = VoiceCallRequestCenter()
+        let factory = CoordinatorFactory()
+        let starter = VoiceCallStarter(isAuthenticated: { true }, makeCoordinator: factory.make)
+        starter.install(into: center)
+        center.receiveStartCallRequest()
+        await settleMainActor()
+
+        starter.signedInStateChanged(to: true)
+        await settleMainActor()
+
+        XCTAssertTrue(factory.controller.endRequests.isEmpty)
     }
 
     func testTheVoiceTabStateFollowsTheCallAndTheTabsOwnSession() {

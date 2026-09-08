@@ -49,6 +49,21 @@ final class VoiceCallStarter {
         }
     }
 
+    /// End a running call when the user signs out. The call is owned at process
+    /// scope and outlives the authenticated UI, so nothing else would stop it:
+    /// signing out would revoke the credentials while the conversation carried
+    /// on listening and talking to the same session.
+    func signedInStateChanged(to isSignedIn: Bool) {
+        guard !isSignedIn, let coordinator, coordinator.isCallActive else { return }
+        Task {
+            do {
+                try await coordinator.endCall()
+            } catch {
+                ErrorReporter.shared.report(error, component: "Voice.call.signOut")
+            }
+        }
+    }
+
     /// A request that arrives while a call is already running is the same
     /// conversation asked for twice, so it is dropped rather than queued.
     ///
