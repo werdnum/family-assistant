@@ -57,9 +57,13 @@ user has shown an interest in talking.
 
 The destination is checked, because Siri resolves "call someone using Family Assistant" to this app
 too, and answering that with an assistant conversation would discard the destination the user asked
-for. An intent that names no destination at all is ours, because Siri resolved the app itself. That
-rule is one predicate compiled into both the extension, which refuses the intent, and the app, which
-refuses the activity — the two cannot be allowed to disagree about who the assistant is.
+for. An assistant call has exactly one destination, so the request is ours only when the single name
+it carries is the assistant's; naming anyone else, or naming the assistant alongside somebody else,
+is refused rather than narrowed. An intent that names no destination at all is ours, because Siri
+resolved the app itself. That rule is one predicate compiled into both the extension, which refuses
+the intent, and the app, which refuses the activity — the two cannot be allowed to disagree about
+who the assistant is. The extension answers Siri with one resolution result per name the intent
+carried, as SiriKit reads that array positionally.
 
 **Inverted: who owns the audio session.** Today `VoiceAudioEngine` configures *and activates*
 `AVAudioSession` itself. Under CallKit that is wrong: CallKit activates the session, and audio

@@ -126,14 +126,16 @@ final class VoiceCallRequestCenterTests: XCTestCase {
         XCTAssertTrue(AssistantCallHandle.isAddressedToAssistant(intent))
     }
 
-    /// A named assistant among other destinations is still us.
-    func testAStartCallIntentNamingTheAssistantAmongOthersIsAccepted() {
+    /// An assistant call has one destination, so a request that also names
+    /// somebody else is not one this app can serve — picking the assistant out
+    /// of the list would drop the other destination silently.
+    func testAStartCallIntentNamingTheAssistantAmongOthersIsRejected() {
         let intent = makeStartCallIntent(contacts: [
             makePerson(handle: "+15550100", displayName: "Bob"),
             makePerson(handle: AssistantCallHandle.value, displayName: AssistantCallHandle.value),
         ])
 
-        XCTAssertTrue(AssistantCallHandle.isAddressedToAssistant(intent))
+        XCTAssertFalse(AssistantCallHandle.isAddressedToAssistant(intent))
     }
 
     /// Siri resolved the app as the destination and told us nothing more. The
@@ -153,10 +155,26 @@ final class VoiceCallRequestCenterTests: XCTestCase {
         let assistant = makePerson(handle: AssistantCallHandle.value, displayName: AssistantCallHandle.value)
 
         XCTAssertEqual(AssistantCallHandle.resolveDestination(in: [assistant]), .assistant(assistant))
-        XCTAssertEqual(AssistantCallHandle.resolveDestination(in: [bob, assistant]), .assistant(assistant))
         XCTAssertEqual(AssistantCallHandle.resolveDestination(in: [bob]), .unsupported)
+        XCTAssertEqual(AssistantCallHandle.resolveDestination(in: [bob, assistant]), .unsupported)
+        XCTAssertEqual(AssistantCallHandle.resolveDestination(in: [bob, bob]), .unsupported)
         XCTAssertEqual(AssistantCallHandle.resolveDestination(in: []), .unnamed)
         XCTAssertEqual(AssistantCallHandle.resolveDestination(in: nil), .unnamed)
+    }
+
+    /// SiriKit reads the resolution array positionally: one result per contact
+    /// the intent named. A rejected request has to say so about each of them,
+    /// not answer a two-contact request with one result.
+    func testTheResolutionAnswersEveryNamedContact() {
+        let bob = makePerson(handle: "+15550100", displayName: "Bob")
+        let assistant = makePerson(handle: AssistantCallHandle.value, displayName: AssistantCallHandle.value)
+
+        XCTAssertEqual(AssistantCallHandle.resolveContacts(in: nil).count, 1)
+        XCTAssertEqual(AssistantCallHandle.resolveContacts(in: []).count, 1)
+        XCTAssertEqual(AssistantCallHandle.resolveContacts(in: [assistant]).count, 1)
+        XCTAssertEqual(AssistantCallHandle.resolveContacts(in: [bob]).count, 1)
+        XCTAssertEqual(AssistantCallHandle.resolveContacts(in: [bob, assistant]).count, 2)
+        XCTAssertEqual(AssistantCallHandle.resolveContacts(in: [bob, bob]).count, 2)
     }
 
     /// Signing in is the only prerequisite the user is told about, so a user

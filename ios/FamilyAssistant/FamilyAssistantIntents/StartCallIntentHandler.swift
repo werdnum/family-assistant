@@ -15,14 +15,7 @@ final class StartCallIntentHandler: NSObject, INStartCallIntentHandling {
         for intent: INStartCallIntent,
         with completion: @escaping ([INStartCallContactResolutionResult]) -> Void
     ) {
-        switch AssistantCallHandle.resolveDestination(in: intent.contacts) {
-        case .unnamed:
-            completion([INStartCallContactResolutionResult.notRequired()])
-        case let .assistant(person):
-            completion([INStartCallContactResolutionResult.success(with: person)])
-        case .unsupported:
-            completion([INStartCallContactResolutionResult.unsupported()])
-        }
+        completion(AssistantCallHandle.resolveContacts(in: intent.contacts))
     }
 
     func handle(intent: INStartCallIntent, completion: @escaping (INStartCallIntentResponse) -> Void) {
