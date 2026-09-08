@@ -4,13 +4,12 @@ import {
   AttachmentPrimitive,
   ComposerPrimitive,
   MessagePrimitive,
-  useAttachment,
-  useComposerRuntime,
+  useAui,
+  useAuiState,
 } from '@assistant-ui/react';
 import { Slot } from '@radix-ui/react-slot';
 import { CircleXIcon, FileIcon, PaperclipIcon } from 'lucide-react';
 import { type FC, PropsWithChildren, useEffect, useMemo, useState } from 'react';
-import { useShallow } from 'zustand/shallow';
 import { TooltipIconButton } from '@/components/assistant-ui/tooltip-icon-button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { ImageLightbox } from '@/components/ui/image-lightbox';
@@ -37,29 +36,23 @@ const useFileSrc = (file: File | undefined) => {
 };
 
 const useAttachmentSrc = () => {
-  const { file, src } = useAttachment(
-    useShallow((a): { file?: File; src?: string } => {
-      if (a.type !== 'image') {
-        return {};
-      }
-      if (a.file) {
-        return { file: a.file };
-      }
-      // Handle both string content (base64) and array content formats
-      if (typeof a.content === 'string') {
-        // If content is a string (base64 data URL), use it directly
-        return { src: a.content };
-      } else if (Array.isArray(a.content)) {
-        // If content is an array, look for image content
-        const src = a.content.filter((c) => c.type === 'image')[0]?.image;
-        if (!src) {
-          return {};
-        }
-        return { src };
-      }
-      return {};
-    })
-  );
+  const file = useAuiState((s) => (s.attachment.type === 'image' ? s.attachment.file : undefined));
+  const src = useAuiState((s) => {
+    const a = s.attachment;
+    if (a.type !== 'image' || a.file) {
+      return undefined;
+    }
+    // Handle both string content (base64) and array content formats
+    if (typeof a.content === 'string') {
+      // If content is a string (base64 data URL), use it directly
+      return a.content;
+    } else if (Array.isArray(a.content)) {
+      // If content is an array, look for image content
+      const imageSrc = a.content.filter((c) => c.type === 'image')[0]?.image;
+      return imageSrc ?? undefined;
+    }
+    return undefined;
+  });
 
   return useFileSrc(file) ?? src;
 };
@@ -70,7 +63,7 @@ const useAttachmentSrc = () => {
  */
 const AttachmentPreviewTrigger: FC<PropsWithChildren> = ({ children }) => {
   const src = useAttachmentSrc();
-  const name = useAttachment((a) => a.name);
+  const name = useAuiState((s) => s.attachment.name);
   const [isOpen, setIsOpen] = useState(false);
   const images = useMemo(
     () => (src ? [{ key: src, url: src, name: name || 'Image attachment' }] : []),
@@ -110,7 +103,7 @@ const AttachmentPreviewTrigger: FC<PropsWithChildren> = ({ children }) => {
 };
 
 const AttachmentThumb: FC = () => {
-  const isImage = useAttachment((a) => a.type === 'image');
+  const isImage = useAuiState((s) => s.attachment.type === 'image');
   const src = useAttachmentSrc();
   return (
     <Avatar className="bg-muted flex size-10 items-center justify-center rounded border text-sm">
@@ -123,10 +116,11 @@ const AttachmentThumb: FC = () => {
 };
 
 const AttachmentUI: FC = () => {
-  const canRemove = useAttachment((a) => a.source !== 'message');
-  const status = useAttachment((a) => a.status);
-  const typeLabel = useAttachment((a) => {
-    const type = a.type;
+  const aui = useAui();
+  const canRemove = aui.attachment.source !== 'message';
+  const status = useAuiState((s) => s.attachment.status);
+  const typeLabel = useAuiState((s) => {
+    const type = s.attachment.type;
     switch (type) {
       case 'image':
         return 'Image';
@@ -231,14 +225,14 @@ export const ComposerAttachments: FC = () => {
 };
 
 export const ComposerAddAttachment: FC = () => {
-  const composerRuntime = useComposerRuntime();
+  const aui = useAui();
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (files && files.length > 0) {
       // Add each file as an attachment
       Array.from(files).forEach((file) => {
-        composerRuntime.addAttachment(file);
+        aui.composer.addAttachment(file);
       });
       // Clear the input so the same file can be selected again
       event.target.value = '';

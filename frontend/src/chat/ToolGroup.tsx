@@ -1,4 +1,4 @@
-import { useMessage } from '@assistant-ui/react';
+import { useAuiState } from '@assistant-ui/react';
 import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { ToolConfirmationContext } from './ToolConfirmationContext';
 import { ToolGroupShell } from './ToolGroupShell';
@@ -74,12 +74,14 @@ function getToolGroupState(
 
 // Hook to safely access message state with fallback
 function useSafeToolGroupState(startIndex: number, endIndex: number): ToolGroupState {
-  const serializedState = useMessage<string>({
-    optional: true,
-    selector: (message) =>
-      JSON.stringify(
-        getToolGroupState(message.content as readonly MessagePartLike[], startIndex, endIndex)
-      ),
+  const serializedState = useAuiState((s) => {
+    const message = s.optional.message;
+    if (!message) {
+      return undefined;
+    }
+    return JSON.stringify(
+      getToolGroupState(message.content as readonly MessagePartLike[], startIndex, endIndex)
+    );
   });
 
   return useMemo(
