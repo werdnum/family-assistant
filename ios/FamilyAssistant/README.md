@@ -229,6 +229,23 @@ CallKit transaction. Do not move `CXCallController` or `CXProvider` into it — 
 `unentitled` from an extension. `AssistantCallHandle` in `CallShared/` is compiled into both targets
 so the resolution rule and the handle string have one definition.
 
+**CallKit requires the VoIP background mode.** The app's `Info.plist` declares `UIBackgroundModes`
+= `audio` **and** `voip`. There is no CallKit capability in the Developer portal and no CallKit
+entitlement to add: the `voip` entry is the only thing that marks the process as a calling app, so
+iOS gates the CallKit APIs on it. Apple states the requirement for calling apps in
+[Preparing your app to be the default calling app](https://developer.apple.com/documentation/callkit/preparing-your-app-to-be-the-default-calling-app)
+("The `Info.plist` file has the `UIBackgroundModes` property array and contains an entry with the
+string `voip`"), and `CXErrorCodeMissingVoIPBackgroundMode` exists in `CXError.h` for the same
+reason.
+
+Drop `voip` and nothing fails at build or launch. `CXCallController.request` fails at runtime, on a
+device, with `CXErrorDomainRequestTransaction` code 1 —
+`CXErrorCodeRequestTransactionErrorUnentitled`, surfaced as "The operation couldn't be completed.
+(com.apple.CallKit.error.requesttransaction error 1.)" — because that domain has no dedicated
+missing-background-mode code. `VoiceCallRequestCenterTests` asserts both modes are in the built bundle so
+this is caught in CI instead. Note that declaring `voip` brings the app within App Store Review
+Guideline 2.5.4, which reserves background modes for their intended purposes.
+
 Every SiriKit intent listed in `IntentsSupported` needs at least one registered example phrase in
 every language the app ships, or App Store Connect answers the upload with `ITMS-90626: Invalid Siri
 Support`. The phrases live in `FamilyAssistant/en.lproj/AppIntentVocabulary.plist` — a resource of
