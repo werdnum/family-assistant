@@ -40,8 +40,14 @@ call reports connected when the Live session completes setup, and ending either 
 other. It is the only place that knows CallKit exists.
 
 **Added: a way in from Siri.** The app advertises that it handles the start-call intent and
-donates a callable handle under the app's own name, so Siri can resolve it as a destination.
-The intent arrives as a user activity, which the app turns into a call request.
+donates a callable handle under the app's own name, so Siri can resolve it as a destination. The
+donation is what makes the handle resolvable and it prompts for nothing, so it happens on the only
+condition the user is told about — being signed in — from app scope rather than from a view; the
+one part that does prompt, Siri authorization, stays where the user has shown an interest in
+talking. The intent arrives as a user activity, which the app turns into a call request, but only
+when the intent is addressed to us: Siri resolves "call someone using Family Assistant" to this app
+too, and answering that with an assistant conversation would discard the destination the user asked
+for. An intent that names no destination at all is ours, because Siri resolved the app itself.
 
 **Inverted: who owns the audio session.** Today `VoiceAudioEngine` configures *and activates*
 `AVAudioSession` itself. Under CallKit that is wrong: CallKit activates the session, and audio
@@ -136,7 +142,10 @@ have just decided not to talk to.
   than reasoning about the audio consequences — there is one process-wide `AVAudioSession`, and
   a second session would both compete for the microphone and deactivate it out from under the
   call when it closed. Standing aside is visible, not silent: the tab says the call is where the
-  conversation is, and starts a session of its own once the call ends.
+  conversation is, and starts a session of its own once the call ends. The system is told the same
+  thing about the call itself, which is declared to support none of the multi-call operations — no
+  holding, grouping, ungrouping or tones. That is what makes a real phone call end the conversation
+  instead of leaving CallKit waiting out an action nothing here answers.
 - **The handle is a constant, not a contact.** The assistant is donated as one generic handle
   rather than written into the user's contacts. It keeps Siri resolution working without the
   app taking a write dependency on the address book.
