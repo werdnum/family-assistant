@@ -12,6 +12,16 @@ import Intents
 enum AssistantCallHandle {
     static let value = "Family Assistant"
 
+    /// The activity type the start-call continuation carries.
+    ///
+    /// SiriKit will invent an activity when the extension hands it none, and
+    /// the type it invents is not something Apple documents, so the extension
+    /// sets it from here and the app matches on the same constant. It is the
+    /// Objective-C class name of `INStartCallIntent`, which is also what the
+    /// app's `NSUserActivityTypes` declares — a continuation whose type is not
+    /// declared there is never delivered.
+    static let startCallActivityType = "INStartCallIntent"
+
     /// What a spoken destination resolves to.
     enum Destination: Equatable {
         /// The intent named nobody, so there is nothing to resolve: Siri
@@ -22,6 +32,25 @@ enum AssistantCallHandle {
         /// The intent named somebody else, or named more people than a call to
         /// the assistant has room for.
         case unsupported
+
+        /// Whether this app should answer the request by talking to the
+        /// assistant.
+        var isAddressedToAssistant: Bool {
+            self != .unsupported
+        }
+
+        /// How the decision is named in the breadcrumb the app records for it.
+        /// Names the decision only — never who was named or what was said.
+        var telemetryName: String {
+            switch self {
+            case .unnamed:
+                return "unnamed"
+            case .assistant:
+                return "assistant"
+            case .unsupported:
+                return "unsupported"
+            }
+        }
     }
 
     /// An assistant call has exactly one destination — the provider advertises
@@ -62,7 +91,20 @@ enum AssistantCallHandle {
     /// at all, which arrives here as `nil` — is one this app should answer by
     /// talking to the assistant.
     static func isAddressedToAssistant(_ intent: INStartCallIntent?) -> Bool {
-        resolveDestination(in: intent?.contacts) != .unsupported
+        resolveDestination(in: intent?.contacts).isAddressedToAssistant
+    }
+
+    /// What an arriving user activity means for the call path, or `nil` when
+    /// the activity is not a start-call continuation at all.
+    ///
+    /// The two questions — is this the continuation, and is it addressed to the
+    /// assistant — are answered separately because the app records both: an
+    /// activity arriving under an unexpected type is the failure that otherwise
+    /// looks exactly like no activity arriving.
+    static func startCallDestination(in activity: NSUserActivity) -> Destination? {
+        guard activity.activityType == startCallActivityType else { return nil }
+        let intent = activity.interaction?.intent as? INStartCallIntent
+        return resolveDestination(in: intent?.contacts)
     }
 
     static func isAssistant(_ person: INPerson) -> Bool {

@@ -1,5 +1,4 @@
 import Foundation
-import Intents
 import Observation
 
 /// One delivered "call the assistant" request. Carries an identity only so a
@@ -29,21 +28,13 @@ struct VoiceCallRequest: Equatable, Identifiable {
 final class VoiceCallRequestCenter {
     static let shared = VoiceCallRequestCenter()
 
-    /// The activity type Siri delivers for a start-call intent, mirroring the
-    /// `NSUserActivityTypes` declaration in `Info.plist`.
-    static let startCallActivityType = "INStartCallIntent"
-
     private(set) var pendingRequests: [VoiceCallRequest] = []
 
+    @ObservationIgnored private let telemetry: VoiceCallTelemetryRecording
     @ObservationIgnored private var handler: (@MainActor (VoiceCallRequest) -> Void)?
 
-    init() {}
-
-    /// Whether an activity is a start-call intent this app should answer by
-    /// talking to the assistant.
-    static func isAssistantStartCallActivity(_ activity: NSUserActivity) -> Bool {
-        activity.activityType == startCallActivityType
-            && AssistantCallHandle.isAddressedToAssistant(activity.interaction?.intent as? INStartCallIntent)
+    init(telemetry: VoiceCallTelemetryRecording = VoiceCallTelemetry.shared) {
+        self.telemetry = telemetry
     }
 
     /// Install what acts on requests, draining anything already buffered
@@ -61,8 +52,18 @@ final class VoiceCallRequestCenter {
         let request = VoiceCallRequest()
         guard let handler else {
             pendingRequests.append(request)
+            telemetry.record(
+                "iOS received a start-call request",
+                component: VoiceCallTelemetryComponent.request,
+                extraData: ["disposition": "buffered", "pending_count": String(pendingRequests.count)]
+            )
             return
         }
+        telemetry.record(
+            "iOS received a start-call request",
+            component: VoiceCallTelemetryComponent.request,
+            extraData: ["disposition": "handled", "pending_count": "0"]
+        )
         handler(request)
     }
 

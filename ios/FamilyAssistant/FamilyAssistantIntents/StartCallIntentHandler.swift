@@ -10,6 +10,15 @@ import Intents
 /// not happen — an extension holds none of the calling entitlements it needs —
 /// so the response is `.continueInApp`, which hands the intent to the app as an
 /// `NSUserActivity` for `VoiceCallRequestCenter` to act on.
+///
+/// The activity is constructed here rather than left to SiriKit. SiriKit will
+/// make one when given none, but the type it chooses is not documented, and the
+/// app matches arriving activities on exactly one type — a type it assumed
+/// rather than set. Setting it makes the app's match a match against something
+/// this app decided, and the constant is shared with the app so the two cannot
+/// disagree. SiriKit attaches the `INInteraction` carrying the intent and this
+/// response to whichever activity it delivers, so nothing is lost by supplying
+/// one.
 final class StartCallIntentHandler: NSObject, INStartCallIntentHandling {
     func resolveContacts(
         for intent: INStartCallIntent,
@@ -23,6 +32,7 @@ final class StartCallIntentHandler: NSObject, INStartCallIntentHandling {
             completion(INStartCallIntentResponse(code: .failureContactNotSupportedByApp, userActivity: nil))
             return
         }
-        completion(INStartCallIntentResponse(code: .continueInApp, userActivity: nil))
+        let activity = NSUserActivity(activityType: AssistantCallHandle.startCallActivityType)
+        completion(INStartCallIntentResponse(code: .continueInApp, userActivity: activity))
     }
 }

@@ -5,6 +5,26 @@ import Intents
 import UIKit
 import XCTest
 
+/// Collects what the call path records, so a test can assert the breadcrumb a
+/// step leaves as well as the work it does. The path records from whichever
+/// thread delivered the activity, so this locks.
+private final class RecordingVoiceCallTelemetry: VoiceCallTelemetryRecording {
+    private let lock = NSLock()
+    private var records: [(event: String, component: String, extraData: [String: String])] = []
+
+    func record(_ event: String, component: String, extraData: [String: String]) {
+        lock.withLock { records.append((event, component, extraData)) }
+    }
+
+    func components() -> [String] {
+        lock.withLock { records.map(\.component) }
+    }
+
+    func extraData(for component: String) -> [[String: String]] {
+        lock.withLock { records.filter { $0.component == component }.map(\.extraData) }
+    }
+}
+
 @MainActor
 private final class RecordingCallController: CallRequesting {
     private(set) var startRequests: [UUID] = []
@@ -65,12 +85,22 @@ private final class CoordinatorFactory {
     private(set) var lastCoordinator: VoiceCallCoordinator?
     let controller = RecordingCallController()
 
+    private let isDeviceUnlocked: Bool
+
+    init(isDeviceUnlocked: Bool = true) {
+        self.isDeviceUnlocked = isDeviceUnlocked
+    }
+
     func make() -> VoiceCallCoordinator {
         buildCount += 1
+        let isDeviceUnlocked = isDeviceUnlocked
         let coordinator = VoiceCallCoordinator(
             provider: SilentCallProvider(),
             controller: controller,
-            handsFreeAccess: VoiceHandsFreeAccess(isDeviceUnlocked: { true }, isCarPlayConnected: { false }),
+            handsFreeAccess: VoiceHandsFreeAccess(
+                isDeviceUnlocked: { isDeviceUnlocked },
+                isCarPlayConnected: { false }
+            ),
             makeSession: { _ in
                 VoiceCallSessionAudio(session: UnusedVoiceCallSession(), audio: UnusedVoiceAudioIO())
             }
@@ -93,9 +123,11 @@ final class VoiceCallRequestCenterTests: XCTestCase {
     }
 
     func testAStartCallActivityProducesAPendingRequest() {
-        let activity = NSUserActivity(activityType: VoiceCallRequestCenter.startCallActivityType)
+        let activity = NSUserActivity(activityType: AssistantCallHandle.startCallActivityType)
 
-        XCTAssertTrue(HomeScreenShortcutSceneDelegate.forwardUserActivities([activity]))
+        XCTAssertTrue(
+            HomeScreenShortcutSceneDelegate.forwardUserActivities([activity], from: .sceneContinue)
+        )
 
         XCTAssertEqual(VoiceCallRequestCenter.shared.pendingRequests.count, 1)
     }
@@ -210,7 +242,9 @@ final class VoiceCallRequestCenterTests: XCTestCase {
     func testAnUnrelatedActivityProducesNoRequest() {
         let activity = NSUserActivity(activityType: "com.familyassistant.app.something-else")
 
-        XCTAssertFalse(HomeScreenShortcutSceneDelegate.forwardUserActivities([activity]))
+        XCTAssertFalse(
+            HomeScreenShortcutSceneDelegate.forwardUserActivities([activity], from: .sceneContinue)
+        )
 
         XCTAssertTrue(VoiceCallRequestCenter.shared.pendingRequests.isEmpty)
     }
@@ -221,7 +255,9 @@ final class VoiceCallRequestCenterTests: XCTestCase {
         let activity = NSUserActivity(activityType: NSUserActivityTypeBrowsingWeb)
         activity.webpageURL = URL(string: "https://assistant.example.test/chat")
 
-        XCTAssertTrue(HomeScreenShortcutSceneDelegate.forwardUserActivities([activity]))
+        XCTAssertTrue(
+            HomeScreenShortcutSceneDelegate.forwardUserActivities([activity], from: .sceneWillConnect)
+        )
 
         XCTAssertTrue(VoiceCallRequestCenter.shared.pendingRequests.isEmpty)
         XCTAssertEqual(
@@ -232,7 +268,7 @@ final class VoiceCallRequestCenterTests: XCTestCase {
 
     func testTheApplicationDelegateAcceptsAColdStartCallActivity() {
         let delegate = AppDelegate()
-        let activity = NSUserActivity(activityType: VoiceCallRequestCenter.startCallActivityType)
+        let activity = NSUserActivity(activityType: AssistantCallHandle.startCallActivityType)
 
         let handled = delegate.application(
             UIApplication.shared,
@@ -438,6 +474,172 @@ final class VoiceCallRequestCenterTests: XCTestCase {
             VoiceTabState.decide(isCallInProgress: starter.isCallActive, hasSession: false),
             .startingSession
         )
+    }
+
+    // MARK: - Breadcrumbs
+
+    /// The activity type is what the app matches on, and until the extension
+    /// set it the system chose it. An activity arriving under a type we do not
+    /// expect is therefore the failure most worth seeing, and recording only
+    /// the activities that match makes it look identical to no activity at all.
+    func testAnActivityOfAnUnexpectedTypeIsRecordedRatherThanDroppedSilently() {
+        let telemetry = RecordingVoiceCallTelemetry()
+        let activity = NSUserActivity(activityType: "INStartAudioCallIntent")
+
+        XCTAssertFalse(
+            HomeScreenShortcutSceneDelegate.forwardUserActivities(
+                [activity],
+                from: .appDelegateContinue,
+                telemetry: telemetry
+            )
+        )
+
+        let arrivals = telemetry.extraData(for: "Voice.call.activity")
+        XCTAssertEqual(arrivals.count, 1)
+        XCTAssertEqual(arrivals.first?["activity_type"], "INStartAudioCallIntent")
+        XCTAssertEqual(arrivals.first?["delivery"], "app_delegate_continue")
+        XCTAssertEqual(arrivals.first?["has_interaction"], "false")
+        XCTAssertEqual(arrivals.first?["has_start_call_intent"], "false")
+        XCTAssertTrue(telemetry.extraData(for: "Voice.call.destination").isEmpty)
+    }
+
+    /// Three hooks deliver activities and a request that reaches none of them
+    /// is a different problem from a request the destination rule refused, so
+    /// the arrival says which hook it came through.
+    func testEachDeliveryHookNamesItselfOnTheArrival() {
+        let hooks: [(UserActivityDelivery, String)] = [
+            (.sceneContinue, "scene_continue"),
+            (.sceneWillConnect, "scene_will_connect"),
+            (.appDelegateContinue, "app_delegate_continue"),
+        ]
+
+        for (delivery, name) in hooks {
+            let telemetry = RecordingVoiceCallTelemetry()
+            HomeScreenShortcutSceneDelegate.forwardUserActivities(
+                [NSUserActivity(activityType: "com.familyassistant.app.something-else")],
+                from: delivery,
+                telemetry: telemetry
+            )
+
+            XCTAssertEqual(telemetry.extraData(for: "Voice.call.activity").first?["delivery"], name)
+        }
+    }
+
+    /// The destination rule is the drop point between an activity that arrived
+    /// and a call that started, so it says what it decided and how many names
+    /// it decided it over.
+    func testAStartCallActivityRecordsTheDestinationDecision() {
+        let telemetry = RecordingVoiceCallTelemetry()
+        let activity = NSUserActivity(activityType: AssistantCallHandle.startCallActivityType)
+
+        XCTAssertTrue(
+            HomeScreenShortcutSceneDelegate.forwardUserActivities(
+                [activity],
+                from: .sceneContinue,
+                telemetry: telemetry
+            )
+        )
+
+        let decisions = telemetry.extraData(for: "Voice.call.destination")
+        XCTAssertEqual(decisions.count, 1)
+        XCTAssertEqual(decisions.first?["decision"], "unnamed")
+        XCTAssertEqual(decisions.first?["contact_count"], "0")
+        XCTAssertEqual(decisions.first?["delivery"], "scene_continue")
+    }
+
+    /// Whether a request was acted on or parked waiting for a handler is the
+    /// difference between a call that is starting and one that never will.
+    func testAStartCallRequestRecordsWhetherItWasHandledOrBuffered() {
+        let telemetry = RecordingVoiceCallTelemetry()
+        let center = VoiceCallRequestCenter(telemetry: telemetry)
+
+        center.receiveStartCallRequest()
+        center.installHandler { _ in }
+        center.receiveStartCallRequest()
+
+        let requests = telemetry.extraData(for: "Voice.call.request")
+        XCTAssertEqual(requests.map { $0["disposition"] }, ["buffered", "handled"])
+        XCTAssertEqual(requests.first?["pending_count"], "1")
+    }
+
+    /// Without this a call that started fine and a call that was never asked
+    /// for leave the same trail: nothing.
+    func testASuccessfulStartRecordsThatTheCallBegan() async {
+        let telemetry = RecordingVoiceCallTelemetry()
+        let center = VoiceCallRequestCenter(telemetry: telemetry)
+        let factory = CoordinatorFactory()
+        let starter = VoiceCallStarter(
+            isAuthenticated: { true },
+            makeCoordinator: factory.make,
+            telemetry: telemetry
+        )
+        starter.install(into: center)
+
+        center.receiveStartCallRequest()
+        await settleMainActor()
+
+        XCTAssertEqual(factory.controller.startRequests.count, 1)
+        XCTAssertEqual(telemetry.extraData(for: "Voice.call.starting").count, 1)
+        XCTAssertEqual(telemetry.extraData(for: "Voice.call.started").count, 1)
+    }
+
+    /// The coordinator refuses a hands-free start from a locked phone that is
+    /// not in a car and reports that itself, so the starter must not claim a
+    /// call began — a breadcrumb that says "started" for a refusal is worse
+    /// than none.
+    func testARefusedHandsFreeStartRecordsNoStartedCall() async {
+        let telemetry = RecordingVoiceCallTelemetry()
+        let factory = CoordinatorFactory(isDeviceUnlocked: false)
+        let starter = VoiceCallStarter(
+            isAuthenticated: { true },
+            makeCoordinator: factory.make,
+            telemetry: telemetry
+        )
+
+        await starter.startCall()
+
+        XCTAssertTrue(factory.controller.startRequests.isEmpty)
+        XCTAssertFalse(telemetry.components().contains("Voice.call.started"))
+    }
+
+    /// The refusals are the other half of the same question, and one of them
+    /// was silent.
+    func testTheStarterRecordsWhyItRefused() async {
+        let signedOut = RecordingVoiceCallTelemetry()
+        let refusing = VoiceCallStarter(
+            isAuthenticated: { false },
+            makeCoordinator: CoordinatorFactory().make,
+            telemetry: signedOut
+        )
+        await refusing.startCall()
+
+        XCTAssertEqual(signedOut.components(), ["Voice.call.starting", "Voice.call.signedOut"])
+
+        let duplicate = RecordingVoiceCallTelemetry()
+        let starter = VoiceCallStarter(
+            isAuthenticated: { true },
+            makeCoordinator: CoordinatorFactory().make,
+            telemetry: duplicate
+        )
+        await starter.startCall()
+        await starter.startCall()
+
+        XCTAssertTrue(duplicate.components().contains("Voice.call.duplicate"))
+    }
+
+    /// What the extension sets the continuation's type to, what the app matches
+    /// on, and what `NSUserActivityTypes` declares are one string: an activity
+    /// whose type the app does not declare is never delivered to it.
+    func testTheStartCallActivityTypeIsTheIntentClassAndIsDeclaredByTheApp() throws {
+        XCTAssertEqual(
+            AssistantCallHandle.startCallActivityType,
+            NSStringFromClass(INStartCallIntent.self)
+        )
+
+        let declared = try XCTUnwrap(
+            Bundle.main.object(forInfoDictionaryKey: "NSUserActivityTypes") as? [String]
+        )
+        XCTAssertTrue(declared.contains(AssistantCallHandle.startCallActivityType))
     }
 
     private func makePerson(handle: String, displayName: String) -> INPerson {
