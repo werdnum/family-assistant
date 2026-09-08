@@ -22,7 +22,7 @@ struct RootTabView: View {
                 // default profile whatever the picker says, and the saved transcript
                 // would then be filed under a profile that never held the call.
                 VoiceView(
-                    profileID: PreferredProfile.id,
+                    profileID: { PreferredProfile.id },
                     onClose: { appRouter.selectedTab = .chat }
                 )
             }
