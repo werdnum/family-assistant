@@ -77,8 +77,17 @@ def test_standard_tier_profiles_keep_the_gemini_terra_chain(
     }
 
 
-def test_complex_tasks_keeps_the_sol_fable_chain(shipped_config: AppConfig) -> None:
-    assert _tier_config_for(shipped_config, "complex_tasks") == {
+@pytest.mark.parametrize(
+    "profile_id",
+    [
+        pytest.param("complex_tasks", id="complex-tasks"),
+        pytest.param("engineer", id="engineer"),
+    ],
+)
+def test_deep_tier_profiles_run_the_sol_fable_chain(
+    shipped_config: AppConfig, profile_id: str
+) -> None:
+    assert _tier_config_for(shipped_config, profile_id) == {
         "retry_config": {
             "primary": {
                 "provider": "openai",
@@ -87,11 +96,30 @@ def test_complex_tasks_keeps_the_sol_fable_chain(shipped_config: AppConfig) -> N
             },
             "fallback": {
                 "provider": "anthropic",
-                "model": "claude-fable-5",
+                "model": "claude-fable-5-1",
                 "model_parameters": shipped_config.llm_parameters,
             },
         }
     }
+
+
+def test_engineer_offers_every_tier_with_deep_as_its_floor(
+    shipped_config: AppConfig,
+) -> None:
+    """Diagnosis runs on `deep` by default; a person may still pick either way.
+
+    `frontier` is absent from the automatic range for the same reason as on
+    the assistant: it is chosen when somebody decides a request is worth the
+    spend, not inferred.
+    """
+    profile = shipped_profile(shipped_config, "engineer")
+
+    assert profile.processing_config.model_tier == "deep"
+    assert profile.processing_config.llm_model is None
+    assert profile.processing_config.provider is None
+    assert profile.allowed_model_tiers == ["standard", "deep", "frontier"]
+    assert profile.auto_model_tiers == ["standard", "deep"]
+    assert profile.auto_routing_guidance
 
 
 def test_a_profile_inheriting_the_default_tier_keeps_the_default_chain(
@@ -165,13 +193,16 @@ def test_frontier_thinking_config_reaches_the_anthropic_client(
 def test_the_global_map_still_configures_nothing_for_fable(
     shipped_config: AppConfig,
 ) -> None:
-    """Fable is `deep`'s fallback, where it must inherit no thinking config.
+    """Fable 5.1 is `deep`'s fallback, where it must inherit no thinking config.
 
     The `frontier` overlay is per entry precisely so enabling thinking for the
     tier that exists for it does not reach the tier that merely falls back to
-    the same model.
+    the same family. The global map matches by substring, so the check is on
+    the family prefix: a `claude-fable-5` entry would reach 5.1 as well.
     """
-    assert "claude-fable-5" not in shipped_config.llm_parameters
+    assert not any(
+        key.startswith("claude-fable-") for key in shipped_config.llm_parameters
+    )
 
     deep_fallback = resolve_tier_client_config(
         shipped_config.model_tiers["deep"], shipped_config.llm_parameters
@@ -179,7 +210,7 @@ def test_the_global_map_still_configures_nothing_for_fable(
     client = LLMClientFactory.create_client({**deep_fallback, "api_key": "test-key"})
 
     assert isinstance(client, AnthropicClient)
-    assert "thinking" not in client._get_model_specific_params("claude-fable-5")
+    assert "thinking" not in client._get_model_specific_params("claude-fable-5-1")
 
 
 @pytest.mark.parametrize(

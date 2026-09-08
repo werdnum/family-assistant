@@ -71,7 +71,7 @@ def _anthropic_client_for(config: AppConfig, model: str) -> AnthropicClient:
 def test_shipped_defaults_enable_adaptive_thinking_for_opus_5(
     shipped_config: AppConfig,
 ) -> None:
-    """The Anthropic profiles' model must get thinking, in its generation's shape.
+    """The shipped Opus 5 recipe must carry thinking, in its generation's shape.
 
     `enabled` + `budget_tokens` is what the previous generation took and is a 400
     on this one, so the type is asserted rather than merely the presence of a
@@ -115,11 +115,11 @@ def test_shipped_defaults_leave_thinking_off_for_unconfigured_anthropic_models(
 ) -> None:
     """Enabling thinking is per model, so it must not leak to the fallback.
 
-    `claude-fable-5` is the `complex_tasks` fallback and rejects an explicit
+    `claude-fable-5-1` is the `deep` tier's fallback and rejects an explicit
     disabled thinking config, so it has to inherit nothing at all here.
     """
     params = _anthropic_client_for(
-        shipped_config, "claude-fable-5"
-    )._get_model_specific_params("claude-fable-5")
+        shipped_config, "claude-fable-5-1"
+    )._get_model_specific_params("claude-fable-5-1")
 
     assert "thinking" not in params

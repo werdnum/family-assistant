@@ -89,9 +89,11 @@ llm_parameters:
       effort: medium
       # Other top-level parameters for this model could still go here
       # temperature: 0.8
-  # Thinking on for the Anthropic profile (engineer), which runs long tool loops
-  # at 100 iterations diagnosing the running system -- the work adaptive thinking
-  # helps most. Safe now that thinking blocks are captured into
+  # The recipe for Opus 5 wherever a deployment names it -- an operator pinning
+  # a profile to it in config.yaml, or a tier remapped to it. No shipped tier
+  # runs it: `engineer` used to, and moved to the `deep` tier. Thinking is on
+  # because the long tool loops it was chosen for are the work adaptive
+  # thinking helps most. Safe now that thinking blocks are captured into
   # provider_metadata and replayed verbatim; before that, the turn after the
   # model's first tool call replayed a turn missing its thinking block and
   # signature, which the API rejects.
@@ -178,8 +180,15 @@ model_tiers:
       # Sol's reasoning_effort comes from the global llm_parameters entry above.
       - provider: "openai"
         model: "gpt-5.6-sol"
+      # Fable 5.1 succeeds Fable 5 in the same tier at the same price, with a
+      # wide lead on long agentic tool loops. One known gap: it rejects a
+      # forced tool choice (`required` or a named tool) with a 400, which
+      # attachment selection sends, so a turn that lands here through the
+      # fallback and then has to pick attachments fails visibly rather than
+      # silently. `frontier` stays on Fable 5 until that call is reworked,
+      # because there is no fallback behind it.
       - provider: "anthropic"
-        model: "claude-fable-5"
+        model: "claude-fable-5-1"
   frontier:
     label: "Max"
     description: "The strongest configured recipe, for the hardest requests."
@@ -193,9 +202,11 @@ model_tiers:
       # Fable takes the `adaptive` + output_config shape and rejects the
       # previous generation's `enabled` + `budget_tokens`. This entry is the
       # only place it is configured -- the global map deliberately has no
-      # claude-fable-5 key, so Fable inherits nothing when it serves as the
-      # `deep` tier's fallback. Thinking shares the max_tokens budget with the
-      # response, so the client's 8192 default is raised to match the effort.
+      # claude-fable- key (it matches by substring, so one would reach 5.1
+      # too), so Fable 5.1 inherits nothing when it serves as the `deep`
+      # tier's fallback and runs at its own default effort there. Thinking
+      # shares the max_tokens budget with the response, so the client's 8192
+      # default is raised to match the effort.
       - provider: "anthropic"
         model: "claude-fable-5"
         llm_parameters:
@@ -1742,8 +1753,13 @@ service_profiles:
         - "calendar"
         - "weather"
         - "home_assistant"
-      provider: "anthropic"
-      llm_model: "claude-opus-5"
+      # Diagnosis is long tool loops over code, logs and query results, where
+      # a weak model loops without converging, so `deep` is the floor rather
+      # than the upgrade it is for the assistant. Auto runs in shadow mode
+      # here as on `default_assistant`: it records what it would have chosen
+      # while every turn still executes on `deep`.
+      model_tier: "deep"
+      model_selection: "auto"
       max_iterations: 100
       prompts:
         system_prompt: |
@@ -1795,6 +1811,19 @@ service_profiles:
           7. Summarize findings and recommend fixes
           8. If appropriate, create a GitHub issue with your findings
           9. For a self-contained coding task — including a fix or investigation against this repo, which the worker clones itself from GitHub — offer to spawn an isolated AI coding worker (judged by automated review); it returns a patch/analysis as output files rather than changing the running app, so describe the change and how to report back in the task description
+    allowed_model_tiers: ["standard", "deep", "frontier"]
+    # `standard` is in the automatic range for the questions that are really
+    # lookups -- what a config value is, when a task last ran -- and `frontier`
+    # is left to a person, as on the assistant.
+    auto_model_tiers: ["standard", "deep"]
+    auto_routing_guidance: |
+      This profile diagnoses a running system: it reads code, queries the
+      database and reads logs, then reasons about what it found. Prefer deep
+      whenever the request asks why something happened or how to fix it --
+      diagnosis needs to hold several pieces of evidence at once, and a
+      weaker model loops without converging. Choose standard only for a
+      direct lookup with a short factual answer: a config value, a table's
+      contents, when a task last ran.
     tools_policy:
       default_decision: "deny"
       rules:
