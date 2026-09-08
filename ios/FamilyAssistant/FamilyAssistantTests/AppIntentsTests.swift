@@ -17,6 +17,7 @@ final class AppIntentsTests: XCTestCase {
     }
 
     override func tearDown() {
+        AskAssistantIntent.handsFreeAccess = .system
         ChatMockBackendURLProtocol.reset()
         URLProtocol.unregisterClass(ChatMockBackendURLProtocol.self)
         // The navigation center is a process-wide singleton; clear any pending
@@ -78,6 +79,50 @@ final class AppIntentsTests: XCTestCase {
 
         let intent = AskAssistantIntent()
         intent.prompt = "Remind me to call mum"
+        _ = try await intent.perform()
+
+        XCTAssertTrue(sawSend)
+    }
+
+    func testAskAssistantIntentRefusesALockedDeviceOffCarPlay() async throws {
+        signIn()
+        AskAssistantIntent.handsFreeAccess = VoiceHandsFreeAccess(
+            isDeviceUnlocked: { false },
+            isCarPlayConnected: { false }
+        )
+        ChatMockBackendURLProtocol.respond { _ in
+            XCTFail("A refused intent must not reach the backend.")
+            return .json("{}")
+        }
+
+        let intent = AskAssistantIntent()
+        intent.prompt = "What's on my calendar?"
+
+        do {
+            _ = try await intent.perform()
+            XCTFail("Expected the intent to refuse.")
+        } catch let error as AssistantIntentError {
+            guard case .handsFreeAccessDenied = error else {
+                return XCTFail("Expected handsFreeAccessDenied, got \(error)")
+            }
+            XCTAssertEqual(error.errorDescription, "Unlock your phone to ask Family Assistant.")
+        }
+    }
+
+    func testAskAssistantIntentProceedsOnCarPlayWhileLocked() async throws {
+        signIn()
+        AskAssistantIntent.handsFreeAccess = VoiceHandsFreeAccess(
+            isDeviceUnlocked: { false },
+            isCarPlayConnected: { true }
+        )
+        var sawSend = false
+        ChatMockBackendURLProtocol.respond { _ in
+            sawSend = true
+            return .json(#"{"reply":"Nothing today.","conversation_id":"web_conv_c","turn_id":"t1"}"#)
+        }
+
+        let intent = AskAssistantIntent()
+        intent.prompt = "What's on my calendar?"
         _ = try await intent.perform()
 
         XCTAssertTrue(sawSend)

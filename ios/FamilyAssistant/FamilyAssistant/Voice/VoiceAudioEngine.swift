@@ -198,7 +198,10 @@ final class VoiceAudioEngine: VoiceAudioIO {
     private static let stallThreshold: Duration = .seconds(10)
     private static let watchdogInterval: Duration = .seconds(5)
 
-    init() {
+    private let activation: VoiceAudioActivationPolicy
+
+    init(activation: VoiceAudioActivationPolicy = .selfManaged) {
+        self.activation = activation
         playbackFormat = VoiceAudioFormat.pcm16(sampleRate: VoiceAudioFormat.outputSampleRate)
             ?? AVAudioFormat(standardFormatWithSampleRate: VoiceAudioFormat.outputSampleRate, channels: 1)!
     }
@@ -209,6 +212,12 @@ final class VoiceAudioEngine: VoiceAudioIO {
         let activated = try await AVAudioSession.sharedInstance().activate(options: [])
         guard activated else { throw VoiceAudioError.restartFailed("Audio activation was declined.") }
         #endif
+        if let signal = activation.externalSignal {
+            // The category must be in place before the owner activates the
+            // session, and no audio may start until it has.
+            try await MainActor.run { try configureSession() }
+            try await signal.waitForActivation()
+        }
         // All control-plane state (flags, observers, graph) is confined to the
         // main thread: the notification handlers and watchdog run there, and the
         // configuration-change notification can fire while this method is still
@@ -319,7 +328,9 @@ final class VoiceAudioEngine: VoiceAudioIO {
             $0.converter = nil
             $0.lastCaptureAt = nil
         }
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        if activation.isSelfManaged {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
     }
 
     func enqueue(_ pcm24k: Data) {
@@ -432,7 +443,9 @@ final class VoiceAudioEngine: VoiceAudioIO {
                 return
             }
             isInterrupted = false
-            try? AVAudioSession.sharedInstance().setActive(true, options: [])
+            if activation.isSelfManaged {
+                try? AVAudioSession.sharedInstance().setActive(true, options: [])
+            }
             // The interruption may have changed the route/formats; a plain
             // start can silently come back with a dead graph, so rebuild.
             restartOrFail()
@@ -527,7 +540,9 @@ final class VoiceAudioEngine: VoiceAudioIO {
             mode: .voiceChat,
             options: [.allowBluetoothHFP, .allowBluetoothA2DP, .defaultToSpeaker]
         )
-        try session.setActive(true, options: [])
+        if activation.isSelfManaged {
+            try session.setActive(true, options: [])
+        }
         #endif
     }
 }

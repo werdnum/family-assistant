@@ -28,6 +28,18 @@ struct FamilyAssistantApp: App {
             }
         )
         ErrorReporter.shared.installGlobalHandlers()
+
+        // Siri's start-call intent is delivered before any scene connects, and
+        // on a background launch from a locked phone no scene connects at all,
+        // so the thing that turns a request into a call is installed here
+        // rather than driven from the view layer.
+        #if DEBUG
+        if !UITestConfiguration.isEnabled, !UITestConfiguration.isHostingUnitTests {
+            VoiceCallStarter(authManager: authManager).install(into: .shared)
+        }
+        #else
+        VoiceCallStarter(authManager: authManager).install(into: .shared)
+        #endif
     }
 
     var body: some Scene {

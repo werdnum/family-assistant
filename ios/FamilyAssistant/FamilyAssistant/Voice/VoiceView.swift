@@ -34,6 +34,9 @@ struct VoiceView: View {
         }
         .navigationTitle("Voice")
         .navigationBarTitleDisplayMode(.inline)
+        .task {
+            prepareSiriCalling()
+        }
         .task(id: sessionRequestID) {
             guard model == nil else { return }
             let api = ChatAPIClient(authManager: authManager)
@@ -50,6 +53,16 @@ struct VoiceView: View {
         .onDisappear {
             model?.end()
         }
+    }
+
+    /// Opening the Voice tab is the moment the user has shown an interest in
+    /// talking to the assistant, which makes it the right place to ask for Siri
+    /// and to donate the callable handle.
+    private func prepareSiriCalling() {
+        #if DEBUG
+        guard !UITestConfiguration.isEnabled else { return }
+        #endif
+        AssistantCallDonation.prepare(isSignedIn: authManager.isAuthenticated)
     }
 
     private func startNewSession() {

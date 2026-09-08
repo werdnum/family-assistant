@@ -12,6 +12,14 @@ struct AskAssistantIntent: AppIntent {
     /// Runs in the background and presents the reply; the user opens the app only
     /// via the snippet's "Continue in app" link.
     static var openAppWhenRun = false
+    /// The app decides in code whether a locked device may reach the assistant,
+    /// rather than depending on how the system evaluates this policy. See
+    /// ``VoiceHandsFreeAccess``.
+    static var authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
+
+    /// The system constructs the intent, so the access rule is reached through
+    /// a type-level seam rather than an initializer parameter.
+    static var handsFreeAccess = VoiceHandsFreeAccess.system
 
     @Parameter(
         title: "Message",
@@ -25,6 +33,9 @@ struct AskAssistantIntent: AppIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog & ShowsSnippetView {
+        guard Self.handsFreeAccess.isAllowed else {
+            throw AssistantIntentError.handsFreeAccessDenied
+        }
         let result = try await IntentSupport.sendAssistantMessage(prompt: prompt)
         return .result(
             dialog: IntentDialog(stringLiteral: result.reply),
