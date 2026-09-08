@@ -3,10 +3,8 @@ import {
   ComposerPrimitive,
   MessagePrimitive,
   ThreadPrimitive,
-  useComposer,
-  useComposerRuntime,
-  useMessage,
-  useThread,
+  useAui,
+  useAuiState,
 } from '@assistant-ui/react';
 import {
   ArrowDownIcon,
@@ -204,8 +202,8 @@ const SteerError: React.FC = () => {
 };
 
 const Composer: React.FC = () => {
-  const isRunning = useThread((t) => t.isRunning);
-  const composerRuntime = useComposerRuntime();
+  const aui = useAui();
+  const isRunning = useAuiState((s) => s.thread.isRunning);
   const controls = useChatControls();
   const [steering, setSteering] = useState(false);
 
@@ -216,7 +214,7 @@ const Composer: React.FC = () => {
     if (!controls || steering) {
       return;
     }
-    const text = composerRuntime.getState().text.trim();
+    const text = aui.composer.getState().text.trim();
     if (!text) {
       return;
     }
@@ -225,8 +223,8 @@ const Composer: React.FC = () => {
       const result = await controls.submitSteer(text);
       // Clear on success, but only if the user hasn't typed something new while
       // the steer was in flight (don't clobber a fresh edit).
-      if (result !== 'error' && composerRuntime.getState().text.trim() === text) {
-        composerRuntime.setText('');
+      if (result !== 'error' && aui.composer.getState().text.trim() === text) {
+        aui.composer.setText('');
       }
     } finally {
       setSteering(false);
@@ -281,10 +279,10 @@ const ComposerAction: React.FC<ComposerActionProps> = ({ steering, onSteer }) =>
   // The composer refuses to send while it is already sending, which is the
   // window in which attachments upload. Reading that rather than attachment
   // status keeps the button honest whatever an attachment adapter reports.
-  const isSending = useComposer((state) => !state.canSend && !state.isEmpty);
+  const isSending = useAuiState((s) => !s.composer.canSend && !s.composer.isEmpty);
   // While running, the single action button steers when there's text to send
   // and stops the turn when the composer is empty.
-  const hasText = useComposer((state) => state.text.trim().length > 0);
+  const hasText = useAuiState((s) => s.composer.text.trim().length > 0);
 
   return (
     <>
@@ -414,7 +412,7 @@ export function hasCopyableAssistantContent(content: unknown): boolean {
 }
 
 const AssistantMessage: React.FC = () => {
-  const message = useMessage();
+  const message = useAuiState((s) => s.message);
   const { profilesById, tierLabels, error } = useProfiles();
 
   // Check if message is loading by checking for our special marker

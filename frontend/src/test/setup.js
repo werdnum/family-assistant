@@ -96,7 +96,8 @@ console.error = (...args) => {
     errorMessage.includes('This is likely an internal bug') ||
     errorMessage.includes('Warning: An update to') ||
     errorMessage.includes('not wrapped in act(') ||
-    errorMessage.includes('tapClientLookup')
+    errorMessage.includes('tapClientLookup') ||
+    errorMessage.includes('useClientLookup')
   ) {
     return; // Don't log these expected errors
   }
@@ -104,12 +105,15 @@ console.error = (...args) => {
   originalError.apply(console, args);
 };
 
-// Suppress known @assistant-ui/store tapClientLookup race condition errors.
+// Suppress known @assistant-ui/store tapClientLookup/useClientLookup race condition errors.
 // These occur during test cleanup when React's useSyncExternalStore tries to
 // read message state while the tap reactive system has already cleared its
 // resources during unmount. This is a known library issue (assistant-ui#3395).
 window.addEventListener('error', (event) => {
-  if (event.error?.message?.includes('tapClientLookup')) {
+  if (
+    event.error?.message?.includes('tapClientLookup') ||
+    event.error?.message?.includes('useClientLookup')
+  ) {
     event.preventDefault();
   }
 });
