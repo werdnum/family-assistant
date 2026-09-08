@@ -164,9 +164,15 @@ have just decided not to talk to.
   a purpose-built conversational screen need `com.apple.developer.carplay-voice-based-conversation`,
   which is a separate, reviewed request. This design is the thing worth having before deciding
   whether to make that request.
-- **No incoming calls.** The call is always outgoing and always user-started, so there is no
-  PushKit and no `voip` background mode. The existing `audio` background mode is what keeps the
-  session alive; nothing here uses an API reserved for VoIP apps.
+- **No incoming calls.** Placing a call at all is what the `voip` background mode buys: iOS reads
+  that declaration as the app's claim to be a calling app, and without it CallKit refuses the
+  transaction as unentitled — there is no separate CallKit entitlement to hold instead. The app
+  declares it, alongside `audio`, which is still what keeps the session's own audio alive. What the
+  app does not do is receive: no PushKit registration, no incoming call reported to the provider,
+  and no waking for one. The call is always outgoing and always user-started. Declaring the mode
+  does place the app inside App Review Guideline 2.5.4, which reserves background services for
+  their intended purposes and the mode for apps providing VoIP services; the case to be made is
+  that a two-way live voice conversation the user places as a call is one.
 - **No new confirmation path.** Tools that are confirmation-gated still fail closed in a voice
   session, as they do today. Review policies cover the cases that matter, and adding spoken
   confirmation is independent of how the session was started.

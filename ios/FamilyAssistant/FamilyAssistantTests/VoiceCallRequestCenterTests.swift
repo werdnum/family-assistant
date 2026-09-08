@@ -652,6 +652,20 @@ final class VoiceCallRequestCenterTests: XCTestCase {
         XCTAssertTrue(declared.contains(AssistantCallHandle.startCallActivityType))
     }
 
+    /// CallKit has no entitlement of its own: the `voip` background mode is the
+    /// only thing that marks the process as a calling app, and without it
+    /// `CXCallController.request` fails `unentitled` — on a device, at the
+    /// moment a call is placed, which is the one place this is expensive to
+    /// find out. `audio` is separately what keeps the session's audio alive.
+    func testTheAppDeclaresTheBackgroundModesCallKitAndVoiceNeed() throws {
+        let declared = try XCTUnwrap(
+            Bundle.main.object(forInfoDictionaryKey: "UIBackgroundModes") as? [String]
+        )
+
+        XCTAssertTrue(declared.contains("voip"), "CallKit needs the voip background mode")
+        XCTAssertTrue(declared.contains("audio"), "the voice session needs the audio background mode")
+    }
+
     private func makePerson(handle: String, displayName: String) -> INPerson {
         INPerson(
             personHandle: INPersonHandle(value: handle, type: .unknown),
