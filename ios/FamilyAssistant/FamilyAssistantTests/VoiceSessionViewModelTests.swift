@@ -62,6 +62,8 @@ private final class FakeAudioIO: VoiceAudioIO {
     private(set) var flushCount = 0
     private(set) var muted = false
 
+    func configureAudioSession() throws {}
+
     func start() async throws {
         await beforeStart?()
         if let startError { throw startError }

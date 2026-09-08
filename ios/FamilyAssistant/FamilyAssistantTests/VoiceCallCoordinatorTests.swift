@@ -45,18 +45,63 @@ private final class FakeCallController: CallRequesting {
     }
 }
 
+/// Records events that have to happen in a particular order, so a test can
+/// assert the order rather than each event in isolation.
+private final class EventLog {
+    private(set) var events: [String] = []
+
+    func record(_ event: String) {
+        events.append(event)
+    }
+}
+
 @MainActor
 private final class FakeCallAction: CallAction {
     private(set) var fulfilled = false
     private(set) var failed = false
+    private let log: EventLog?
+
+    init(log: EventLog? = nil) {
+        self.log = log
+    }
 
     func fulfill() {
         fulfilled = true
+        log?.record("fulfill")
     }
 
     func fail() {
         failed = true
+        log?.record("fail")
     }
+}
+
+/// Stands in for the call's ``VoiceAudioEngine``. Only the audio-session
+/// configuration the coordinator drives itself is interesting here; the session
+/// owns everything else.
+private final class FakeVoiceAudioIO: VoiceAudioIO {
+    var onCapturedAudio: (@Sendable (Data) -> Void)?
+    var onInputLevel: (@Sendable (Double) -> Void)?
+    var onEngineFailure: ((Error) -> Void)?
+    var configureError: Error?
+    private(set) var configureCount = 0
+    private let log: EventLog?
+
+    init(log: EventLog?) {
+        self.log = log
+    }
+
+    func configureAudioSession() throws {
+        configureCount += 1
+        log?.record("configure-audio")
+        if let configureError { throw configureError }
+    }
+
+    func start() async throws {}
+    func stop() {}
+    func enqueue(_: Data) {}
+    func flushPlayback() {}
+    func setMuted(_: Bool) {}
 }
 
 @MainActor
@@ -102,14 +147,20 @@ final class VoiceCallCoordinatorTests: XCTestCase {
     private var provider: FakeCallProvider!
     private var controller: FakeCallController!
     private var sessions: [FakeVoiceCallSession] = []
+    private var audios: [FakeVoiceAudioIO] = []
     private var sessionsWaitForActivation = false
+    private var eventLog: EventLog?
+    private var audioConfigureError: Error?
 
     override func setUp() async throws {
         try await super.setUp()
         provider = FakeCallProvider()
         controller = FakeCallController()
         sessions = []
+        audios = []
         sessionsWaitForActivation = false
+        eventLog = nil
+        audioConfigureError = nil
     }
 
     private func makeCoordinator(
@@ -126,7 +177,10 @@ final class VoiceCallCoordinatorTests: XCTestCase {
                 let session = FakeVoiceCallSession(activation: signal)
                 session.waitsForActivation = self?.sessionsWaitForActivation ?? false
                 self?.sessions.append(session)
-                return session
+                let audio = FakeVoiceAudioIO(log: self?.eventLog)
+                audio.configureError = self?.audioConfigureError
+                self?.audios.append(audio)
+                return VoiceCallSessionAudio(session: session, audio: audio)
             }
         )
     }
@@ -235,6 +289,51 @@ final class VoiceCallCoordinatorTests: XCTestCase {
         let session = try XCTUnwrap(sessions.last)
         try await waitUntil { session.startCount == 1 }
         XCTAssertTrue(coordinator.session === session)
+    }
+
+    /// CallKit activates the audio session on the back of the fulfilled start
+    /// action. A session still on the default category at that moment brings the
+    /// call up with no audio, which is worst on the cold launch this whole
+    /// feature exists for.
+    func testTheAudioSessionIsConfiguredBeforeTheStartActionIsFulfilled() async throws {
+        let log = EventLog()
+        eventLog = log
+        let coordinator = makeCoordinator()
+        try await coordinator.startCall()
+        let uuid = try XCTUnwrap(controller.startRequests.last?.uuid)
+
+        coordinator.performStartCall(uuid: uuid, action: FakeCallAction(log: log))
+
+        XCTAssertEqual(log.events, ["configure-audio", "fulfill"])
+        XCTAssertEqual(audios.last?.configureCount, 1)
+    }
+
+    /// The session's own startup stays behind CallKit's activation callback, so
+    /// configuring the category cannot wait on it.
+    func testTheSessionIsNotStartedByConfiguringTheAudioSession() async throws {
+        sessionsWaitForActivation = true
+        let coordinator = makeCoordinator()
+        let (_, session) = try await startCall(coordinator)
+
+        try await waitUntil { session.isStartRunning }
+        XCTAssertFalse(session.activation.isActivated)
+        XCTAssertEqual(audios.last?.configureCount, 1)
+    }
+
+    func testAnAudioSessionThatCannotBeConfiguredFailsTheStartAction() async throws {
+        audioConfigureError = NSError(domain: "test", code: 2)
+        let coordinator = makeCoordinator()
+        try await coordinator.startCall()
+        let uuid = try XCTUnwrap(controller.startRequests.last?.uuid)
+        let action = FakeCallAction()
+
+        coordinator.performStartCall(uuid: uuid, action: action)
+
+        XCTAssertTrue(action.failed)
+        XCTAssertFalse(action.fulfilled)
+        XCTAssertFalse(coordinator.isCallActive)
+        XCTAssertNil(coordinator.session)
+        XCTAssertEqual(sessions.last?.startCount, 0)
     }
 
     func testStartActionForAnUnknownCallFails() async throws {

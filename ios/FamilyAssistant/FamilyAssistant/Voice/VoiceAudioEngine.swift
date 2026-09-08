@@ -14,7 +14,13 @@ protocol VoiceAudioIO: AnyObject {
     /// revived. The session must fail visibly rather than keep showing an active
     /// conversation with a dead microphone.
     var onEngineFailure: ((Error) -> Void)? { get set }
-    /// Configure the audio session, start capture, and begin playback.
+    /// Put the shared audio session on the category and mode a voice call needs.
+    /// Separate from ``start()`` because under CallKit the session is activated
+    /// by the system, which happens before anything may start — the category has
+    /// to be in place by then or the call comes up with no audio.
+    func configureAudioSession() throws
+    /// Start capture and begin playback, configuring the audio session first if
+    /// nobody else has.
     func start() async throws
     /// Stop capture/playback and deactivate the audio session.
     func stop()
@@ -208,14 +214,13 @@ final class VoiceAudioEngine: VoiceAudioIO {
 
     func start() async throws {
         #if os(watchOS)
-        try configureSession()
+        try configureAudioSession()
         let activated = try await AVAudioSession.sharedInstance().activate(options: [])
         guard activated else { throw VoiceAudioError.restartFailed("Audio activation was declined.") }
         #endif
         if let signal = activation.externalSignal {
-            // The category must be in place before the owner activates the
-            // session, and no audio may start until it has.
-            try await MainActor.run { try configureSession() }
+            // Configuring the category belongs to whoever activates the session,
+            // because it has to be done before the activation this waits for.
             try await signal.waitForActivation()
         }
         // All control-plane state (flags, observers, graph) is confined to the
@@ -232,7 +237,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
                 throw VoiceAudioError.simulatorLiveInputDisabled
             }
         #endif
-        try configureSession()
+        try configureAudioSession()
 
         do {
             // Voice processing must be toggled while the engine is stopped, and
@@ -464,7 +469,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
             removeObservers()
             engine = AVAudioEngine()
             playerNode = AVAudioPlayerNode()
-            try configureSession()
+            try configureAudioSession()
             try? engine.inputNode.setVoiceProcessingEnabled(true)
             registerObservers()
             try buildGraphAndStart()
@@ -530,7 +535,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
         }
     }
 
-    private func configureSession() throws {
+    func configureAudioSession() throws {
         let session = AVAudioSession.sharedInstance()
         #if os(watchOS)
         try session.setCategory(.playAndRecord, mode: .voiceChat)
@@ -593,6 +598,9 @@ final class SimulatorVoiceAudioIO: VoiceAudioIO {
             .filter { !$0.isEmpty }
         return scriptedPrompts.isEmpty ? [prompt] : scriptedPrompts
     }
+
+    /// Scripted audio needs no real audio session.
+    func configureAudioSession() throws {}
 
     func start() async throws {
         guard captureTask == nil else { return }

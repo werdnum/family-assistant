@@ -14,6 +14,16 @@ protocol VoiceCallSession: AnyObject {
 
 extension VoiceSessionViewModel: VoiceCallSession {}
 
+/// A voice session together with the audio I/O it drives. The coordinator needs
+/// both, because the two are used at different moments: the audio session's
+/// category is configured before the start action is fulfilled, while the
+/// session's own startup waits for CallKit to activate that audio session.
+@MainActor
+struct VoiceCallSessionAudio {
+    let session: any VoiceCallSession
+    let audio: any VoiceAudioIO
+}
+
 enum VoiceCallError: LocalizedError {
     case callAlreadyInProgress
 
@@ -28,8 +38,8 @@ enum VoiceCallError: LocalizedError {
 /// Presents a voice session to the system as an outgoing call.
 ///
 /// The two lifecycles are mapped onto each other: CallKit's start action builds
-/// and starts the session, its audio activation releases the session's audio
-/// engine, and either side ending ends the other. Each direction ends the call
+/// the session and configures its audio, its audio activation releases the
+/// session's audio engine, and either side ending ends the other. Each direction ends the call
 /// exactly once — the call UUID is cleared as the first step of teardown, and
 /// every entry point is guarded on it, so a session that finishes because
 /// CallKit ended it cannot report the end back a second time.
@@ -43,7 +53,7 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
 
     private let provider: any CallProviding
     private let controller: any CallRequesting
-    private let makeSession: @MainActor (VoiceAudioActivationSignal) -> any VoiceCallSession
+    private let makeSession: @MainActor (VoiceAudioActivationSignal) -> VoiceCallSessionAudio
     private let handsFreeAccess: VoiceHandsFreeAccess
     private let logger = Logger(subsystem: "com.familyassistant.app", category: "voice-call")
 
@@ -56,7 +66,7 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
         provider: any CallProviding,
         controller: any CallRequesting,
         handsFreeAccess: VoiceHandsFreeAccess = .system,
-        makeSession: @escaping @MainActor (VoiceAudioActivationSignal) -> any VoiceCallSession
+        makeSession: @escaping @MainActor (VoiceAudioActivationSignal) -> VoiceCallSessionAudio
     ) {
         self.provider = provider
         self.controller = controller
@@ -77,12 +87,16 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
             controller: SystemCallController(),
             makeSession: { signal in
                 let api = ChatAPIClient(authManager: authManager)
-                return VoiceSessionViewModel(
-                    tokenProvider: api,
-                    toolExecutor: api,
-                    transcriptStore: api,
-                    audio: VoiceAudioEngine(activation: .externallyManaged(signal)),
-                    profileID: profileID
+                let audio = VoiceAudioEngine(activation: .externallyManaged(signal))
+                return VoiceCallSessionAudio(
+                    session: VoiceSessionViewModel(
+                        tokenProvider: api,
+                        toolExecutor: api,
+                        transcriptStore: api,
+                        audio: audio,
+                        profileID: profileID
+                    ),
+                    audio: audio
                 )
             }
         )
@@ -133,6 +147,12 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
 
     // MARK: - VoiceCallEventHandling
 
+    /// Fulfilling the start action is what lets CallKit activate the audio
+    /// session, so everything that must be true of that audio session happens
+    /// first. The category is the whole of it: activating on the default
+    /// category gives a call with no audio, and the session's own startup —
+    /// microphone permission, a token fetch, the socket — is far too slow to sit
+    /// in front of it, which is why it stays behind the activation callback.
     func performStartCall(uuid: UUID, action: any CallAction) {
         guard uuid == callUUID else {
             action.fail()
@@ -141,14 +161,26 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
         provider.reportOutgoingCall(with: uuid, startedConnectingAt: Date())
 
         let signal = VoiceAudioActivationSignal()
+        let built = makeSession(signal)
+        do {
+            try built.audio.configureAudioSession()
+        } catch {
+            logger.error(
+                "Could not configure the call's audio session: \(error.localizedDescription, privacy: .public)"
+            )
+            ErrorReporter.shared.report(error, component: "Voice.call.audioConfiguration")
+            callUUID = nil
+            action.fail()
+            return
+        }
+
         activationSignal = signal
         didReportConnected = false
-        let session = makeSession(signal)
-        self.session = session
+        session = built.session
         action.fulfill()
 
-        observePhase(of: session, uuid: uuid)
-        startupTask = Task { await session.start() }
+        observePhase(of: built.session, uuid: uuid)
+        startupTask = Task { await built.session.start() }
     }
 
     func performEndCall(uuid: UUID, action: any CallAction) {

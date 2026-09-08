@@ -32,6 +32,19 @@ private final class UnusedVoiceCallSession: VoiceCallSession {
     func end() {}
 }
 
+private final class UnusedVoiceAudioIO: VoiceAudioIO {
+    var onCapturedAudio: (@Sendable (Data) -> Void)?
+    var onInputLevel: (@Sendable (Double) -> Void)?
+    var onEngineFailure: ((Error) -> Void)?
+
+    func configureAudioSession() throws {}
+    func start() async throws {}
+    func stop() {}
+    func enqueue(_: Data) {}
+    func flushPlayback() {}
+    func setMuted(_: Bool) {}
+}
+
 /// Counts how many coordinators the starter builds, so a test can tell a call
 /// that was refused before any CallKit machinery existed from one that was not.
 @MainActor
@@ -45,7 +58,9 @@ private final class CoordinatorFactory {
             provider: SilentCallProvider(),
             controller: controller,
             handsFreeAccess: VoiceHandsFreeAccess(isDeviceUnlocked: { true }, isCarPlayConnected: { false }),
-            makeSession: { _ in UnusedVoiceCallSession() }
+            makeSession: { _ in
+                VoiceCallSessionAudio(session: UnusedVoiceCallSession(), audio: UnusedVoiceAudioIO())
+            }
         )
     }
 }

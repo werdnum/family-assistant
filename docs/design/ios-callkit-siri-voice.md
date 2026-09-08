@@ -46,9 +46,17 @@ The intent arrives as a user activity, which the app turns into a call request.
 **Inverted: who owns the audio session.** Today `VoiceAudioEngine` configures *and activates*
 `AVAudioSession` itself. Under CallKit that is wrong: CallKit activates the session, and audio
 started before it does will be silent or fail. The engine therefore gains an activation policy.
-Self-managed is what the in-app Voice tab keeps doing. Externally-managed means the engine
-configures the category as usual but waits to be told the session is live, and does not
-deactivate it on teardown. The wait is what CallKit's activation callback releases.
+Self-managed is what the in-app Voice tab keeps doing. Externally-managed splits the engine's two
+jobs and hands the first to whoever activates the session: configuring the category is the call
+owner's, done before the call's audio session can be activated, and the engine only waits to be
+told the session is live and does not deactivate it on teardown. The wait is what CallKit's
+activation callback releases.
+
+The split matters because activation is not something the coordinator waits for but something it
+causes: fulfilling the start action is what invites CallKit to activate the session, and a session
+still on its default category at that moment brings the call up with no audio. Everything the audio
+session must be true of therefore happens before the action is fulfilled, and nothing that can
+block — permission, a token, a socket — may sit in front of it.
 
 That seam is why the view model needs no changes at all: it already starts audio before opening
 the socket, so blocking inside `start()` until CallKit is ready sequences the whole thing
@@ -136,9 +144,10 @@ have just decided not to talk to.
 
 ## Work plan
 
-1. **Audio activation policy.** `VoiceAudioEngine` gains the externally-managed mode and the
-   awaited activation signal. Verified by unit tests that a self-managed engine activates as
-   before and an externally-managed one does not start until signalled.
+1. **Audio activation policy.** `VoiceAudioEngine` gains the externally-managed mode, in which
+   configuration is separable from startup, and the awaited activation signal. Verified by unit
+   tests that a self-managed engine activates as before, that an externally-managed one does not
+   start until signalled, and that its category is configured before the start action is fulfilled.
 2. **The call surface.** The coordinator, behind protocols for the CallKit provider and call
    controller so the state machine is testable without a real call. Verified by unit tests
    driving start, connect, remote-end and reset.
