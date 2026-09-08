@@ -46,9 +46,6 @@ enum VoiceCallError: LocalizedError {
 @MainActor
 @Observable
 final class VoiceCallCoordinator: VoiceCallEventHandling {
-    /// How the assistant is addressed on the system call screen and by Siri.
-    static let assistantHandleValue = "Family Assistant"
-
     /// What the system may do with the call, reported as soon as the call
     /// exists. None of the multi-call operations mean anything for an assistant
     /// conversation: it cannot be held or swapped, merged with another call,
@@ -149,7 +146,7 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
         guard callUUID == nil else { throw VoiceCallError.callAlreadyInProgress }
         let uuid = UUID()
         callUUID = uuid
-        let handle = CXHandle(type: .generic, value: Self.assistantHandleValue)
+        let handle = CXHandle(type: .generic, value: AssistantCallHandle.value)
         do {
             try await controller.requestStartCall(uuid: uuid, handle: handle)
         } catch {

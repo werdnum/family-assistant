@@ -106,14 +106,14 @@ final class VoiceCallRequestCenterTests: XCTestCase {
     func testAStartCallIntentNamingSomebodyElseIsRejected() {
         let intent = makeStartCallIntent(contacts: [makePerson(handle: "+15550100", displayName: "Bob")])
 
-        XCTAssertFalse(VoiceCallRequestCenter.isAddressedToAssistant(intent))
+        XCTAssertFalse(AssistantCallHandle.isAddressedToAssistant(intent))
     }
 
     /// The intent Siri matches is the one this app donated, so the donation and
     /// the check have to agree about the handle.
     func testTheDonatedIntentIsAccepted() {
         XCTAssertTrue(
-            VoiceCallRequestCenter.isAddressedToAssistant(AssistantCallDonation.makeStartCallIntent())
+            AssistantCallHandle.isAddressedToAssistant(AssistantCallDonation.makeStartCallIntent())
         )
     }
 
@@ -123,26 +123,58 @@ final class VoiceCallRequestCenterTests: XCTestCase {
             contacts: [makePerson(handle: "  family assistant  ", displayName: "  family assistant  ")]
         )
 
-        XCTAssertTrue(VoiceCallRequestCenter.isAddressedToAssistant(intent))
+        XCTAssertTrue(AssistantCallHandle.isAddressedToAssistant(intent))
     }
 
-    /// A named assistant among other destinations is still us.
-    func testAStartCallIntentNamingTheAssistantAmongOthersIsAccepted() {
+    /// An assistant call has one destination, so a request that also names
+    /// somebody else is not one this app can serve — picking the assistant out
+    /// of the list would drop the other destination silently.
+    func testAStartCallIntentNamingTheAssistantAmongOthersIsRejected() {
         let intent = makeStartCallIntent(contacts: [
             makePerson(handle: "+15550100", displayName: "Bob"),
-            makePerson(handle: AssistantCallDonation.handleValue, displayName: AssistantCallDonation.handleValue),
+            makePerson(handle: AssistantCallHandle.value, displayName: AssistantCallHandle.value),
         ])
 
-        XCTAssertTrue(VoiceCallRequestCenter.isAddressedToAssistant(intent))
+        XCTAssertFalse(AssistantCallHandle.isAddressedToAssistant(intent))
     }
 
     /// Siri resolved the app as the destination and told us nothing more. The
     /// primary path is not worth breaking over a payload shape that cannot be
     /// verified from a simulator.
     func testAStartCallIntentNamingNobodyIsAccepted() {
-        XCTAssertTrue(VoiceCallRequestCenter.isAddressedToAssistant(makeStartCallIntent(contacts: nil)))
-        XCTAssertTrue(VoiceCallRequestCenter.isAddressedToAssistant(makeStartCallIntent(contacts: [])))
-        XCTAssertTrue(VoiceCallRequestCenter.isAddressedToAssistant(nil))
+        XCTAssertTrue(AssistantCallHandle.isAddressedToAssistant(makeStartCallIntent(contacts: nil)))
+        XCTAssertTrue(AssistantCallHandle.isAddressedToAssistant(makeStartCallIntent(contacts: [])))
+        XCTAssertTrue(AssistantCallHandle.isAddressedToAssistant(nil))
+    }
+
+    /// What the Intents extension resolves a spoken destination to. The
+    /// extension's handler cannot be reached from a test bundle hosted by the
+    /// app, so the decision it makes is tested where both targets compile it.
+    func testTheDestinationResolvesToTheAssistantAndNothingElse() {
+        let bob = makePerson(handle: "+15550100", displayName: "Bob")
+        let assistant = makePerson(handle: AssistantCallHandle.value, displayName: AssistantCallHandle.value)
+
+        XCTAssertEqual(AssistantCallHandle.resolveDestination(in: [assistant]), .assistant(assistant))
+        XCTAssertEqual(AssistantCallHandle.resolveDestination(in: [bob]), .unsupported)
+        XCTAssertEqual(AssistantCallHandle.resolveDestination(in: [bob, assistant]), .unsupported)
+        XCTAssertEqual(AssistantCallHandle.resolveDestination(in: [bob, bob]), .unsupported)
+        XCTAssertEqual(AssistantCallHandle.resolveDestination(in: []), .unnamed)
+        XCTAssertEqual(AssistantCallHandle.resolveDestination(in: nil), .unnamed)
+    }
+
+    /// SiriKit reads the resolution array positionally: one result per contact
+    /// the intent named. A rejected request has to say so about each of them,
+    /// not answer a two-contact request with one result.
+    func testTheResolutionAnswersEveryNamedContact() {
+        let bob = makePerson(handle: "+15550100", displayName: "Bob")
+        let assistant = makePerson(handle: AssistantCallHandle.value, displayName: AssistantCallHandle.value)
+
+        XCTAssertEqual(AssistantCallHandle.resolveContacts(in: nil).count, 1)
+        XCTAssertEqual(AssistantCallHandle.resolveContacts(in: []).count, 1)
+        XCTAssertEqual(AssistantCallHandle.resolveContacts(in: [assistant]).count, 1)
+        XCTAssertEqual(AssistantCallHandle.resolveContacts(in: [bob]).count, 1)
+        XCTAssertEqual(AssistantCallHandle.resolveContacts(in: [bob, assistant]).count, 2)
+        XCTAssertEqual(AssistantCallHandle.resolveContacts(in: [bob, bob]).count, 2)
     }
 
     /// Signing in is the only prerequisite the user is told about, so a user
@@ -159,7 +191,7 @@ final class VoiceCallRequestCenterTests: XCTestCase {
 
         XCTAssertEqual(donated.count, 1)
         let intent = donated.first?.intent as? INStartCallIntent
-        XCTAssertTrue(VoiceCallRequestCenter.isAddressedToAssistant(intent))
+        XCTAssertTrue(AssistantCallHandle.isAddressedToAssistant(intent))
         XCTAssertEqual(donated.first?.direction, .outgoing)
     }
 

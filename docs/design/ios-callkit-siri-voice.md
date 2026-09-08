@@ -39,15 +39,31 @@ request to talk into an outgoing call, and maps the call's lifecycle onto the se
 call reports connected when the Live session completes setup, and ending either one ends the
 other. It is the only place that knows CallKit exists.
 
-**Added: a way in from Siri.** The app advertises that it handles the start-call intent and
-donates a callable handle under the app's own name, so Siri can resolve it as a destination. The
-donation is what makes the handle resolvable and it prompts for nothing, so it happens on the only
-condition the user is told about — being signed in — from app scope rather than from a view; the
-one part that does prompt, Siri authorization, stays where the user has shown an interest in
-talking. The intent arrives as a user activity, which the app turns into a call request, but only
-when the intent is addressed to us: Siri resolves "call someone using Family Assistant" to this app
+**Added: a way in from Siri.** Two things, because Siri needs both a declaration and something to
+resolve a spoken name against.
+
+The declaration lives in an Intents app extension. SiriKit's calling domain is reached through the
+extension point, not through the app: an app that declares nothing there is not a call provider as
+far as Siri is concerned, and "call using Family Assistant" is refused outright, before any activity
+continuation is considered. The extension does exactly two things — declare the intent and resolve
+the destination — and it must do no more, because a CallKit transaction issued from an extension
+fails on entitlements the extension cannot hold. It answers *continue in app*, which is what turns a
+resolved intent into a user activity the app receives, and the app places the call.
+
+The donation is what makes the app's own name resolvable as a destination, and it prompts for
+nothing, so it happens on the only condition the user is told about — being signed in — from app
+scope rather than from a view; the one part that does prompt, Siri authorization, stays where the
+user has shown an interest in talking.
+
+The destination is checked, because Siri resolves "call someone using Family Assistant" to this app
 too, and answering that with an assistant conversation would discard the destination the user asked
-for. An intent that names no destination at all is ours, because Siri resolved the app itself.
+for. An assistant call has exactly one destination, so the request is ours only when the single name
+it carries is the assistant's; naming anyone else, or naming the assistant alongside somebody else,
+is refused rather than narrowed. An intent that names no destination at all is ours, because Siri
+resolved the app itself. That rule is one predicate compiled into both the extension, which refuses
+the intent, and the app, which refuses the activity — the two cannot be allowed to disagree about
+who the assistant is. The extension answers Siri with one resolution result per name the intent
+carried, as SiriKit reads that array positionally.
 
 **Inverted: who owns the audio session.** Today `VoiceAudioEngine` configures *and activates*
 `AVAudioSession` itself. Under CallKit that is wrong: CallKit activates the session, and audio
@@ -70,8 +86,9 @@ correctly, and the session's existing connection timeout already bounds the wait
 
 ## The paths in
 
-Two, and they must both work, because they are the same feature from the user's point of view
-and they arrive through different system hooks.
+Every request passes through the extension first, which resolves it and hands it back to the system
+as an activity to continue in the app. From there, two paths, and they must both work, because they
+are the same feature from the user's point of view and they arrive through different system hooks.
 
 - **Warm**, with a scene already connected: the activity arrives at the scene delegate.
 - **Cold and locked**, with the app not running: the system launches the app in the background
@@ -149,6 +166,11 @@ have just decided not to talk to.
 - **The handle is a constant, not a contact.** The assistant is donated as one generic handle
   rather than written into the user's contacts. It keeps Siri resolution working without the
   app taking a write dependency on the address book.
+- **The extension is tested through what it shares, not through itself.** An Intents extension is a
+  separate bundle with no test host, so the app-hosted unit tests cannot load it. The decision it
+  makes — whether a spoken destination is the assistant — therefore lives in the file both targets
+  compile and is tested there. What remains in the extension is the plumbing that hands that
+  decision to SiriKit, which only a device exercises.
 - **The Siri path is unverified until it runs on real hardware.** Locked-phone cold start,
   CarPlay Siri, and the intent-to-app handoff are exactly the things a simulator cannot
   demonstrate. The unit tests cover the coordinator's state machine and the activation seam;
@@ -167,6 +189,7 @@ have just decided not to talk to.
 3. **The hands-free access rule.** The shared predicate and its two injected probes, applied at
    both entry points. Verified by unit tests over the truth table, and by the ask intent and the
    coordinator refusing when it says no.
-4. **The way in from Siri.** Intent declaration, donation, both delivery hooks, and the wiring
-   that turns a delivered activity into a call. Verified by unit tests over the activity-to-
-   request translation; end-to-end behaviour is a device test.
+4. **The way in from Siri.** The Intents extension that declares and resolves the intent, the
+   donation, both delivery hooks, and the wiring that turns a delivered activity into a call.
+   Verified by unit tests over the shared destination rule and the activity-to-request translation;
+   end-to-end behaviour is a device test.

@@ -11,10 +11,6 @@ import os
 /// into the user's contacts, which keeps resolution working without taking a
 /// write dependency on the address book.
 enum AssistantCallDonation {
-    /// The same handle the call screen shows, so what Siri hears and what the
-    /// user sees while talking are one string.
-    static let handleValue = VoiceCallCoordinator.assistantHandleValue
-
     private static let logger = Logger(subsystem: "com.familyassistant.app", category: "voice-call")
 
     /// Ask for Siri authorization. Called when the user opens the Voice tab: it
@@ -46,12 +42,12 @@ enum AssistantCallDonation {
 
     static func makeStartCallIntent() -> INStartCallIntent {
         let person = INPerson(
-            personHandle: INPersonHandle(value: handleValue, type: .unknown),
+            personHandle: INPersonHandle(value: AssistantCallHandle.value, type: .unknown),
             nameComponents: nil,
-            displayName: handleValue,
+            displayName: AssistantCallHandle.value,
             image: nil,
             contactIdentifier: nil,
-            customIdentifier: handleValue
+            customIdentifier: AssistantCallHandle.value
         )
         return INStartCallIntent(
             callRecordFilter: nil,
