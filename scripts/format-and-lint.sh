@@ -74,15 +74,18 @@ if [ $# -eq 0 ]; then
         JS_TS_FILES=("frontend")
     fi
     # Find tracked markdown files. This avoids generated or vendored build
-    # output such as ignored iOS DerivedData checkouts.
+    # output such as ignored iOS DerivedData checkouts, and the provider model
+    # mirrors, which are other people's pages copied verbatim -- reformatting
+    # them would make every refresh a diff against our own formatting.
     if command -v git >/dev/null 2>&1 && git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         while IFS= read -r -d '' file; do
             MARKDOWN_FILES+=("$file")
-        done < <(git ls-files -z -- "*.md" ":(exclude).claude/*")
+        done < <(git ls-files -z -- "*.md" ":(exclude).claude/*" \
+            ":(exclude).agents/skills/*/references/current-models.md")
     else
         while IFS= read -r -d '' file; do
             MARKDOWN_FILES+=("$file")
-        done < <(find . -name "*.md" -not -path "./.venv/*" -not -path "./venv/*" -not -path "./.git/*" -not -path "*/node_modules/*" -not -path "./scratch/*" -not -path "./.claude/*" -not -path "*/build/*" -print0 2>/dev/null)
+        done < <(find . -name "*.md" -not -path "./.venv/*" -not -path "./venv/*" -not -path "./.git/*" -not -path "*/node_modules/*" -not -path "./scratch/*" -not -path "./.claude/*" -not -path "*/build/*" -not -path "./.agents/skills/*/references/current-models.md" -print0 2>/dev/null)
     fi
 else
     categorize_files "$@"

@@ -29,7 +29,7 @@ jobs:
           REPOSITORY: '${{ github.repository }}'
         run: |-
           if git diff --quiet -- .agents/skills; then
-            echo 'Provider model snapshots are current.'
+            echo 'Provider model documentation mirrors are current.'
             exit 0
           fi
 
@@ -37,8 +37,8 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git switch -c "${branch}"
-          git add .agents/skills/*/references/current-models.json
-          git commit -m 'Refresh provider model skill snapshots'
+          git add .agents/skills/*/references/current-models.md
+          git commit -m 'Refresh provider model documentation mirrors'
 
           remote_sha=$(git ls-remote --heads origin "refs/heads/${branch}" | cut -f1)
           if [[ -n "${remote_sha}" ]]; then
@@ -58,5 +58,5 @@ jobs:
             --repo "${REPOSITORY}" \
             --base main \
             --head "${branch}" \
-            --title 'Refresh provider model skill snapshots' \
-            --body 'Automated refresh from the official Gemini, OpenAI, and Anthropic model documentation.'
+            --title 'Refresh provider model documentation mirrors' \
+            --body 'Automated refresh of the verbatim mirrors of the official Gemini, OpenAI, and Anthropic model documentation.'

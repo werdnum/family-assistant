@@ -40,7 +40,7 @@ repos:
         entry: uv run --locked --extra dev mdformat --wrap 100
         language: system
         types: [markdown]
-        exclude: "(?x)^( \n  docs/python-telegram-bot-abridged\\.md|\n  docs/python-telegram-bot-abridged-filtered\\.md\n)$\n"
+        exclude: "(?x)^( \n  docs/python-telegram-bot-abridged\\.md|\n  docs/python-telegram-bot-abridged-filtered\\.md|\n  \\.agents/skills/[^/]+/references/current-models\\.md\n)$\n"
   - repo: local
     hooks:
       - id: yamlfmt

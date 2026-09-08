@@ -19,12 +19,15 @@ The Gemini API provides access to Google's most advanced AI models. Key capabili
 
 ## Current Gemini Models
 
-Read [references/current-models.json](references/current-models.json) before selecting or changing a
-model. It is generated from Google's public model catalog and each linked model-detail page so the
-documented API model code wins over a page slug. This distinction matters for Gemini Omni Flash: the
-page slug omits `-preview`, while the API model code retains it.
+Read [references/current-models.md](references/current-models.md) before selecting or changing a
+model. It is Google's own model catalog page, mirrored verbatim. Take model IDs from the
+`Model code` / model variant entries rather than from a documentation URL, which can differ: Gemini
+Omni Flash is served from a page slugged `gemini-omni-flash` but its model code is
+`gemini-omni-1.1-flash`.
 
-Refresh all provider snapshots with `python scripts/refresh-provider-model-skills.py`.
+The mirror's header says when it was taken. If that date is not recent, or the answer matters, fetch
+the URL in the header instead — it is the same page, current. Refresh all mirrors with
+`python scripts/refresh-provider-model-skills.py`.
 
 ## SDKs
 
