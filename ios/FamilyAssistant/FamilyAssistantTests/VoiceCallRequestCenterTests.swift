@@ -26,6 +26,7 @@ private final class SilentCallProvider: CallProviding {
 @MainActor
 private final class UnusedVoiceCallSession: VoiceCallSession {
     var phase: VoiceSessionViewModel.Phase = .idle
+    var isMuted = false
 
     func start() async {}
     func end() {}

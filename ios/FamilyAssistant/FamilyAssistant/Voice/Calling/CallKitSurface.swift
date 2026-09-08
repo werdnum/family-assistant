@@ -35,6 +35,7 @@ protocol CallRequesting: AnyObject {
 protocol VoiceCallEventHandling: AnyObject {
     func performStartCall(uuid: UUID, action: any CallAction)
     func performEndCall(uuid: UUID, action: any CallAction)
+    func performSetMuted(uuid: UUID, muted: Bool, action: any CallAction)
     func audioSessionActivated()
     func audioSessionDeactivated()
     func callProviderDidReset()
@@ -97,6 +98,12 @@ extension SystemCallProvider: CXProviderDelegate {
 
     nonisolated func provider(_: CXProvider, perform action: CXEndCallAction) {
         MainActor.assumeIsolated { handler?.performEndCall(uuid: action.callUUID, action: action) }
+    }
+
+    nonisolated func provider(_: CXProvider, perform action: CXSetMutedCallAction) {
+        MainActor.assumeIsolated {
+            handler?.performSetMuted(uuid: action.callUUID, muted: action.isMuted, action: action)
+        }
     }
 
     nonisolated func provider(_: CXProvider, didActivate _: AVAudioSession) {

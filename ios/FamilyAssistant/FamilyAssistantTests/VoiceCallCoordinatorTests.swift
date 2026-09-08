@@ -63,6 +63,7 @@ private final class FakeCallAction: CallAction {
 @Observable
 private final class FakeVoiceCallSession: VoiceCallSession {
     var phase: VoiceSessionViewModel.Phase = .idle
+    var isMuted = false
     private(set) var startCount = 0
     private(set) var endCount = 0
     let activation: VoiceAudioActivationSignal
@@ -228,6 +229,33 @@ final class VoiceCallCoordinatorTests: XCTestCase {
 
         XCTAssertTrue(action.failed)
         XCTAssertTrue(sessions.isEmpty)
+    }
+
+    func testMuteActionAppliesTheRequestedStateToTheSession() async throws {
+        let coordinator = makeCoordinator()
+        let (uuid, session) = try await startCall(coordinator)
+
+        let muteAction = FakeCallAction()
+        coordinator.performSetMuted(uuid: uuid, muted: true, action: muteAction)
+        XCTAssertTrue(session.isMuted)
+        XCTAssertTrue(muteAction.fulfilled)
+
+        let unmuteAction = FakeCallAction()
+        coordinator.performSetMuted(uuid: uuid, muted: false, action: unmuteAction)
+        XCTAssertFalse(session.isMuted)
+        XCTAssertTrue(unmuteAction.fulfilled)
+    }
+
+    func testMuteActionForAnUnknownCallFails() async throws {
+        let coordinator = makeCoordinator()
+        let (_, session) = try await startCall(coordinator)
+        let action = FakeCallAction()
+
+        coordinator.performSetMuted(uuid: UUID(), muted: true, action: action)
+
+        XCTAssertTrue(action.failed)
+        XCTAssertFalse(action.fulfilled)
+        XCTAssertFalse(session.isMuted)
     }
 
     func testAudioActivationReleasesTheSessionsAudioEngine() async throws {

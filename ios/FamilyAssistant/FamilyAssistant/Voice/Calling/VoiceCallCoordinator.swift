@@ -7,6 +7,7 @@ import os
 @MainActor
 protocol VoiceCallSession: AnyObject {
     var phase: VoiceSessionViewModel.Phase { get }
+    var isMuted: Bool { get set }
     func start() async
     func end()
 }
@@ -155,6 +156,18 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
         if uuid == callUUID {
             teardown(uuid: uuid, reporting: nil)
         }
+        action.fulfill()
+    }
+
+    /// The system call screen — including a CarPlay head unit — is the only
+    /// mute control over a call, so its state is pushed straight onto the
+    /// session, which gates microphone forwarding on it.
+    func performSetMuted(uuid: UUID, muted: Bool, action: any CallAction) {
+        guard uuid == callUUID else {
+            action.fail()
+            return
+        }
+        session?.isMuted = muted
         action.fulfill()
     }
 
