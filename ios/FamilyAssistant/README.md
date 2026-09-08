@@ -213,6 +213,21 @@ or backend change is required. `FamilyAssistantAppShortcuts` registers Siri phra
 - **Open Chat** — `openAppWhenRun`; foregrounds the Chat tab and can auto-send a message.
 
 If the user is signed out, intents throw a "sign in" error rather than attempting interactive login.
+
+### Intents extension (SiriKit calling)
+
+`FamilyAssistantIntents` is an Intents app extension embedded in the app, bundle identifier
+`dev.andrewgarrett.assistant.intents`. Its `Info.plist` declares `INStartCallIntent` in
+`NSExtension` → `NSExtensionAttributes` → `IntentsSupported`, which is what makes Siri treat the app
+as a call provider; the App Intents above cannot do that, because SiriKit's calling domain is
+reached only through this extension point. `FamilyAssistantIntents.entitlements` carries
+`com.apple.developer.siri`, so a device build needs the Siri capability on the extension's App ID as
+well as the app's, and automatic signing needs a provisioning profile for both.
+
+The extension declares and resolves only: it answers `.continueInApp`, and the app issues the
+CallKit transaction. Do not move `CXCallController` or `CXProvider` into it — those calls fail
+`unentitled` from an extension. `AssistantCallHandle` in `CallShared/` is compiled into both targets
+so the resolution rule and the handle string have one definition.
 See [docs/design/ios-app-intents.md](../../docs/design/ios-app-intents.md) for the full design.
 
 ### Home Screen Quick Actions
