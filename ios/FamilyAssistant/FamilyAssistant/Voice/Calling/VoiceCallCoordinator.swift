@@ -49,6 +49,21 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
     /// How the assistant is addressed on the system call screen and by Siri.
     static let assistantHandleValue = "Family Assistant"
 
+    /// What the system may do with the call, reported as soon as the call
+    /// exists. None of the multi-call operations mean anything for an assistant
+    /// conversation: it cannot be held or swapped, merged with another call,
+    /// taken private, or sent tones. Declaring that is what makes an incoming
+    /// phone call end this one, rather than leaving CallKit waiting out a hold
+    /// action nothing here answers.
+    static func makeCallUpdate() -> CXCallUpdate {
+        let update = CXCallUpdate()
+        update.supportsHolding = false
+        update.supportsGrouping = false
+        update.supportsUngrouping = false
+        update.supportsDTMF = false
+        return update
+    }
+
     private(set) var session: (any VoiceCallSession)?
 
     private let provider: any CallProviding
@@ -165,6 +180,7 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
             return
         }
         provider.reportOutgoingCall(with: uuid, startedConnectingAt: Date())
+        provider.reportCall(with: uuid, updated: Self.makeCallUpdate())
 
         let signal = VoiceAudioActivationSignal()
         let built = makeSession(signal)

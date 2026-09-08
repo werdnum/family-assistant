@@ -18,6 +18,7 @@ extension CXAction: CallAction {}
 protocol CallProviding: AnyObject {
     func reportOutgoingCall(with uuid: UUID, startedConnectingAt: Date?)
     func reportOutgoingCall(with uuid: UUID, connectedAt: Date?)
+    func reportCall(with uuid: UUID, updated update: CXCallUpdate)
     func reportCall(with uuid: UUID, endedAt: Date?, reason: CXCallEndedReason)
     func invalidate()
 }
@@ -76,6 +77,10 @@ final class SystemCallProvider: NSObject, CallProviding {
 
     func reportOutgoingCall(with uuid: UUID, connectedAt: Date?) {
         provider.reportOutgoingCall(with: uuid, connectedAt: connectedAt)
+    }
+
+    func reportCall(with uuid: UUID, updated update: CXCallUpdate) {
+        provider.reportCall(with: uuid, updated: update)
     }
 
     func reportCall(with uuid: UUID, endedAt: Date?, reason: CXCallEndedReason) {

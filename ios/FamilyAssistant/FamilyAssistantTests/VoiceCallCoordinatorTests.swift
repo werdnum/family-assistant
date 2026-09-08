@@ -10,6 +10,7 @@ private final class FakeCallProvider: CallProviding {
     private(set) var startedConnecting: [UUID] = []
     private(set) var connected: [UUID] = []
     private(set) var ended: [(uuid: UUID, reason: CXCallEndedReason)] = []
+    private(set) var updates: [(uuid: UUID, update: CXCallUpdate)] = []
     private(set) var invalidated = false
 
     func reportOutgoingCall(with uuid: UUID, startedConnectingAt _: Date?) {
@@ -18,6 +19,10 @@ private final class FakeCallProvider: CallProviding {
 
     func reportOutgoingCall(with uuid: UUID, connectedAt _: Date?) {
         connected.append(uuid)
+    }
+
+    func reportCall(with uuid: UUID, updated update: CXCallUpdate) {
+        updates.append((uuid, update))
     }
 
     func reportCall(with uuid: UUID, endedAt _: Date?, reason: CXCallEndedReason) {
@@ -306,6 +311,24 @@ final class VoiceCallCoordinatorTests: XCTestCase {
         let session = try XCTUnwrap(sessions.last)
         try await waitUntil { session.startCount == 1 }
         XCTAssertTrue(coordinator.session === session)
+    }
+
+    /// An assistant conversation cannot be held. Saying so is what lets an
+    /// incoming phone call take the audio and end this call, instead of CallKit
+    /// timing out a hold action that no delegate method answers.
+    func testTheReportedCallDeclaresItCannotBeHeldOrGrouped() async throws {
+        let coordinator = makeCoordinator()
+        try await coordinator.startCall()
+        let uuid = try XCTUnwrap(controller.startRequests.last?.uuid)
+
+        coordinator.performStartCall(uuid: uuid, action: FakeCallAction())
+
+        let reported = try XCTUnwrap(provider.updates.last)
+        XCTAssertEqual(reported.uuid, uuid)
+        XCTAssertFalse(reported.update.supportsHolding)
+        XCTAssertFalse(reported.update.supportsGrouping)
+        XCTAssertFalse(reported.update.supportsUngrouping)
+        XCTAssertFalse(reported.update.supportsDTMF)
     }
 
     /// CallKit activates the audio session on the back of the fulfilled start

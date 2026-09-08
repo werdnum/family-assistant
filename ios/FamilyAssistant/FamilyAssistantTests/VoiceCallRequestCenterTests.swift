@@ -19,6 +19,7 @@ private final class RecordingCallController: CallRequesting {
 private final class SilentCallProvider: CallProviding {
     func reportOutgoingCall(with _: UUID, startedConnectingAt _: Date?) {}
     func reportOutgoingCall(with _: UUID, connectedAt _: Date?) {}
+    func reportCall(with _: UUID, updated _: CXCallUpdate) {}
     func reportCall(with _: UUID, endedAt _: Date?, reason _: CXCallEndedReason) {}
     func invalidate() {}
 }
