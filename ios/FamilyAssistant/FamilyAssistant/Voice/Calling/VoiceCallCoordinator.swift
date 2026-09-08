@@ -57,6 +57,12 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
     private let handsFreeAccess: VoiceHandsFreeAccess
     private let logger = Logger(subsystem: "com.familyassistant.app", category: "voice-call")
 
+    /// Called after an observed session phase change has been handled, including
+    /// one belonging to a call that is already torn down. Nothing else marks the
+    /// end of that work, so a test asserting that a phase change reported
+    /// nothing has no other point to assert from.
+    var onSessionPhaseHandled: (@MainActor () -> Void)?
+
     private var callUUID: UUID?
     private var activationSignal: VoiceAudioActivationSignal?
     private var startupTask: Task<Void, Never>?
@@ -236,6 +242,7 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
     }
 
     private func handlePhase(of session: any VoiceCallSession, uuid: UUID) {
+        defer { onSessionPhaseHandled?() }
         guard uuid == callUUID else { return }
         switch session.phase {
         case .active:

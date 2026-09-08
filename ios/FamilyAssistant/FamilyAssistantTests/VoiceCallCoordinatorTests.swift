@@ -197,6 +197,23 @@ final class VoiceCallCoordinatorTests: XCTestCase {
         return (uuid, session)
     }
 
+    /// Runs `body` and returns once the coordinator has handled the session
+    /// phase change it causes. An assertion that nothing further was reported
+    /// then runs after the handler has definitely run, instead of after a delay
+    /// that only assumes it has.
+    private func afterPhaseHandled(
+        of coordinator: VoiceCallCoordinator,
+        _ body: @MainActor () -> Void
+    ) async {
+        await withCheckedContinuation { continuation in
+            coordinator.onSessionPhaseHandled = {
+                coordinator.onSessionPhaseHandled = nil
+                continuation.resume()
+            }
+            body()
+        }
+    }
+
     private func waitUntil(
         timeout: TimeInterval = 2,
         _ condition: @MainActor () -> Bool
@@ -393,8 +410,11 @@ final class VoiceCallCoordinatorTests: XCTestCase {
         session.phase = .active
         try await waitUntil { self.provider.connected == [uuid] }
 
-        session.phase = .active
-        try await Task.sleep(nanoseconds: 5_000_000)
+        // Reaching `.active` a second time — the session reconnecting, or any
+        // later phase churn — must not report a second connection for a call
+        // that is already up.
+        await afterPhaseHandled(of: coordinator) { session.phase = .connecting }
+        await afterPhaseHandled(of: coordinator) { session.phase = .active }
         XCTAssertEqual(provider.connected, [uuid])
     }
 
@@ -403,7 +423,12 @@ final class VoiceCallCoordinatorTests: XCTestCase {
         let (uuid, session) = try await startCall(coordinator)
         let action = FakeCallAction()
 
-        coordinator.performEndCall(uuid: uuid, action: action)
+        // Teardown ends the session, which moves it to `.finished`; the wait is
+        // for that phase change to have been handled, because it is what could
+        // report the end a second time.
+        await afterPhaseHandled(of: coordinator) {
+            coordinator.performEndCall(uuid: uuid, action: action)
+        }
 
         XCTAssertTrue(action.fulfilled)
         XCTAssertEqual(session.endCount, 1)
@@ -411,9 +436,7 @@ final class VoiceCallCoordinatorTests: XCTestCase {
         XCTAssertNil(coordinator.session)
         // CallKit ended the call, so reporting an end back to it would be a
         // second end for the same call.
-        try await Task.sleep(nanoseconds: 5_000_000)
         XCTAssertTrue(provider.ended.isEmpty)
-        XCTAssertEqual(session.endCount, 1)
     }
 
     func testEndCallForwardsTheUsersRequestToTheCallController() async throws {
@@ -458,11 +481,10 @@ final class VoiceCallCoordinatorTests: XCTestCase {
         XCTAssertEqual(provider.ended.first?.uuid, uuid)
         XCTAssertEqual(provider.ended.first?.reason, .remoteEnded)
 
-        // The teardown calls end() on the session, which moves it to .finished
-        // again; that must not report a second end.
+        // The call is already gone, so a late end action is answered and
+        // otherwise ignored — every step of it is synchronous.
         let lateAction = FakeCallAction()
         coordinator.performEndCall(uuid: uuid, action: lateAction)
-        try await Task.sleep(nanoseconds: 5_000_000)
         XCTAssertTrue(lateAction.fulfilled)
         XCTAssertEqual(provider.ended.count, 1)
     }
@@ -471,12 +493,11 @@ final class VoiceCallCoordinatorTests: XCTestCase {
         let coordinator = makeCoordinator()
         let (_, session) = try await startCall(coordinator)
 
-        coordinator.callProviderDidReset()
+        await afterPhaseHandled(of: coordinator) { coordinator.callProviderDidReset() }
 
         XCTAssertEqual(session.endCount, 1)
         XCTAssertFalse(coordinator.isCallActive)
         XCTAssertNil(coordinator.session)
-        try await Task.sleep(nanoseconds: 5_000_000)
         XCTAssertTrue(provider.ended.isEmpty)
     }
 
