@@ -83,8 +83,8 @@ without writing files. The scheduled `refresh-provider-model-skills.yml` workflo
 the generated snapshots change.
 
 Gemini ids come from each detail page's "Model code" row, **not** the page's URL slug: the two
-differ, and `gemini-omni-flash-preview` is served from a page slugged `gemini-omni-flash`. When a
-page has no such row the slug is the only thing left, so that entry is written with
+differ, and `gemini-omni-1.1-flash` is served from a page slugged `gemini-omni-flash`. When a page
+has no such row the slug is the only thing left, so that entry is written with
 `"id_source": "url-slug (no documented Model code row)"` — treat those ids as unverified against the
 API until a real call confirms them, rather than as equivalent to a documented code.
 

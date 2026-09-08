@@ -14,7 +14,7 @@ USER_AGENT = "family-assistant-provider-model-refresh/1.0"
 
 GEMINI_SOURCE = "https://ai.google.dev/gemini-api/docs/models.md.txt"
 OPENAI_SOURCE = "https://developers.openai.com/api/docs/models.md"
-ANTHROPIC_SOURCE = "https://platform.claude.com/docs/en/about-claude/models/overview.md"
+ANTHROPIC_SOURCE = "https://platform.claude.com/docs/en/models/overview.md"
 
 
 @dataclass(frozen=True)
@@ -27,7 +27,7 @@ class Model:
     source_url: str
     # Whether `model_id` came from the detail page's "Model code" row (the
     # documented API identifier) or was inferred from the page's URL slug. The
-    # two differ for real models -- gemini-omni-flash-preview is served from a
+    # two differ for real models -- gemini-omni-1.1-flash is served from a
     # page slugged gemini-omni-flash -- and reading the slug is how that id was
     # previously got wrong, so a slug-derived id is marked rather than presented
     # as equivalent.
@@ -45,7 +45,7 @@ def _table_cells(line: str) -> list[str]:
 
 
 def _extract_openai_models(markdown: str) -> list[Model]:
-    section = markdown.split("## Recommended models", maxsplit=1)[1].split(
+    section = markdown.split("## Featured models", maxsplit=1)[1].split(
         "## Browse our full catalog", maxsplit=1
     )[0]
     matches = re.findall(
@@ -66,18 +66,29 @@ def _extract_openai_models(markdown: str) -> list[Model]:
     ]
 
 
+def _comparison_row(lines: list[str], label: str) -> list[str]:
+    """Return the cells of the comparison-table row whose label matches.
+
+    The label cell is emphasised in some revisions of the page and plain in
+    others, so the markers are stripped before comparing rather than matched.
+    """
+    for line in lines:
+        cells = _table_cells(line)
+        if cells and cells[0].strip("* ") == label:
+            return cells[1:]
+    raise ValueError(f"Anthropic comparison table has no {label!r} row")
+
+
 def _extract_anthropic_models(markdown: str) -> list[Model]:
-    section = markdown.split("### Latest models comparison", maxsplit=1)[1].split(
-        "<Info>", maxsplit=1
+    section = markdown.split("## Compare models", maxsplit=1)[1].split(
+        "\n## ", maxsplit=1
     )[0]
     lines = [line for line in section.splitlines() if line.startswith("|")]
     header = next(line for line in lines if "Claude Fable" in line)
-    descriptions = next(line for line in lines if "**Description**" in line)
-    api_ids = next(line for line in lines if "**Claude API ID**" in line)
 
     names = _table_cells(header)[1:]
-    description_cells = _table_cells(descriptions)[1:]
-    id_cells = _table_cells(api_ids)[1:]
+    description_cells = _comparison_row(lines, "Description")
+    id_cells = [cell.strip("`") for cell in _comparison_row(lines, "Claude API ID")]
     if not names or not (len(names) == len(description_cells) == len(id_cells)):
         raise ValueError("Anthropic latest-model table could not be parsed")
 
