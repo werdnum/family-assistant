@@ -60,6 +60,25 @@ private final class EventLog {
     }
 }
 
+/// Collects what the coordinator records, so a test can assert the breadcrumb
+/// a start left as well as what it did to the call.
+private final class RecordingVoiceCallTelemetry: VoiceCallTelemetryRecording {
+    private let lock = NSLock()
+    private var records: [(event: String, component: String, extraData: [String: String])] = []
+
+    func record(_ event: String, component: String, extraData: [String: String]) {
+        lock.withLock { records.append((event, component, extraData)) }
+    }
+
+    func components() -> [String] {
+        lock.withLock { records.map(\.component) }
+    }
+
+    func extraData(for component: String) -> [[String: String]] {
+        lock.withLock { records.filter { $0.component == component }.map(\.extraData) }
+    }
+}
+
 @MainActor
 private final class FakeCallAction: CallAction {
     private(set) var fulfilled = false
@@ -156,6 +175,7 @@ final class VoiceCallCoordinatorTests: XCTestCase {
     private var sessionsWaitForActivation = false
     private var eventLog: EventLog?
     private var audioConfigureError: Error?
+    private var telemetry: RecordingVoiceCallTelemetry!
 
     override func setUp() async throws {
         try await super.setUp()
@@ -166,6 +186,7 @@ final class VoiceCallCoordinatorTests: XCTestCase {
         sessionsWaitForActivation = false
         eventLog = nil
         audioConfigureError = nil
+        telemetry = RecordingVoiceCallTelemetry()
     }
 
     private func makeCoordinator(
@@ -178,6 +199,7 @@ final class VoiceCallCoordinatorTests: XCTestCase {
             provider: provider,
             controller: controller,
             handsFreeAccess: handsFreeAccess,
+            telemetry: telemetry,
             makeSession: { [weak self] signal in
                 let session = FakeVoiceCallSession(activation: signal)
                 session.waitsForActivation = self?.sessionsWaitForActivation ?? false
@@ -259,6 +281,9 @@ final class VoiceCallCoordinatorTests: XCTestCase {
         XCTAssertTrue(controller.startRequests.isEmpty)
         XCTAssertFalse(coordinator.isCallActive)
         XCTAssertTrue(sessions.isEmpty)
+        // Quiet to the user, not to the trail: a refusal nobody is told about
+        // is the one most in need of a breadcrumb.
+        XCTAssertEqual(telemetry.components(), ["Voice.call.handsFreeAccess"])
     }
 
     func testALockedDeviceOnCarPlayCanStartACall() async throws {
@@ -311,6 +336,18 @@ final class VoiceCallCoordinatorTests: XCTestCase {
         let session = try XCTUnwrap(sessions.last)
         try await waitUntil { session.startCount == 1 }
         XCTAssertTrue(coordinator.session === session)
+    }
+
+    /// A call that started fine and a call that was never asked for otherwise
+    /// leave the same trail: nothing. The record is made here rather than where
+    /// the call was requested, because CallKit accepts the transaction before
+    /// any of this runs.
+    func testAFulfilledStartActionRecordsThatTheCallBegan() async throws {
+        let coordinator = makeCoordinator()
+        _ = try await startCall(coordinator)
+
+        XCTAssertEqual(telemetry.extraData(for: "Voice.call.started").count, 1)
+        XCTAssertFalse(telemetry.components().contains("Voice.call.startFailed"))
     }
 
     /// An assistant conversation cannot be held. Saying so is what lets an
@@ -376,6 +413,24 @@ final class VoiceCallCoordinatorTests: XCTestCase {
         XCTAssertEqual(sessions.last?.startCount, 0)
     }
 
+    /// CallKit accepts the transaction before the start action runs, so this
+    /// failure happens after everything that asked for the call has been told
+    /// the request went through. Claiming a call began from that acceptance is
+    /// exactly the false positive the trail exists to rule out.
+    func testAStartFailedByAudioConfigurationIsRecordedAndIsNotAStartedCall() async throws {
+        audioConfigureError = NSError(domain: "test", code: 2)
+        let coordinator = makeCoordinator()
+        try await coordinator.startCall()
+        let uuid = try XCTUnwrap(controller.startRequests.last?.uuid)
+
+        coordinator.performStartCall(uuid: uuid, action: FakeCallAction())
+
+        XCTAssertFalse(telemetry.components().contains("Voice.call.started"))
+        let failures = telemetry.extraData(for: "Voice.call.startFailed")
+        XCTAssertEqual(failures.count, 1)
+        XCTAssertEqual(failures.first?["reason"], "audio_configuration")
+    }
+
     func testStartActionForAnUnknownCallFails() async throws {
         let coordinator = makeCoordinator()
         let action = FakeCallAction()
@@ -384,6 +439,10 @@ final class VoiceCallCoordinatorTests: XCTestCase {
 
         XCTAssertTrue(action.failed)
         XCTAssertTrue(sessions.isEmpty)
+        XCTAssertEqual(
+            telemetry.extraData(for: "Voice.call.startFailed").first?["reason"],
+            "unknown_call"
+        )
     }
 
     func testMuteActionAppliesTheRequestedStateToTheSession() async throws {

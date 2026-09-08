@@ -94,6 +94,26 @@ are the same feature from the user's point of view and they arrive through diffe
 - **Cold and locked**, with the app not running: the system launches the app in the background
   and delivers through the application delegate.
 
+The activity's type is what the app matches an arrival on, so the extension sets it rather than
+letting SiriKit invent one: SiriKit makes an activity when handed none, but the type it picks is not
+documented, and a match against an assumed string is a match that can quietly stop matching. One
+constant is compiled into both sides, and it is the same string the app's `NSUserActivityTypes`
+declares — a type the app does not declare is never delivered to it at all.
+
+Every step between Siri and a running call records that it was reached and what it decided, into the
+telemetry lane under one `Voice.call.` prefix. This path runs on a locked device, through hooks a
+simulator never exercises, and has no channel back to the user: without the records, a request
+refused by the destination rule, a request arriving under an unexpected type, a request buffered for
+a handler that never installed, and a request that was never made all look identical afterwards.
+Arrivals are recorded before anything about them is judged, since the unexpected activity is exactly
+the one a predicate would discard, and a call that starts records too — a path that only reports
+refusals cannot tell success from silence. Each record is made where its outcome is actually known
+rather than where it can be inferred: CallKit accepting the transaction is not yet a call, so it is
+the step that fulfils the start action which says one began, and every other way out of that step
+says so too. A record whose name asserts an outcome it only guessed at is worse than no record,
+because the trail exists precisely to tell a start from a failure to start. The records carry
+decisions, types and counts, never a spoken word or a contact name.
+
 Both forward to one place, and the call starts there, at the point of delivery: the scenario the
 whole feature exists for has no scene, so anything that waits for the view layer waits until the
 user picks up the phone — the interaction being avoided. What acts on a request is therefore

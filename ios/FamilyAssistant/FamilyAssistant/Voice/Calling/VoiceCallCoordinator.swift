@@ -67,6 +67,7 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
     private let controller: any CallRequesting
     private let makeSession: @MainActor (VoiceAudioActivationSignal) -> VoiceCallSessionAudio
     private let handsFreeAccess: VoiceHandsFreeAccess
+    private let telemetry: VoiceCallTelemetryRecording
     private let logger = Logger(subsystem: "com.familyassistant.app", category: "voice-call")
 
     /// Called after an observed session phase change has been handled, including
@@ -84,11 +85,13 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
         provider: any CallProviding,
         controller: any CallRequesting,
         handsFreeAccess: VoiceHandsFreeAccess = .system,
+        telemetry: VoiceCallTelemetryRecording = VoiceCallTelemetry.shared,
         makeSession: @escaping @MainActor (VoiceAudioActivationSignal) -> VoiceCallSessionAudio
     ) {
         self.provider = provider
         self.controller = controller
         self.handsFreeAccess = handsFreeAccess
+        self.telemetry = telemetry
         self.makeSession = makeSession
     }
 
@@ -136,10 +139,9 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
     func startCall() async throws {
         guard handsFreeAccess.isAllowed else {
             logger.notice("Refusing a call start: the device is locked and not connected to CarPlay")
-            ErrorReporter.shared.report(
-                message: "Refused a hands-free assistant call: device locked, not on CarPlay",
-                component: "Voice.call.handsFreeAccess",
-                errorType: .component
+            telemetry.record(
+                "Refused a hands-free assistant call: device locked, not on CarPlay",
+                component: VoiceCallTelemetryComponent.handsFreeRefused
             )
             return
         }
@@ -171,8 +173,21 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
     /// category gives a call with no audio, and the session's own startup —
     /// microphone permission, a token fetch, the socket — is far too slow to sit
     /// in front of it, which is why it stays behind the activation callback.
+    ///
+    /// This is also where the call path's success is recorded, because this is
+    /// the only place it is known. CallKit accepts the transaction long before
+    /// the start action runs, so whoever asked for the call has already been
+    /// told the request went through while the audio configuration that can
+    /// still fail it has not happened yet. Every exit from here therefore
+    /// leaves a breadcrumb, and only the one that fulfilled the action and
+    /// started the session says a call began.
     func performStartCall(uuid: UUID, action: any CallAction) {
         guard uuid == callUUID else {
+            telemetry.record(
+                "Failed a start action for a call this coordinator is not running",
+                component: VoiceCallTelemetryComponent.startFailed,
+                extraData: ["reason": "unknown_call"]
+            )
             action.fail()
             return
         }
@@ -188,6 +203,11 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
                 "Could not configure the call's audio session: \(error.localizedDescription, privacy: .public)"
             )
             ErrorReporter.shared.report(error, component: "Voice.call.audioConfiguration")
+            telemetry.record(
+                "Failed a start action: the call's audio session could not be configured",
+                component: VoiceCallTelemetryComponent.startFailed,
+                extraData: ["reason": "audio_configuration"]
+            )
             callUUID = nil
             action.fail()
             return
@@ -200,6 +220,7 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
 
         observePhase(of: built.session, uuid: uuid)
         startupTask = Task { await built.session.start() }
+        telemetry.record("iOS started a call", component: VoiceCallTelemetryComponent.started)
     }
 
     func performEndCall(uuid: UUID, action: any CallAction) {

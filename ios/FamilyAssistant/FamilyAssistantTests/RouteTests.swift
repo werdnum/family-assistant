@@ -428,7 +428,7 @@ final class RouteTests: XCTestCase {
         let activity = NSUserActivity(activityType: NSUserActivityTypeBrowsingWeb)
         activity.webpageURL = url
 
-        HomeScreenShortcutSceneDelegate.forwardUserActivities([activity])
+        HomeScreenShortcutSceneDelegate.forwardUserActivities([activity], from: .sceneContinue)
 
         XCTAssertEqual(OpenURLCenter.shared.pendingURLs, [url])
     }

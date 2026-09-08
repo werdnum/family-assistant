@@ -17,6 +17,7 @@ import Observation
 final class VoiceCallStarter {
     private let isAuthenticated: @MainActor () -> Bool
     private let makeCoordinator: @MainActor () -> VoiceCallCoordinator
+    private let telemetry: VoiceCallTelemetryRecording
     private var coordinator: VoiceCallCoordinator?
 
     /// Whether a call is running right now. The single answer to that question:
@@ -29,10 +30,12 @@ final class VoiceCallStarter {
 
     init(
         isAuthenticated: @escaping @MainActor () -> Bool,
-        makeCoordinator: @escaping @MainActor () -> VoiceCallCoordinator
+        makeCoordinator: @escaping @MainActor () -> VoiceCallCoordinator,
+        telemetry: VoiceCallTelemetryRecording = VoiceCallTelemetry.shared
     ) {
         self.isAuthenticated = isAuthenticated
         self.makeCoordinator = makeCoordinator
+        self.telemetry = telemetry
     }
 
     convenience init(authManager: AuthManager) {
@@ -69,14 +72,31 @@ final class VoiceCallStarter {
     ///
     /// A request from a signed-out app is dropped too — there is no session to
     /// authenticate the voice socket with, and the request arrives on a path
-    /// with no channel back to Siri to say so. It leaves a breadcrumb instead,
-    /// as a hands-free refusal does.
+    /// with no channel back to Siri to say so.
+    ///
+    /// Every outcome leaves a breadcrumb, the call that starts included: a
+    /// refusal that records and a success that does not are indistinguishable
+    /// from a request that never arrived, which is the question this path is
+    /// most often asked.
+    ///
+    /// The refusals this makes itself are recorded here, and nothing else is.
+    /// Whether a call actually began is not known here at all: the coordinator
+    /// returns once CallKit has accepted the transaction, and the audio
+    /// configuration that can still fail the start runs afterwards, in the
+    /// start action. The coordinator records that outcome where it sees it.
     func startCall() async {
+        telemetry.record(
+            "iOS was asked to start a call",
+            component: VoiceCallTelemetryComponent.starting,
+            extraData: [
+                "is_authenticated": String(isAuthenticated()),
+                "is_call_active": String(isCallActive),
+            ]
+        )
         guard isAuthenticated() else {
-            ErrorReporter.shared.report(
-                message: "Dropped a start-call request: the app is signed out",
-                component: "Voice.call.signedOut",
-                errorType: .component
+            telemetry.record(
+                "Dropped a start-call request: the app is signed out",
+                component: VoiceCallTelemetryComponent.signedOut
             )
             return
         }
@@ -84,7 +104,13 @@ final class VoiceCallStarter {
         let coordinator = coordinator ?? makeCoordinator()
         self.coordinator = coordinator
 
-        guard !coordinator.isCallActive else { return }
+        guard !coordinator.isCallActive else {
+            telemetry.record(
+                "Dropped a start-call request: a call is already running",
+                component: VoiceCallTelemetryComponent.duplicate
+            )
+            return
+        }
         do {
             try await coordinator.startCall()
         } catch {

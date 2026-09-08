@@ -123,6 +123,7 @@
 		CA11B00000000000000000C3 /* CallKitSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA11A00000000000000000A2 /* CallKitSurface.swift */; };
 		CA11B00000000000000000C4 /* VoiceCallCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA11A00000000000000000A3 /* VoiceCallCoordinator.swift */; };
 		CA11B00000000000000000D1 /* VoiceCallStarter.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA11A00000000000000000B1 /* VoiceCallStarter.swift */; };
+		CA11B00000000000000000D2 /* VoiceCallTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA11A00000000000000000B2 /* VoiceCallTelemetry.swift */; };
 		CA11B00000000000000000C5 /* VoiceAudioActivationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA11A00000000000000000A4 /* VoiceAudioActivationTests.swift */; };
 		CA11B00000000000000000C6 /* VoiceCallCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA11A00000000000000000A5 /* VoiceCallCoordinatorTests.swift */; };
 		CA11B00000000000000000C7 /* VoiceHandsFreeAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA11A00000000000000000A6 /* VoiceHandsFreeAccess.swift */; };
@@ -225,6 +226,7 @@
 		CA11A00000000000000000A2 /* CallKitSurface.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CallKitSurface.swift; sourceTree = "<group>"; };
 		CA11A00000000000000000A3 /* VoiceCallCoordinator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceCallCoordinator.swift; sourceTree = "<group>"; };
 		CA11A00000000000000000B1 /* VoiceCallStarter.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceCallStarter.swift; sourceTree = "<group>"; };
+		CA11A00000000000000000B2 /* VoiceCallTelemetry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceCallTelemetry.swift; sourceTree = "<group>"; };
 		CA11A00000000000000000A4 /* VoiceAudioActivationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceAudioActivationTests.swift; sourceTree = "<group>"; };
 		CA11A00000000000000000A5 /* VoiceCallCoordinatorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceCallCoordinatorTests.swift; sourceTree = "<group>"; };
 		CA11A00000000000000000A6 /* VoiceHandsFreeAccess.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VoiceHandsFreeAccess.swift; sourceTree = "<group>"; };
@@ -429,6 +431,7 @@
 				CA11A00000000000000000A3 /* VoiceCallCoordinator.swift */,
 				CA11A00000000000000000A7 /* VoiceCallRequestCenter.swift */,
 				CA11A00000000000000000B1 /* VoiceCallStarter.swift */,
+				CA11A00000000000000000B2 /* VoiceCallTelemetry.swift */,
 				CA11A00000000000000000A8 /* AssistantCallDonation.swift */,
 			);
 			name = Calling;
@@ -961,6 +964,7 @@
 				CA11B00000000000000000C3 /* CallKitSurface.swift in Sources */,
 				CA11B00000000000000000C4 /* VoiceCallCoordinator.swift in Sources */,
 				CA11B00000000000000000D1 /* VoiceCallStarter.swift in Sources */,
+				CA11B00000000000000000D2 /* VoiceCallTelemetry.swift in Sources */,
 				CA11B00000000000000000C7 /* VoiceHandsFreeAccess.swift in Sources */,
 				CA11B00000000000000000C8 /* VoiceCallRequestCenter.swift in Sources */,
 				CA11B00000000000000000C9 /* AssistantCallDonation.swift in Sources */,
