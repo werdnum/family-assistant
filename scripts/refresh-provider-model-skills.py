@@ -9,6 +9,7 @@ reformat to break: the file an agent reads is the file the provider wrote.
 
 import argparse
 import datetime
+import http.client
 import sys
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -39,6 +40,15 @@ def _body(mirrored: str) -> str:
     return remainder
 
 
+def _header_url(mirrored: str) -> str | None:
+    """Return the source URL a mirrored file records, if it carries our header."""
+    if not mirrored.startswith(HEADER_PREFIX):
+        return None
+    first_line = mirrored.partition("\n")[0]
+    url, _, _date = first_line[len(HEADER_PREFIX) :].rpartition(" on ")
+    return url or None
+
+
 def _render(url: str, body: str, retrieved: str) -> str:
     return (
         f"{HEADER_PREFIX}{url} on {retrieved}.\n"
@@ -52,7 +62,14 @@ def _refresh(skill_dir: str, url: str, *, check: bool) -> bool:
     path = ROOT / skill_dir / "references/current-models.md"
     body = _fetch(url)
     existing = path.read_text() if path.exists() else None
-    if existing is not None and _body(existing) == body:
+    # The recorded URL is compared as well as the body: a provider that moves a
+    # page while serving identical content would otherwise leave the retired
+    # endpoint in the header, which is the URL the skills send readers to.
+    if (
+        existing is not None
+        and _body(existing) == body
+        and _header_url(existing) == url
+    ):
         return False
 
     if not check:
@@ -78,7 +95,7 @@ def main() -> int:
     for skill_dir, url in SOURCES.items():
         try:
             changed = _refresh(skill_dir, url, check=args.check)
-        except (OSError, UnicodeDecodeError) as error:
+        except (OSError, http.client.HTTPException, UnicodeDecodeError) as error:
             print(f"Failed: {skill_dir} <- {url} ({error})", file=sys.stderr)
             failed.append(skill_dir)
             continue

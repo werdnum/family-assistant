@@ -20,7 +20,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      - name: Refresh provider model snapshots
+      # Allowed to fail so that a provider whose page moved or whose host is
+      # down does not discard the mirrors that did refresh: the pull request
+      # step below still publishes them, and the job is failed at the end.
+      - name: Refresh provider model documentation mirrors
+        id: refresh
+        continue-on-error: true
         run: python scripts/refresh-provider-model-skills.py
 
       - name: Open refresh pull request
@@ -60,3 +65,9 @@ jobs:
             --head "${branch}" \
             --title 'Refresh provider model documentation mirrors' \
             --body 'Automated refresh of the verbatim mirrors of the official Gemini, OpenAI, and Anthropic model documentation.'
+
+      - name: Fail if a provider could not be mirrored
+        if: steps.refresh.outcome == 'failure'
+        run: |-
+          echo 'At least one provider mirror failed to refresh; see the refresh step log.' >&2
+          exit 1

@@ -7,6 +7,7 @@ header, and one provider's failure must not cost the others their refresh --
 that last one is the defect that kept every snapshot stale for months.
 """
 
+import http.client
 import importlib.util
 import sys
 from collections.abc import Iterator
@@ -84,6 +85,50 @@ def test_a_changed_page_is_rewritten(
     assert script._body(_mirror(script, "skills/gemini").read_text()).endswith(
         "A new model.\n"
     )
+
+
+def test_a_moved_page_serving_identical_content_updates_the_header(
+    script: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The header URL is what the skills send readers to, so it must not go stale."""
+    monkeypatch.setattr(script, "_fetch", lambda _url: PAGE)
+    script._refresh("skills/gemini", "https://example.test/old.md", check=False)
+
+    changed = script._refresh(
+        "skills/gemini", "https://example.test/new.md", check=False
+    )
+
+    assert changed is True
+    assert script._header_url(_mirror(script, "skills/gemini").read_text()) == (
+        "https://example.test/new.md"
+    )
+
+
+def test_a_truncated_response_does_not_abort_the_other_providers(
+    script: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """IncompleteRead is an HTTPException, not an OSError, so it needs naming."""
+
+    def fetch(url: str) -> str:
+        if "openai" in url:
+            raise http.client.IncompleteRead(b"partial")
+        return PAGE
+
+    monkeypatch.setattr(script, "_fetch", fetch)
+    monkeypatch.setattr(
+        script,
+        "SOURCES",
+        {
+            "skills/gemini": "https://example.test/gemini.md",
+            "skills/openai": "https://example.test/openai.md",
+        },
+    )
+    monkeypatch.setattr(sys, "argv", ["refresh-provider-model-skills.py"])
+
+    exit_code = script.main()
+
+    assert exit_code == 1
+    assert script._body(_mirror(script, "skills/gemini").read_text()) == PAGE
 
 
 def test_check_reports_drift_without_writing(

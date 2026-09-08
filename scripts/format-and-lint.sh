@@ -57,6 +57,11 @@ categorize_files() {
             case "$arg" in
                 *.py) PYTHON_FILES+=("$arg") ;;
                 *.js|*.jsx|*.ts|*.tsx|*.vue) JS_TS_FILES+=("$arg") ;;
+                # Provider model mirrors are other people's pages, copied
+                # verbatim. Skipped even when named explicitly, so that a
+                # targeted run cannot reformat what the mirror exists to keep
+                # byte-identical.
+                *.agents/skills/*/references/current-models.md) ;;
                 *.md) MARKDOWN_FILES+=("$arg") ;;
                 *.sh|*.bash) OTHER_FILES+=("$arg") ;;
                 *) OTHER_FILES+=("$arg") ;;
