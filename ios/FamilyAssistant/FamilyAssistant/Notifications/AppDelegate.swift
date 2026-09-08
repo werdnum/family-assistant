@@ -38,6 +38,17 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         completionHandler(HomeScreenShortcutRouter.handle(shortcutItem))
     }
 
+    /// The cold and locked path for a Siri start-call intent: the system can
+    /// launch the app into the background to deliver it, so this must not
+    /// assume a scene exists.
+    func application(
+        _ application: UIApplication,
+        continue userActivity: NSUserActivity,
+        restorationHandler: @escaping ([UIUserActivityRestoring]?) -> Void
+    ) -> Bool {
+        HomeScreenShortcutSceneDelegate.forwardUserActivities([userActivity])
+    }
+
     func application(
         _ application: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
@@ -93,7 +104,7 @@ final class HomeScreenShortcutSceneDelegate: NSObject, UIWindowSceneDelegate {
             _ = HomeScreenShortcutRouter.handle(shortcutItem)
         }
         Self.forwardOpenedURLs(connectionOptions.urlContexts)
-        Self.forwardUserActivities(connectionOptions.userActivities)
+        Self.forwardUserActivities(Array(connectionOptions.userActivities))
     }
 
     func windowScene(
@@ -116,24 +127,53 @@ final class HomeScreenShortcutSceneDelegate: NSObject, UIWindowSceneDelegate {
         forwardOpenedURLs(contexts.map(\.url))
     }
 
-    static func forwardUserActivities(_ activities: Set<NSUserActivity>) {
-        forwardOpenedURLs(activities.compactMap { activity in
-            guard activity.activityType == NSUserActivityTypeBrowsingWeb else {
-                return nil
+    /// Routes each activity to the buffer that owns it: Universal Links to
+    /// `OpenURLCenter`, Siri's start-call intent to `VoiceCallRequestCenter`.
+    /// Returns whether any activity was recognized, so a start-call intent
+    /// addressed to somebody else is reported back as unhandled rather than
+    /// answered with an assistant call.
+    @discardableResult
+    static func forwardUserActivities(_ activities: [NSUserActivity]) -> Bool {
+        var webpageURLs: [URL] = []
+        var startCallRequests = 0
+        for activity in activities {
+            if VoiceCallRequestCenter.isAssistantStartCallActivity(activity) {
+                startCallRequests += 1
+            } else if activity.activityType == NSUserActivityTypeBrowsingWeb,
+                      let url = activity.webpageURL {
+                webpageURLs.append(url)
             }
-            return activity.webpageURL
-        })
+        }
+
+        forwardOpenedURLs(webpageURLs)
+        if startCallRequests > 0 {
+            onMainActor {
+                for _ in 0 ..< startCallRequests {
+                    VoiceCallRequestCenter.shared.receiveStartCallRequest()
+                }
+            }
+        }
+        return !webpageURLs.isEmpty || startCallRequests > 0
     }
 
     static func forwardOpenedURLs(_ urls: [URL]) {
         guard !urls.isEmpty else { return }
+        onMainActor {
+            OpenURLCenter.shared.receive(urls)
+        }
+    }
+
+    /// Delivery hooks run on the main thread, but the application-delegate
+    /// launch path can reach here before the main actor is the current
+    /// executor, so hop when it is not.
+    private static func onMainActor(_ work: @escaping @MainActor () -> Void) {
         if Thread.isMainThread {
             MainActor.assumeIsolated {
-                OpenURLCenter.shared.receive(urls)
+                work()
             }
         } else {
             Task { @MainActor in
-                OpenURLCenter.shared.receive(urls)
+                work()
             }
         }
     }

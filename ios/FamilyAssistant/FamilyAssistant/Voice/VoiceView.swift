@@ -1,10 +1,37 @@
 import SwiftUI
 import UIKit
 
+/// What the Voice tab does with the user's arrival, given that a call may
+/// already be running.
+///
+/// A call started from Siri owns the one process-wide `AVAudioSession` for as
+/// long as it lasts. A tab session started alongside it would compete for the
+/// same microphone, and closing the tab would deactivate that audio session out
+/// from under the live call. The tab therefore stands aside and says so, rather
+/// than starting a second conversation.
+enum VoiceTabState: Equatable {
+    /// A call is running, so the tab shows the call is where the conversation is.
+    case deferringToCall
+    /// The tab is running a session of its own.
+    case session
+    /// Nothing is running: start a session.
+    case startingSession
+
+    static func decide(isCallInProgress: Bool, hasSession: Bool) -> VoiceTabState {
+        if isCallInProgress {
+            return .deferringToCall
+        }
+        return hasSession ? .session : .startingSession
+    }
+}
+
 /// Full-screen native voice-conversation UI. Builds its view model from the
 /// shared ``AuthManager`` and drives a direct Gemini Live session.
 struct VoiceView: View {
     @Environment(AuthManager.self) private var authManager
+    /// Absent in UI-test and unit-test hosting, where no call machinery is
+    /// installed and no call can be in progress.
+    @Environment(VoiceCallStarter.self) private var callStarter: VoiceCallStarter?
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
 
@@ -20,22 +47,41 @@ struct VoiceView: View {
     @State private var model: VoiceSessionViewModel?
     @State private var sessionRequestID = UUID()
 
+    private var isCallInProgress: Bool {
+        callStarter?.isCallActive ?? false
+    }
+
+    private var tabState: VoiceTabState {
+        .decide(isCallInProgress: isCallInProgress, hasSession: model != nil)
+    }
+
     var body: some View {
         Group {
-            if let model {
-                VoiceSessionContent(
-                    model: model,
-                    onStartNewSession: startNewSession,
-                    onClose: close
-                )
-            } else {
+            switch tabState {
+            case .deferringToCall:
+                callInProgressNotice
+            case .session:
+                if let model {
+                    VoiceSessionContent(
+                        model: model,
+                        onStartNewSession: startNewSession,
+                        onClose: close
+                    )
+                }
+            case .startingSession:
                 ProgressView()
             }
         }
         .navigationTitle("Voice")
         .navigationBarTitleDisplayMode(.inline)
-        .task(id: sessionRequestID) {
-            guard model == nil else { return }
+        .task {
+            prepareSiriCalling()
+        }
+        // The attempt is re-run when a call ends as well as when the user asks
+        // for a new session, so leaving the tab open across a call lands back on
+        // a live session rather than on the notice.
+        .task(id: SessionAttempt(requestID: sessionRequestID, isCallInProgress: isCallInProgress)) {
+            guard tabState == .startingSession else { return }
             let api = ChatAPIClient(authManager: authManager)
             let viewModel = VoiceSessionViewModel(
                 tokenProvider: api,
@@ -47,9 +93,39 @@ struct VoiceView: View {
             model = viewModel
             await viewModel.start()
         }
+        // A call started while the tab was already talking takes the audio
+        // session over, so the tab's own session yields to it.
+        .onChange(of: isCallInProgress) { _, isInProgress in
+            if isInProgress {
+                model?.end()
+                model = nil
+            }
+        }
         .onDisappear {
             model?.end()
         }
+    }
+
+    private var callInProgressNotice: some View {
+        ContentUnavailableView {
+            Label("Call in progress", systemImage: "phone.fill")
+        } description: {
+            Text("You are already talking to the assistant on a call. End the call to use the Voice tab.")
+        }
+        .accessibilityIdentifier("voice-call-in-progress")
+    }
+
+    /// Opening the Voice tab is the moment the user has shown an interest in
+    /// talking to the assistant, which makes it the right place to prompt for
+    /// Siri. The callable handle is donated at app scope instead, because that
+    /// prompts for nothing and a user who never opens this tab must still be
+    /// reachable by "Hey Siri, call Family Assistant".
+    private func prepareSiriCalling() {
+        #if DEBUG
+        guard !UITestConfiguration.isEnabled else { return }
+        #endif
+        guard authManager.isAuthenticated else { return }
+        AssistantCallDonation.requestSiriAuthorizationIfNeeded()
     }
 
     private func startNewSession() {
@@ -67,6 +143,13 @@ struct VoiceView: View {
         } else {
             dismiss()
         }
+    }
+
+    /// Identifies one attempt to run a session, so the tab tries again when the
+    /// call that was blocking it ends.
+    private struct SessionAttempt: Equatable {
+        let requestID: UUID
+        let isCallInProgress: Bool
     }
 
     private static func makeAudioIO() -> VoiceAudioIO {

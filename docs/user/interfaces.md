@@ -228,8 +228,28 @@ be signed in first.
 - **"Add a note to Family Assistant"** — create a note by title and content.
 - **"Open Family Assistant chat"** — open on the Chat tab, optionally starting a new conversation
   with a message.
+- **"Call Family Assistant"** — start a spoken conversation, handled as a call. See
+  **Hands-free and in the car** below.
 
 These also appear as building blocks in Shortcuts, so you can combine them with other automations.
+
+### Hands-free and in the car
+
+Say **"Hey Siri, call Family Assistant"** to start a voice conversation without
+touching your phone. It works with the app closed, as long as you have signed in at least once since
+the phone was last restarted.
+
+With the phone locked, the assistant answers only when the phone is connected to CarPlay — being
+plugged into the car is what stands in for unlocking it. Otherwise, unlock the phone first. The same
+rule applies to **"Ask Family Assistant…"**, which asks you to unlock rather than answering from a
+locked phone. An ordinary Bluetooth car connection is not enough.
+
+The conversation runs as a call, so it appears on the lock screen and on a CarPlay screen the way a
+phone call does. Mute and hang up with the usual call controls, or end it from the app. An incoming
+phone call takes over the audio and ends the assistant conversation.
+
+The same tools are available as in any voice conversation, so anything that would normally ask you
+to approve it first cannot run — start those from Chat instead.
 
 ## Messaging other people in your household
 
