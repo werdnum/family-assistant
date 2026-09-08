@@ -1,4 +1,4 @@
-import { useMessage } from '@assistant-ui/react';
+import { useAuiState } from '@assistant-ui/react';
 import { ImageOffIcon } from 'lucide-react';
 import React, { useMemo, useState } from 'react';
 import { ImageLightbox } from '@/components/ui/image-lightbox';
@@ -55,9 +55,12 @@ const ImageTile: React.FC<{ image: ResponseImage; onOpen: () => void }> = ({ ima
 export const AssistantResponseImages: React.FC = () => {
   // Serialize inside the selector so a fresh array on every store read doesn't
   // retrigger a render (same reason ToolGroup does this).
-  const serialized = useMessage<string>({
-    optional: true,
-    selector: (message) => JSON.stringify(collectResponseImages(message.content)),
+  const serialized = useAuiState((s) => {
+    const message = s.optional.message;
+    if (!message) {
+      return undefined;
+    }
+    return JSON.stringify(collectResponseImages(message.content));
   });
   const images = useMemo<ResponseImage[]>(
     () => (serialized ? (JSON.parse(serialized) as ResponseImage[]) : []),

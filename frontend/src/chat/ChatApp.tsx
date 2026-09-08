@@ -60,7 +60,10 @@ class ThreadErrorBoundary extends Component<{ children: ReactNode }, ThreadError
   }
 
   componentDidCatch(error: Error, _info: ErrorInfo): void {
-    if (!error.message?.includes('tapClientLookup')) {
+    if (
+      !error.message?.includes('tapClientLookup') &&
+      !error.message?.includes('useClientLookup')
+    ) {
       throw error;
     }
     // Schedule re-mount with a new key so children get a fresh fiber tree
