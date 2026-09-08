@@ -228,6 +228,16 @@ The extension declares and resolves only: it answers `.continueInApp`, and the a
 CallKit transaction. Do not move `CXCallController` or `CXProvider` into it — those calls fail
 `unentitled` from an extension. `AssistantCallHandle` in `CallShared/` is compiled into both targets
 so the resolution rule and the handle string have one definition.
+
+Every SiriKit intent listed in `IntentsSupported` needs at least one registered example phrase in
+every language the app ships, or App Store Connect answers the upload with `ITMS-90626: Invalid Siri
+Support`. The phrases live in `FamilyAssistant/en.lproj/AppIntentVocabulary.plist` — a resource of
+the **app** target, not the extension's, and inside a language `.lproj` directory — as an
+`IntentPhrases` array whose entries pair an `IntentName` with an `IntentExamples` array. Adding an
+intent to the extension, or a language to the app, means adding a matching entry or a localized copy
+of the file. Siri also shows these phrases in the Siri Guide, so they should be things that actually
+work: the assistant answers to one name, so only `Call Family Assistant` and its variants belong
+here.
 See [docs/design/ios-app-intents.md](../../docs/design/ios-app-intents.md) for the full design.
 
 ### Home Screen Quick Actions
