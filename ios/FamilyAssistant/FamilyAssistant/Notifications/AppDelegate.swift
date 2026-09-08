@@ -129,13 +129,15 @@ final class HomeScreenShortcutSceneDelegate: NSObject, UIWindowSceneDelegate {
 
     /// Routes each activity to the buffer that owns it: Universal Links to
     /// `OpenURLCenter`, Siri's start-call intent to `VoiceCallRequestCenter`.
-    /// Returns whether any activity was recognized.
+    /// Returns whether any activity was recognized, so a start-call intent
+    /// addressed to somebody else is reported back as unhandled rather than
+    /// answered with an assistant call.
     @discardableResult
     static func forwardUserActivities(_ activities: [NSUserActivity]) -> Bool {
         var webpageURLs: [URL] = []
         var startCallRequests = 0
         for activity in activities {
-            if VoiceCallRequestCenter.isStartCallActivity(activity) {
+            if VoiceCallRequestCenter.isAssistantStartCallActivity(activity) {
                 startCallRequests += 1
             } else if activity.activityType == NSUserActivityTypeBrowsingWeb,
                       let url = activity.webpageURL {

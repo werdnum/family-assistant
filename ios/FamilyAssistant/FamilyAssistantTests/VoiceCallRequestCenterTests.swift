@@ -1,6 +1,7 @@
 import CallKit
 @testable import FamilyAssistant
 import Foundation
+import Intents
 import UIKit
 import XCTest
 
@@ -93,6 +94,51 @@ final class VoiceCallRequestCenterTests: XCTestCase {
         XCTAssertTrue(HomeScreenShortcutSceneDelegate.forwardUserActivities([activity]))
 
         XCTAssertEqual(VoiceCallRequestCenter.shared.pendingRequests.count, 1)
+    }
+
+    /// "Call Bob using Family Assistant" resolves to this app with Bob as the
+    /// destination. Discarding Bob and calling the assistant instead answers a
+    /// question nobody asked.
+    func testAStartCallIntentNamingSomebodyElseIsRejected() {
+        let intent = makeStartCallIntent(contacts: [makePerson(handle: "+15550100", displayName: "Bob")])
+
+        XCTAssertFalse(VoiceCallRequestCenter.isAddressedToAssistant(intent))
+    }
+
+    /// The intent Siri matches is the one this app donated, so the donation and
+    /// the check have to agree about the handle.
+    func testTheDonatedIntentIsAccepted() {
+        XCTAssertTrue(
+            VoiceCallRequestCenter.isAddressedToAssistant(AssistantCallDonation.makeStartCallIntent())
+        )
+    }
+
+    /// Whitespace and casing come from what Siri heard, not from the donation.
+    func testTheAssistantHandleMatchesRegardlessOfCaseAndSpacing() {
+        let intent = makeStartCallIntent(
+            contacts: [makePerson(handle: "  family assistant  ", displayName: "  family assistant  ")]
+        )
+
+        XCTAssertTrue(VoiceCallRequestCenter.isAddressedToAssistant(intent))
+    }
+
+    /// A named assistant among other destinations is still us.
+    func testAStartCallIntentNamingTheAssistantAmongOthersIsAccepted() {
+        let intent = makeStartCallIntent(contacts: [
+            makePerson(handle: "+15550100", displayName: "Bob"),
+            makePerson(handle: AssistantCallDonation.handleValue, displayName: AssistantCallDonation.handleValue),
+        ])
+
+        XCTAssertTrue(VoiceCallRequestCenter.isAddressedToAssistant(intent))
+    }
+
+    /// Siri resolved the app as the destination and told us nothing more. The
+    /// primary path is not worth breaking over a payload shape that cannot be
+    /// verified from a simulator.
+    func testAStartCallIntentNamingNobodyIsAccepted() {
+        XCTAssertTrue(VoiceCallRequestCenter.isAddressedToAssistant(makeStartCallIntent(contacts: nil)))
+        XCTAssertTrue(VoiceCallRequestCenter.isAddressedToAssistant(makeStartCallIntent(contacts: [])))
+        XCTAssertTrue(VoiceCallRequestCenter.isAddressedToAssistant(nil))
     }
 
     func testAnUnrelatedActivityProducesNoRequest() {
@@ -294,6 +340,28 @@ final class VoiceCallRequestCenterTests: XCTestCase {
         XCTAssertEqual(
             VoiceTabState.decide(isCallInProgress: starter.isCallActive, hasSession: false),
             .startingSession
+        )
+    }
+
+    private func makePerson(handle: String, displayName: String) -> INPerson {
+        INPerson(
+            personHandle: INPersonHandle(value: handle, type: .unknown),
+            nameComponents: nil,
+            displayName: displayName,
+            image: nil,
+            contactIdentifier: nil,
+            customIdentifier: nil
+        )
+    }
+
+    private func makeStartCallIntent(contacts: [INPerson]?) -> INStartCallIntent {
+        INStartCallIntent(
+            callRecordFilter: nil,
+            callRecordToCallBack: nil,
+            audioRoute: .unknown,
+            destinationType: .normal,
+            contacts: contacts,
+            callCapability: .audioCall
         )
     }
 
