@@ -49,6 +49,7 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
 
     private var callUUID: UUID?
     private var activationSignal: VoiceAudioActivationSignal?
+    private var startupTask: Task<Void, Never>?
     private var didReportConnected = false
 
     init(
@@ -147,7 +148,7 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
         action.fulfill()
 
         observePhase(of: session, uuid: uuid)
-        Task { await session.start() }
+        startupTask = Task { await session.start() }
     }
 
     func performEndCall(uuid: UUID, action: any CallAction) {
@@ -225,9 +226,19 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
     /// Release the call and the session together. `reason` is non-nil only when
     /// the session ended on its own and the system call screen has to be told;
     /// when CallKit ended the call it already knows.
+    ///
+    /// The startup task is cancelled rather than left to finish: the session's
+    /// audio engine parks on CallKit's activation, and a call that ends before
+    /// that arrives would otherwise leave the task suspended forever, holding
+    /// the session, with the signal that could resume it already released.
+    /// Cancelling resumes the wait with a `CancellationError`, and because the
+    /// call UUID is cleared first, whatever phase the session then settles into
+    /// cannot re-enter teardown or report the call's end a second time.
     private func teardown(uuid: UUID, reporting reason: CXCallEndedReason?) {
         guard callUUID == uuid else { return }
         callUUID = nil
+        startupTask?.cancel()
+        startupTask = nil
         activationSignal = nil
         didReportConnected = false
         let session = self.session

@@ -64,8 +64,13 @@ private final class FakeCallAction: CallAction {
 private final class FakeVoiceCallSession: VoiceCallSession {
     var phase: VoiceSessionViewModel.Phase = .idle
     var isMuted = false
+    /// Park in `start()` on the activation signal, the way the real session's
+    /// audio engine does under CallKit.
+    var waitsForActivation = false
     private(set) var startCount = 0
     private(set) var endCount = 0
+    private(set) var startCancelled = false
+    private(set) var isStartRunning = false
     let activation: VoiceAudioActivationSignal
 
     init(activation: VoiceAudioActivationSignal) {
@@ -74,6 +79,14 @@ private final class FakeVoiceCallSession: VoiceCallSession {
 
     func start() async {
         startCount += 1
+        guard waitsForActivation else { return }
+        isStartRunning = true
+        do {
+            try await activation.waitForActivation()
+        } catch {
+            startCancelled = true
+        }
+        isStartRunning = false
     }
 
     func end() {
@@ -89,12 +102,14 @@ final class VoiceCallCoordinatorTests: XCTestCase {
     private var provider: FakeCallProvider!
     private var controller: FakeCallController!
     private var sessions: [FakeVoiceCallSession] = []
+    private var sessionsWaitForActivation = false
 
     override func setUp() async throws {
         try await super.setUp()
         provider = FakeCallProvider()
         controller = FakeCallController()
         sessions = []
+        sessionsWaitForActivation = false
     }
 
     private func makeCoordinator(
@@ -109,6 +124,7 @@ final class VoiceCallCoordinatorTests: XCTestCase {
             handsFreeAccess: handsFreeAccess,
             makeSession: { [weak self] signal in
                 let session = FakeVoiceCallSession(activation: signal)
+                session.waitsForActivation = self?.sessionsWaitForActivation ?? false
                 self?.sessions.append(session)
                 return session
             }
@@ -362,6 +378,24 @@ final class VoiceCallCoordinatorTests: XCTestCase {
         XCTAssertFalse(coordinator.isCallActive)
         XCTAssertNil(coordinator.session)
         try await Task.sleep(nanoseconds: 5_000_000)
+        XCTAssertTrue(provider.ended.isEmpty)
+    }
+
+    func testEndingACallParkedOnActivationCancelsTheStartup() async throws {
+        sessionsWaitForActivation = true
+        let coordinator = makeCoordinator()
+        let (uuid, session) = try await startCall(coordinator)
+        try await waitUntil { session.isStartRunning }
+
+        coordinator.performEndCall(uuid: uuid, action: FakeCallAction())
+
+        // Teardown clears the activation signal, so nothing else could ever
+        // resume the wait; cancelling the startup task is what releases it.
+        try await waitUntil { session.startCancelled }
+        XCTAssertFalse(session.isStartRunning)
+        XCTAssertEqual(session.endCount, 1)
+        XCTAssertNil(coordinator.session)
+        XCTAssertFalse(coordinator.isCallActive)
         XCTAssertTrue(provider.ended.isEmpty)
     }
 
