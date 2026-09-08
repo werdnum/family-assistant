@@ -86,9 +86,14 @@ private final class CoordinatorFactory {
     let controller = RecordingCallController()
 
     private let isDeviceUnlocked: Bool
+    private let telemetry: VoiceCallTelemetryRecording
 
-    init(isDeviceUnlocked: Bool = true) {
+    init(
+        isDeviceUnlocked: Bool = true,
+        telemetry: VoiceCallTelemetryRecording = RecordingVoiceCallTelemetry()
+    ) {
         self.isDeviceUnlocked = isDeviceUnlocked
+        self.telemetry = telemetry
     }
 
     func make() -> VoiceCallCoordinator {
@@ -101,6 +106,7 @@ private final class CoordinatorFactory {
                 isDeviceUnlocked: { isDeviceUnlocked },
                 isCarPlayConnected: { false }
             ),
+            telemetry: telemetry,
             makeSession: { _ in
                 VoiceCallSessionAudio(session: UnusedVoiceCallSession(), audio: UnusedVoiceAudioIO())
             }
@@ -562,12 +568,15 @@ final class VoiceCallRequestCenterTests: XCTestCase {
         XCTAssertEqual(requests.first?["pending_count"], "1")
     }
 
-    /// Without this a call that started fine and a call that was never asked
-    /// for leave the same trail: nothing.
-    func testASuccessfulStartRecordsThatTheCallBegan() async {
+    /// The starter records the attempt and nothing about how it turned out.
+    /// It cannot know: the coordinator returns once CallKit has accepted the
+    /// transaction, and configuring the call's audio — which can still fail the
+    /// start — happens afterwards, in the start action. The coordinator records
+    /// the outcome where it sees it.
+    func testTheStarterRecordsTheAttemptAndLeavesTheOutcomeToTheCoordinator() async {
         let telemetry = RecordingVoiceCallTelemetry()
         let center = VoiceCallRequestCenter(telemetry: telemetry)
-        let factory = CoordinatorFactory()
+        let factory = CoordinatorFactory(telemetry: telemetry)
         let starter = VoiceCallStarter(
             isAuthenticated: { true },
             makeCoordinator: factory.make,
@@ -580,16 +589,16 @@ final class VoiceCallRequestCenterTests: XCTestCase {
 
         XCTAssertEqual(factory.controller.startRequests.count, 1)
         XCTAssertEqual(telemetry.extraData(for: "Voice.call.starting").count, 1)
-        XCTAssertEqual(telemetry.extraData(for: "Voice.call.started").count, 1)
+        XCTAssertFalse(telemetry.components().contains("Voice.call.started"))
     }
 
     /// The coordinator refuses a hands-free start from a locked phone that is
-    /// not in a car and reports that itself, so the starter must not claim a
-    /// call began — a breadcrumb that says "started" for a refusal is worse
-    /// than none.
-    func testARefusedHandsFreeStartRecordsNoStartedCall() async {
+    /// not in a car, and says so where it decides it. Nothing claims a call
+    /// began — a breadcrumb that says "started" for a refusal is worse than
+    /// none.
+    func testARefusedHandsFreeStartRecordsTheRefusalAndNoStartedCall() async {
         let telemetry = RecordingVoiceCallTelemetry()
-        let factory = CoordinatorFactory(isDeviceUnlocked: false)
+        let factory = CoordinatorFactory(isDeviceUnlocked: false, telemetry: telemetry)
         let starter = VoiceCallStarter(
             isAuthenticated: { true },
             makeCoordinator: factory.make,
@@ -599,6 +608,7 @@ final class VoiceCallRequestCenterTests: XCTestCase {
         await starter.startCall()
 
         XCTAssertTrue(factory.controller.startRequests.isEmpty)
+        XCTAssertTrue(telemetry.components().contains("Voice.call.handsFreeAccess"))
         XCTAssertFalse(telemetry.components().contains("Voice.call.started"))
     }
 

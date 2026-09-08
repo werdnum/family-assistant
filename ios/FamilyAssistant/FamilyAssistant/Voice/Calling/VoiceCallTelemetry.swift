@@ -32,8 +32,16 @@ enum VoiceCallTelemetryComponent {
     static let request = "Voice.call.request"
     /// The starter was asked for a call.
     static let starting = "Voice.call.starting"
-    /// A call was placed.
+    /// A call was placed: CallKit's start action was fulfilled and the session
+    /// behind it was started. Recorded by the coordinator, because that is the
+    /// only place the outcome is known — the transaction the starter awaits is
+    /// accepted well before anything that can still fail the start has run.
     static let started = "Voice.call.started"
+    /// CallKit accepted the transaction and the start action was failed anyway.
+    static let startFailed = "Voice.call.startFailed"
+    /// A hands-free start was refused: the device was locked and not connected
+    /// to CarPlay.
+    static let handsFreeRefused = "Voice.call.handsFreeAccess"
     /// A request arrived while a call was already running.
     static let duplicate = "Voice.call.duplicate"
     /// A request arrived with nothing to authenticate the voice socket with.

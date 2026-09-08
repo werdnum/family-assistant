@@ -78,6 +78,12 @@ final class VoiceCallStarter {
     /// refusal that records and a success that does not are indistinguishable
     /// from a request that never arrived, which is the question this path is
     /// most often asked.
+    ///
+    /// The refusals this makes itself are recorded here, and nothing else is.
+    /// Whether a call actually began is not known here at all: the coordinator
+    /// returns once CallKit has accepted the transaction, and the audio
+    /// configuration that can still fail the start runs afterwards, in the
+    /// start action. The coordinator records that outcome where it sees it.
     func startCall() async {
         telemetry.record(
             "iOS was asked to start a call",
@@ -107,12 +113,6 @@ final class VoiceCallStarter {
         }
         do {
             try await coordinator.startCall()
-            // The coordinator refuses a hands-free start from a locked phone
-            // that is not in a car, and says so itself. Only a call it actually
-            // placed is a call that started.
-            if coordinator.isCallActive {
-                telemetry.record("iOS started a call", component: VoiceCallTelemetryComponent.started)
-            }
         } catch {
             ErrorReporter.shared.report(error, component: "Voice.call.start")
         }

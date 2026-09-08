@@ -107,8 +107,12 @@ refused by the destination rule, a request arriving under an unexpected type, a 
 a handler that never installed, and a request that was never made all look identical afterwards.
 Arrivals are recorded before anything about them is judged, since the unexpected activity is exactly
 the one a predicate would discard, and a call that starts records too — a path that only reports
-refusals cannot tell success from silence. The records carry decisions, types and counts, never a
-spoken word or a contact name.
+refusals cannot tell success from silence. Each record is made where its outcome is actually known
+rather than where it can be inferred: CallKit accepting the transaction is not yet a call, so it is
+the step that fulfils the start action which says one began, and every other way out of that step
+says so too. A record whose name asserts an outcome it only guessed at is worse than no record,
+because the trail exists precisely to tell a start from a failure to start. The records carry
+decisions, types and counts, never a spoken word or a contact name.
 
 Both forward to one place, and the call starts there, at the point of delivery: the scenario the
 whole feature exists for has no scene, so anything that waits for the view layer waits until the
