@@ -116,13 +116,16 @@ struct VoiceView: View {
     }
 
     /// Opening the Voice tab is the moment the user has shown an interest in
-    /// talking to the assistant, which makes it the right place to ask for Siri
-    /// and to donate the callable handle.
+    /// talking to the assistant, which makes it the right place to prompt for
+    /// Siri. The callable handle is donated at app scope instead, because that
+    /// prompts for nothing and a user who never opens this tab must still be
+    /// reachable by "Hey Siri, call Family Assistant".
     private func prepareSiriCalling() {
         #if DEBUG
         guard !UITestConfiguration.isEnabled else { return }
         #endif
-        AssistantCallDonation.prepare(isSignedIn: authManager.isAuthenticated)
+        guard authManager.isAuthenticated else { return }
+        AssistantCallDonation.requestSiriAuthorizationIfNeeded()
     }
 
     private func startNewSession() {

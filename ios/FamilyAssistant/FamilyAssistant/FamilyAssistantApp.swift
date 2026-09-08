@@ -8,6 +8,7 @@ struct FamilyAssistantApp: App {
     @State private var watchAuthentication: WatchAuthentication
     @State private var sharedAttachmentInbox = SharedAttachmentInbox()
     @State private var voiceCallStarter: VoiceCallStarter
+    @State private var callDonor = AssistantCallDonor()
 
     init() {
         #if DEBUG
@@ -75,9 +76,17 @@ struct FamilyAssistantApp: App {
                 watchAuthentication.activate()
                 appDelegate.notificationManager = notificationManager
                 notificationManager.bind(authManager: authManager)
+                donateAssistantCallHandle()
             }
             .onChange(of: authManager.watchPairingIdentity) {
                 watchAuthentication.publishPhoneState()
+            }
+            // Signing in is the only prerequisite for "Hey Siri, call Family
+            // Assistant", so the handle Siri resolves is donated here rather
+            // than from the Voice tab, on a launch that is already signed in
+            // and on a sign-in that happens later.
+            .onChange(of: authManager.isAuthenticated) {
+                donateAssistantCallHandle()
             }
             .task {
                 await ErrorReporter.shared.flushPersisted()
@@ -96,6 +105,13 @@ struct FamilyAssistantApp: App {
                     await dispatchOpenedURLs()
                 }
             }
+    }
+
+    private func donateAssistantCallHandle() {
+        #if DEBUG
+        guard !UITestConfiguration.isEnabled else { return }
+        #endif
+        callDonor.signedInStateChanged(to: authManager.isAuthenticated)
     }
 
     private func dispatchOpenedURLs() async {

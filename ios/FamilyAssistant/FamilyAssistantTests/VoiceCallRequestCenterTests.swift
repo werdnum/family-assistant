@@ -141,6 +141,36 @@ final class VoiceCallRequestCenterTests: XCTestCase {
         XCTAssertTrue(VoiceCallRequestCenter.isAddressedToAssistant(nil))
     }
 
+    /// Signing in is the only prerequisite the user is told about, so a user
+    /// who signs in and never opens the Voice tab must still be resolvable by
+    /// Siri.
+    func testSigningInDonatesTheCallableHandle() {
+        var donated: [INInteraction] = []
+        let donor = AssistantCallDonor { donated.append($0) }
+
+        donor.signedInStateChanged(to: false)
+        XCTAssertTrue(donated.isEmpty)
+
+        donor.signedInStateChanged(to: true)
+
+        XCTAssertEqual(donated.count, 1)
+        let intent = donated.first?.intent as? INStartCallIntent
+        XCTAssertTrue(VoiceCallRequestCenter.isAddressedToAssistant(intent))
+        XCTAssertEqual(donated.first?.direction, .outgoing)
+    }
+
+    func testTheHandleIsDonatedOnlyOncePerProcess() {
+        var donationCount = 0
+        let donor = AssistantCallDonor { _ in donationCount += 1 }
+
+        donor.signedInStateChanged(to: true)
+        donor.signedInStateChanged(to: true)
+        donor.signedInStateChanged(to: false)
+        donor.signedInStateChanged(to: true)
+
+        XCTAssertEqual(donationCount, 1)
+    }
+
     func testAnUnrelatedActivityProducesNoRequest() {
         let activity = NSUserActivity(activityType: "com.familyassistant.app.something-else")
 

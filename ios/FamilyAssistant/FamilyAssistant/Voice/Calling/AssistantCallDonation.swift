@@ -17,32 +17,31 @@ enum AssistantCallDonation {
 
     private static let logger = Logger(subsystem: "com.familyassistant.app", category: "voice-call")
 
-    /// Ask for Siri authorization and donate the callable handle. Called when
-    /// the user opens the Voice tab: a cold-launch prompt would be asking for
-    /// something the user has not yet shown any interest in.
+    /// Ask for Siri authorization. Called when the user opens the Voice tab: it
+    /// is the only part of this that prompts, and a cold-launch prompt would be
+    /// asking for something the user has not yet shown any interest in.
     @MainActor
-    static func prepare(isSignedIn: Bool) {
-        guard isSignedIn else { return }
-        requestSiriAuthorizationIfNeeded()
-        donateStartCall()
-    }
-
-    @MainActor
-    private static func requestSiriAuthorizationIfNeeded() {
+    static func requestSiriAuthorizationIfNeeded() {
         guard INPreferences.siriAuthorizationStatus() == .notDetermined else { return }
         INPreferences.requestSiriAuthorization { status in
             logger.info("Siri authorization status: \(status.rawValue, privacy: .public)")
         }
     }
 
-    private static func donateStartCall() {
-        let interaction = INInteraction(intent: makeStartCallIntent(), response: nil)
-        interaction.direction = .outgoing
+    static func donate(_ interaction: INInteraction) {
         interaction.donate { error in
             if let error {
-                logger.error("Failed to donate the assistant call handle: \(error.localizedDescription, privacy: .public)")
+                logger.error(
+                    "Failed to donate the assistant call handle: \(error.localizedDescription, privacy: .public)"
+                )
             }
         }
+    }
+
+    static func makeInteraction() -> INInteraction {
+        let interaction = INInteraction(intent: makeStartCallIntent(), response: nil)
+        interaction.direction = .outgoing
+        return interaction
     }
 
     static func makeStartCallIntent() -> INStartCallIntent {
@@ -62,5 +61,33 @@ enum AssistantCallDonation {
             contacts: [person],
             callCapability: .audioCall
         )
+    }
+}
+
+/// Donates the callable handle as soon as the app is signed in.
+///
+/// Signing in is the only prerequisite the user is told about, so the donation
+/// cannot wait for the Voice tab to be opened: a user who never opens it would
+/// otherwise have nothing for Siri to resolve. It is therefore driven from app
+/// scope, which covers a launch that is already signed in and a sign-in that
+/// happens later in the same session. Donating prompts for nothing and needs no
+/// authorization, which is what makes doing it unasked correct; requesting Siri
+/// authorization, which does prompt, stays with the Voice tab.
+@MainActor
+final class AssistantCallDonor {
+    private let donate: (INInteraction) -> Void
+    private var hasDonated = false
+
+    init(donate: @escaping (INInteraction) -> Void = AssistantCallDonation.donate) {
+        self.donate = donate
+    }
+
+    /// The handle is a constant, so one donation per process says everything
+    /// there is to say. Every place that learns the signed-in state calls this,
+    /// and the first signed-in answer is the one that donates.
+    func signedInStateChanged(to isSignedIn: Bool) {
+        guard isSignedIn, !hasDonated else { return }
+        hasDonated = true
+        donate(AssistantCallDonation.makeInteraction())
     }
 }
