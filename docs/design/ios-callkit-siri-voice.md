@@ -130,9 +130,13 @@ have just decided not to talk to.
 
 ## Deliberate simplifications
 
-- **One call at a time.** The provider advertises a single call group of one. Two simultaneous
-  assistant conversations have no meaning, and refusing them is cheaper than reasoning about
-  the audio consequences.
+- **One conversation at a time.** The provider advertises a single call group of one, and the
+  in-app Voice tab stands aside while a call is running rather than starting a session of its
+  own. Two simultaneous assistant conversations have no meaning, and refusing them is cheaper
+  than reasoning about the audio consequences — there is one process-wide `AVAudioSession`, and
+  a second session would both compete for the microphone and deactivate it out from under the
+  call when it closed. Standing aside is visible, not silent: the tab says the call is where the
+  conversation is, and starts a session of its own once the call ends.
 - **The handle is a constant, not a contact.** The assistant is donated as one generic handle
   rather than written into the user's contacts. It keeps Siri resolution working without the
   app taking a write dependency on the address book.

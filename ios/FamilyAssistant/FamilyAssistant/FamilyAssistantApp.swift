@@ -7,6 +7,7 @@ struct FamilyAssistantApp: App {
     @State private var notificationManager: NotificationManager
     @State private var watchAuthentication: WatchAuthentication
     @State private var sharedAttachmentInbox = SharedAttachmentInbox()
+    @State private var voiceCallStarter: VoiceCallStarter
 
     init() {
         #if DEBUG
@@ -32,13 +33,17 @@ struct FamilyAssistantApp: App {
         // Siri's start-call intent is delivered before any scene connects, and
         // on a background launch from a locked phone no scene connects at all,
         // so the thing that turns a request into a call is installed here
-        // rather than driven from the view layer.
+        // rather than driven from the view layer. It reaches the view layer
+        // through the environment, because the Voice tab has to know whether a
+        // call already owns the audio session.
+        let voiceCallStarter = VoiceCallStarter(authManager: authManager)
+        _voiceCallStarter = State(initialValue: voiceCallStarter)
         #if DEBUG
         if !UITestConfiguration.isEnabled, !UITestConfiguration.isHostingUnitTests {
-            VoiceCallStarter(authManager: authManager).install(into: .shared)
+            voiceCallStarter.install(into: .shared)
         }
         #else
-        VoiceCallStarter(authManager: authManager).install(into: .shared)
+        voiceCallStarter.install(into: .shared)
         #endif
     }
 
@@ -65,6 +70,7 @@ struct FamilyAssistantApp: App {
             .environment(authManager)
             .environment(notificationManager)
             .environment(sharedAttachmentInbox)
+            .environment(voiceCallStarter)
             .onAppear {
                 watchAuthentication.activate()
                 appDelegate.notificationManager = notificationManager

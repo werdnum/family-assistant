@@ -45,16 +45,23 @@ private final class UnusedVoiceAudioIO: VoiceAudioIO {
     func setMuted(_: Bool) {}
 }
 
+@MainActor
+private final class SilentCallAction: CallAction {
+    func fulfill() {}
+    func fail() {}
+}
+
 /// Counts how many coordinators the starter builds, so a test can tell a call
 /// that was refused before any CallKit machinery existed from one that was not.
 @MainActor
 private final class CoordinatorFactory {
     private(set) var buildCount = 0
+    private(set) var lastCoordinator: VoiceCallCoordinator?
     let controller = RecordingCallController()
 
     func make() -> VoiceCallCoordinator {
         buildCount += 1
-        return VoiceCallCoordinator(
+        let coordinator = VoiceCallCoordinator(
             provider: SilentCallProvider(),
             controller: controller,
             handsFreeAccess: VoiceHandsFreeAccess(isDeviceUnlocked: { true }, isCarPlayConnected: { false }),
@@ -62,6 +69,8 @@ private final class CoordinatorFactory {
                 VoiceCallSessionAudio(session: UnusedVoiceCallSession(), audio: UnusedVoiceAudioIO())
             }
         )
+        lastCoordinator = coordinator
+        return coordinator
     }
 }
 
@@ -221,6 +230,70 @@ final class VoiceCallRequestCenterTests: XCTestCase {
         await settleMainActor()
 
         XCTAssertTrue(center.pendingRequests.isEmpty)
+    }
+
+    func testTheVoiceTabStateFollowsTheCallAndTheTabsOwnSession() {
+        XCTAssertEqual(
+            VoiceTabState.decide(isCallInProgress: false, hasSession: false),
+            .startingSession
+        )
+        XCTAssertEqual(
+            VoiceTabState.decide(isCallInProgress: false, hasSession: true),
+            .session
+        )
+        // A call owns the audio session either way: with a tab session of its
+        // own already running, the tab still has to stand aside.
+        XCTAssertEqual(
+            VoiceTabState.decide(isCallInProgress: true, hasSession: false),
+            .deferringToCall
+        )
+        XCTAssertEqual(
+            VoiceTabState.decide(isCallInProgress: true, hasSession: true),
+            .deferringToCall
+        )
+    }
+
+    /// The Voice tab reads the running call from the starter, so opening the tab
+    /// during a Siri-started call cannot build a second session driving the same
+    /// `AVAudioSession`.
+    func testTheVoiceTabDoesNotStartASessionDuringACall() async {
+        let center = VoiceCallRequestCenter()
+        let factory = CoordinatorFactory()
+        let starter = VoiceCallStarter(isAuthenticated: { true }, makeCoordinator: factory.make)
+        starter.install(into: center)
+
+        XCTAssertEqual(
+            VoiceTabState.decide(isCallInProgress: starter.isCallActive, hasSession: false),
+            .startingSession
+        )
+
+        center.receiveStartCallRequest()
+        await settleMainActor()
+
+        XCTAssertTrue(starter.isCallActive)
+        XCTAssertEqual(
+            VoiceTabState.decide(isCallInProgress: starter.isCallActive, hasSession: false),
+            .deferringToCall
+        )
+    }
+
+    func testTheVoiceTabStartsItsOwnSessionAgainOnceTheCallEnds() async throws {
+        let center = VoiceCallRequestCenter()
+        let factory = CoordinatorFactory()
+        let starter = VoiceCallStarter(isAuthenticated: { true }, makeCoordinator: factory.make)
+        starter.install(into: center)
+
+        center.receiveStartCallRequest()
+        await settleMainActor()
+        let coordinator = try XCTUnwrap(factory.lastCoordinator)
+        let uuid = try XCTUnwrap(factory.controller.startRequests.last)
+        coordinator.performEndCall(uuid: uuid, action: SilentCallAction())
+
+        XCTAssertFalse(starter.isCallActive)
+        XCTAssertEqual(
+            VoiceTabState.decide(isCallInProgress: starter.isCallActive, hasSession: false),
+            .startingSession
+        )
     }
 
     /// The starter hands its work to a `Task`, so let the main actor run it.

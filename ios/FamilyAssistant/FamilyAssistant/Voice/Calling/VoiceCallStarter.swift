@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 /// Turns a delivered start-call request into a call, from process scope.
 ///
@@ -12,10 +13,19 @@ import Foundation
 /// The coordinator is built on first use rather than at launch, so a process
 /// that is never asked for a call never creates a `CXProvider`.
 @MainActor
+@Observable
 final class VoiceCallStarter {
     private let isAuthenticated: @MainActor () -> Bool
     private let makeCoordinator: @MainActor () -> VoiceCallCoordinator
     private var coordinator: VoiceCallCoordinator?
+
+    /// Whether a call is running right now. The single answer to that question:
+    /// the coordinator owns the call, and this is the only way anything outside
+    /// the call path — the Voice tab, which must not start a session competing
+    /// for the same audio session — can ask.
+    var isCallActive: Bool {
+        coordinator?.isCallActive ?? false
+    }
 
     init(
         isAuthenticated: @escaping @MainActor () -> Bool,
