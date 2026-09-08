@@ -47,7 +47,7 @@ enum VoiceCallError: LocalizedError {
 @Observable
 final class VoiceCallCoordinator: VoiceCallEventHandling {
     /// How the assistant is addressed on the system call screen and by Siri.
-    static let assistantHandleValue = "Assistant"
+    static let assistantHandleValue = "Family Assistant"
 
     private(set) var session: (any VoiceCallSession)?
 

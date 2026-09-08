@@ -1,6 +1,6 @@
 # Starting a voice session from Siri, as a call
 
-**What's here:** how "Hey Siri, call Assistant using Family Assistant" reaches the existing
+**What's here:** how "Hey Siri, call Family Assistant" reaches the existing
 Gemini Live voice session, and why the session is presented to the system as a call.
 
 ## Why a call
@@ -40,7 +40,7 @@ call reports connected when the Live session completes setup, and ending either 
 other. It is the only place that knows CallKit exists.
 
 **Added: a way in from Siri.** The app advertises that it handles the start-call intent and
-donates a callable handle for the assistant, so Siri can resolve "Assistant" as a destination.
+donates a callable handle under the app's own name, so Siri can resolve it as a destination.
 The intent arrives as a user activity, which the app turns into a call request.
 
 **Inverted: who owns the audio session.** Today `VoiceAudioEngine` configures *and activates*

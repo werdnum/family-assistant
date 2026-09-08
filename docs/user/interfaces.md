@@ -228,14 +228,14 @@ be signed in first.
 - **"Add a note to Family Assistant"** — create a note by title and content.
 - **"Open Family Assistant chat"** — open on the Chat tab, optionally starting a new conversation
   with a message.
-- **"Call Assistant using Family Assistant"** — start a spoken conversation, handled as a call. See
+- **"Call Family Assistant"** — start a spoken conversation, handled as a call. See
   **Hands-free and in the car** below.
 
 These also appear as building blocks in Shortcuts, so you can combine them with other automations.
 
 ### Hands-free and in the car
 
-Say **"Hey Siri, call Assistant using Family Assistant"** to start a voice conversation without
+Say **"Hey Siri, call Family Assistant"** to start a voice conversation without
 touching your phone. It works with the app closed, as long as you have signed in at least once since
 the phone was last restarted.
 

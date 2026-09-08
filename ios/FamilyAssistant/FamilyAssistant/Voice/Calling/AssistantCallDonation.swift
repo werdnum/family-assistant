@@ -1,10 +1,12 @@
 import Intents
 import os
 
-/// Teaches Siri that "Assistant" is a thing this app can call.
+/// Teaches Siri that "Family Assistant" is a thing this app can call.
 ///
 /// Siri resolves a spoken destination against donated interactions, so without
-/// a donation "call Assistant using Family Assistant" has nothing to match.
+/// a donation "call Family Assistant" has nothing to match. The name is the
+/// app's own rather than a bare "Assistant", which collides with a common noun
+/// and with every other assistant on the phone.
 /// The assistant is donated as one constant generic handle rather than written
 /// into the user's contacts, which keeps resolution working without taking a
 /// write dependency on the address book.
