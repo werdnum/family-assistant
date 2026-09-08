@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from family_assistant.processing import ProcessingService
 from family_assistant.processing.turn_context import (
@@ -57,6 +57,15 @@ class EphemeralTokenResponse(BaseModel):
     system_instruction: str
     model: str
     config: GeminiLiveConfig
+    profile_id: str = Field(
+        description=(
+            "The profile the session actually runs under, after resolving the "
+            "request's profile_id (which is absent, or names an unknown profile, "
+            "when the default is used). The client sends this back when it "
+            "persists the transcript, so the saved conversation is tagged with "
+            "the profile whose tools and prompt produced it."
+        )
+    )
 
 
 class EphemeralTokenRequest(BaseModel):
@@ -253,6 +262,7 @@ def _create_token_response(
     gemini_tools: list[GeminiToolDeclaration],
     system_instruction: str,
     gemini_live_config: GeminiLiveConfig,
+    profile_id: str,
 ) -> EphemeralTokenResponse:
     from google import (  # noqa: PLC0415 - Import here to handle missing dependency gracefully
         genai,
@@ -278,6 +288,7 @@ def _create_token_response(
         system_instruction=system_instruction,
         model=gemini_live_config.model,
         config=gemini_live_config,
+        profile_id=profile_id,
     )
 
 
@@ -364,6 +375,7 @@ async def create_ephemeral_token(
             gemini_tools=gemini_tools,
             system_instruction=system_instruction,
             gemini_live_config=gemini_live_config,
+            profile_id=target_service.service_config.id,
         )
     except ImportError as e:
         logger.error(f"google-genai SDK not available: {e}")

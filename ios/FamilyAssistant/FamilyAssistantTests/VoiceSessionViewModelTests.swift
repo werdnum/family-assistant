@@ -119,8 +119,13 @@ private final class FakeTokenProvider: VoiceTokenProviding {
     var error: Error?
     var beforeFetch: (() async -> Void)?
     var maxSessionMinutes = 15
+    /// What the backend reports the session resolved onto. Nil models a server
+    /// that predates the field.
+    var resolvedProfileID: String?
+    private(set) var requestedProfileIDs: [String?] = []
 
-    func fetchEphemeralToken(profileID _: String?) async throws -> EphemeralToken {
+    func fetchEphemeralToken(profileID: String?) async throws -> EphemeralToken {
+        requestedProfileIDs.append(profileID)
         await beforeFetch?()
         if let error { throw error }
         return EphemeralToken(
@@ -134,7 +139,8 @@ private final class FakeTokenProvider: VoiceTokenProviding {
                 maxSessionMinutes: maxSessionMinutes,
                 inputTranscriptionEnabled: true,
                 outputTranscriptionEnabled: true
-            )
+            ),
+            profileID: resolvedProfileID
         )
     }
 }
@@ -142,13 +148,14 @@ private final class FakeTokenProvider: VoiceTokenProviding {
 @MainActor
 private final class FakeToolExecutor: VoiceToolExecuting {
     var handler: (String, JSONValue) async throws -> JSONValue = { _, _ in .null }
+    private(set) var profileIDs: [String?] = []
     func executeTool(
         name: String,
         arguments: JSONValue,
         profileID: String?,
         taintMetadata: JSONValue
     ) async throws -> JSONValue {
-        _ = profileID
+        profileIDs.append(profileID)
         _ = taintMetadata
         return try await handler(name, arguments)
     }
@@ -158,9 +165,15 @@ private final class FakeToolExecutor: VoiceToolExecuting {
 private final class FakeTranscriptStore: VoiceTranscriptStoring {
     var error: Error?
     private(set) var saved: [[VoiceTranscriptEntry]] = []
-    func saveVoiceSession(turns: [VoiceTranscriptEntry], conversationID _: String?) async throws -> String {
+    private(set) var savedProfileIDs: [String?] = []
+    func saveVoiceSession(
+        turns: [VoiceTranscriptEntry],
+        conversationID _: String?,
+        profileID: String?
+    ) async throws -> String {
         if let error { throw error }
         saved.append(turns)
+        savedProfileIDs.append(profileID)
         return "web_conv_test"
     }
 }
@@ -196,6 +209,7 @@ final class VoiceSessionViewModelTests: XCTestCase {
         permissionGranted: Bool = true,
         timeout: Duration? = nil,
         connectionTimeout: Duration = .seconds(30),
+        profileID: String? = nil,
         diagnostics: VoiceConnectionDiagnostics = VoiceConnectionDiagnostics(sink: { _, _, _ in })
     ) -> VoiceSessionViewModel {
         VoiceSessionViewModel(
@@ -204,7 +218,7 @@ final class VoiceSessionViewModelTests: XCTestCase {
             transcriptStore: store,
             audio: audio,
             permission: FakePermission(granted: permissionGranted),
-            profileID: nil,
+            profileID: profileID,
             sessionFactory: { [session] in session! },
             sessionTimeoutOverride: timeout,
             connectionTimeout: connectionTimeout,
@@ -544,6 +558,52 @@ final class VoiceSessionViewModelTests: XCTestCase {
         try await waitUntil { self.store.saved.isEmpty == false }
         XCTAssertEqual(store.saved.count, 1)
         XCTAssertEqual(store.saved.first?.map(\.text), ["hi", "hello"])
+    }
+
+    /// The saved transcript is filed under the profile the backend resolved, not
+    /// the one that was asked for. History is read back filtered by profile, so a
+    /// transcript saved under the wrong one is a conversation the assistant cannot
+    /// load when the user continues it in text.
+    func testTranscriptIsPersistedUnderTheResolvedProfile() async throws {
+        tokenProvider.resolvedProfileID = "default_assistant"
+        let model = makeModel(profileID: "retired_profile")
+        await model.start()
+        XCTAssertEqual(tokenProvider.requestedProfileIDs, ["retired_profile"])
+        session.emit(.inputTranscription("hi"))
+        try await waitUntil { model.transcript.entries.isEmpty == false }
+
+        model.end()
+        try await waitUntil { self.store.saved.isEmpty == false }
+        XCTAssertEqual(store.savedProfileIDs, ["default_assistant"])
+    }
+
+    /// A server that predates `profile_id` reports none. It resolves the requested
+    /// profile the same way we asked for it, so that is what the save reports —
+    /// and a nil throughout leaves the backend to record its own default.
+    func testTranscriptFallsBackToRequestedProfileWhenServerReportsNone() async throws {
+        tokenProvider.resolvedProfileID = nil
+        let model = makeModel(profileID: "engineer")
+        await model.start()
+        session.emit(.inputTranscription("hi"))
+        try await waitUntil { model.transcript.entries.isEmpty == false }
+
+        model.end()
+        try await waitUntil { self.store.saved.isEmpty == false }
+        XCTAssertEqual(store.savedProfileIDs, ["engineer"])
+    }
+
+    /// Tool calls run against the resolved profile too, so a session's tools and
+    /// its persisted history agree with the prompt the token carried.
+    func testToolCallsUseTheResolvedProfile() async throws {
+        tokenProvider.resolvedProfileID = "default_assistant"
+        let model = makeModel(profileID: "retired_profile")
+        await model.start()
+        session.emit(.setupComplete)
+        try await waitUntil { model.phase == .active }
+
+        session.emit(.toolCall([GeminiFunctionCall(id: "1", name: "get_notes", args: .object([:]))]))
+        try await waitUntil { self.toolExecutor.profileIDs.isEmpty == false }
+        XCTAssertEqual(toolExecutor.profileIDs, ["default_assistant"])
     }
 
     func testEmptyTranscriptIsNotPersisted() async {

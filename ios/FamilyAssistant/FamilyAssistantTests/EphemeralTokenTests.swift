@@ -41,7 +41,8 @@ final class EphemeralTokenTests: XCTestCase {
         "voice": {"name": "Charon"},
         "session": {"max_duration_minutes": 10},
         "transcription": {"input_enabled": true, "output_enabled": false}
-      }
+      },
+      "profile_id": "default_assistant"
     }
     """
 
@@ -59,6 +60,7 @@ final class EphemeralTokenTests: XCTestCase {
         XCTAssertTrue(token.config.inputTranscriptionEnabled)
         XCTAssertFalse(token.config.outputTranscriptionEnabled)
         XCTAssertNotNil(token.expiresAt)
+        XCTAssertEqual(token.profileID, "default_assistant")
     }
 
     func testDecodeUsesConfigDefaultsWhenSectionsMissing() throws {
@@ -137,12 +139,17 @@ final class EphemeralTokenTests: XCTestCase {
             VoiceTranscriptEntry(speaker: .user, text: "hi"),
             VoiceTranscriptEntry(speaker: .assistant, text: "hello"),
         ]
-        let conversationID = try await makeClient().saveVoiceSession(turns: entries, conversationID: nil)
+        let conversationID = try await makeClient().saveVoiceSession(
+            turns: entries,
+            conversationID: nil,
+            profileID: "complex_tasks"
+        )
 
         XCTAssertEqual(conversationID, "web_conv_42")
         let turns = try XCTUnwrap(capturedBody["turns"] as? [[String: Any]])
         XCTAssertEqual(turns.map { $0["role"] as? String }, ["user", "assistant"])
         XCTAssertEqual(turns.map { $0["text"] as? String }, ["hi", "hello"])
+        XCTAssertEqual(capturedBody["profile_id"] as? String, "complex_tasks")
     }
 
     private func makeClient() -> ChatAPIClient {

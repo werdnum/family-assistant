@@ -30,7 +30,11 @@ final class VoiceToolRunner {
     ])
 
     private let executor: VoiceToolExecuting
-    private let profileID: String?
+    /// The profile tool calls execute against. Set from the requested profile and
+    /// replaced with the one the ephemeral token resolved, so tools run under the
+    /// same profile whose prompt the session was given. Only ever written before
+    /// the session is connected, and so before any tool call can arrive.
+    var profileID: String?
     private var taintMetadata = VoiceToolRunner.initialTaintMetadata
 
     init(executor: VoiceToolExecuting, profileID: String? = nil) {

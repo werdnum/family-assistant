@@ -165,7 +165,10 @@ beside the composer. The Photos share sheet does not list Family Assistant — c
 paste it, use the composer's photo button, or share from Files. Long-pressing the app icon offers
 **New Chat** and **Voice** quick actions.
 
-**Voice** asks for microphone permission and shows a level meter while capturing audio.
+**Voice** asks for microphone permission and shows a level meter while capturing audio. A call runs
+under the profile currently picked in Chat, and when it ends the transcript is saved as its own
+conversation in that profile — so opening it in Chat picks the conversation up where the call left
+off. Calls placed by Siri work the same way.
 
 If voice cannot connect on your iPhone or Apple Watch, tell the assistant approximately when you
 tried and which device you used. The app sends connection-stage diagnostics automatically so the
@@ -228,16 +231,16 @@ be signed in first.
 - **"Add a note to Family Assistant"** — create a note by title and content.
 - **"Open Family Assistant chat"** — open on the Chat tab, optionally starting a new conversation
   with a message.
-- **"Call Family Assistant"** — start a spoken conversation, handled as a call. See
-  **Hands-free and in the car** below.
+- **"Call Family Assistant"** — start a spoken conversation, handled as a call. See **Hands-free and
+  in the car** below.
 
 These also appear as building blocks in Shortcuts, so you can combine them with other automations.
 
 ### Hands-free and in the car
 
-Say **"Hey Siri, call Family Assistant"** to start a voice conversation without
-touching your phone. It works with the app closed, as long as you have signed in at least once since
-the phone was last restarted.
+Say **"Hey Siri, call Family Assistant"** to start a voice conversation without touching your phone.
+It works with the app closed, as long as you have signed in at least once since the phone was last
+restarted.
 
 With the phone locked, the assistant answers only when the phone is connected to CarPlay — being
 plugged into the car is what stands in for unlocking it. Otherwise, unlock the phone first. The same

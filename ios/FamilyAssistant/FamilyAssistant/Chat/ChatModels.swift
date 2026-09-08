@@ -1,5 +1,24 @@
 import Foundation
 
+/// The processing profile the user last chose, which every entry point that is
+/// not pinned to a conversation starts from — the chat composer and the voice
+/// tab alike. Owning the stored key in one place is what keeps the two from
+/// drifting onto different profiles.
+enum PreferredProfile {
+    /// The profile id a fresh session runs under. `default_assistant` until the
+    /// user picks something else, matching the backend's own default.
+    static var id: String {
+        UserDefaults.standard.string(forKey: storageKey) ?? fallbackID
+    }
+
+    static func store(_ profileID: String) {
+        UserDefaults.standard.set(profileID, forKey: storageKey)
+    }
+
+    static let fallbackID = "default_assistant"
+    private static let storageKey = "selectedProfileId"
+}
+
 enum ChatConstants {
     static let interfaceType = "web"
     static let conversationPrefix = "web_conv_"

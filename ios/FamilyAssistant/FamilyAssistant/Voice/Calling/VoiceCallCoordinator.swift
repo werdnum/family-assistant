@@ -98,9 +98,14 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
     /// Build a coordinator against the real CallKit provider and controller,
     /// running the same session machinery as the in-app Voice tab on an
     /// externally-managed audio engine.
+    ///
+    /// `profileID` is read when a call is actually placed rather than captured
+    /// here, because the coordinator is built once and outlives any number of
+    /// calls: a profile the user chooses later must reach the next call without
+    /// waiting for a relaunch.
     static func system(
         authManager: AuthManager,
-        profileID: String? = nil
+        profileID: @escaping @MainActor () -> String? = { nil }
     ) -> VoiceCallCoordinator {
         let systemProvider = SystemCallProvider()
         let coordinator = VoiceCallCoordinator(
@@ -115,7 +120,7 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
                         toolExecutor: api,
                         transcriptStore: api,
                         audio: audio,
-                        profileID: profileID
+                        profileID: profileID()
                     ),
                     audio: audio
                 )

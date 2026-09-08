@@ -17,6 +17,34 @@ struct EphemeralToken: Equatable {
     /// in the setup message.
     let tools: [JSONValue]
     let config: VoiceLiveConfig
+    /// The profile the backend resolved this session onto: the requested profile
+    /// when it names a real one, the default profile otherwise — so the token
+    /// reports the profile whose prompt and tools it actually carries, not the one
+    /// that was asked for. Sent back when the transcript is persisted so the saved
+    /// conversation is filed under the profile that produced it.
+    ///
+    /// Nil against a server that predates the field. The caller then falls back to
+    /// the profile it requested, which is what such a server resolves too, and a
+    /// nil all the way down means the default profile at both ends.
+    let profileID: String?
+
+    init(
+        token: String,
+        expiresAt: Date?,
+        model: String,
+        systemInstruction: String,
+        tools: [JSONValue],
+        config: VoiceLiveConfig,
+        profileID: String? = nil
+    ) {
+        self.token = token
+        self.expiresAt = expiresAt
+        self.model = model
+        self.systemInstruction = systemInstruction
+        self.tools = tools
+        self.config = config
+        self.profileID = profileID
+    }
 }
 
 extension EphemeralToken: Decodable {
@@ -27,6 +55,7 @@ extension EphemeralToken: Decodable {
         case systemInstruction = "system_instruction"
         case tools
         case config
+        case profileID = "profile_id"
     }
 
     init(from decoder: Decoder) throws {
@@ -36,6 +65,7 @@ extension EphemeralToken: Decodable {
         systemInstruction = try container.decode(String.self, forKey: .systemInstruction)
         tools = try container.decodeIfPresent([JSONValue].self, forKey: .tools) ?? []
         config = try container.decode(VoiceLiveConfig.self, forKey: .config)
+        profileID = try container.decodeIfPresent(String.self, forKey: .profileID)
         let expiresRaw = try container.decodeIfPresent(String.self, forKey: .expiresAt)
         expiresAt = expiresRaw.flatMap(VoiceLiveDateParser.date(from:))
     }

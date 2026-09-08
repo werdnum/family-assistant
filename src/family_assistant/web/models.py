@@ -296,6 +296,14 @@ class VoiceSessionRequest(BaseModel):
         description="Client-supplied conversation id. Generated when omitted.",
     )
     turns: list[VoiceSessionTurn]
+    profile_id: str | None = Field(
+        default=None,
+        description=(
+            "The profile the voice session ran under, as returned by "
+            "/api/gemini/ephemeral-token. Omit to record the session against the "
+            "default profile, which is what an omitted profile resolves to there."
+        ),
+    )
 
 
 class VoiceSessionResponse(BaseModel):

@@ -3073,12 +3073,43 @@ async def debug_test_stream() -> StreamingResponse:
     )
 
 
+def _resolve_voice_session_profile_id(
+    request: Request,
+    requested_profile_id: str | None,
+    default_processing_service: ProcessingService,
+) -> str:
+    """Return the profile a finished voice session is recorded against.
+
+    The client echoes back the ``profile_id`` the ephemeral-token endpoint
+    resolved for the session, so an omitted value means the same thing it means
+    there: the default profile. An id no profile answers to is rejected rather
+    than stored, because a stamp that matches no profile reads back as history
+    nothing can load.
+    """
+    if requested_profile_id is None:
+        return default_processing_service.service_config.id
+
+    registry = getattr(request.app.state, "processing_services", {})
+    candidate = registry.get(requested_profile_id)
+    if candidate is None or candidate.kind == "remote":
+        # A remote profile is refused live audio in the first place, so a session
+        # cannot have run under one.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Profile '{requested_profile_id}' cannot hold a voice session.",
+        )
+    return requested_profile_id
+
+
 @chat_api_router.post("/v1/chat/voice-sessions")
 async def api_chat_save_voice_session(
     payload: VoiceSessionRequest,
     request: Request,
     current_user: Annotated[dict, Depends(get_current_user)],
     db_context: Annotated[Database, Depends(get_db)],
+    default_processing_service: Annotated[
+        ProcessingService, Depends(get_processing_service)
+    ],
 ) -> VoiceSessionResponse:
     """Persist a completed native-voice conversation as its own chat conversation.
 
@@ -3088,6 +3119,12 @@ async def api_chat_save_voice_session(
     conversation id (with the caller's ``user_id`` so the ownership predicate that
     gates the conversation list and reads recognizes them), so the session shows up
     in the conversation list and can be continued in text.
+
+    Every row is stamped with the profile the session ran under. History is read
+    back filtered by ``processing_profile_id``, so an unstamped transcript is not
+    merely mislabeled: a text follow-up loads none of it, and the client — having
+    no profile to adopt from the thread — falls back to whichever profile the user
+    last picked elsewhere.
     """
     raw_user_id = current_user.get("user_identifier")
     if not isinstance(raw_user_id, str) or not raw_user_id:
@@ -3098,6 +3135,10 @@ async def api_chat_save_voice_session(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="A voice session must contain at least one turn.",
         )
+
+    profile_id = _resolve_voice_session_profile_id(
+        request, payload.profile_id, default_processing_service
+    )
 
     if payload.conversation_id:
         # A client-supplied id must already belong to the caller (or be unused).
@@ -3155,6 +3196,7 @@ async def api_chat_save_voice_session(
             timestamp=timestamp,
             turn_id=turn_id,
             user_id=raw_user_id,
+            processing_profile_id=profile_id,
         )
         saved += 1
 
