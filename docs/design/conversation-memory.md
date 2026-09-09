@@ -450,19 +450,19 @@ eligibility: only rows from contributing profiles are rendered into the review.
 ### User visibility and control
 
 Memory notes are ordinary notes in the notes UI, distinguished by their label, and each entry shows
-when it was asserted and links to the messages it came from. Evidence access follows the memory
-audience, not conversation ownership: an evidence link resolves to an isolated excerpt of the cited
-turn, readable by anyone who can read the memory note, and never to the surrounding transcript. A
-household member sees why the assistant believes a fact learned in someone else's private
-conversation or in a group chat, which the existing sole-owner messages endpoint would refuse,
-without gaining a way into that conversation; the conversation's owner can follow the excerpt into
-the full transcript as they already could. A recent-changes view lists what the curator added,
-updated or removed, with undo, and a subtle indicator in the chat surfaces that memory changed after
-a conversation without a notification per fact. "Forget that I said X" in chat is a foreground
-removal with the suppression semantics above. A deployment can turn contribution, reading, or the
-whole mechanism off. The user documentation for this feature is a new `docs/user/memory.md`
-describing what the assistant remembers on its own, what it never remembers, that memory is
-household-wide, and how to correct or forget.
+when it was asserted and links to the messages it came from. Evidence text stays with conversation
+ownership: the cited turn's text is shown only to the owner of the source conversation, who can
+follow it into the full transcript as they already can, and the existing sole-owner rule is left
+exactly as it is. Every other memory reader sees the entry's provenance summary instead, who said
+it, in which kind of conversation, and when, without any transcript text. A cited turn can carry a
+surprise or a sensitive aside alongside the durable fact the curator kept, and no amount of
+excerpting by the curator makes the turn itself safe for the whole household, so the design does not
+try. A recent-changes view lists what the curator added, updated or removed, with undo, and a subtle
+indicator in the chat surfaces that memory changed after a conversation without a notification per
+fact. "Forget that I said X" in chat is a foreground removal with the suppression semantics above. A
+deployment can turn contribution, reading, or the whole mechanism off. The user documentation for
+this feature is a new `docs/user/memory.md` describing what the assistant remembers on its own, what
+it never remembers, that memory is household-wide, and how to correct or forget.
 
 ## Deliberate simplifications
 
@@ -556,11 +556,11 @@ Each milestone is independently useful and verifiable.
    against a stronger model before the cheaper one is taken as sufficient, and a sample of skipped
    stretches from a real deployment is scored for lost facts. Verified by the corpus running in CI
    with thresholds.
-6. **User control.** Evidence links on entries with the excerpt access rule, the recent-changes view
-   with undo, and the chat indicator. Verified by frontend tests, a functional test that undo
-   produces a suppression, and tests that a member who does not own the source conversation can read
-   the cited excerpt of a private-conversation memory and of a group-chat memory but not the
-   surrounding transcript.
+6. **User control.** Evidence links on entries with the owner-only text rule, the recent-changes
+   view with undo, and the chat indicator. Verified by frontend tests, a functional test that undo
+   produces a suppression, and tests that a member who does not own the source conversation sees the
+   provenance summary and no transcript text for a private-conversation memory and for a group-chat
+   memory, while the owner can open the cited turn.
 7. **Consolidation pass.** Gated on review volume; merges, resolves by kind and period, prunes,
    refuses a pass that changes more than the allowed share of entries. Verified by seeded duplicate
    and contradictory entries, by three over-share passes, one each through removals, merges and
