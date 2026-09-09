@@ -151,8 +151,11 @@ already exists:
   confines what the curator may create or overwrite, but deletion is not a write under that policy,
   so giving the curator `delete_note` would let it remove any note its read grants reach. A
   contradicted fact is removed by rewriting the note it lives in, which is what the curator does
-  anyway. No messaging, no calendar, no egress, no delegation, no `wake_llm`, no scheduling. Nothing
-  it does is user-visible except the note content.
+  anyway. No messaging, no calendar, no egress, no delegation, no `wake_llm`, no scheduling. The
+  three globally granted tools are withheld through `excluded_global_tools`, as the media analyst
+  and coder profiles already do: a profile's own policy cannot refuse a global grant, and those
+  tools would let the curator read any attachment the acting user owns and persist model-supplied
+  text outside the memory label. Nothing it does is user-visible except the note content.
 - **Context**: memory notes only. No calendar, weather or Home Assistant; those are things memory
   should never duplicate.
 - **Model**: the standard tier, with a small iteration ceiling. This is extraction, not reasoning.
@@ -287,7 +290,8 @@ Each milestone is independently useful and verifiable.
    retried; and a note edited between a review's read and its write is not overwritten. The
    repository is verified to refuse a second always-loaded memory note and an over-cap write from
    the UI and foreground tool paths alike, and a conformance check confirms the curator's write
-   policy carries the `memory` floor and its tool set has neither delete nor document search.
+   policy carries the `memory` floor and that its effective tool set, global grants included, is
+   exactly the note read and write tools.
 2. **Prompts, grants and documentation.** The curator prompt in `prompts.yaml`; the memory opt-in on
    the profiles that carry it, with the `memory` grant it implies, and a line in the assistant
    system prompt about what the memory notes are and how to honour "forget"; `docs/user/memory.md`;
