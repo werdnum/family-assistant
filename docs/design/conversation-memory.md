@@ -492,9 +492,12 @@ Telegram needs no separate mechanism, but three of the rules above exist because
   rendered transcript names the sender of each user message. That requires the persisted rows to
   carry it: the Telegram batcher today joins messages that arrive within its window and persists
   them under the last sender's identity, so two members speaking within half a second of each other
-  collapse into one. The batcher must never merge messages from different senders; that change is
-  part of the Telegram milestone, since attribution that the transcript cannot support is not
-  attribution.
+  collapse into one, and a message that arrives while another member's turn is already running is
+  steered into that turn carrying only a display name, so it is persisted under the first member's
+  identity. The rule is that every persisted user row carries its own sender: the batcher must never
+  merge messages from different senders, and mid-turn input must carry the sender's identity through
+  to persistence. Both changes are part of the Telegram milestone, since attribution that the
+  transcript cannot support is not attribution.
 - A longer idle window than the web, because Telegram conversation is bursty and a household member
   replying twenty minutes later is still the same exchange.
 
@@ -629,10 +632,11 @@ Each milestone is independently useful and verifiable.
    test that a read-only profile sees the core note and does not feed reviews, and a test that a
    foreground memory write from a turn above the trusted pole is refused.
 4. **Telegram: attribution and maximum deferral.** Sender names in the rendered transcript, a
-   batcher that never merges messages from different senders, the maximum-deferral clause of the due
-   predicate, and the longer idle window. Verified by a Telegram functional test with two senders
-   posting inside one batching window and each attributed correctly, and a continuously active chat
-   that is still reviewed.
+   batcher that never merges messages from different senders, mid-turn input persisted under its own
+   sender, the maximum-deferral clause of the due predicate, and the longer idle window. Verified by
+   Telegram functional tests with two senders posting inside one batching window and with the second
+   posting while the first's turn is running, each attributed correctly in both, and a continuously
+   active chat that is still reviewed.
 5. **Evaluation.** A replay corpus of synthetic conversations with expected outcomes: nothing worth
    remembering, a correction, a tentative plan, an assistant mistake, several speakers, a deliberate
    forget, and useful user facts mixed with research. Each case is scored on what the curator
