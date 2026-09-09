@@ -487,26 +487,28 @@ Each milestone is independently useful and verifiable.
    past the idle window, runs the sweep and the worker, and asserts the expected entries exist with
    evidence references and provenance; that a conversation with recent activity is not enqueued;
    that a pre-existing conversation with no watermark row is not reviewed for rows older than the
-   enablement time; that a re-run after the watermark reviews only new rows; that a stretch larger
-   than the chunk budget is reviewed across successive sweeps with the watermark advancing each
-   time; that an abandoned review advances the watermark and leaves the conversation not due; and
-   that a stretch carrying unknown-external taint is skipped with an audit record and counted.
-   Concurrency is verified directly: a message persisted at any point during a review, including
-   after the handler's last read and before the task is marked done, is covered by a later sweep;
-   two reviews changing the same note leave both change sets applied, with one review retried; a
-   note edited between a review's read and its apply is not overwritten; and a retried review does
-   not duplicate an addition. The applier is verified to reject an operation citing evidence outside
-   the stretch, an update to a missing entry, an over-cap result and a second always-loaded memory
-   note, from the UI and foreground tool paths alike; to fail a whole change set on one rejected
-   operation and keep the stretch reviewable; to accept a manual addition from the notes UI with the
-   editor as its evidence; and to keep two facts from one message as distinct entries so forgetting
-   one leaves the other. The read policy is verified by seeding an unlabelled note, a
-   default-labelled note and an unlabelled file-based skill and asserting none reaches the curator
-   through the context provider, the title list, the skill catalogue or `get_note`, including the
-   file-skill fallback; a conformance rule asserts every note or skill read the curator can reach
-   goes through the policy. Conformance also confirms the curator's write policy carries the
-   `memory` floor and that its effective tool set, global grants included, is exactly the memory
-   entry tools. Skip counters and skipped-volume gauges land here, on the existing metrics surface.
+   enablement time; that a re-run after the watermark reviews only new rows; that a turn parked on a
+   confirmation across the idle window is not reviewed until it completes and is then reviewed
+   whole; that a stretch larger than the chunk budget is reviewed across successive sweeps with the
+   watermark advancing each time; that an abandoned review advances the watermark and leaves the
+   conversation not due; and that a stretch carrying unknown-external taint is skipped with an audit
+   record and counted. Concurrency is verified directly: a message persisted at any point during a
+   review, including after the handler's last read and before the task is marked done, is covered by
+   a later sweep; two reviews changing the same note leave both change sets applied, with one review
+   retried; a note edited between a review's read and its apply is not overwritten; and a retried
+   review does not duplicate an addition. The applier is verified to reject an operation citing
+   evidence outside the stretch, an update to a missing entry, an over-cap result and a second
+   always-loaded memory note, from the UI and foreground tool paths alike; to fail a whole change
+   set on one rejected operation and keep the stretch reviewable; to accept a manual addition from
+   the notes UI with the editor as its evidence; and to keep two facts from one message as distinct
+   entries so forgetting one leaves the other. The read policy is verified by seeding an unlabelled
+   note, a default-labelled note and an unlabelled file-based skill and asserting none reaches the
+   curator through the context provider, the title list, the skill catalogue or `get_note`,
+   including the file-skill fallback; a conformance rule asserts every note or skill read the
+   curator can reach goes through the policy. Conformance also confirms the curator's write policy
+   carries the `memory` floor and that its effective tool set, global grants included, is exactly
+   the memory entry tools. Skip counters and skipped-volume gauges land here, on the existing
+   metrics surface.
 2. **Forgetting.** Suppression records, applier rejection, foreground "forget". Verified by the
    reconstruction scenario end to end: a fact is learned, forgotten, and a pending review over the
    original conversation plus a retry of a conflicting review both fail to recreate it, a review
