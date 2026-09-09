@@ -500,12 +500,19 @@ exactly as it is. Every other memory reader sees the entry's provenance summary 
 it, in which kind of conversation, and when, without any transcript text. A cited turn can carry a
 surprise or a sensitive aside alongside the durable fact the curator kept, and no amount of
 excerpting by the curator makes the turn itself safe for the whole household, so the design does not
-try. A recent-changes view lists what the curator added, updated or removed, with undo, and a subtle
-indicator in the chat surfaces that memory changed after a conversation without a notification per
-fact. "Forget that I said X" in chat is a foreground removal with the suppression semantics above. A
-deployment can turn contribution, reading, or the whole mechanism off. The user documentation for
-this feature is a new `docs/user/memory.md` describing what the assistant remembers on its own, what
-it never remembers, that memory is household-wide, and how to correct or forget.
+try. A recent-changes view lists what the curator added, updated or removed, with undo. **Undo is a
+person-authored change set that inverts the recorded operation** and goes through the applier like
+any other: undoing an addition removes the entry and is a forgetting; undoing a removal re-adds the
+entry, and as person-authored evidence newer than the forgetting it releases the suppression;
+undoing an update restores the previous version. What a suppression records is a set of
+propositions, and the operation decides which: forgetting records the entry's whole lineage, while
+undoing an update records only the version the person rejected, so the restored version stays live
+and a later review that re-proposes the rejected one is refused. A subtle indicator in the chat
+surfaces that memory changed after a conversation without a notification per fact. "Forget that I
+said X" in chat is a foreground removal with the suppression semantics above. A deployment can turn
+contribution, reading, or the whole mechanism off. The user documentation for this feature is a new
+`docs/user/memory.md` describing what the assistant remembers on its own, what it never remembers,
+that memory is household-wide, and how to correct or forget.
 
 ## Deliberate simplifications
 
@@ -616,8 +623,11 @@ Each milestone is independently useful and verifiable.
    stretches from a real deployment is scored for lost facts. Verified by the corpus running in CI
    with thresholds.
 6. **User control.** Evidence links on entries with the owner-only text rule, the recent-changes
-   view with undo, and the chat indicator. Verified by frontend tests, a functional test that undo
-   produces a suppression, and tests that a member who does not own the source conversation sees the
+   view with undo, and the chat indicator. Verified by frontend tests; by functional tests that
+   undoing an addition leaves the entry absent and suppressed, that undoing a removal restores the
+   entry and a later review citing only the old evidence does not remove it again, and that undoing
+   an update leaves the previous version live while a later review re-proposing the rejected version
+   is refused; and by tests that a member who does not own the source conversation sees the
    provenance summary and no transcript text for a private-conversation memory and for a group-chat
    memory, while the owner can open the cited turn.
 7. **Consolidation pass.** Gated on review volume; merges, resolves by kind and period, prunes,
