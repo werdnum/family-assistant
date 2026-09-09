@@ -340,18 +340,18 @@ unrelated older conversation that stated it in the same words, while forgetting 
 message still leaves the other facts from that message untouched, because they are different
 propositions. That is the mechanical guarantee, and it covers retries and pending reviews over any
 conversation. The curator sees the suppressed text so that it can recognise the same proposition
-arriving as a paraphrase from a different old conversation, which the applier's
-proposition-and-subject matching cannot connect, because the paraphrase is a different proposition;
-that part is an instruction, not a mechanism, and it is recorded as the residual below. A
-suppression is released only by evidence a person authored after it: a user row newer than the
-forgetting, or a foreground action, and it releases only the proposition that evidence restates. An
-entry corrected from "bus" to "tram" and then forgotten is suppressed in both versions, and a person
-later saying "tram" again frees "tram" alone, so a pending review over the old "bus" evidence still
-cannot add "bus". The assistant's own acknowledgement ("I'll forget that") is a newer row too, and
-it must not count, or the act of forgetting would supply the evidence to un-forget; rows the
-assistant wrote, and any row older than the suppression, never release it. Retaining the forgotten
-text in the suppression store is a deliberate trade: forgetting without it cannot resist paraphrase
-at all, and the store is as private as the memory notes themselves.
+arriving as a paraphrase from a different old conversation, which the applier's version matching
+cannot connect, because the paraphrase is a different proposition; that part is an instruction, not
+a mechanism, and it is recorded as the residual below. A suppression is released only by evidence a
+person authored after it: a user row newer than the forgetting, or a foreground action, and it
+releases only the version that evidence restates, so a fact freed for one person or period stays
+suppressed for another. An entry corrected from "bus" to "tram" and then forgotten is suppressed in
+both versions, and a person later saying "tram" again frees "tram" alone, so a pending review over
+the old "bus" evidence still cannot add "bus". The assistant's own acknowledgement ("I'll forget
+that") is a newer row too, and it must not count, or the act of forgetting would supply the evidence
+to un-forget; rows the assistant wrote, and any row older than the suppression, never release it.
+Retaining the forgotten text in the suppression store is a deliberate trade: forgetting without it
+cannot resist paraphrase at all, and the store is as private as the memory notes themselves.
 
 Forgetting curated memory is distinct from deleting conversation history, indexed search entries and
 other retained copies. The user documentation says so and points to what each requires.
@@ -484,12 +484,15 @@ something else now covers a fact. It is gated on volume, not the clock, and its 
 set applied by the same applier under a consolidation-specific evidence rule: with no reviewed
 stretch, operations cite existing entries rather than messages, a merged or updated entry inherits
 the union of its sources' evidence, and the applier validates that every cited entry exists at the
-read version and that no operation drops evidence the entries carried. Consolidation is limited to
-merging duplicates, resolving contradictions and pruning expired entries; it does not reword. One
-extra guard applies, and it counts change of any kind: a pass that would alter the proposition of
-more than a fixed share of the existing entries, whether by removal, merge or update, is rejected,
-so a faulty pass cannot replace the store's content while keeping its evidence references intact. It
-is a later milestone; the incremental design is useful without it.
+read version and that no operation drops evidence the entries carried. A merge retires the duplicate
+structurally, like a move: the retired entry's lineage and evidence fold into the survivor and no
+suppression is recorded, because nothing was forgotten; only a person's removal or a pruning that
+the person could have asked for records one. Consolidation is limited to merging duplicates,
+resolving contradictions and pruning expired entries; it does not reword. One extra guard applies,
+and it counts change of any kind: a pass that would touch more than a fixed share of the existing
+entries, in any field and whether by removal, merge or update, is rejected, so a faulty pass cannot
+rewrite, re-attribute or retime the store while keeping its evidence references intact. It is a
+later milestone; the incremental design is useful without it.
 
 ### Telegram
 
