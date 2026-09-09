@@ -70,8 +70,8 @@ the singleton and the cap together is what makes "capped" a statement about the 
 about a note; a per-note cap that many notes could each sit under would bound nothing.
 
 Explicit requests ("remember that...", "forget that...") keep working in the foreground turn: the
-default assistant holds the `memory` grant and edits the memory notes directly. The background
-process described next is the complement for everything the user did not ask to have saved.
+opted-in profiles hold the `memory` grant and edit the memory notes directly. The background process
+described next is the complement for everything the user did not ask to have saved.
 
 ### A curator profile reviews each conversation when it goes idle
 
@@ -125,8 +125,12 @@ corrections the same way it protects a sibling curator's.
 member talks through (web, iOS, Telegram, telephone) and the turns ran under a profile that opts
 into memory. Email intake, A2A, delegation subconversations, automation-triggered turns and internal
 profiles such as the engineer, media analyst and event handler do not feed memory. The opt-in is a
-profile setting so a deployment can add or remove profiles without code. If the unreviewed stretch
-contains no user messages, the review is skipped and the watermark advanced.
+profile setting so a deployment can add or remove profiles without code, and it is one setting, not
+two: a profile that contributes to memory also reads it, holding the `memory` grant so the
+always-loaded note and the topic-note titles reach its turns and its foreground "remember" and
+"forget" requests can edit them. A profile that fed memory it could not see would be a configuration
+error, and startup validation treats it as one. If the unreviewed stretch contains no user messages,
+the review is skipped and the watermark advanced.
 
 ### The curator is a confined agent
 
@@ -136,16 +140,21 @@ already exists:
 
 - **Write policy**: `required_note_visibility_labels: [memory]`. The repository-level policy then
   refuses to create or overwrite any note outside that label set, so a bad review cannot damage the
-  user's own notes. Read grants include the default label so the curator can see existing notes and
-  avoid duplicating a fact the user already filed.
-- **Tools**: reading and writing notes, and document search. No delete tool: the write policy
+  user's own notes.
+- **Read grants**: the `memory` label only. The curator sees the memory notes and nothing else the
+  household has filed. That costs it the ability to notice that a fact is already in a user note,
+  which is a small duplication cost; what it buys is that everything in the curator's context is
+  content that has already passed the memory ceiling below, so no user note written from a tainted
+  turn, and no indexed email or web page, can reach an unattended writer.
+- **Tools**: reading and writing notes. No document search: it is the widest path from the indexed
+  corpus into a silent turn, and the curator has no need of it. No delete tool: the write policy
   confines what the curator may create or overwrite, but deletion is not a write under that policy,
   so giving the curator `delete_note` would let it remove any note its read grants reach. A
   contradicted fact is removed by rewriting the note it lives in, which is what the curator does
   anyway. No messaging, no calendar, no egress, no delegation, no `wake_llm`, no scheduling. Nothing
   it does is user-visible except the note content.
-- **Context**: notes only. No calendar, weather or Home Assistant; those are things memory should
-  never duplicate.
+- **Context**: memory notes only. No calendar, weather or Home Assistant; those are things memory
+  should never duplicate.
 - **Model**: the standard tier, with a small iteration ceiling. This is extraction, not reasoning.
 - **History**: the curator's own rows are persisted in an internal subconversation, so they never
   enter the user's prompt window or the conversation list, but remain inspectable in diagnostics.
@@ -164,10 +173,21 @@ those rows. Two consequences follow, both wanted:
 - The review task can decide, before spending a model call, whether the stretch is clean enough to
   learn from at all.
 
-**Tainted stretches are not reviewed.** If the merged taint of the unreviewed rows exceeds the
-known-user tier, the review skips the stretch, advances the watermark, and records the skip in the
-audit log. This is the memory-poisoning guard: an instruction planted in an email or a web page
-cannot become a standing "fact" that every later turn reads. It costs the household some memory from
+**Memory holds nothing above the known-user tier, whoever writes it.** This is the memory-poisoning
+guard, and it is one invariant at the write chokepoint rather than a check on one input: the notes
+repository refuses any write to a memory-labelled note whose provenance stamp exceeds the known-user
+tier. For the curator that means a review whose turn taint has risen above the ceiling, from any
+source, cannot write and fails visibly. For the foreground assistant it means a "remember this" in a
+turn that has read an untrusted email is refused with a clear error rather than filed. Because the
+ceiling is enforced on the way in, the memory notes are clean by construction, which is what lets
+the curator's context be exactly those notes without a second gate on the read side. An instruction
+planted in an email or a web page therefore cannot become a standing "fact" that every later turn
+reads, by whichever path it tries to arrive.
+
+**Tainted stretches are skipped before the model call.** The write-side rule is the guarantee; the
+review task also checks the merged taint of the unreviewed rows up front, and when it exceeds the
+ceiling it skips the stretch, advances the watermark, and records the skip in the audit log rather
+than spending a model call on a review that could not write. It costs the household some memory from
 conversations where the assistant did research, which is the accepted trade-off below. Tool result
 bodies are also omitted from the rendered transcript; the user's words and the assistant's replies
 carry what mattered, and tool output is where injected text lives.
@@ -233,9 +253,10 @@ never remembers, and how to correct it.
   quarantine-and-review path is the right long-term shape (it is what the confined-writes design
   built for diagnostics), but it needs a human review step that does not exist for memory yet.
   Skipping loses some memory from research-heavy conversations and is safe.
-- **The curator cannot edit user-authored notes.** Findings that belong in a user note are written
-  to a memory note with a pointer; the user or the foreground assistant can merge them. This keeps
-  the blast radius of a bad review to the memory label.
+- **The curator neither reads nor edits user-authored notes.** Findings that belong in a user note
+  are written to a memory note; the user or the foreground assistant can merge them, and the
+  foreground assistant, which sees both, can also deduplicate on the way. This keeps both the input
+  and the blast radius of a review inside the memory label.
 - **No approval queue for new memories.** Wrong memories are corrected after the fact through the
   notes UI or in chat. An approval step would go unused and then be turned off.
 
@@ -266,12 +287,14 @@ Each milestone is independently useful and verifiable.
    retried; and a note edited between a review's read and its write is not overwritten. The
    repository is verified to refuse a second always-loaded memory note and an over-cap write from
    the UI and foreground tool paths alike, and a conformance check confirms the curator's write
-   policy carries the `memory` floor and its tool set has no delete.
-2. **Prompts, grants and documentation.** The curator prompt in `prompts.yaml`; the default
-   assistant's grant on the `memory` label and a line in its system prompt about what the memory
-   notes are and how to honour "forget"; `docs/user/memory.md`; the settings in the configuration
-   reference. Verified by the existing prompt-render startup check and a test that the foreground
-   assistant can edit a memory note.
+   policy carries the `memory` floor and its tool set has neither delete nor document search.
+2. **Prompts, grants and documentation.** The curator prompt in `prompts.yaml`; the memory opt-in on
+   the profiles that carry it, with the `memory` grant it implies, and a line in the assistant
+   system prompt about what the memory notes are and how to honour "forget"; `docs/user/memory.md`;
+   the settings in the configuration reference. Verified by the existing prompt-render startup
+   check, a startup validation that every opted-in profile holds the grant, a test that each
+   opted-in profile sees the always-loaded note and can edit it, and a test that a foreground memory
+   write from a turn above the known-user tier is refused.
 3. **Telegram: attribution and maximum deferral.** Sender names in the rendered transcript, the
    maximum-deferral clause of the due predicate, and the longer idle window. Verified by a Telegram
    functional test with two senders in a group and a continuously active chat that is still
