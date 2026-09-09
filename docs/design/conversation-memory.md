@@ -169,6 +169,16 @@ task, on the same footing as the existing cleanup tasks, evaluates that predicat
 and enqueues one review task per due conversation, keyed on the conversation so the same
 conversation never has two reviews in flight. Nothing is enqueued when a message is persisted.
 
+**A review covers a bounded chunk, and the watermark always moves on a terminal outcome.** A review
+takes at most a fixed budget of rows after the watermark, so a stretch can never outgrow the model's
+context however busy the chat was. When more rows remain, the watermark advances to the end of the
+chunk and the conversation is simply still due, so the next sweep reviews the next chunk. The same
+rule closes the failure path: a review that fails permanently is abandoned by advancing the
+watermark past its chunk, with the failed change set and reason kept for the recent-changes view and
+an error logged. There is no separate retry ledger and no state the due predicate does not already
+read; a conversation is due exactly when it has rows after its watermark and the timing condition
+holds, and every terminal outcome, success or abandonment, moves the watermark forward.
+
 This is deliberately not an event-driven debounce. A per-message enqueue that pushes a task back has
 to stay correct across the moment the worker marks a running task done, and every such design needs
 a rule for the message that lands between the handler's last check and the completion write. With a
@@ -198,10 +208,10 @@ updated or removed entry exists at the version the curator read; nothing violate
 ceiling, the cap, or a suppression; and an addition is not a duplicate of an entry already present.
 Validation is all-or-nothing for the change set: one rejected operation fails the review, which is
 retried with the rejection reasons fed back to the curator, so a fact is not quietly dropped because
-a sibling operation was malformed. A review that exhausts its retries does not advance the watermark
-silently either: it is recorded as a failed review, with the rejected change set kept for the
-recent-changes view and an error logged, and the stretch is retried by later sweeps up to a bounded
-count before it is abandoned visibly. Neglect here degrades availability of memory, not its
+a sibling operation was malformed. A review that exhausts its retries is abandoned as described
+under scheduling: the watermark advances past the chunk, the rejected change set and reason are kept
+for the recent-changes view, and an error is logged, so the failure is visible rather than silent
+and the sweep does not keep paying for it. Neglect here degrades availability of memory, not its
 integrity.
 
 Application and watermark advancement happen in **one short transaction**, conditional on the
@@ -427,15 +437,17 @@ Each milestone is independently useful and verifiable.
    test drives a web conversation with a fake LLM that returns a change set, advances the mock clock
    past the idle window, runs the sweep and the worker, and asserts the expected entries exist with
    evidence references and provenance; that a conversation with recent activity is not enqueued;
-   that a re-run after the watermark reviews only new rows; and that a stretch carrying
-   unknown-external taint is skipped with an audit record and counted. Concurrency is verified
-   directly: a message persisted at any point during a review, including after the handler's last
-   read and before the task is marked done, is covered by a later sweep; two reviews changing the
-   same note leave both change sets applied, with one review retried; a note edited between a
-   review's read and its apply is not overwritten; and a retried review does not duplicate an
-   addition. The applier is verified to reject an operation citing evidence outside the stretch, an
-   update to a missing entry, an over-cap result and a second always-loaded memory note, from the UI
-   and foreground tool paths alike; to fail a whole change set on one rejected operation and keep
+   that a re-run after the watermark reviews only new rows; that a stretch larger than the chunk
+   budget is reviewed across successive sweeps with the watermark advancing each time; that an
+   abandoned review advances the watermark and leaves the conversation not due; and that a stretch
+   carrying unknown-external taint is skipped with an audit record and counted. Concurrency is
+   verified directly: a message persisted at any point during a review, including after the
+   handler's last read and before the task is marked done, is covered by a later sweep; two reviews
+   changing the same note leave both change sets applied, with one review retried; a note edited
+   between a review's read and its apply is not overwritten; and a retried review does not duplicate
+   an addition. The applier is verified to reject an operation citing evidence outside the stretch,
+   an update to a missing entry, an over-cap result and a second always-loaded memory note, from the
+   UI and foreground tool paths alike; to fail a whole change set on one rejected operation and keep
    the stretch reviewable; to accept a manual addition from the notes UI with the editor as its
    evidence; and to keep two facts from one message as distinct entries so forgetting one leaves the
    other. The read policy is verified by seeding an unlabelled note, a default-labelled note and an
