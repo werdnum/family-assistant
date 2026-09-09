@@ -2339,6 +2339,16 @@ final class ChatViewModel {
                 recoverSteerAsDraft(prompt)
             }
             for pendingSteer in pendingSteers {
+                // Each submission yields: history reconciliation or a turn-ended
+                // event can retire the adopted turn before the next prompt.
+                // No send task remains to drain a pre-registration queue for it.
+                guard activeTurnIdentity == activeTurn else {
+                    if conversationID == id,
+                       canRecoverSteerAfterTurnEnded(activeTurnID, defaultWhenUnknown: true) {
+                        recoverSteerAsDraft(pendingSteer)
+                    }
+                    continue
+                }
                 _ = await submitSteerPrompt(pendingSteer, activeTurn: activeTurn)
             }
             return
@@ -2846,13 +2856,25 @@ final class ChatViewModel {
         let isSameConversation = conversationID == activeTurn.conversationID
         let originalTurnEnded = endedTurnIDs.contains(activeTurn.turnID)
         let originalTurnEndedCleanly = canRecoverSteerAfterTurnEnded(activeTurn.turnID)
-        // A late result for a turn that is neither active nor ended was superseded
-        // (cancelStream/a new send cleared THIS turn's steer arrays). The steer
-        // collections are keyed by prompt text, so a newer turn may already hold an
-        // identical prompt; removing by text here would untrack the newer turn's
-        // steer. Don't touch the shared arrays — just drop a stale matching draft.
+        // A newer turn may hold identical prompt text, so a superseded result
+        // must not remove its entries from the shared steer arrays.
         guard isCurrentTurn || originalTurnEnded else {
-            clearComposerIfMatching(prompt)
+            // A history snapshot can retire a reattached turn without an end
+            // event. With no replacement turn, its request still owns these
+            // entries; release them instead of leaving the composer pending.
+            if isSameConversation, activeTurnIdentity == nil {
+                guard removeInFlightSteer(prompt) else {
+                    return
+                }
+                switch result {
+                case .accepted:
+                    clearComposerIfMatching(prompt)
+                case .finished, .error:
+                    recoverSteerAsDraft(prompt)
+                }
+            } else {
+                clearComposerIfMatching(prompt)
+            }
             return
         }
         switch result {

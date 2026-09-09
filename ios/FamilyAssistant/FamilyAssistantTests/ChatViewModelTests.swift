@@ -2065,6 +2065,80 @@ final class ChatViewModelTests: XCTestCase {
 
     func testTurnStartConflictTransfersSteerQueuedWhileRequestIsInFlight() async throws {
         let startResponse = HangingStream()
+        let firstSteerResponse = HangingStream()
+        let turnStarts = AtomicCounter()
+        let steerRequests = AtomicCounter()
+        ChatMockBackendURLProtocol.respond { request in
+            let path = request.url?.path ?? ""
+            switch (request.httpMethod ?? "GET", path) {
+            case ("GET", "/api/v1/chat/conversations/web_conv_conflict_queued_steer/messages"):
+                let activeTurns = turnStarts.value == 0 ? "[]" :
+                    #"[{"turn_id":"turn-won-steer-race","status":"running","latest_seq":0,"started_at":"2026-01-01T00:00:00Z"}]"#
+                return .json(
+                    #"{"conversation_id":"web_conv_conflict_queued_steer","messages":[],"count":0,"total_messages":0,"has_more_before":false,"has_more_after":false,"active_turns":\#(activeTurns)}"#
+                )
+            case ("POST", "/api/v1/chat/turns"):
+                turnStarts.increment()
+                return .hangingStream(
+                    #"{"detail":{"message":"running","active_turn_id":"turn-won-steer-race"}}"#,
+                    statusCode: 409,
+                    controller: startResponse
+                )
+            case ("POST", "/api/v1/chat/turns/turn-won-steer-race/steer"):
+                let requestNumber = steerRequests.increment()
+                let payload = try XCTUnwrap(Self.jsonObject(from: request) as? [String: Any])
+                XCTAssertEqual(
+                    payload["prompt"] as? String,
+                    requestNumber == 1 ? "original prompt" : "queued steer"
+                )
+                return .hangingStream(
+                    #"{"turn_id":"turn-won-steer-race","conversation_id":"web_conv_conflict_queued_steer","accepted":true}"#,
+                    controller: firstSteerResponse
+                )
+            case ("GET", "/api/v1/chat/conversations/web_conv_conflict_queued_steer/stream"):
+                return .hangingStream("", controller: HangingStream())
+            default:
+                return .json(#"{"detail":"unexpected"}"#, statusCode: 404)
+            }
+        }
+
+        let model = makeViewModel(conversationID: "web_conv_conflict_queued_steer")
+        model.draftText = "original prompt"
+        await model.sendDraft()
+        try await waitUntil { turnStarts.value == 1 }
+
+        model.draftText = "queued steer"
+        await model.sendSteerDraft()
+        XCTAssertEqual(steerRequests.value, 0)
+
+        startResponse.finish()
+        try await waitUntil { steerRequests.value == 1 }
+        await model.loadMessages()
+        XCTAssertTrue(model.isStreaming)
+        firstSteerResponse.finish()
+        try await waitUntil {
+            steerRequests.value == 2
+                && model.draftText.isEmpty
+                && self.privateStringArray("inFlightSteers", in: model).isEmpty
+        }
+
+        XCTAssertEqual(model.draftText, "")
+        XCTAssertEqual(privateStringArray("inFlightSteers", in: model), [])
+    }
+
+    func testTurnStartConflictRecoversQueuedSteerWhenAdoptedTurnRetiresDuringTransfer() async throws {
+        try await assertTurnStartConflictRecoversQueuedSteerAfterRetirement(firstSteerAccepted: true)
+    }
+
+    func testTurnStartConflictRecoversRejectedSteersWhenAdoptedTurnRetiresDuringTransfer() async throws {
+        try await assertTurnStartConflictRecoversQueuedSteerAfterRetirement(firstSteerAccepted: false)
+    }
+
+    private func assertTurnStartConflictRecoversQueuedSteerAfterRetirement(
+        firstSteerAccepted: Bool
+    ) async throws {
+        let startResponse = HangingStream()
+        let firstSteerResponse = HangingStream()
         let turnStarts = AtomicCounter()
         let steerRequests = AtomicCounter()
         ChatMockBackendURLProtocol.respond { request in
@@ -2088,8 +2162,10 @@ final class ChatViewModelTests: XCTestCase {
                     payload["prompt"] as? String,
                     requestNumber == 1 ? "original prompt" : "queued steer"
                 )
-                return .json(
-                    #"{"turn_id":"turn-won-steer-race","conversation_id":"web_conv_conflict_queued_steer","accepted":true}"#
+                return .hangingStream(
+                    #"{"turn_id":"turn-won-steer-race","conversation_id":"web_conv_conflict_queued_steer","accepted":true}"#,
+                    statusCode: firstSteerAccepted ? 200 : 400,
+                    controller: firstSteerResponse
                 )
             case ("GET", "/api/v1/chat/conversations/web_conv_conflict_queued_steer/stream"):
                 return .hangingStream("", controller: HangingStream())
@@ -2107,15 +2183,21 @@ final class ChatViewModelTests: XCTestCase {
         await model.sendSteerDraft()
         XCTAssertEqual(steerRequests.value, 0)
 
+        let sendTask = try XCTUnwrap(model.sendTaskForTesting)
         startResponse.finish()
-        try await waitUntil {
-            steerRequests.value == 2
-                && model.draftText.isEmpty
-                && self.privateStringArray("inFlightSteers", in: model).isEmpty
-        }
+        try await waitUntil { steerRequests.value == 1 }
+        await model.loadMessages()
+        XCTAssertFalse(model.isStreaming)
+        firstSteerResponse.finish()
+        await sendTask.value
 
-        XCTAssertEqual(model.draftText, "")
+        XCTAssertEqual(steerRequests.value, 1)
+        XCTAssertEqual(
+            model.draftText,
+            firstSteerAccepted ? "queued steer" : "queued steer\noriginal prompt"
+        )
         XCTAssertEqual(privateStringArray("inFlightSteers", in: model), [])
+        XCTAssertTrue(model.turnControlStateForTesting.pendingSteersByTurnID.isEmpty)
     }
 
     func testTurnStartConflictTransfersQueuedStopAndDropsQueuedSteer() async throws {
