@@ -121,18 +121,19 @@ removal, with a suppression, of every entry the note holds, applied by the appli
 repository refuses a raw row deletion of a memory-labelled note just as it refuses a raw overwrite.
 Without that, deleting a topic note would erase its entries and their lineage without recording a
 single forget, and the next review could put them all back. The core note's topic index is derived,
-not authored: the applier regenerates it from the set of topic notes that exist, in the same
-transaction as any apply that creates or removes a topic, so a pointer can never outlive its topic
-and no writer has to remember to update it. The index is a bounded projection, not a complete
-listing: it names the most recently changed topics up to a fixed share of the core cap, so the core
-note stays within its ceiling however many topics exist and opening a new topic can never fail on
-the pointer it adds. A topic that has fallen out of the projection is still a memory note: it is
-reachable by `get_note` by title and through document search, and the curator prompt says so, so the
-projection is a convenience for the foreground turn rather than the only path to a topic. A profile
-that could reach a memory note with the generic tools would be bypassing evidence validation,
-suppression and entry-level conflict handling, so the repository refuses that regardless of which
-tool asked. The background process is the complement for everything the user did not ask to have
-saved.
+not authored: the applier regenerates it from the topic notes that exist and their titles, in the
+same transaction as any apply that creates, removes or renames a topic, so a pointer can never
+outlive its topic or its title and no writer has to remember to update it. A rename through the
+notes UI is a memory-note mutation like the rest and reaches the store only through the applier. The
+index is a bounded projection, not a complete listing: it names the most recently changed topics up
+to a fixed share of the core cap, so the core note stays within its ceiling however many topics
+exist and opening a new topic can never fail on the pointer it adds. A topic that has fallen out of
+the projection is still a memory note: it is reachable by `get_note` by title and through document
+search, and the curator prompt says so, so the projection is a convenience for the foreground turn
+rather than the only path to a topic. A profile that could reach a memory note with the generic
+tools would be bypassing evidence validation, suppression and entry-level conflict handling, so the
+repository refuses that regardless of which tool asked. The background process is the complement for
+everything the user did not ask to have saved.
 
 ### Whose memory it is
 
@@ -288,15 +289,17 @@ person-authored evidence its current version rests on, whichever writer applied 
 curator update citing the person's correction sets it as surely as a hand-edit in the notes UI. This
 is the same evidence that releases a suppression, so a review holding old evidence, or only the
 assistant's acknowledgement of the person's change, can neither take back what a person did to the
-entry since nor re-create as a new entry the version the person corrected away; nothing violates the
-provenance ceiling, the cap, or a suppression; and an addition is not a duplicate of an entry
-already present. Validation is all-or-nothing for the change set: one rejected operation fails the
-review, which is retried with the rejection reasons fed back to the curator, so a fact is not
-quietly dropped because a sibling operation was malformed. A review that exhausts its retries is
-abandoned as described under scheduling: the watermark advances past the chunk, the rejected change
-set and reason are kept for the recent-changes view, and an error is logged, so the failure is
-visible rather than silent and the sweep does not keep paying for it. Neglect here degrades
-availability of memory, not its integrity.
+entry since nor re-create as a new entry the version the person corrected away, the one exception
+being an expiry pruning, whose ground is not evidence but the entry's own applicable period having
+ended, which the applier checks against the clock; nothing violates the provenance ceiling, the cap,
+or a suppression; and an addition is not a duplicate of an entry already present. Validation is
+all-or-nothing for the change set: one rejected operation fails the review, which is retried with
+the rejection reasons fed back to the curator, so a fact is not quietly dropped because a sibling
+operation was malformed. A review that exhausts its retries is abandoned as described under
+scheduling: the watermark advances past the chunk, the rejected change set and reason are kept for
+the recent-changes view, and an error is logged, so the failure is visible rather than silent and
+the sweep does not keep paying for it. Neglect here degrades availability of memory, not its
+integrity.
 
 Application and watermark advancement happen in **one short transaction**, conditional on the
 version of the memory store the applier validated against, with all model work outside it. The store
@@ -579,9 +582,9 @@ it never remembers, that memory is household-wide, and how to correct or forget.
 - A wrong inference from a clean conversation becomes a standing entry until someone notices. Entry
   kinds, evidence links, the recent-changes view and the small core note bound the damage.
 - A forgotten fact can be re-proposed as a paraphrase from other old evidence that the applier's
-  proposition-and-subject matching does not connect to the suppression, because a paraphrase is a
-  different proposition; the curator's suppression input is the guard there, and it is an
-  instruction rather than a mechanism.
+  version matching does not connect to the suppression, because a paraphrase is a different
+  proposition; the curator's suppression input is the guard there, and it is an instruction rather
+  than a mechanism.
 - Memory carries the provenance of the conversation that wrote it. An entry written from a
   trusted-pole conversation keeps that tier on readers. That is the correct propagation.
 - A conversation whose last turn never finished, after a restart, is not reviewed until the next
