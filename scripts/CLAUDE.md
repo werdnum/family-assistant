@@ -77,16 +77,26 @@ Useful environment variables:
 
 ### `refresh-provider-model-skills.py`
 
-Regenerates the current-model references for the Gemini, OpenAI, and Anthropic API development
-skills from each provider's official public Markdown documentation. Pass `--check` to report drift
-without writing files. The scheduled `refresh-provider-model-skills.yml` workflow opens a PR when
-the generated snapshots change.
+Mirrors each provider's official model documentation page into the Gemini, OpenAI, and Anthropic API
+development skills as `references/current-models.md`. Pass `--check` to report drift without writing
+files. The scheduled `refresh-provider-model-skills.yml` workflow opens a PR when a mirror changes.
 
-Gemini ids come from each detail page's "Model code" row, **not** the page's URL slug: the two
-differ, and `gemini-omni-flash-preview` is served from a page slugged `gemini-omni-flash`. When a
-page has no such row the slug is the only thing left, so that entry is written with
-`"id_source": "url-slug (no documented Model code row)"` — treat those ids as unverified against the
-API until a real call confirms them, rather than as equivalent to a documented code.
+The pages are copied **verbatim** — the providers publish them in an LLM-addressable form precisely
+so consumers need not parse them, and the previous version of this script, which extracted records
+into a schema of its own, was silently broken for months by routine upstream reformatting. Do not
+reintroduce parsing here. If a consumer needs a different shape, it can read the page.
+
+Each mirror carries a one-line header naming its source URL and the date it was taken; the body
+below is untouched. The body **and** that URL are compared, so an unchanged page does not produce a
+dated no-op commit, while a page that moves without changing content still updates the URL the
+skills send readers to. mdformat is held off these files in both `.pre-commit-config.yaml` and this
+script's own argument handling — reformatting them to our wrap width would make every refresh a diff
+against our formatting rather than the provider's.
+
+Providers are mirrored independently: one provider's moved page or outage leaves the others
+refreshed, and the run exits non-zero naming the one that failed. The scheduled workflow runs the
+refresh with `continue-on-error` so that a partial failure still publishes the mirrors that did
+refresh, then fails the job in a final step.
 
 ### Review-eval public corpus scripts
 

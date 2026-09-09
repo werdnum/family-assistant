@@ -1,37 +1,29 @@
 #!/usr/bin/env python3
-"""Refresh provider skill model snapshots from official public documentation."""
+"""Mirror each provider's published model documentation into its skill's references.
+
+The providers publish these pages in an LLM-addressable form so that consumers do
+not have to parse them, so this mirrors them verbatim rather than extracting
+records into a schema of our own. There is nothing here for a provider's next
+reformat to break: the file an agent reads is the file the provider wrote.
+"""
 
 import argparse
-import json
-import re
+import datetime
+import http.client
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 from urllib.request import Request, urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
-USER_AGENT = "family-assistant-provider-model-refresh/1.0"
+USER_AGENT = "family-assistant-provider-model-refresh/2.0"
 
-GEMINI_SOURCE = "https://ai.google.dev/gemini-api/docs/models.md.txt"
-OPENAI_SOURCE = "https://developers.openai.com/api/docs/models.md"
-ANTHROPIC_SOURCE = "https://platform.claude.com/docs/en/about-claude/models/overview.md"
+SOURCES = {
+    ".agents/skills/gemini-api-dev": "https://ai.google.dev/gemini-api/docs/models.md.txt",
+    ".agents/skills/openai-api-dev": "https://developers.openai.com/api/docs/models.md",
+    ".agents/skills/anthropic-api-dev": "https://platform.claude.com/docs/en/models/overview.md",
+}
 
-
-@dataclass(frozen=True)
-class Model:
-    """A provider model extracted from official documentation."""
-
-    name: str
-    model_id: str
-    description: str
-    source_url: str
-    # Whether `model_id` came from the detail page's "Model code" row (the
-    # documented API identifier) or was inferred from the page's URL slug. The
-    # two differ for real models -- gemini-omni-flash-preview is served from a
-    # page slugged gemini-omni-flash -- and reading the slug is how that id was
-    # previously got wrong, so a slug-derived id is marked rather than presented
-    # as equivalent.
-    model_id_verified: bool = True
+HEADER_PREFIX = "<!-- Mirrored from "
 
 
 def _fetch(url: str) -> str:
@@ -40,187 +32,51 @@ def _fetch(url: str) -> str:
         return response.read().decode("utf-8")
 
 
-def _table_cells(line: str) -> list[str]:
-    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+def _body(mirrored: str) -> str:
+    """Return a mirrored file's provider content, without our provenance header."""
+    if not mirrored.startswith(HEADER_PREFIX):
+        return mirrored
+    _, _, remainder = mirrored.partition("\n\n")
+    return remainder
 
 
-def _extract_openai_models(markdown: str) -> list[Model]:
-    section = markdown.split("## Recommended models", maxsplit=1)[1].split(
-        "## Browse our full catalog", maxsplit=1
-    )[0]
-    matches = re.findall(
-        r"^- \[([^]]+)]\((/api/docs/models/([a-z0-9.\-]+)\.md)\): (.+)$",
-        section,
-        flags=re.MULTILINE,
+def _header_url(mirrored: str) -> str | None:
+    """Return the source URL a mirrored file records, if it carries our header."""
+    if not mirrored.startswith(HEADER_PREFIX):
+        return None
+    first_line = mirrored.partition("\n")[0]
+    url, _, _date = first_line[len(HEADER_PREFIX) :].rpartition(" on ")
+    return url or None
+
+
+def _render(url: str, body: str, retrieved: str) -> str:
+    return (
+        f"{HEADER_PREFIX}{url} on {retrieved}.\n"
+        "     Fetch that URL directly if this looks out of date. -->\n\n"
+        f"{body}"
     )
-    if not matches:
-        raise ValueError("OpenAI recommended-model section could not be parsed")
-    return [
-        Model(
-            name=name,
-            model_id=model_id,
-            description=description.rstrip("."),
-            source_url=f"https://developers.openai.com{path}",
-        )
-        for name, path, model_id, description in matches
-    ]
 
 
-def _extract_anthropic_models(markdown: str) -> list[Model]:
-    section = markdown.split("### Latest models comparison", maxsplit=1)[1].split(
-        "<Info>", maxsplit=1
-    )[0]
-    lines = [line for line in section.splitlines() if line.startswith("|")]
-    header = next(line for line in lines if "Claude Fable" in line)
-    descriptions = next(line for line in lines if "**Description**" in line)
-    api_ids = next(line for line in lines if "**Claude API ID**" in line)
+def _refresh(skill_dir: str, url: str, *, check: bool) -> bool:
+    """Mirror one provider's page. Returns whether the mirrored content changed."""
+    path = ROOT / skill_dir / "references/current-models.md"
+    body = _fetch(url)
+    existing = path.read_text() if path.exists() else None
+    # The recorded URL is compared as well as the body: a provider that moves a
+    # page while serving identical content would otherwise leave the retired
+    # endpoint in the header, which is the URL the skills send readers to.
+    if (
+        existing is not None
+        and _body(existing) == body
+        and _header_url(existing) == url
+    ):
+        return False
 
-    names = _table_cells(header)[1:]
-    description_cells = _table_cells(descriptions)[1:]
-    id_cells = _table_cells(api_ids)[1:]
-    if not names or not (len(names) == len(description_cells) == len(id_cells)):
-        raise ValueError("Anthropic latest-model table could not be parsed")
-
-    return [
-        Model(
-            name=name,
-            model_id=model_id,
-            description=description,
-            source_url=ANTHROPIC_SOURCE,
-        )
-        for name, model_id, description in zip(
-            names, id_cells, description_cells, strict=True
-        )
-    ]
-
-
-def _gemini_catalog_entries(markdown: str) -> list[tuple[str, str, str]]:
-    current = markdown.split("## Previous models", maxsplit=1)[0]
-    entries: list[tuple[str, str, str]] = []
-
-    card_pattern = re.compile(
-        r"\[### ([^\n]+)\n([^\n]+)\n(?:New )?(?:Stable|Preview)]"
-        r"\((https://ai\.google\.dev/gemini-api/docs/models/[a-z0-9.\-]+)\)"
-    )
-    heading_pattern = re.compile(
-        r"^### \[([^]]+)]"
-        r"\((https://ai\.google\.dev/gemini-api/docs/models/[a-z0-9.\-]+)\)"
-        r"\n\n([^\n]+)",
-        flags=re.MULTILINE,
-    )
-    # Sections outside the Gemini 3 cards list their models as table rows of
-    # name, description and endpoint. Rows carrying only a name and an endpoint
-    # (the "All Gemini 3 models" summary) repeat models the cards already
-    # describe, so they are left to the dedup below rather than parsed here.
-    table_row_pattern = re.compile(
-        r"^\| \[([^]]+)]"
-        r"\((https://ai\.google\.dev/gemini-api/docs/models/[a-z0-9.\-]+)\) \| "
-        r"([^|]+?) \| ```",
-        flags=re.MULTILINE,
-    )
-    for name, description, url in card_pattern.findall(current):
-        entries.append((name, description, url))
-    for pattern in (heading_pattern, table_row_pattern):
-        for name, url, description in pattern.findall(current):
-            if "Deprecated" in name or "Shut down" in name:
-                continue
-            if "/lyria-" in url:
-                continue
-            entries.append((name, description, url))
-
-    deduplicated: dict[str, tuple[str, str, str]] = {}
-    for entry in entries:
-        deduplicated.setdefault(entry[2], entry)
-    if not deduplicated:
-        raise ValueError("Gemini current-model catalog could not be parsed")
-    return list(deduplicated.values())
-
-
-def _extract_gemini_models(markdown: str) -> list[Model]:
-    models: list[Model] = []
-    seen_ids: set[str] = set()
-    for name, description, page_url in _gemini_catalog_entries(markdown):
-        detail = _fetch(f"{page_url}.md.txt")
-        codes = re.findall(r"\| Model code \|[^\n]*?`([^`]+)`", detail)
-        # A detail page without a "Model code" row leaves only the URL slug,
-        # which is not always the API model code. Recorded as unverified rather
-        # than presented as authoritative, so the one thing this generator exists
-        # to prevent -- shipping a slug as an API id -- stays visible instead of
-        # looking identical to a documented code.
-        model_id = codes[0] if codes else page_url.rsplit("/", maxsplit=1)[-1]
-        if model_id in seen_ids:
-            continue
-        seen_ids.add(model_id)
-        models.append(
-            Model(
-                name=name,
-                model_id=model_id,
-                description=description.rstrip("."),
-                source_url=page_url,
-                model_id_verified=bool(codes),
-            )
-        )
-    return models
-
-
-def _render(provider: str, source_url: str, models: list[Model]) -> str:
-    snapshot = {
-        "provider": provider,
-        "source": source_url,
-        "generated_by": "scripts/refresh-provider-model-skills.py",
-        "models": [
-            {
-                "id": model.model_id,
-                "name": model.name,
-                "description": model.description,
-                "source": model.source_url,
-                **(
-                    {}
-                    if model.model_id_verified
-                    else {"id_source": "url-slug (no documented Model code row)"}
-                ),
-            }
-            for model in models
-        ],
-    }
-    return json.dumps(snapshot, indent=2, ensure_ascii=False) + "\n"
-
-
-def _snapshots() -> dict[Path, str]:
-    gemini_source = _fetch(GEMINI_SOURCE)
-    openai_source = _fetch(OPENAI_SOURCE)
-    anthropic_source = _fetch(ANTHROPIC_SOURCE)
-    return {
-        ROOT / ".agents/skills/gemini-api-dev/references/current-models.json": _render(
-            "Gemini", GEMINI_SOURCE, _extract_gemini_models(gemini_source)
-        ),
-        ROOT / ".agents/skills/openai-api-dev/references/current-models.json": _render(
-            "OpenAI", OPENAI_SOURCE, _extract_openai_models(openai_source)
-        ),
-        ROOT
-        / ".agents/skills/anthropic-api-dev/references/current-models.json": _render(
-            "Anthropic", ANTHROPIC_SOURCE, _extract_anthropic_models(anthropic_source)
-        ),
-    }
-
-
-def _apply_snapshots(snapshots: dict[Path, str], *, check: bool) -> int:
-    stale: list[Path] = []
-    for path, content in snapshots.items():
-        existing = path.read_text() if path.exists() else None
-        if existing == content:
-            continue
-        stale.append(path)
-        if not check:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content)
-
-    if not stale:
-        print("Provider model skill snapshots are current.")
-        return 0
-    for path in stale:
-        print(f"{'Stale' if check else 'Updated'}: {path.relative_to(ROOT)}")
-    return 1 if check else 0
+    if not check:
+        retrieved = datetime.datetime.now(tz=datetime.UTC).date().isoformat()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(_render(url, body, retrieved))
+    return True
 
 
 def main() -> int:
@@ -228,10 +84,28 @@ def main() -> int:
     parser.add_argument(
         "--check",
         action="store_true",
-        help="Exit non-zero if generated snapshots differ without writing them.",
+        help="Exit non-zero if a mirror is out of date without writing it.",
     )
     args = parser.parse_args()
-    return _apply_snapshots(_snapshots(), check=args.check)
+
+    stale: list[str] = []
+    failed: list[str] = []
+    # Each provider is mirrored independently: one provider's outage or moved page
+    # leaves the others refreshed, rather than taking the whole run down with it.
+    for skill_dir, url in SOURCES.items():
+        try:
+            changed = _refresh(skill_dir, url, check=args.check)
+        except (OSError, http.client.HTTPException, UnicodeDecodeError) as error:
+            print(f"Failed: {skill_dir} <- {url} ({error})", file=sys.stderr)
+            failed.append(skill_dir)
+            continue
+        if changed:
+            stale.append(skill_dir)
+            print(f"{'Stale' if args.check else 'Updated'}: {skill_dir}")
+
+    if not stale and not failed:
+        print("Provider model documentation mirrors are current.")
+    return 1 if failed or (args.check and stale) else 0
 
 
 if __name__ == "__main__":

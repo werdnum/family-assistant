@@ -11,11 +11,13 @@ accepted sampling parameters can differ between model generations.
 
 ## Model selection
 
-Read [references/current-models.json](references/current-models.json) before selecting or changing a
-model. The generated snapshot contains the latest-model comparison from Anthropic's public catalog.
-Treat dateless Claude 4.6-and-later IDs as pinned releases, not rolling aliases.
+Read [references/current-models.md](references/current-models.md) before selecting or changing a
+model. It is Anthropic's own models overview, mirrored verbatim, including the model comparison
+table. Treat dateless Claude 4.6-and-later IDs as pinned releases, not rolling aliases.
 
-Refresh all provider snapshots with `python scripts/refresh-provider-model-skills.py`.
+The mirror's header says when it was taken. If that date is not recent, or the answer matters, fetch
+the URL in the header instead — it is the same page, current. Refresh all mirrors with
+`python scripts/refresh-provider-model-skills.py`.
 
 ## Integration workflow
 
@@ -27,6 +29,6 @@ Refresh all provider snapshots with `python scripts/refresh-provider-model-skill
 
 Official sources:
 
-- Models: https://platform.claude.com/docs/en/about-claude/models/overview.md
+- Models: https://platform.claude.com/docs/en/models/overview.md
 - API reference: https://platform.claude.com/docs/en/api/overview
 - Model IDs: https://platform.claude.com/docs/en/about-claude/models/model-ids-and-versions

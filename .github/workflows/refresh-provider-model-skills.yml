@@ -20,7 +20,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      - name: Refresh provider model snapshots
+      # Allowed to fail so that a provider whose page moved or whose host is
+      # down does not discard the mirrors that did refresh: the pull request
+      # step below still publishes them, and the job is failed at the end.
+      - name: Refresh provider model documentation mirrors
+        id: refresh
+        continue-on-error: true
         run: python scripts/refresh-provider-model-skills.py
 
       - name: Open refresh pull request
@@ -29,7 +34,7 @@ jobs:
           REPOSITORY: '${{ github.repository }}'
         run: |-
           if git diff --quiet -- .agents/skills; then
-            echo 'Provider model snapshots are current.'
+            echo 'Provider model documentation mirrors are current.'
             exit 0
           fi
 
@@ -37,8 +42,8 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git switch -c "${branch}"
-          git add .agents/skills/*/references/current-models.json
-          git commit -m 'Refresh provider model skill snapshots'
+          git add .agents/skills/*/references/current-models.md
+          git commit -m 'Refresh provider model documentation mirrors'
 
           remote_sha=$(git ls-remote --heads origin "refs/heads/${branch}" | cut -f1)
           if [[ -n "${remote_sha}" ]]; then
@@ -58,5 +63,11 @@ jobs:
             --repo "${REPOSITORY}" \
             --base main \
             --head "${branch}" \
-            --title 'Refresh provider model skill snapshots' \
-            --body 'Automated refresh from the official Gemini, OpenAI, and Anthropic model documentation.'
+            --title 'Refresh provider model documentation mirrors' \
+            --body 'Automated refresh of the verbatim mirrors of the official Gemini, OpenAI, and Anthropic model documentation.'
+
+      - name: Fail if a provider could not be mirrored
+        if: steps.refresh.outcome == 'failure'
+        run: |-
+          echo 'At least one provider mirror failed to refresh; see the refresh step log.' >&2
+          exit 1

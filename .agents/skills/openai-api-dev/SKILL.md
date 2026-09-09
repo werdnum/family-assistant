@@ -11,11 +11,14 @@ model name alone.
 
 ## Model selection
 
-Read [references/current-models.json](references/current-models.json) before selecting or changing a
-model. The generated snapshot contains the current recommended models from OpenAI's public catalog.
-Preserve an explicitly requested or intentionally pinned model unless the task asks for a migration.
+Read [references/current-models.md](references/current-models.md) before selecting or changing a
+model. It is OpenAI's own models page, mirrored verbatim, covering both the featured models and the
+full catalog. Preserve an explicitly requested or intentionally pinned model unless the task asks
+for a migration.
 
-Refresh all provider snapshots with `python scripts/refresh-provider-model-skills.py`.
+The mirror's header says when it was taken. If that date is not recent, or the answer matters, fetch
+the URL in the header instead — it is the same page, current. Refresh all mirrors with
+`python scripts/refresh-provider-model-skills.py`.
 
 ## Integration workflow
 
