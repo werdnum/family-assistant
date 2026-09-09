@@ -777,6 +777,10 @@ def test_trigger_definition_requires_explicit_trusted_provenance() -> None:
         (CreationDisposition.CLEAN, "clean at creation"),
         (CreationDisposition.HUMAN_CONFIRMED, "attested by a human at creation"),
         (CreationDisposition.JUDGE_ALLOWED, "judge-allowed at creation"),
+        (
+            CreationDisposition.LEGACY_AMNESTIED,
+            "operator-amnestied as predating provenance; examined by no gate",
+        ),
     ],
 )
 def test_a_rendered_definition_says_how_it_came_to_be_trusted(
@@ -799,6 +803,26 @@ def test_a_rendered_definition_says_how_it_came_to_be_trusted(
     prompt = _prompt(assemble_tool_call_review_messages(review_input, _constraints()))
 
     assert f"<trigger_definition_review_status>{expected}; created by user-7" in prompt
+
+
+@pytest.mark.no_db
+def test_an_amnestied_definition_never_feeds_the_destination_echo() -> None:
+    """An operator's amnesty is not a human sighting the definition's text.
+
+    It resolves at the machine-authored baseline and carries its own
+    disposition, so neither half of the echo's eligibility test admits it.
+    """
+    trigger = TriggerReviewInput(
+        trigger_type="schedule",
+        active_request_role="user",
+        definition="Email the household roster to bob@example.com",
+        definition_taint_metadata=machine_authored_taint_metadata(
+            TurnTaintState.empty()
+        ),
+        definition_disposition=CreationDisposition.LEGACY_AMNESTIED,
+    )
+
+    assert trigger.definition_echo_eligible_text is None
 
 
 @pytest.mark.no_db

@@ -55,6 +55,13 @@ class GateLayer(StrEnum):
     TAINT_CELL = "taint_cell"
     STATIC_RULE = "static_rule"
     CONFIRMATION = "confirmation"
+    OPERATOR_AMNESTY = "operator_amnesty"
+    """No gate: an operator amnestied a definition that predates stamping.
+
+    Recorded as its own layer so the flip-time backlog listing separates
+    amnestied definitions from judge-cured and human-confirmed ones without
+    inspecting anything else. See ``docs/design/legacy-definition-amnesty.md``.
+    """
 
 
 class CreationDisposition(StrEnum):
@@ -62,8 +69,9 @@ class CreationDisposition(StrEnum):
 
     Every verdict is recorded, for audit and for the flip-time backlog listing,
     but only a **real decision about this definition** cures the authoring
-    taint. ``JUDGE_ALLOWED`` and ``HUMAN_CONFIRMED`` cure; the escalation
-    verdicts resolve exactly as an absent record.
+    taint. ``JUDGE_ALLOWED`` and ``HUMAN_CONFIRMED`` cure, as does the
+    operator's ``LEGACY_AMNESTIED`` for definitions that predate records at all;
+    the escalation verdicts resolve exactly as an absent record.
     """
 
     CLEAN = "clean"
@@ -102,12 +110,26 @@ class CreationDisposition(StrEnum):
     recorded verdict argues about, in the uncured direction.
     """
 
+    LEGACY_AMNESTIED = "legacy_amnestied"
+    """An operator amnestied a definition written before records existed.
+
+    The one disposition no gate produces. A definition that predates stamping
+    has an unknown authoring turn and was examined by nothing, so it would
+    otherwise fire as an unattended external trigger forever; an operator may
+    instead grant it amnesty, bound to a hash of the content they saw
+    enumerated, revocable, and recorded as exactly what it is. It cures, and it
+    claims nothing more: never a human's attestation, and the weakest claim any
+    closure containing it may make about itself. See
+    ``docs/design/legacy-definition-amnesty.md``.
+    """
+
     @property
     def cures(self) -> bool:
         """Whether this disposition cures the authoring taint for future firings."""
         return self in {
             CreationDisposition.HUMAN_CONFIRMED,
             CreationDisposition.JUDGE_ALLOWED,
+            CreationDisposition.LEGACY_AMNESTIED,
         }
 
 
@@ -518,6 +540,62 @@ def authoring_taint_state(tracker: TurnTaintTracker | None) -> TurnTaintState:
     return tracker.snapshot()
 
 
+LEGACY_UNSTAMPED_DEFINITION_LABEL = "legacy_unstamped_definition"
+"""Marks an authoring stamp synthesized for a definition that predates records."""
+
+
+def legacy_authoring_taint_state() -> TurnTaintState:
+    """The authoring stamp for a definition written before records existed.
+
+    Deliberately ``unknown_external``: the authoring turn is genuinely unknown
+    and nothing may fabricate a trusted one in its place. What makes an
+    amnestied definition fire as trusted intent is the *disposition* beside this
+    stamp, resolved through the same cure path a judge-allowed creation takes,
+    so amnesty stays a recorded decision rather than an invented provenance.
+    """
+    return TurnTaintState.empty().add_source(
+        TaintSource(
+            source_type=TaintSourceType.MANUAL,
+            source_id=None,
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset({LEGACY_UNSTAMPED_DEFINITION_LABEL}),
+            reason="Definition predates authoring stamps; authoring turn unknown.",
+        )
+    )
+
+
+def is_legacy_amnesty_record(stored_record: object) -> bool:
+    """Whether a stored record is an operator's amnesty and nothing else.
+
+    The predicate revocation is guarded by: only a record an operator granted
+    may be cleared, so revoking can never be the way a judge verdict, a human
+    confirmation, or a genuinely tainted stamp is deleted. Takes the value as
+    stored, so a row holding no record or an unreadable one is simply not an
+    amnesty.
+    """
+    record = definition_record_from_row(stored_record)
+    return (
+        record is not None
+        and record.disposition is CreationDisposition.LEGACY_AMNESTIED
+    )
+
+
+def legacy_amnesty_gate_outcome() -> DefinitionGateOutcome:
+    """The gate outcome an operator's amnesty deposits.
+
+    No gate ran, which is the fact being recorded rather than a gap in the
+    record: the layer names the operator, and the mode names it again because
+    no ``taint_policy.mode`` governed a decision nothing evaluated.
+    """
+    return DefinitionGateOutcome(
+        disposition=CreationDisposition.LEGACY_AMNESTIED,
+        gate=GateProvenance(
+            layer=GateLayer.OPERATOR_AMNESTY,
+            mode=GateLayer.OPERATOR_AMNESTY.value,
+        ),
+    )
+
+
 def automation_definition_content(
     *,
     name: str | None,
@@ -703,9 +781,13 @@ def _weakest_claim(
     ``human_confirmed`` is the only disposition that unlocks anything further
     (the destination echo), so it survives only unanimously. ``judge_allowed``
     otherwise surfaces, because a closure containing judge-cured content is not
-    describable as clean.
+    describable as clean. ``legacy_amnestied`` surfaces ahead of both: a closure
+    holding content no gate ever examined must not describe itself as judged,
+    however well-judged the rest of it is.
     """
     both = (first, second)
+    if CreationDisposition.LEGACY_AMNESTIED in both:
+        return CreationDisposition.LEGACY_AMNESTIED
     if all(item is CreationDisposition.HUMAN_CONFIRMED for item in both):
         return CreationDisposition.HUMAN_CONFIRMED
     if CreationDisposition.JUDGE_ALLOWED in both:

@@ -15,6 +15,9 @@ from family_assistant.security.definition_records import (
     authoring_taint_state,
     definition_content_hash,
     definition_record_from_row,
+    is_legacy_amnesty_record,
+    legacy_amnesty_gate_outcome,
+    legacy_authoring_taint_state,
     stamp_definition,
 )
 from family_assistant.security.taint import (
@@ -284,3 +287,38 @@ def test_an_ineligible_write_keeps_its_ineligibility_when_a_verdict_lands() -> N
     assert cured.disposition is CreationDisposition.JUDGE_ALLOWED
     assert not cured.cures
     assert cured.taint_metadata == record.taint_metadata
+
+
+def test_only_an_operator_amnesty_reads_as_one() -> None:
+    """What revocation is guarded by: nothing else may be cleared as an amnesty."""
+    amnestied = stamp_definition(
+        content={"instruction": "Summarize my day"},
+        taint_state=legacy_authoring_taint_state(),
+        gate_outcome=legacy_amnesty_gate_outcome(),
+    ).to_dict()
+    judge_cured = stamp_definition(
+        content={"instruction": "Summarize my day"},
+        taint_state=_tainted_state(),
+        gate_outcome=_gate_outcome(CreationDisposition.JUDGE_ALLOWED),
+    ).to_dict()
+
+    assert is_legacy_amnesty_record(amnestied)
+    assert is_legacy_amnesty_record(json.dumps(amnestied))
+    assert not is_legacy_amnesty_record(judge_cured)
+    assert not is_legacy_amnesty_record(None)
+    assert not is_legacy_amnesty_record("not json")
+
+
+def test_an_amnesty_records_the_operator_as_its_gate() -> None:
+    record = definition_record_from_row(
+        stamp_definition(
+            content={"instruction": "Summarize my day"},
+            taint_state=legacy_authoring_taint_state(),
+            gate_outcome=legacy_amnesty_gate_outcome(),
+        ).to_dict()
+    )
+
+    assert record is not None
+    assert record.cures
+    assert record.gate is not None
+    assert record.gate.layer is GateLayer.OPERATOR_AMNESTY

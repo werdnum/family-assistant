@@ -273,6 +273,8 @@ class TriggerReviewInput:
             return "attested by a human at creation"
         if self.definition_disposition is CreationDisposition.JUDGE_ALLOWED:
             return "judge-allowed at creation"
+        if self.definition_disposition is CreationDisposition.LEGACY_AMNESTIED:
+            return "operator-amnestied as predating provenance; examined by no gate"
         return "clean at creation"
 
     @property
