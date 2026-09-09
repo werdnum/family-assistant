@@ -174,11 +174,15 @@ conversation is one chat id for its whole life and never "ends": the idle window
 boundary, and the watermark keeps each review to the new material. It also handles web conversations
 the user resumes days later.
 
-A conversation with no watermark row is treated as reviewed up to the moment memory was enabled on
-the deployment, never as unreviewed from the beginning. Turning the feature on therefore learns from
-what is said from then on, and does not spend a burst of model calls surfacing months of old
-conversations as new facts. Reviewing history before that point is an explicit opt-in backfill,
-bounded and run on request, not an effect of enabling.
+Contribution has a durable **enablement boundary**: each time contribution is turned on for a
+profile, the moment is recorded, and a review considers only rows newer than both the watermark and
+the latest enablement of the profile the rows ran under. That one rule covers first enablement (a
+conversation with no watermark row is reviewed only from the enablement moment, never from the
+beginning) and every later off-and-on cycle (rows written while contribution was off lie before the
+re-enablement moment and are never curated, even though the conversation keeps its old watermark).
+Turning the feature on therefore learns from what is said from then on, and does not spend a burst
+of model calls surfacing months of old conversations as new facts. Reviewing history before a
+boundary is an explicit opt-in backfill, bounded and run on request, not an effect of enabling.
 
 **Reviews are scheduled from state, not from events.** Whether a conversation is due is a pure
 function of stored data: it has at least one completed turn after its watermark, and either its last
@@ -440,7 +444,12 @@ Telegram needs no separate mechanism, but three of the rules above exist because
 
 - The watermark and maximum deferral, because a chat id never ends.
 - Per-person attribution, because a group chat is one conversation with several speakers, and the
-  rendered transcript names the sender of each user message.
+  rendered transcript names the sender of each user message. That requires the persisted rows to
+  carry it: the Telegram batcher today joins messages that arrive within its window and persists
+  them under the last sender's identity, so two members speaking within half a second of each other
+  collapse into one. The batcher must never merge messages from different senders; that change is
+  part of the Telegram milestone, since attribution that the transcript cannot support is not
+  attribution.
 - A longer idle window than the web, because Telegram conversation is bursty and a household member
   replying twenty minutes later is still the same exchange.
 
@@ -508,30 +517,31 @@ Each milestone is independently useful and verifiable.
    past the idle window, runs the sweep and the worker, and asserts the expected entries exist with
    evidence references and provenance; that a conversation with recent activity is not enqueued;
    that a pre-existing conversation with no watermark row is not reviewed for rows older than the
-   enablement time; that a re-run after the watermark reviews only new rows; that a turn parked on a
-   confirmation across the idle window is neither enqueued nor reviewed until it completes and is
-   then reviewed whole; that a turn left without a terminal reply by a restart is reviewed with a
-   never-finished marker once a later turn completes, and the watermark passes it; that a stretch
-   larger than the chunk budget is reviewed across successive sweeps with the watermark advancing
-   each time; that an abandoned review advances the watermark and leaves the conversation not due;
-   and that a stretch carrying unknown-external taint is skipped with an audit record and counted.
-   Concurrency is verified directly: a message persisted at any point during a review, including
-   after the handler's last read and before the task is marked done, is covered by a later sweep;
-   two reviews changing the same note leave both change sets applied, with one review retried; a
-   note edited between a review's read and its apply is not overwritten; and a retried review does
-   not duplicate an addition. The applier is verified to reject an operation citing evidence outside
-   the stretch, an update to a missing entry, an over-cap result and a second always-loaded memory
-   note, from the UI and foreground tool paths alike; to fail a whole change set on one rejected
-   operation and keep the stretch reviewable; to accept a manual addition from the notes UI with the
-   editor as its evidence; and to keep two facts from one message as distinct entries so forgetting
-   one leaves the other. The read policy is verified by seeding an unlabelled note, a
-   default-labelled note and an unlabelled file-based skill and asserting none reaches the curator
-   through the context provider, the title list, the skill catalogue or `get_note`, including the
-   file-skill fallback; a conformance rule asserts every note or skill read the curator can reach
-   goes through the policy. Conformance also confirms the curator's write policy carries the
-   `memory` floor, that its effective tool set, global grants included, is exactly the memory entry
-   tools, and that its effective context provider set is exactly the notes provider. Skip counters
-   and skipped-volume gauges land here, on the existing metrics surface.
+   enablement time; that after contribution is turned off and on again, rows written while it was
+   off are never curated; that a re-run after the watermark reviews only new rows; that a turn
+   parked on a confirmation across the idle window is neither enqueued nor reviewed until it
+   completes and is then reviewed whole; that a turn left without a terminal reply by a restart is
+   reviewed with a never-finished marker once a later turn completes, and the watermark passes it;
+   that a stretch larger than the chunk budget is reviewed across successive sweeps with the
+   watermark advancing each time; that an abandoned review advances the watermark and leaves the
+   conversation not due; and that a stretch carrying unknown-external taint is skipped with an audit
+   record and counted. Concurrency is verified directly: a message persisted at any point during a
+   review, including after the handler's last read and before the task is marked done, is covered by
+   a later sweep; two reviews changing the same note leave both change sets applied, with one review
+   retried; a note edited between a review's read and its apply is not overwritten; and a retried
+   review does not duplicate an addition. The applier is verified to reject an operation citing
+   evidence outside the stretch, an update to a missing entry, an over-cap result and a second
+   always-loaded memory note, from the UI and foreground tool paths alike; to fail a whole change
+   set on one rejected operation and keep the stretch reviewable; to accept a manual addition from
+   the notes UI with the editor as its evidence; and to keep two facts from one message as distinct
+   entries so forgetting one leaves the other. The read policy is verified by seeding an unlabelled
+   note, a default-labelled note and an unlabelled file-based skill and asserting none reaches the
+   curator through the context provider, the title list, the skill catalogue or `get_note`,
+   including the file-skill fallback; a conformance rule asserts every note or skill read the
+   curator can reach goes through the policy. Conformance also confirms the curator's write policy
+   carries the `memory` floor, that its effective tool set, global grants included, is exactly the
+   memory entry tools, and that its effective context provider set is exactly the notes provider.
+   Skip counters and skipped-volume gauges land here, on the existing metrics surface.
 2. **Forgetting.** Suppression records, applier rejection, foreground "forget". Verified by the
    reconstruction scenario end to end: a fact is learned, forgotten, and a pending review over the
    original conversation plus a retry of a conflicting review both fail to recreate it, a review
@@ -544,10 +554,11 @@ Each milestone is independently useful and verifiable.
    existing prompt-render startup check, a startup validation that a contributing profile reads, a
    test that a read-only profile sees the core note and does not feed reviews, and a test that a
    foreground memory write from a turn above the trusted pole is refused.
-4. **Telegram: attribution and maximum deferral.** Sender names in the rendered transcript, the
-   maximum-deferral clause of the due predicate, and the longer idle window. Verified by a Telegram
-   functional test with two senders in a group and a continuously active chat that is still
-   reviewed.
+4. **Telegram: attribution and maximum deferral.** Sender names in the rendered transcript, a
+   batcher that never merges messages from different senders, the maximum-deferral clause of the due
+   predicate, and the longer idle window. Verified by a Telegram functional test with two senders
+   posting inside one batching window and each attributed correctly, and a continuously active chat
+   that is still reviewed.
 5. **Evaluation.** A replay corpus of synthetic conversations with expected outcomes: nothing worth
    remembering, a correction, a tentative plan, an assistant mistake, several speakers, a deliberate
    forget, and useful user facts mixed with research. Each case is scored on what the curator
