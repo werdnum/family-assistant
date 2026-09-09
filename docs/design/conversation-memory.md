@@ -283,8 +283,10 @@ core note and a topic note, which cite nothing new. A deterministic applier vali
 and applies it. Validation covers: every cited message lies inside the reviewed stretch; every
 updated, removed or moved entry exists at the version the curator read; every operation that would
 touch an entry's lineage, an update or removal of the entry or an addition matching any version the
-entry has held, cites person-authored evidence newer than the entry's most recent person-authored
-change, the same evidence that releases a suppression, so a review holding old evidence, or only the
+entry has held, cites person-authored evidence newer than the entry's **floor**, the newest
+person-authored evidence its current version rests on, whichever writer applied that version: a
+curator update citing the person's correction sets it as surely as a hand-edit in the notes UI. This
+is the same evidence that releases a suppression, so a review holding old evidence, or only the
 assistant's acknowledgement of the person's change, can neither take back what a person did to the
 entry since nor re-create as a new entry the version the person corrected away; nothing violates the
 provenance ceiling, the cap, or a suppression; and an addition is not a duplicate of an entry
@@ -533,18 +535,17 @@ design does not try. A recent-changes view lists what the curator added, updated
 undo. **Undo is a person-authored change set that inverts the recorded operation** and goes through
 the applier like any other: undoing an addition removes the entry and is a forgetting; undoing a
 removal re-adds the entry, and as person-authored evidence newer than the forgetting it releases the
-suppression, while the person-authored floor above refuses a pending or retried review that would
-remove the restored entry on the old evidence again; undoing an update restores the previous
-version. What a suppression records is a set of versions, and the operation decides which:
-forgetting records the entry's whole lineage, while undoing an update records only the version the
-person rejected, so the restored version stays live and a later review that re-proposes the rejected
-one is refused, whether the rejected update changed the proposition or only re-attributed it to
-another subject. A subtle indicator in the chat surfaces that memory changed after a conversation
-without a notification per fact. "Forget that I said X" in chat is a foreground removal with the
-suppression semantics above. A deployment can turn contribution, reading, or the whole mechanism
-off. The user documentation for this feature is a new `docs/user/memory.md` describing what the
-assistant remembers on its own, what it never remembers, that memory is household-wide, and how to
-correct or forget.
+suppression, while the floor above refuses a pending or retried review that would remove the
+restored entry on the old evidence again; undoing an update restores the previous version. What a
+suppression records is a set of versions, and the operation decides which: forgetting records the
+entry's whole lineage, while undoing an update records only the version the person rejected, so the
+restored version stays live and a later review that re-proposes the rejected one is refused, whether
+the rejected update changed the proposition or only re-attributed it to another subject. A subtle
+indicator in the chat surfaces that memory changed after a conversation without a notification per
+fact. "Forget that I said X" in chat is a foreground removal with the suppression semantics above. A
+deployment can turn contribution, reading, or the whole mechanism off. The user documentation for
+this feature is a new `docs/user/memory.md` describing what the assistant remembers on its own, what
+it never remembers, that memory is household-wide, and how to correct or forget.
 
 ## Deliberate simplifications
 
