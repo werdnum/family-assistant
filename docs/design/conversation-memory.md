@@ -283,17 +283,18 @@ core note and a topic note, which cite nothing new. A deterministic applier vali
 and applies it. Validation covers: every cited message lies inside the reviewed stretch; every
 updated, removed or moved entry exists at the version the curator read; every operation that would
 touch an entry's lineage, an update or removal of the entry or an addition matching any version the
-entry has held, cites evidence newer than the entry's most recent person-authored change, so a
-review still holding old evidence can neither take back what a person did to the entry since nor
-re-create as a new entry the version the person corrected away; nothing violates the provenance
-ceiling, the cap, or a suppression; and an addition is not a duplicate of an entry already present.
-Validation is all-or-nothing for the change set: one rejected operation fails the review, which is
-retried with the rejection reasons fed back to the curator, so a fact is not quietly dropped because
-a sibling operation was malformed. A review that exhausts its retries is abandoned as described
-under scheduling: the watermark advances past the chunk, the rejected change set and reason are kept
-for the recent-changes view, and an error is logged, so the failure is visible rather than silent
-and the sweep does not keep paying for it. Neglect here degrades availability of memory, not its
-integrity.
+entry has held, cites person-authored evidence newer than the entry's most recent person-authored
+change, the same evidence that releases a suppression, so a review holding old evidence, or only the
+assistant's acknowledgement of the person's change, can neither take back what a person did to the
+entry since nor re-create as a new entry the version the person corrected away; nothing violates the
+provenance ceiling, the cap, or a suppression; and an addition is not a duplicate of an entry
+already present. Validation is all-or-nothing for the change set: one rejected operation fails the
+review, which is retried with the rejection reasons fed back to the curator, so a fact is not
+quietly dropped because a sibling operation was malformed. A review that exhausts its retries is
+abandoned as described under scheduling: the watermark advances past the chunk, the rejected change
+set and reason are kept for the recent-changes view, and an error is logged, so the failure is
+visible rather than silent and the sweep does not keep paying for it. Neglect here degrades
+availability of memory, not its integrity.
 
 Application and watermark advancement happen in **one short transaction**, conditional on the
 version of the memory store the applier validated against, with all model work outside it. The store
@@ -321,25 +322,25 @@ retries. Optimistic concurrency alone does not give that: a curator reads an old
 user removes the fact, the curator's write conflicts, the retry sees the same old evidence and
 recreates the fact. Another pending conversation can recreate it too.
 
-So removing an entry, whether in the notes UI or through a foreground "forget", records a
-**suppression**: the entry's lineage, its current text and subject, and the time of forgetting. A
-**version** of an entry is its proposition, subject and applicable period together, the same
-discriminators that identity and duplicate detection use, so that forgetting is scoped to the
-semantic entry being removed and a fact about a different period is a different version. An entry's
-identity is stable across updates, but its lineage is not one version: it is every version the entry
-has held, with the evidence for each, from the addition that created it through each update that
-changed any of them. A fact first learned as "bus" from one message and updated to "tram" from a
-later one carries both versions, a preference re-attributed from Alice to Bob carries both subjects,
-and forgetting the entry suppresses every version. Suppressions live in a repository record outside
-the always-loaded note; the forgotten text never goes back into every prompt as a negative
-instruction, and reaches only the curator's review input, which is a silent background turn. The
-applier matches a proposal against suppressions by version alone, against every version in the
-lineage, without regard to what evidence the proposal cites; only a proposal that matches is then
-asked whether it cites person-authored evidence newer than the forgetting, and it is rejected unless
-it does. Matching on the proposition rather than on the evidence-derived identity is what stops the
-same fact returning from a different message, such as the assistant's acknowledgement or an
-unrelated older conversation that stated it in the same words, while forgetting one fact from a
-message still leaves the other facts from that message untouched, because they are different
+So removing an entry, whether by a review that learned a contradiction, in the notes UI or through a
+foreground "forget", records a **suppression**: the entry's lineage, its current text and subject,
+and the time of forgetting. A **version** of an entry is its proposition, subject and applicable
+period together, the same discriminators that identity and duplicate detection use, so that
+forgetting is scoped to the semantic entry being removed and a fact about a different period is a
+different version. An entry's identity is stable across updates, but its lineage is not one version:
+it is every version the entry has held, with the evidence for each, from the addition that created
+it through each update that changed any of them. A fact first learned as "bus" from one message and
+updated to "tram" from a later one carries both versions, a preference re-attributed from Alice to
+Bob carries both subjects, and forgetting the entry suppresses every version. Suppressions live in a
+repository record outside the always-loaded note; the forgotten text never goes back into every
+prompt as a negative instruction, and reaches only the curator's review input, which is a silent
+background turn. The applier matches a proposal against suppressions by version alone, against every
+version in the lineage, without regard to what evidence the proposal cites; only a proposal that
+matches is then asked whether it cites person-authored evidence newer than the forgetting, and it is
+rejected unless it does. Matching on the proposition rather than on the evidence-derived identity is
+what stops the same fact returning from a different message, such as the assistant's acknowledgement
+or an unrelated older conversation that stated it in the same words, while forgetting one fact from
+a message still leaves the other facts from that message untouched, because they are different
 propositions. That is the mechanical guarantee, and it covers retries and pending reviews over any
 conversation. The curator sees the suppressed text so that it can recognise the same proposition
 arriving as a paraphrase from a different old conversation, which the applier's version matching
@@ -488,13 +489,13 @@ stretch, operations cite existing entries rather than messages, a merged or upda
 the union of its sources' evidence, and the applier validates that every cited entry exists at the
 read version and that no operation drops evidence the entries carried. A merge retires the duplicate
 structurally, like a move: the retired entry's lineage and evidence fold into the survivor and no
-suppression is recorded, because nothing was forgotten; only a person's removal or a pruning that
-the person could have asked for records one. Consolidation is limited to merging duplicates,
-resolving contradictions and pruning expired entries; it does not reword. One extra guard applies,
-and it counts change of any kind: a pass that would touch more than a fixed share of the existing
-entries, in any field and whether by removal, merge or update, is rejected, so a faulty pass cannot
-rewrite, re-attribute or retime the store while keeping its evidence references intact. It is a
-later milestone; the incremental design is useful without it.
+suppression is recorded, because nothing was forgotten; every other removal, whoever asked for it,
+records one. Consolidation is limited to merging duplicates, resolving contradictions and pruning
+expired entries; it does not reword. One extra guard applies, and it counts change of any kind: a
+pass that would touch more than a fixed share of the existing entries, in any field and whether by
+removal, merge or update, is rejected, so a faulty pass cannot rewrite, re-attribute or retime the
+store while keeping its evidence references intact. It is a later milestone; the incremental design
+is useful without it.
 
 ### Telegram
 
