@@ -5014,17 +5014,19 @@ async def _cleanup_dead_worker_completion_listeners(
 ) -> int:
     """Delete worker completion listeners whose worker can no longer report.
 
-    A listener is dead when its worker task has reached a terminal status, or
-    when its row is gone entirely because the worker task cleanup already
-    reaped it. Either way the completion webhook that would fire it is never
-    coming, and the listener goes once it is past the grace period.
+    A worker goes quiet either because we watched it finish or because its own
+    deadline passed with it still recorded as live. Both are given the same
+    grace afterwards, which is what keeps this off a completion still being
+    acted on: the webhook marks a task terminal before the event it carried has
+    fired the listener, so a task that just finished is not yet done with.
 
-    A task still recorded as live is judged by its own timeout rather than by
-    the listener's age: a backend that loses a job leaves a row stuck in a live
-    status forever, but a task an operator allowed a fortnight for is not
-    abandoned on day seven. Once it is overdue by its own deadline -- the one
-    the stale task reaper fails it at -- and the listener has reached
-    ``abandoned_listener_hours``, the callback is not in flight, it is lost.
+    A task whose row is gone entirely -- reaped by the worker task cleanup --
+    has nothing left to report, and its listener goes once the listener itself
+    is past the grace.
+
+    Deadness inferred from a stuck live status is held to the higher bar of
+    ``abandoned_listener_hours`` as well: a backend that loses a job leaves a
+    row live forever, but a week is long enough to stop calling it in flight.
     """
     listeners = await db_context.events.get_untriggered_one_time_listeners(
         created_before=now - timedelta(hours=dead_worker_grace_hours),
@@ -5040,19 +5042,20 @@ async def _cleanup_dead_worker_completion_listeners(
     if not waiting:
         return 0
 
-    deadlines = await db_context.worker_tasks.get_live_task_deadlines([
+    quiet_times = await db_context.worker_tasks.get_quiet_times([
         task_id for _, task_id in waiting
     ])
+    quiet_cutoff = now - timedelta(hours=dead_worker_grace_hours)
     abandoned_cutoff = now - timedelta(hours=abandoned_listener_hours)
 
     doomed: list[int] = []
     for listener, task_id in waiting:
-        deadline = deadlines.get(task_id)
-        if (
-            deadline is None
-            or now > deadline
-            and listener["created_at"] < abandoned_cutoff
-        ):
+        quiet = quiet_times.get(task_id)
+        if quiet is None:
+            doomed.append(listener["id"])
+        elif quiet.at >= quiet_cutoff:
+            continue
+        elif not quiet.is_live or listener["created_at"] < abandoned_cutoff:
             doomed.append(listener["id"])
 
     return await db_context.events.delete_event_listeners_by_id(doomed)
