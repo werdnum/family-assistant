@@ -204,13 +204,14 @@ of model calls surfacing months of old conversations as new facts. Reviewing his
 boundary is an explicit opt-in backfill, bounded and run on request, not an effect of enabling.
 
 **Reviews are scheduled from state, not from events.** Whether a conversation is due is a pure
-function of stored data: it has at least one completed turn after its watermark, and either its last
-activity is older than the idle window or its oldest unreviewed row is older than the maximum
-deferral. The second clause is what guarantees a busy Telegram group that never goes quiet is still
-reviewed. A recurring system task, on the same footing as the existing cleanup tasks, evaluates that
-predicate every few minutes and enqueues one review task per due conversation, keyed on the
-conversation so the same conversation never has two reviews in flight. Nothing is enqueued when a
-message is persisted.
+function of stored data: the first turn after its watermark is complete, so that a review can
+advance the watermark past at least one turn rather than stop short of a live one and repeat every
+sweep, and either its last activity is older than the idle window or its oldest unreviewed row is
+older than the maximum deferral. The second clause is what guarantees a busy Telegram group that
+never goes quiet is still reviewed. A recurring system task, on the same footing as the existing
+cleanup tasks, evaluates that predicate every few minutes and enqueues one review task per due
+conversation, keyed on the conversation so the same conversation never has two reviews in flight.
+Nothing is enqueued when a message is persisted.
 
 **A review covers a bounded chunk, and the watermark always moves on a terminal outcome.** A review
 takes rows after the watermark up to a fixed budget of rendered size, not row count, so a stretch
@@ -335,11 +336,14 @@ same proposition arriving as a paraphrase from a different old conversation, whi
 proposition-and-subject matching cannot connect, because the paraphrase is a different proposition;
 that part is an instruction, not a mechanism, and it is recorded as the residual below. A
 suppression is released only by evidence a person authored after it: a user row newer than the
-forgetting, or a foreground action. The assistant's own acknowledgement ("I'll forget that") is a
-newer row too, and it must not count, or the act of forgetting would supply the evidence to
-un-forget; rows the assistant wrote, and any row older than the suppression, never release it.
-Retaining the forgotten text in the suppression store is a deliberate trade: forgetting without it
-cannot resist paraphrase at all, and the store is as private as the memory notes themselves.
+forgetting, or a foreground action, and it releases only the proposition that evidence restates. An
+entry corrected from "bus" to "tram" and then forgotten is suppressed in both versions, and a person
+later saying "tram" again frees "tram" alone, so a pending review over the old "bus" evidence still
+cannot add "bus". The assistant's own acknowledgement ("I'll forget that") is a newer row too, and
+it must not count, or the act of forgetting would supply the evidence to un-forget; rows the
+assistant wrote, and any row older than the suppression, never release it. Retaining the forgotten
+text in the suppression store is a deliberate trade: forgetting without it cannot resist paraphrase
+at all, and the store is as private as the memory notes themselves.
 
 Forgetting curated memory is distinct from deleting conversation history, indexed search entries and
 other retained copies. The user documentation says so and points to what each requires.
@@ -536,6 +540,10 @@ correct or forget.
   markdown, not a new table of facts.
 - **Whole-stretch taint exclusion.** Per-evidence provenance and explicit promotion are named as the
   refinements; the first version measures the loss and ships the conservative rule.
+- **Turning contribution off discards what was not yet reviewed.** Rows written while contribution
+  was on but not reviewed before it was turned off lie before the next enablement moment and are
+  never curated. Turning the feature off is read as "stop learning from this", and one boundary per
+  enablement is what makes the eligibility rule a single comparison rather than a set of intervals.
 - **Spoken interfaces read but do not contribute.** Telephone calls and iOS native-voice sessions
   are excluded from contribution until their persistence produces message rows with real provenance;
   a test pins the exclusion so the limitation is visible rather than a path that can never pass the
@@ -595,15 +603,16 @@ Each milestone is independently useful and verifiable.
    and a second always-loaded memory note, from the UI and foreground tool paths alike; to fail a
    whole change set on one rejected operation and keep the stretch reviewable; to accept a manual
    addition from the notes UI with the editor as its evidence; and to keep two facts from one
-   message as distinct entries so forgetting one leaves the other. The read policy is verified by
-   seeding an unlabelled note, a default-labelled note and an unlabelled file-based skill and
-   asserting none reaches the curator through the context provider, the title list, the skill
-   catalogue or `get_note`, including the file-skill fallback; a conformance rule asserts every note
-   or skill read the curator can reach goes through the policy. Conformance also confirms the
-   curator's write policy carries the `memory` floor, that its effective tool set, global grants
-   included, is exactly the memory entry tools, and that its effective context provider set is
-   exactly the notes provider. Skip counters and skipped-volume gauges land here, on the existing
-   metrics surface.
+   message as distinct entries so forgetting one leaves the other, and that a corrected then
+   forgotten entry restated by a person in its later version stays suppressed in its earlier one.
+   The read policy is verified by seeding an unlabelled note, a default-labelled note and an
+   unlabelled file-based skill and asserting none reaches the curator through the context provider,
+   the title list, the skill catalogue or `get_note`, including the file-skill fallback; a
+   conformance rule asserts every note or skill read the curator can reach goes through the policy.
+   Conformance also confirms the curator's write policy carries the `memory` floor, that its
+   effective tool set, global grants included, is exactly the memory entry tools, and that its
+   effective context provider set is exactly the notes provider. Skip counters and skipped-volume
+   gauges land here, on the existing metrics surface.
 2. **Forgetting.** Suppression records, applier rejection, foreground "forget". Verified by the
    reconstruction scenario end to end: a fact is learned, forgotten, and a pending review over the
    original conversation plus a retry of a conflicting review both fail to recreate it, a review
