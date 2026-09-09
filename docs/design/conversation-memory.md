@@ -118,10 +118,16 @@ Without that, deleting a topic note would erase its entries and their lineage wi
 single forget, and the next review could put them all back. The core note's topic index is derived,
 not authored: the applier regenerates it from the set of topic notes that exist, in the same
 transaction as any apply that creates or removes a topic, so a pointer can never outlive its topic
-and no writer has to remember to update it. A profile that could reach a memory note with the
-generic tools would be bypassing evidence validation, suppression and entry-level conflict handling,
-so the repository refuses that regardless of which tool asked. The background process is the
-complement for everything the user did not ask to have saved.
+and no writer has to remember to update it. The index is a bounded projection, not a complete
+listing: it names the most recently changed topics up to a fixed share of the core cap, so the core
+note stays within its ceiling however many topics exist and opening a new topic can never fail on
+the pointer it adds. A topic that has fallen out of the projection is still a memory note: it is
+reachable by `get_note` by title and through document search, and the curator prompt says so, so the
+projection is a convenience for the foreground turn rather than the only path to a topic. A profile
+that could reach a memory note with the generic tools would be bypassing evidence validation,
+suppression and entry-level conflict handling, so the repository refuses that regardless of which
+tool asked. The background process is the complement for everything the user did not ask to have
+saved.
 
 ### Whose memory it is
 
@@ -210,17 +216,18 @@ orphaned assistant rows that the no-user-messages rule would then skip. Only com
 eligible: a turn still awaiting its terminal reply, such as one parked on a confirmation that can
 stay pending for a day, ends the chunk before itself and is reviewed once it completes, and the
 watermark never advances past a turn that has not finished. "Finished" is defined so that no turn
-can block a conversation forever: a turn is complete when it has its terminal reply, or when a later
-turn in the same conversation has completed, or when the maximum deferral has elapsed since its last
-row and the turn holds no live confirmation. A pending confirmation is a durable record with its own
-timeout, so "live" is mechanical: while one exists for the turn, the turn is waiting, not dead, and
-the sweep leaves it alone however long the confirmation's timeout runs; once the confirmation
-resolves or expires, the turn either completes with its terminal reply or falls under the deferral
-rule. A turn cut off by a server restart, which the web flow deliberately leaves without a terminal
-reply, therefore counts as complete as soon as the household moves on, and is rendered with a marker
-saying it never finished so the curator does not read a request as an outcome. A single turn larger
-than the budget on its own (a pasted document, say) is rendered truncated with a marker, since a
-message's length has no limit at the API; the review proceeds on what fits, and the turn's
+can block a conversation forever, and with no clock in it: a turn is complete when it has its
+terminal reply, or when a later turn in the same conversation has completed. There is no time-based
+alternative, because none can be made safe: a confirmation can stay pending longer than any
+deferral, and even after it resolves the turn is still running until its reply lands, so any rule
+that declared a turn finished on elapsed time alone could advance past an outcome that was about to
+be written. A turn cut off by a server restart, which the web flow deliberately leaves without a
+terminal reply, therefore counts as complete as soon as the household's next turn completes, and is
+rendered with a marker saying it never finished so the curator does not read a request as an
+outcome. The cost is that a conversation whose last turn was cut off is not reviewed until someone
+speaks in it again; that memory is delayed, not lost, and it is recorded as a residual. A single
+turn larger than the budget on its own (a pasted document, say) is rendered truncated with a marker,
+since a message's length has no limit at the API; the review proceeds on what fits, and the turn's
 provenance is carried in full regardless. When more rows remain, the watermark advances to the end
 of the chunk and the conversation is simply still due, so the next sweep reviews the next chunk. The
 same rule closes the failure path: a review that fails permanently is abandoned by advancing the
@@ -517,6 +524,9 @@ it never remembers, that memory is household-wide, and how to correct or forget.
   input is the guard there, and it is an instruction rather than a mechanism.
 - Memory carries the provenance of the conversation that wrote it. An entry written from a
   trusted-pole conversation keeps that tier on readers. That is the correct propagation.
+- A conversation whose last turn never finished, after a restart, is not reviewed until the next
+  turn in it completes. Memory from that stretch is delayed, not lost, and the alternative, a
+  time-based completion rule, cannot be made safe against a turn that is still running.
 - Idle review is one model call per active conversation per idle period. On a chatty deployment this
   is tens of cheap calls a day; the no-user-messages skip and the contribute setting are the levers.
 
@@ -531,30 +541,32 @@ Each milestone is independently useful and verifiable.
    that a pre-existing conversation with no watermark row is not reviewed for rows older than the
    enablement time; that after contribution is turned off and on again, rows written while it was
    off are never curated; that a re-run after the watermark reviews only new rows; that a turn
-   parked on a confirmation across the idle window, and past the maximum deferral while the
-   confirmation is still live, is neither enqueued nor reviewed until it completes and is then
-   reviewed whole; that a turn left without a terminal reply by a restart is reviewed with a
-   never-finished marker once a later turn completes, and the watermark passes it; that a stretch
-   larger than the chunk budget is reviewed across successive sweeps with the watermark advancing
-   each time; that an abandoned review advances the watermark and leaves the conversation not due;
-   and that a stretch carrying unknown-external taint is skipped with an audit record and counted.
-   Concurrency is verified directly: a message persisted at any point during a review, including
-   after the handler's last read and before the task is marked done, is covered by a later sweep;
-   two reviews changing the same note leave both change sets applied, with one review retried; a
-   note edited between a review's read and its apply is not overwritten; and a retried review does
-   not duplicate an addition. The applier is verified to reject an operation citing evidence outside
-   the stretch, an update to a missing entry, an over-cap result and a second always-loaded memory
-   note, from the UI and foreground tool paths alike; to fail a whole change set on one rejected
-   operation and keep the stretch reviewable; to accept a manual addition from the notes UI with the
-   editor as its evidence; and to keep two facts from one message as distinct entries so forgetting
-   one leaves the other. The read policy is verified by seeding an unlabelled note, a
-   default-labelled note and an unlabelled file-based skill and asserting none reaches the curator
-   through the context provider, the title list, the skill catalogue or `get_note`, including the
-   file-skill fallback; a conformance rule asserts every note or skill read the curator can reach
-   goes through the policy. Conformance also confirms the curator's write policy carries the
-   `memory` floor, that its effective tool set, global grants included, is exactly the memory entry
-   tools, and that its effective context provider set is exactly the notes provider. Skip counters
-   and skipped-volume gauges land here, on the existing metrics surface.
+   parked on a confirmation across the idle window and past the maximum deferral, including the
+   interval between the confirmation resolving and the reply landing, is neither enqueued nor
+   reviewed until it completes and is then reviewed whole; that a turn left without a terminal reply
+   by a restart is reviewed with a never-finished marker once a later turn completes, and the
+   watermark passes it, and is not reviewed before then; that a store with more topics than the core
+   index can name keeps the core within its cap and still allows a new topic to be opened; that a
+   stretch larger than the chunk budget is reviewed across successive sweeps with the watermark
+   advancing each time; that an abandoned review advances the watermark and leaves the conversation
+   not due; and that a stretch carrying unknown-external taint is skipped with an audit record and
+   counted. Concurrency is verified directly: a message persisted at any point during a review,
+   including after the handler's last read and before the task is marked done, is covered by a later
+   sweep; two reviews changing the same note leave both change sets applied, with one review
+   retried; a note edited between a review's read and its apply is not overwritten; and a retried
+   review does not duplicate an addition. The applier is verified to reject an operation citing
+   evidence outside the stretch, an update to a missing entry, an over-cap result and a second
+   always-loaded memory note, from the UI and foreground tool paths alike; to fail a whole change
+   set on one rejected operation and keep the stretch reviewable; to accept a manual addition from
+   the notes UI with the editor as its evidence; and to keep two facts from one message as distinct
+   entries so forgetting one leaves the other. The read policy is verified by seeding an unlabelled
+   note, a default-labelled note and an unlabelled file-based skill and asserting none reaches the
+   curator through the context provider, the title list, the skill catalogue or `get_note`,
+   including the file-skill fallback; a conformance rule asserts every note or skill read the
+   curator can reach goes through the policy. Conformance also confirms the curator's write policy
+   carries the `memory` floor, that its effective tool set, global grants included, is exactly the
+   memory entry tools, and that its effective context provider set is exactly the notes provider.
+   Skip counters and skipped-volume gauges land here, on the existing metrics surface.
 2. **Forgetting.** Suppression records, applier rejection, foreground "forget". Verified by the
    reconstruction scenario end to end: a fact is learned, forgotten, and a pending review over the
    original conversation plus a retry of a conflicting review both fail to recreate it, a review
