@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed. Companion to [executable-definition-taint.md](executable-definition-taint.md), whose
+Implemented. Companion to [executable-definition-taint.md](executable-definition-taint.md), whose
 migration section names three paths for definitions written before that design shipped — touch,
 attest, recreate — and to [taint-history-epoch-amnesty.md](taint-history-epoch-amnesty.md), which
 solved the same shape of problem for message history. This design supplies the bulk path the

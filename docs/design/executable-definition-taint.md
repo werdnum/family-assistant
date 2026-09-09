@@ -506,7 +506,7 @@ close-vocabulary marking at every consultation, and the audit anchor to the crea
 
 ## Migration
 
-Legacy definitions have no record and keep today's behaviour untouched. Three paths forward, all
+Legacy definitions have no record and keep today's behaviour untouched. Four paths forward, all
 existing shapes:
 
 1. **Touch.** The next update through any write path stamps, hashes, and gates the definition in the
@@ -518,6 +518,11 @@ existing shapes:
    under `observe`.
 3. **Recreate.** For one-shot callbacks in flight, nothing: they expire on firing, and newly
    scheduled ones carry records from day one.
+4. **Amnesty.** For an estate that predates records entirely, per-definition review is the wrong
+   granularity, and [legacy-definition-amnesty.md](legacy-definition-amnesty.md) adds the bulk form
+   of the same decision: an operator-granted, hash-bound, revocable `legacy_amnestied` disposition,
+   written through this design's own stamping chokepoint and rendering as itself to the firing-time
+   reviewer.
 
 The enforce-migration note in auto-tool-call-review.md simplifies once this lands: reminder delivery
 from clean turns no longer trips the `known_user_message` pin, so the reminder-compatible-exception

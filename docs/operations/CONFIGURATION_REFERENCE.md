@@ -1818,6 +1818,60 @@ See [docs/design/taint-history-epoch-amnesty.md](../design/taint-history-epoch-a
 
 ______________________________________________________________________
 
+## Legacy Definition Amnesty
+
+An automation, event listener, or stored script written before definition records shipped carries
+none, and a firing reads that absence as fail-closed: the definition renders to the tool-call
+reviewer as a stub and seeds its turn at `unknown_external`, permanently. A deployment whose
+automation estate predates the feature migrates it with `scripts/restamp_legacy_definitions.py`,
+which lists the definitions holding no record that were created before a cutoff you state, and —
+only with `--apply` — records an operator amnesty for each.
+
+```bash
+# What would be amnestied? Nothing is written.
+python scripts/restamp_legacy_definitions.py \
+    --database-url "$DATABASE_URL" --created-before 2026-08-01
+
+# Grant it.
+python scripts/restamp_legacy_definitions.py \
+    --database-url "$DATABASE_URL" --created-before 2026-08-01 --apply
+```
+
+State `--created-before` as the instant definition records were **deployed**. There is no default: a
+definition written after that instant with no record is a write-path regression to fix, not a legacy
+artifact to bless. Restrict a run with `--kind` (`schedule_automation`, `event_listener`, `script`)
+and `--name`, both repeatable, to amnesty in batches.
+
+An amnestied definition fires with its intent rendered, and the reviewer is told which it is
+reading: the review status says the definition was amnestied by the operator and examined by no
+gate, it never counts as a human attestation, and it never feeds the destination echo. It is bound
+to a hash of the content it was granted over, so editing the definition afterwards voids the amnesty
+and returns it to the ordinary creation gate.
+
+Two properties bound what a run can do. It fills absence only — a definition already holding a
+record, including one voided by a hash mismatch, is never touched — and it is reversible:
+
+```bash
+python scripts/restamp_legacy_definitions.py --database-url "$DATABASE_URL" --revoke          # list
+python scripts/restamp_legacy_definitions.py --database-url "$DATABASE_URL" --revoke --apply  # clear
+```
+
+Revocation clears records carrying the amnesty disposition and nothing else, restoring the
+fail-closed state exactly, so a judge verdict or human confirmation can never be deleted this way.
+Review the amnestied estate with `--revoke` (without `--apply`) when you later add a `confirm` floor
+to executable persistence: an amnesty records a decision no gate made, and like a judge-allowed cure
+it keeps curing under configuration tightened afterwards.
+
+One-shot callbacks in flight (reminders, `schedule_future_callback`) are not covered — their records
+ride the enqueued task and expire on firing.
+
+Notes and attachments need no equivalent: an artifact carrying no stored provenance contributes no
+taint, so legacy ones are already unaffected.
+
+See [docs/design/legacy-definition-amnesty.md](../design/legacy-definition-amnesty.md).
+
+______________________________________________________________________
+
 ## Confined Diagnostics Profile (`ops_automation`)
 
 `ops_automation` exists so an unattended scheduled job can crawl recent error logs, triage them, and
