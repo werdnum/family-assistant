@@ -157,6 +157,94 @@ async def test_voice_session_rejects_foreign_conversation_id(
 
 
 @pytest.mark.asyncio
+async def test_voice_session_without_profile_records_the_default_profile(
+    web_only_assistant: Assistant,
+) -> None:
+    """An omitted profile means the default, which is what the token endpoint
+    resolves an omitted profile to. Recording it (rather than nothing) is what
+    lets the conversation be reopened: history is read back filtered by profile,
+    and an unstamped transcript matches no profile at all."""
+    app = web_only_assistant.fastapi_app
+    assert app is not None
+    default_profile_id = app.state.processing_service.service_config.id
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/api/v1/chat/voice-sessions",
+            json={"turns": [{"role": "user", "text": "hi"}]},
+        )
+        assert response.status_code == 200
+        conversation_id = response.json()["conversation_id"]
+
+        messages = await client.get(
+            f"/api/v1/chat/conversations/{conversation_id}/messages",
+            params={"include_conversation_profile": True},
+        )
+        assert messages.status_code == 200
+        assert messages.json()["latest_user_profile_id"] == default_profile_id
+
+
+@pytest.mark.asyncio
+async def test_voice_session_records_the_profile_the_session_ran_under(
+    web_only_assistant: Assistant,
+) -> None:
+    """The profile the client echoes back from its ephemeral token is what the
+    transcript is filed under, so reopening the conversation lands on the profile
+    that holds its history rather than on whichever one the user last picked."""
+    app = web_only_assistant.fastapi_app
+    assert app is not None
+    default_profile_id = app.state.processing_service.service_config.id
+    other_profile_id = next(
+        profile_id
+        for profile_id, service in app.state.processing_services.items()
+        if profile_id != default_profile_id and service.kind != "remote"
+    )
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/api/v1/chat/voice-sessions",
+            json={
+                "turns": [{"role": "user", "text": "hi"}],
+                "profile_id": other_profile_id,
+            },
+        )
+        assert response.status_code == 200
+        conversation_id = response.json()["conversation_id"]
+
+        messages = await client.get(
+            f"/api/v1/chat/conversations/{conversation_id}/messages",
+            params={"include_conversation_profile": True},
+        )
+        assert messages.status_code == 200
+        assert messages.json()["latest_user_profile_id"] == other_profile_id
+
+
+@pytest.mark.asyncio
+async def test_voice_session_rejects_unknown_profile(
+    web_only_assistant: Assistant,
+) -> None:
+    """A stamp no profile answers to reads back as history nothing can load, so
+    it is refused rather than stored."""
+    assert web_only_assistant.fastapi_app is not None
+    transport = httpx.ASGITransport(app=web_only_assistant.fastapi_app)
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/api/v1/chat/voice-sessions",
+            json={
+                "turns": [{"role": "user", "text": "hi"}],
+                "profile_id": "no_such_profile",
+            },
+        )
+        assert response.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_voice_session_rejects_empty_turns(
     web_only_assistant: Assistant,
 ) -> None:

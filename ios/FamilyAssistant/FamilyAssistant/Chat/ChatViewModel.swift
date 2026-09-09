@@ -310,7 +310,6 @@ final class ChatViewModel {
     private enum Keys {
         static let lastConversationID = "lastConversationId"
         static let lastConversationActiveAt = "lastConversationActiveAt"
-        static let selectedProfileID = "selectedProfileId"
     }
 
     private struct ActiveChatTurn: Equatable {
@@ -516,7 +515,7 @@ final class ChatViewModel {
             followReconnectMaxDelaySeconds: liveReconnectMaxDelaySeconds,
             breadcrumb: syncBreadcrumb
         )
-        let storedProfileID = UserDefaults.standard.string(forKey: Keys.selectedProfileID) ?? "default_assistant"
+        let storedProfileID = PreferredProfile.id
         preferredProfileID = storedProfileID
         // Starts at the preferred profile; if launch restores a conversation,
         // `bootstrap` reopens it via `selectConversation`, which adopts that
@@ -1031,7 +1030,7 @@ final class ChatViewModel {
             return
         }
         preferredProfileID = profileID
-        UserDefaults.standard.set(profileID, forKey: Keys.selectedProfileID)
+        PreferredProfile.store(profileID)
         if isEmptyUnsentConversation {
             // Nothing has been said yet, so there is no context to separate and a
             // fresh conversation would only churn the id. Switch in place.

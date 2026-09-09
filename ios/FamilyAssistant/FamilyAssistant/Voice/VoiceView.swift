@@ -35,11 +35,17 @@ struct VoiceView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
 
-    /// Optional processing profile to route the session to (nil → default).
-    let profileID: String?
+    /// The processing profile to route the session to (nil → default), resolved
+    /// when a session actually starts rather than when the view is built: the tab
+    /// is built once and can outlive several profile changes made in Chat, and a
+    /// plain `UserDefaults` read is not something SwiftUI re-evaluates on.
+    let profileID: @MainActor () -> String?
     let onClose: (() -> Void)?
 
-    init(profileID: String? = nil, onClose: (() -> Void)? = nil) {
+    init(
+        profileID: @escaping @MainActor () -> String? = { nil },
+        onClose: (() -> Void)? = nil
+    ) {
         self.profileID = profileID
         self.onClose = onClose
     }
@@ -88,7 +94,7 @@ struct VoiceView: View {
                 toolExecutor: api,
                 transcriptStore: api,
                 audio: Self.makeAudioIO(),
-                profileID: profileID
+                profileID: profileID()
             )
             model = viewModel
             await viewModel.start()

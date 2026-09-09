@@ -164,10 +164,17 @@ struct ChatAPIClient {
 
     /// Persist a completed voice session as its own conversation.
     ///
-    /// POSTs `/api/v1/chat/voice-sessions` with the accumulated transcript turns.
+    /// POSTs `/api/v1/chat/voice-sessions` with the accumulated transcript turns
+    /// and the profile the session ran under, so the stored conversation is filed
+    /// under that profile rather than under none (history is read back filtered by
+    /// profile). A nil `profileID` records the session against the default profile.
     /// Returns the conversation id the backend stored them under.
     @discardableResult
-    func saveVoiceSession(turns: [VoiceTranscriptEntry], conversationID: String?) async throws -> String {
+    func saveVoiceSession(
+        turns: [VoiceTranscriptEntry],
+        conversationID: String?,
+        profileID: String?
+    ) async throws -> String {
         var request = try await authManager.authorizedRequest(
             url: apiURL("/api/v1/chat/voice-sessions"),
             method: "POST"
@@ -176,7 +183,8 @@ struct ChatAPIClient {
         request.httpBody = try JSONEncoder().encode(
             VoiceSessionBody(
                 conversationID: conversationID,
-                turns: turns.map { VoiceSessionTurnBody(role: $0.speaker.rawValue, text: $0.text) }
+                turns: turns.map { VoiceSessionTurnBody(role: $0.speaker.rawValue, text: $0.text) },
+                profileID: profileID
             )
         )
         let (data, response) = try await urlSession.dataExpectingJSON(for: request, authWallError: ChatAPIError.authWall)
@@ -998,10 +1006,12 @@ private struct VoiceSessionTurnBody: Encodable {
 private struct VoiceSessionBody: Encodable {
     let conversationID: String?
     let turns: [VoiceSessionTurnBody]
+    let profileID: String?
 
     enum CodingKeys: String, CodingKey {
         case conversationID = "conversation_id"
         case turns
+        case profileID = "profile_id"
     }
 }
 

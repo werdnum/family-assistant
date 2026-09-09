@@ -185,6 +185,73 @@ async def test_ephemeral_token_uses_confirmation_aware_tool_advertisement(
     assert tools_provider.calls == [False]
 
 
+def _voice_processing_service(profile_id: str) -> ProcessingService:
+    """A minimal live-capable service, identified only by its profile id."""
+    return ProcessingService(
+        llm_client=RuleBasedMockLLMClient(
+            rules=[],
+            default_response=LLMOutput(content="ok", tool_calls=None),
+        ),
+        tools_provider=VoiceModeStubToolsProvider(),
+        service_config=ProcessingServiceConfig(
+            prompts={"system_prompt": "You are a voice assistant."},
+            timezone=ZoneInfo("UTC"),
+            max_history_messages=5,
+            history_max_age_hours=1,
+            tools_config=ToolsConfig(),
+            delegation_security_level=DelegationSecurityLevel.CONFIRM,
+            id=profile_id,
+        ),
+        context_providers=[],
+        server_url="http://testserver",
+        app_config=AppConfig(),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_ephemeral_token_reports_the_profile_it_resolved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The token names the profile whose prompt and tools it carries.
+
+    The client has no other way to know: a request naming no profile, or one no
+    profile answers to, silently lands on the default. It echoes this back when
+    it saves the transcript, so the conversation is filed under the profile that
+    actually held the call.
+    """
+    monkeypatch.setenv("GEMINI_API_KEY", "test-api-key")
+
+    fake_google = cast("Any", types.ModuleType("google"))
+    fake_google.genai = types.SimpleNamespace(Client=_FakeGenAIClient)
+    monkeypatch.setitem(sys.modules, "google", fake_google)
+
+    default_service = _voice_processing_service("default-profile")
+    named_service = _voice_processing_service("named-profile")
+
+    app = FastAPI()
+    app.include_router(gemini_live_router, prefix="/api")
+    app.state.processing_service = default_service
+    app.state.processing_services = {"named-profile": named_service}
+    app.state.config = AppConfig()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        omitted = await client.post("/api/gemini/ephemeral-token", json={})
+        named = await client.post(
+            "/api/gemini/ephemeral-token", json={"profile_id": "named-profile"}
+        )
+        unknown = await client.post(
+            "/api/gemini/ephemeral-token", json={"profile_id": "no-such-profile"}
+        )
+
+    assert omitted.json()["profile_id"] == "default-profile"
+    assert named.json()["profile_id"] == "named-profile"
+    # An unknown profile falls back to the default, and says so rather than
+    # echoing back a profile that never ran.
+    assert unknown.json()["profile_id"] == "default-profile"
+
+
 async def _live_noop_tool(**_kwargs: object) -> str:
     return "ok"
 

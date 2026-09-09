@@ -41,7 +41,15 @@ final class VoiceCallStarter {
     convenience init(authManager: AuthManager) {
         self.init(
             isAuthenticated: { authManager.isAuthenticated },
-            makeCoordinator: { VoiceCallCoordinator.system(authManager: authManager) }
+            // A Siri or CallKit call runs under the profile the user last chose,
+            // like the Voice tab. Passed as a closure because the coordinator is
+            // built once and reused for every later call.
+            makeCoordinator: {
+                VoiceCallCoordinator.system(
+                    authManager: authManager,
+                    profileID: { PreferredProfile.id }
+                )
+            }
         )
     }
 

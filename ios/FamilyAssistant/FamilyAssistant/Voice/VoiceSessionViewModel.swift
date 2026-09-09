@@ -28,7 +28,11 @@ extension ChatAPIClient: VoiceTokenProviding {}
 @MainActor
 protocol VoiceTranscriptStoring {
     @discardableResult
-    func saveVoiceSession(turns: [VoiceTranscriptEntry], conversationID: String?) async throws -> String
+    func saveVoiceSession(
+        turns: [VoiceTranscriptEntry],
+        conversationID: String?,
+        profileID: String?
+    ) async throws -> String
 }
 
 extension ChatAPIClient: VoiceTranscriptStoring {}
@@ -65,7 +69,13 @@ final class VoiceSessionViewModel {
     private let audio: VoiceAudioIO
     private let permission: VoiceMicrophonePermission
     private let sessionFactory: @MainActor () -> VoiceLiveSession
-    private let profileID: String?
+    /// The profile the session asks for. Nil means "whatever the backend calls
+    /// default", which is only resolved to a name once the token comes back.
+    private let requestedProfileID: String?
+    /// The profile the session actually runs under, known from the token. The
+    /// transcript is filed under it so reopening the conversation in text lands on
+    /// the profile that holds its history.
+    private var resolvedProfileID: String?
     private let reportError: @MainActor (Error) -> Void
     private let sessionTimeoutOverride: Duration?
     private let diagnostics: VoiceConnectionDiagnostics
@@ -105,7 +115,8 @@ final class VoiceSessionViewModel {
         self.transcriptStore = transcriptStore
         self.audio = audio
         self.permission = permission
-        self.profileID = profileID
+        requestedProfileID = profileID
+        resolvedProfileID = profileID
         self.diagnostics = diagnostics
         self.connectionTimeout = connectionTimeout
         self.sessionFactory = sessionFactory ?? { GeminiLiveClient(diagnostics: diagnostics) }
@@ -171,12 +182,17 @@ final class VoiceSessionViewModel {
         }
         let token: EphemeralToken
         do {
-            token = try await tokenProvider.fetchEphemeralToken(profileID: profileID)
+            token = try await tokenProvider.fetchEphemeralToken(profileID: requestedProfileID)
         } catch {
             fail(error)
             return
         }
         guard !isTerminal else { return }
+
+        // A server that predates `profile_id` reports none; it resolves the
+        // requested profile the same way we asked for it, so keep that.
+        resolvedProfileID = token.profileID ?? requestedProfileID
+        toolRunner.profileID = resolvedProfileID
 
         diagnostics.record("token_received", fields: ["function_count": String(token.tools.reduce(0) {
             $0 + ($1["functionDeclarations"]?.arrayValue?.count ?? 0)
@@ -368,9 +384,14 @@ final class VoiceSessionViewModel {
         let turns = transcript.entries
         let diagnostics = diagnostics
         let reportError = reportError
+        let profileID = resolvedProfileID
         Task {
             do {
-                _ = try await transcriptStore.saveVoiceSession(turns: turns, conversationID: nil)
+                _ = try await transcriptStore.saveVoiceSession(
+                    turns: turns,
+                    conversationID: nil,
+                    profileID: profileID
+                )
             } catch {
                 diagnostics.record("transcript_save_failed", error: error)
                 reportError(error)
