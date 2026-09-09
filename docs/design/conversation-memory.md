@@ -62,11 +62,12 @@ of the turn that wrote them. This design adds no second store. Memory is a set o
   Their titles appear in every turn's "Other available notes" list and their content is reachable
   with `get_note` and `search_documents`.
 
-The cap on the always-loaded note is a property of the note, not of one writer: the notes repository
-refuses any write that would leave a memory-labelled `include_in_prompt` note over the ceiling,
-whoever is writing. The curator gets an error telling it to condense, the foreground assistant gets
-the same tool error, and the notes UI shows it to the user. A cap that only one writer honoured
-would be a promise the other writers quietly broke.
+The always-loaded layer is exactly one note, and the notes repository enforces that shape for every
+writer: a memory-labelled note may be `include_in_prompt` only if it is that one note, and a write
+that would leave it over the ceiling is refused. The curator gets an error telling it to condense,
+the foreground assistant gets the same tool error, and the notes UI shows it to the user. Enforcing
+the singleton and the cap together is what makes "capped" a statement about the prompt rather than
+about a note; a per-note cap that many notes could each sit under would bound nothing.
 
 Explicit requests ("remember that...", "forget that...") keep working in the foreground turn: the
 default assistant holds the `memory` grant and edits the memory notes directly. The background
@@ -87,13 +88,6 @@ cheap-model call per conversation that had new content, versus one large call ov
 nightly pass still has a role, described under Consolidation below, but it operates on the memory
 notes, not on transcripts.
 
-**Idle detection uses an existing primitive.** Task ids prefixed `system_` have upsert semantics in
-the task queue: re-enqueuing the same id replaces its `scheduled_at`. So the chokepoint that
-persists a user message also upserts a review task for that conversation, due at
-`now + idle window`. Each further message pushes the due time back. When the task finally runs, the
-conversation has been quiet for the whole window. No new scheduler, no polling, and no in-memory
-state that a restart would lose.
-
 **A watermark, not a conversation boundary.** A small table records, per
 `(interface_type, conversation_id)`, the last message reviewed. A review covers rows after the
 watermark and advances it on success. This is what makes the design work on Telegram, where a
@@ -101,18 +95,21 @@ conversation is one chat id for its whole life and never "ends": the idle window
 boundary, and the watermark keeps each review to the new material. It also handles web conversations
 the user resumes days later.
 
-**A conversation that never goes idle is still reviewed.** A busy Telegram group can push the due
-time back indefinitely. The due time is therefore the earlier of `last activity + idle window` and
-`first unreviewed message + maximum deferral`. A review of a still-active conversation is fine; the
-watermark means the next one picks up where it left off.
+**Reviews are scheduled from state, not from events.** Whether a conversation is due is a pure
+function of stored data: it has rows after its watermark, and either its last activity is older than
+the idle window or its oldest unreviewed row is older than the maximum deferral. The second clause
+is what guarantees a busy Telegram group that never goes quiet is still reviewed. A recurring system
+task, on the same footing as the existing cleanup tasks, evaluates that predicate every few minutes
+and enqueues one review task per due conversation, keyed on the conversation so the same
+conversation never has two reviews in flight. Nothing is enqueued when a message is persisted.
 
-**A review re-arms itself when activity remains.** The due time is a pure function of the watermark
-and the conversation's last activity, and the review task's last step re-evaluates it: if any
-unreviewed rows exist after the stretch it rendered, it enqueues the next review before finishing.
-This is what keeps a message that arrives while a review is running from being stranded. The upsert
-on a task that is already executing only moves a schedule the worker is about to mark done, so the
-running review, not the enqueue, is responsible for the follow-up. The same rule covers the
-maximum-deferral case without special handling.
+This is deliberately not an event-driven debounce. A per-message enqueue that pushes a task back has
+to stay correct across the moment the worker marks a running task done, and every such design needs
+a rule for the message that lands between the handler's last check and the completion write. With a
+sweep there is no such moment: a message that arrives during a review simply leaves rows after the
+watermark, and the next sweep sees them. Correctness rests on one predicate over durable state,
+evaluated repeatedly, instead of on the ordering of two writers. The cost is that freshness is
+quantised to the sweep interval, which is negligible against a thirty-minute idle window.
 
 **Memory writes are conditional on what the writer read.** Two conversations can go idle together
 and the worker pool will run both curators at once; a user can edit a memory note in the UI while a
@@ -141,8 +138,12 @@ already exists:
   refuses to create or overwrite any note outside that label set, so a bad review cannot damage the
   user's own notes. Read grants include the default label so the curator can see existing notes and
   avoid duplicating a fact the user already filed.
-- **Tools**: the note tools and document search. No messaging, no calendar, no egress, no
-  delegation, no `wake_llm`, no scheduling. Nothing it does is user-visible except the note content.
+- **Tools**: reading and writing notes, and document search. No delete tool: the write policy
+  confines what the curator may create or overwrite, but deletion is not a write under that policy,
+  so giving the curator `delete_note` would let it remove any note its read grants reach. A
+  contradicted fact is removed by rewriting the note it lives in, which is what the curator does
+  anyway. No messaging, no calendar, no egress, no delegation, no `wake_llm`, no scheduling. Nothing
+  it does is user-visible except the note content.
 - **Context**: notes only. No calendar, weather or Home Assistant; those are things memory should
   never duplicate.
 - **Model**: the standard tier, with a small iteration ceiling. This is extraction, not reasoning.
@@ -254,25 +255,27 @@ never remembers, and how to correct it.
 
 Each milestone is independently useful and verifiable.
 
-1. **Curator profile, review task, watermark, idle trigger.** A functional test drives a web
-   conversation with a fake LLM, advances the mock clock past the idle window, runs the worker, and
-   asserts a labelled memory note exists with the expected content and provenance; that a second
-   message before the window pushes the task back; that a re-run after the watermark reviews only
+1. **Curator profile, review task, watermark, sweep.** A functional test drives a web conversation
+   with a fake LLM, advances the mock clock past the idle window, runs the sweep and the worker, and
+   asserts a labelled memory note exists with the expected content and provenance; that a
+   conversation with recent activity is not enqueued; that a re-run after the watermark reviews only
    new rows; and that a stretch carrying unknown-external taint is skipped with an audit record.
-   Concurrency is verified directly: a message persisted while a review is running produces a
-   follow-up review that covers it; two reviews writing the same memory note leave both sets of
-   facts in place, with one review retried; and a note edited between a review's read and its write
-   is not overwritten. The cap is verified at the repository, with the UI and foreground tool paths
-   both rejected past it, plus a conformance check that the curator's write policy carries the
-   `memory` floor.
+   Concurrency is verified directly: a message persisted at any point during a review, including
+   after the handler's last read and before the task is marked done, is covered by a later sweep;
+   two reviews writing the same memory note leave both sets of facts in place, with one review
+   retried; and a note edited between a review's read and its write is not overwritten. The
+   repository is verified to refuse a second always-loaded memory note and an over-cap write from
+   the UI and foreground tool paths alike, and a conformance check confirms the curator's write
+   policy carries the `memory` floor and its tool set has no delete.
 2. **Prompts, grants and documentation.** The curator prompt in `prompts.yaml`; the default
    assistant's grant on the `memory` label and a line in its system prompt about what the memory
    notes are and how to honour "forget"; `docs/user/memory.md`; the settings in the configuration
    reference. Verified by the existing prompt-render startup check and a test that the foreground
    assistant can edit a memory note.
 3. **Telegram: attribution and maximum deferral.** Sender names in the rendered transcript, the
-   earlier-of-two due-time rule, and the longer idle window. Verified by a Telegram functional test
-   with two senders in a group and a continuously active chat that is still reviewed.
+   maximum-deferral clause of the due predicate, and the longer idle window. Verified by a Telegram
+   functional test with two senders in a group and a continuously active chat that is still
+   reviewed.
 4. **Consolidation pass.** Gated on review volume; merges, resolves, prunes. Verified by a test that
    seeds duplicate and contradictory entries and checks the later-dated fact survives, and that the
    pass refuses a rewrite that drops most of the existing entries.
