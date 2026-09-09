@@ -165,6 +165,12 @@ conversation is one chat id for its whole life and never "ends": the idle window
 boundary, and the watermark keeps each review to the new material. It also handles web conversations
 the user resumes days later.
 
+A conversation with no watermark row is treated as reviewed up to the moment memory was enabled on
+the deployment, never as unreviewed from the beginning. Turning the feature on therefore learns from
+what is said from then on, and does not spend a burst of model calls surfacing months of old
+conversations as new facts. Reviewing history before that point is an explicit opt-in backfill,
+bounded and run on request, not an effect of enabling.
+
 **Reviews are scheduled from state, not from events.** Whether a conversation is due is a pure
 function of stored data: it has rows after its watermark, and either its last activity is older than
 the idle window or its oldest unreviewed row is older than the maximum deferral. The second clause
@@ -257,10 +263,13 @@ other facts from that message untouched; that is the mechanical guarantee, and i
 pending reviews over the same conversations. The curator sees the suppressed text so that it can
 recognise the same proposition arriving as a paraphrase from a different old conversation, which the
 applier's identity and evidence matching cannot connect; that part is an instruction, not a
-mechanism, and it is recorded as the residual below. Evidence that postdates the forgetting, such as
-the user restating the fact, legitimately re-adds it. Retaining the forgotten text in the
-suppression store is a deliberate trade: forgetting without it cannot resist paraphrase at all, and
-the store is as private as the memory notes themselves.
+mechanism, and it is recorded as the residual below. A suppression is released only by evidence a
+person authored after it: a user row newer than the forgetting, or a foreground action. The
+assistant's own acknowledgement ("I'll forget that") is a newer row too, and it must not count, or
+the act of forgetting would supply the evidence to un-forget; rows the assistant wrote, and any row
+older than the suppression, never release it. Retaining the forgotten text in the suppression store
+is a deliberate trade: forgetting without it cannot resist paraphrase at all, and the store is as
+private as the memory notes themselves.
 
 Forgetting curated memory is distinct from deleting conversation history, indexed search entries and
 other retained copies. The user documentation says so and points to what each requires.
@@ -449,30 +458,32 @@ Each milestone is independently useful and verifiable.
    test drives a web conversation with a fake LLM that returns a change set, advances the mock clock
    past the idle window, runs the sweep and the worker, and asserts the expected entries exist with
    evidence references and provenance; that a conversation with recent activity is not enqueued;
-   that a re-run after the watermark reviews only new rows; that a stretch larger than the chunk
-   budget is reviewed across successive sweeps with the watermark advancing each time; that an
-   abandoned review advances the watermark and leaves the conversation not due; and that a stretch
-   carrying unknown-external taint is skipped with an audit record and counted. Concurrency is
-   verified directly: a message persisted at any point during a review, including after the
-   handler's last read and before the task is marked done, is covered by a later sweep; two reviews
-   changing the same note leave both change sets applied, with one review retried; a note edited
-   between a review's read and its apply is not overwritten; and a retried review does not duplicate
-   an addition. The applier is verified to reject an operation citing evidence outside the stretch,
-   an update to a missing entry, an over-cap result and a second always-loaded memory note, from the
-   UI and foreground tool paths alike; to fail a whole change set on one rejected operation and keep
-   the stretch reviewable; to accept a manual addition from the notes UI with the editor as its
-   evidence; and to keep two facts from one message as distinct entries so forgetting one leaves the
-   other. The read policy is verified by seeding an unlabelled note, a default-labelled note and an
-   unlabelled file-based skill and asserting none reaches the curator through the context provider,
-   the title list, the skill catalogue or `get_note`, including the file-skill fallback; a
-   conformance rule asserts every note or skill read the curator can reach goes through the policy.
-   Conformance also confirms the curator's write policy carries the `memory` floor and that its
-   effective tool set, global grants included, is exactly the memory entry tools. Skip counters and
-   skipped-volume gauges land here, on the existing metrics surface.
+   that a pre-existing conversation with no watermark row is not reviewed for rows older than the
+   enablement time; that a re-run after the watermark reviews only new rows; that a stretch larger
+   than the chunk budget is reviewed across successive sweeps with the watermark advancing each
+   time; that an abandoned review advances the watermark and leaves the conversation not due; and
+   that a stretch carrying unknown-external taint is skipped with an audit record and counted.
+   Concurrency is verified directly: a message persisted at any point during a review, including
+   after the handler's last read and before the task is marked done, is covered by a later sweep;
+   two reviews changing the same note leave both change sets applied, with one review retried; a
+   note edited between a review's read and its apply is not overwritten; and a retried review does
+   not duplicate an addition. The applier is verified to reject an operation citing evidence outside
+   the stretch, an update to a missing entry, an over-cap result and a second always-loaded memory
+   note, from the UI and foreground tool paths alike; to fail a whole change set on one rejected
+   operation and keep the stretch reviewable; to accept a manual addition from the notes UI with the
+   editor as its evidence; and to keep two facts from one message as distinct entries so forgetting
+   one leaves the other. The read policy is verified by seeding an unlabelled note, a
+   default-labelled note and an unlabelled file-based skill and asserting none reaches the curator
+   through the context provider, the title list, the skill catalogue or `get_note`, including the
+   file-skill fallback; a conformance rule asserts every note or skill read the curator can reach
+   goes through the policy. Conformance also confirms the curator's write policy carries the
+   `memory` floor and that its effective tool set, global grants included, is exactly the memory
+   entry tools. Skip counters and skipped-volume gauges land here, on the existing metrics surface.
 2. **Forgetting.** Suppression records, applier rejection, foreground "forget". Verified by the
    reconstruction scenario end to end: a fact is learned, forgotten, and a pending review over the
-   original conversation plus a retry of a conflicting review both fail to recreate it, while a
-   later restatement does re-add it.
+   original conversation plus a retry of a conflicting review both fail to recreate it, a review
+   over the assistant's own acknowledgement of the forget does not re-add it, and a later user
+   restatement does.
 3. **Prompts, settings and documentation.** The curator prompt in `prompts.yaml`; the read and
    contribute settings on the profiles that carry them and the household default; a line in the
    assistant system prompt about what memory is and how to honour "forget"; `docs/user/memory.md`
