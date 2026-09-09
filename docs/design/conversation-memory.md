@@ -100,7 +100,10 @@ that would leave it over the ceiling is refused. The curator gets an error telli
 the foreground assistant gets the same tool error, and the notes UI shows it to the user. Enforcing
 the singleton, the cap, and the exclusion of memory topics from the title list together is what
 makes "capped" a statement about the rendered prompt rather than about a note, and the rendered
-memory contribution is measured as such.
+memory contribution is measured as such. Topic notes carry a cap of their own at the same
+chokepoint, sized to the curator's input budget rather than the prompt: a write that would take a
+topic past it is refused, and the curator opens a further topic instead, so no memory note ever
+exceeds what one review or consolidation invocation can read.
 
 Explicit requests ("remember that...", "forget that...") keep working in the foreground turn, and
 they go through the same entry protocol as the curator. That is enforced where it cannot be
@@ -258,21 +261,24 @@ changed it. A fact first learned as "bus" from one message and updated to "tram"
 carries both pairs, and forgetting the entry suppresses both. Suppressions live in a repository
 record outside the always-loaded note; the forgotten text never goes back into every prompt as a
 negative instruction, and reaches only the curator's review input, which is a silent background
-turn. The applier rejects any proposed entry whose derived identity matches any pair in a
-suppression's lineage and that cites nothing newer than the suppression. Because identity is derived
-from evidence together with proposition, this catches a pending review reconstructing any past form
-of the entry from any of its past evidence, while forgetting one fact from a message leaves the
-other facts from that message untouched; that is the mechanical guarantee, and it covers retries and
-pending reviews over the same conversations. The curator sees the suppressed text so that it can
-recognise the same proposition arriving as a paraphrase from a different old conversation, which the
-applier's identity and evidence matching cannot connect; that part is an instruction, not a
-mechanism, and it is recorded as the residual below. A suppression is released only by evidence a
-person authored after it: a user row newer than the forgetting, or a foreground action. The
-assistant's own acknowledgement ("I'll forget that") is a newer row too, and it must not count, or
-the act of forgetting would supply the evidence to un-forget; rows the assistant wrote, and any row
-older than the suppression, never release it. Retaining the forgotten text in the suppression store
-is a deliberate trade: forgetting without it cannot resist paraphrase at all, and the store is as
-private as the memory notes themselves.
+turn. The applier matches a proposal against suppressions by proposition and subject alone, against
+every proposition in the lineage, without regard to what evidence the proposal cites; only a
+proposal that matches is then asked whether it cites person-authored evidence newer than the
+forgetting, and it is rejected unless it does. Matching on the proposition rather than on the
+evidence-derived identity is what stops the same fact returning from a different message, such as
+the assistant's acknowledgement or an unrelated older conversation that stated it in the same words,
+while forgetting one fact from a message still leaves the other facts from that message untouched,
+because they are different propositions. That is the mechanical guarantee, and it covers retries and
+pending reviews over any conversation. The curator sees the suppressed text so that it can recognise
+the same proposition arriving as a paraphrase from a different old conversation, which the applier's
+identity and evidence matching cannot connect; that part is an instruction, not a mechanism, and it
+is recorded as the residual below. A suppression is released only by evidence a person authored
+after it: a user row newer than the forgetting, or a foreground action. The assistant's own
+acknowledgement ("I'll forget that") is a newer row too, and it must not count, or the act of
+forgetting would supply the evidence to un-forget; rows the assistant wrote, and any row older than
+the suppression, never release it. Retaining the forgotten text in the suppression store is a
+deliberate trade: forgetting without it cannot resist paraphrase at all, and the store is as private
+as the memory notes themselves.
 
 Forgetting curated memory is distinct from deleting conversation history, indexed search entries and
 other retained copies. The user documentation says so and points to what each requires.
@@ -390,22 +396,23 @@ over the core note alone to keep it within its cap and its index current. Consol
 a partition; it does not claim to reconcile entries across topics. Cross-topic duplicates are
 prevented where they would arise, at review time, by the applier's whole-store duplicate check and
 by the relevance selection that shows the curator matching entries from any topic; what slips past
-both is a residual, not a job for this pass. A topic note that has itself outgrown the input budget
-is split by theme into two topics first, as an ordinary change set, and each half consolidated on
-its own. Verified against a store larger than one model request. Contradiction resolution uses the
-entries' kinds and applicable periods, not only assertion dates: an explicit correction outranks an
-inference, and a later assertion about the past does not overwrite a current preference. It has no
-calendar or tool access, so it never judges whether something else now covers a fact. It is gated on
-volume, not the clock, and its output is a change set applied by the same applier under a
-consolidation-specific evidence rule: with no reviewed stretch, operations cite existing entries
-rather than messages, a merged or updated entry inherits the union of its sources' evidence, and the
-applier validates that every cited entry exists at the read version and that no operation drops
-evidence the entries carried. Consolidation is limited to merging duplicates, resolving
-contradictions and pruning expired entries; it does not reword. One extra guard applies, and it
-counts change of any kind: a pass that would alter the proposition of more than a fixed share of the
-existing entries, whether by removal, merge or update, is rejected, so a faulty pass cannot replace
-the store's content while keeping its evidence references intact. It is a later milestone; the
-incremental design is useful without it.
+both is a residual, not a job for this pass. A topic note always fits one invocation because it is
+never allowed to grow past the input budget in the first place: the topic cap below is enforced at
+the write chokepoint, so a review that would overfill a topic must open a new one in the same change
+set while the old one still fits. Verified against a store larger than one model request.
+Contradiction resolution uses the entries' kinds and applicable periods, not only assertion dates:
+an explicit correction outranks an inference, and a later assertion about the past does not
+overwrite a current preference. It has no calendar or tool access, so it never judges whether
+something else now covers a fact. It is gated on volume, not the clock, and its output is a change
+set applied by the same applier under a consolidation-specific evidence rule: with no reviewed
+stretch, operations cite existing entries rather than messages, a merged or updated entry inherits
+the union of its sources' evidence, and the applier validates that every cited entry exists at the
+read version and that no operation drops evidence the entries carried. Consolidation is limited to
+merging duplicates, resolving contradictions and pruning expired entries; it does not reword. One
+extra guard applies, and it counts change of any kind: a pass that would alter the proposition of
+more than a fixed share of the existing entries, whether by removal, merge or update, is rejected,
+so a faulty pass cannot replace the store's content while keeping its evidence references intact. It
+is a later milestone; the incremental design is useful without it.
 
 ### Telegram
 
@@ -521,7 +528,8 @@ Each milestone is independently useful and verifiable.
    refuses a pass that changes more than the allowed share of entries. Verified by seeded duplicate
    and contradictory entries, by three over-share passes, one each through removals, merges and
    updates, all rejected, and by a seeded store larger than one model request being consolidated
-   partition by partition, including a topic note that must be split first.
+   partition by partition, with the topic cap verified to refuse a write that would overfill a
+   topic.
 
 ## Open questions
 
