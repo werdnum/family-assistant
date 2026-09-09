@@ -87,10 +87,12 @@ Within a memory note the content is a list of **entries**. A note stays human-re
 entry per bullet, but each entry carries a stable identity, the person or people it is about, the
 date it was asserted, where relevant the period it applies to, its kind (an explicit statement, an
 explicit correction, an inference the curator drew, a decision), and references to the messages it
-came from. The structure is recoverable from the rendered note, and a line a person adds by hand in
-the notes UI without any marker is adopted as a user-authored entry on the next apply rather than
-rejected. Entries are what make the rest of the design mechanical: forgetting, retry, contradiction
-handling and evidence links all operate on entry identity, not on prose.
+came from. The structure is recoverable from the rendered note. Evidence has one shape for every
+writer: a curator entry cites messages, and an entry a person adds or edits by hand in the notes UI
+cites the authenticated editor and the time of the edit, with a user-authored kind; a line added
+without any marker is adopted that way rather than rejected. Entries are what make the rest of the
+design mechanical: forgetting, retry, contradiction handling and evidence links all operate on entry
+identity, not on prose.
 
 The always-loaded layer is exactly one note, and the notes repository enforces that shape for every
 writer: a memory-labelled note may be `include_in_prompt` only if it is that one note, and a write
@@ -184,16 +186,24 @@ entries, each citing the messages in the reviewed stretch it rests on, each with
 and, where relevant, an applicable period and a kind. A deterministic applier validates the change
 set and applies it. Validation covers: every cited message lies inside the reviewed stretch; every
 updated or removed entry exists at the version the curator read; nothing violates the provenance
-ceiling, the cap, or a suppression; and an addition is not a duplicate of an entry already present
-from the same evidence. Rejected operations are dropped with a recorded reason, not silently.
+ceiling, the cap, or a suppression; and an addition is not a duplicate of an entry already present.
+Validation is all-or-nothing for the change set: one rejected operation fails the review, which is
+retried with the rejection reasons fed back to the curator, so a fact is not quietly dropped because
+a sibling operation was malformed. A review that exhausts its retries does not advance the watermark
+silently either: it is recorded as a failed review, with the rejected change set kept for the
+recent-changes view and an error logged, and the stretch is retried by later sweeps up to a bounded
+count before it is abandoned visibly. Neglect here degrades availability of memory, not its
+integrity.
 
 Application and watermark advancement happen in **one short transaction**, conditional on the
 versions of the notes the curator read, with all model work outside it. If a note changed underneath
 (a sibling curator, a foreground edit, the notes UI), the transaction fails, the review is retried,
 and the curator sees the fresh state. Operation identity is stable across retries: updates and
-removals are keyed by entry identity, additions by their evidence, so a retried review cannot land
-the same addition twice or lose unrelated entries in a fresh rewrite. Version checks prevent a stale
-write; the change-set protocol is what prevents semantic loss in a new one.
+removals are keyed by the existing entry's identity, and a new entry's identity is derived
+deterministically from its evidence together with its proposition, so two facts stated in one
+message are distinct entries, and a retried review cannot land the same entry twice or lose
+unrelated entries in a fresh rewrite. Version checks prevent a stale write; the change-set protocol
+is what prevents semantic loss in a new one.
 
 Whole-note rewriting is retained only for consolidation, below, under its own guard.
 
@@ -210,15 +220,16 @@ So removing an entry, whether in the notes UI or through a foreground "forget", 
 of forgetting. Suppressions live in a repository record outside the always-loaded note; the
 forgotten text never goes back into every prompt as a negative instruction, and reaches only the
 curator's review input, which is a silent background turn. The applier rejects any proposed entry
-that matches a suppression by identity or by evidence and cites nothing newer than the suppression;
-that is the mechanical guarantee, and it covers retries and pending reviews over the same
-conversations. The curator sees the suppressed text so that it can recognise the same proposition
-arriving as a paraphrase from a different old conversation, which the applier's identity and
-evidence matching cannot connect; that part is an instruction, not a mechanism, and it is recorded
-as the residual below. Evidence that postdates the forgetting, such as the user restating the fact,
-legitimately re-adds it. Retaining the forgotten text in the suppression store is a deliberate
-trade: forgetting without it cannot resist paraphrase at all, and the store is as private as the
-memory notes themselves.
+whose entry identity matches a suppression and that cites nothing newer than the suppression, and
+because identity is derived from evidence together with proposition, forgetting one fact from a
+message leaves the other facts from that message untouched; that is the mechanical guarantee, and it
+covers retries and pending reviews over the same conversations. The curator sees the suppressed text
+so that it can recognise the same proposition arriving as a paraphrase from a different old
+conversation, which the applier's identity and evidence matching cannot connect; that part is an
+instruction, not a mechanism, and it is recorded as the residual below. Evidence that postdates the
+forgetting, such as the user restating the fact, legitimately re-adds it. Retaining the forgotten
+text in the suppression store is a deliberate trade: forgetting without it cannot resist paraphrase
+at all, and the store is as private as the memory notes themselves.
 
 Forgetting curated memory is distinct from deleting conversation history, indexed search entries and
 other retained copies. The user documentation says so and points to what each requires.
@@ -274,14 +285,14 @@ policy cell distinguishes, and the boundary is the one `is_externally_authored` 
 provenance is the household's own words and the assistant's internal processing, is inside it and
 stays satisfiable. This is the memory-poisoning guard, and it is one invariant at the write
 chokepoint rather than a check on one input: the notes repository refuses any write to a
-memory-labelled note whose provenance stamp exceeds the known-user tier. For the curator that means
-a review whose turn taint has risen above the ceiling, from any source, cannot write and fails
-visibly. For the foreground assistant it means a "remember this" in a turn that has read an
-untrusted email is refused with a clear error rather than filed. The precise guarantee is about
-origin: every memory entry was written by a turn whose recorded provenance was at or below the
-trusted pole. It says nothing about truth. A household member can be wrong, a curator can misread
-them, and a true statement can still be a poor standing instruction; those are what the evidence
-links, the entry kinds and the evaluation below are for.
+memory-labelled note whose provenance stamp lies outside the trusted pole, the same
+`is_externally_authored` predicate. For the curator that means a review whose turn taint has risen
+above the ceiling, from any source, cannot write and fails visibly. For the foreground assistant it
+means a "remember this" in a turn that has read an untrusted email is refused with a clear error
+rather than filed. The precise guarantee is about origin: every memory entry was written by a turn
+whose recorded provenance was at or below the trusted pole. It says nothing about truth. A household
+member can be wrong, a curator can misread them, and a true statement can still be a poor standing
+instruction; those are what the evidence links, the entry kinds and the evaluation below are for.
 
 **Tainted stretches are skipped before the model call, and the loss is measured.** The review task
 checks the merged taint of the unreviewed rows up front, and when it exceeds the ceiling it skips
@@ -408,13 +419,15 @@ Each milestone is independently useful and verifiable.
    review's read and its apply is not overwritten; and a retried review does not duplicate an
    addition. The applier is verified to reject an operation citing evidence outside the stretch, an
    update to a missing entry, an over-cap result and a second always-loaded memory note, from the UI
-   and foreground tool paths alike. The read policy is verified by seeding an unlabelled note and a
-   default-labelled note and asserting neither reaches the curator through the context provider, the
-   title list, the skill catalogue or `get_note`; a conformance rule asserts every note read the
-   curator can reach goes through the policy. Conformance also confirms the curator's write policy
-   carries the `memory` floor and that its effective tool set, global grants included, is exactly
-   the memory entry tools. Skip counters and skipped-volume gauges land here, on the existing
-   metrics surface.
+   and foreground tool paths alike; to fail a whole change set on one rejected operation and keep
+   the stretch reviewable; to accept a manual addition from the notes UI with the editor as its
+   evidence; and to keep two facts from one message as distinct entries so forgetting one leaves the
+   other. The read policy is verified by seeding an unlabelled note and a default-labelled note and
+   asserting neither reaches the curator through the context provider, the title list, the skill
+   catalogue or `get_note`; a conformance rule asserts every note read the curator can reach goes
+   through the policy. Conformance also confirms the curator's write policy carries the `memory`
+   floor and that its effective tool set, global grants included, is exactly the memory entry tools.
+   Skip counters and skipped-volume gauges land here, on the existing metrics surface.
 2. **Forgetting.** Suppression records, applier rejection, foreground "forget". Verified by the
    reconstruction scenario end to end: a fact is learned, forgotten, and a pending review over the
    original conversation plus a retry of a conflicting review both fail to recreate it, while a
