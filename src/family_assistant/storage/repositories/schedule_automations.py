@@ -504,6 +504,65 @@ class ScheduleAutomationsRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
         return [self._normalize_automation(dict(row)) for row in rows]
 
+    async def list_spent_one_shot_automations(
+        self,
+        scheduled_before: datetime,
+        *,
+        timezone: ZoneInfo,
+    ) -> list[ScheduleAutomationDict]:
+        """
+        List enabled automations whose recurrence rule has no future occurrence.
+
+        A rule bounded by ``COUNT=1`` or an ``UNTIL`` in the past stops
+        producing occurrences once it has run, and nothing clears the row: the
+        automation stays enabled with ``next_scheduled_at`` frozen at its last
+        firing. Those are spent and will never fire again.
+
+        An automation whose rule still yields a future occurrence is excluded
+        even when its ``next_scheduled_at`` is long past -- that is a stranded
+        automation, which is the schedule sync's problem, not a dead one.
+
+        Args:
+            scheduled_before: Only consider automations whose next_scheduled_at
+                is older than this, so a firing still in flight is left alone
+            timezone: Timezone the recurrence rules are interpreted in
+
+        Returns:
+            List of automation dictionaries, each safe to delete
+        """
+        stmt = select(schedule_automations_table).where(
+            (schedule_automations_table.c.enabled.is_(True))
+            & (schedule_automations_table.c.next_scheduled_at.isnot(None))
+            & (schedule_automations_table.c.next_scheduled_at < scheduled_before)
+        )
+        rows = await self._db.fetch_all(stmt)
+
+        spent: list[ScheduleAutomationDict] = []
+        for row in rows:
+            automation = self._normalize_automation(dict(row))
+            next_occurrence = self._parse_rrule_and_get_next(
+                automation["recurrence_rule"], timezone=timezone
+            )
+            if next_occurrence is not None:
+                continue
+            if await self._has_pending_tasks(automation["id"]):
+                continue
+            spent.append(automation)
+
+        return spent
+
+    async def _has_pending_tasks(self, automation_id: int) -> bool:
+        """Whether any queued task for this automation is still to run."""
+        stmt = (
+            select(tasks_table.c.task_id)
+            .where(tasks_table.c.status == "pending")
+            .where(
+                tasks_table.c.payload["automation_id"].as_string() == str(automation_id)
+            )
+            .limit(1)
+        )
+        return await self._db.fetch_one(stmt) is not None
+
     async def update_enabled(
         self,
         automation_id: int,

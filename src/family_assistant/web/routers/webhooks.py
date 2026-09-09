@@ -38,6 +38,7 @@ from family_assistant.services.user_identity import (
 )
 from family_assistant.storage.database import Database
 from family_assistant.storage.email import AttachmentData, ParsedEmailData
+from family_assistant.storage.events import WORKER_COMPLETION_EVENT_TYPE
 from family_assistant.storage.tasks import TaskPriority
 from family_assistant.web.dependencies import get_db
 from family_assistant.web.models import WebhookEventPayload
@@ -640,7 +641,7 @@ async def handle_generic_webhook(
             body.data,
             request.headers.get("X-Worker-Callback-Token"),
         )
-    elif effective_event_type == "worker_completion":
+    elif effective_event_type == WORKER_COMPLETION_EVENT_TYPE:
         await _handle_worker_completion(
             db_context,
             body.data,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, Final, NotRequired, TypedDict
 
 from sqlalchemy import (
     JSON,
@@ -28,9 +28,13 @@ from family_assistant.storage.base import metadata
 from family_assistant.storage.repositories.base import BaseRepository
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
 logger = logging.getLogger(__name__)
+
+# Statuses from which a worker task can still report back. Anything else is
+# terminal: the callback webhook has either already arrived or never will.
+LIVE_WORKER_TASK_STATUSES: Final = ("pending", "submitted", "running")
 
 
 class WorkerTaskDict(TypedDict):
@@ -191,6 +195,30 @@ class WorkerTasksRepository(BaseRepository):
         if row:
             return self._row_to_dict(row)
         return None
+
+    async def get_live_task_ids(self, task_ids: Sequence[str]) -> set[str]:
+        """Return which of the given task IDs can still report a completion.
+
+        A task ID is live when its row exists and its status is one the worker
+        can still transition out of. An ID with no row at all -- reaped by the
+        worker task cleanup, say -- is not live, so a caller waiting on it is
+        waiting on nothing.
+
+        Args:
+            task_ids: Worker task IDs to check
+
+        Returns:
+            The subset of ``task_ids`` that can still complete
+        """
+        if not task_ids:
+            return set()
+
+        stmt = select(worker_tasks_table.c.task_id).where(
+            worker_tasks_table.c.task_id.in_(task_ids),
+            worker_tasks_table.c.status.in_(LIVE_WORKER_TASK_STATUSES),
+        )
+        rows = await self._db.fetch_all(stmt)
+        return {row["task_id"] for row in rows}
 
     async def get_tasks_for_conversation(
         self,

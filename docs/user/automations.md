@@ -75,6 +75,17 @@ history, and enable, disable, or delete it.
 To change an existing automation's conditions or script, ask the assistant — the web form creates
 and inspects automations, but doesn't edit them in place.
 
+### Automatic tidying
+
+Some automations are one-shot: they wait for a single thing to happen and are finished once it does.
+The assistant removes them when they can no longer fire — a listener waiting on a background worker
+that has already finished or died, or a schedule whose recurrence has run out. A one-shot listener
+still waiting on a worker is dropped after a week whatever the worker's state, since by then the
+result is not coming.
+
+Recurring automations and ones you have disabled are never removed for you; delete those yourself
+when you are done with them.
+
 ## Scripts in automations
 
 Scripts are Python, running in a sandbox, and can call the assistant's tools. See
