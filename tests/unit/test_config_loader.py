@@ -3072,18 +3072,18 @@ def test_operator_retry_chain_drops_the_shipped_model_tier(tmp_path: Path) -> No
 def test_operator_model_tier_drops_a_shipped_inline_model(tmp_path: Path) -> None:
     """The reverse direction: the operator's tier wins over the shipped model.
 
-    `engineer` ships `anthropic`/`claude-opus-5` inline. Left in place, the
+    `artist` ships `google`/`gemini-3.8-flash` inline. Left in place, the
     merged definition would name both kinds of selection, which is refused.
     """
     config = _loaded_with_operator_config(
         tmp_path,
         "service_profiles:\n"
-        '  - id: "engineer"\n'
+        '  - id: "artist"\n'
         "    processing_config:\n"
         '      model_tier: "deep"\n',
     )
 
-    profile = next(p for p in config.service_profiles if p.id == "engineer")
+    profile = next(p for p in config.service_profiles if p.id == "artist")
     processing_config = profile.processing_config
     assert processing_config.model_tier == "deep"
     assert processing_config.llm_model is None

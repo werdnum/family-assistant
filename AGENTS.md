@@ -286,9 +286,11 @@ supervision requirements based on input trust level:
    `spawn_worker`); `code_execution` alone — the in-app script tools — stays denied, as does the
    shared workspace. A sandbox run reproduces a failure or reads a repository without giving the
    profile anything that writes back, and the `sandbox_network` taint sink gates it whenever the
-   turn carries untrusted content.
+   turn carries untrusted content. It runs on the `deep` model tier, with all three tiers selectable
+   per request and Auto in shadow mode, like `default_assistant` below; its routing guidance is more
+   eager, because diagnosis is the work a weaker model loops on without converging.
 5. **Complex Tasks Profile [BC]**: full tool access on the `deep` model tier (OpenAI GPT-5.6-sol at
-   `reasoning_effort: high`, falling back to Claude Fable 5), with a higher iteration limit (100)
+   `reasoning_effort: high`, falling back to Claude Fable 5.1), with a higher iteration limit (100)
    for deep multi-step reasoning. Used via `/complex` or delegation from the default assistant,
    which runs the `standard` tier (Gemini 3.8 Flash, with GPT-5.6-terra as its fallback) with 50
    iterations. Which models a tier names is configured in the top-level `model_tiers` map, not on
