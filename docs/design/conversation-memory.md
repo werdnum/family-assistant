@@ -135,8 +135,17 @@ scopes. Nothing in the first version forecloses that, and nothing in it pretends
 
 A conversation becomes reviewable when it has unreviewed user activity and has been quiet for an
 idle window. The review runs as a background task under a new `memory_curator` processing profile.
-The curator is given the unreviewed stretch of transcript as its input, sees the current memory
-entries and the suppression list described under Forgetting, and proposes a change set.
+The curator is given the unreviewed stretch of transcript as its input, sees the memory entries and
+suppressions relevant to it, and proposes a change set.
+
+**The curator's input is bounded; the applier's checks are not.** A long-lived household accumulates
+topic entries and suppressions without limit, and a review that tried to show all of them would
+eventually crowd out the transcript it is reviewing. So the curator's input is the capped core note
+plus the topic entries and suppressions selected for relevance to the reviewed stretch, using the
+search index the notes already have, under a fixed input budget. Selection only shapes what the
+model sees. Conflict detection, duplicate detection and suppression matching run in the applier over
+the whole store, so an entry or suppression the selection left out still cannot be duplicated or
+resurrected; the cost of a miss is a less informed proposal, never an incorrect apply.
 
 **Why idle-per-conversation.** An idle stretch is a settled discussion: the curator sees the
 resolution, not the half-finished question, and its work stays off the interactive path. Freshness
@@ -264,7 +273,8 @@ exists, and one new read-side rule where it does not:
   policy cannot refuse a global grant, and those tools would let the curator read any attachment the
   acting user owns and persist model-supplied text outside the memory label. Nothing it does is
   user-visible except the entries.
-- **Context**: memory entries and the suppression list only. No calendar, weather or Home Assistant.
+- **Context**: the core note and the relevance-selected memory entries and suppressions only. No
+  calendar, weather or Home Assistant.
 - **Model**: start on the standard tier with a small iteration ceiling, and keep that choice under
   the evaluation below rather than assuming it. Deciding what a household will want to know later,
   from a messy multi-speaker transcript, is judgement, not extraction.
@@ -347,9 +357,12 @@ something else now covers a fact. It is gated on volume, not the clock, and its 
 set applied by the same applier under a consolidation-specific evidence rule: with no reviewed
 stretch, operations cite existing entries rather than messages, a merged or updated entry inherits
 the union of its sources' evidence, and the applier validates that every cited entry exists at the
-read version and that no operation drops evidence the entries carried. One extra guard applies: a
-pass that would remove more than a fixed share of the existing entries is rejected. It is a later
-milestone; the incremental design is useful without it.
+read version and that no operation drops evidence the entries carried. Consolidation is limited to
+merging duplicates, resolving contradictions and pruning expired entries; it does not reword. One
+extra guard applies, and it counts change of any kind: a pass that would alter the proposition of
+more than a fixed share of the existing entries, whether by removal, merge or update, is rejected,
+so a faulty pass cannot replace the store's content while keeping its evidence references intact. It
+is a later milestone; the incremental design is useful without it.
 
 ### Telegram
 
