@@ -181,16 +181,19 @@ conversation never has two reviews in flight. Nothing is enqueued when a message
 
 **A review covers a bounded chunk, and the watermark always moves on a terminal outcome.** A review
 takes rows after the watermark up to a fixed budget of rendered size, not row count, so a stretch
-can never outgrow the model's context however busy the chat was. A single row larger than the budget
-on its own (a pasted document, say) is rendered truncated with a marker, since a message's length
-has no limit at the API; the review proceeds on what fits, and the row's provenance is carried in
-full regardless. When more rows remain, the watermark advances to the end of the chunk and the
-conversation is simply still due, so the next sweep reviews the next chunk. The same rule closes the
-failure path: a review that fails permanently is abandoned by advancing the watermark past its
-chunk, with the failed change set and reason kept for the recent-changes view and an error logged.
-There is no separate retry ledger and no state the due predicate does not already read; a
-conversation is due exactly when it has rows after its watermark and the timing condition holds, and
-every terminal outcome, success or abandonment, moves the watermark forward.
+can never outgrow the model's context however busy the chat was. The chunk boundary falls on a turn
+boundary, never inside a turn: a user message and the assistant's reply to it are reviewed together,
+so the curator never sees a request without its outcome, and the following chunk never consists of
+orphaned assistant rows that the no-user-messages rule would then skip. A single turn larger than
+the budget on its own (a pasted document, say) is rendered truncated with a marker, since a
+message's length has no limit at the API; the review proceeds on what fits, and the turn's
+provenance is carried in full regardless. When more rows remain, the watermark advances to the end
+of the chunk and the conversation is simply still due, so the next sweep reviews the next chunk. The
+same rule closes the failure path: a review that fails permanently is abandoned by advancing the
+watermark past its chunk, with the failed change set and reason kept for the recent-changes view and
+an error logged. There is no separate retry ledger and no state the due predicate does not already
+read; a conversation is due exactly when it has rows after its watermark and the timing condition
+holds, and every terminal outcome, success or abandonment, moves the watermark forward.
 
 This is deliberately not an event-driven debounce. A per-message enqueue that pushes a task back has
 to stay correct across the moment the worker marks a running task done, and every such design needs
@@ -383,22 +386,26 @@ the same curator profile over the memory entries alone, with no transcript, and 
 resolves contradictions, and prunes entries whose own dates or wording mark them as expired. Its
 input is bounded by partition, since there is no transcript to select against: one invocation per
 topic note, each a natural unit that the review process keeps to a single theme, plus one invocation
-over the core note and the topic index for cross-topic reconciliation. A topic note that has itself
-outgrown the input budget is split by theme into two topics first, as an ordinary change set, and
-each half consolidated on its own. Verified against a store larger than one model request.
-Contradiction resolution uses the entries' kinds and applicable periods, not only assertion dates:
-an explicit correction outranks an inference, and a later assertion about the past does not
-overwrite a current preference. It has no calendar or tool access, so it never judges whether
-something else now covers a fact. It is gated on volume, not the clock, and its output is a change
-set applied by the same applier under a consolidation-specific evidence rule: with no reviewed
-stretch, operations cite existing entries rather than messages, a merged or updated entry inherits
-the union of its sources' evidence, and the applier validates that every cited entry exists at the
-read version and that no operation drops evidence the entries carried. Consolidation is limited to
-merging duplicates, resolving contradictions and pruning expired entries; it does not reword. One
-extra guard applies, and it counts change of any kind: a pass that would alter the proposition of
-more than a fixed share of the existing entries, whether by removal, merge or update, is rejected,
-so a faulty pass cannot replace the store's content while keeping its evidence references intact. It
-is a later milestone; the incremental design is useful without it.
+over the core note alone to keep it within its cap and its index current. Consolidation is local to
+a partition; it does not claim to reconcile entries across topics. Cross-topic duplicates are
+prevented where they would arise, at review time, by the applier's whole-store duplicate check and
+by the relevance selection that shows the curator matching entries from any topic; what slips past
+both is a residual, not a job for this pass. A topic note that has itself outgrown the input budget
+is split by theme into two topics first, as an ordinary change set, and each half consolidated on
+its own. Verified against a store larger than one model request. Contradiction resolution uses the
+entries' kinds and applicable periods, not only assertion dates: an explicit correction outranks an
+inference, and a later assertion about the past does not overwrite a current preference. It has no
+calendar or tool access, so it never judges whether something else now covers a fact. It is gated on
+volume, not the clock, and its output is a change set applied by the same applier under a
+consolidation-specific evidence rule: with no reviewed stretch, operations cite existing entries
+rather than messages, a merged or updated entry inherits the union of its sources' evidence, and the
+applier validates that every cited entry exists at the read version and that no operation drops
+evidence the entries carried. Consolidation is limited to merging duplicates, resolving
+contradictions and pruning expired entries; it does not reword. One extra guard applies, and it
+counts change of any kind: a pass that would alter the proposition of more than a fixed share of the
+existing entries, whether by removal, merge or update, is rejected, so a faulty pass cannot replace
+the store's content while keeping its evidence references intact. It is a later milestone; the
+incremental design is useful without it.
 
 ### Telegram
 
