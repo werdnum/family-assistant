@@ -212,7 +212,11 @@ stay pending for a day, ends the chunk before itself and is reviewed once it com
 watermark never advances past a turn that has not finished. "Finished" is defined so that no turn
 can block a conversation forever: a turn is complete when it has its terminal reply, or when a later
 turn in the same conversation has completed, or when the maximum deferral has elapsed since its last
-row. A turn cut off by a server restart, which the web flow deliberately leaves without a terminal
+row and the turn holds no live confirmation. A pending confirmation is a durable record with its own
+timeout, so "live" is mechanical: while one exists for the turn, the turn is waiting, not dead, and
+the sweep leaves it alone however long the confirmation's timeout runs; once the confirmation
+resolves or expires, the turn either completes with its terminal reply or falls under the deferral
+rule. A turn cut off by a server restart, which the web flow deliberately leaves without a terminal
 reply, therefore counts as complete as soon as the household moves on, and is rendered with a marker
 saying it never finished so the curator does not read a request as an outcome. A single turn larger
 than the budget on its own (a pasted document, say) is rendered truncated with a marker, since a
