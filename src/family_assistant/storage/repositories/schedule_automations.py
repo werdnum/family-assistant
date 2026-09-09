@@ -592,13 +592,42 @@ class ScheduleAutomationsRepository(BaseRepository):
         cutoff: datetime,
         timezone: ZoneInfo,
     ) -> bool:
-        """Whether the series starting at ``anchor`` reaches past ``cutoff``.
+        """Whether the series anchored at ``anchor`` reaches past ``cutoff``.
+
+        Answered in two single steps rather than by walking the series to the
+        cutoff, which for a stale anchor and a high-frequency rule means
+        millions of occurrences computed synchronously.
+
+        The first step asks the series, at its own anchor, for anything at all:
+        no answer means the rule is finished, whatever ``COUNT`` it carried.
+        An answer past the cutoff means it is plainly alive. Only an occurrence
+        already behind us is ambiguous -- a schedule that ran late leaves that
+        -- and the second step re-asks from the cutoff itself.
+
+        Re-anchoring restarts a ``COUNT``, so that second step can call a
+        finished series alive. It errs towards keeping an automation, which is
+        the direction to err when the alternative is deleting one; ``UNTIL`` is
+        absolute and survives the re-anchor exactly, so the case this question
+        exists for stays correct.
 
         Raises ValueError or ParserError for a rule that does not parse, so a
         broken rule is never mistaken for an exhausted one.
         """
-        rule = rrule.rrulestr(recurrence_rule, dtstart=anchor.astimezone(timezone))
-        return rule.after(cutoff.astimezone(timezone)) is not None
+        local_anchor = anchor.astimezone(timezone)
+        local_cutoff = cutoff.astimezone(timezone)
+
+        from_anchor = rrule.rrulestr(recurrence_rule, dtstart=local_anchor).after(
+            local_anchor
+        )
+        if from_anchor is None:
+            return False
+        if from_anchor > local_cutoff:
+            return True
+
+        return (
+            rrule.rrulestr(recurrence_rule, dtstart=local_cutoff).after(local_cutoff)
+            is not None
+        )
 
     async def _has_pending_tasks(self, automation_id: int) -> bool:
         """Whether any queued task for this automation is still to run."""

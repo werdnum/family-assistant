@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
@@ -470,6 +471,36 @@ class TestSpentScheduleAutomationCleanup:
                 automation_id, CONVERSATION_ID
             )
             is None
+        )
+
+    @pytest.mark.asyncio
+    async def test_evaluates_a_stale_high_frequency_rule_cheaply(
+        self, exec_context: ToolExecutionContext, db_context: Database
+    ) -> None:
+        """A year-old per-second rule must not be walked occurrence by occurrence.
+
+        Reaching the cutoff by iteration is tens of millions of steps computed
+        synchronously, which holds the event loop for over a minute and stalls
+        every other worker. The budget here is generous against that: the
+        walking version took ~77 seconds for this rule.
+        """
+        automation_id = await self._create_spent_schedule(
+            db_context,
+            "per-second-schedule",
+            recurrence_rule="FREQ=SECONDLY",
+            next_scheduled_at=datetime.now(UTC) - timedelta(days=365),
+        )
+
+        started = time.perf_counter()
+        await handle_stale_automation_cleanup(exec_context, {})
+        elapsed = time.perf_counter() - started
+
+        assert elapsed < 5.0, f"cleanup took {elapsed:.1f}s walking the recurrence"
+        assert (
+            await db_context.schedule_automations.get_by_id(
+                automation_id, CONVERSATION_ID
+            )
+            is not None
         )
 
     @pytest.mark.asyncio
