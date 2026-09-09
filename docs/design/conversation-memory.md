@@ -242,20 +242,25 @@ user removes the fact, the curator's write conflicts, the retry sees the same ol
 recreates the fact. Another pending conversation can recreate it too.
 
 So removing an entry, whether in the notes UI or through a foreground "forget", records a
-**suppression**: the entry's identity, its text and subject, its evidence references, and the time
-of forgetting. Suppressions live in a repository record outside the always-loaded note; the
-forgotten text never goes back into every prompt as a negative instruction, and reaches only the
-curator's review input, which is a silent background turn. The applier rejects any proposed entry
-whose entry identity matches a suppression and that cites nothing newer than the suppression, and
-because identity is derived from evidence together with proposition, forgetting one fact from a
-message leaves the other facts from that message untouched; that is the mechanical guarantee, and it
-covers retries and pending reviews over the same conversations. The curator sees the suppressed text
-so that it can recognise the same proposition arriving as a paraphrase from a different old
-conversation, which the applier's identity and evidence matching cannot connect; that part is an
-instruction, not a mechanism, and it is recorded as the residual below. Evidence that postdates the
-forgetting, such as the user restating the fact, legitimately re-adds it. Retaining the forgotten
-text in the suppression store is a deliberate trade: forgetting without it cannot resist paraphrase
-at all, and the store is as private as the memory notes themselves.
+**suppression**: the entry's lineage, its current text and subject, and the time of forgetting. An
+entry's identity is stable across updates, but its lineage is not one pair: it is every evidence and
+proposition pair the entry has held, from the addition that created it through each update that
+changed it. A fact first learned as "bus" from one message and updated to "tram" from a later one
+carries both pairs, and forgetting the entry suppresses both. Suppressions live in a repository
+record outside the always-loaded note; the forgotten text never goes back into every prompt as a
+negative instruction, and reaches only the curator's review input, which is a silent background
+turn. The applier rejects any proposed entry whose derived identity matches any pair in a
+suppression's lineage and that cites nothing newer than the suppression. Because identity is derived
+from evidence together with proposition, this catches a pending review reconstructing any past form
+of the entry from any of its past evidence, while forgetting one fact from a message leaves the
+other facts from that message untouched; that is the mechanical guarantee, and it covers retries and
+pending reviews over the same conversations. The curator sees the suppressed text so that it can
+recognise the same proposition arriving as a paraphrase from a different old conversation, which the
+applier's identity and evidence matching cannot connect; that part is an instruction, not a
+mechanism, and it is recorded as the residual below. Evidence that postdates the forgetting, such as
+the user restating the fact, legitimately re-adds it. Retaining the forgotten text in the
+suppression store is a deliberate trade: forgetting without it cannot resist paraphrase at all, and
+the store is as private as the memory notes themselves.
 
 Forgetting curated memory is distinct from deleting conversation history, indexed search entries and
 other retained copies. The user documentation says so and points to what each requires.
