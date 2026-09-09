@@ -100,9 +100,15 @@ the singleton, the cap, and the exclusion of memory topics from the title list t
 makes "capped" a statement about the rendered prompt rather than about a note, and the rendered
 memory contribution is measured as such.
 
-Explicit requests ("remember that...", "forget that...") keep working in the foreground turn:
-profiles that read memory edit the memory notes directly through the same entry protocol below. The
-background process is the complement for everything the user did not ask to have saved.
+Explicit requests ("remember that...", "forget that...") keep working in the foreground turn, and
+they go through the same entry protocol as the curator. That is enforced where it cannot be
+bypassed: the notes repository accepts a mutation to a memory-labelled note only from the entry
+applier. The generic whole-note tools and the notes UI do not get a second path; a foreground
+"remember" is an addition, a "forget" is a removal with a suppression, and a note edited by hand in
+the UI is parsed back into entries and submitted as the change set that diff implies. A profile that
+could reach a memory note with the generic tools would be bypassing evidence validation, suppression
+and entry-level conflict handling, so the repository refuses that regardless of which tool asked.
+The background process is the complement for everything the user did not ask to have saved.
 
 ### Whose memory it is
 
@@ -200,14 +206,19 @@ user removes the fact, the curator's write conflicts, the retry sees the same ol
 recreates the fact. Another pending conversation can recreate it too.
 
 So removing an entry, whether in the notes UI or through a foreground "forget", records a
-**suppression**: the entry's identity, its evidence references, and the time of forgetting.
-Suppressions live in a repository record outside the always-loaded note; the forgotten text never
-goes back into every prompt as a negative instruction. The applier rejects any proposed entry that
-matches a suppression by identity or by evidence and cites nothing newer than the suppression.
-Evidence that postdates the forgetting, such as the user restating the fact, legitimately re-adds
-it. The curator additionally sees the suppression list as review input, so a paraphrase from other
-old evidence is caught by instruction where the applier's matching cannot reach; that residual is
-recorded below.
+**suppression**: the entry's identity, its text and subject, its evidence references, and the time
+of forgetting. Suppressions live in a repository record outside the always-loaded note; the
+forgotten text never goes back into every prompt as a negative instruction, and reaches only the
+curator's review input, which is a silent background turn. The applier rejects any proposed entry
+that matches a suppression by identity or by evidence and cites nothing newer than the suppression;
+that is the mechanical guarantee, and it covers retries and pending reviews over the same
+conversations. The curator sees the suppressed text so that it can recognise the same proposition
+arriving as a paraphrase from a different old conversation, which the applier's identity and
+evidence matching cannot connect; that part is an instruction, not a mechanism, and it is recorded
+as the residual below. Evidence that postdates the forgetting, such as the user restating the fact,
+legitimately re-adds it. Retaining the forgotten text in the suppression store is a deliberate
+trade: forgetting without it cannot resist paraphrase at all, and the store is as private as the
+memory notes themselves.
 
 Forgetting curated memory is distinct from deleting conversation history, indexed search entries and
 other retained copies. The user documentation says so and points to what each requires.
@@ -256,16 +267,21 @@ those rows. Rendering user rows only, or omitting tool result bodies, changes wh
 it never changes the provenance the review carries, which is always the merged taint of the whole
 stretch as the taint machinery recorded it.
 
-**Memory holds nothing above the known-user tier, whoever writes it.** This is the memory-poisoning
-guard, and it is one invariant at the write chokepoint rather than a check on one input: the notes
-repository refuses any write to a memory-labelled note whose provenance stamp exceeds the known-user
-tier. For the curator that means a review whose turn taint has risen above the ceiling, from any
-source, cannot write and fails visibly. For the foreground assistant it means a "remember this" in a
-turn that has read an untrusted email is refused with a clear error rather than filed. The precise
-guarantee is about origin: every memory entry was written by a turn whose recorded provenance was at
-or below the known-user tier. It says nothing about truth. A household member can be wrong, a
-curator can misread them, and a true statement can still be a poor standing instruction; those are
-what the evidence links, the entry kinds and the evaluation below are for.
+**Memory holds nothing above the trusted pole, whoever writes it.** The trusted pole is the pair
+`TRUSTED_USER` and `TRUSTED_INTERNAL` in the existing `SourceTrustTier`, the two tiers no shipped
+policy cell distinguishes, and the boundary is the one `is_externally_authored` already draws. So
+`KNOWN_CONTACT` and everything less trusted is outside it, while the ordinary curator write, whose
+provenance is the household's own words and the assistant's internal processing, is inside it and
+stays satisfiable. This is the memory-poisoning guard, and it is one invariant at the write
+chokepoint rather than a check on one input: the notes repository refuses any write to a
+memory-labelled note whose provenance stamp exceeds the known-user tier. For the curator that means
+a review whose turn taint has risen above the ceiling, from any source, cannot write and fails
+visibly. For the foreground assistant it means a "remember this" in a turn that has read an
+untrusted email is refused with a clear error rather than filed. The precise guarantee is about
+origin: every memory entry was written by a turn whose recorded provenance was at or below the
+trusted pole. It says nothing about truth. A household member can be wrong, a curator can misread
+them, and a true statement can still be a poor standing instruction; those are what the evidence
+links, the entry kinds and the evaluation below are for.
 
 **Tainted stretches are skipped before the model call, and the loss is measured.** The review task
 checks the merged taint of the unreviewed rows up front, and when it exceeds the ceiling it skips
@@ -314,8 +330,12 @@ Contradiction resolution uses the entries' kinds and applicable periods, not onl
 an explicit correction outranks an inference, and a later assertion about the past does not
 overwrite a current preference. It has no calendar or tool access, so it never judges whether
 something else now covers a fact. It is gated on volume, not the clock, and its output is a change
-set like any other, with one extra guard: a pass that would remove more than a fixed share of the
-existing entries is rejected. It is a later milestone; the incremental design is useful without it.
+set applied by the same applier under a consolidation-specific evidence rule: with no reviewed
+stretch, operations cite existing entries rather than messages, a merged or updated entry inherits
+the union of its sources' evidence, and the applier validates that every cited entry exists at the
+read version and that no operation drops evidence the entries carried. One extra guard applies: a
+pass that would remove more than a fixed share of the existing entries is rejected. It is a later
+milestone; the incremental design is useful without it.
 
 ### Telegram
 
@@ -368,7 +388,7 @@ that memory is household-wide, and how to correct or forget.
   identity and evidence matching does not connect to the suppression; the curator's suppression
   input is the guard there, and it is an instruction rather than a mechanism.
 - Memory carries the provenance of the conversation that wrote it. An entry written from a
-  known-user-tier conversation keeps that tier on readers. That is the correct propagation.
+  trusted-pole conversation keeps that tier on readers. That is the correct propagation.
 - Idle review is one model call per active conversation per idle period. On a chatty deployment this
   is tens of cheap calls a day; the no-user-messages skip and the contribute setting are the levers.
 
@@ -405,7 +425,7 @@ Each milestone is independently useful and verifiable.
    stating the household scope; the settings in the configuration reference. Verified by the
    existing prompt-render startup check, a startup validation that a contributing profile reads, a
    test that a read-only profile sees the core note and does not feed reviews, and a test that a
-   foreground memory write from a turn above the known-user tier is refused.
+   foreground memory write from a turn above the trusted pole is refused.
 4. **Telegram: attribution and maximum deferral.** Sender names in the rendered transcript, the
    maximum-deferral clause of the due predicate, and the longer idle window. Verified by a Telegram
    functional test with two senders in a group and a continuously active chat that is still
