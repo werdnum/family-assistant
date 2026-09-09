@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -46,11 +47,15 @@ from family_assistant.services.tool_call_review import (
     ToolCallReviewStatus,
     ToolCallReviewVerdict,
     TriggerReviewInput,
+    _render_provenance_digest,  # noqa: PLC2701 - testing internal bounded provenance rendering
     assemble_browser_action_review_messages,
     assemble_tool_call_review_messages,
     build_delegation_review_trigger,
     compute_trusted_destination_echo,
     resolve_originating_request,
+)
+from family_assistant.tools.infrastructure import (
+    _taint_audit_sources,  # noqa: PLC2701 - testing internal audit source bounds
 )
 from family_assistant.tools.metadata import ToolDescriptor, ToolTag
 
@@ -1523,3 +1528,83 @@ async def test_history_read_is_bounded_to_when_the_work_was_handed_off() -> None
     )
 
     assert db.before_bounds == [handed_off_at]
+
+
+def test_render_provenance_digest_bounded_and_deterministic() -> None:
+    """Provenance digest bounds rendered sources to 12 and reports provenance counts."""
+    state = TurnTaintState.empty()
+    for i in range(25):
+        state = state.add_source(
+            TaintSource(
+                source_type=TaintSourceType.TOOL_OUTPUT,
+                source_id=f"src-{i}",
+                tier=SourceTrustTier.KNOWN_CONTACT,
+                labels=frozenset(),
+                reason=f"Test source {i}",
+            )
+        )
+    # Add 5 duplicates of src-0
+    for _ in range(5):
+        state = state.add_source(
+            TaintSource(
+                source_type=TaintSourceType.TOOL_OUTPUT,
+                source_id="src-0",
+                tier=SourceTrustTier.KNOWN_CONTACT,
+                labels=frozenset(),
+                reason="Test source 0",
+            )
+        )
+
+    digest = _render_provenance_digest(state)
+    assert digest.startswith("<provenance_digest>\n```json\n")
+    assert digest.endswith("\n```\n</provenance_digest>")
+    json_str = digest[
+        len("<provenance_digest>\n```json\n") : -len("\n```\n</provenance_digest>")
+    ]
+    payload = json.loads(json_str)
+
+    assert len(payload["sources_in_order"]) == 12
+    assert payload["total_source_count"] == 30
+    assert payload["distinct_source_count"] == 25
+    assert payload["omitted_source_count"] == 13
+
+    # Determinism: creating the same distinct sources in a different order yields identical sources_in_order
+    state_reversed = TurnTaintState.empty()
+    for i in reversed(range(25)):
+        state_reversed = state_reversed.add_source(
+            TaintSource(
+                source_type=TaintSourceType.TOOL_OUTPUT,
+                source_id=f"src-{i}",
+                tier=SourceTrustTier.KNOWN_CONTACT,
+                labels=frozenset(),
+                reason=f"Test source {i}",
+            )
+        )
+    digest_reversed = _render_provenance_digest(state_reversed)
+    json_str_reversed = digest_reversed[
+        len("<provenance_digest>\n```json\n") : -len("\n```\n</provenance_digest>")
+    ]
+    payload_reversed = json.loads(json_str_reversed)
+    assert payload["sources_in_order"] == payload_reversed["sources_in_order"]
+
+
+def test_taint_audit_sources_bounded_and_deterministic() -> None:
+    """Taint audit source summaries are bounded and deterministically ordered."""
+    state = TurnTaintState.empty()
+    for i in range(25):
+        state = state.add_source(
+            TaintSource(
+                source_type=TaintSourceType.TOOL_OUTPUT,
+                source_id=f"src-{i}",
+                tier=SourceTrustTier.TRUSTED_INTERNAL,
+                labels=frozenset({f"lbl-{i}"}),
+                reason=f"Audit source {i}",
+            )
+        )
+
+    summaries = _taint_audit_sources(state)
+    assert len(summaries) == 12
+    # Verify deterministic ordering: source_ids match state.sources
+    expected_ids = [s.source_id for s in state.sources[:12]]
+    actual_ids = [s["source_id"] for s in summaries]
+    assert actual_ids == expected_ids

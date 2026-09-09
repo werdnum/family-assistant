@@ -1235,9 +1235,13 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
         await self.wrapped_provider.close()
 
 
-def _taint_audit_sources(state: TurnTaintState) -> list[TaintAuditSourceSummary]:
+def _taint_audit_sources(
+    state: TurnTaintState,
+    *,
+    max_sources: int = 12,
+) -> list[TaintAuditSourceSummary]:
     summaries: list[TaintAuditSourceSummary] = []
-    for source in state.sources:
+    for source in state.sources[:max_sources]:
         trusted = not is_externally_authored(source.tier)
         summaries.append({
             # These are enum-backed, closed-vocabulary provenance fields.
@@ -2878,6 +2882,9 @@ class TaintTrackingToolsProvider(ToolsProvider):
             "fallback_verdict": constraints.fallback_verdict.value,
             "used_fallback": result.used_fallback,
             "destination_echo": destination_echo,
+            "total_source_count": state.total_source_count,
+            "distinct_source_count": state.distinct_source_count,
+            "omitted_source_count": state.omitted_source_count,
         }
         event_id = str(uuid.uuid4())
         await context.db_context.taint_audit_events.add(
