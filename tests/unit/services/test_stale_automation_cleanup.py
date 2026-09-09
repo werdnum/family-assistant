@@ -299,6 +299,57 @@ class TestSpentScheduleAutomationCleanup:
         )
 
     @pytest.mark.asyncio
+    async def test_deletes_count_exhausted_schedule(
+        self, exec_context: MinimalContext, db_context: Database
+    ) -> None:
+        """A COUNT-bounded rule is spent as of the firing that consumed it.
+
+        Evaluated from now instead, such a rule reports a fresh occurrence
+        today and the automation would never be collected.
+        """
+        # next_scheduled_at is always an occurrence of the rule, so the
+        # anchor has to be one here too for the fixture to be realistic.
+        last_firing = (datetime.now(UTC) - timedelta(days=3)).replace(
+            hour=9, minute=0, second=0, microsecond=0
+        )
+        automation_id = await self._create_spent_schedule(
+            db_context,
+            "count-exhausted-schedule",
+            recurrence_rule="FREQ=DAILY;BYHOUR=9;BYMINUTE=0;COUNT=1",
+            next_scheduled_at=last_firing,
+        )
+
+        await handle_stale_automation_cleanup(exec_context, {})  # type: ignore[arg-type]
+
+        assert (
+            await db_context.schedule_automations.get_by_id(
+                automation_id, CONVERSATION_ID
+            )
+            is None
+        )
+
+    @pytest.mark.asyncio
+    async def test_preserves_schedule_with_unparseable_rule(
+        self, exec_context: MinimalContext, db_context: Database
+    ) -> None:
+        """A rule that does not parse is broken, not spent."""
+        automation_id = await self._create_spent_schedule(
+            db_context,
+            "broken-schedule",
+            recurrence_rule="FREQ=EVERY_OTHER_TUESDAY",
+            next_scheduled_at=datetime.now(UTC) - timedelta(days=3),
+        )
+
+        await handle_stale_automation_cleanup(exec_context, {})  # type: ignore[arg-type]
+
+        assert (
+            await db_context.schedule_automations.get_by_id(
+                automation_id, CONVERSATION_ID
+            )
+            is not None
+        )
+
+    @pytest.mark.asyncio
     async def test_preserves_recurring_schedule_that_is_behind(
         self, exec_context: MinimalContext, db_context: Database
     ) -> None:

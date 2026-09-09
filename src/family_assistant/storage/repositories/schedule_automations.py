@@ -511,16 +511,23 @@ class ScheduleAutomationsRepository(BaseRepository):
         timezone: ZoneInfo,
     ) -> list[ScheduleAutomationDict]:
         """
-        List enabled automations whose recurrence rule has no future occurrence.
+        List enabled automations whose recurrence rule is spent.
 
-        A rule bounded by ``COUNT=1`` or an ``UNTIL`` in the past stops
-        producing occurrences once it has run, and nothing clears the row: the
-        automation stays enabled with ``next_scheduled_at`` frozen at its last
-        firing. Those are spent and will never fire again.
+        A rule bounded by ``COUNT`` or by an ``UNTIL`` in the past runs out of
+        occurrences, and nothing clears the row: :meth:`after_task_execution`
+        finds no next occurrence, returns without scheduling, and leaves the
+        automation enabled with ``next_scheduled_at`` frozen at its last
+        firing. Nothing re-evaluates the rule after that, so it is dead.
 
-        An automation whose rule still yields a future occurrence is excluded
-        even when its ``next_scheduled_at`` is long past -- that is a stranded
-        automation, which is the schedule sync's problem, not a dead one.
+        Deadness is decided by re-running that same decision at the same
+        anchor -- the rule as of its last firing, not as of now. A rule
+        restarted from now is a different series: ``COUNT=1`` yields a fresh
+        occurrence today and would look live forever, while the automation it
+        belongs to has already been abandoned by the scheduler.
+
+        An automation whose rule still yields an occurrence from that anchor is
+        excluded: the scheduler meant to keep it running, so it is stranded
+        rather than spent, and repairing it belongs to the schedule sync.
 
         Args:
             scheduled_before: Only consider automations whose next_scheduled_at
@@ -540,9 +547,25 @@ class ScheduleAutomationsRepository(BaseRepository):
         spent: list[ScheduleAutomationDict] = []
         for row in rows:
             automation = self._normalize_automation(dict(row))
-            next_occurrence = self._parse_rrule_and_get_next(
-                automation["recurrence_rule"], timezone=timezone
-            )
+            last_firing = automation["next_scheduled_at"]
+            if last_firing is None:
+                continue
+
+            try:
+                next_occurrence = self._calculate_next_occurrence(
+                    automation["recurrence_rule"], last_firing, timezone
+                )
+            except (ValueError, ParserError):
+                # A rule that does not parse is a broken automation, not a
+                # spent one. Deleting it would destroy the evidence, so leave
+                # it for its owner and say which row needs looking at.
+                self._logger.exception(
+                    f"Schedule automation {automation['id']} has an unparseable "
+                    f"RRULE '{automation['recurrence_rule']}' and cannot fire; "
+                    f"leaving it in place for repair"
+                )
+                continue
+
             if next_occurrence is not None:
                 continue
             if await self._has_pending_tasks(automation["id"]):
