@@ -191,15 +191,20 @@ so the curator never sees a request without its outcome, and the following chunk
 orphaned assistant rows that the no-user-messages rule would then skip. Only completed turns are
 eligible: a turn still awaiting its terminal reply, such as one parked on a confirmation that can
 stay pending for a day, ends the chunk before itself and is reviewed once it completes, and the
-watermark never advances past a turn that has not finished. A single turn larger than the budget on
-its own (a pasted document, say) is rendered truncated with a marker, since a message's length has
-no limit at the API; the review proceeds on what fits, and the turn's provenance is carried in full
-regardless. When more rows remain, the watermark advances to the end of the chunk and the
-conversation is simply still due, so the next sweep reviews the next chunk. The same rule closes the
-failure path: a review that fails permanently is abandoned by advancing the watermark past its
-chunk, with the failed change set and reason kept for the recent-changes view and an error logged.
-There is no separate retry ledger and no state the due predicate does not already read; a
-conversation is due exactly when it has a completed turn after its watermark and the timing
+watermark never advances past a turn that has not finished. "Finished" is defined so that no turn
+can block a conversation forever: a turn is complete when it has its terminal reply, or when a later
+turn in the same conversation has completed, or when the maximum deferral has elapsed since its last
+row. A turn cut off by a server restart, which the web flow deliberately leaves without a terminal
+reply, therefore counts as complete as soon as the household moves on, and is rendered with a marker
+saying it never finished so the curator does not read a request as an outcome. A single turn larger
+than the budget on its own (a pasted document, say) is rendered truncated with a marker, since a
+message's length has no limit at the API; the review proceeds on what fits, and the turn's
+provenance is carried in full regardless. When more rows remain, the watermark advances to the end
+of the chunk and the conversation is simply still due, so the next sweep reviews the next chunk. The
+same rule closes the failure path: a review that fails permanently is abandoned by advancing the
+watermark past its chunk, with the failed change set and reason kept for the recent-changes view and
+an error logged. There is no separate retry ledger and no state the due predicate does not already
+read; a conversation is due exactly when it has a completed turn after its watermark and the timing
 condition holds, and every terminal outcome, success or abandonment, moves the watermark forward.
 
 This is deliberately not an event-driven debounce. A per-message enqueue that pushes a task back has
@@ -259,22 +264,23 @@ recreates the fact. Another pending conversation can recreate it too.
 
 So removing an entry, whether in the notes UI or through a foreground "forget", records a
 **suppression**: the entry's lineage, its current text and subject, and the time of forgetting. An
-entry's identity is stable across updates, but its lineage is not one pair: it is every evidence and
-proposition pair the entry has held, from the addition that created it through each update that
-changed it. A fact first learned as "bus" from one message and updated to "tram" from a later one
-carries both pairs, and forgetting the entry suppresses both. Suppressions live in a repository
+entry's identity is stable across updates, but its lineage is not one version: it is every evidence,
+proposition and subject the entry has held, from the addition that created it through each update
+that changed any of them. A fact first learned as "bus" from one message and updated to "tram" from
+a later one carries both versions, a preference re-attributed from Alice to Bob carries both
+subjects, and forgetting the entry suppresses every version. Suppressions live in a repository
 record outside the always-loaded note; the forgotten text never goes back into every prompt as a
 negative instruction, and reaches only the curator's review input, which is a silent background
 turn. The applier matches a proposal against suppressions by proposition and subject alone, against
-every proposition in the lineage, without regard to what evidence the proposal cites; only a
-proposal that matches is then asked whether it cites person-authored evidence newer than the
-forgetting, and it is rejected unless it does. Matching on the proposition rather than on the
-evidence-derived identity is what stops the same fact returning from a different message, such as
-the assistant's acknowledgement or an unrelated older conversation that stated it in the same words,
-while forgetting one fact from a message still leaves the other facts from that message untouched,
-because they are different propositions. That is the mechanical guarantee, and it covers retries and
-pending reviews over any conversation. The curator sees the suppressed text so that it can recognise
-the same proposition arriving as a paraphrase from a different old conversation, which the applier's
+every version in the lineage, without regard to what evidence the proposal cites; only a proposal
+that matches is then asked whether it cites person-authored evidence newer than the forgetting, and
+it is rejected unless it does. Matching on the proposition rather than on the evidence-derived
+identity is what stops the same fact returning from a different message, such as the assistant's
+acknowledgement or an unrelated older conversation that stated it in the same words, while
+forgetting one fact from a message still leaves the other facts from that message untouched, because
+they are different propositions. That is the mechanical guarantee, and it covers retries and pending
+reviews over any conversation. The curator sees the suppressed text so that it can recognise the
+same proposition arriving as a paraphrase from a different old conversation, which the applier's
 identity and evidence matching cannot connect; that part is an instruction, not a mechanism, and it
 is recorded as the residual below. A suppression is released only by evidence a person authored
 after it: a user row newer than the forgetting, or a foreground action. The assistant's own
@@ -490,26 +496,27 @@ Each milestone is independently useful and verifiable.
    that a pre-existing conversation with no watermark row is not reviewed for rows older than the
    enablement time; that a re-run after the watermark reviews only new rows; that a turn parked on a
    confirmation across the idle window is neither enqueued nor reviewed until it completes and is
-   then reviewed whole; that a stretch larger than the chunk budget is reviewed across successive
-   sweeps with the watermark advancing each time; that an abandoned review advances the watermark
-   and leaves the conversation not due; and that a stretch carrying unknown-external taint is
-   skipped with an audit record and counted. Concurrency is verified directly: a message persisted
-   at any point during a review, including after the handler's last read and before the task is
-   marked done, is covered by a later sweep; two reviews changing the same note leave both change
-   sets applied, with one review retried; a note edited between a review's read and its apply is not
-   overwritten; and a retried review does not duplicate an addition. The applier is verified to
-   reject an operation citing evidence outside the stretch, an update to a missing entry, an
-   over-cap result and a second always-loaded memory note, from the UI and foreground tool paths
-   alike; to fail a whole change set on one rejected operation and keep the stretch reviewable; to
-   accept a manual addition from the notes UI with the editor as its evidence; and to keep two facts
-   from one message as distinct entries so forgetting one leaves the other. The read policy is
-   verified by seeding an unlabelled note, a default-labelled note and an unlabelled file-based
-   skill and asserting none reaches the curator through the context provider, the title list, the
-   skill catalogue or `get_note`, including the file-skill fallback; a conformance rule asserts
-   every note or skill read the curator can reach goes through the policy. Conformance also confirms
-   the curator's write policy carries the `memory` floor and that its effective tool set, global
-   grants included, is exactly the memory entry tools. Skip counters and skipped-volume gauges land
-   here, on the existing metrics surface.
+   then reviewed whole; that a turn left without a terminal reply by a restart is reviewed with a
+   never-finished marker once a later turn completes, and the watermark passes it; that a stretch
+   larger than the chunk budget is reviewed across successive sweeps with the watermark advancing
+   each time; that an abandoned review advances the watermark and leaves the conversation not due;
+   and that a stretch carrying unknown-external taint is skipped with an audit record and counted.
+   Concurrency is verified directly: a message persisted at any point during a review, including
+   after the handler's last read and before the task is marked done, is covered by a later sweep;
+   two reviews changing the same note leave both change sets applied, with one review retried; a
+   note edited between a review's read and its apply is not overwritten; and a retried review does
+   not duplicate an addition. The applier is verified to reject an operation citing evidence outside
+   the stretch, an update to a missing entry, an over-cap result and a second always-loaded memory
+   note, from the UI and foreground tool paths alike; to fail a whole change set on one rejected
+   operation and keep the stretch reviewable; to accept a manual addition from the notes UI with the
+   editor as its evidence; and to keep two facts from one message as distinct entries so forgetting
+   one leaves the other. The read policy is verified by seeding an unlabelled note, a
+   default-labelled note and an unlabelled file-based skill and asserting none reaches the curator
+   through the context provider, the title list, the skill catalogue or `get_note`, including the
+   file-skill fallback; a conformance rule asserts every note or skill read the curator can reach
+   goes through the policy. Conformance also confirms the curator's write policy carries the
+   `memory` floor and that its effective tool set, global grants included, is exactly the memory
+   entry tools. Skip counters and skipped-volume gauges land here, on the existing metrics surface.
 2. **Forgetting.** Suppression records, applier rejection, foreground "forget". Verified by the
    reconstruction scenario end to end: a fact is learned, forgotten, and a pending review over the
    original conversation plus a retry of a conflicting review both fail to recreate it, a review
