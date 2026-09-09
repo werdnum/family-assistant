@@ -172,12 +172,12 @@ eventually crowd out the transcript it is reviewing. So the curator's input is t
 plus the topic entries and suppressions selected for relevance to the reviewed stretch, using the
 search index the notes already have, under a fixed input budget. Selection only shapes what the
 model sees. Everything the applier checks mechanically, conflict detection, duplicate detection and
-suppression matching by proposition and subject, runs over the whole store, so an entry or
-suppression the selection left out still cannot be duplicated or resurrected through those checks.
-What a selection miss does weaken is the one guard that is an instruction rather than a mechanism: a
-suppression the curator was not shown cannot help it recognise a paraphrase from other old evidence.
-That is the residual already recorded under Forgetting, and selection widens it only to the extent
-that relevance selection fails to surface a suppression about the very topic under review.
+suppression matching by version, runs over the whole store, so an entry or suppression the selection
+left out still cannot be duplicated or resurrected through those checks. What a selection miss does
+weaken is the one guard that is an instruction rather than a mechanism: a suppression the curator
+was not shown cannot help it recognise a paraphrase from other old evidence. That is the residual
+already recorded under Forgetting, and selection widens it only to the extent that relevance
+selection fails to surface a suppression about the very topic under review.
 
 **Why idle-per-conversation.** An idle stretch is a settled discussion: the curator sees the
 resolution, not the half-finished question, and its work stays off the interactive path. Freshness
@@ -320,24 +320,27 @@ user removes the fact, the curator's write conflicts, the retry sees the same ol
 recreates the fact. Another pending conversation can recreate it too.
 
 So removing an entry, whether in the notes UI or through a foreground "forget", records a
-**suppression**: the entry's lineage, its current text and subject, and the time of forgetting. An
-entry's identity is stable across updates, but its lineage is not one version: it is every evidence,
-proposition and subject the entry has held, from the addition that created it through each update
-that changed any of them. A fact first learned as "bus" from one message and updated to "tram" from
-a later one carries both versions, a preference re-attributed from Alice to Bob carries both
-subjects, and forgetting the entry suppresses every version. Suppressions live in a repository
-record outside the always-loaded note; the forgotten text never goes back into every prompt as a
-negative instruction, and reaches only the curator's review input, which is a silent background
-turn. The applier matches a proposal against suppressions by proposition and subject alone, against
-every version in the lineage, without regard to what evidence the proposal cites; only a proposal
-that matches is then asked whether it cites person-authored evidence newer than the forgetting, and
-it is rejected unless it does. Matching on the proposition rather than on the evidence-derived
-identity is what stops the same fact returning from a different message, such as the assistant's
-acknowledgement or an unrelated older conversation that stated it in the same words, while
-forgetting one fact from a message still leaves the other facts from that message untouched, because
-they are different propositions. That is the mechanical guarantee, and it covers retries and pending
-reviews over any conversation. The curator sees the suppressed text so that it can recognise the
-same proposition arriving as a paraphrase from a different old conversation, which the applier's
+**suppression**: the entry's lineage, its current text and subject, and the time of forgetting. A
+**version** of an entry is its proposition, subject and applicable period together, the same
+discriminators that identity and duplicate detection use, so that forgetting is scoped to the
+semantic entry being removed and a fact about a different period is a different version. An entry's
+identity is stable across updates, but its lineage is not one version: it is every version the entry
+has held, with the evidence for each, from the addition that created it through each update that
+changed any of them. A fact first learned as "bus" from one message and updated to "tram" from a
+later one carries both versions, a preference re-attributed from Alice to Bob carries both subjects,
+and forgetting the entry suppresses every version. Suppressions live in a repository record outside
+the always-loaded note; the forgotten text never goes back into every prompt as a negative
+instruction, and reaches only the curator's review input, which is a silent background turn. The
+applier matches a proposal against suppressions by version alone, against every version in the
+lineage, without regard to what evidence the proposal cites; only a proposal that matches is then
+asked whether it cites person-authored evidence newer than the forgetting, and it is rejected unless
+it does. Matching on the proposition rather than on the evidence-derived identity is what stops the
+same fact returning from a different message, such as the assistant's acknowledgement or an
+unrelated older conversation that stated it in the same words, while forgetting one fact from a
+message still leaves the other facts from that message untouched, because they are different
+propositions. That is the mechanical guarantee, and it covers retries and pending reviews over any
+conversation. The curator sees the suppressed text so that it can recognise the same proposition
+arriving as a paraphrase from a different old conversation, which the applier's
 proposition-and-subject matching cannot connect, because the paraphrase is a different proposition;
 that part is an instruction, not a mechanism, and it is recorded as the residual below. A
 suppression is released only by evidence a person authored after it: a user row newer than the
@@ -526,16 +529,16 @@ the applier like any other: undoing an addition removes the entry and is a forge
 removal re-adds the entry, and as person-authored evidence newer than the forgetting it releases the
 suppression, while the person-authored floor above refuses a pending or retried review that would
 remove the restored entry on the old evidence again; undoing an update restores the previous
-version. What a suppression records is a set of proposition-and-subject versions, and the operation
-decides which: forgetting records the entry's whole lineage, while undoing an update records only
-the version the person rejected, so the restored version stays live and a later review that
-re-proposes the rejected one is refused, whether the rejected update changed the proposition or only
-re-attributed it to another subject. A subtle indicator in the chat surfaces that memory changed
-after a conversation without a notification per fact. "Forget that I said X" in chat is a foreground
-removal with the suppression semantics above. A deployment can turn contribution, reading, or the
-whole mechanism off. The user documentation for this feature is a new `docs/user/memory.md`
-describing what the assistant remembers on its own, what it never remembers, that memory is
-household-wide, and how to correct or forget.
+version. What a suppression records is a set of versions, and the operation decides which:
+forgetting records the entry's whole lineage, while undoing an update records only the version the
+person rejected, so the restored version stays live and a later review that re-proposes the rejected
+one is refused, whether the rejected update changed the proposition or only re-attributed it to
+another subject. A subtle indicator in the chat surfaces that memory changed after a conversation
+without a notification per fact. "Forget that I said X" in chat is a foreground removal with the
+suppression semantics above. A deployment can turn contribution, reading, or the whole mechanism
+off. The user documentation for this feature is a new `docs/user/memory.md` describing what the
+assistant remembers on its own, what it never remembers, that memory is household-wide, and how to
+correct or forget.
 
 ## Deliberate simplifications
 
