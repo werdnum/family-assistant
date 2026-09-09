@@ -5017,12 +5017,14 @@ async def _cleanup_dead_worker_completion_listeners(
     A listener is dead when its worker task has reached a terminal status, or
     when its row is gone entirely because the worker task cleanup already
     reaped it. Either way the completion webhook that would fire it is never
-    coming.
+    coming, and the listener goes once it is past the grace period.
 
-    Listeners are also dropped once they are older than
-    ``abandoned_listener_hours`` whatever their task's recorded status says: a
-    worker whose backend lost the job leaves a row stuck in a live status
-    forever, and after a week the callback is not in flight, it is lost.
+    A task still recorded as live is judged by its own timeout rather than by
+    the listener's age: a backend that loses a job leaves a row stuck in a live
+    status forever, but a task an operator allowed a fortnight for is not
+    abandoned on day seven. Once it is overdue by its own deadline -- the one
+    the stale task reaper fails it at -- and the listener has reached
+    ``abandoned_listener_hours``, the callback is not in flight, it is lost.
     """
     listeners = await db_context.events.get_untriggered_one_time_listeners(
         created_before=now - timedelta(hours=dead_worker_grace_hours),
@@ -5038,16 +5040,20 @@ async def _cleanup_dead_worker_completion_listeners(
     if not waiting:
         return 0
 
-    live_task_ids = await db_context.worker_tasks.get_live_task_ids([
+    deadlines = await db_context.worker_tasks.get_live_task_deadlines([
         task_id for _, task_id in waiting
     ])
     abandoned_cutoff = now - timedelta(hours=abandoned_listener_hours)
 
-    doomed = [
-        listener["id"]
-        for listener, task_id in waiting
-        if task_id not in live_task_ids or listener["created_at"] < abandoned_cutoff
-    ]
+    doomed: list[int] = []
+    for listener, task_id in waiting:
+        deadline = deadlines.get(task_id)
+        if (
+            deadline is None
+            or now > deadline
+            and listener["created_at"] < abandoned_cutoff
+        ):
+            doomed.append(listener["id"])
 
     return await db_context.events.delete_event_listeners_by_id(doomed)
 

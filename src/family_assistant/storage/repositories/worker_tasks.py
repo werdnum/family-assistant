@@ -36,6 +36,10 @@ logger = logging.getLogger(__name__)
 # terminal: the callback webhook has either already arrived or never will.
 LIVE_WORKER_TASK_STATUSES: Final = ("pending", "submitted", "running")
 
+# Grace allowed past a task's own timeout before it counts as overdue, matching
+# the buffer mark_stale_tasks fails a running task at.
+STALE_TASK_BUFFER_MINUTES: Final = 30
+
 
 class WorkerTaskDict(TypedDict):
     """Typed dictionary for worker task data returned from database queries.
@@ -196,29 +200,49 @@ class WorkerTasksRepository(BaseRepository):
             return self._row_to_dict(row)
         return None
 
-    async def get_live_task_ids(self, task_ids: Sequence[str]) -> set[str]:
-        """Return which of the given task IDs can still report a completion.
+    async def get_live_task_deadlines(
+        self, task_ids: Sequence[str]
+    ) -> dict[str, datetime]:
+        """Return, per still-live task, when it stops being able to report.
 
-        A task ID is live when its row exists and its status is one the worker
-        can still transition out of. An ID with no row at all -- reaped by the
-        worker task cleanup, say -- is not live, so a caller waiting on it is
-        waiting on nothing.
+        A task is live when its row exists and its status is one the worker can
+        still transition out of. An ID with no row at all -- reaped by the
+        worker task cleanup, say -- is absent from the result, so a caller
+        waiting on it is waiting on nothing.
+
+        The deadline is the same one :meth:`mark_stale_tasks` fails a running
+        task at, so a task the reaper would call stale is past it. A caller
+        waiting on a legitimately long task is not cut short by a fixed age,
+        however long an operator lets tasks run.
 
         Args:
             task_ids: Worker task IDs to check
 
         Returns:
-            The subset of ``task_ids`` that can still complete
+            Deadline by task ID, for those of ``task_ids`` that are still live
         """
         if not task_ids:
-            return set()
+            return {}
 
-        stmt = select(worker_tasks_table.c.task_id).where(
+        stmt = select(
+            worker_tasks_table.c.task_id,
+            worker_tasks_table.c.created_at,
+            worker_tasks_table.c.timeout_minutes,
+        ).where(
             worker_tasks_table.c.task_id.in_(task_ids),
             worker_tasks_table.c.status.in_(LIVE_WORKER_TASK_STATUSES),
         )
         rows = await self._db.fetch_all(stmt)
-        return {row["task_id"] for row in rows}
+
+        deadlines: dict[str, datetime] = {}
+        for row in rows:
+            created_at = row["created_at"]
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=UTC)
+            deadlines[row["task_id"]] = created_at + timedelta(
+                minutes=row["timeout_minutes"] + STALE_TASK_BUFFER_MINUTES
+            )
+        return deadlines
 
     async def get_tasks_for_conversation(
         self,
@@ -391,7 +415,7 @@ class WorkerTasksRepository(BaseRepository):
     async def mark_stale_tasks(
         self,
         submitted_timeout_hours: int = 1,
-        running_buffer_minutes: int = 30,
+        running_buffer_minutes: int = STALE_TASK_BUFFER_MINUTES,
     ) -> int:
         """Mark stale tasks as failed.
 

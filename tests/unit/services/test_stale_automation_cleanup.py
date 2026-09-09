@@ -15,6 +15,7 @@ from family_assistant.storage.events import (
     WORKER_COMPLETION_EVENT_TYPE,
     event_listeners_table,
 )
+from family_assistant.storage.repositories.worker_tasks import worker_tasks_table
 from family_assistant.storage.schedule_automations import schedule_automations_table
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.task_worker import handle_stale_automation_cleanup
@@ -85,15 +86,29 @@ async def _create_worker_completion_listener(
     return listener_id
 
 
-async def _create_worker_task(db_context: Database, task_id: str, status: str) -> None:
+async def _create_worker_task(
+    db_context: Database,
+    task_id: str,
+    status: str,
+    *,
+    age: timedelta = timedelta(0),
+    timeout_minutes: int = 30,
+) -> None:
     await db_context.worker_tasks.create_task(
         task_id=task_id,
         conversation_id=CONVERSATION_ID,
         interface_type="test",
         task_description="do a thing",
+        timeout_minutes=timeout_minutes,
     )
     if status != "pending":
         await db_context.worker_tasks.update_task_status(task_id=task_id, status=status)
+    if age:
+        await db_context.execute(
+            update(worker_tasks_table)
+            .where(worker_tasks_table.c.task_id == task_id)
+            .values(created_at=datetime.now(UTC) - age)
+        )
 
 
 class TestWorkerCompletionListenerCleanup:
@@ -130,7 +145,7 @@ class TestWorkerCompletionListenerCleanup:
     async def test_preserves_listener_for_running_worker(
         self, exec_context: MinimalContext, db_context: Database
     ) -> None:
-        """A long-running worker is still going to report back."""
+        """A worker still inside its own timeout is going to report back."""
         await _create_worker_task(db_context, "task-running", "running")
         listener_id = await _create_worker_completion_listener(
             db_context, "task-running", age=timedelta(days=2)
@@ -144,8 +159,10 @@ class TestWorkerCompletionListenerCleanup:
     async def test_deletes_abandoned_listener_for_running_worker(
         self, exec_context: MinimalContext, db_context: Database
     ) -> None:
-        """After a week a 'running' worker has lost its job, not its patience."""
-        await _create_worker_task(db_context, "task-stuck", "running")
+        """A week on, a worker overdue by its own timeout has lost its job."""
+        await _create_worker_task(
+            db_context, "task-stuck", "running", age=timedelta(days=8)
+        )
         listener_id = await _create_worker_completion_listener(
             db_context, "task-stuck", age=timedelta(days=8)
         )
@@ -153,6 +170,26 @@ class TestWorkerCompletionListenerCleanup:
         await handle_stale_automation_cleanup(exec_context, {})  # type: ignore[arg-type]
 
         assert await db_context.events.get_event_listener_by_id(listener_id) is None
+
+    @pytest.mark.asyncio
+    async def test_preserves_listener_for_worker_still_within_its_timeout(
+        self, exec_context: MinimalContext, db_context: Database
+    ) -> None:
+        """A long timeout an operator allowed outranks the week-old rule."""
+        await _create_worker_task(
+            db_context,
+            "task-fortnight",
+            "running",
+            age=timedelta(days=8),
+            timeout_minutes=14 * 24 * 60,
+        )
+        listener_id = await _create_worker_completion_listener(
+            db_context, "task-fortnight", age=timedelta(days=8)
+        )
+
+        await handle_stale_automation_cleanup(exec_context, {})  # type: ignore[arg-type]
+
+        assert await db_context.events.get_event_listener_by_id(listener_id) is not None
 
     @pytest.mark.asyncio
     async def test_preserves_recent_listener_for_terminal_worker(

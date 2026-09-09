@@ -77,11 +77,10 @@ and inspects automations, but doesn't edit them in place.
 
 ### Automatic tidying
 
-Some automations finish for good: they wait for a single thing to happen, or repeat a set number of
-times. The assistant removes them once they can no longer fire — a listener waiting on a background
-worker that has already finished or died, or a schedule that has run out of occurrences because you
-gave it an end date or a count. A listener still waiting on a worker is dropped after a week
-whatever the worker's state, since by then the result is not coming.
+Some automations finish for good. The assistant removes them once they can no longer fire — a
+listener waiting on a background worker that has already finished or died, or a schedule that has
+run out of occurrences, such as one you gave an end date. A listener whose worker has overrun the
+time it was given is dropped after a week, since by then the result is not coming.
 
 A schedule that repeats indefinitely is never removed for you, and neither is an automation you have
 disabled — delete those yourself when you are done with them. If you want to keep a record of one
