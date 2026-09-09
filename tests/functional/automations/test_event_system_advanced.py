@@ -35,6 +35,7 @@ from family_assistant.tools.events import (
     test_event_listener_tool as event_listener_test_tool,
 )
 from family_assistant.tools.types import ToolExecutionContext
+from tests.helpers import wait_for_condition
 from tests.mocks.mock_llm import LLMOutput as MockLLMOutput
 from tests.mocks.mock_llm import RuleBasedMockLLMClient, last_real_message
 
@@ -378,16 +379,18 @@ async def test_end_to_end_event_listener_wakes_llm(
     )
     task_worker.register_task_handler("llm_callback", handle_llm_callback)
 
-    # Give worker time to start
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Allow worker startup
-    await asyncio.sleep(0.1)
-
-    # Signal that there's a new task to process
+    # Signal that there's a new task to process. The worker polls for work, so
+    # it picks this up whether or not it has finished starting.
     new_task_event.set()
 
-    # Give worker time to process the task (this will fail if timestamp is wrong)
-    # ast-grep-ignore: no-asyncio-sleep-in-tests - Allow task processing
-    await asyncio.sleep(0.5)
+    # Wait on the outcome rather than on a duration: the callback has to be
+    # claimed, run a turn through the mock LLM, and persist history before the
+    # message is sent, and a loaded CI runner takes longer over that than any
+    # fixed sleep is worth betting on.
+    await wait_for_condition(
+        lambda: mock_chat_interface.send_message.call_count > 0,
+        description="the event callback to deliver its message",
+    )
 
     # Verify the message was sent (proves the task was processed successfully)
     mock_chat_interface.send_message.assert_called_once()
