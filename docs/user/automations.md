@@ -79,8 +79,9 @@ and inspects automations, but doesn't edit them in place.
 
 Some automations finish for good. The assistant removes them once they can no longer fire — a
 listener waiting on a background worker that has already finished or died, or a schedule that has
-run out of occurrences, such as one you gave an end date. A listener whose worker has overrun the
-time it was given is dropped after a week, since by then the result is not coming.
+run out of occurrences, such as one you gave an end date. A listener waiting on a worker that
+overran the time it was given is dropped once it is more than a week old, since by then the result
+is not coming.
 
 A schedule that repeats indefinitely is never removed for you, and neither is an automation you have
 disabled — delete those yourself when you are done with them. If you want to keep a record of one
