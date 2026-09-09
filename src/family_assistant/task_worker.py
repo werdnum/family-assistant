@@ -5014,19 +5014,20 @@ async def _cleanup_dead_worker_completion_listeners(
 ) -> int:
     """Delete worker completion listeners whose worker can no longer report.
 
-    A worker goes quiet either because we watched it finish or because its own
-    deadline passed with it still recorded as live. Both are given the same
-    grace afterwards, which is what keeps this off a completion still being
-    acted on: the webhook marks a task terminal before the event it carried has
-    fired the listener, so a task that just finished is not yet done with.
+    There are two grades of evidence, and they earn different waits.
 
-    A task whose row is gone entirely -- reaped by the worker task cleanup --
-    has nothing left to report, and its listener goes once the listener itself
-    is past the grace.
+    We watched the task finish: its own finish time starts the clock, and the
+    listener goes once that is past the grace. The grace is what keeps this off
+    a completion still being acted on -- the webhook marks a task terminal
+    before the event it carried has fired the listener.
 
-    Deadness inferred from a stuck live status is held to the higher bar of
-    ``abandoned_listener_hours`` as well: a backend that loses a job leaves a
-    row live forever, but a week is long enough to stop calling it in flight.
+    We never watched it finish, because the row is gone or because it is still
+    recorded live: the death is inferred, so the listener waits out
+    ``abandoned_listener_hours`` of silence. That covers a worker task reaped
+    while its own completion was still in flight -- the row retention is
+    shorter than this wait -- and a backend that lost a job, leaving a row live
+    forever. A row still live must also be past its own deadline, so a task an
+    operator gave a fortnight to is not judged by anyone else's clock.
     """
     listeners = await db_context.events.get_untriggered_one_time_listeners(
         created_before=now - timedelta(hours=dead_worker_grace_hours),
@@ -5045,17 +5046,18 @@ async def _cleanup_dead_worker_completion_listeners(
     quiet_times = await db_context.worker_tasks.get_quiet_times([
         task_id for _, task_id in waiting
     ])
-    quiet_cutoff = now - timedelta(hours=dead_worker_grace_hours)
+    finished_cutoff = now - timedelta(hours=dead_worker_grace_hours)
     abandoned_cutoff = now - timedelta(hours=abandoned_listener_hours)
 
     doomed: list[int] = []
     for listener, task_id in waiting:
         quiet = quiet_times.get(task_id)
-        if quiet is None:
-            doomed.append(listener["id"])
-        elif quiet.at >= quiet_cutoff:
-            continue
-        elif not quiet.is_live or listener["created_at"] < abandoned_cutoff:
+        if quiet is not None and not quiet.is_live:
+            if quiet.at < finished_cutoff:
+                doomed.append(listener["id"])
+        elif listener["created_at"] < abandoned_cutoff and (
+            quiet is None or now > quiet.at
+        ):
             doomed.append(listener["id"])
 
     return await db_context.events.delete_event_listeners_by_id(doomed)
@@ -5070,7 +5072,8 @@ async def _cleanup_spent_one_shot_schedules(
 ) -> int:
     """Delete schedule automations whose rule has no occurrence left."""
     spent = await db_context.schedule_automations.list_spent_one_shot_automations(
-        now - timedelta(hours=grace_hours),
+        now,
+        grace_hours=grace_hours,
         timezone=timezone,
     )
 

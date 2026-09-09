@@ -2,7 +2,7 @@
 
 import uuid
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
@@ -506,8 +506,9 @@ class ScheduleAutomationsRepository(BaseRepository):
 
     async def list_spent_one_shot_automations(
         self,
-        scheduled_before: datetime,
+        now: datetime,
         *,
+        grace_hours: int,
         timezone: ZoneInfo,
     ) -> list[ScheduleAutomationDict]:
         """
@@ -519,19 +520,22 @@ class ScheduleAutomationsRepository(BaseRepository):
         automation enabled with ``next_scheduled_at`` frozen at its last
         firing. Nothing re-evaluates the rule after that, so it is dead.
 
-        Deadness is decided by re-running that same decision at the same
-        anchor -- the rule as of its last firing, not as of now. A rule
-        restarted from now is a different series: ``COUNT=1`` yields a fresh
-        occurrence today and would look live forever, while the automation it
-        belongs to has already been abandoned by the scheduler.
+        The rule is read as the series the automation actually belongs to --
+        anchored at that last firing, since a rule restarted from now is a
+        different series and ``COUNT=1`` would yield a fresh occurrence today
+        forever -- and asked whether it has anything left *ahead of us*. An
+        occurrence between the anchor and now is already in the past and no
+        longer schedulable, so it is not evidence of life: a schedule that ran
+        late, after its own ``UNTIL``, leaves exactly that behind.
 
-        An automation whose rule still yields an occurrence from that anchor is
-        excluded: the scheduler meant to keep it running, so it is stranded
-        rather than spent, and repairing it belongs to the schedule sync.
+        An automation whose series still reaches past now is excluded. The
+        scheduler meant to keep it running, so it is stranded rather than
+        spent, and repairing it belongs to the schedule sync.
 
         Args:
-            scheduled_before: Only consider automations whose next_scheduled_at
-                is older than this, so a firing still in flight is left alone
+            now: Current time; a series must reach past this to count as live
+            grace_hours: How long past its last firing an automation is left
+                alone, so a firing still in flight is not collected
             timezone: Timezone the recurrence rules are interpreted in
 
         Returns:
@@ -540,7 +544,10 @@ class ScheduleAutomationsRepository(BaseRepository):
         stmt = select(schedule_automations_table).where(
             (schedule_automations_table.c.enabled.is_(True))
             & (schedule_automations_table.c.next_scheduled_at.isnot(None))
-            & (schedule_automations_table.c.next_scheduled_at < scheduled_before)
+            & (
+                schedule_automations_table.c.next_scheduled_at
+                < now - timedelta(hours=grace_hours)
+            )
         )
         rows = await self._db.fetch_all(stmt)
 
@@ -552,8 +559,11 @@ class ScheduleAutomationsRepository(BaseRepository):
                 continue
 
             try:
-                next_occurrence = self._calculate_next_occurrence(
-                    automation["recurrence_rule"], last_firing, timezone
+                still_to_come = self._has_occurrence_after(
+                    automation["recurrence_rule"],
+                    anchor=last_firing,
+                    cutoff=now,
+                    timezone=timezone,
                 )
             except (ValueError, ParserError):
                 # A rule that does not parse is a broken automation, not a
@@ -566,13 +576,29 @@ class ScheduleAutomationsRepository(BaseRepository):
                 )
                 continue
 
-            if next_occurrence is not None:
+            if still_to_come:
                 continue
             if await self._has_pending_tasks(automation["id"]):
                 continue
             spent.append(automation)
 
         return spent
+
+    @staticmethod
+    def _has_occurrence_after(
+        recurrence_rule: str,
+        *,
+        anchor: datetime,
+        cutoff: datetime,
+        timezone: ZoneInfo,
+    ) -> bool:
+        """Whether the series starting at ``anchor`` reaches past ``cutoff``.
+
+        Raises ValueError or ParserError for a rule that does not parse, so a
+        broken rule is never mistaken for an exhausted one.
+        """
+        rule = rrule.rrulestr(recurrence_rule, dtstart=anchor.astimezone(timezone))
+        return rule.after(cutoff.astimezone(timezone)) is not None
 
     async def _has_pending_tasks(self, automation_id: int) -> bool:
         """Whether any queued task for this automation is still to run."""

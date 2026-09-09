@@ -146,12 +146,30 @@ class TestWorkerCompletionListenerCleanup:
     ) -> None:
         """The worker task cleanup reaps rows well before listeners expire."""
         listener_id = await _create_worker_completion_listener(
-            db_context, "task-reaped", age=timedelta(days=2)
+            db_context, "task-reaped", age=timedelta(days=8)
         )
 
         await handle_stale_automation_cleanup(exec_context, {})
 
         assert await db_context.events.get_event_listener_by_id(listener_id) is None
+
+    @pytest.mark.asyncio
+    async def test_preserves_recent_listener_whose_worker_task_is_gone(
+        self, exec_context: ToolExecutionContext, db_context: Database
+    ) -> None:
+        """A missing row is not proof the completion has already been acted on.
+
+        The worker task cleanup deletes terminal rows by age, so a task that
+        finished as its row was reaped leaves nothing to read. Waiting out the
+        week covers that window, which is shorter than the row retention.
+        """
+        listener_id = await _create_worker_completion_listener(
+            db_context, "task-recently-reaped", age=timedelta(days=2)
+        )
+
+        await handle_stale_automation_cleanup(exec_context, {})
+
+        assert await db_context.events.get_event_listener_by_id(listener_id) is not None
 
     @pytest.mark.asyncio
     async def test_preserves_listener_for_running_worker(
@@ -422,6 +440,36 @@ class TestSpentScheduleAutomationCleanup:
                 automation_id, CONVERSATION_ID
             )
             is not None
+        )
+
+    @pytest.mark.asyncio
+    async def test_deletes_schedule_that_ran_late_past_its_end_date(
+        self, exec_context: ToolExecutionContext, db_context: Database
+    ) -> None:
+        """A late run leaves next_scheduled_at frozen before the end date.
+
+        The series then still has occurrences between that anchor and the end
+        date, all of them in the past. Reading those as life would keep a
+        schedule that can never fire again.
+        """
+        end_date = datetime.now(UTC) - timedelta(days=4)
+        frozen = datetime.now(UTC) - timedelta(days=6)
+        automation_id = await self._create_spent_schedule(
+            db_context,
+            "late-then-expired-schedule",
+            recurrence_rule=(
+                f"FREQ=DAILY;BYHOUR=9;BYMINUTE=0;UNTIL={end_date:%Y%m%dT%H%M%SZ}"
+            ),
+            next_scheduled_at=frozen,
+        )
+
+        await handle_stale_automation_cleanup(exec_context, {})
+
+        assert (
+            await db_context.schedule_automations.get_by_id(
+                automation_id, CONVERSATION_ID
+            )
+            is None
         )
 
     @pytest.mark.asyncio
