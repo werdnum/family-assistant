@@ -124,8 +124,14 @@ become context in the recipient's chat because the entry correctly names both pe
 
 **The first version has one scope: the household.** Everything the curator learns from an opted-in
 conversation is household memory, visible in every conversation of every profile that reads memory,
-whoever is speaking. Conversations that contribute are those on household-member interfaces (web,
-iOS, Telegram, telephone) under a profile that opts into contributing. This is stated in the user
+whoever is speaking. Conversations that contribute are those on household-member interfaces (web and
+iOS chat, and Telegram) under a profile that opts into contributing. Two spoken interfaces are
+read-only in the first version, for reasons in the persistence layer rather than the design: a
+telephone call is saved as a transcript note, not as message-history rows, so nothing exists for the
+sweep to review; and an iOS native-voice session is persisted with every assistant row stamped at
+the untrusted extreme because the saved payload carries no runtime tracker, so every such stretch
+would trip the provenance ceiling. Each becomes a contributor when its persistence carries message
+rows with real provenance, which is follow-up work outside this design. This is stated in the user
 documentation in plain terms: what you tell the assistant in those conversations may surface to any
 household member. It is a deliberate, bounded choice, not an accident of a shared label, and the
 curator prompt tells it to leave out anything a speaker plainly intended for one person.
@@ -470,6 +476,10 @@ household-wide, and how to correct or forget.
   markdown, not a new table of facts.
 - **Whole-stretch taint exclusion.** Per-evidence provenance and explicit promotion are named as the
   refinements; the first version measures the loss and ships the conservative rule.
+- **Spoken interfaces read but do not contribute.** Telephone calls and iOS native-voice sessions
+  are excluded from contribution until their persistence produces message rows with real provenance;
+  a test pins the exclusion so the limitation is visible rather than a path that can never pass the
+  gate.
 - **The curator neither reads nor edits user-authored notes.** Findings that belong in a user note
   are written to a memory note; the user or the foreground assistant can merge them. This keeps both
   the input and the blast radius of a review inside the memory label.
@@ -560,10 +570,11 @@ Each milestone is independently useful and verifiable.
 
 ## Open questions
 
-- Idle windows. Proposed starting points: 30 minutes for web and telephone, 90 minutes for Telegram,
-  24 hours maximum deferral. These are settings, not design; the question is whether to ship them as
-  defaults or leave memory off until a deployment sets them.
-- Whether `complex_tasks` and `telephone` contribute from the start, or read only. The proposal says
-  both contribute.
+- Idle windows. Proposed starting points: 30 minutes for web, 90 minutes for Telegram, 24 hours
+  maximum deferral. These are settings, not design; the question is whether to ship them as defaults
+  or leave memory off until a deployment sets them.
+- Whether `complex_tasks` contributes from the start, or reads only. The proposal says it
+  contributes. Telephone and iOS native voice read only until their persistence carries message rows
+  with real provenance.
 - Where the household-scope statement should surface beyond the user documentation: once, in the
   chat, when memory first writes something, or only in the docs.
