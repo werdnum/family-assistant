@@ -15,6 +15,7 @@ import aiofiles
 import aiofiles.os
 
 from family_assistant.services.worker_backend import WorkerStatus, get_worker_backend
+from family_assistant.storage.events import WORKER_COMPLETION_EVENT_TYPE
 from family_assistant.tools.types import ToolResult
 from family_assistant.utils.workspace import get_workspace_root, validate_workspace_path
 
@@ -422,7 +423,7 @@ async def spawn_worker_tool(
             server_url = app_config.server_url.rstrip("/")
             base_url = f"{server_url}/webhook/event"
         separator = "&" if "?" in base_url else "?"
-        webhook_url = f"{base_url}{separator}event_type=worker_completion"
+        webhook_url = f"{base_url}{separator}event_type={WORKER_COMPLETION_EVENT_TYPE}"
 
         # Generate callback token for webhook verification (32 bytes = 64 hex chars)
         callback_token = secrets.token_hex(32)
@@ -443,7 +444,7 @@ async def spawn_worker_tool(
                 name=f"worker-{task_id}-completion",
                 source_id="webhook",
                 match_conditions={
-                    "event_type": "worker_completion",
+                    "event_type": WORKER_COMPLETION_EVENT_TYPE,
                     "data.task_id": task_id,
                 },
                 conversation_id=exec_context.conversation_id,

@@ -2,7 +2,7 @@
 
 import json
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -810,6 +810,63 @@ class EventsRepository(BaseRepository):
                 f"older than {retention_hours} hours"
             )
         return deleted_count
+
+    async def get_untriggered_one_time_listeners(
+        self,
+        created_before: datetime,
+        source_id: str | None = None,
+    ) -> list[EventListenerDict]:
+        """
+        Get enabled one-time listeners that have never fired.
+
+        These are the listeners a caller armed and nothing ever matched. They
+        stay enabled forever, so deciding whether one is still live needs the
+        listener's own subject (a worker task, say) rather than its state here.
+
+        Args:
+            created_before: Only return listeners created before this time
+            source_id: Optional event source to filter by
+
+        Returns:
+            List of event listener dictionaries
+        """
+        stmt = select(event_listeners_table).where(
+            (event_listeners_table.c.one_time.is_(True))
+            & (event_listeners_table.c.enabled.is_(True))
+            & (event_listeners_table.c.last_execution_at.is_(None))
+            & (event_listeners_table.c.created_at < created_before)
+        )
+
+        if source_id is not None:
+            stmt = stmt.where(event_listeners_table.c.source_id == source_id)
+
+        stmt = stmt.order_by(event_listeners_table.c.created_at)
+
+        rows = await self._db.fetch_all(stmt)
+        return [self._normalize_event_listener(dict(row)) for row in rows]
+
+    async def delete_event_listeners_by_id(self, listener_ids: Sequence[int]) -> int:
+        """
+        Delete listeners by ID, without a conversation check.
+
+        For maintenance callers that already selected the rows to remove.
+        Use :meth:`delete_event_listener` for anything acting on a user's
+        behalf, which verifies the listener belongs to their conversation.
+
+        Args:
+            listener_ids: IDs of the listeners to delete
+
+        Returns:
+            Number of deleted listeners
+        """
+        if not listener_ids:
+            return 0
+
+        stmt = delete(event_listeners_table).where(
+            event_listeners_table.c.id.in_(listener_ids)
+        )
+        result = await self._db.execute(stmt)
+        return result.rowcount
 
     def _process_listener_row(self, row: Mapping[str, Any]) -> EventListenerDict:
         """Process a listener row from the database."""

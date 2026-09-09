@@ -138,6 +138,7 @@ from family_assistant.task_worker import (
     handle_llm_callback,
     handle_reindex_document,
     handle_script_execution,
+    handle_stale_automation_cleanup,
     handle_system_error_log_cleanup,
     handle_system_event_cleanup,
     handle_worker_task_cleanup,
@@ -2304,6 +2305,26 @@ class Assistant:
             except Exception as e:
                 logger.warning(f"Completed automation cleanup task setup: {e}")
 
+            # Upsert the stale automation reaper. One-shot automations that
+            # are still armed for something that already happened without them
+            # -- a worker that died, a recurrence rule with nothing left --
+            # never fire, so nothing else ever collects them.
+            try:
+                await db_ctx.tasks.enqueue(
+                    task_id="system_stale_automation_cleanup_daily",
+                    task_type="stale_automation_cleanup",
+                    payload={},
+                    scheduled_at=next_3am_utc,
+                    recurrence_rule="FREQ=DAILY;BYHOUR=3;BYMINUTE=0",
+                    max_retries_override=5,
+                    priority=TaskPriority.BACKGROUND,
+                )
+                logger.info(
+                    f"Stale automation cleanup task scheduled for {next_3am_local} ({local_tz})"
+                )
+            except Exception:
+                logger.exception("Stale automation cleanup task setup failed")
+
             # Upsert the unreferenced attachment reaper. Uploads commit their
             # row before the message that references them exists, so a send
             # that never persists a message leaves the row and file behind.
@@ -2451,6 +2472,9 @@ class Assistant:
         worker.register_task_handler("worker_task_cleanup", handle_worker_task_cleanup)
         worker.register_task_handler(
             "completed_automation_cleanup", handle_completed_automation_cleanup
+        )
+        worker.register_task_handler(
+            "stale_automation_cleanup", handle_stale_automation_cleanup
         )
         worker.register_task_handler("attachment_cleanup", handle_attachment_cleanup)
         worker.register_task_handler("reindex_document", self.handle_reindex_document)

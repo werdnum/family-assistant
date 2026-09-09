@@ -75,6 +75,17 @@ history, and enable, disable, or delete it.
 To change an existing automation's conditions or script, ask the assistant — the web form creates
 and inspects automations, but doesn't edit them in place.
 
+### Automatic tidying
+
+Some automations finish for good. The assistant removes them once they can no longer fire — a
+listener waiting on a background worker that has already finished or died, or a schedule that has
+run out of occurrences, such as one you gave an end date. A listener waiting on a worker that
+overran the time it was given goes soon after that becomes clear, and within a week at the outside.
+
+A schedule that repeats indefinitely is never removed for you, and neither is an automation you have
+disabled — delete those yourself when you are done with them. If you want to keep a record of one
+that has finished, save what matters to a note before its last run.
+
 ## Scripts in automations
 
 Scripts are Python, running in a sandbox, and can call the assistant's tools. See

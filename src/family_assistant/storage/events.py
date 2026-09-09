@@ -5,7 +5,7 @@ Handles storage for the event listener system.
 import logging
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Final
 
 from sqlalchemy import (
     JSON,
@@ -35,6 +35,10 @@ from family_assistant.storage.types import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Event type a spawned worker reports its own completion with, matched by the
+# one-time listener spawn_worker arms for it.
+WORKER_COMPLETION_EVENT_TYPE: Final = "worker_completion"
 
 
 # Enum types for the event system

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Any, Final, NamedTuple, NotRequired, TypedDict
 
 from sqlalchemy import (
     JSON,
@@ -28,9 +28,33 @@ from family_assistant.storage.base import metadata
 from family_assistant.storage.repositories.base import BaseRepository
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
 logger = logging.getLogger(__name__)
+
+# Statuses from which a worker task can still report back. Anything else is
+# terminal: the callback webhook has either already arrived or never will.
+LIVE_WORKER_TASK_STATUSES: Final = ("pending", "submitted", "running")
+
+# Grace allowed past a task's own timeout before it counts as overdue, matching
+# the buffer mark_stale_tasks fails a running task at.
+STALE_TASK_BUFFER_MINUTES: Final = 30
+
+
+class QuietTime(NamedTuple):
+    """When a worker task stops being able to report, and whether it still can.
+
+    ``is_live`` separates a deadline we inferred from a status the task never
+    left -- the worker may simply have vanished -- from a finish we observed.
+    """
+
+    at: datetime
+    is_live: bool
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Attach UTC to a naive timestamp, as SQLite hands them back."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 class WorkerTaskDict(TypedDict):
@@ -191,6 +215,60 @@ class WorkerTasksRepository(BaseRepository):
         if row:
             return self._row_to_dict(row)
         return None
+
+    async def get_quiet_times(self, task_ids: Sequence[str]) -> dict[str, QuietTime]:
+        """Return, per existing task, when it stops being able to report.
+
+        For a task still in a live status that is its deadline: the point
+        :meth:`mark_stale_tasks` fails a running task at, so a task the reaper
+        would call stale is past it, and a task an operator gave a fortnight to
+        is not judged by anyone else's clock.
+
+        For a terminal task it is the moment it finished. A completion webhook
+        marks the task terminal before the event it arrived with has been
+        emitted, so a task that just went terminal is not yet finished being
+        acted on.
+
+        A task ID with no row at all -- reaped by the worker task cleanup, say
+        -- is absent from the result: nothing is coming for it.
+
+        Args:
+            task_ids: Worker task IDs to check
+
+        Returns:
+            Quiet time by task ID, for those of ``task_ids`` that still exist
+        """
+        if not task_ids:
+            return {}
+
+        stmt = select(
+            worker_tasks_table.c.task_id,
+            worker_tasks_table.c.status,
+            worker_tasks_table.c.created_at,
+            worker_tasks_table.c.timeout_minutes,
+            worker_tasks_table.c.completed_at,
+            worker_tasks_table.c.updated_at,
+        ).where(worker_tasks_table.c.task_id.in_(task_ids))
+        rows = await self._db.fetch_all(stmt)
+
+        quiet_times: dict[str, QuietTime] = {}
+        for row in rows:
+            created_at = _as_utc(row["created_at"])
+            if row["status"] in LIVE_WORKER_TASK_STATUSES:
+                quiet_times[row["task_id"]] = QuietTime(
+                    at=created_at
+                    + timedelta(
+                        minutes=row["timeout_minutes"] + STALE_TASK_BUFFER_MINUTES
+                    ),
+                    is_live=True,
+                )
+            else:
+                finished_at = row["completed_at"] or row["updated_at"]
+                quiet_times[row["task_id"]] = QuietTime(
+                    at=_as_utc(finished_at) if finished_at is not None else created_at,
+                    is_live=False,
+                )
+        return quiet_times
 
     async def get_tasks_for_conversation(
         self,
@@ -363,7 +441,7 @@ class WorkerTasksRepository(BaseRepository):
     async def mark_stale_tasks(
         self,
         submitted_timeout_hours: int = 1,
-        running_buffer_minutes: int = 30,
+        running_buffer_minutes: int = STALE_TASK_BUFFER_MINUTES,
     ) -> int:
         """Mark stale tasks as failed.
 

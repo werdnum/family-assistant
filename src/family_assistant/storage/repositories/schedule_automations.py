@@ -2,7 +2,7 @@
 
 import uuid
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
@@ -503,6 +503,143 @@ class ScheduleAutomationsRepository(BaseRepository):
 
         rows = await self._db.fetch_all(stmt)
         return [self._normalize_automation(dict(row)) for row in rows]
+
+    async def list_spent_one_shot_automations(
+        self,
+        now: datetime,
+        *,
+        grace_hours: int,
+        timezone: ZoneInfo,
+    ) -> list[ScheduleAutomationDict]:
+        """
+        List enabled automations whose recurrence rule is spent.
+
+        A rule bounded by ``COUNT`` or by an ``UNTIL`` in the past runs out of
+        occurrences, and nothing clears the row: :meth:`after_task_execution`
+        finds no next occurrence, returns without scheduling, and leaves the
+        automation enabled with ``next_scheduled_at`` frozen at its last
+        firing. Nothing re-evaluates the rule after that, so it is dead.
+
+        The rule is read as the series the automation actually belongs to --
+        anchored at that last firing, since a rule restarted from now is a
+        different series and ``COUNT=1`` would yield a fresh occurrence today
+        forever -- and asked whether it has anything left *ahead of us*. An
+        occurrence between the anchor and now is already in the past and no
+        longer schedulable, so it is not evidence of life: a schedule that ran
+        late, after its own ``UNTIL``, leaves exactly that behind.
+
+        An automation whose series still reaches past now is excluded. The
+        scheduler meant to keep it running, so it is stranded rather than
+        spent, and repairing it belongs to the schedule sync.
+
+        Args:
+            now: Current time; a series must reach past this to count as live
+            grace_hours: How long past its last firing an automation is left
+                alone, so a firing still in flight is not collected
+            timezone: Timezone the recurrence rules are interpreted in
+
+        Returns:
+            List of automation dictionaries, each safe to delete
+        """
+        stmt = select(schedule_automations_table).where(
+            (schedule_automations_table.c.enabled.is_(True))
+            & (schedule_automations_table.c.next_scheduled_at.isnot(None))
+            & (
+                schedule_automations_table.c.next_scheduled_at
+                < now - timedelta(hours=grace_hours)
+            )
+        )
+        rows = await self._db.fetch_all(stmt)
+
+        spent: list[ScheduleAutomationDict] = []
+        for row in rows:
+            automation = self._normalize_automation(dict(row))
+            last_firing = automation["next_scheduled_at"]
+            if last_firing is None:
+                continue
+
+            try:
+                still_to_come = self._has_occurrence_after(
+                    automation["recurrence_rule"],
+                    anchor=last_firing,
+                    cutoff=now,
+                    timezone=timezone,
+                )
+            except (ValueError, ParserError):
+                # A rule that does not parse is a broken automation, not a
+                # spent one. Deleting it would destroy the evidence, so leave
+                # it for its owner and say which row needs looking at.
+                self._logger.exception(
+                    f"Schedule automation {automation['id']} has an unparseable "
+                    f"RRULE '{automation['recurrence_rule']}' and cannot fire; "
+                    f"leaving it in place for repair"
+                )
+                continue
+
+            if still_to_come:
+                continue
+            if await self._has_pending_tasks(automation["id"]):
+                continue
+            spent.append(automation)
+
+        return spent
+
+    @staticmethod
+    def _has_occurrence_after(
+        recurrence_rule: str,
+        *,
+        anchor: datetime,
+        cutoff: datetime,
+        timezone: ZoneInfo,
+    ) -> bool:
+        """Whether the series anchored at ``anchor`` reaches past ``cutoff``.
+
+        Answered in two single steps rather than by walking the series to the
+        cutoff, which for a stale anchor and a high-frequency rule means
+        millions of occurrences computed synchronously.
+
+        The first step asks the series, at its own anchor, for anything at all:
+        no answer means the rule is finished, whatever ``COUNT`` it carried.
+        An answer past the cutoff means it is plainly alive. Only an occurrence
+        already behind us is ambiguous -- a schedule that ran late leaves that
+        -- and the second step re-asks from the cutoff itself.
+
+        Re-anchoring restarts a ``COUNT``, so that second step can call a
+        finished series alive. It errs towards keeping an automation, which is
+        the direction to err when the alternative is deleting one; ``UNTIL`` is
+        absolute and survives the re-anchor exactly, so the case this question
+        exists for stays correct.
+
+        Raises ValueError or ParserError for a rule that does not parse, so a
+        broken rule is never mistaken for an exhausted one.
+        """
+        local_anchor = anchor.astimezone(timezone)
+        local_cutoff = cutoff.astimezone(timezone)
+
+        from_anchor = rrule.rrulestr(recurrence_rule, dtstart=local_anchor).after(
+            local_anchor
+        )
+        if from_anchor is None:
+            return False
+        if from_anchor > local_cutoff:
+            return True
+
+        return (
+            rrule.rrulestr(recurrence_rule, dtstart=local_cutoff).after(local_cutoff)
+            is not None
+        )
+
+    async def _has_pending_tasks(self, automation_id: int) -> bool:
+        """Whether any queued task for this automation is still to run."""
+        stmt = (
+            select(tasks_table.c.task_id)
+            .where(tasks_table.c.status == "pending")
+            .where(
+                tasks_table.c.payload["automation_id"].as_string() == str(automation_id)
+            )
+            .limit(1)
+        )
+        return await self._db.fetch_one(stmt) is not None
 
     async def update_enabled(
         self,

@@ -482,17 +482,13 @@ async def db_engine(
             try:
                 # ast-grep-ignore: no-raw-transaction-management - test fixture setup, outside the application transaction model
                 async with admin_engine.begin() as conn:
-                    # Terminate any remaining connections to the test database
+                    # Drop with FORCE rather than terminating backends first and
+                    # dropping after: a connection appearing between the two
+                    # steps fails the drop with ObjectInUseError, which is a
+                    # teardown error against whichever test happened to run.
+                    # FORCE does both as one statement (PostgreSQL 13+).
                     await conn.execute(
-                        text(
-                            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                            "WHERE datname = :dbname AND pid <> pg_backend_pid()"
-                        ),
-                        {"dbname": unique_db_name},
-                    )
-                    # Drop the test database
-                    await conn.execute(
-                        text(f'DROP DATABASE IF EXISTS "{unique_db_name}"')
+                        text(f'DROP DATABASE IF EXISTS "{unique_db_name}" WITH (FORCE)')
                     )
                 logger.info(f"Dropped test database: {unique_db_name}")
             finally:
