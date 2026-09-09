@@ -62,9 +62,11 @@ of the turn that wrote them. This design adds no second store. Memory is a set o
   Their titles appear in every turn's "Other available notes" list and their content is reachable
   with `get_note` and `search_documents`.
 
-The cap on the always-loaded note is enforced at the note write chokepoint (a size ceiling on the
-curator's write policy), so an over-size write fails with an error telling the model to condense,
-instead of quietly growing the per-turn prompt forever.
+The cap on the always-loaded note is a property of the note, not of one writer: the notes repository
+refuses any write that would leave a memory-labelled `include_in_prompt` note over the ceiling,
+whoever is writing. The curator gets an error telling it to condense, the foreground assistant gets
+the same tool error, and the notes UI shows it to the user. A cap that only one writer honoured
+would be a promise the other writers quietly broke.
 
 Explicit requests ("remember that...", "forget that...") keep working in the foreground turn: the
 default assistant holds the `memory` grant and edits the memory notes directly. The background
@@ -103,6 +105,24 @@ the user resumes days later.
 time back indefinitely. The due time is therefore the earlier of `last activity + idle window` and
 `first unreviewed message + maximum deferral`. A review of a still-active conversation is fine; the
 watermark means the next one picks up where it left off.
+
+**A review re-arms itself when activity remains.** The due time is a pure function of the watermark
+and the conversation's last activity, and the review task's last step re-evaluates it: if any
+unreviewed rows exist after the stretch it rendered, it enqueues the next review before finishing.
+This is what keeps a message that arrives while a review is running from being stranded. The upsert
+on a task that is already executing only moves a schedule the worker is about to mark done, so the
+running review, not the enqueue, is responsible for the follow-up. The same rule covers the
+maximum-deferral case without special handling.
+
+**Memory writes are conditional on what the writer read.** Two conversations can go idle together
+and the worker pool will run both curators at once; a user can edit a memory note in the UI while a
+review is in flight. Every memory write therefore carries the version of the note the writer read,
+and the repository applies it only if the note is still at that version. A stale write fails the
+review, which is retried from scratch against the fresh state; because the curator updates in place
+rather than appending, a retry after a partially applied review does not duplicate what already
+landed. The watermark advances only after every write in the review has succeeded. This is one rule
+at the write chokepoint instead of a lock around the review, and it protects the user's foreground
+corrections the same way it protects a sibling curator's.
 
 **Eligibility.** A stretch of transcript is reviewed only when the interface is one a household
 member talks through (web, iOS, Telegram, telephone) and the turns ran under a profile that opts
@@ -158,8 +178,9 @@ The curator prompt is short and operational. Its instructions, at approach level
 - Remember durable things: standing preferences and their corrections, facts about people and the
   household, decisions and their reasons, routines, and the state of anything the family is working
   on across conversations.
-- Do not remember one-off requests, anything the calendar or a tool already knows, verbatim tool
-  output, secrets or credentials, or sensitive personal matters the user did not ask to have kept.
+- Do not remember one-off requests, appointments and dated events (those belong in the calendar),
+  device state, verbatim tool output, secrets or credentials, or sensitive personal matters the user
+  did not ask to have kept.
 - Update, do not append. Rewrite the entry that changed, delete the one that was contradicted, and
   honour an explicit "forget". Give every entry an absolute date.
 - Attribute facts to a person. In a group chat the transcript carries who said what; "Alice prefers
@@ -172,10 +193,12 @@ The curator prompt is short and operational. Its instructions, at approach level
 Idle reviews are incremental and local to one conversation, so memory can accumulate near-duplicate
 entries across topic notes and the always-loaded note drifts toward the cap. A consolidation pass
 runs under the same curator profile over the memory notes alone, with no transcript, and merges
-duplicates, resolves contradictions in favour of the later-dated entry, and prunes entries that are
-stale or that the calendar or tools now cover. It is gated on volume, not the clock: it runs when
-enough reviews have written since the last pass. It is a later milestone; the incremental design is
-useful without it, and the cap keeps the always-loaded note honest in the meantime.
+duplicates, resolves contradictions in favour of the later-dated entry, and prunes entries whose own
+dates or wording mark them as expired. It has no calendar or tool access, so it never judges whether
+something else now covers a fact; that is the curator's job at review time, by category. It is gated
+on volume, not the clock: it runs when enough reviews have written since the last pass. It is a
+later milestone; the incremental design is useful without it, and the cap keeps the always-loaded
+note honest in the meantime.
 
 ### Telegram
 
@@ -236,8 +259,12 @@ Each milestone is independently useful and verifiable.
    asserts a labelled memory note exists with the expected content and provenance; that a second
    message before the window pushes the task back; that a re-run after the watermark reviews only
    new rows; and that a stretch carrying unknown-external taint is skipped with an audit record.
-   Verified also by a conformance check that the curator's write policy carries the `memory` floor
-   and the size cap.
+   Concurrency is verified directly: a message persisted while a review is running produces a
+   follow-up review that covers it; two reviews writing the same memory note leave both sets of
+   facts in place, with one review retried; and a note edited between a review's read and its write
+   is not overwritten. The cap is verified at the repository, with the UI and foreground tool paths
+   both rejected past it, plus a conformance check that the curator's write policy carries the
+   `memory` floor.
 2. **Prompts, grants and documentation.** The curator prompt in `prompts.yaml`; the default
    assistant's grant on the `memory` label and a line in its system prompt about what the memory
    notes are and how to honour "forget"; `docs/user/memory.md`; the settings in the configuration
