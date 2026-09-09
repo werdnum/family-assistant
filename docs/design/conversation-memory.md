@@ -167,9 +167,9 @@ eventually crowd out the transcript it is reviewing. So the curator's input is t
 plus the topic entries and suppressions selected for relevance to the reviewed stretch, using the
 search index the notes already have, under a fixed input budget. Selection only shapes what the
 model sees. Everything the applier checks mechanically, conflict detection, duplicate detection and
-suppression matching by identity and evidence, runs over the whole store, so an entry or suppression
-the selection left out still cannot be duplicated or resurrected through those checks. What a
-selection miss does weaken is the one guard that is an instruction rather than a mechanism: a
+suppression matching by proposition and subject, runs over the whole store, so an entry or
+suppression the selection left out still cannot be duplicated or resurrected through those checks.
+What a selection miss does weaken is the one guard that is an instruction rather than a mechanism: a
 suppression the curator was not shown cannot help it recognise a paraphrase from other old evidence.
 That is the residual already recorded under Forgetting, and selection widens it only to the extent
 that relevance selection fails to surface a suppression about the very topic under review.
@@ -217,23 +217,27 @@ eligible: a turn still awaiting its terminal reply, such as one parked on a conf
 stay pending for a day, ends the chunk before itself and is reviewed once it completes, and the
 watermark never advances past a turn that has not finished. "Finished" is defined so that no turn
 can block a conversation forever, and with no clock in it: a turn is complete when it has its
-terminal reply, or when a later turn in the same conversation has completed. There is no time-based
-alternative, because none can be made safe: a confirmation can stay pending longer than any
-deferral, and even after it resolves the turn is still running until its reply lands, so any rule
-that declared a turn finished on elapsed time alone could advance past an outcome that was about to
-be written. A turn cut off by a server restart, which the web flow deliberately leaves without a
-terminal reply, therefore counts as complete as soon as the household's next turn completes, and is
-rendered with a marker saying it never finished so the curator does not read a request as an
-outcome. The cost is that a conversation whose last turn was cut off is not reviewed until someone
-speaks in it again; that memory is delayed, not lost, and it is recorded as a residual. A single
-turn larger than the budget on its own (a pasted document, say) is rendered truncated with a marker,
-since a message's length has no limit at the API; the review proceeds on what fits, and the turn's
-provenance is carried in full regardless. When more rows remain, the watermark advances to the end
-of the chunk and the conversation is simply still due, so the next sweep reviews the next chunk. The
-same rule closes the failure path: a review that fails permanently is abandoned by advancing the
-watermark past its chunk, with the failed change set and reason kept for the recent-changes view and
-an error logged. There is no separate retry ledger and no state the due predicate does not already
-read; a conversation is due exactly when it has a completed turn after its watermark and the timing
+terminal reply, or when a later turn in the same conversation has completed and the earlier turn
+holds no live durable work, meaning no pending confirmation that could still produce its outcome. A
+confirmation survives a restart as a durable record while the in-memory turn does not, so a later
+turn can complete while the earlier one is still waiting; the fallback keeps such a turn open until
+its confirmation resolves or expires and its reply lands. There is no time-based alternative,
+because none can be made safe: a confirmation can stay pending longer than any deferral, and even
+after it resolves the turn is still running until its reply lands, so any rule that declared a turn
+finished on elapsed time alone could advance past an outcome that was about to be written. A turn
+cut off by a server restart, which the web flow deliberately leaves without a terminal reply,
+therefore counts as complete as soon as the household's next turn completes, and is rendered with a
+marker saying it never finished so the curator does not read a request as an outcome. The cost is
+that a conversation whose last turn was cut off is not reviewed until someone speaks in it again;
+that memory is delayed, not lost, and it is recorded as a residual. A single turn larger than the
+budget on its own (a pasted document, say) is rendered truncated with a marker, since a message's
+length has no limit at the API; the review proceeds on what fits, and the turn's provenance is
+carried in full regardless. When more rows remain, the watermark advances to the end of the chunk
+and the conversation is simply still due, so the next sweep reviews the next chunk. The same rule
+closes the failure path: a review that fails permanently is abandoned by advancing the watermark
+past its chunk, with the failed change set and reason kept for the recent-changes view and an error
+logged. There is no separate retry ledger and no state the due predicate does not already read; a
+conversation is due exactly when it has a completed turn after its watermark and the timing
 condition holds, and every terminal outcome, success or abandonment, moves the watermark forward.
 
 This is deliberately not an event-driven debounce. A per-message enqueue that pushes a task back has
@@ -281,7 +285,8 @@ message are distinct entries, and a retried review cannot land the same entry tw
 unrelated entries in a fresh rewrite. Version checks prevent a stale write; the change-set protocol
 is what prevents semantic loss in a new one.
 
-Whole-note rewriting is retained only for consolidation, below, under its own guard.
+Consolidation, below, is no exception: it reads a whole partition but applies only guarded entry
+operations through the same applier.
 
 ### Forgetting
 
@@ -310,14 +315,14 @@ forgetting one fact from a message still leaves the other facts from that messag
 they are different propositions. That is the mechanical guarantee, and it covers retries and pending
 reviews over any conversation. The curator sees the suppressed text so that it can recognise the
 same proposition arriving as a paraphrase from a different old conversation, which the applier's
-identity and evidence matching cannot connect; that part is an instruction, not a mechanism, and it
-is recorded as the residual below. A suppression is released only by evidence a person authored
-after it: a user row newer than the forgetting, or a foreground action. The assistant's own
-acknowledgement ("I'll forget that") is a newer row too, and it must not count, or the act of
-forgetting would supply the evidence to un-forget; rows the assistant wrote, and any row older than
-the suppression, never release it. Retaining the forgotten text in the suppression store is a
-deliberate trade: forgetting without it cannot resist paraphrase at all, and the store is as private
-as the memory notes themselves.
+proposition-and-subject matching cannot connect, because the paraphrase is a different proposition;
+that part is an instruction, not a mechanism, and it is recorded as the residual below. A
+suppression is released only by evidence a person authored after it: a user row newer than the
+forgetting, or a foreground action. The assistant's own acknowledgement ("I'll forget that") is a
+newer row too, and it must not count, or the act of forgetting would supply the evidence to
+un-forget; rows the assistant wrote, and any row older than the suppression, never release it.
+Retaining the forgotten text in the suppression store is a deliberate trade: forgetting without it
+cannot resist paraphrase at all, and the store is as private as the memory notes themselves.
 
 Forgetting curated memory is distinct from deleting conversation history, indexed search entries and
 other retained copies. The user documentation says so and points to what each requires.
@@ -520,8 +525,9 @@ it never remembers, that memory is household-wide, and how to correct or forget.
 - A wrong inference from a clean conversation becomes a standing entry until someone notices. Entry
   kinds, evidence links, the recent-changes view and the small core note bound the damage.
 - A forgotten fact can be re-proposed as a paraphrase from other old evidence that the applier's
-  identity and evidence matching does not connect to the suppression; the curator's suppression
-  input is the guard there, and it is an instruction rather than a mechanism.
+  proposition-and-subject matching does not connect to the suppression, because a paraphrase is a
+  different proposition; the curator's suppression input is the guard there, and it is an
+  instruction rather than a mechanism.
 - Memory carries the provenance of the conversation that wrote it. An entry written from a
   trusted-pole conversation keeps that tier on readers. That is the correct propagation.
 - A conversation whose last turn never finished, after a restart, is not reviewed until the next
