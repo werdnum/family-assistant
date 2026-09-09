@@ -187,16 +187,19 @@ takes rows after the watermark up to a fixed budget of rendered size, not row co
 can never outgrow the model's context however busy the chat was. The chunk boundary falls on a turn
 boundary, never inside a turn: a user message and the assistant's reply to it are reviewed together,
 so the curator never sees a request without its outcome, and the following chunk never consists of
-orphaned assistant rows that the no-user-messages rule would then skip. A single turn larger than
-the budget on its own (a pasted document, say) is rendered truncated with a marker, since a
-message's length has no limit at the API; the review proceeds on what fits, and the turn's
-provenance is carried in full regardless. When more rows remain, the watermark advances to the end
-of the chunk and the conversation is simply still due, so the next sweep reviews the next chunk. The
-same rule closes the failure path: a review that fails permanently is abandoned by advancing the
-watermark past its chunk, with the failed change set and reason kept for the recent-changes view and
-an error logged. There is no separate retry ledger and no state the due predicate does not already
-read; a conversation is due exactly when it has rows after its watermark and the timing condition
-holds, and every terminal outcome, success or abandonment, moves the watermark forward.
+orphaned assistant rows that the no-user-messages rule would then skip. Only completed turns are
+eligible: a turn still awaiting its terminal reply, such as one parked on a confirmation that can
+stay pending for a day, ends the chunk before itself and is reviewed once it completes, and the
+watermark never advances past a turn that has not finished. A single turn larger than the budget on
+its own (a pasted document, say) is rendered truncated with a marker, since a message's length has
+no limit at the API; the review proceeds on what fits, and the turn's provenance is carried in full
+regardless. When more rows remain, the watermark advances to the end of the chunk and the
+conversation is simply still due, so the next sweep reviews the next chunk. The same rule closes the
+failure path: a review that fails permanently is abandoned by advancing the watermark past its
+chunk, with the failed change set and reason kept for the recent-changes view and an error logged.
+There is no separate retry ledger and no state the due predicate does not already read; a
+conversation is due exactly when it has rows after its watermark and the timing condition holds, and
+every terminal outcome, success or abandonment, moves the watermark forward.
 
 This is deliberately not an event-driven debounce. A per-message enqueue that pushes a task back has
 to stay correct across the moment the worker marks a running task done, and every such design needs
@@ -430,13 +433,19 @@ eligibility: only rows from contributing profiles are rendered into the review.
 ### User visibility and control
 
 Memory notes are ordinary notes in the notes UI, distinguished by their label, and each entry shows
-when it was asserted and links to the messages it came from. A recent-changes view lists what the
-curator added, updated or removed, with undo, and a subtle indicator in the chat surfaces that
-memory changed after a conversation without a notification per fact. "Forget that I said X" in chat
-is a foreground removal with the suppression semantics above. A deployment can turn contribution,
-reading, or the whole mechanism off. The user documentation for this feature is a new
-`docs/user/memory.md` describing what the assistant remembers on its own, what it never remembers,
-that memory is household-wide, and how to correct or forget.
+when it was asserted and links to the messages it came from. Evidence access follows the memory
+audience, not conversation ownership: an evidence link resolves to an isolated excerpt of the cited
+turn, readable by anyone who can read the memory note, and never to the surrounding transcript. A
+household member sees why the assistant believes a fact learned in someone else's private
+conversation or in a group chat, which the existing sole-owner messages endpoint would refuse,
+without gaining a way into that conversation; the conversation's owner can follow the excerpt into
+the full transcript as they already could. A recent-changes view lists what the curator added,
+updated or removed, with undo, and a subtle indicator in the chat surfaces that memory changed after
+a conversation without a notification per fact. "Forget that I said X" in chat is a foreground
+removal with the suppression semantics above. A deployment can turn contribution, reading, or the
+whole mechanism off. The user documentation for this feature is a new `docs/user/memory.md`
+describing what the assistant remembers on its own, what it never remembers, that memory is
+household-wide, and how to correct or forget.
 
 ## Deliberate simplifications
 
@@ -522,8 +531,11 @@ Each milestone is independently useful and verifiable.
    against a stronger model before the cheaper one is taken as sufficient, and a sample of skipped
    stretches from a real deployment is scored for lost facts. Verified by the corpus running in CI
    with thresholds.
-6. **User control.** Evidence links on entries, the recent-changes view with undo, and the chat
-   indicator. Verified by frontend tests and a functional test that undo produces a suppression.
+6. **User control.** Evidence links on entries with the excerpt access rule, the recent-changes view
+   with undo, and the chat indicator. Verified by frontend tests, a functional test that undo
+   produces a suppression, and tests that a member who does not own the source conversation can read
+   the cited excerpt of a private-conversation memory and of a group-chat memory but not the
+   surrounding transcript.
 7. **Consolidation pass.** Gated on review volume; merges, resolves by kind and period, prunes,
    refuses a pass that changes more than the allowed share of entries. Verified by seeded duplicate
    and contradictory entries, by three over-share passes, one each through removals, merges and
