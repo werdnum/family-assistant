@@ -208,12 +208,13 @@ boundary is an explicit opt-in backfill, bounded and run on request, not an effe
 function of stored data: the first eligible turn after its watermark, meaning the first turn among
 the rows the enablement boundary admits, is complete, so that a review can advance the watermark
 past at least one turn rather than stop short of a live one and repeat every sweep, and either its
-last activity is older than the idle window or its oldest unreviewed row is older than the maximum
-deferral. The second clause is what guarantees a busy Telegram group that never goes quiet is still
-reviewed. A recurring system task, on the same footing as the existing cleanup tasks, evaluates that
-predicate every few minutes and enqueues one review task per due conversation, keyed on the
-conversation so the same conversation never has two reviews in flight. Nothing is enqueued when a
-message is persisted.
+last eligible activity is older than the idle window or its oldest unreviewed eligible row is older
+than the maximum deferral, both measured over the same rows the boundary admits, so a backlog the
+boundary excludes neither hurries nor delays a review. The second clause is what guarantees a busy
+Telegram group that never goes quiet is still reviewed. A recurring system task, on the same footing
+as the existing cleanup tasks, evaluates that predicate every few minutes and enqueues one review
+task per due conversation, keyed on the conversation so the same conversation never has two reviews
+in flight. Nothing is enqueued when a message is persisted.
 
 **A review covers a bounded chunk, and the watermark always moves on a terminal outcome.** A review
 takes rows after the watermark up to a fixed budget of rendered size, not row count, so a stretch
@@ -290,9 +291,11 @@ curator update citing the person's correction sets it as surely as a hand-edit i
 is the same evidence that releases a suppression, so a review holding old evidence, or only the
 assistant's acknowledgement of the person's change, can neither take back what a person did to the
 entry since nor re-create as a new entry the version the person corrected away, the one exception
-being an expiry pruning, whose ground is not evidence but the entry's own applicable period having
-ended, which the applier checks against the clock; nothing violates the provenance ceiling, the cap,
-or a suppression; and an addition is not a duplicate of an entry already present. Validation is
+being an expiry pruning, whose ground is not evidence but an **expiry** the entry itself carries, a
+date after which the person said the fact stops holding ("until the end of term"), which the applier
+checks against the clock. A closed applicable period is not an expiry: a fact about the past stays a
+fact, so it is never pruned on its dates alone; nothing violates the provenance ceiling, the cap, or
+a suppression; and an addition is not a duplicate of an entry already present. Validation is
 all-or-nothing for the change set: one rejected operation fails the review, which is retried with
 the rejection reasons fed back to the curator, so a fact is not quietly dropped because a sibling
 operation was malformed. A review that exhausts its retries is abandoned as described under
@@ -474,33 +477,33 @@ The curator prompt is short and operational. Its instructions, at approach level
 Idle reviews are incremental and local to one conversation, so memory can accumulate near-duplicate
 entries across topic notes and the core note drifts toward the cap. A consolidation pass runs under
 the same curator profile over the memory entries alone, with no transcript, and merges duplicates,
-resolves contradictions, and prunes entries whose own dates or wording mark them as expired. Its
-input is bounded by partition, since there is no transcript to select against: one invocation per
-topic note, each a natural unit that the review process keeps to a single theme, plus one invocation
-over the core note alone to keep it within its cap and its index current. Consolidation is local to
-a partition; it does not claim to reconcile entries across topics. Cross-topic duplicates are
-prevented where they would arise, at review time, by the applier's whole-store duplicate check and
-by the relevance selection that shows the curator matching entries from any topic; what slips past
-both is a residual, not a job for this pass. A topic note always fits one invocation because it is
-never allowed to grow past the input budget in the first place: the topic cap below is enforced at
-the write chokepoint, so a review that would overfill a topic must open a new one in the same change
-set while the old one still fits. Verified against a store larger than one model request.
-Contradiction resolution uses the entries' kinds and applicable periods, not only assertion dates:
-an explicit correction outranks an inference, and a later assertion about the past does not
-overwrite a current preference. It has no calendar or tool access, so it never judges whether
-something else now covers a fact. It is gated on volume, not the clock, and its output is a change
-set applied by the same applier under a consolidation-specific evidence rule: with no reviewed
-stretch, operations cite existing entries rather than messages, a merged or updated entry inherits
-the union of its sources' evidence, and the applier validates that every cited entry exists at the
-read version and that no operation drops evidence the entries carried. A merge retires the duplicate
-structurally, like a move: the retired entry's lineage and evidence fold into the survivor and no
-suppression is recorded, because nothing was forgotten; every other removal, whoever asked for it,
-records one. Consolidation is limited to merging duplicates, resolving contradictions and pruning
-expired entries; it does not reword. One extra guard applies, and it counts change of any kind: a
-pass that would touch more than a fixed share of the existing entries, in any field and whether by
-removal, merge or update, is rejected, so a faulty pass cannot rewrite, re-attribute or retime the
-store while keeping its evidence references intact. It is a later milestone; the incremental design
-is useful without it.
+resolves contradictions, and prunes entries whose own expiry has passed. Its input is bounded by
+partition, since there is no transcript to select against: one invocation per topic note, each a
+natural unit that the review process keeps to a single theme, plus one invocation over the core note
+alone to keep it within its cap and its index current. Consolidation is local to a partition; it
+does not claim to reconcile entries across topics. Cross-topic duplicates are prevented where they
+would arise, at review time, by the applier's whole-store duplicate check and by the relevance
+selection that shows the curator matching entries from any topic; what slips past both is a
+residual, not a job for this pass. A topic note always fits one invocation because it is never
+allowed to grow past the input budget in the first place: the topic cap below is enforced at the
+write chokepoint, so a review that would overfill a topic must open a new one in the same change set
+while the old one still fits. Verified against a store larger than one model request. Contradiction
+resolution uses the entries' kinds and applicable periods, not only assertion dates: an explicit
+correction outranks an inference, and a later assertion about the past does not overwrite a current
+preference. It has no calendar or tool access, so it never judges whether something else now covers
+a fact. It is gated on volume, not the clock, and its output is a change set applied by the same
+applier under a consolidation-specific evidence rule: with no reviewed stretch, operations cite
+existing entries rather than messages, a merged or updated entry inherits the union of its sources'
+evidence, and the applier validates that every cited entry exists at the read version and that no
+operation drops evidence the entries carried. A merge retires the duplicate structurally, like a
+move: the retired entry's lineage and evidence fold into the survivor and no suppression is
+recorded, because nothing was forgotten; every other removal, whoever asked for it, records one.
+Consolidation is limited to merging duplicates, resolving contradictions and pruning expired
+entries; it does not reword. One extra guard applies, and it counts change of any kind: a pass that
+would touch more than a fixed share of the existing entries, in any field and whether by removal,
+merge or update, is rejected, so a faulty pass cannot rewrite, re-attribute or retime the store
+while keeping its evidence references intact. It is a later milestone; the incremental design is
+useful without it.
 
 ### Telegram
 
