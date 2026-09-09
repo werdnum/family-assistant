@@ -169,6 +169,7 @@ async def _run(args: argparse.Namespace) -> int:
                 await list_amnestied_definitions(db, kinds=kinds), args.name
             )
             verb, past = "revoke the amnesty of", "Revoked"
+            print("Definitions currently holding an operator amnesty:")
         else:
             selected = _by_name(
                 await list_legacy_definitions(
@@ -177,6 +178,10 @@ async def _run(args: argparse.Namespace) -> int:
                 args.name,
             )
             verb, past = "amnesty", "Amnestied"
+            print(
+                "Definitions holding no record, created before "
+                f"{args.created_before.isoformat()}:"
+            )
 
         for definition in selected:
             print(f"  {definition.describe()}")
