@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from dateutil import rrule
 from dateutil.parser import ParserError
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import delete, insert, null, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from family_assistant.security.definition_records import (
@@ -341,7 +341,7 @@ class ScheduleAutomationsRepository(BaseRepository):
             await txn.execute(
                 update(schedule_automations_table)
                 .where(schedule_automations_table.c.id == automation_id)
-                .values(definition_record=None)
+                .values(definition_record=null())
             )
             return True
 

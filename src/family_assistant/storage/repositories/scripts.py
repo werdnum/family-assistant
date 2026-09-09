@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import delete, insert, null, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
@@ -339,7 +339,7 @@ class ScriptsRepository(BaseRepository):
             await txn.execute(
                 update(scripts_table)
                 .where(scripts_table.c.name == name)
-                .values(definition_record=None)
+                .values(definition_record=null())
             )
             return True
 

@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import String, cast, delete, insert, select, update
+from sqlalchemy import String, cast, delete, insert, null, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.sql import functions as func
@@ -472,7 +472,7 @@ class EventsRepository(BaseRepository):
             await txn.execute(
                 update(event_listeners_table)
                 .where(event_listeners_table.c.id == listener_id)
-                .values(definition_record=None)
+                .values(definition_record=null())
             )
             return True
 
