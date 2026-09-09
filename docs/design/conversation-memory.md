@@ -282,14 +282,18 @@ visible rather than silent and the sweep does not keep paying for it. Neglect he
 availability of memory, not its integrity.
 
 Application and watermark advancement happen in **one short transaction**, conditional on the
-versions of the notes the curator read, with all model work outside it. If a note changed underneath
-(a sibling curator, a foreground edit, the notes UI), the transaction fails, the review is retried,
-and the curator sees the fresh state. Operation identity is stable across retries: updates and
-removals are keyed by the existing entry's identity, and a new entry's identity is derived
-deterministically from its evidence together with its proposition, so two facts stated in one
-message are distinct entries, and a retried review cannot land the same entry twice or lose
-unrelated entries in a fresh rewrite. Version checks prevent a stale write; the change-set protocol
-is what prevents semantic loss in a new one.
+version of the memory store the applier validated against, with all model work outside it. The store
+has one version for the household, not one per note: the duplicate and suppression checks read the
+whole store, so the condition that protects them must cover the whole store, and a per-note
+condition would let two reviews that each read a clean store land the same proposition in different
+topic notes. If anything in the store changed underneath (a sibling curator, a foreground edit, the
+notes UI), the transaction fails, the review is retried, and the curator sees the fresh state; with
+reviews sparse and transactions short, the retries this costs are few. Operation identity is stable
+across retries: updates and removals are keyed by the existing entry's identity, and a new entry's
+identity is derived deterministically from its evidence together with its proposition, so two facts
+stated in one message are distinct entries, and a retried review cannot land the same entry twice or
+lose unrelated entries in a fresh rewrite. Version checks prevent a stale write; the change-set
+protocol is what prevents semantic loss in a new one.
 
 Consolidation, below, is no exception: it reads a whole partition but applies only guarded entry
 operations through the same applier.
@@ -565,22 +569,24 @@ Each milestone is independently useful and verifiable.
    counted. Concurrency is verified directly: a message persisted at any point during a review,
    including after the handler's last read and before the task is marked done, is covered by a later
    sweep; two reviews changing the same note leave both change sets applied, with one review
-   retried; a note edited between a review's read and its apply is not overwritten; and a retried
-   review does not duplicate an addition; and a core note full of distinct current facts accepts a
-   new one through a change set that moves older entries to a topic with their identity and lineage
-   intact. The applier is verified to reject an operation citing evidence outside the stretch, an
-   update to a missing entry, an over-cap result and a second always-loaded memory note, from the UI
-   and foreground tool paths alike; to fail a whole change set on one rejected operation and keep
-   the stretch reviewable; to accept a manual addition from the notes UI with the editor as its
-   evidence; and to keep two facts from one message as distinct entries so forgetting one leaves the
-   other. The read policy is verified by seeding an unlabelled note, a default-labelled note and an
-   unlabelled file-based skill and asserting none reaches the curator through the context provider,
-   the title list, the skill catalogue or `get_note`, including the file-skill fallback; a
-   conformance rule asserts every note or skill read the curator can reach goes through the policy.
-   Conformance also confirms the curator's write policy carries the `memory` floor, that its
-   effective tool set, global grants included, is exactly the memory entry tools, and that its
-   effective context provider set is exactly the notes provider. Skip counters and skipped-volume
-   gauges land here, on the existing metrics surface.
+   retried; two reviews proposing the same proposition into different topic notes leave one entry,
+   with the second review retried against the store that holds it; a note edited between a review's
+   read and its apply is not overwritten; a retried review does not duplicate an addition; and a
+   core note full of distinct current facts accepts a new one through a change set that moves older
+   entries to a topic with their identity and lineage intact. The applier is verified to reject an
+   operation citing evidence outside the stretch, an update to a missing entry, an over-cap result
+   and a second always-loaded memory note, from the UI and foreground tool paths alike; to fail a
+   whole change set on one rejected operation and keep the stretch reviewable; to accept a manual
+   addition from the notes UI with the editor as its evidence; and to keep two facts from one
+   message as distinct entries so forgetting one leaves the other. The read policy is verified by
+   seeding an unlabelled note, a default-labelled note and an unlabelled file-based skill and
+   asserting none reaches the curator through the context provider, the title list, the skill
+   catalogue or `get_note`, including the file-skill fallback; a conformance rule asserts every note
+   or skill read the curator can reach goes through the policy. Conformance also confirms the
+   curator's write policy carries the `memory` floor, that its effective tool set, global grants
+   included, is exactly the memory entry tools, and that its effective context provider set is
+   exactly the notes provider. Skip counters and skipped-volume gauges land here, on the existing
+   metrics surface.
 2. **Forgetting.** Suppression records, applier rejection, foreground "forget". Verified by the
    reconstruction scenario end to end: a fact is learned, forgotten, and a pending review over the
    original conversation plus a retry of a conflicting review both fail to recreate it, a review
