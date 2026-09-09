@@ -323,8 +323,12 @@ exists, and one new read-side rule where it does not:
   policy cannot refuse a global grant, and those tools would let the curator read any attachment the
   acting user owns and persist model-supplied text outside the memory label. Nothing it does is
   user-visible except the entries.
-- **Context**: the core note and the relevance-selected memory entries and suppressions only. No
-  calendar, weather or Home Assistant.
+- **Context**: the core note and the relevance-selected memory entries and suppressions only.
+  Turning aggregated context on for a profile attaches every context provider by default, and the
+  read policy filters only notes and skills, so the curator lists every provider but the notes
+  provider in `excluded_context_providers`, as the media analyst does. Calendar and Home Assistant
+  text can be externally authored, and none of it belongs in a silent turn that writes household
+  memory.
 - **Model**: start on the standard tier with a small iteration ceiling, and keep that choice under
   the evaluation below rather than assuming it. Deciding what a household will want to know later,
   from a messy multi-speaker transcript, is judgement, not extraction.
@@ -515,8 +519,9 @@ Each milestone is independently useful and verifiable.
    through the context provider, the title list, the skill catalogue or `get_note`, including the
    file-skill fallback; a conformance rule asserts every note or skill read the curator can reach
    goes through the policy. Conformance also confirms the curator's write policy carries the
-   `memory` floor and that its effective tool set, global grants included, is exactly the memory
-   entry tools. Skip counters and skipped-volume gauges land here, on the existing metrics surface.
+   `memory` floor, that its effective tool set, global grants included, is exactly the memory entry
+   tools, and that its effective context provider set is exactly the notes provider. Skip counters
+   and skipped-volume gauges land here, on the existing metrics surface.
 2. **Forgetting.** Suppression records, applier rejection, foreground "forget". Verified by the
    reconstruction scenario end to end: a fact is learned, forgotten, and a pending review over the
    original conversation plus a retry of a conflicting review both fail to recreate it, a review
