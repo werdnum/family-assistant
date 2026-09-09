@@ -143,9 +143,13 @@ topic entries and suppressions without limit, and a review that tried to show al
 eventually crowd out the transcript it is reviewing. So the curator's input is the capped core note
 plus the topic entries and suppressions selected for relevance to the reviewed stretch, using the
 search index the notes already have, under a fixed input budget. Selection only shapes what the
-model sees. Conflict detection, duplicate detection and suppression matching run in the applier over
-the whole store, so an entry or suppression the selection left out still cannot be duplicated or
-resurrected; the cost of a miss is a less informed proposal, never an incorrect apply.
+model sees. Everything the applier checks mechanically, conflict detection, duplicate detection and
+suppression matching by identity and evidence, runs over the whole store, so an entry or suppression
+the selection left out still cannot be duplicated or resurrected through those checks. What a
+selection miss does weaken is the one guard that is an instruction rather than a mechanism: a
+suppression the curator was not shown cannot help it recognise a paraphrase from other old evidence.
+That is the residual already recorded under Forgetting, and selection widens it only to the extent
+that relevance selection fails to surface a suppression about the very topic under review.
 
 **Why idle-per-conversation.** An idle stretch is a settled discussion: the curator sees the
 resolution, not the half-finished question, and its work stays off the interactive path. Freshness
@@ -170,14 +174,17 @@ and enqueues one review task per due conversation, keyed on the conversation so 
 conversation never has two reviews in flight. Nothing is enqueued when a message is persisted.
 
 **A review covers a bounded chunk, and the watermark always moves on a terminal outcome.** A review
-takes at most a fixed budget of rows after the watermark, so a stretch can never outgrow the model's
-context however busy the chat was. When more rows remain, the watermark advances to the end of the
-chunk and the conversation is simply still due, so the next sweep reviews the next chunk. The same
-rule closes the failure path: a review that fails permanently is abandoned by advancing the
-watermark past its chunk, with the failed change set and reason kept for the recent-changes view and
-an error logged. There is no separate retry ledger and no state the due predicate does not already
-read; a conversation is due exactly when it has rows after its watermark and the timing condition
-holds, and every terminal outcome, success or abandonment, moves the watermark forward.
+takes rows after the watermark up to a fixed budget of rendered size, not row count, so a stretch
+can never outgrow the model's context however busy the chat was. A single row larger than the budget
+on its own (a pasted document, say) is rendered truncated with a marker, since a message's length
+has no limit at the API; the review proceeds on what fits, and the row's provenance is carried in
+full regardless. When more rows remain, the watermark advances to the end of the chunk and the
+conversation is simply still due, so the next sweep reviews the next chunk. The same rule closes the
+failure path: a review that fails permanently is abandoned by advancing the watermark past its
+chunk, with the failed change set and reason kept for the recent-changes view and an error logged.
+There is no separate retry ledger and no state the due predicate does not already read; a
+conversation is due exactly when it has rows after its watermark and the timing condition holds, and
+every terminal outcome, success or abandonment, moves the watermark forward.
 
 This is deliberately not an event-driven debounce. A per-message enqueue that pushes a task back has
 to stay correct across the moment the worker marks a running task done, and every such design needs
@@ -483,8 +490,9 @@ Each milestone is independently useful and verifiable.
 6. **User control.** Evidence links on entries, the recent-changes view with undo, and the chat
    indicator. Verified by frontend tests and a functional test that undo produces a suppression.
 7. **Consolidation pass.** Gated on review volume; merges, resolves by kind and period, prunes,
-   refuses a pass that drops more than the allowed share. Verified by seeded duplicate and
-   contradictory entries.
+   refuses a pass that changes more than the allowed share of entries. Verified by seeded duplicate
+   and contradictory entries, and by three over-share passes, one each through removals, merges and
+   updates, all rejected.
 
 ## Open questions
 
