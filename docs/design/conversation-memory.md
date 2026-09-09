@@ -204,14 +204,15 @@ of model calls surfacing months of old conversations as new facts. Reviewing his
 boundary is an explicit opt-in backfill, bounded and run on request, not an effect of enabling.
 
 **Reviews are scheduled from state, not from events.** Whether a conversation is due is a pure
-function of stored data: the first turn after its watermark is complete, so that a review can
-advance the watermark past at least one turn rather than stop short of a live one and repeat every
-sweep, and either its last activity is older than the idle window or its oldest unreviewed row is
-older than the maximum deferral. The second clause is what guarantees a busy Telegram group that
-never goes quiet is still reviewed. A recurring system task, on the same footing as the existing
-cleanup tasks, evaluates that predicate every few minutes and enqueues one review task per due
-conversation, keyed on the conversation so the same conversation never has two reviews in flight.
-Nothing is enqueued when a message is persisted.
+function of stored data: the first eligible turn after its watermark, meaning the first turn among
+the rows the enablement boundary admits, is complete, so that a review can advance the watermark
+past at least one turn rather than stop short of a live one and repeat every sweep, and either its
+last activity is older than the idle window or its oldest unreviewed row is older than the maximum
+deferral. The second clause is what guarantees a busy Telegram group that never goes quiet is still
+reviewed. A recurring system task, on the same footing as the existing cleanup tasks, evaluates that
+predicate every few minutes and enqueues one review task per due conversation, keyed on the
+conversation so the same conversation never has two reviews in flight. Nothing is enqueued when a
+message is persisted.
 
 **A review covers a bounded chunk, and the watermark always moves on a terminal outcome.** A review
 takes rows after the watermark up to a fixed budget of rendered size, not row count, so a stretch
@@ -231,25 +232,28 @@ terminal outcome rather than by the confirmation's status. A confirmation surviv
 durable record while the in-memory turn does not, so a later turn can complete while the earlier one
 is still waiting, and a turn lost to a restart after its confirmation resolved would otherwise stay
 open for good; the confirmation's own expiry window therefore runs again from any resolution, and
-only once it has passed with no reply does the turn fall to the never-finished rule below. There is
-no time-based alternative, because none can be made safe: a confirmation can stay pending longer
-than any deferral, and even after it resolves the turn is still running until its reply lands, so
-any rule that declared a turn finished on elapsed time alone could advance past an outcome that was
-about to be written. A turn cut off by a server restart, which the web flow deliberately leaves
-without a terminal reply, therefore counts as complete as soon as the household's next turn
-completes, and is rendered with a marker saying it never finished so the curator does not read a
-request as an outcome. The cost is that a conversation whose last turn was cut off is not reviewed
-until someone speaks in it again; that memory is delayed, not lost, and it is recorded as a
-residual. A single turn larger than the budget on its own (a pasted document, say) is rendered
-truncated with a marker, since a message's length has no limit at the API; the review proceeds on
-what fits, and the turn's provenance is carried in full regardless. When more rows remain, the
-watermark advances to the end of the chunk and the conversation is simply still due, so the next
-sweep reviews the next chunk. The same rule closes the failure path: a review that fails permanently
-is abandoned by advancing the watermark past its chunk, with the failed change set and reason kept
-for the recent-changes view and an error logged. There is no separate retry ledger and no state the
-due predicate does not already read; a conversation is due exactly when it has a completed turn
-after its watermark and the timing condition holds, and every terminal outcome, success or
-abandonment, moves the watermark forward.
+only once it has passed with no reply does the turn fall to the never-finished rule below. That is
+the one clock in the definition, and it is a deliberately narrowed guarantee rather than a safe
+rule: a tool still running that long after its confirmation resolved is a failure in its own right,
+and a reply that lands after the window is rendered as an orphaned assistant stretch and skipped,
+recorded as a residual below. No broader time-based rule can be made safe: a confirmation can stay
+pending longer than any deferral, and even after it resolves the turn is still running until its
+reply lands, so a rule that declared a turn finished on elapsed time alone would advance past
+outcomes that were about to be written. A turn cut off by a server restart, which the web flow
+deliberately leaves without a terminal reply, therefore counts as complete as soon as the
+household's next turn completes, and is rendered with a marker saying it never finished so the
+curator does not read a request as an outcome. The cost is that a conversation whose last turn was
+cut off is not reviewed until someone speaks in it again; that memory is delayed, not lost, and it
+is recorded as a residual. A single turn larger than the budget on its own (a pasted document, say)
+is rendered truncated with a marker, since a message's length has no limit at the API; the review
+proceeds on what fits, and the turn's provenance is carried in full regardless. When more rows
+remain, the watermark advances to the end of the chunk and the conversation is simply still due, so
+the next sweep reviews the next chunk. The same rule closes the failure path: a review that fails
+permanently is abandoned by advancing the watermark past its chunk, with the failed change set and
+reason kept for the recent-changes view and an error logged. There is no separate retry ledger and
+no state the due predicate does not already read; a conversation is due exactly when the first
+eligible turn after its watermark is complete and the timing condition holds, and every terminal
+outcome, success or abandonment, moves the watermark forward.
 
 This is deliberately not an event-driven debounce. A per-message enqueue that pushes a task back has
 to stay correct across the moment the worker marks a running task done, and every such design needs
@@ -298,10 +302,11 @@ topic notes. If anything in the store changed underneath (a sibling curator, a f
 notes UI), the transaction fails, the review is retried, and the curator sees the fresh state; with
 reviews sparse and transactions short, the retries this costs are few. Operation identity is stable
 across retries: updates and removals are keyed by the existing entry's identity, and a new entry's
-identity is derived deterministically from its evidence together with its proposition, so two facts
-stated in one message are distinct entries, and a retried review cannot land the same entry twice or
-lose unrelated entries in a fresh rewrite. Version checks prevent a stale write; the change-set
-protocol is what prevents semantic loss in a new one.
+identity is derived deterministically from its evidence together with everything the duplicate check
+compares, its proposition, subject and applicable period, so two facts stated in one message are
+distinct entries, and a retried review cannot land the same entry twice or lose unrelated entries in
+a fresh rewrite. Version checks prevent a stale write; the change-set protocol is what prevents
+semantic loss in a new one.
 
 Consolidation, below, is no exception: it reads a whole partition but applies only guarded entry
 operations through the same applier.
@@ -521,15 +526,16 @@ the applier like any other: undoing an addition removes the entry and is a forge
 removal re-adds the entry, and as person-authored evidence newer than the forgetting it releases the
 suppression, while the person-authored floor above refuses a pending or retried review that would
 remove the restored entry on the old evidence again; undoing an update restores the previous
-version. What a suppression records is a set of propositions, and the operation decides which:
-forgetting records the entry's whole lineage, while undoing an update records only the version the
-person rejected, so the restored version stays live and a later review that re-proposes the rejected
-one is refused. A subtle indicator in the chat surfaces that memory changed after a conversation
-without a notification per fact. "Forget that I said X" in chat is a foreground removal with the
-suppression semantics above. A deployment can turn contribution, reading, or the whole mechanism
-off. The user documentation for this feature is a new `docs/user/memory.md` describing what the
-assistant remembers on its own, what it never remembers, that memory is household-wide, and how to
-correct or forget.
+version. What a suppression records is a set of proposition-and-subject versions, and the operation
+decides which: forgetting records the entry's whole lineage, while undoing an update records only
+the version the person rejected, so the restored version stays live and a later review that
+re-proposes the rejected one is refused, whether the rejected update changed the proposition or only
+re-attributed it to another subject. A subtle indicator in the chat surfaces that memory changed
+after a conversation without a notification per fact. "Forget that I said X" in chat is a foreground
+removal with the suppression semantics above. A deployment can turn contribution, reading, or the
+whole mechanism off. The user documentation for this feature is a new `docs/user/memory.md`
+describing what the assistant remembers on its own, what it never remembers, that memory is
+household-wide, and how to correct or forget.
 
 ## Deliberate simplifications
 
@@ -571,6 +577,10 @@ correct or forget.
 - A conversation whose last turn never finished, after a restart, is not reviewed until the next
   turn in it completes. Memory from that stretch is delayed, not lost, and the alternative, a
   time-based completion rule, cannot be made safe against a turn that is still running.
+- A turn whose confirmation resolved but whose tool ran on past the confirmation's expiry window is
+  treated as never finished; a reply landing after that is skipped as an orphaned assistant stretch,
+  so its outcome is not learned. The request is rendered with a never-finished marker, so nothing
+  false is learned in its place.
 - Idle review is one model call per active conversation per idle period. On a chatty deployment this
   is tens of cheap calls a day; the no-user-messages skip and the contribute setting are the levers.
 
