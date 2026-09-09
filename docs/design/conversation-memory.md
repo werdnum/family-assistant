@@ -281,17 +281,19 @@ entries, each citing the messages in the reviewed stretch it rests on, each with
 and, where relevant, an applicable period and a kind, plus moves of existing entries between the
 core note and a topic note, which cite nothing new. A deterministic applier validates the change set
 and applies it. Validation covers: every cited message lies inside the reviewed stretch; every
-updated, removed or moved entry exists at the version the curator read; every update or removal of
-an entry cites evidence newer than the entry's most recent person-authored change, so a review still
-holding old evidence cannot take back what a person did to the entry since; nothing violates the
-provenance ceiling, the cap, or a suppression; and an addition is not a duplicate of an entry
-already present. Validation is all-or-nothing for the change set: one rejected operation fails the
-review, which is retried with the rejection reasons fed back to the curator, so a fact is not
-quietly dropped because a sibling operation was malformed. A review that exhausts its retries is
-abandoned as described under scheduling: the watermark advances past the chunk, the rejected change
-set and reason are kept for the recent-changes view, and an error is logged, so the failure is
-visible rather than silent and the sweep does not keep paying for it. Neglect here degrades
-availability of memory, not its integrity.
+updated, removed or moved entry exists at the version the curator read; every operation that would
+touch an entry's lineage, an update or removal of the entry or an addition matching any version the
+entry has held, cites evidence newer than the entry's most recent person-authored change, so a
+review still holding old evidence can neither take back what a person did to the entry since nor
+re-create as a new entry the version the person corrected away; nothing violates the provenance
+ceiling, the cap, or a suppression; and an addition is not a duplicate of an entry already present.
+Validation is all-or-nothing for the change set: one rejected operation fails the review, which is
+retried with the rejection reasons fed back to the curator, so a fact is not quietly dropped because
+a sibling operation was malformed. A review that exhausts its retries is abandoned as described
+under scheduling: the watermark advances past the chunk, the rejected change set and reason are kept
+for the recent-changes view, and an error is logged, so the failure is visible rather than silent
+and the sweep does not keep paying for it. Neglect here degrades availability of memory, not its
+integrity.
 
 Application and watermark advancement happen in **one short transaction**, conditional on the
 version of the memory store the applier validated against, with all model work outside it. The store
