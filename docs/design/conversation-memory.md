@@ -221,29 +221,34 @@ orphaned assistant rows that the no-user-messages rule would then skip. Only com
 eligible: a turn still awaiting its terminal reply, such as one parked on a confirmation that can
 stay pending for a day, ends the chunk before itself and is reviewed once it completes, and the
 watermark never advances past a turn that has not finished. "Finished" is defined so that no turn
-can block a conversation forever, and with no clock in it: a turn is complete when it has its
+can block a conversation forever, and with no clock of its own: a turn is complete when it has its
 terminal reply, or when a later turn in the same conversation has completed and the earlier turn
-holds no live durable work, meaning no pending confirmation that could still produce its outcome. A
-confirmation survives a restart as a durable record while the in-memory turn does not, so a later
-turn can complete while the earlier one is still waiting; the fallback keeps such a turn open until
-its confirmation resolves or expires and its reply lands. There is no time-based alternative,
-because none can be made safe: a confirmation can stay pending longer than any deferral, and even
-after it resolves the turn is still running until its reply lands, so any rule that declared a turn
-finished on elapsed time alone could advance past an outcome that was about to be written. A turn
-cut off by a server restart, which the web flow deliberately leaves without a terminal reply,
-therefore counts as complete as soon as the household's next turn completes, and is rendered with a
-marker saying it never finished so the curator does not read a request as an outcome. The cost is
-that a conversation whose last turn was cut off is not reviewed until someone speaks in it again;
-that memory is delayed, not lost, and it is recorded as a residual. A single turn larger than the
-budget on its own (a pasted document, say) is rendered truncated with a marker, since a message's
-length has no limit at the API; the review proceeds on what fits, and the turn's provenance is
-carried in full regardless. When more rows remain, the watermark advances to the end of the chunk
-and the conversation is simply still due, so the next sweep reviews the next chunk. The same rule
-closes the failure path: a review that fails permanently is abandoned by advancing the watermark
-past its chunk, with the failed change set and reason kept for the recent-changes view and an error
-logged. There is no separate retry ledger and no state the due predicate does not already read; a
-conversation is due exactly when it has a completed turn after its watermark and the timing
-condition holds, and every terminal outcome, success or abandonment, moves the watermark forward.
+holds no live durable work. A confirmation raised by a turn is live from the moment it is recorded
+until the turn's reply lands or the confirmation is rejected or expires; approval does not end it,
+because the tool still runs and the reply is still to be written after approval, so liveness is
+defined by the missing terminal outcome rather than by the confirmation's status. A confirmation
+survives a restart as a durable record while the in-memory turn does not, so a later turn can
+complete while the earlier one is still waiting, and a turn lost to a restart after approval would
+otherwise stay open for good; the confirmation's own expiry window therefore runs again from
+approval, and only once it has passed with no reply does the turn fall to the never-finished rule
+below. There is no time-based alternative, because none can be made safe: a confirmation can stay
+pending longer than any deferral, and even after it resolves the turn is still running until its
+reply lands, so any rule that declared a turn finished on elapsed time alone could advance past an
+outcome that was about to be written. A turn cut off by a server restart, which the web flow
+deliberately leaves without a terminal reply, therefore counts as complete as soon as the
+household's next turn completes, and is rendered with a marker saying it never finished so the
+curator does not read a request as an outcome. The cost is that a conversation whose last turn was
+cut off is not reviewed until someone speaks in it again; that memory is delayed, not lost, and it
+is recorded as a residual. A single turn larger than the budget on its own (a pasted document, say)
+is rendered truncated with a marker, since a message's length has no limit at the API; the review
+proceeds on what fits, and the turn's provenance is carried in full regardless. When more rows
+remain, the watermark advances to the end of the chunk and the conversation is simply still due, so
+the next sweep reviews the next chunk. The same rule closes the failure path: a review that fails
+permanently is abandoned by advancing the watermark past its chunk, with the failed change set and
+reason kept for the recent-changes view and an error logged. There is no separate retry ledger and
+no state the due predicate does not already read; a conversation is due exactly when it has a
+completed turn after its watermark and the timing condition holds, and every terminal outcome,
+success or abandonment, moves the watermark forward.
 
 This is deliberately not an event-driven debounce. A per-message enqueue that pushes a task back has
 to stay correct across the moment the worker marks a running task done, and every such design needs
@@ -271,7 +276,9 @@ entries, each citing the messages in the reviewed stretch it rests on, each with
 and, where relevant, an applicable period and a kind, plus moves of existing entries between the
 core note and a topic note, which cite nothing new. A deterministic applier validates the change set
 and applies it. Validation covers: every cited message lies inside the reviewed stretch; every
-updated, removed or moved entry exists at the version the curator read; nothing violates the
+updated, removed or moved entry exists at the version the curator read; every update or removal of
+an entry cites evidence newer than the entry's most recent person-authored change, so a review still
+holding old evidence cannot take back what a person did to the entry since; nothing violates the
 provenance ceiling, the cap, or a suppression; and an addition is not a duplicate of an entry
 already present. Validation is all-or-nothing for the change set: one rejected operation fails the
 review, which is retried with the rejection reasons fed back to the curator, so a fact is not
@@ -503,16 +510,17 @@ excerpting by the curator makes the turn itself safe for the whole household, so
 try. A recent-changes view lists what the curator added, updated or removed, with undo. **Undo is a
 person-authored change set that inverts the recorded operation** and goes through the applier like
 any other: undoing an addition removes the entry and is a forgetting; undoing a removal re-adds the
-entry, and as person-authored evidence newer than the forgetting it releases the suppression;
-undoing an update restores the previous version. What a suppression records is a set of
-propositions, and the operation decides which: forgetting records the entry's whole lineage, while
-undoing an update records only the version the person rejected, so the restored version stays live
-and a later review that re-proposes the rejected one is refused. A subtle indicator in the chat
-surfaces that memory changed after a conversation without a notification per fact. "Forget that I
-said X" in chat is a foreground removal with the suppression semantics above. A deployment can turn
-contribution, reading, or the whole mechanism off. The user documentation for this feature is a new
-`docs/user/memory.md` describing what the assistant remembers on its own, what it never remembers,
-that memory is household-wide, and how to correct or forget.
+entry, and as person-authored evidence newer than the forgetting it releases the suppression, while
+the person-authored floor above refuses a pending or retried review that would remove the restored
+entry on the old evidence again; undoing an update restores the previous version. What a suppression
+records is a set of propositions, and the operation decides which: forgetting records the entry's
+whole lineage, while undoing an update records only the version the person rejected, so the restored
+version stays live and a later review that re-proposes the rejected one is refused. A subtle
+indicator in the chat surfaces that memory changed after a conversation without a notification per
+fact. "Forget that I said X" in chat is a foreground removal with the suppression semantics above. A
+deployment can turn contribution, reading, or the whole mechanism off. The user documentation for
+this feature is a new `docs/user/memory.md` describing what the assistant remembers on its own, what
+it never remembers, that memory is household-wide, and how to correct or forget.
 
 ## Deliberate simplifications
 
