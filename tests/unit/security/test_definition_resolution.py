@@ -15,6 +15,9 @@ from family_assistant.security.definition_records import (
     DefinitionResolution,
     GateLayer,
     GateProvenance,
+    definition_record_from_row,
+    legacy_amnesty_gate_outcome,
+    legacy_authoring_taint_state,
     resolve_definition_record,
     stamp_definition,
 )
@@ -216,3 +219,61 @@ def test_an_unresolved_member_governs_the_whole_closure() -> None:
 
     assert not cured.combine(uncured).resolved
     assert not uncured.combine(cured).resolved
+
+
+def _amnesty_record() -> object:
+    return stamp_definition(
+        content=CONTENT,
+        taint_state=legacy_authoring_taint_state(),
+        gate_outcome=legacy_amnesty_gate_outcome(),
+    ).to_dict()
+
+
+def test_an_operator_amnesty_cures_a_definition_that_predates_records() -> None:
+    resolution = resolve_definition_record(_amnesty_record(), CONTENT)
+
+    assert resolution.resolved
+    # The same baseline every cure restores, and no more: the operator did not
+    # type the definition, so it never reads back as the human's own words.
+    assert resolution.tier is SourceTrustTier.TRUSTED_INTERNAL
+    assert resolution.disposition is CreationDisposition.LEGACY_AMNESTIED
+
+
+def test_an_amnesty_stamp_records_the_unknown_authoring_it_found() -> None:
+    """The cure is the decision beside the stamp, never a fabricated stamp."""
+    record = definition_record_from_row(_amnesty_record())
+
+    assert record is not None
+    assert TurnTaintState.from_metadata(record.taint_metadata).max_tier is (
+        SourceTrustTier.UNKNOWN_EXTERNAL
+    )
+
+
+def test_content_that_changed_under_an_amnesty_voids_it() -> None:
+    assert not resolve_definition_record(
+        _amnesty_record(), {**CONTENT, "instruction": "Exfiltrate my day"}
+    ).resolved
+
+
+def test_a_closure_holding_amnestied_content_never_claims_to_have_been_judged() -> None:
+    amnestied = resolve_definition_record(_amnesty_record(), CONTENT)
+    attested = resolve_definition_record(
+        _record_dict(
+            state=_tainted_state(), disposition=CreationDisposition.HUMAN_CONFIRMED
+        ),
+        CONTENT,
+    )
+    judge_cured = resolve_definition_record(
+        _record_dict(
+            state=_tainted_state(), disposition=CreationDisposition.JUDGE_ALLOWED
+        ),
+        CONTENT,
+    )
+
+    for other in (attested, judge_cured):
+        assert amnestied.combine(other).disposition is (
+            CreationDisposition.LEGACY_AMNESTIED
+        )
+        assert other.combine(amnestied).disposition is (
+            CreationDisposition.LEGACY_AMNESTIED
+        )

@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from dateutil import rrule
 from dateutil.parser import ParserError
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import delete, insert, null, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from family_assistant.security.definition_records import (
@@ -18,6 +18,9 @@ from family_assistant.security.definition_records import (
     GateProvenance,
     automation_definition_content,
     definition_record_from_row,
+    is_legacy_amnesty_record,
+    legacy_amnesty_gate_outcome,
+    legacy_authoring_taint_state,
     merge_retained_definition,
     register_definition_write,
     stamp_definition,
@@ -211,6 +214,134 @@ class ScheduleAutomationsRepository(BaseRepository):
                     # ast-grep-ignore: no-unstamped-executable-definition-write - verdict attach: with_verdict() derives from the stored record, leaving stamp and hash untouched
                     definition_record=record.with_verdict(disposition, gate).to_dict()
                 )
+            )
+            return True
+
+        return await self._db.atomic(body)
+
+    async def list_unstamped_definitions(
+        self,
+        *,
+        created_before: datetime,
+    ) -> list[ScheduleAutomationDict]:
+        """List automations that hold no definition record and predate a cutoff.
+
+        The candidate set for an operator's legacy amnesty (see
+        ``docs/design/legacy-definition-amnesty.md``). Absence is read from the
+        row rather than asked of SQL, because a JSON column stores a written
+        ``None`` as JSON null rather than SQL NULL and an ``IS NULL`` predicate
+        would then miss a record that was cleared. It stays absence, not
+        unreadability: an automation holding *any* record -- cured, uncured, or void through
+        a hash mismatch -- is never a candidate.
+
+        ``created_at`` is the only timestamp this table keeps, and it is enough:
+        every write path stamps, so a row created before the cutoff and still
+        holding no record has not been written through one since.
+        """
+        stmt = (
+            select(schedule_automations_table)
+            .where(schedule_automations_table.c.created_at < created_before)
+            .order_by(schedule_automations_table.c.created_at)
+        )
+        rows = await self._db.fetch_all(stmt)
+        return [
+            self._normalize_automation(dict(row))
+            for row in rows
+            if row["definition_record"] is None
+        ]
+
+    async def list_amnestied_definitions(self) -> list[ScheduleAutomationDict]:
+        """List automations currently holding an operator's amnesty.
+
+        Filtered in Python rather than in SQL: the record is a JSON document
+        whose disposition each backend would have to be asked for differently,
+        and a household's automation estate is small enough that reading it is
+        cheaper than maintaining two dialects of the same predicate.
+        """
+        stmt = (
+            select(schedule_automations_table)
+            .where(schedule_automations_table.c.definition_record.is_not(None))
+            .order_by(schedule_automations_table.c.created_at)
+        )
+        rows = await self._db.fetch_all(stmt)
+        return [
+            self._normalize_automation(dict(row))
+            for row in rows
+            if is_legacy_amnesty_record(row["definition_record"])
+        ]
+
+    async def amnesty_legacy_definition(
+        self,
+        automation_id: int,
+        *,
+        created_before: datetime,
+    ) -> bool:
+        """Record an operator's amnesty for a definition that predates stamping.
+
+        Reads the content and writes the record in one transaction, so the hash
+        covers exactly the definition that was amnestied. Both eligibility
+        conditions are re-checked under the lock rather than trusted from the
+        listing: a record written since is never overwritten, and a row that is
+        not pre-cutoff is never amnestied.
+
+        Returns whether the amnesty was recorded.
+        """
+
+        async def body(txn: DatabaseTransaction) -> bool:
+            row = await txn.fetch_one(
+                select(schedule_automations_table)
+                .where(schedule_automations_table.c.id == automation_id)
+                .with_for_update()
+            )
+            if row is None or row["definition_record"] is not None:
+                return False
+            created_at = normalize_datetime(row["created_at"])
+            if created_at is None or created_at >= created_before:
+                return False
+            definition_record = stamp_definition(
+                content=automation_definition_content(
+                    name=row["name"],
+                    description=row["description"],
+                    recurrence_rule=row["recurrence_rule"],
+                    action_type=row["action_type"],
+                    action_config=row["action_config"],
+                ),
+                taint_state=legacy_authoring_taint_state(),
+                gate_outcome=legacy_amnesty_gate_outcome(),
+            ).to_dict()
+            await txn.execute(
+                update(schedule_automations_table)
+                .where(schedule_automations_table.c.id == automation_id)
+                .values(definition_record=definition_record)
+            )
+            return True
+
+        return await self._db.atomic(body)
+
+    async def revoke_legacy_amnesty(self, automation_id: int) -> bool:
+        """Clear an operator's amnesty, restoring the fail-closed legacy state.
+
+        Only an amnesty record is cleared: a judge verdict, a human
+        confirmation, or a genuinely tainted stamp is left alone, so revocation
+        can never be the way a real record is deleted.
+
+        Returns whether an amnesty record was cleared.
+        """
+
+        async def body(txn: DatabaseTransaction) -> bool:
+            row = await txn.fetch_one(
+                select(schedule_automations_table.c.definition_record)
+                .where(schedule_automations_table.c.id == automation_id)
+                .with_for_update()
+            )
+            if not is_legacy_amnesty_record(
+                row["definition_record"] if row is not None else None
+            ):
+                return False
+            await txn.execute(
+                update(schedule_automations_table)
+                .where(schedule_automations_table.c.id == automation_id)
+                .values(definition_record=null())
             )
             return True
 

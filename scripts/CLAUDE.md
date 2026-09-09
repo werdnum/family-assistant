@@ -98,6 +98,23 @@ refreshed, and the run exits non-zero naming the one that failed. The scheduled 
 refresh with `continue-on-error` so that a partial failure still publishes the mirrors that did
 refresh, then fails the job in a final step.
 
+### `restamp_legacy_definitions.py`
+
+Operator command for the legacy definition amnesty: lists automations, event listeners and stored
+scripts that hold no definition record and were created before a stated cutoff, and with `--apply`
+records an amnesty for each. `--revoke` acts on the amnestied estate instead, clearing the grant.
+
+It writes through `stamp_definition()` in the repository transaction that read the content, so the
+hash covers what was amnestied and nothing hand-assembles a record — the same chokepoint the
+conformance rule keeps every write path on. It fills absence only: a definition already holding a
+record, a hash mismatch included, is skipped. `--created-before` has no default on purpose; a
+definition written after stamping shipped with no record is a write-path regression, not a legacy
+artifact.
+
+Operator guidance lives in
+[CONFIGURATION_REFERENCE.md](../docs/operations/CONFIGURATION_REFERENCE.md); the rationale is in
+[docs/design/legacy-definition-amnesty.md](../docs/design/legacy-definition-amnesty.md).
+
 ### Review-eval public corpus scripts
 
 `fetch_review_eval_corpora.sh` fetches pinned Deepset Prompt Injections and InjecAgent source files

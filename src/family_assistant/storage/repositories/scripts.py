@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import delete, insert, null, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
@@ -17,10 +17,14 @@ from family_assistant.security.definition_records import (
     DefinitionGateOutcome,
     GateProvenance,
     definition_record_from_row,
+    is_legacy_amnesty_record,
+    legacy_amnesty_gate_outcome,
+    legacy_authoring_taint_state,
     register_definition_write,
     script_definition_content,
     stamp_definition,
 )
+from family_assistant.storage.datetime_utils import normalize_datetime
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.scripts import scripts_table
 
@@ -204,6 +208,138 @@ class ScriptsRepository(BaseRepository):
                         record.with_verdict(disposition, gate).to_dict()
                     )
                 )
+            )
+            return True
+
+        return await self._db.atomic(body)
+
+    async def list_unstamped_definitions(
+        self,
+        *,
+        created_before: datetime,
+    ) -> list[ScriptRow]:
+        """List stored scripts that hold no definition record and predate a cutoff.
+
+        The candidate set for an operator's legacy amnesty (see
+        ``docs/design/legacy-definition-amnesty.md``). Absence is read from the
+        row rather than asked of SQL, because a JSON column stores a written
+        ``None`` as JSON null rather than SQL NULL and an ``IS NULL`` predicate
+        would then miss a record that was cleared. It stays absence, not
+        unreadability: a script holding *any* record -- cured, uncured, or void through a
+        hash mismatch -- is never a candidate.
+
+        Creation, not last modification, is the test, as for the other two
+        definition classes: every save stamps, so a script created before the
+        cutoff and still holding no record has not been saved since. Reading
+        ``updated_at`` instead would additionally make an amnesty unrepeatable
+        after a revocation, since both writes touch it.
+        """
+        stmt = (
+            select(scripts_table)
+            .where(scripts_table.c.created_at < created_before)
+            .order_by(scripts_table.c.name)
+        )
+        rows = await self._db.fetch_all(stmt)
+        return [
+            _row_to_script_row(dict(row))
+            for row in rows
+            if row["definition_record"] is None
+        ]
+
+    async def list_amnestied_definitions(self) -> list[ScriptRow]:
+        """List stored scripts currently holding an operator's amnesty.
+
+        Filtered in Python rather than in SQL: the record is a JSON document
+        whose disposition each backend would have to be asked for differently,
+        and a household's script estate is small enough that reading it is
+        cheaper than maintaining two dialects of the same predicate.
+        """
+        stmt = (
+            select(scripts_table)
+            .where(scripts_table.c.definition_record.is_not(None))
+            .order_by(scripts_table.c.name)
+        )
+        rows = await self._db.fetch_all(stmt)
+        return [
+            _row_to_script_row(dict(row))
+            for row in rows
+            if is_legacy_amnesty_record(row["definition_record"])
+        ]
+
+    async def amnesty_legacy_definition(
+        self,
+        name: str,
+        *,
+        created_before: datetime,
+    ) -> bool:
+        """Record an operator's amnesty for a script that predates stamping.
+
+        Reads the body and writes the record in one transaction, so the hash
+        covers exactly the code that was amnestied. Both eligibility conditions
+        are re-checked under the lock rather than trusted from the listing: a
+        record written since is never overwritten, and a script that is not
+        pre-cutoff is never amnestied.
+
+        Returns whether the amnesty was recorded.
+        """
+
+        async def body(txn: DatabaseTransaction) -> bool:
+            row = await txn.fetch_one(
+                select(scripts_table)
+                .where(scripts_table.c.name == name)
+                .with_for_update()
+            )
+            if row is None or row["definition_record"] is not None:
+                return False
+            created_at = normalize_datetime(row["created_at"])
+            if created_at is None or created_at >= created_before:
+                return False
+            script = _row_to_script_row(dict(row))
+            definition_record = json.dumps(
+                stamp_definition(
+                    content=script_definition_content(
+                        name=script.name,
+                        description=script.description,
+                        script_code=script.script_code,
+                        parameters_schema=script.parameters_schema,
+                    ),
+                    taint_state=legacy_authoring_taint_state(),
+                    gate_outcome=legacy_amnesty_gate_outcome(),
+                ).to_dict()
+            )
+            await txn.execute(
+                update(scripts_table)
+                .where(scripts_table.c.name == name)
+                .values(definition_record=definition_record)
+            )
+            return True
+
+        return await self._db.atomic(body)
+
+    async def revoke_legacy_amnesty(self, name: str) -> bool:
+        """Clear an operator's amnesty, restoring the fail-closed legacy state.
+
+        Only an amnesty record is cleared: a judge verdict, a human
+        confirmation, or a genuinely tainted stamp is left alone, so revocation
+        can never be the way a real record is deleted.
+
+        Returns whether an amnesty record was cleared.
+        """
+
+        async def body(txn: DatabaseTransaction) -> bool:
+            row = await txn.fetch_one(
+                select(scripts_table.c.definition_record)
+                .where(scripts_table.c.name == name)
+                .with_for_update()
+            )
+            if not is_legacy_amnesty_record(
+                row["definition_record"] if row is not None else None
+            ):
+                return False
+            await txn.execute(
+                update(scripts_table)
+                .where(scripts_table.c.name == name)
+                .values(definition_record=null())
             )
             return True
 
