@@ -97,12 +97,17 @@ identity, not on prose.
 The always-loaded layer is exactly one note, and the notes repository enforces that shape for every
 writer: a memory-labelled note may be `include_in_prompt` only if it is that one note, and a write
 that would leave it over the ceiling is refused. The curator gets an error telling it to condense,
-the foreground assistant gets the same tool error, and the notes UI shows it to the user. Enforcing
-the singleton, the cap, and the exclusion of memory topics from the title list together is what
-makes "capped" a statement about the rendered prompt rather than about a note, and the rendered
-memory contribution is measured as such. Topic notes carry a cap of their own at the same
-chokepoint, sized to the curator's input budget rather than the prompt: a write that would take a
-topic past it is refused, and the curator opens a further topic instead, so no memory note ever
+the foreground assistant gets the same tool error, and the notes UI shows it to the user. Condensing
+has a legal shape when the core is full of distinct, current facts: a change set may **move** an
+existing entry from the core note to a topic note, keeping its identity, lineage and evidence, and a
+move cites no new evidence because it changes where an entry lives, not what it says. The curator
+demotes the entries least like standing facts to make room, and the applier accepts the addition and
+the moves as one all-or-nothing set, so a new core-worthy fact never fails for want of room it could
+have made. Enforcing the singleton, the cap, and the exclusion of memory topics from the title list
+together is what makes "capped" a statement about the rendered prompt rather than about a note, and
+the rendered memory contribution is measured as such. Topic notes carry a cap of their own at the
+same chokepoint, sized to the curator's input budget rather than the prompt: a write that would take
+a topic past it is refused, and the curator opens a further topic instead, so no memory note ever
 exceeds what one review or consolidation invocation can read.
 
 Explicit requests ("remember that...", "forget that...") keep working in the foreground turn, and
@@ -263,17 +268,18 @@ its conversations back into shared memory. The household-facing profiles enable 
 
 The curator does not rewrite notes. It emits a **change set**: additions, updates and removals of
 entries, each citing the messages in the reviewed stretch it rests on, each with an asserted-on date
-and, where relevant, an applicable period and a kind. A deterministic applier validates the change
-set and applies it. Validation covers: every cited message lies inside the reviewed stretch; every
-updated or removed entry exists at the version the curator read; nothing violates the provenance
-ceiling, the cap, or a suppression; and an addition is not a duplicate of an entry already present.
-Validation is all-or-nothing for the change set: one rejected operation fails the review, which is
-retried with the rejection reasons fed back to the curator, so a fact is not quietly dropped because
-a sibling operation was malformed. A review that exhausts its retries is abandoned as described
-under scheduling: the watermark advances past the chunk, the rejected change set and reason are kept
-for the recent-changes view, and an error is logged, so the failure is visible rather than silent
-and the sweep does not keep paying for it. Neglect here degrades availability of memory, not its
-integrity.
+and, where relevant, an applicable period and a kind, plus moves of existing entries between the
+core note and a topic note, which cite nothing new. A deterministic applier validates the change set
+and applies it. Validation covers: every cited message lies inside the reviewed stretch; every
+updated, removed or moved entry exists at the version the curator read; nothing violates the
+provenance ceiling, the cap, or a suppression; and an addition is not a duplicate of an entry
+already present. Validation is all-or-nothing for the change set: one rejected operation fails the
+review, which is retried with the rejection reasons fed back to the curator, so a fact is not
+quietly dropped because a sibling operation was malformed. A review that exhausts its retries is
+abandoned as described under scheduling: the watermark advances past the chunk, the rejected change
+set and reason are kept for the recent-changes view, and an error is logged, so the failure is
+visible rather than silent and the sweep does not keep paying for it. Neglect here degrades
+availability of memory, not its integrity.
 
 Application and watermark advancement happen in **one short transaction**, conditional on the
 versions of the notes the curator read, with all model work outside it. If a note changed underneath
