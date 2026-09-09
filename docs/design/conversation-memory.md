@@ -110,10 +110,15 @@ they go through the same entry protocol as the curator. That is enforced where i
 bypassed: the notes repository accepts a mutation to a memory-labelled note only from the entry
 applier. The generic whole-note tools and the notes UI do not get a second path; a foreground
 "remember" is an addition, a "forget" is a removal with a suppression, and a note edited by hand in
-the UI is parsed back into entries and submitted as the change set that diff implies. A profile that
-could reach a memory note with the generic tools would be bypassing evidence validation, suppression
-and entry-level conflict handling, so the repository refuses that regardless of which tool asked.
-The background process is the complement for everything the user did not ask to have saved.
+the UI is parsed back into entries and submitted as the change set that diff implies. Deleting a
+memory note is a mutation like any other: through the notes UI or the delete tool, it becomes the
+removal, with a suppression, of every entry the note holds, applied by the applier, and the
+repository refuses a raw row deletion of a memory-labelled note just as it refuses a raw overwrite.
+Without that, deleting a topic note would erase its entries and their lineage without recording a
+single forget, and the next review could put them all back. A profile that could reach a memory note
+with the generic tools would be bypassing evidence validation, suppression and entry-level conflict
+handling, so the repository refuses that regardless of which tool asked. The background process is
+the complement for everything the user did not ask to have saved.
 
 ### Whose memory it is
 
@@ -546,7 +551,9 @@ Each milestone is independently useful and verifiable.
    reconstruction scenario end to end: a fact is learned, forgotten, and a pending review over the
    original conversation plus a retry of a conflicting review both fail to recreate it, a review
    over the assistant's own acknowledgement of the forget does not re-add it, and a later user
-   restatement does.
+   restatement does. Deleting a whole memory note through the notes UI and through the delete tool
+   is verified to record a suppression for every entry it held, and a raw repository delete of a
+   memory-labelled note is verified to be refused.
 3. **Prompts, settings and documentation.** The curator prompt in `prompts.yaml`; the read and
    contribute settings on the profiles that carry them and the household default; a line in the
    assistant system prompt about what memory is and how to honour "forget"; `docs/user/memory.md`
