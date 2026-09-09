@@ -246,12 +246,15 @@ exists, and one new read-side rule where it does not:
 - **Read policy**: every note exposed to the curator carries the `memory` label. Visibility grants
   alone do not give this: a note is visible when its labels are a subset of the reader's grants, so
   an unlabelled note is visible to every reader, including one granted only `memory`. The curator
-  therefore runs under a **read policy** that adds a required-label filter at the repository, the
-  read-side mirror of the write policy's required labels, and every path that surfaces notes to it
-  (the context provider's prompt notes, the title list, the skill catalogue, and `get_note` by
-  title) goes through that policy. A conformance rule keeps it that way. The curator cannot notice
-  that a fact is already in a user note, which is a small duplication cost the foreground assistant,
-  which sees both, can repair.
+  therefore runs under a **read policy** that adds a required-label filter, the read-side mirror of
+  the write policy's required labels, enforced at every boundary where notes or skills are resolved
+  for a profile: the notes repository for stored notes and the skill registry for file-based skills,
+  which have no labels and would otherwise pass any grant set for the same subset reason. One policy
+  object is what both boundaries consult, so every path that surfaces notes to the curator (the
+  context provider's prompt notes, the title list, the skill catalogue, and `get_note` by title,
+  including its file-skill fallback) goes through it. A conformance rule keeps it that way. The
+  curator cannot notice that a fact is already in a user note, which is a small duplication cost the
+  foreground assistant, which sees both, can repair.
 - **Tools**: reading and writing memory entries. No document search: it is the widest path from the
   indexed corpus into a silent turn, and the curator has no need of it. No delete tool: deletion is
   not a write under the confinement policy, so `delete_note` would let the curator remove any note
@@ -422,12 +425,13 @@ Each milestone is independently useful and verifiable.
    and foreground tool paths alike; to fail a whole change set on one rejected operation and keep
    the stretch reviewable; to accept a manual addition from the notes UI with the editor as its
    evidence; and to keep two facts from one message as distinct entries so forgetting one leaves the
-   other. The read policy is verified by seeding an unlabelled note and a default-labelled note and
-   asserting neither reaches the curator through the context provider, the title list, the skill
-   catalogue or `get_note`; a conformance rule asserts every note read the curator can reach goes
-   through the policy. Conformance also confirms the curator's write policy carries the `memory`
-   floor and that its effective tool set, global grants included, is exactly the memory entry tools.
-   Skip counters and skipped-volume gauges land here, on the existing metrics surface.
+   other. The read policy is verified by seeding an unlabelled note, a default-labelled note and an
+   unlabelled file-based skill and asserting none reaches the curator through the context provider,
+   the title list, the skill catalogue or `get_note`, including the file-skill fallback; a
+   conformance rule asserts every note or skill read the curator can reach goes through the policy.
+   Conformance also confirms the curator's write policy carries the `memory` floor and that its
+   effective tool set, global grants included, is exactly the memory entry tools. Skip counters and
+   skipped-volume gauges land here, on the existing metrics surface.
 2. **Forgetting.** Suppression records, applier rejection, foreground "forget". Verified by the
    reconstruction scenario end to end: a fact is learned, forgotten, and a pending review over the
    original conversation plus a retry of a conflicting review both fail to recreate it, while a
