@@ -380,7 +380,12 @@ The curator prompt is short and operational. Its instructions, at approach level
 Idle reviews are incremental and local to one conversation, so memory can accumulate near-duplicate
 entries across topic notes and the core note drifts toward the cap. A consolidation pass runs under
 the same curator profile over the memory entries alone, with no transcript, and merges duplicates,
-resolves contradictions, and prunes entries whose own dates or wording mark them as expired.
+resolves contradictions, and prunes entries whose own dates or wording mark them as expired. Its
+input is bounded by partition, since there is no transcript to select against: one invocation per
+topic note, each a natural unit that the review process keeps to a single theme, plus one invocation
+over the core note and the topic index for cross-topic reconciliation. A topic note that has itself
+outgrown the input budget is split by theme into two topics first, as an ordinary change set, and
+each half consolidated on its own. Verified against a store larger than one model request.
 Contradiction resolution uses the entries' kinds and applicable periods, not only assertion dates:
 an explicit correction outranks an inference, and a later assertion about the past does not
 overwrite a current preference. It has no calendar or tool access, so it never judges whether
@@ -507,8 +512,9 @@ Each milestone is independently useful and verifiable.
    indicator. Verified by frontend tests and a functional test that undo produces a suppression.
 7. **Consolidation pass.** Gated on review volume; merges, resolves by kind and period, prunes,
    refuses a pass that changes more than the allowed share of entries. Verified by seeded duplicate
-   and contradictory entries, and by three over-share passes, one each through removals, merges and
-   updates, all rejected.
+   and contradictory entries, by three over-share passes, one each through removals, merges and
+   updates, all rejected, and by a seeded store larger than one model request being consolidated
+   partition by partition, including a topic note that must be split first.
 
 ## Open questions
 
