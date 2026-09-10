@@ -157,7 +157,7 @@ class TaintAuditArgumentsSummary(TypedDict):
     value_types: dict[str, str]
 
 
-class TaintAuditReviewContext(TypedDict):
+class TaintAuditReviewContext(TypedDict, total=False):
     """Audit-safe summary of the policy contexts delegated to a reviewer."""
 
     delegating_contexts: list[str]
@@ -165,6 +165,9 @@ class TaintAuditReviewContext(TypedDict):
     fallback_verdict: str
     used_fallback: bool
     destination_echo: bool | None
+    total_source_count: int
+    distinct_source_count: int
+    omitted_source_count: int
 
 
 class TaintAuditEventRow(TypedDict):

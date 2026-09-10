@@ -1235,9 +1235,13 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
         await self.wrapped_provider.close()
 
 
-def _taint_audit_sources(state: TurnTaintState) -> list[TaintAuditSourceSummary]:
+def _taint_audit_sources(
+    state: TurnTaintState,
+    *,
+    max_sources: int = 12,
+) -> list[TaintAuditSourceSummary]:
     summaries: list[TaintAuditSourceSummary] = []
-    for source in state.sources:
+    for source in state.sources[:max_sources]:
         trusted = not is_externally_authored(source.tier)
         summaries.append({
             # These are enum-backed, closed-vocabulary provenance fields.
@@ -2853,6 +2857,60 @@ class TaintTrackingToolsProvider(ToolsProvider):
         except Exception:
             logger.exception("Detached tool-call shadow review failed")
 
+    async def _record_taint_audit_event(
+        self,
+        *,
+        context: ToolExecutionContext,
+        event_type: str,
+        tool_name: str,
+        tool_call_id: str | None,
+        sink_class: str | None,
+        state: TurnTaintState,
+        requested_outcome: str | None,
+        effective_outcome: str | None,
+        mode: str | None,
+        reason: str,
+        arguments_summary: TaintAuditArgumentsSummary | None,
+        artifact_id: str | None = None,
+        review_verdict: str | None = None,
+        review_status: str | None = None,
+        review_latency_ms: float | None = None,
+        review_context: TaintAuditReviewContext | None = None,
+    ) -> str:
+        """Persist a taint audit event with bounded sources and provenance counts."""
+        event_id = str(uuid.uuid4())
+        payload_context: TaintAuditReviewContext = (
+            dict(review_context) if review_context is not None else {}  # type: ignore[assignment]
+        )
+        payload_context["total_source_count"] = state.total_source_count
+        payload_context["distinct_source_count"] = state.distinct_source_count
+        payload_context["omitted_source_count"] = state.omitted_source_count
+
+        await context.db_context.taint_audit_events.add(
+            event_id=event_id,
+            event_type=event_type,
+            conversation_id=context.conversation_id,
+            turn_id=context.turn_id,
+            processing_profile_id=context.processing_profile_id,
+            subconversation_id=context.subconversation_id,
+            tool_name=tool_name,
+            tool_call_id=tool_call_id,
+            sink_class=sink_class,
+            max_tier=state.max_tier.config_value,
+            sources=_taint_audit_sources(state),
+            requested_outcome=requested_outcome,
+            effective_outcome=effective_outcome,
+            mode=mode,
+            reason=reason,
+            arguments_summary=arguments_summary,
+            artifact_id=artifact_id,
+            review_verdict=review_verdict,
+            review_status=review_status,
+            review_latency_ms=review_latency_ms,
+            review_context=payload_context,
+        )
+        return event_id
+
     async def _record_tool_call_review_audit(
         self,
         *,
@@ -2879,19 +2937,13 @@ class TaintTrackingToolsProvider(ToolsProvider):
             "used_fallback": result.used_fallback,
             "destination_echo": destination_echo,
         }
-        event_id = str(uuid.uuid4())
-        await context.db_context.taint_audit_events.add(
-            event_id=event_id,
+        return await self._record_taint_audit_event(
+            context=context,
             event_type="tool_call_review",
-            conversation_id=context.conversation_id,
-            turn_id=context.turn_id,
-            processing_profile_id=context.processing_profile_id,
-            subconversation_id=context.subconversation_id,
             tool_name=descriptor.name,
             tool_call_id=call_id,
             sink_class=sink_class.value,
-            max_tier=state.max_tier.config_value,
-            sources=_taint_audit_sources(state),
+            state=state,
             requested_outcome="review",
             effective_outcome=result.verdict.value,
             mode=mode.value if mode is not None else None,
@@ -2905,7 +2957,6 @@ class TaintTrackingToolsProvider(ToolsProvider):
             review_latency_ms=result.latency_ms,
             review_context=review_context,
         )
-        return event_id
 
     async def _record_confined_exemption_audit(
         self,
@@ -2917,18 +2968,27 @@ class TaintTrackingToolsProvider(ToolsProvider):
         state: TurnTaintState,
         evaluation: TaintPolicyEvaluation,
     ) -> None:
-        await context.db_context.taint_audit_events.add(
-            event_id=str(uuid.uuid4()),
+        review_context: TaintAuditReviewContext = {
+            "delegating_contexts": [
+                f"taint_cell:{state.max_tier.config_value}."
+                f"{evaluation.sink_class.value}"
+            ],
+            "allowed_verdicts": [],
+            "fallback_verdict": (
+                evaluation.fallback_outcome.value
+                if evaluation.fallback_outcome is not None
+                else ToolCallReviewVerdict.CONFIRM.value
+            ),
+            "used_fallback": False,
+            "destination_echo": None,
+        }
+        await self._record_taint_audit_event(
+            context=context,
             event_type="tool_call_review",
-            conversation_id=context.conversation_id,
-            turn_id=context.turn_id,
-            processing_profile_id=context.processing_profile_id,
-            subconversation_id=context.subconversation_id,
             tool_name=descriptor.name,
             tool_call_id=call_id,
             sink_class=evaluation.sink_class.value,
-            max_tier=state.max_tier.config_value,
-            sources=_taint_audit_sources(state),
+            state=state,
             requested_outcome=TaintPolicyOutcome.ADJUDICATE.value,
             effective_outcome=TaintPolicyOutcome.AUDIT.value,
             mode=evaluation.mode.value,
@@ -2942,18 +3002,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 safe_keys=_descriptor_argument_keys(descriptor),
             ),
             review_status=ToolCallReviewStatus.CONFINED_EXEMPTION.value,
-            review_context={
-                "delegating_contexts": [
-                    f"taint_cell:{state.max_tier.config_value}."
-                    f"{evaluation.sink_class.value}"
-                ],
-                "allowed_verdicts": [],
-                "fallback_verdict": evaluation.fallback_outcome.value
-                if evaluation.fallback_outcome is not None
-                else ToolCallReviewVerdict.CONFIRM.value,
-                "used_fallback": False,
-                "destination_echo": None,
-            },
+            review_context=review_context,
         )
 
     def _review_denial_result(
@@ -3122,18 +3171,22 @@ class TaintTrackingToolsProvider(ToolsProvider):
         status: str,
     ) -> None:
         """Persist one stable, countable event when a denial threshold trips."""
-        await context.db_context.taint_audit_events.add(
-            event_id=str(uuid.uuid4()),
+        review_context: TaintAuditReviewContext = {
+            "delegating_contexts": ["denial_threshold"],
+            "allowed_verdicts": sorted(
+                verdict.value for verdict in constraints.available_verdicts
+            ),
+            "fallback_verdict": constraints.fallback_verdict.value,
+            "used_fallback": False,
+            "destination_echo": None,
+        }
+        await self._record_taint_audit_event(
+            context=context,
             event_type="tool_call_review_escalation",
-            conversation_id=context.conversation_id,
-            turn_id=context.turn_id,
-            processing_profile_id=context.processing_profile_id,
-            subconversation_id=context.subconversation_id,
             tool_name=descriptor.name,
             tool_call_id=call_id,
             sink_class=sink_class.value,
-            max_tier=state.max_tier.config_value,
-            sources=_taint_audit_sources(state),
+            state=state,
             requested_outcome="review_escalation",
             effective_outcome=(
                 ToolCallReviewVerdict.DENY.value
@@ -3156,15 +3209,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             review_verdict=ToolCallReviewVerdict.DENY.value,
             review_status=status,
             review_latency_ms=None,
-            review_context={
-                "delegating_contexts": ["denial_threshold"],
-                "allowed_verdicts": sorted(
-                    verdict.value for verdict in constraints.available_verdicts
-                ),
-                "fallback_verdict": constraints.fallback_verdict.value,
-                "used_fallback": False,
-                "destination_echo": None,
-            },
+            review_context=review_context,
         )
 
     async def _merge_argument_taint_into_context(
@@ -3302,18 +3347,13 @@ class TaintTrackingToolsProvider(ToolsProvider):
         evaluation: TaintPolicyEvaluation,
         safe_argument_keys: Collection[str] = (),
     ) -> None:
-        await context.db_context.taint_audit_events.add(
-            event_id=str(uuid.uuid4()),
+        await self._record_taint_audit_event(
+            context=context,
             event_type="policy_evaluation",
-            conversation_id=context.conversation_id,
-            turn_id=context.turn_id,
-            processing_profile_id=context.processing_profile_id,
-            subconversation_id=context.subconversation_id,
             tool_name=tool_name,
             tool_call_id=call_id,
             sink_class=evaluation.sink_class.value,
-            max_tier=state.max_tier.config_value,
-            sources=_taint_audit_sources(state),
+            state=state,
             requested_outcome=evaluation.requested_outcome.value,
             effective_outcome=evaluation.effective_outcome.value,
             mode=evaluation.mode.value,
@@ -3428,18 +3468,13 @@ class TaintTrackingToolsProvider(ToolsProvider):
         call_id: str | None,
         state: TurnTaintState,
     ) -> None:
-        await context.db_context.taint_audit_events.add(
-            event_id=str(uuid.uuid4()),
+        await self._record_taint_audit_event(
+            context=context,
             event_type="result_taint",
-            conversation_id=context.conversation_id,
-            turn_id=context.turn_id,
-            processing_profile_id=context.processing_profile_id,
-            subconversation_id=context.subconversation_id,
             tool_name=descriptor.name,
             tool_call_id=call_id,
             sink_class=None,
-            max_tier=state.max_tier.config_value,
-            sources=_taint_audit_sources(state),
+            state=state,
             requested_outcome=None,
             effective_outcome=None,
             mode=self._taint_evaluator.mode.value,

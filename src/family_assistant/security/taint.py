@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import IntEnum, StrEnum
@@ -11,7 +12,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, TypedDict, cast
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Iterable, Mapping, Sequence
 
     from family_assistant.tools.metadata import ToolDescriptor
 
@@ -221,6 +222,63 @@ class SensitiveReadRecord:
     query_origin: Literal["direct_user", "model_generated", "tool_or_history"]
 
 
+DEFAULT_MAX_SOURCES: int = 12
+DEFAULT_MAX_SEEN_KEYS: int = 128
+
+TaintSourceKey = tuple[str, str | None, str, tuple[str, ...], str]
+TaintSourceSortKey = tuple[int, str, str, tuple[str, ...], str]
+
+
+def taint_source_semantic_key(source: TaintSource) -> TaintSourceKey:
+    """Return the stable semantic identity of a taint source."""
+    return (
+        source.source_type.value,
+        source.source_id,
+        source.tier.config_value,
+        tuple(sorted(source.labels)),
+        source.reason,
+    )
+
+
+def taint_source_sort_key(source: TaintSource) -> TaintSourceSortKey:
+    """Deterministic sort key for taint sources.
+
+    Orders lower trust tiers to higher trust tiers so the highest-tier taint
+    escalation remains at the tail of the retained sequence, followed by
+    source type, source id, labels, and reason for complete stability.
+    """
+    return (
+        int(source.tier),
+        source.source_type.value,
+        source.source_id or "",
+        tuple(sorted(source.labels)),
+        source.reason,
+    )
+
+
+def order_taint_sources(sources: Iterable[TaintSource]) -> tuple[TaintSource, ...]:
+    """Order taint sources deterministically."""
+    return tuple(sorted(sources, key=taint_source_sort_key))
+
+
+def canonicalize_taint_sources(
+    sources: Iterable[TaintSource],
+    *,
+    max_sources: int = DEFAULT_MAX_SOURCES,
+) -> tuple[TaintSource, ...]:
+    """Deduplicate sources by semantic key and sort deterministically."""
+    seen_keys: set[TaintSourceKey] = set()
+    distinct: list[TaintSource] = []
+    for source in sources:
+        key = taint_source_semantic_key(source)
+        if key not in seen_keys:
+            seen_keys.add(key)
+            distinct.append(source)
+    if len(distinct) > max_sources:
+        distinct = distinct[-max_sources:]
+    return order_taint_sources(distinct)
+
+
 @dataclass(frozen=True, slots=True)
 class TurnTaintState:
     """Immutable taint state for a single processing turn."""
@@ -232,6 +290,38 @@ class TurnTaintState:
     history_high_taint_present: bool
     sequence: int = 0
     approved_sinks: frozenset[str] = frozenset()
+    total_source_count: int = 0
+    distinct_source_count: int = 0
+    has_explicit_counts: bool = False
+    _seen_keys: tuple[int, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self._seen_keys and self.sources:
+            seen_hashes: list[int] = []
+            distinct: list[TaintSource] = []
+            for s in self.sources:
+                h = hash(taint_source_semantic_key(s))
+                if h not in seen_hashes:
+                    seen_hashes.append(h)
+                    distinct.append(s)
+            retained_fifo = tuple(distinct[-DEFAULT_MAX_SOURCES:])
+            object.__setattr__(self, "sources", retained_fifo)
+            # Bound and compact deduplication index to 64-bit integer hashes of recent distinct sources
+            object.__setattr__(
+                self,
+                "_seen_keys",
+                tuple(seen_hashes[-DEFAULT_MAX_SEEN_KEYS:]),
+            )
+            if self.total_source_count == 0:
+                object.__setattr__(self, "total_source_count", len(self.sources))
+            if self.distinct_source_count == 0:
+                object.__setattr__(self, "distinct_source_count", len(distinct))
+
+    @property
+    def omitted_source_count(self) -> int:
+        """Count of distinct sources omitted from retained details."""
+        return max(0, self.distinct_source_count - len(self.sources))
+
     """Exact profile-sink handoffs a human approved for *this* taint.
 
     Travels with the taint rather than beside it, because it is a fact about
@@ -291,13 +381,44 @@ class TurnTaintState:
                 history_high_present = True
             elif fresh_high_sequence is None:
                 fresh_high_sequence = next_sequence
+
+        key_hash = hash(taint_source_semantic_key(source))
+        if key_hash in self._seen_keys:
+            return replace(
+                self,
+                max_tier=max_tier,
+                fresh_high_taint_seen_at_sequence=fresh_high_sequence,
+                history_high_taint_present=history_high_present,
+                sequence=next_sequence,
+                total_source_count=self.total_source_count + 1,
+            )
+
+        new_total = self.total_source_count + 1
+        new_distinct = self.distinct_source_count + 1
+
+        if len(self.sources) >= DEFAULT_MAX_SOURCES:
+            new_sources = (*self.sources[-(DEFAULT_MAX_SOURCES - 1) :], source)
+        else:
+            new_sources = (*self.sources, source)
+
+        if len(self._seen_keys) >= DEFAULT_MAX_SEEN_KEYS:
+            new_seen_keys = (
+                *self._seen_keys[-(DEFAULT_MAX_SEEN_KEYS - 1) :],
+                key_hash,
+            )
+        else:
+            new_seen_keys = (*self._seen_keys, key_hash)
+
         return replace(
             self,
             max_tier=max_tier,
-            sources=(*self.sources, source),
+            sources=new_sources,
             fresh_high_taint_seen_at_sequence=fresh_high_sequence,
             history_high_taint_present=history_high_present,
             sequence=next_sequence,
+            total_source_count=new_total,
+            distinct_source_count=new_distinct,
+            _seen_keys=new_seen_keys,
         )
 
     def add_sensitive_read(
@@ -331,9 +452,15 @@ class TurnTaintState:
             return self
         return replace(self, max_tier=SourceTrustTier.TRUSTED_INTERNAL)
 
-    def to_metadata(self, *, max_sources: int = 12) -> TaintMetadata:
+    def to_metadata(
+        self,
+        *,
+        max_sources: int = DEFAULT_MAX_SOURCES,
+        include_counts: bool | None = None,
+    ) -> TaintMetadata:
         """Serialize a compact metadata representation for persistence."""
-        return {
+        retained = self.sources[-max_sources:]
+        metadata: TaintMetadata = {
             "version": TAINT_METADATA_VERSION,
             "max_tier": self.max_tier.config_value,
             "history_high_taint_present": self.history_high_taint_present,
@@ -346,10 +473,22 @@ class TurnTaintState:
                     "labels": sorted(source.labels),
                     "reason": source.reason,
                 }
-                for source in self.sources[-max_sources:]
+                for source in retained
             ],
             "approved_sinks": sorted(self.approved_sinks),
         }
+        should_include_counts = include_counts
+        if should_include_counts is None:
+            should_include_counts = (
+                self.has_explicit_counts
+                or self.omitted_source_count > 0
+                or self.total_source_count > len(retained)
+            )
+        if should_include_counts:
+            metadata["total_source_count"] = self.total_source_count
+            metadata["distinct_source_count"] = self.distinct_source_count
+            metadata["omitted_source_count"] = self.omitted_source_count
+        return metadata
 
     @classmethod
     def from_metadata(
@@ -402,6 +541,58 @@ class TurnTaintState:
             )
         if from_history and state.max_tier >= SourceTrustTier.UNKNOWN_EXTERNAL:
             state = replace(state, history_high_taint_present=True)
+
+        has_explicit = (
+            "total_source_count" in metadata
+            or "distinct_source_count" in metadata
+            or "omitted_source_count" in metadata
+        )
+        if has_explicit:
+            raw_total = metadata.get("total_source_count")
+            raw_distinct = metadata.get("distinct_source_count")
+            raw_omitted = metadata.get("omitted_source_count")
+
+            parsed_total = (
+                _parse_nonnegative_int(raw_total) if raw_total is not None else None
+            )
+            parsed_distinct = (
+                _parse_nonnegative_int(raw_distinct)
+                if raw_distinct is not None
+                else None
+            )
+            parsed_omitted = (
+                _parse_nonnegative_int(raw_omitted) if raw_omitted is not None else None
+            )
+
+            if (
+                (raw_total is not None and parsed_total is None)
+                or (raw_distinct is not None and parsed_distinct is None)
+                or (raw_omitted is not None and parsed_omitted is None)
+            ):
+                return cls.malformed_history_state()
+
+            if parsed_distinct is not None:
+                distinct_count = parsed_distinct
+            elif parsed_omitted is not None:
+                distinct_count = len(state.sources) + parsed_omitted
+            else:
+                distinct_count = state.distinct_source_count
+
+            total_count = (
+                parsed_total
+                if parsed_total is not None
+                else max(distinct_count, state.total_source_count)
+            )
+
+            distinct_count = max(distinct_count, len(state.sources))
+            total_count = max(total_count, distinct_count)
+
+            state = replace(
+                state,
+                total_source_count=total_count,
+                distinct_source_count=distinct_count,
+                has_explicit_counts=True,
+            )
         # Approvals are not carried across a *history* read: a human clearing
         # one turn's content for a sandbox says nothing about a later turn that
         # merely quotes it. They travel only on the delegation boundary, where
@@ -449,6 +640,9 @@ class TaintMetadata(TypedDict, total=False):
     fresh_high_taint_seen_at_sequence: int | None
     sources: list[TaintMetadataSource]
     approved_sinks: list[str]
+    total_source_count: int
+    distinct_source_count: int
+    omitted_source_count: int
 
 
 class TurnTaintTracker(Protocol):
@@ -553,6 +747,19 @@ def merge_taint_state_into_tracker(
     if state.approved_sinks and not from_history:
         merged = replace(
             merged, approved_sinks=merged.approved_sinks | state.approved_sinks
+        )
+    extra_total = max(0, state.total_source_count - len(state.sources))
+    new_distinct = max(merged.distinct_source_count, state.distinct_source_count)
+    if (
+        extra_total > 0
+        or new_distinct != merged.distinct_source_count
+        or state.has_explicit_counts
+    ):
+        merged = replace(
+            merged,
+            total_source_count=merged.total_source_count + extra_total,
+            distinct_source_count=new_distinct,
+            has_explicit_counts=True,
         )
     tracker.replace(merged)
     return merged
@@ -1540,7 +1747,39 @@ def merge_history_taint(messages: Sequence[object]) -> TurnTaintState:
             state = replace(state, max_tier=history_state.max_tier)
         if history_state.history_high_taint_present:
             state = replace(state, history_high_taint_present=True)
+        extra_total = max(
+            0, history_state.total_source_count - len(history_state.sources)
+        )
+        new_distinct = max(
+            state.distinct_source_count, history_state.distinct_source_count
+        )
+        if (
+            extra_total > 0
+            or new_distinct != state.distinct_source_count
+            or history_state.has_explicit_counts
+        ):
+            state = replace(
+                state,
+                total_source_count=state.total_source_count + extra_total,
+                distinct_source_count=new_distinct,
+                has_explicit_counts=True,
+            )
     return state
+
+
+def _parse_nonnegative_int(value: object) -> int | None:
+    """Return a non-negative integer if value is a finite, non-boolean int or float, else None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, float) and math.isfinite(value) and value >= 0:
+        try:
+            converted = int(value)
+            return converted if converted >= 0 else None
+        except (OverflowError, ValueError):
+            return None
+    return None
 
 
 def _source_from_metadata(

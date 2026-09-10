@@ -439,9 +439,13 @@ def _render_conversation(
     return "\n".join(rows) or "[No conversation rows were supplied.]"
 
 
-def _render_provenance_digest(state: TurnTaintState) -> str:
+def _render_provenance_digest(
+    state: TurnTaintState,
+    *,
+    max_sources: int = 12,
+) -> str:
     sources: list[dict[str, object]] = []
-    for index, source in enumerate(state.sources):
+    for index, source in enumerate(state.sources[:max_sources]):
         item: dict[str, object] = {
             "order": index,
             "source_type": source.source_type.value,
@@ -466,6 +470,9 @@ def _render_provenance_digest(state: TurnTaintState) -> str:
     digest = {
         "max_tier": state.max_tier.config_value,
         "sources_in_order": sources,
+        "total_source_count": state.total_source_count,
+        "distinct_source_count": state.distinct_source_count,
+        "omitted_source_count": state.omitted_source_count,
         "sensitive_reads": reads,
         "fresh_high_taint_seen_at_sequence": state.fresh_high_taint_seen_at_sequence,
         "history_high_taint_present": state.history_high_taint_present,
