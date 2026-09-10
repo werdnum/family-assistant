@@ -2765,6 +2765,11 @@ async def test_completed_taint_confirmation_records_result_taint(
     assert len(result_events) == 1
     assert result_events[0]["tool_name"] == "confirmed_browser_untrusted"
     assert result_events[0]["max_tier"] == "unknown_external"
+    result_ctx = result_events[0]["review_context_json"]
+    assert isinstance(result_ctx, dict)
+    assert result_ctx.get("total_source_count") == 2
+    assert result_ctx.get("distinct_source_count") == 2
+    assert result_ctx.get("omitted_source_count") == 0
 
 
 @pytest.mark.asyncio
@@ -3282,3 +3287,105 @@ def test_merge_taint_state_into_tracker_propagates_duplicate_presentation_counts
     assert merged.total_source_count == 50
     assert merged.distinct_source_count == 1
     assert merged.omitted_source_count == 0
+
+
+def test_from_metadata_invalid_counts_safe() -> None:
+    """Non-finite, negative, boolean, or invalid counts are handled safely."""
+    for invalid_val in [float("nan"), float("inf"), 1e400, True, -5, "not_a_number"]:
+        metadata = {
+            "version": "runtime_v2",
+            "max_tier": "known_contact",
+            "history_high_taint_present": False,
+            "sources": [],
+            "total_source_count": invalid_val,
+        }
+        state = TurnTaintState.from_metadata(metadata)
+        # Should conservatively return malformed_history_state without raising
+        assert state.max_tier is SourceTrustTier.UNKNOWN_EXTERNAL
+        assert (
+            state.sources[0].reason
+            == "Malformed taint metadata treated as unknown external."
+        )
+
+
+def test_merge_history_taint_bounds_omitted_sources_without_summing() -> None:
+    """Overlapping omitted provenance across history rows is bounded, not summed."""
+    metadata = {
+        "version": "runtime_v2",
+        "max_tier": "known_contact",
+        "history_high_taint_present": False,
+        "fresh_high_taint_seen_at_sequence": None,
+        "sources": [
+            {
+                "source_type": "tool_output",
+                "source_id": "contact-1",
+                "tier": "known_contact",
+                "labels": ["contact"],
+                "reason": "Repeated contact lookup",
+            }
+        ],
+        "approved_sinks": [],
+        "total_source_count": 20,
+        "distinct_source_count": 20,
+        "omitted_source_count": 19,
+    }
+
+    msg1 = SimpleNamespace(taint_metadata=metadata)
+    msg2 = SimpleNamespace(taint_metadata=metadata)
+
+    merged = merge_history_taint([msg1, msg2])
+    # Total presentations sum across turns (20 + 20 = 40)
+    assert merged.total_source_count == 40
+    # Distinct count is bounded by 20 (not 1 + 19 + 19 = 39)
+    assert merged.distinct_source_count == 20
+    assert merged.omitted_source_count == 19
+
+
+def test_merge_taint_state_into_tracker_bounds_omitted_sources() -> None:
+    """Tracker merge bounds distinct count to upper bound rather than summing omitted."""
+    tracker = InMemoryTurnTaintTracker()
+    state1 = TurnTaintState.from_metadata({
+        "version": "runtime_v2",
+        "max_tier": "known_contact",
+        "history_high_taint_present": False,
+        "fresh_high_taint_seen_at_sequence": None,
+        "sources": [
+            {
+                "source_type": "tool_output",
+                "source_id": "contact-1",
+                "tier": "known_contact",
+                "labels": ["contact"],
+                "reason": "Repeated contact lookup",
+            }
+        ],
+        "approved_sinks": [],
+        "total_source_count": 20,
+        "distinct_source_count": 20,
+        "omitted_source_count": 19,
+    })
+    state2 = TurnTaintState.from_metadata({
+        "version": "runtime_v2",
+        "max_tier": "known_contact",
+        "history_high_taint_present": False,
+        "fresh_high_taint_seen_at_sequence": None,
+        "sources": [
+            {
+                "source_type": "tool_output",
+                "source_id": "contact-1",
+                "tier": "known_contact",
+                "labels": ["contact"],
+                "reason": "Repeated contact lookup",
+            }
+        ],
+        "approved_sinks": [],
+        "total_source_count": 20,
+        "distinct_source_count": 20,
+        "omitted_source_count": 19,
+    })
+
+    merge_taint_state_into_tracker(tracker, state1)
+    merged = merge_taint_state_into_tracker(tracker, state2)
+
+    assert merged.total_source_count == 40
+    assert merged.distinct_source_count == 20
+    assert merged.omitted_source_count == 19

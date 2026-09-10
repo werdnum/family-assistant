@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import IntEnum, StrEnum
@@ -550,17 +551,42 @@ class TurnTaintState:
             raw_total = metadata.get("total_source_count")
             raw_distinct = metadata.get("distinct_source_count")
             raw_omitted = metadata.get("omitted_source_count")
-            total_count = (
-                int(raw_total)
-                if isinstance(raw_total, (int, float))
-                else state.total_source_count
+
+            parsed_total = (
+                _parse_nonnegative_int(raw_total) if raw_total is not None else None
             )
-            if raw_distinct is not None and isinstance(raw_distinct, (int, float)):
-                distinct_count = int(raw_distinct)
-            elif raw_omitted is not None and isinstance(raw_omitted, (int, float)):
-                distinct_count = len(state.sources) + int(raw_omitted)
+            parsed_distinct = (
+                _parse_nonnegative_int(raw_distinct)
+                if raw_distinct is not None
+                else None
+            )
+            parsed_omitted = (
+                _parse_nonnegative_int(raw_omitted) if raw_omitted is not None else None
+            )
+
+            if (
+                (raw_total is not None and parsed_total is None)
+                or (raw_distinct is not None and parsed_distinct is None)
+                or (raw_omitted is not None and parsed_omitted is None)
+            ):
+                return cls.malformed_history_state()
+
+            if parsed_distinct is not None:
+                distinct_count = parsed_distinct
+            elif parsed_omitted is not None:
+                distinct_count = len(state.sources) + parsed_omitted
             else:
                 distinct_count = state.distinct_source_count
+
+            total_count = (
+                parsed_total
+                if parsed_total is not None
+                else max(distinct_count, state.total_source_count)
+            )
+
+            distinct_count = max(distinct_count, len(state.sources))
+            total_count = max(total_count, distinct_count)
+
             state = replace(
                 state,
                 total_source_count=total_count,
@@ -723,12 +749,16 @@ def merge_taint_state_into_tracker(
             merged, approved_sinks=merged.approved_sinks | state.approved_sinks
         )
     extra_total = max(0, state.total_source_count - len(state.sources))
-    extra_distinct = max(0, state.omitted_source_count)
-    if extra_total > 0 or extra_distinct > 0 or state.has_explicit_counts:
+    new_distinct = max(merged.distinct_source_count, state.distinct_source_count)
+    if (
+        extra_total > 0
+        or new_distinct != merged.distinct_source_count
+        or state.has_explicit_counts
+    ):
         merged = replace(
             merged,
             total_source_count=merged.total_source_count + extra_total,
-            distinct_source_count=merged.distinct_source_count + extra_distinct,
+            distinct_source_count=new_distinct,
             has_explicit_counts=True,
         )
     tracker.replace(merged)
@@ -1720,15 +1750,36 @@ def merge_history_taint(messages: Sequence[object]) -> TurnTaintState:
         extra_total = max(
             0, history_state.total_source_count - len(history_state.sources)
         )
-        extra_distinct = max(0, history_state.omitted_source_count)
-        if extra_total > 0 or extra_distinct > 0 or history_state.has_explicit_counts:
+        new_distinct = max(
+            state.distinct_source_count, history_state.distinct_source_count
+        )
+        if (
+            extra_total > 0
+            or new_distinct != state.distinct_source_count
+            or history_state.has_explicit_counts
+        ):
             state = replace(
                 state,
                 total_source_count=state.total_source_count + extra_total,
-                distinct_source_count=state.distinct_source_count + extra_distinct,
+                distinct_source_count=new_distinct,
                 has_explicit_counts=True,
             )
     return state
+
+
+def _parse_nonnegative_int(value: object) -> int | None:
+    """Return a non-negative integer if value is a finite, non-boolean int or float, else None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, float) and math.isfinite(value) and value >= 0:
+        try:
+            converted = int(value)
+            return converted if converted >= 0 else None
+        except (OverflowError, ValueError):
+            return None
+    return None
 
 
 def _source_from_metadata(
