@@ -222,6 +222,7 @@ class SensitiveReadRecord:
 
 
 DEFAULT_MAX_SOURCES: int = 12
+DEFAULT_MAX_SEEN_KEYS: int = 128
 
 TaintSourceKey = tuple[str, str | None, str, tuple[str, ...], str]
 TaintSourceSortKey = tuple[int, str, str, tuple[str, ...], str]
@@ -291,31 +292,29 @@ class TurnTaintState:
     total_source_count: int = 0
     distinct_source_count: int = 0
     has_explicit_counts: bool = False
-    _retained_sources: tuple[TaintSource, ...] = ()
-    _seen_keys: frozenset[TaintSourceKey] = frozenset()
+    _seen_keys: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
-        if not self._retained_sources and self.sources:
-            seen: set[TaintSourceKey] = set()
+        if not self._seen_keys and self.sources:
+            seen_hashes: list[int] = []
             distinct: list[TaintSource] = []
             for s in self.sources:
-                k = taint_source_semantic_key(s)
-                if k not in seen:
-                    seen.add(k)
+                h = hash(taint_source_semantic_key(s))
+                if h not in seen_hashes:
+                    seen_hashes.append(h)
                     distinct.append(s)
             retained_fifo = tuple(distinct[-DEFAULT_MAX_SOURCES:])
-            ordered = order_taint_sources(retained_fifo)
-            object.__setattr__(self, "_retained_sources", retained_fifo)
-            object.__setattr__(self, "sources", ordered)
-            object.__setattr__(self, "_seen_keys", frozenset(seen))
+            object.__setattr__(self, "sources", retained_fifo)
+            # Bound and compact deduplication index to 64-bit integer hashes of recent distinct sources
+            object.__setattr__(
+                self,
+                "_seen_keys",
+                tuple(seen_hashes[-DEFAULT_MAX_SEEN_KEYS:]),
+            )
             if self.total_source_count == 0:
                 object.__setattr__(self, "total_source_count", len(self.sources))
             if self.distinct_source_count == 0:
                 object.__setattr__(self, "distinct_source_count", len(distinct))
-        elif not self.sources and self._retained_sources:
-            object.__setattr__(
-                self, "sources", order_taint_sources(self._retained_sources)
-            )
 
     @property
     def omitted_source_count(self) -> int:
@@ -382,8 +381,8 @@ class TurnTaintState:
             elif fresh_high_sequence is None:
                 fresh_high_sequence = next_sequence
 
-        key = taint_source_semantic_key(source)
-        if key in self._seen_keys:
+        key_hash = hash(taint_source_semantic_key(source))
+        if key_hash in self._seen_keys:
             return replace(
                 self,
                 max_tier=max_tier,
@@ -395,17 +394,19 @@ class TurnTaintState:
 
         new_total = self.total_source_count + 1
         new_distinct = self.distinct_source_count + 1
-        new_seen_keys = self._seen_keys | {key}
 
-        if len(self._retained_sources) >= DEFAULT_MAX_SOURCES:
-            new_retained = (
-                *self._retained_sources[-(DEFAULT_MAX_SOURCES - 1) :],
-                source,
+        if len(self.sources) >= DEFAULT_MAX_SOURCES:
+            new_sources = (*self.sources[-(DEFAULT_MAX_SOURCES - 1) :], source)
+        else:
+            new_sources = (*self.sources, source)
+
+        if len(self._seen_keys) >= DEFAULT_MAX_SEEN_KEYS:
+            new_seen_keys = (
+                *self._seen_keys[-(DEFAULT_MAX_SEEN_KEYS - 1) :],
+                key_hash,
             )
         else:
-            new_retained = (*self._retained_sources, source)
-
-        new_sources = order_taint_sources(new_retained)
+            new_seen_keys = (*self._seen_keys, key_hash)
 
         return replace(
             self,
@@ -416,7 +417,6 @@ class TurnTaintState:
             sequence=next_sequence,
             total_source_count=new_total,
             distinct_source_count=new_distinct,
-            _retained_sources=new_retained,
             _seen_keys=new_seen_keys,
         )
 
@@ -458,7 +458,7 @@ class TurnTaintState:
         include_counts: bool | None = None,
     ) -> TaintMetadata:
         """Serialize a compact metadata representation for persistence."""
-        retained = self.sources[:max_sources]
+        retained = self.sources[-max_sources:]
         metadata: TaintMetadata = {
             "version": TAINT_METADATA_VERSION,
             "max_tier": self.max_tier.config_value,
@@ -722,12 +722,13 @@ def merge_taint_state_into_tracker(
         merged = replace(
             merged, approved_sinks=merged.approved_sinks | state.approved_sinks
         )
-    extra_omitted = state.omitted_source_count
-    if extra_omitted > 0:
+    extra_total = max(0, state.total_source_count - len(state.sources))
+    extra_distinct = max(0, state.omitted_source_count)
+    if extra_total > 0 or extra_distinct > 0 or state.has_explicit_counts:
         merged = replace(
             merged,
-            distinct_source_count=merged.distinct_source_count + extra_omitted,
-            total_source_count=merged.total_source_count + extra_omitted,
+            total_source_count=merged.total_source_count + extra_total,
+            distinct_source_count=merged.distinct_source_count + extra_distinct,
             has_explicit_counts=True,
         )
     tracker.replace(merged)
@@ -1716,12 +1717,15 @@ def merge_history_taint(messages: Sequence[object]) -> TurnTaintState:
             state = replace(state, max_tier=history_state.max_tier)
         if history_state.history_high_taint_present:
             state = replace(state, history_high_taint_present=True)
-        extra_omitted = history_state.omitted_source_count
-        if extra_omitted > 0:
+        extra_total = max(
+            0, history_state.total_source_count - len(history_state.sources)
+        )
+        extra_distinct = max(0, history_state.omitted_source_count)
+        if extra_total > 0 or extra_distinct > 0 or history_state.has_explicit_counts:
             state = replace(
                 state,
-                distinct_source_count=state.distinct_source_count + extra_omitted,
-                total_source_count=state.total_source_count + extra_omitted,
+                total_source_count=state.total_source_count + extra_total,
+                distinct_source_count=state.distinct_source_count + extra_distinct,
                 has_explicit_counts=True,
             )
     return state

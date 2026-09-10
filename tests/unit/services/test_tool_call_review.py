@@ -1530,8 +1530,8 @@ async def test_history_read_is_bounded_to_when_the_work_was_handed_off() -> None
     assert db.before_bounds == [handed_off_at]
 
 
-def test_render_provenance_digest_bounded_and_deterministic() -> None:
-    """Provenance digest bounds rendered sources to 12 and reports provenance counts."""
+def test_render_provenance_digest_bounded_and_fifo_order() -> None:
+    """Provenance digest bounds rendered sources to 12 and preserves FIFO acquisition order."""
     state = TurnTaintState.empty()
     for i in range(25):
         state = state.add_source(
@@ -1568,28 +1568,15 @@ def test_render_provenance_digest_bounded_and_deterministic() -> None:
     assert payload["distinct_source_count"] == 25
     assert payload["omitted_source_count"] == 13
 
-    # Determinism: creating the same distinct sources in a different order yields identical sources_in_order
-    state_reversed = TurnTaintState.empty()
-    for i in reversed(range(25)):
-        state_reversed = state_reversed.add_source(
-            TaintSource(
-                source_type=TaintSourceType.TOOL_OUTPUT,
-                source_id=f"src-{i}",
-                tier=SourceTrustTier.KNOWN_CONTACT,
-                labels=frozenset(),
-                reason=f"Test source {i}",
-            )
-        )
-    digest_reversed = _render_provenance_digest(state_reversed)
-    json_str_reversed = digest_reversed[
-        len("<provenance_digest>\n```json\n") : -len("\n```\n</provenance_digest>")
-    ]
-    payload_reversed = json.loads(json_str_reversed)
-    assert payload["sources_in_order"] == payload_reversed["sources_in_order"]
+    # FIFO acquisition order: the 12 retained sources are the most recent 12 (src-13 through src-24)
+    for idx, item in enumerate(payload["sources_in_order"]):
+        assert item["order"] == idx
+        assert item["source_type"] == "tool_output"
+        assert item["tier"] == "known_contact"
 
 
-def test_taint_audit_sources_bounded_and_deterministic() -> None:
-    """Taint audit source summaries are bounded and deterministically ordered."""
+def test_taint_audit_sources_bounded_and_fifo_order() -> None:
+    """Taint audit source summaries are bounded and preserve FIFO acquisition order."""
     state = TurnTaintState.empty()
     for i in range(25):
         state = state.add_source(
@@ -1604,7 +1591,9 @@ def test_taint_audit_sources_bounded_and_deterministic() -> None:
 
     summaries = _taint_audit_sources(state)
     assert len(summaries) == 12
-    # Verify deterministic ordering: source_ids match state.sources
+    # Verify FIFO acquisition order: source_ids match state.sources
     expected_ids = [s.source_id for s in state.sources[:12]]
     actual_ids = [s["source_id"] for s in summaries]
     assert actual_ids == expected_ids
+    assert actual_ids[0] == "src-13"
+    assert actual_ids[-1] == "src-24"

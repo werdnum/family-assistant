@@ -21,6 +21,7 @@ from family_assistant.llm.tool_call import ToolCallFunction, ToolCallItem
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.scripting.monty_engine import MontyEngine
 from family_assistant.security.taint import (
+    DEFAULT_MAX_SEEN_KEYS,
     DEFAULT_MAX_SOURCES,
     LEGACY_MISSING_TAINT_METADATA_LABEL,
     InMemoryTurnTaintTracker,
@@ -36,8 +37,10 @@ from family_assistant.security.taint import (
     TaintSourceType,
     TurnTaintState,
     amnestied_history_taint_metadata,
+    canonicalize_taint_sources,
     merge_history_taint,
     merge_taint_policy_config,
+    merge_taint_state_into_tracker,
     resolve_tool_sink_class,
     strip_legacy_labeled_echoes,
     taint_source_semantic_key,
@@ -2968,7 +2971,7 @@ def test_many_distinct_sources_bounds_in_memory_and_tracks_omitted() -> None:
 
 
 def test_taint_source_deterministic_ordering_and_output() -> None:
-    """Distinct sources yield identical deterministic order regardless of insertion order."""
+    """Sources preserve FIFO acquisition order; canonicalize_taint_sources provides deterministic order."""
     s1 = TaintSource(
         source_type=TaintSourceType.USER_MESSAGE,
         source_id="usr-1",
@@ -3013,17 +3016,21 @@ def test_taint_source_deterministic_ordering_and_output() -> None:
         .add_source(s1, from_history=True)
     )
 
-    assert state_order_1.sources == state_order_2.sources == state_order_3.sources
-    assert (
-        state_order_1.to_metadata()
-        == state_order_2.to_metadata()
-        == state_order_3.to_metadata()
-    )
+    # In-memory and reviewer state preserves FIFO acquisition order
+    assert state_order_1.sources == (s1, s2, s3)
+    assert state_order_2.sources == (s3, s1, s2)
+    assert state_order_3.sources == (s2, s3, s1)
+
+    # Canonical comparison function sorts deterministically across orders
+    canon_1 = canonicalize_taint_sources(state_order_1.sources)
+    canon_2 = canonicalize_taint_sources(state_order_2.sources)
+    canon_3 = canonicalize_taint_sources(state_order_3.sources)
+    assert canon_1 == canon_2 == canon_3
 
     # The deterministic order sorts lower trust tiers first and highest tier last
-    assert state_order_1.sources[0].tier is SourceTrustTier.TRUSTED_USER
-    assert state_order_1.sources[1].tier is SourceTrustTier.KNOWN_CONTACT
-    assert state_order_1.sources[2].tier is SourceTrustTier.UNKNOWN_EXTERNAL
+    assert canon_1[0].tier is SourceTrustTier.TRUSTED_USER
+    assert canon_1[1].tier is SourceTrustTier.KNOWN_CONTACT
+    assert canon_1[2].tier is SourceTrustTier.UNKNOWN_EXTERNAL
 
 
 def test_preservation_of_max_tier_and_flags_across_truncation() -> None:
@@ -3185,3 +3192,93 @@ def test_legacy_metadata_round_trip_compatibility() -> None:
     assert reserialized2.get("total_source_count") == 50
     assert reserialized2.get("distinct_source_count") == 20
     assert reserialized2.get("omitted_source_count") == 19
+
+
+def test_seen_keys_index_is_strictly_bounded() -> None:
+    """The deduplication index stays strictly bounded by DEFAULT_MAX_SEEN_KEYS and compacted to ints."""
+    state = TurnTaintState.empty()
+    for i in range(200):
+        source = TaintSource(
+            source_type=TaintSourceType.TOOL_OUTPUT,
+            source_id=f"tool-{i}",
+            tier=SourceTrustTier.TRUSTED_INTERNAL,
+            labels=frozenset({f"label-{i}"}),
+            reason=f"Reason {i}",
+        )
+        state = state.add_source(source)
+
+    # _seen_keys must never grow beyond DEFAULT_MAX_SEEN_KEYS and must store compacted integer hashes
+    assert len(state._seen_keys) <= DEFAULT_MAX_SEEN_KEYS
+    assert len(state._seen_keys) == DEFAULT_MAX_SEEN_KEYS
+    assert all(isinstance(h, int) for h in state._seen_keys)
+    # The most recent source is retained in the bounded window
+    latest_hash = hash(taint_source_semantic_key(source))
+    assert latest_hash in state._seen_keys
+
+
+def test_merge_history_taint_propagates_duplicate_presentation_counts() -> None:
+    """Duplicate presentation counts in history are carried through state merges."""
+    # 1 retained source, but 50 total presentations
+    metadata: TaintMetadata = {
+        "version": "runtime_v2",
+        "max_tier": SourceTrustTier.KNOWN_CONTACT.config_value,
+        "history_high_taint_present": False,
+        "fresh_high_taint_seen_at_sequence": None,
+        "sources": [
+            {
+                "source_type": "tool_output",
+                "source_id": "contact-1",
+                "tier": "known_contact",
+                "labels": ["contact"],
+                "reason": "Repeated contact lookup",
+            }
+        ],
+        "approved_sinks": [],
+        "total_source_count": 50,
+        "distinct_source_count": 1,
+        "omitted_source_count": 0,
+    }
+
+    msg1 = SimpleNamespace(taint_metadata=metadata)
+    merged = merge_history_taint([msg1])
+    assert merged.total_source_count == 50
+    assert merged.distinct_source_count == 1
+    assert merged.omitted_source_count == 0
+
+    # Merging two such messages carrying the same source duplicates
+    msg2 = SimpleNamespace(taint_metadata=metadata)
+    merged2 = merge_history_taint([msg1, msg2])
+    assert merged2.total_source_count == 100
+    assert merged2.distinct_source_count == 1
+    assert merged2.omitted_source_count == 0
+
+
+def test_merge_taint_state_into_tracker_propagates_duplicate_presentation_counts() -> (
+    None
+):
+    """merge_taint_state_into_tracker carries duplicate presentation counts."""
+    tracker = InMemoryTurnTaintTracker()
+    state = TurnTaintState.from_metadata({
+        "version": "runtime_v2",
+        "max_tier": "known_contact",
+        "history_high_taint_present": False,
+        "fresh_high_taint_seen_at_sequence": None,
+        "sources": [
+            {
+                "source_type": "tool_output",
+                "source_id": "contact-1",
+                "tier": "known_contact",
+                "labels": ["contact"],
+                "reason": "Repeated contact lookup",
+            }
+        ],
+        "approved_sinks": [],
+        "total_source_count": 50,
+        "distinct_source_count": 1,
+        "omitted_source_count": 0,
+    })
+
+    merged = merge_taint_state_into_tracker(tracker, state)
+    assert merged.total_source_count == 50
+    assert merged.distinct_source_count == 1
+    assert merged.omitted_source_count == 0
