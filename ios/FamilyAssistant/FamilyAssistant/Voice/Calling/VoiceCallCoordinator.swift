@@ -67,8 +67,14 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
     private let controller: any CallRequesting
     private let makeSession: @MainActor (VoiceAudioActivationSignal) -> VoiceCallSessionAudio
     private let handsFreeAccess: VoiceHandsFreeAccess
+    private let routeSettling: any CallRouteSettling
     private let telemetry: VoiceCallTelemetryRecording
     private let logger = Logger(subsystem: "com.familyassistant.app", category: "voice-call")
+
+    /// How long a locked device's call may take to reach CarPlay once CallKit
+    /// has activated it. Short, because the call screen is already showing and
+    /// a refused call should fail promptly rather than hang at "connecting".
+    static let carPlayRouteTimeout: Duration = .seconds(2)
 
     /// Called after an observed session phase change has been handled, including
     /// one belonging to a call that is already torn down. Nothing else marks the
@@ -80,17 +86,26 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
     private var activationSignal: VoiceAudioActivationSignal?
     private var startupTask: Task<Void, Never>?
     private var didReportConnected = false
+    /// Latched when the call is asked for: someone who asked from an unlocked
+    /// phone has crossed the boundary, even if the screen locks during setup.
+    private var unlockedAtRequest = false
+    /// Whether the call may reach the assistant. Nothing the session does —
+    /// microphone permission, the token fetch, the socket — begins before this.
+    private var isAdmitted = false
+    private var routeWaitTask: Task<Void, Never>?
 
     init(
         provider: any CallProviding,
         controller: any CallRequesting,
         handsFreeAccess: VoiceHandsFreeAccess = .system,
+        routeSettling: any CallRouteSettling = SystemCallRouteSettling(),
         telemetry: VoiceCallTelemetryRecording = VoiceCallTelemetry.shared,
         makeSession: @escaping @MainActor (VoiceAudioActivationSignal) -> VoiceCallSessionAudio
     ) {
         self.provider = provider
         self.controller = controller
         self.handsFreeAccess = handsFreeAccess
+        self.routeSettling = routeSettling
         self.telemetry = telemetry
         self.makeSession = makeSession
     }
@@ -137,22 +152,24 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
     /// Ask the system to place the outgoing call. The session itself is not
     /// built until CallKit performs the start action.
     ///
-    /// A refusal on hands-free access is quiet: the request arrives as a user
-    /// activity with no channel back to Siri, and showing a failed call on the
-    /// lock screen of a phone whose holder we have just decided not to talk to
-    /// would be worse than saying nothing. It leaves a breadcrumb instead.
+    /// A locked device is not refused here. Whether the phone is in the car is
+    /// read from the call's own audio route, and the call has no route until
+    /// CallKit has activated it; asked now, the app's inactive audio session
+    /// can report no route at all from inside a CarPlay car. The call is
+    /// therefore placed, and a locked device's call is admitted or failed once
+    /// its route exists — see ``audioSessionActivated(route:)``.
     func startCall() async throws {
-        guard handsFreeAccess.isAllowed else {
-            logger.notice("Refusing a call start: the device is locked and not connected to CarPlay")
-            telemetry.record(
-                "Refused a hands-free assistant call: device locked, not on CarPlay",
-                component: VoiceCallTelemetryComponent.handsFreeRefused
-            )
-            return
-        }
         guard callUUID == nil else { throw VoiceCallError.callAlreadyInProgress }
+        let unlocked = handsFreeAccess.deviceIsUnlocked
+        telemetry.record(
+            "iOS asked the system for an assistant call",
+            component: VoiceCallTelemetryComponent.admission,
+            extraData: ["unlocked_at_request": String(unlocked)]
+        )
         let uuid = UUID()
         callUUID = uuid
+        unlockedAtRequest = unlocked
+        isAdmitted = unlocked
         let handle = CXHandle(type: .generic, value: AssistantCallHandle.value)
         do {
             try await controller.requestStartCall(uuid: uuid, handle: handle)
@@ -224,7 +241,15 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
         action.fulfill()
 
         observePhase(of: built.session, uuid: uuid)
-        startupTask = Task { await built.session.start() }
+        if isAdmitted {
+            startSession(built.session)
+        }
+    }
+
+    /// Only an admitted call's session starts, so a refused one never asks for
+    /// the microphone, fetches a token or opens the socket.
+    private func startSession(_ session: any VoiceCallSession) {
+        startupTask = Task { await session.start() }
         telemetry.record("iOS started a call", component: VoiceCallTelemetryComponent.started)
     }
 
@@ -249,12 +274,81 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
         action.fulfill()
     }
 
-    func audioSessionActivated() {
-        activationSignal?.signalActivated()
+    /// Where a locked device's call is decided, because the route only exists
+    /// from here. The route is recorded for every call, admitted or not: which
+    /// ports a real car reports is the thing a device test has to establish.
+    ///
+    /// A route that is not yet CarPlay gets a short wait rather than an
+    /// immediate refusal, since the system may activate the session before it
+    /// has finished moving the call to the car. Until the call is admitted the
+    /// activation is withheld from the session's audio engine.
+    func audioSessionActivated(route: VoiceAudioRoute) {
+        telemetry.record(
+            "CallKit activated the call's audio session",
+            component: VoiceCallTelemetryComponent.route,
+            extraData: route.telemetryFields
+        )
+        guard let uuid = callUUID else { return }
+        if isAdmitted {
+            activationSignal?.signalActivated()
+            return
+        }
+        if VoiceHandsFreeAccess.admitsCall(unlockedAtRequest: unlockedAtRequest, route: route) {
+            admit(route: route)
+            return
+        }
+        guard routeWaitTask == nil else { return }
+        routeWaitTask = Task { [weak self, routeSettling] in
+            let settled = await routeSettling.carPlayRoute(within: Self.carPlayRouteTimeout)
+            guard !Task.isCancelled else { return }
+            self?.finishRouteWait(uuid: uuid, route: settled)
+        }
     }
 
     func audioSessionDeactivated() {
         activationSignal?.signalDeactivated()
+        // A wait that outlives the activation it began on would admit a call
+        // whose audio is no longer live. The next activation starts it again.
+        routeWaitTask?.cancel()
+        routeWaitTask = nil
+    }
+
+    private func finishRouteWait(uuid: UUID, route: VoiceAudioRoute) {
+        guard uuid == callUUID, !isAdmitted else { return }
+        routeWaitTask = nil
+        if VoiceHandsFreeAccess.admitsCall(unlockedAtRequest: unlockedAtRequest, route: route) {
+            admit(route: route)
+        } else {
+            refuse(uuid: uuid, route: route)
+        }
+    }
+
+    private func admit(route: VoiceAudioRoute) {
+        isAdmitted = true
+        telemetry.record(
+            "Admitted a call from a locked device: its audio reached CarPlay",
+            component: VoiceCallTelemetryComponent.admission,
+            extraData: route.telemetryFields
+        )
+        // The signal is latched, so releasing it before the session reaches
+        // its audio start is safe.
+        activationSignal?.signalActivated()
+        if let session {
+            startSession(session)
+        }
+    }
+
+    /// A refused call has already been shown as a call, so it ends as a failed
+    /// one: there is no quieter way out once CallKit has put it on screen, and
+    /// that is the price of deciding on the route the system actually chose.
+    private func refuse(uuid: UUID, route: VoiceAudioRoute) {
+        logger.notice("Refusing a call: the device was locked and the call never reached CarPlay")
+        telemetry.record(
+            "Refused a hands-free assistant call: device locked, call not routed to CarPlay",
+            component: VoiceCallTelemetryComponent.handsFreeRefused,
+            extraData: route.telemetryFields
+        )
+        teardown(uuid: uuid, reporting: .failed)
     }
 
     func callProviderDidReset() {
@@ -317,6 +411,9 @@ final class VoiceCallCoordinator: VoiceCallEventHandling {
         callUUID = nil
         startupTask?.cancel()
         startupTask = nil
+        routeWaitTask?.cancel()
+        routeWaitTask = nil
+        isAdmitted = false
         activationSignal = nil
         didReportConnected = false
         let session = self.session
