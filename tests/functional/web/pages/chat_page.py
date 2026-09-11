@@ -5,9 +5,34 @@ import time
 from typing import Any
 
 import httpx
-from playwright.async_api import expect
+from playwright.async_api import Locator, expect
 
 from .base_page import BasePage
+
+# The thread's scroll container is the nearest scrollable ancestor of a message.
+_FIND_THREAD_VIEWPORT_JS = """
+(el) => {
+    let node = el.parentElement;
+    while (node) {
+        const overflowY = getComputedStyle(node).overflowY;
+        if ((overflowY === 'auto' || overflowY === 'scroll')
+            && node.scrollHeight > node.clientHeight) {
+            return node;
+        }
+        node = node.parentElement;
+    }
+    throw new Error('No scrollable thread viewport found');
+}
+"""
+
+# Rect top after two animation frames, so late layout from a commit has run.
+_SETTLED_RECT_TOP_JS = """
+(el) => new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+        resolve(el.getBoundingClientRect().top);
+    }));
+})
+"""
 
 
 class ChatPage(BasePage):
@@ -28,6 +53,7 @@ class ChatPage(BasePage):
     MESSAGE_ASSISTANT = '[data-testid="assistant-message"]'
     MESSAGE_USER_CONTENT = '[data-testid="user-message-content"]'
     MESSAGE_ASSISTANT_CONTENT = '[data-testid="assistant-message-content"]'
+    MESSAGES = f"{MESSAGE_USER}, {MESSAGE_ASSISTANT}"
     MESSAGE_TOOL_CALL = '[data-ui="tool-call-content"], .tool-call-content'
     TOOL_GROUP = '[data-testid="tool-group"]'
     TOOL_GROUP_TRIGGER = '[data-testid="tool-group-trigger"]'
@@ -828,6 +854,44 @@ class ChatPage(BasePage):
             f"document.querySelectorAll('{selector}').length >= {expected_count}",
             timeout=timeout,
         )
+
+    def message_with_text(self, text: str) -> Locator:
+        """Locate a thread message by its exact text.
+
+        Scoped to thread messages, since the sidebar previews the latest one too.
+        """
+        return self.page.locator(self.MESSAGES).get_by_text(text, exact=True)
+
+    def load_earlier_messages_button(self) -> Locator:
+        """The button at the top of the thread that loads older history."""
+        return self.page.get_by_role("button", name="Load earlier messages")
+
+    async def rendered_message_count(self) -> int:
+        """Number of user and assistant messages rendered in the thread."""
+        return await self.page.locator(self.MESSAGES).count()
+
+    async def scroll_thread_to_top(self) -> None:
+        """Scroll the thread's viewport to its top."""
+        viewport = await self.page.locator(self.MESSAGES).first.evaluate_handle(
+            _FIND_THREAD_VIEWPORT_JS
+        )
+        await viewport.evaluate("(el) => { el.scrollTop = 0; }")
+        await self.page.wait_for_function("(el) => el.scrollTop === 0", arg=viewport)
+
+    async def load_earlier_messages(self, timeout: int = 15000) -> None:
+        """Click "Load earlier messages" and wait for the older messages to render."""
+        count_before = await self.rendered_message_count()
+        await self.load_earlier_messages_button().click()
+        await self.page.wait_for_function(
+            "([selector, previous]) => document.querySelectorAll(selector).length > previous",
+            arg=[self.MESSAGES, count_before],
+            timeout=timeout,
+        )
+
+    @staticmethod
+    async def settled_top(locator: Locator) -> float:
+        """The element's viewport-relative top once pending layout has run."""
+        return float(await locator.evaluate(_SETTLED_RECT_TOP_JS))
 
     async def wait_for_message_content(
         self, expected_text: str, role: str = "assistant", timeout: int = 10000
