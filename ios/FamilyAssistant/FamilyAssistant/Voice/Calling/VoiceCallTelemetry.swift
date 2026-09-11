@@ -39,8 +39,13 @@ enum VoiceCallTelemetryComponent {
     static let started = "Voice.call.started"
     /// CallKit accepted the transaction and the start action was failed anyway.
     static let startFailed = "Voice.call.startFailed"
-    /// A hands-free start was refused: the device was locked and not connected
-    /// to CarPlay.
+    /// Whether the device was unlocked when the call was asked for, and — for
+    /// a locked device — the moment the call's route let it through.
+    static let admission = "Voice.call.admission"
+    /// CallKit activated the call's audio session, and the route it chose.
+    static let route = "Voice.call.route"
+    /// A hands-free call was refused: the device was locked when it was asked
+    /// for, and the call's audio never reached CarPlay.
     static let handsFreeRefused = "Voice.call.handsFreeAccess"
     /// A request arrived while a call was already running.
     static let duplicate = "Voice.call.duplicate"

@@ -37,9 +37,44 @@ protocol VoiceCallEventHandling: AnyObject {
     func performStartCall(uuid: UUID, action: any CallAction)
     func performEndCall(uuid: UUID, action: any CallAction)
     func performSetMuted(uuid: UUID, muted: Bool, action: any CallAction)
-    func audioSessionActivated()
+    /// `route` is read from the session CallKit hands over, at the moment it
+    /// hands it over: it is the first point at which the call's route exists.
+    func audioSessionActivated(route: VoiceAudioRoute)
     func audioSessionDeactivated()
     func callProviderDidReset()
+}
+
+/// Waits a bounded time for a call's audio to reach the car.
+@MainActor
+protocol CallRouteSettling {
+    /// The first route seen that is CarPlay, or the route as it stands once
+    /// `timeout` has passed.
+    func carPlayRoute(within timeout: Duration) async -> VoiceAudioRoute
+}
+
+/// Polled rather than observed: a route settles through route changes and
+/// through ports becoming available, and a bounded poll catches both without
+/// racing a notification subscription against the deadline.
+@MainActor
+struct SystemCallRouteSettling: CallRouteSettling {
+    /// Holds nothing, so it can be built anywhere — including as a default
+    /// argument, which is evaluated outside the main actor.
+    nonisolated init() {}
+
+    func carPlayRoute(within timeout: Duration) async -> VoiceAudioRoute {
+        let clock = ContinuousClock()
+        let deadline = clock.now + timeout
+        var route = VoiceAudioRoute(session: .sharedInstance())
+        while !route.isCarPlay, clock.now < deadline {
+            do {
+                try await Task.sleep(for: .milliseconds(100))
+            } catch {
+                break
+            }
+            route = VoiceAudioRoute(session: .sharedInstance())
+        }
+        return route
+    }
 }
 
 /// The real `CXProvider`, plus the delegate that forwards its callbacks to the
@@ -51,7 +86,9 @@ final class SystemCallProvider: NSObject, CallProviding {
     private let provider: CXProvider
 
     /// One call at a time, audio only, addressed by a generic handle rather than
-    /// a phone number or an address-book entry.
+    /// a phone number or an address-book entry. Kept out of Recents: a
+    /// conversation with the assistant is not a call anyone wants in their call
+    /// history, and a call refused on a locked phone even less so.
     ///
     /// `CXProviderConfiguration()` takes its localized name from the bundle's
     /// display name, which is already localized per app language; the
@@ -62,6 +99,7 @@ final class SystemCallProvider: NSObject, CallProviding {
         configuration.maximumCallGroups = 1
         configuration.maximumCallsPerCallGroup = 1
         configuration.supportedHandleTypes = [.generic]
+        configuration.includesCallsInRecents = false
         return configuration
     }
 
@@ -111,8 +149,10 @@ extension SystemCallProvider: CXProviderDelegate {
         }
     }
 
-    nonisolated func provider(_: CXProvider, didActivate _: AVAudioSession) {
-        MainActor.assumeIsolated { handler?.audioSessionActivated() }
+    nonisolated func provider(_: CXProvider, didActivate audioSession: AVAudioSession) {
+        MainActor.assumeIsolated {
+            handler?.audioSessionActivated(route: VoiceAudioRoute(session: audioSession))
+        }
     }
 
     nonisolated func provider(_: CXProvider, didDeactivate _: AVAudioSession) {

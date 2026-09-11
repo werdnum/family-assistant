@@ -243,7 +243,8 @@ It works with the app closed, as long as you have signed in at least once since 
 restarted.
 
 With the phone locked, the assistant answers only when the phone is connected to CarPlay — being
-plugged into the car is what stands in for unlocking it. Otherwise, unlock the phone first. The same
+plugged into the car is what stands in for unlocking it. Otherwise, unlock the phone first; a call
+from a locked phone away from the car shows up briefly and then fails. The same
 rule applies to **"Ask Family Assistant…"**, which asks you to unlock rather than answering from a
 locked phone. An ordinary Bluetooth car connection is not enough.
 

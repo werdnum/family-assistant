@@ -592,11 +592,10 @@ final class VoiceCallRequestCenterTests: XCTestCase {
         XCTAssertFalse(telemetry.components().contains("Voice.call.started"))
     }
 
-    /// The coordinator refuses a hands-free start from a locked phone that is
-    /// not in a car, and says so where it decides it. Nothing claims a call
-    /// began — a breadcrumb that says "started" for a refusal is worse than
-    /// none.
-    func testARefusedHandsFreeStartRecordsTheRefusalAndNoStartedCall() async {
+    /// A locked phone's start is placed, because whether it is in a car is
+    /// only known from the call's route, and recorded as locked where that is
+    /// latched. Nothing claims a call began — that is decided on the route.
+    func testALockedHandsFreeStartIsPlacedAndNotYetClaimedAsStarted() async {
         let telemetry = RecordingVoiceCallTelemetry()
         let factory = CoordinatorFactory(isDeviceUnlocked: false, telemetry: telemetry)
         let starter = VoiceCallStarter(
@@ -607,8 +606,11 @@ final class VoiceCallRequestCenterTests: XCTestCase {
 
         await starter.startCall()
 
-        XCTAssertTrue(factory.controller.startRequests.isEmpty)
-        XCTAssertTrue(telemetry.components().contains("Voice.call.handsFreeAccess"))
+        XCTAssertEqual(factory.controller.startRequests.count, 1)
+        XCTAssertEqual(
+            telemetry.extraData(for: "Voice.call.admission").first?["unlocked_at_request"],
+            "false"
+        )
         XCTAssertFalse(telemetry.components().contains("Voice.call.started"))
     }
 

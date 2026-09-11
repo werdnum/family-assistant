@@ -1,3 +1,4 @@
+import AVFoundation
 import CallKit
 @testable import FamilyAssistant
 import Foundation
@@ -164,6 +165,35 @@ private final class FakeVoiceCallSession: VoiceCallSession {
     }
 }
 
+/// Stands in for the wait on a locked device's call reaching CarPlay. Answers
+/// with a fixed route, optionally only once a test releases it, so a test can
+/// act while the wait is still open.
+@MainActor
+private final class FakeRouteSettling: CallRouteSettling {
+    var settledRoute = VoiceAudioRoute(inputs: [.builtInMic], outputs: [.builtInSpeaker])
+    var holdsUntilReleased = false
+    private(set) var waitCount = 0
+    private(set) var returnCount = 0
+    private var parked: CheckedContinuation<Void, Never>?
+
+    func carPlayRoute(within _: Duration) async -> VoiceAudioRoute {
+        waitCount += 1
+        if holdsUntilReleased {
+            await withCheckedContinuation { parked = $0 }
+        }
+        returnCount += 1
+        return settledRoute
+    }
+
+    func release() {
+        parked?.resume()
+        parked = nil
+    }
+}
+
+private let speakerRoute = VoiceAudioRoute(inputs: [.builtInMic], outputs: [.builtInSpeaker])
+private let carPlayRoute = VoiceAudioRoute(inputs: [.carAudio], outputs: [.carAudio])
+
 // MARK: - Tests
 
 @MainActor
@@ -176,6 +206,7 @@ final class VoiceCallCoordinatorTests: XCTestCase {
     private var eventLog: EventLog?
     private var audioConfigureError: Error?
     private var telemetry: RecordingVoiceCallTelemetry!
+    private var routeSettling: FakeRouteSettling!
 
     override func setUp() async throws {
         try await super.setUp()
@@ -187,18 +218,20 @@ final class VoiceCallCoordinatorTests: XCTestCase {
         eventLog = nil
         audioConfigureError = nil
         telemetry = RecordingVoiceCallTelemetry()
+        routeSettling = FakeRouteSettling()
     }
 
-    private func makeCoordinator(
-        handsFreeAccess: VoiceHandsFreeAccess = VoiceHandsFreeAccess(
-            isDeviceUnlocked: { true },
-            isCarPlayConnected: { false }
-        )
-    ) -> VoiceCallCoordinator {
+    private func makeCoordinator(unlocked: Bool = true) -> VoiceCallCoordinator {
         VoiceCallCoordinator(
             provider: provider,
             controller: controller,
-            handsFreeAccess: handsFreeAccess,
+            handsFreeAccess: VoiceHandsFreeAccess(
+                isDeviceUnlocked: { unlocked },
+                // The call path must not consult the pre-call route at all, so
+                // this probe claims CarPlay to catch it doing so.
+                isCarPlayConnected: { true }
+            ),
+            routeSettling: routeSettling,
             telemetry: telemetry,
             makeSession: { [weak self] signal in
                 let session = FakeVoiceCallSession(activation: signal)
@@ -266,38 +299,141 @@ final class VoiceCallCoordinatorTests: XCTestCase {
         XCTAssertTrue(coordinator.isCallActive)
     }
 
-    func testALockedDeviceOffCarPlayNeverReachesTheCallController() async throws {
-        let coordinator = makeCoordinator(
-            handsFreeAccess: VoiceHandsFreeAccess(
-                isDeviceUnlocked: { false },
-                isCarPlayConnected: { false }
-            )
-        )
-
-        // The refusal is deliberately quiet: no throw, and nothing for Siri or
-        // the lock screen to show.
-        try await coordinator.startCall()
-
-        XCTAssertTrue(controller.startRequests.isEmpty)
-        XCTAssertFalse(coordinator.isCallActive)
-        XCTAssertTrue(sessions.isEmpty)
-        // Quiet to the user, not to the trail: a refusal nobody is told about
-        // is the one most in need of a breadcrumb.
-        XCTAssertEqual(telemetry.components(), ["Voice.call.handsFreeAccess"])
-    }
-
-    func testALockedDeviceOnCarPlayCanStartACall() async throws {
-        let coordinator = makeCoordinator(
-            handsFreeAccess: VoiceHandsFreeAccess(
-                isDeviceUnlocked: { false },
-                isCarPlayConnected: { true }
-            )
-        )
+    /// Whether a locked phone is in the car is only known from the call's own
+    /// route, so the call is placed first and judged once it has one.
+    func testALockedDeviceStillPlacesTheCall() async throws {
+        let coordinator = makeCoordinator(unlocked: false)
 
         try await coordinator.startCall()
 
         XCTAssertEqual(controller.startRequests.count, 1)
         XCTAssertTrue(coordinator.isCallActive)
+        XCTAssertEqual(
+            telemetry.extraData(for: "Voice.call.admission").first?["unlocked_at_request"],
+            "false"
+        )
+    }
+
+    /// Until the route admits the call, nothing the session does may begin —
+    /// not the microphone prompt, not the token fetch, not the socket.
+    func testALockedDevicesSessionDoesNotStartBeforeItsRouteIsKnown() async throws {
+        let coordinator = makeCoordinator(unlocked: false)
+        let (_, session) = try await startCall(coordinator)
+
+        XCTAssertEqual(session.startCount, 0)
+        XCTAssertFalse(telemetry.components().contains("Voice.call.started"))
+    }
+
+    func testALockedDeviceRoutedToCarPlayIsAdmitted() async throws {
+        let coordinator = makeCoordinator(unlocked: false)
+        let (_, session) = try await startCall(coordinator)
+
+        coordinator.audioSessionActivated(route: carPlayRoute)
+
+        try await waitUntil { session.startCount == 1 }
+        XCTAssertTrue(session.activation.isActivated)
+        XCTAssertEqual(routeSettling.waitCount, 0)
+        XCTAssertEqual(telemetry.extraData(for: "Voice.call.started").count, 1)
+        XCTAssertEqual(telemetry.extraData(for: "Voice.call.admission").last?["route_is_carplay"], "true")
+    }
+
+    /// The system may activate the session before it has finished moving the
+    /// call to the car, so a first route that is not CarPlay is waited on.
+    func testALockedDeviceWhoseRouteReachesCarPlayDuringTheWaitIsAdmitted() async throws {
+        routeSettling.settledRoute = carPlayRoute
+        let coordinator = makeCoordinator(unlocked: false)
+        let (_, session) = try await startCall(coordinator)
+
+        coordinator.audioSessionActivated(route: speakerRoute)
+
+        try await waitUntil { session.startCount == 1 }
+        XCTAssertTrue(session.activation.isActivated)
+        XCTAssertEqual(routeSettling.waitCount, 1)
+        XCTAssertTrue(provider.ended.isEmpty)
+    }
+
+    /// The call is already on screen, so a refusal ends it as failed, and the
+    /// session behind it never starts.
+    func testALockedDeviceWhoseCallNeverReachesCarPlayFailsTheCall() async throws {
+        let coordinator = makeCoordinator(unlocked: false)
+        let (uuid, session) = try await startCall(coordinator)
+
+        coordinator.audioSessionActivated(route: speakerRoute)
+
+        try await waitUntil { !self.provider.ended.isEmpty }
+        XCTAssertEqual(provider.ended.first?.uuid, uuid)
+        XCTAssertEqual(provider.ended.first?.reason, .failed)
+        XCTAssertEqual(session.startCount, 0)
+        XCTAssertFalse(session.activation.isActivated)
+        XCTAssertFalse(coordinator.isCallActive)
+        XCTAssertFalse(telemetry.components().contains("Voice.call.started"))
+        let refusal = try XCTUnwrap(telemetry.extraData(for: "Voice.call.handsFreeAccess").first)
+        XCTAssertEqual(refusal["route_outputs"], AVAudioSession.Port.builtInSpeaker.rawValue)
+        XCTAssertEqual(refusal["route_is_carplay"], "false")
+    }
+
+    /// Bluetooth hands-free is what an ordinary car pairing looks like, and it
+    /// is not CarPlay however long the call waits on it.
+    func testALockedDeviceOnBluetoothHandsFreeIsRefused() async throws {
+        let bluetooth = VoiceAudioRoute(inputs: [.bluetoothHFP], outputs: [.bluetoothHFP])
+        routeSettling.settledRoute = bluetooth
+        let coordinator = makeCoordinator(unlocked: false)
+        let (_, session) = try await startCall(coordinator)
+
+        coordinator.audioSessionActivated(route: bluetooth)
+
+        try await waitUntil { !self.provider.ended.isEmpty }
+        XCTAssertEqual(provider.ended.first?.reason, .failed)
+        XCTAssertEqual(session.startCount, 0)
+    }
+
+    /// A call that ends while its route is still being waited on is gone; the
+    /// wait finishing afterwards must neither start it nor report it again.
+    func testACallEndedDuringTheRouteWaitIsNeitherAdmittedNorReportedAgain() async throws {
+        routeSettling.settledRoute = carPlayRoute
+        routeSettling.holdsUntilReleased = true
+        let coordinator = makeCoordinator(unlocked: false)
+        let (uuid, session) = try await startCall(coordinator)
+        coordinator.audioSessionActivated(route: speakerRoute)
+        try await waitUntil { self.routeSettling.waitCount == 1 }
+
+        coordinator.performEndCall(uuid: uuid, action: FakeCallAction())
+        routeSettling.release()
+        // The wait and what the coordinator does with its answer run in one
+        // main-actor job, so once the answer is out the handling is done.
+        try await waitUntil { self.routeSettling.returnCount == 1 }
+
+        XCTAssertEqual(session.startCount, 0)
+        XCTAssertFalse(session.activation.isActivated)
+        XCTAssertTrue(provider.ended.isEmpty)
+        XCTAssertFalse(telemetry.extraData(for: "Voice.call.admission").contains { $0["route_is_carplay"] == "true" })
+    }
+
+    /// An unlocked request crossed the boundary when it was made, so its call
+    /// is not held to the route at all.
+    func testAnUnlockedDevicesCallIsNotHeldToItsRoute() async throws {
+        sessionsWaitForActivation = true
+        let coordinator = makeCoordinator(unlocked: true)
+        let (_, session) = try await startCall(coordinator)
+
+        coordinator.audioSessionActivated(route: speakerRoute)
+
+        XCTAssertTrue(session.activation.isActivated)
+        XCTAssertEqual(routeSettling.waitCount, 0)
+        XCTAssertTrue(provider.ended.isEmpty)
+    }
+
+    /// Which ports a real car reports is exactly what a device test has to
+    /// establish, so every activation records its route.
+    func testEveryActivationRecordsItsRoute() async throws {
+        let coordinator = makeCoordinator()
+        _ = try await startCall(coordinator)
+
+        coordinator.audioSessionActivated(route: carPlayRoute)
+
+        let routes = telemetry.extraData(for: "Voice.call.route")
+        XCTAssertEqual(routes.count, 1)
+        XCTAssertEqual(routes.first?["route_inputs"], AVAudioSession.Port.carAudio.rawValue)
     }
 
     func testSecondStartCallIsRefused() async throws {
@@ -477,7 +613,7 @@ final class VoiceCallCoordinatorTests: XCTestCase {
         let (_, session) = try await startCall(coordinator)
 
         XCTAssertFalse(session.activation.isActivated)
-        coordinator.audioSessionActivated()
+        coordinator.audioSessionActivated(route: speakerRoute)
         XCTAssertTrue(session.activation.isActivated)
 
         coordinator.audioSessionDeactivated()

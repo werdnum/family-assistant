@@ -132,15 +132,31 @@ The rule is therefore that assistant voice may start without an unlock only when
 connected to CarPlay. Being plugged into the car is the authentication: someone driving the car with
 the phone connected to it is already past every boundary this could protect.
 
-One predicate answers that question for every entry point — the ask intent and the call coordinator
-both consult it, so a future entry point that forgets to is the thing that looks wrong rather than
-the thing that quietly works. It reads two probes, both injected so the rule is testable without a
+One rule answers that question for every entry point — the ask intent and the call coordinator both
+consult it, so a future entry point that forgets to is the thing that looks wrong rather than the
+thing that quietly works. It reads two things, both injected so the rule is testable without a
 locked device or a car:
 
 - Whether the device is unlocked. There is no API for this; protected-data availability is the
   conventional proxy and is accurate apart from a short grace period after locking.
-- Whether an output route is CarPlay. This is an audio-route property, readable by any app, and
-  needs no CarPlay entitlement.
+- Whether audio is routed to CarPlay: the `.carAudio` port, as input or output. This is readable by
+  any app with no CarPlay entitlement, but it describes the route of *this app's* audio session, not
+  a device-wide connection state.
+
+That last point decides when the call path asks. Until CallKit activates the call's audio session,
+the app's session is inactive, and from a cold background launch it can report no route at all from
+inside a CarPlay car — so asked before the call is placed, the rule is wrong in exactly the case the
+feature exists for. The call path therefore takes the two halves at different moments. Whether the
+device was unlocked is latched when the call is asked for: someone who asked from an unlocked phone
+has crossed the boundary, even if the screen locks during setup. A locked device's call is placed
+anyway and judged on the route CallKit activates it with, allowing a short, bounded wait for that
+route to settle onto the car. Until it is admitted, the session behind it does not start — no
+microphone prompt, no token, no socket — so a refused call has reached nothing of the assistant's.
+Every activation records its route's port types, because which ports a real car reports is what the
+first device test has to establish.
+
+The ask intent has no call, and so no route of its own; it reads the app's current route, which the
+system does not reliably populate for an app in the background. It fails closed.
 
 Consequently the ask intent declares that it is always allowed to run, rather than letting the
 system gate it. Whether the system evaluates an intent's authentication policy per invocation or
@@ -150,11 +166,12 @@ stops arbitrating and the app decides in code that can be tested.
 **Bluetooth hands-free does not count.** Only CarPlay does. An ordinary Bluetooth car pairing is a
 much weaker claim about who is in the car, and the stricter reading is the safe default.
 
-**A refusal on the call path is quiet.** The start-call intent arrives as a user activity, which has
-no channel back to Siri, so a refused call means Siri says "calling…" and nothing happens. That is
-the correct outcome and a poor explanation of it; it is accepted rather than solved, because the
-alternative is showing a failed call on the lock screen of a phone whose holder we have just decided
-not to talk to.
+**A refused call fails visibly.** By the time the route exists, CallKit is already showing the call,
+so there is no quiet way to refuse it: it ends as a failed call. The only way to refuse quietly is to
+decide before the call exists, which means deciding on a route that does not exist yet. A locked
+phone away from the car therefore shows a call that fails within a couple of seconds — the correct
+outcome, and a more honest explanation of it than silence. Assistant calls are kept out of Recents,
+so neither kind lingers in the call history.
 
 ## What this does not do
 
