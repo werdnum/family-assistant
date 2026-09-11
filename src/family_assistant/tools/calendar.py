@@ -19,6 +19,7 @@ import vobject
 from caldav.lib.error import DAVError, NotFoundError
 from dateutil.parser import isoparse
 
+from family_assistant.calendar_integration import resolve_calendar_sources
 from family_assistant.similarity import create_similarity_strategy_from_config
 
 if TYPE_CHECKING:
@@ -93,7 +94,10 @@ async def _check_for_duplicate_events(
 
         username: str | None = caldav_config.get("username")
         password: str | None = caldav_config.get("password")
-        calendar_urls_list: list[str] | None = caldav_config.get("calendar_urls", [])
+        caldav_sources = [
+            s for s in resolve_calendar_sources(calendar_config) if s.kind == "caldav"
+        ]
+        calendar_urls_list = [s.url for s in caldav_sources]
         base_url: str | None = caldav_config.get("base_url")
 
         if not username or not password or not calendar_urls_list:
@@ -292,6 +296,19 @@ CALENDAR_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
         "type": "function",
         "function": {
+            "name": "list_calendars",
+            "description": (
+                "Lists all configured calendars and event sources, including their IDs, friendly names, source type (CalDAV or iCal feed), and whether they are writable or read-only. Use this to discover available calendars before searching with source filters or adding events to a specific calendar."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "add_calendar_event",
             "description": (
                 "Adds a new event to the primary family calendar (requires CalDAV configuration). Can create single or recurring events. Use this to schedule appointments, reminders with duration, or block out time. IMPORTANT: Always use search_calendar_events first to check for existing similar events and avoid creating duplicates."
@@ -437,6 +454,28 @@ CALENDAR_TOOLS_DEFINITION: list[ToolDefinition] = [
 ]
 
 
+async def list_calendars_tool(
+    exec_context: ToolExecutionContext,
+    calendar_config: CalendarConfig,
+) -> str:
+    """Lists all configured calendars and event sources."""
+    logger.info("Executing list_calendars_tool")
+    sources = resolve_calendar_sources(calendar_config)
+    if not sources:
+        return "No calendars configured."
+
+    lines = ["Available calendars:"]
+    for src in sources:
+        kind_label = "CalDAV" if src.kind == "caldav" else "iCal feed"
+        writable_label = "writable" if src.writable else "read-only"
+        default_label = " [default for new events]" if src.is_default else ""
+        lines.append(
+            f"- {src.source_id}: {src.name} ({kind_label}, {writable_label}){default_label}"
+        )
+
+    return "\n".join(lines)
+
+
 async def add_calendar_event_tool(
     exec_context: ToolExecutionContext,
     calendar_config: CalendarConfig,
@@ -467,7 +506,10 @@ async def add_calendar_event_tool(
 
     username: str | None = caldav_config.get("username")
     password: str | None = caldav_config.get("password")
-    calendar_urls_list: list[str] | None = caldav_config.get("calendar_urls", [])
+    caldav_sources = [
+        s for s in resolve_calendar_sources(calendar_config) if s.kind == "caldav"
+    ]
+    calendar_urls_list = [s.url for s in caldav_sources]
     base_url: str | None = caldav_config.get("base_url")
 
     if not username or not password or not calendar_urls_list:
@@ -670,7 +712,10 @@ async def search_calendar_events_tool(
 
     username: str | None = caldav_config.get("username")
     password: str | None = caldav_config.get("password")
-    calendar_urls_list: list[str] | None = caldav_config.get("calendar_urls", [])
+    caldav_sources = [
+        s for s in resolve_calendar_sources(calendar_config) if s.kind == "caldav"
+    ]
+    calendar_urls_list = [s.url for s in caldav_sources]
     base_url: str | None = caldav_config.get("base_url")
 
     if not username or not password or not calendar_urls_list:

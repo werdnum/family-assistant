@@ -739,6 +739,7 @@ default_profile_settings:
             - "test_script_with_simulated_tools"
             - "send_message_to_user"
             - "attach_to_response"
+            - "list_calendars"
             - "add_calendar_event"
             - "search_calendar_events"
             - "modify_calendar_event"
@@ -934,6 +935,7 @@ service_profiles:
           description: "Email intake cannot use destructive, code, browser, delegation, worker, or automation tools."
         - match:
             names:
+              - "list_calendars"
               - "search_calendar_events"
               - "get_note"
               - "list_notes"
@@ -979,6 +981,7 @@ service_profiles:
       rules:
         - match:
             names:
+              - "list_calendars"
               - "search_calendar_events"
               - "get_note"
               - "list_notes"
@@ -1245,6 +1248,7 @@ service_profiles:
               - "get_note"
               - "search_documents"
               - "send_message_to_user"
+              - "list_calendars"
               - "search_calendar_events"
               - "query_recent_events"
               - "mqtt_publish"
@@ -1436,6 +1440,7 @@ service_profiles:
               - "delete_script"
               - "test_script_with_simulated_tools"
               - "send_message_to_user"
+              - "list_calendars"
               - "add_calendar_event"
               - "search_calendar_events"
               - "modify_calendar_event"
@@ -1633,6 +1638,7 @@ service_profiles:
               - "test_script_with_simulated_tools"
               - "send_message_to_user"
               - "attach_to_response"
+              - "list_calendars"
               - "add_calendar_event"
               - "search_calendar_events"
               - "modify_calendar_event"
