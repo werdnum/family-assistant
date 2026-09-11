@@ -395,13 +395,19 @@ const HISTORY_PAGE_SIZE = 50;
 const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant' }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  // How many of the most recent rows every load of the open conversation
-  // fetches. Loading earlier history widens it, so later reloads (after a turn,
-  // or from the follow stream) keep the older pages instead of cutting back to
-  // one page, and always return a contiguous tail with no gap to stitch.
-  const historyWindowRef = useRef<{ convId: string | null; limit: number }>({
+  // Which rows every load of the open conversation fetches. It starts as the
+  // latest page; loading earlier history widens it and pins it to the oldest
+  // row loaded (floorId), so later reloads (after a turn, or from the follow
+  // stream) keep that history as new rows arrive, and always return a
+  // contiguous tail with no gap to stitch.
+  const historyWindowRef = useRef<{
+    convId: string | null;
+    limit: number;
+    floorId: string | null;
+  }>({
     convId: null,
     limit: HISTORY_PAGE_SIZE,
+    floorId: null,
   });
   const [olderHistory, setOlderHistory] = useState<{ convId: string; hasMore: boolean } | null>(
     null
@@ -1451,9 +1457,16 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
       // reload of the same conversation keeps whatever window the user has
       // widened it to.
       if (!background || historyWindowRef.current.convId !== convId) {
-        historyWindowRef.current = { convId, limit: HISTORY_PAGE_SIZE };
+        historyWindowRef.current = { convId, limit: HISTORY_PAGE_SIZE, floorId: null };
       }
-      const params = new URLSearchParams({ limit: String(historyWindowRef.current.limit) });
+      const requestWindow = historyWindowRef.current;
+      // A pinned window asks for a page of headroom, so rows that arrived since
+      // the last load can't push its oldest row out of the response.
+      const requestLimit =
+        requestWindow.floorId === null
+          ? requestWindow.limit
+          : requestWindow.limit + HISTORY_PAGE_SIZE;
+      const params = new URLSearchParams({ limit: String(requestLimit) });
       // A foreground load is an explicit user open, where we adopt the
       // conversation's profile; ask the backend to resolve it (it's computed
       // across the whole conversation, not just the returned page, so adoption
@@ -1472,10 +1485,36 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
           // reconcile. Don't clobber it, and treat this as a supersession.
           return 'bailed' as const;
         }
-        if (data.messages.length > 0 && conversationIdRef.current === convId) {
+        // A background load is deferred, so the user can have left this
+        // conversation while it was in flight.
+        if (background && conversationIdRef.current !== convId) {
+          return 'bailed' as const;
+        }
+
+        // Trim the headroom back to the oldest row the user had loaded, and
+        // keep the window pinned there so the next load covers the same range
+        // plus whatever arrives in the meantime.
+        const { messages: fetchedRows, has_more_before: fetchedHasMore } = data;
+        const floorIndex =
+          requestWindow.floorId === null
+            ? -1
+            : fetchedRows.findIndex((row) => row.internal_id === requestWindow.floorId);
+        const historyRows = floorIndex > 0 ? fetchedRows.slice(floorIndex) : fetchedRows;
+        const historyHasMore = floorIndex > 0 || fetchedHasMore === true;
+        const windowIsWidened =
+          requestWindow.floorId !== null || requestWindow.limit > HISTORY_PAGE_SIZE;
+        if (windowIsWidened && historyWindowRef.current === requestWindow) {
+          historyWindowRef.current = {
+            convId,
+            limit: Math.max(historyRows.length, HISTORY_PAGE_SIZE),
+            floorId: historyRows[0]?.internal_id ?? null,
+          };
+        }
+
+        if (historyRows.length > 0 && conversationIdRef.current === convId) {
           setPersistedConversationId(convId);
         }
-        setOlderHistory({ convId, hasMore: data.has_more_before === true });
+        setOlderHistory({ convId, hasMore: historyHasMore });
         setOlderMessagesStatus((prev) => (prev === 'failed' ? 'idle' : prev));
 
         // A foreground load means the user just opened this conversation (every
@@ -1519,7 +1558,7 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
         const toolAttachments = new Map<string, BackendAttachment[]>();
 
         // First pass: collect tool responses and attachments
-        data.messages.forEach((msg: BackendConversationMessage) => {
+        historyRows.forEach((msg: BackendConversationMessage) => {
           if (msg.role === 'tool' && msg.tool_call_id) {
             const responseContent =
               typeof msg.content === 'string'
@@ -1537,7 +1576,7 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
           }
         });
 
-        data.messages.forEach((msg: BackendConversationMessage) => {
+        historyRows.forEach((msg: BackendConversationMessage) => {
           if (msg.role === 'tool') {
             return;
           }
@@ -1769,7 +1808,7 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
         // hidden), so we just pass the message through. Skip the first load of
         // a conversation (no prior baseline) so opening it doesn't notify for
         // its existing tail.
-        const latestAssistantMessage = [...data.messages]
+        const latestAssistantMessage = [...historyRows]
           .reverse()
           .find((msg) => msg.role === 'assistant');
         const hadBaseline = lastSeenAssistantIdRef.current.has(convId);
@@ -1884,7 +1923,7 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
     const current = historyWindowRef.current;
     const limit =
       (current.convId === convId ? current.limit : HISTORY_PAGE_SIZE) + HISTORY_PAGE_SIZE;
-    historyWindowRef.current = { convId, limit };
+    historyWindowRef.current = { convId, limit, floorId: null };
     setOlderMessagesStatus('loading');
     const result = await loadConversationMessages(convId, true);
     setOlderMessagesStatus(result === 'failed' ? 'failed' : 'idle');
@@ -2068,6 +2107,8 @@ const ChatAppContent: React.FC<ChatAppProps> = ({ profileId = 'default_assistant
   const handleNewChat = useCallback(() => {
     // Cancel any active streaming before creating a new chat
     cancelStream();
+    // A history load still in flight belongs to the conversation being left.
+    messagesAbortControllerRef.current?.abort();
 
     // A new chat starts from the user's preferred profile, not whatever profile
     // an old conversation we were just viewing was adopted into.

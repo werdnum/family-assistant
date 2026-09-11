@@ -36,7 +36,8 @@ class MockEventSource {
   }
 }
 
-const TOTAL_ROWS = 120;
+const CONVERSATION_ID = 'web_conv_long';
+const INITIAL_ROWS = 120;
 
 function historyRow(index: number) {
   return {
@@ -50,10 +51,10 @@ function historyRow(index: number) {
 describe('Loading earlier messages', () => {
   let originalEventSource: typeof EventSource;
   let requestedLimits: number[];
-  // Each test opens its own conversation, so a follow stream opened late by a
-  // previous test's app can't be mistaken for this test's.
-  let testIndex = 0;
-  let conversationId: string;
+  let rows: Array<ReturnType<typeof historyRow>>;
+  // When set, loads wider than one page wait on it before responding.
+  let widenedLoadGate: Promise<void> | null;
+  let widenedLoadServed: boolean;
 
   beforeEach(() => {
     resetLocalStorageMock();
@@ -63,20 +64,24 @@ describe('Loading earlier messages', () => {
     globalThis.EventSource = MockEventSource as unknown as typeof EventSource;
     MockEventSource.instances = [];
 
-    testIndex += 1;
-    conversationId = `web_conv_long_${testIndex}`;
     mockLocalStorage.getItem.mockImplementation((key: string) =>
-      key === 'lastConversationId' ? conversationId : null
+      key === 'lastConversationId' ? CONVERSATION_ID : null
     );
 
     requestedLimits = [];
-    const rows = Array.from({ length: TOTAL_ROWS }, (_, index) => historyRow(index));
+    rows = Array.from({ length: INITIAL_ROWS }, (_, index) => historyRow(index));
+    widenedLoadGate = null;
+    widenedLoadServed = false;
     server.use(
-      http.get('/api/v1/chat/conversations/:conversationId/messages', ({ params, request }) => {
+      http.get('/api/v1/chat/conversations/:conversationId/messages', async ({ request }) => {
         const limit = Number(new URL(request.url).searchParams.get('limit'));
         // limit=1 is the active-turn poll, not a history load.
-        if (params.conversationId === conversationId && limit !== 1) {
+        if (limit !== 1) {
           requestedLimits.push(limit);
+        }
+        if (widenedLoadGate && limit > 50) {
+          await widenedLoadGate;
+          widenedLoadServed = true;
         }
         const page = rows.slice(Math.max(0, rows.length - limit));
         return HttpResponse.json({
@@ -91,20 +96,27 @@ describe('Loading earlier messages', () => {
     globalThis.EventSource = originalEventSource;
   });
 
-  it('opens on the latest page and widens the window a page at a time', async () => {
+  const openConversation = async () => {
     await renderChatApp({ waitForReady: true });
+    await screen.findByText(`Message ${INITIAL_ROWS - 1}`, {}, { timeout: 5000 });
+  };
 
-    await screen.findByText(`Message ${TOTAL_ROWS - 1}`, {}, { timeout: 5000 });
+  const clickLoadEarlier = () => {
+    fireEvent.click(screen.getByRole('button', { name: /load earlier messages/i }));
+  };
+
+  it('opens on the latest page and widens the window a page at a time', async () => {
+    await openConversation();
     expect(screen.getByText('Message 70')).toBeInTheDocument();
     expect(screen.queryByText('Message 69')).not.toBeInTheDocument();
     expect(requestedLimits).toEqual([50]);
 
-    fireEvent.click(screen.getByRole('button', { name: /load earlier messages/i }));
+    clickLoadEarlier();
     await screen.findByText('Message 20', {}, { timeout: 5000 });
     expect(screen.queryByText('Message 19')).not.toBeInTheDocument();
     expect(requestedLimits[requestedLimits.length - 1]).toBe(100);
 
-    fireEvent.click(screen.getByRole('button', { name: /load earlier messages/i }));
+    clickLoadEarlier();
     await screen.findByText('Message 0', {}, { timeout: 5000 });
     expect(requestedLimits[requestedLimits.length - 1]).toBe(150);
     await waitFor(() => {
@@ -114,31 +126,51 @@ describe('Loading earlier messages', () => {
     });
   });
 
-  it('keeps the loaded older messages across a background reload', async () => {
-    await renderChatApp({ waitForReady: true });
-
-    await screen.findByText(`Message ${TOTAL_ROWS - 1}`, {}, { timeout: 5000 });
-    fireEvent.click(screen.getByRole('button', { name: /load earlier messages/i }));
+  it('keeps the oldest loaded message when a reload brings new messages', async () => {
+    await openConversation();
+    clickLoadEarlier();
     await screen.findByText('Message 20', {}, { timeout: 5000 });
 
     // The follow stream connects once the browser is idle, not at mount.
     const followStream = await waitFor(
       () => {
         const streams = MockEventSource.instances.filter((es) =>
-          es.url.includes(`/conversations/${conversationId}/`)
+          es.url.includes(`/conversations/${CONVERSATION_ID}/`)
         );
         expect(streams.length).toBeGreaterThan(0);
         return streams[streams.length - 1];
       },
       { timeout: 3000 }
     );
-    const requestsBeforeReload = requestedLimits.length;
+    rows.push(historyRow(120), historyRow(121), historyRow(122));
     followStream.emit('turn_ended', { seq: 1, status: 'complete' });
 
-    await waitFor(() => {
-      expect(requestedLimits.length).toBeGreaterThan(requestsBeforeReload);
-    });
-    expect(requestedLimits[requestedLimits.length - 1]).toBe(100);
+    await screen.findByText('Message 122', {}, { timeout: 5000 });
+    expect(requestedLimits[requestedLimits.length - 1]).toBe(150);
     expect(screen.getByText('Message 20')).toBeInTheDocument();
+    expect(screen.queryByText('Message 19')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /load earlier messages/i })).toBeInTheDocument();
+  });
+
+  it('drops an earlier-history load that finishes after starting a new chat', async () => {
+    await openConversation();
+    let releaseWidenedLoad: (() => void) | undefined;
+    widenedLoadGate = new Promise<void>((resolve) => {
+      releaseWidenedLoad = resolve;
+    });
+
+    clickLoadEarlier();
+    await waitFor(() => {
+      expect(requestedLimits).toContain(100);
+    });
+    fireEvent.click(screen.getAllByTestId('new-chat-button')[0]);
+    await screen.findByText('How can I help you?', {}, { timeout: 5000 });
+
+    releaseWidenedLoad?.();
+    await waitFor(() => {
+      expect(widenedLoadServed).toBe(true);
+    });
+    await screen.findByText('How can I help you?');
+    expect(screen.queryByText(`Message ${INITIAL_ROWS - 1}`)).not.toBeInTheDocument();
   });
 });
