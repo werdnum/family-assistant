@@ -11,6 +11,7 @@ import logging
 from typing import TYPE_CHECKING, Protocol, cast
 
 from family_assistant import calendar_integration
+from family_assistant.tools.calendar import resolve_target_caldav_url
 from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
 
 if TYPE_CHECKING:
@@ -213,12 +214,14 @@ async def render_delete_calendar_event_confirmation(
         getattr(context, "tools_provider", None)
     )
 
-    if not calendar_url and calendar_id and calendar_config:
-        sources = calendar_integration.resolve_calendar_sources(calendar_config)
-        for s in sources:
-            if s.source_id == calendar_id and s.kind == "caldav":
-                calendar_url = s.url
-                break
+    if (calendar_url or calendar_id) and calendar_config:
+        resolved_url, err = resolve_target_caldav_url(
+            calendar_config=calendar_config,
+            calendar_url=calendar_url,
+            calendar_id=calendar_id,
+            operation_verb="delete",
+        )
+        calendar_url = resolved_url if not err else None
 
     if uid and calendar_url and calendar_config:
         event_details = await calendar_integration.fetch_event_details_for_confirmation(
@@ -263,12 +266,14 @@ async def render_modify_calendar_event_confirmation(
         getattr(context, "tools_provider", None)
     )
 
-    if not calendar_url and calendar_id and calendar_config:
-        sources = calendar_integration.resolve_calendar_sources(calendar_config)
-        for s in sources:
-            if s.source_id == calendar_id and s.kind == "caldav":
-                calendar_url = s.url
-                break
+    if (calendar_url or calendar_id) and calendar_config:
+        resolved_url, err = resolve_target_caldav_url(
+            calendar_config=calendar_config,
+            calendar_url=calendar_url,
+            calendar_id=calendar_id,
+            operation_verb="modify",
+        )
+        calendar_url = resolved_url if not err else None
 
     if uid and calendar_url and calendar_config:
         event_details = await calendar_integration.fetch_event_details_for_confirmation(

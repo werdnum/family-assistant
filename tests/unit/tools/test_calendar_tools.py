@@ -3,26 +3,31 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 import httpx
 import pytest
 
+from family_assistant.security.taint import derive_tool_result_taint_source
 from family_assistant.storage.database import Database
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS,
+    LOCAL_TOOL_DESCRIPTORS,
     LOCAL_TOOL_METADATA_BY_NAME,
     LocalToolsProvider,
     ToolTag,
 )
 from family_assistant.tools.calendar import (
     CALENDAR_TOOLS_DEFINITION,
+    CalendarSearchResult,
     add_calendar_event_tool,
     check_for_duplicate_events,
     delete_calendar_event_tool,
     list_calendars_tool,
     modify_calendar_event_tool,
+    resolve_target_caldav_url,
     search_calendar_events_tool,
 )
 from family_assistant.tools.confirmation import (
@@ -752,3 +757,143 @@ async def test_confirmation_renderers_resolve_calendar_id(
     assert "Important Sync" in mod_prompt
     assert "Set summary to:" in mod_prompt
     assert "Renamed Sync" in mod_prompt
+
+
+def test_search_calendar_events_output_untrusted_taint() -> None:
+    descriptor = next(
+        d for d in LOCAL_TOOL_DESCRIPTORS if d.name == "search_calendar_events"
+    )
+    assert ToolTag.OUTPUT_UNTRUSTED in descriptor.tags
+    assert ToolTag.OUTPUT_TRUSTED not in descriptor.tags
+
+    taint_source = derive_tool_result_taint_source(
+        descriptor=descriptor, call_id="call_test"
+    )
+    assert taint_source is not None
+    assert taint_source.source_id == "call_test"
+
+
+async def test_resolve_target_caldav_url_conflict_rejection() -> None:
+    config: CalendarConfig = {
+        "caldav": {
+            "username": "user",
+            "password": "pwd",
+            "calendar_urls": [
+                {
+                    "url": "https://caldav.example.com/cal_a",
+                    "id": "cal_a",
+                    "name": "Cal A",
+                },
+                {
+                    "url": "https://caldav.example.com/cal_b",
+                    "id": "cal_b",
+                    "name": "Cal B",
+                },
+            ],
+        }
+    }
+
+    # Matching selectors: ok
+    url, err = resolve_target_caldav_url(
+        config,
+        calendar_url="https://caldav.example.com/cal_a",
+        calendar_id="cal_a",
+    )
+    assert err is None
+    assert url == "https://caldav.example.com/cal_a"
+
+    # Conflicting selectors: rejected
+    url, err = resolve_target_caldav_url(
+        config,
+        calendar_url="https://caldav.example.com/cal_b",
+        calendar_id="cal_a",
+    )
+    assert url is None
+    assert err is not None
+    assert "Conflicting calendar targets" in err
+
+    ctx = _create_mock_context()
+    # Modify tool execution also rejects conflict
+    mod_result = await modify_calendar_event_tool(
+        exec_context=ctx,
+        calendar_config=config,
+        uid="evt-1",
+        calendar_id="cal_a",
+        calendar_url="https://caldav.example.com/cal_b",
+        new_summary="Changed",
+    )
+    assert "Conflicting calendar targets" in mod_result
+
+    # Delete tool execution also rejects conflict
+    del_result = await delete_calendar_event_tool(
+        exec_context=ctx,
+        calendar_config=config,
+        uid="evt-1",
+        calendar_id="cal_a",
+        calendar_url="https://caldav.example.com/cal_b",
+    )
+    assert "Conflicting calendar targets" in del_result
+
+
+async def test_search_calendar_events_chronological_sorting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = _create_mock_context()
+    config: CalendarConfig = {
+        "caldav": {
+            "username": "user",
+            "password": "pwd",
+            "calendar_urls": ["https://caldav.example.com/cal"],
+        },
+        "ical": {
+            "urls": ["https://example.com/feed.ics"],
+        },
+    }
+
+    # Simulate CalDAV returning event at 14:00 and iCal returning event at 10:00
+    async def fake_search_events(
+        exec_context: ToolExecutionContext,
+        calendar_config: CalendarConfig,
+        search_start: datetime,
+        search_end: datetime,
+        sources: list[Any] | None = None,
+    ) -> list[CalendarSearchResult]:
+        # Return unordered list
+        return [
+            {
+                "summary": "Later CalDAV Event",
+                "uid": "uid-later",
+                "start": "2026-05-01 14:00 UTC",
+                "end": "2026-05-01 15:00 UTC",
+                "calendar_url": "https://caldav.example.com/cal",
+                "start_dt": datetime(2026, 5, 1, 14, 0, tzinfo=UTC),
+            },
+            {
+                "summary": "Earlier iCal Event",
+                "uid": "uid-earlier",
+                "start": "2026-05-01 10:00 UTC",
+                "end": "2026-05-01 11:00 UTC",
+                "calendar_url": None,
+                "source_name": "Flight Feed",
+                "start_dt": datetime(2026, 5, 1, 10, 0, tzinfo=UTC),
+            },
+        ]
+
+    monkeypatch.setattr(
+        "family_assistant.tools.calendar._search_events_in_range",
+        fake_search_events,
+    )
+
+    result = await search_calendar_events_tool(
+        exec_context=ctx,
+        calendar_config=config,
+        start_date="2026-05-01",
+        end_date="2026-05-02",
+    )
+
+    # When search_text is not provided, results are sorted chronologically
+    pos_earlier = result.find("Earlier iCal Event")
+    pos_later = result.find("Later CalDAV Event")
+    assert pos_earlier != -1
+    assert pos_later != -1
+    assert pos_earlier < pos_later

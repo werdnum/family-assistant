@@ -30,6 +30,7 @@ class CalDavCalendarEntryConfig(TypedDict, total=False):
     url: str
     id: str | None
     name: str | None
+    default: bool | None
 
 
 class ICalFeedEntryConfig(TypedDict, total=False):

@@ -104,6 +104,12 @@ def resolve_calendar_sources(
     caldav_config = calendar_config.get("caldav")
     if caldav_config:
         calendar_urls = caldav_config.get("calendar_urls", [])
+        explicit_default_idx: int | None = None
+        for i, entry in enumerate(calendar_urls):
+            if isinstance(entry, dict) and entry.get("default") is True:
+                explicit_default_idx = i
+                break
+
         for idx, entry in enumerate(calendar_urls):
             entry_url: str
             explicit_id: str | None = None
@@ -125,7 +131,12 @@ def resolve_calendar_sources(
                 source_id = _unique_id(slug)
 
             source_name = explicit_name or _format_slug_as_name(source_id)
-            is_default = len(sources) == 0  # First CalDAV source is default
+            if explicit_default_idx is not None:
+                is_default = idx == explicit_default_idx
+            else:
+                is_default = (
+                    len(sources) == 0
+                )  # First CalDAV source is default by default
 
             sources.append(
                 CalendarSource(

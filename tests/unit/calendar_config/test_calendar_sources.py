@@ -171,3 +171,30 @@ def test_pydantic_calendar_config_model_dump() -> None:
         "bare_2",
         "rich_feed",
     ]
+
+
+def test_resolve_calendar_sources_explicit_default() -> None:
+    pydantic_conf = CalendarConfig(
+        caldav=CalDAVConfig(
+            username="test_user",
+            password=SecretStr("pwd"),
+            calendar_urls=[
+                CalDAVCalendarConfig(
+                    url="https://caldav.example.com/cal1",
+                    id="cal1",
+                    name="Cal 1",
+                ),
+                CalDAVCalendarConfig(
+                    url="https://caldav.example.com/cal2",
+                    id="cal2",
+                    name="Cal 2",
+                    default=True,
+                ),
+            ],
+        )
+    )
+    dumped = pydantic_conf.model_dump(exclude_none=True)
+    sources = resolve_calendar_sources(dumped)  # type: ignore[arg-type]
+    assert len(sources) == 2
+    assert sources[0].is_default is False
+    assert sources[1].is_default is True

@@ -703,6 +703,7 @@ class CalDAVCalendarConfig(BaseModel):
     url: str
     id: str | None = None
     name: str | None = None
+    default: bool | None = None
 
 
 class ICalFeedConfig(BaseModel):

@@ -49,6 +49,31 @@ class CalendarSearchResult(TypedDict):
     source_name: NotRequired[str | None]
     source_kind: NotRequired[Literal["caldav", "ical"] | None]
     writable: NotRequired[bool | None]
+    start_dt: NotRequired[datetime | date | None]
+
+
+def _event_sort_key(event: CalendarSearchResult, local_tz: ZoneInfo) -> datetime:
+    s_dt = event.get("start_dt")
+    if isinstance(s_dt, datetime):
+        if s_dt.tzinfo is None:
+            return s_dt.replace(tzinfo=local_tz)
+        return s_dt.astimezone(local_tz)
+    if isinstance(s_dt, date):
+        return datetime.combine(s_dt, time.min, tzinfo=local_tz)
+    s_str = event.get("start", "")
+    try:
+        parsed = isoparse(s_str)
+        if isinstance(parsed, datetime):
+            return (
+                parsed.replace(tzinfo=local_tz)
+                if parsed.tzinfo is None
+                else parsed.astimezone(local_tz)
+            )
+        if isinstance(parsed, date):
+            return datetime.combine(parsed, time.min, tzinfo=local_tz)
+    except Exception:
+        pass
+    return datetime.min.replace(tzinfo=local_tz)
 
 
 def _format_event_time_for_display(
@@ -99,6 +124,7 @@ def _parse_caldav_event_component(
         "source_name": src.name,
         "source_kind": "caldav",
         "writable": True,
+        "start_dt": dtstart.dt if dtstart else None,
     }
 
 
@@ -255,10 +281,12 @@ async def _search_events_in_range(
                     "source_name": evt.get("source_name", "iCal feed"),
                     "source_kind": "ical",
                     "writable": False,
+                    "start_dt": evt["start"],
                 })
         except Exception as e:
             logger.exception(f"Error fetching iCal events for search: {e}")
 
+    all_events.sort(key=lambda e: _event_sort_key(e, local_tz))
     return all_events
 
 
@@ -999,15 +1027,17 @@ async def search_calendar_events_tool(
         )
         if not all_events:
             return f"No events found matching '{search_text}' (threshold: {similarity_threshold})."
+    else:
+        all_events.sort(key=lambda e: _event_sort_key(e, local_tz))
 
     return _format_search_results(all_events)
 
 
-def _resolve_target_caldav_url(
+def resolve_target_caldav_url(
     calendar_config: CalendarConfig,
     calendar_url: str | None,
     calendar_id: str | None,
-    operation_verb: str,
+    operation_verb: str = "modify",
 ) -> tuple[str | None, str | None]:
     """Resolves target CalDAV calendar URL for write operations (modify/delete).
 
@@ -1015,6 +1045,16 @@ def _resolve_target_caldav_url(
     """
     all_sources = resolve_calendar_sources(calendar_config)
     operation_past = "modified" if operation_verb == "modify" else "deleted"
+
+    if calendar_id and calendar_url:
+        matching = [s for s in all_sources if s.source_id == calendar_id]
+        if matching:
+            matched = matching[0]
+            if matched.url != calendar_url:
+                return None, (
+                    f"Error: Conflicting calendar targets provided: calendar_id '{calendar_id}' "
+                    f"resolves to '{matched.url}', but calendar_url '{calendar_url}' was also specified."
+                )
 
     if calendar_id:
         matching = [s for s in all_sources if s.source_id == calendar_id]
@@ -1048,6 +1088,9 @@ def _resolve_target_caldav_url(
         None,
         f"Error: Either calendar_id or calendar_url must be provided to {operation_verb} an event.",
     )
+
+
+_resolve_target_caldav_url = resolve_target_caldav_url
 
 
 async def modify_calendar_event_tool(

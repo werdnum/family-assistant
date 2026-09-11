@@ -1160,6 +1160,63 @@ ______________________________________________________________________
 
 ## Calendar Integration
 
+Family Assistant supports multi-source calendar integration with CalDAV servers (e.g. Nextcloud,
+iCloud, Google Workspace) and subscribed iCal feeds (e.g. TripIt, school calendars, public event
+feeds).
+
+Calendars can be configured in `config.yaml` using structured entries to assign friendly display
+names, stable IDs for targeting and filtering, and default calendar selection. Legacy
+comma-separated environment variables are also supported for simple deployments.
+
+### YAML Configuration
+
+```yaml
+calendar:
+  caldav:
+    username: "user@example.com"
+    password: "app-specific-password"
+    base_url: "https://caldav.example.com"  # Optional, inferred from URLs if omitted
+    calendar_urls:
+      - url: "https://caldav.example.com/calendars/user/family"
+        name: "Family"
+        id: "family"
+        default: true
+      - url: "https://caldav.example.com/calendars/user/work"
+        name: "Work"
+        id: "work"
+  ical:
+    urls:
+      - url: "https://www.tripit.com/feed/ical/private/..."
+        name: "TripIt"
+        id: "tripit"
+      - url: "https://school.example.edu/calendar.ics"
+        name: "School"
+        id: "school"
+  duplicate_detection:
+    enabled: true
+    similarity_strategy: "embedding"
+    similarity_threshold: 0.30
+```
+
+#### CalDAV Calendar Source Options
+
+| Field     | Type    | Description                                                                                                                                                                                                                 |
+| --------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `url`     | string  | **Required**. Direct URL to the CalDAV calendar collection.                                                                                                                                                                 |
+| `name`    | string  | Optional friendly display name shown in prompt context (`[{source_name}]`) and search results. If omitted, derived from the ID slug.                                                                                        |
+| `id`      | string  | Optional stable identifier used for tool targeting (`calendar_id`) and search filtering (`source_ids`). If omitted, derived from the URL path slug.                                                                         |
+| `default` | boolean | Optional flag designating this calendar collection as the default destination for `add_calendar_event` when no `calendar_id` is passed. If omitted on all collections, the first configured CalDAV calendar is the default. |
+
+#### iCal Feed Source Options
+
+| Field  | Type   | Description                                                                                                                                                                                                                                                         |
+| ------ | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `url`  | string | **Required**. URL to the public or subscribed iCalendar (.ics) feed. URLs often contain private subscription tokens (e.g. TripIt, private webcals) and are kept strictly internal: they are never sent to the LLM in tool calls, prompt context, or error messages. |
+| `name` | string | Optional friendly display name. If omitted, the feed's `X-WR-CALNAME` header is used, falling back to the URL path slug.                                                                                                                                            |
+| `id`   | string | Optional stable identifier used for search filtering (`source_ids`) and status listing (`list_calendars`). If omitted, derived from the URL path slug.                                                                                                              |
+
+______________________________________________________________________
+
 ### CALDAV_USERNAME
 
 Username for CalDAV authentication.
