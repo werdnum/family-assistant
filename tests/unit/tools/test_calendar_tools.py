@@ -35,6 +35,7 @@ from family_assistant.tools.calendar import (
     search_calendar_events_tool,
 )
 from family_assistant.tools.confirmation import (
+    render_add_calendar_event_confirmation,
     render_delete_calendar_event_confirmation,
     render_modify_calendar_event_confirmation,
 )
@@ -714,10 +715,16 @@ async def test_confirmation_renderers_resolve_calendar_id(
             "password": "pwd",
             "calendar_urls": [
                 {
+                    "id": "personal",
+                    "name": "Personal",
+                    "url": "https://caldav.example.com/personal",
+                    "default": True,
+                },
+                {
                     "id": "work",
                     "name": "Work",
                     "url": "https://caldav.example.com/work",
-                }
+                },
             ],
         }
     }
@@ -763,6 +770,31 @@ async def test_confirmation_renderers_resolve_calendar_id(
     assert "Important Sync" in mod_prompt
     assert "Set summary to:" in mod_prompt
     assert "Renamed Sync" in mod_prompt
+
+    # Add event confirmation shows the selected calendar
+    add_prompt = await render_add_calendar_event_confirmation(
+        args={
+            "summary": "Team Offsite",
+            "start_time": "2026-05-01T09:00:00Z",
+            "end_time": "2026-05-01T17:00:00Z",
+            "calendar_id": "work",
+        },
+        context=ctx,
+    )
+    assert "Team Offsite" in add_prompt
+    assert "Work (work)" in add_prompt
+
+    # Add event confirmation falls back to default calendar if calendar_id is omitted
+    add_default_prompt = await render_add_calendar_event_confirmation(
+        args={
+            "summary": "Doctor Appointment",
+            "start_time": "2026-05-01T09:00:00Z",
+            "end_time": "2026-05-01T10:00:00Z",
+        },
+        context=ctx,
+    )
+    assert "Doctor Appointment" in add_default_prompt
+    assert "Personal (personal)" in add_default_prompt
 
 
 def test_search_calendar_events_output_untrusted_taint() -> None:

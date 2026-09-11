@@ -326,13 +326,52 @@ async def render_add_calendar_event_confirmation(
     context: ToolExecutionContext,
 ) -> str:
     """Render a confirmation prompt for creating a calendar event."""
-    _ = context
     fields = [
         _confirmation_field("Title", args.get("summary")),
+    ]
+
+    calendar_config = _extract_calendar_config_from_provider(
+        getattr(context, "tools_provider", None)
+    )
+    raw_calendar_id = args.get("calendar_id")
+    raw_calendar_url = args.get("calendar_url")
+    calendar_id = raw_calendar_id if isinstance(raw_calendar_id, str) else None
+    calendar_url = raw_calendar_url if isinstance(raw_calendar_url, str) else None
+
+    calendar_label: str | None = None
+    if calendar_config:
+        sources = calendar_integration.resolve_calendar_sources(calendar_config)
+        target_source: calendar_integration.CalendarSource | None = None
+        if calendar_id:
+            target_source = next(
+                (s for s in sources if s.source_id == calendar_id), None
+            )
+        elif calendar_url:
+            target_source = next((s for s in sources if s.url == calendar_url), None)
+        elif sources:
+            target_source = next(
+                (s for s in sources if s.writable and s.is_default), None
+            )
+
+        if target_source:
+            calendar_label = f"{target_source.name} ({target_source.source_id})"
+        elif calendar_id:
+            calendar_label = calendar_id
+        elif calendar_url:
+            calendar_label = calendar_url
+    elif calendar_id:
+        calendar_label = calendar_id
+    elif calendar_url:
+        calendar_label = calendar_url
+
+    if calendar_label:
+        fields.append(_confirmation_field("Calendar", calendar_label))
+
+    fields.extend([
         _confirmation_field("Start", args.get("start_time")),
         _confirmation_field("End", args.get("end_time")),
         _confirmation_field("All day", args.get("all_day", False)),
-    ]
+    ])
     if args.get("location"):
         fields.append(_confirmation_field("Location", args.get("location")))
     if args.get("recurrence_rule"):
