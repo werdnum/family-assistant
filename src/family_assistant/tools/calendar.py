@@ -440,6 +440,12 @@ CALENDAR_TOOLS_DEFINITION: list[ToolDefinition] = [
                             "Set to true to bypass duplicate detection and create the event anyway. Use this if you've reviewed the similar events and determined this is NOT a duplicate (e.g., different doctors, different purposes). Default: false."
                         ),
                     },
+                    "calendar_id": {
+                        "type": "string",
+                        "description": (
+                            "Optional ID of the calendar to add the event to (from list_calendars). If omitted, adds to the default calendar."
+                        ),
+                    },
                 },
                 "required": ["summary", "start_time", "end_time"],
             },
@@ -481,7 +487,7 @@ CALENDAR_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "modify_calendar_event",
             "description": (
-                "Modifies an existing calendar event. You must first use search_calendar_events to find the event's UID and calendar_url. Leave fields as None to keep existing values."
+                "Modifies an existing calendar event. You must first use search_calendar_events to find the event's UID and calendar_url or calendar_id. Leave fields as None to keep existing values."
             ),
             "parameters": {
                 "type": "object",
@@ -493,6 +499,10 @@ CALENDAR_TOOLS_DEFINITION: list[ToolDefinition] = [
                     "calendar_url": {
                         "type": "string",
                         "description": "The calendar URL where the event is stored (obtained from search_calendar_events).",
+                    },
+                    "calendar_id": {
+                        "type": "string",
+                        "description": "Optional ID of the calendar where the event is stored (from list_calendars). Can be provided instead of calendar_url.",
                     },
                     "new_summary": {
                         "type": "string",
@@ -517,7 +527,7 @@ CALENDAR_TOOLS_DEFINITION: list[ToolDefinition] = [
                         ),
                     },
                 },
-                "required": ["uid", "calendar_url"],
+                "required": ["uid"],
             },
         },
     },
@@ -526,7 +536,7 @@ CALENDAR_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "delete_calendar_event",
             "description": (
-                "Deletes a calendar event. You must first use search_calendar_events to find the event's UID and calendar_url."
+                "Deletes a calendar event. You must first use search_calendar_events to find the event's UID and calendar_url or calendar_id."
             ),
             "parameters": {
                 "type": "object",
@@ -539,8 +549,12 @@ CALENDAR_TOOLS_DEFINITION: list[ToolDefinition] = [
                         "type": "string",
                         "description": "The calendar URL where the event is stored (obtained from search_calendar_events).",
                     },
+                    "calendar_id": {
+                        "type": "string",
+                        "description": "Optional ID of the calendar where the event is stored (from list_calendars). Can be provided instead of calendar_url.",
+                    },
                 },
-                "required": ["uid", "calendar_url"],
+                "required": ["uid"],
             },
         },
     },
@@ -579,14 +593,16 @@ async def add_calendar_event_tool(
     all_day: bool = False,
     recurrence_rule: str | None = None,
     bypass_duplicate_check: bool = False,
+    calendar_id: str | None = None,
 ) -> str:
     """
-    Adds an event to the first configured CalDAV calendar.
+    Adds an event to a configured CalDAV calendar.
     Can create recurring events if an RRULE string is provided.
 
     Args:
         bypass_duplicate_check: If True, skip duplicate detection and create the event anyway.
                                 Use this if you've determined the event is not actually a duplicate.
+        calendar_id: Optional ID of target calendar (from list_calendars). Defaults to primary calendar.
     """
     logger.info(
         f"Executing add_calendar_event_tool: {summary}, RRULE: {recurrence_rule}"
@@ -599,20 +615,47 @@ async def add_calendar_event_tool(
 
     username: str | None = caldav_config.get("username")
     password: str | None = caldav_config.get("password")
-    caldav_sources = [
-        s for s in resolve_calendar_sources(calendar_config) if s.kind == "caldav"
-    ]
-    calendar_urls_list = [s.url for s in caldav_sources]
-    base_url: str | None = caldav_config.get("base_url")
+    if not username or not password:
+        return "Error: CalDAV configuration is incomplete (missing user or pass). Cannot add event."
 
-    if not username or not password or not calendar_urls_list:
-        return "Error: CalDAV configuration is incomplete (missing user, pass, or calendar_urls). Cannot add event."
+    all_sources = resolve_calendar_sources(calendar_config)
+    caldav_sources = [s for s in all_sources if s.kind == "caldav"]
+
+    target_source: CalendarSource | None = None
+    if calendar_id:
+        matching = [s for s in all_sources if s.source_id == calendar_id]
+        if not matching:
+            writable_ids = ", ".join(s.source_id for s in caldav_sources if s.writable)
+            return (
+                f"Error: Calendar '{calendar_id}' not found. "
+                f"Available writable calendars: {writable_ids or 'none'}."
+            )
+        matched = matching[0]
+        if not matched.writable or matched.kind == "ical":
+            return (
+                f"Error: Calendar '{matched.name}' ({calendar_id}) is read-only (iCal subscription). "
+                f"Events cannot be added to it. Use a writable CalDAV calendar instead."
+            )
+        target_source = matched
+    else:
+        # Default calendar: look for is_default CalDAV source, or first writable CalDAV source
+        default_sources = [s for s in caldav_sources if s.is_default and s.writable]
+        if default_sources:
+            target_source = default_sources[0]
+        elif caldav_sources:
+            target_source = caldav_sources[0]
+
+    if not target_source:
+        return "Error: CalDAV configuration is incomplete (missing calendar_urls). Cannot add event."
+
+    target_calendar_url = target_source.url
+    base_url: str | None = caldav_config.get("base_url")
 
     # Determine client_url and target_calendar_url
     client_url_to_use = base_url
     if not client_url_to_use:
         try:
-            parsed_first_cal_url = httpx.URL(calendar_urls_list[0])
+            parsed_first_cal_url = httpx.URL(target_calendar_url)
             client_url_to_use = f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}:{parsed_first_cal_url.port}"
             if parsed_first_cal_url.port is None:
                 client_url_to_use = (
@@ -631,9 +674,6 @@ async def add_calendar_event_tool(
     if not client_url_to_use:  # Should be caught above, but defensive
         return "Error: CalDAV client URL could not be determined."
 
-    target_calendar_url: str = calendar_urls_list[
-        0
-    ]  # Use the first configured full calendar URL
     logger.info(
         f"Targeting CalDAV server '{client_url_to_use}' and calendar collection '{target_calendar_url}'"
     )
@@ -963,23 +1003,81 @@ async def search_calendar_events_tool(
     return _format_search_results(all_events)
 
 
+def _resolve_target_caldav_url(
+    calendar_config: CalendarConfig,
+    calendar_url: str | None,
+    calendar_id: str | None,
+    operation_verb: str,
+) -> tuple[str | None, str | None]:
+    """Resolves target CalDAV calendar URL for write operations (modify/delete).
+
+    Returns (resolved_url, error_message). Exactly one will be non-None.
+    """
+    all_sources = resolve_calendar_sources(calendar_config)
+    operation_past = "modified" if operation_verb == "modify" else "deleted"
+
+    if calendar_id:
+        matching = [s for s in all_sources if s.source_id == calendar_id]
+        if matching:
+            matched = matching[0]
+            if not matched.writable or matched.kind == "ical":
+                return None, (
+                    f"Error: Calendar '{matched.name}' ({calendar_id}) is a read-only subscription. "
+                    f"Events cannot be {operation_past}."
+                )
+            return matched.url, None
+
+        writable_ids = ", ".join(
+            s.source_id for s in all_sources if s.writable and s.kind == "caldav"
+        )
+        return None, (
+            f"Error: Calendar '{calendar_id}' not found. "
+            f"Available writable calendars: {writable_ids or 'none'}."
+        )
+
+    if calendar_url:
+        for s in all_sources:
+            if s.url == calendar_url and (s.kind == "ical" or not s.writable):
+                return None, (
+                    f"Error: Calendar '{s.name}' is a read-only subscription. "
+                    f"Events cannot be {operation_past}."
+                )
+        return calendar_url, None
+
+    return (
+        None,
+        f"Error: Either calendar_id or calendar_url must be provided to {operation_verb} an event.",
+    )
+
+
 async def modify_calendar_event_tool(
     exec_context: ToolExecutionContext,
     calendar_config: CalendarConfig,
     uid: str,
-    calendar_url: str,
+    calendar_url: str | None = None,
+    calendar_id: str | None = None,
     new_summary: str | None = None,
     new_start_time: str | None = None,
     new_end_time: str | None = None,
     new_description: str | None = None,
     recurrence_rule: str | None = None,
 ) -> str:
-    """
-    Modifies an existing calendar event identified by UID.
+    """Modifies an existing calendar event identified by UID.
+
     Leave parameters as None to keep existing values.
     """
     logger.info(f"Executing modify_calendar_event_tool for UID: {uid}")
-    # calendar_config is now a direct parameter
+
+    target_cal_url, err = _resolve_target_caldav_url(
+        calendar_config=calendar_config,
+        calendar_url=calendar_url,
+        calendar_id=calendar_id,
+        operation_verb="modify",
+    )
+    if err:
+        return err
+    assert target_cal_url is not None
+
     caldav_config = calendar_config.get("caldav")
 
     if not caldav_config:
@@ -996,7 +1094,7 @@ async def modify_calendar_event_tool(
     client_url_to_use = base_url
     if not client_url_to_use:
         try:
-            parsed_cal_url = httpx.URL(calendar_url)
+            parsed_cal_url = httpx.URL(target_cal_url)
             client_url_to_use = (
                 f"{parsed_cal_url.scheme}://{parsed_cal_url.host}:{parsed_cal_url.port}"
             )
@@ -1025,10 +1123,10 @@ async def modify_calendar_event_tool(
                 timeout=30,
             ) as client:
                 # Get the specific calendar
-                calendar_obj = client.calendar(url=calendar_url)
+                calendar_obj = client.calendar(url=target_cal_url)
                 if not calendar_obj:
                     raise ConnectionError(
-                        f"Failed to obtain calendar object for URL: {calendar_url}"
+                        f"Failed to obtain calendar object for URL: {target_cal_url}"
                     )
 
                 # Search for the event by UID
@@ -1210,13 +1308,22 @@ async def delete_calendar_event_tool(
     exec_context: ToolExecutionContext,
     calendar_config: CalendarConfig,
     uid: str,
-    calendar_url: str,
+    calendar_url: str | None = None,
+    calendar_id: str | None = None,
 ) -> str:
-    """
-    Deletes a calendar event identified by UID.
-    """
+    """Deletes a calendar event identified by UID."""
     logger.info(f"Executing delete_calendar_event_tool for UID: {uid}")
-    # calendar_config is now a direct parameter
+
+    target_cal_url, err = _resolve_target_caldav_url(
+        calendar_config=calendar_config,
+        calendar_url=calendar_url,
+        calendar_id=calendar_id,
+        operation_verb="delete",
+    )
+    if err:
+        return err
+    assert target_cal_url is not None
+
     caldav_config = calendar_config.get("caldav")
 
     if not caldav_config:
@@ -1233,7 +1340,7 @@ async def delete_calendar_event_tool(
     client_url_to_use = base_url
     if not client_url_to_use:
         try:
-            parsed_cal_url = httpx.URL(calendar_url)
+            parsed_cal_url = httpx.URL(target_cal_url)
             client_url_to_use = (
                 f"{parsed_cal_url.scheme}://{parsed_cal_url.host}:{parsed_cal_url.port}"
             )
@@ -1262,10 +1369,10 @@ async def delete_calendar_event_tool(
                 timeout=30,
             ) as client:
                 # Get the specific calendar
-                calendar_obj = client.calendar(url=calendar_url)
+                calendar_obj = client.calendar(url=target_cal_url)
                 if not calendar_obj:
                     raise ConnectionError(
-                        f"Failed to obtain calendar object for URL: {calendar_url}"
+                        f"Failed to obtain calendar object for URL: {target_cal_url}"
                     )
 
                 # Search for the event by UID

@@ -204,25 +204,29 @@ async def render_delete_calendar_event_confirmation(
     event_details = None
     raw_uid = args.get("uid")
     raw_calendar_url = args.get("calendar_url")
+    raw_calendar_id = args.get("calendar_id")
     uid = raw_uid if isinstance(raw_uid, str) else None
     calendar_url = raw_calendar_url if isinstance(raw_calendar_url, str) else None
+    calendar_id = raw_calendar_id if isinstance(raw_calendar_id, str) else None
 
-    if uid and calendar_url:
-        # Get calendar config from the tools provider
-        calendar_config = _extract_calendar_config_from_provider(
-            getattr(context, "tools_provider", None)
+    calendar_config = _extract_calendar_config_from_provider(
+        getattr(context, "tools_provider", None)
+    )
+
+    if not calendar_url and calendar_id and calendar_config:
+        sources = calendar_integration.resolve_calendar_sources(calendar_config)
+        for s in sources:
+            if s.source_id == calendar_id and s.kind == "caldav":
+                calendar_url = s.url
+                break
+
+    if uid and calendar_url and calendar_config:
+        event_details = await calendar_integration.fetch_event_details_for_confirmation(
+            uid=uid,
+            calendar_url=calendar_url,
+            calendar_config=calendar_config,
+            timezone=context.timezone,
         )
-
-        if calendar_config:
-            # fetch_event_details_for_confirmation returns None on error
-            event_details = (
-                await calendar_integration.fetch_event_details_for_confirmation(
-                    uid=uid,
-                    calendar_url=calendar_url,
-                    calendar_config=calendar_config,
-                    timezone=context.timezone,
-                )
-            )
 
     # Use the helper to format event details
     # It handles the None case by returning "Event details not found."
@@ -250,25 +254,29 @@ async def render_modify_calendar_event_confirmation(
     event_details = None
     raw_uid = args.get("uid")
     raw_calendar_url = args.get("calendar_url")
+    raw_calendar_id = args.get("calendar_id")
     uid = raw_uid if isinstance(raw_uid, str) else None
     calendar_url = raw_calendar_url if isinstance(raw_calendar_url, str) else None
+    calendar_id = raw_calendar_id if isinstance(raw_calendar_id, str) else None
 
-    if uid and calendar_url:
-        # Get calendar config from the tools provider
-        calendar_config = _extract_calendar_config_from_provider(
-            getattr(context, "tools_provider", None)
+    calendar_config = _extract_calendar_config_from_provider(
+        getattr(context, "tools_provider", None)
+    )
+
+    if not calendar_url and calendar_id and calendar_config:
+        sources = calendar_integration.resolve_calendar_sources(calendar_config)
+        for s in sources:
+            if s.source_id == calendar_id and s.kind == "caldav":
+                calendar_url = s.url
+                break
+
+    if uid and calendar_url and calendar_config:
+        event_details = await calendar_integration.fetch_event_details_for_confirmation(
+            uid=uid,
+            calendar_url=calendar_url,
+            calendar_config=calendar_config,
+            timezone=context.timezone,
         )
-
-        if calendar_config:
-            # fetch_event_details_for_confirmation returns None on error
-            event_details = (
-                await calendar_integration.fetch_event_details_for_confirmation(
-                    uid=uid,
-                    calendar_url=calendar_url,
-                    calendar_config=calendar_config,
-                    timezone=context.timezone,
-                )
-            )
 
     # Use the helper to format event details
     # It handles the None case by returning "Event details not found."
