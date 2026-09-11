@@ -17,21 +17,40 @@ is that only read-only feeds are connected. Ask your operator.
 For reminders and recurring tasks — which are separate from calendar events — see
 [scheduling.md](scheduling.md).
 
+## Discovering your calendars
+
+- "What calendars do you have access to?"
+- "List all connected calendars."
+
+The assistant will list each available calendar, its name and identifier, whether it is CalDAV or an
+iCal feed, whether it is writable or read-only, and which calendar is the default for new events.
+
 ## Asking about your schedule
 
 - "What's happening tomorrow?"
 - "Do we have anything scheduled next Saturday?"
 - "List events for the next 14 days."
 - "Are there any events next Tuesday?"
+- "What flights or trips are on my TripIt calendar next month?"
+
+When the assistant shows your schedule, each event indicates which calendar it belongs to in
+brackets (e.g., `[Family]`, `[TripIt Trips]`, `[School]`). Searches query across all connected
+CalDAV calendars and iCal subscription feeds at once.
 
 ## Adding events
 
 - "Add dentist appointment for June 5th at 10 AM."
 - "Schedule 'Team Lunch' tomorrow from 12 PM to 1 PM."
-- "Add 'Pick up groceries' on Saturday at 10am."
+- "Add 'Soccer practice' to the Kids calendar on Saturday at 10am."
 
-The assistant checks for similar events at nearby times before creating one, so it may ask whether a
-new event is really a duplicate. If it isn't, tell it to go ahead.
+If you don't specify a calendar, the event goes to your default primary calendar. If you want it on
+a specific calendar, mention the calendar name. If you attempt to add an event to a read-only feed
+(such as a school schedule or TripIt subscription), the assistant will let you know it is read-only
+and suggest using a writable calendar instead.
+
+The assistant checks for similar events across all your calendars (including read-only subscription
+feeds) at nearby times before creating one, so it may ask whether a new event is really a duplicate.
+If it isn't, tell it to go ahead.
 
 ## Changing and deleting events
 

@@ -373,9 +373,18 @@ indexing_pipeline_config:
 #   caldav:
 #     username: "user"
 #     password: "password"
-#     calendar_urls: ["url1"]
+#     calendar_urls:
+#       - url: "https://caldav.example.com/calendars/home"
+#         name: "Family"
+#         id: "family"
+#         default: true
+#       - "https://caldav.example.com/calendars/work"
 #   ical:
-#     urls: ["url2"]
+#     urls:
+#       - url: "https://tripit.example.com/feed.ics"
+#         name: "TripIt Trips"
+#         id: "tripit"
+#       - "https://school.example.com/calendar.ics"
 #   duplicate_detection:
 #     enabled: true  # Enable duplicate event detection (default: true)
 #     similarity_strategy: "fuzzy"  # Strategy: "fuzzy" (fast, zero dependencies) or "embedding" (requires local-embeddings extra)

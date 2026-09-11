@@ -498,9 +498,7 @@ def _parse_ical_response(
     search_start = (
         start_date if start_date is not None else clock.now().astimezone(timezone)
     )
-    search_end = (
-        end_date if end_date is not None else search_start + timedelta(days=16)
-    )
+    search_end = end_date if end_date is not None else search_start + timedelta(days=16)
 
     if isinstance(search_start, datetime) and search_start.tzinfo is None:
         search_start = search_start.replace(tzinfo=timezone)
