@@ -390,12 +390,17 @@ def _parse_icalendar_event_component(
 # --- Core Fetching Functions ---
 
 
-async def _fetch_ical_events_async(
+async def fetch_ical_events_async(
     ical_sources: Sequence[CalendarSource | str],
     timezone: ZoneInfo,
     clock: Clock | None = None,
+    start_date: datetime | date | None = None,
+    end_date: datetime | date | None = None,
 ) -> list["CalendarEvent"]:
     """Asynchronously fetches and parses events from a list of iCal sources or URLs."""
+    if not ical_sources:
+        return []
+
     if clock is None:
         clock = SystemClock()
 
@@ -440,7 +445,13 @@ async def _fetch_ical_events_async(
                 try:
                     all_events.extend(
                         _parse_ical_response(
-                            result.text, src.url, timezone, clock, source=src
+                            result.text,
+                            src.url,
+                            timezone,
+                            clock,
+                            source=src,
+                            start_date=start_date,
+                            end_date=end_date,
                         )
                     )
                 except Exception as e:
@@ -460,12 +471,18 @@ async def _fetch_ical_events_async(
     return all_events
 
 
+# Backward compatibility alias
+_fetch_ical_events_async = fetch_ical_events_async
+
+
 def _parse_ical_response(
     ical_data: str,
     url: str,
     timezone: ZoneInfo,
     clock: Clock,
     source: CalendarSource | None = None,
+    start_date: datetime | date | None = None,
+    end_date: datetime | date | None = None,
 ) -> list["CalendarEvent"]:
     logger.debug(
         f"Parsing iCal data from {url} (first 500 chars):\n{ical_data[:500]}..."
@@ -478,10 +495,21 @@ def _parse_ical_response(
         if raw_calname:
             source_name = str(raw_calname).strip()
 
-    start_date = clock.now().astimezone(timezone)
+    search_start = (
+        start_date if start_date is not None else clock.now().astimezone(timezone)
+    )
+    search_end = (
+        end_date if end_date is not None else search_start + timedelta(days=16)
+    )
+
+    if isinstance(search_start, datetime) and search_start.tzinfo is None:
+        search_start = search_start.replace(tzinfo=timezone)
+    if isinstance(search_end, datetime) and search_end.tzinfo is None:
+        search_end = search_end.replace(tzinfo=timezone)
+
     expanded_events = recurring_ical_events.of(calendar).between(
-        start_date,
-        start_date + timedelta(days=16),
+        search_start,
+        search_end,
     )
     parsed_events: list[CalendarEvent] = []
     for event_component in expanded_events:

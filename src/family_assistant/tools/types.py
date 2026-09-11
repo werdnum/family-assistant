@@ -55,11 +55,22 @@ class ICalConfig(TypedDict, total=False):
     urls: list[str | ICalFeedEntryConfig]
 
 
+class DuplicateDetectionConfig(TypedDict, total=False):
+    """Configuration for duplicate event detection."""
+
+    enabled: bool
+    similarity_threshold: float
+    time_window_hours: int | float
+    similarity_strategy: str
+    embedding: dict[str, object]
+
+
 class CalendarConfig(TypedDict, total=False):
     """Calendar configuration used by tools."""
 
     caldav: CalDavConfig | None
     ical: ICalConfig | None
+    duplicate_detection: DuplicateDetectionConfig | None
 
 
 class MCPServerStdIOConfig(TypedDict, total=False):
