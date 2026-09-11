@@ -140,6 +140,30 @@ describe('useLiveMessageUpdates', () => {
     expect(lastUpdate.turn_id).toBeUndefined();
   });
 
+  it('does not open a stream for a conversation left before it connected', async () => {
+    const { rerender } = renderHook(
+      ({ conversationId }: { conversationId: string }) =>
+        useLiveMessageUpdates({ conversationId, enabled: true }),
+      { initialProps: { conversationId: 'web_conv_left' } }
+    );
+    rerender({ conversationId: 'web_conv_current' });
+    await flushConnect();
+
+    const urls = MockEventSource.instances.map((es) => es.url);
+    expect(urls.some((url) => url.includes('web_conv_current'))).toBe(true);
+    expect(urls.some((url) => url.includes('web_conv_left'))).toBe(false);
+  });
+
+  it('does not open a stream after unmounting before it connected', async () => {
+    const { unmount } = renderHook(() =>
+      useLiveMessageUpdates({ conversationId: 'web_conv_gone', enabled: true })
+    );
+    unmount();
+    await flushConnect();
+
+    expect(MockEventSource.instances).toHaveLength(0);
+  });
+
   it('skips the reload on the initial open but reloads on a reconnect open', async () => {
     const updates: Array<{ new_messages?: boolean }> = [];
     renderHook(() =>
