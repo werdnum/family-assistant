@@ -19,7 +19,7 @@ import {
   StickyNoteIcon,
   SquareIcon,
 } from 'lucide-react';
-import React, { useState } from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import {
   ComposerAddAttachment,
   ComposerAttachments,
@@ -54,11 +54,17 @@ export const Thread: React.FC = () => {
 };
 
 const ThreadContent: React.FC = () => {
+  const viewportRef = useRef<HTMLDivElement>(null);
   return (
     <ThreadPrimitive.Root className="flex flex-1 flex-col min-h-0">
-      <ThreadPrimitive.Viewport className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin scrollbar-thumb-muted-foreground/20 min-h-0">
+      <ThreadPrimitive.Viewport
+        ref={viewportRef}
+        className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin scrollbar-thumb-muted-foreground/20 min-h-0"
+      >
         <div className="pb-6">
           <ThreadWelcome />
+
+          <ThreadLoadOlderMessages viewportRef={viewportRef} />
 
           <ThreadPrimitive.Messages
             components={{
@@ -83,6 +89,69 @@ const ThreadContent: React.FC = () => {
         <Composer />
       </div>
     </ThreadPrimitive.Root>
+  );
+};
+
+const ThreadLoadOlderMessages: React.FC<{
+  viewportRef: React.RefObject<HTMLDivElement | null>;
+}> = ({ viewportRef }) => {
+  const controls = useChatControls();
+  const isRunning = useAuiState((s) => s.thread.isRunning);
+  const messageCount = useAuiState((s) => s.thread.messages.length);
+  // Older messages arrive above the reader, which would push what they were
+  // looking at down the page. Remember the distance from the bottom when they
+  // ask, and restore it once the longer thread renders.
+  const pendingAnchorRef = useRef<{ messageCount: number; fromBottom: number } | null>(null);
+  const status = controls?.olderMessagesStatus;
+
+  useLayoutEffect(() => {
+    const anchor = pendingAnchorRef.current;
+    const viewport = viewportRef.current;
+    if (!anchor || !viewport) {
+      return;
+    }
+    if (messageCount !== anchor.messageCount) {
+      pendingAnchorRef.current = null;
+      viewport.scrollTop = viewport.scrollHeight - anchor.fromBottom;
+    } else if (status === 'failed') {
+      pendingAnchorRef.current = null;
+    }
+  }, [messageCount, status, viewportRef]);
+
+  if (!controls?.hasOlderMessages) {
+    return null;
+  }
+
+  const handleClick = () => {
+    const viewport = viewportRef.current;
+    if (viewport) {
+      pendingAnchorRef.current = {
+        messageCount,
+        fromBottom: viewport.scrollHeight - viewport.scrollTop,
+      };
+    }
+    controls.loadOlderMessages();
+  };
+
+  return (
+    <div className="flex justify-center pt-4">
+      <Button
+        variant="outline"
+        size="sm"
+        className="rounded-full text-muted-foreground"
+        onClick={handleClick}
+        disabled={isRunning || status === 'loading'}
+      >
+        {status === 'loading' ? (
+          <Loader2Icon size={14} className="animate-spin" />
+        ) : (
+          <ArrowUpIcon size={14} />
+        )}
+        {status === 'failed'
+          ? "Couldn't load earlier messages. Try again"
+          : 'Load earlier messages'}
+      </Button>
+    </div>
   );
 };
 

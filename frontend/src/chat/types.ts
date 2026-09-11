@@ -129,6 +129,8 @@ export interface ConversationMessagesResponse {
   // sets include_conversation_profile=true; used to adopt the conversation's
   // profile on open.
   latest_user_profile_id?: string | null;
+  // Whether the conversation has messages older than the returned page.
+  has_more_before?: boolean;
   // Recently retained turn states for this conversation, when the backend has them.
   active_turns?: ActiveTurnInfo[];
 }

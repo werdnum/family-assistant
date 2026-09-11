@@ -44,6 +44,9 @@ conversations are easy to switch between.
 ![Collapsed Tool Calls](../../screenshots/desktop/chat-tool-calls-collapsed.png) *Completed tool
 calls stay collapsed while keeping the details available*
 
+A long conversation opens at its most recent messages. Scroll to the top and select **Load earlier
+messages** to bring in older ones, as many times as you need to reach the start.
+
 Reopening an existing conversation resumes it under the profile it started in, so follow-ups keep
 their context. Starting a new chat uses whichever profile you last picked.
 
@@ -244,9 +247,9 @@ restarted.
 
 With the phone locked, the assistant answers only when the phone is connected to CarPlay — being
 plugged into the car is what stands in for unlocking it. Otherwise, unlock the phone first; a call
-from a locked phone away from the car shows up briefly and then fails. The same
-rule applies to **"Ask Family Assistant…"**, which asks you to unlock rather than answering from a
-locked phone. An ordinary Bluetooth car connection is not enough.
+from a locked phone away from the car shows up briefly and then fails. The same rule applies to
+**"Ask Family Assistant…"**, which asks you to unlock rather than answering from a locked phone. An
+ordinary Bluetooth car connection is not enough.
 
 The conversation runs as a call, so it appears on the lock screen and on a CarPlay screen the way a
 phone call does. Mute and hang up with the usual call controls, or end it from the app. An incoming
