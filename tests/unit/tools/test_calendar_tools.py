@@ -10,7 +10,11 @@ from zoneinfo import ZoneInfo
 import httpx
 import pytest
 
-from family_assistant.security.taint import derive_tool_result_taint_source
+from family_assistant.security.taint import (
+    InMemoryTurnTaintTracker,
+    SourceTrustTier,
+    derive_tool_result_taint_source,
+)
 from family_assistant.storage.database import Database
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS,
@@ -342,6 +346,7 @@ async def test_duplicate_detection_checks_ical_feeds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ctx = _create_mock_context()
+    ctx.taint_tracker = InMemoryTurnTaintTracker()
     event_start = "2026-04-10T14:00:00Z"
     event_end = "2026-04-10T15:00:00Z"
 
@@ -397,6 +402,7 @@ async def test_duplicate_detection_checks_ical_feeds(
     assert "Flight to Melbourne QF445" in warning
     assert "UID: flight-conflicting-1" in warning
     assert "bypass_duplicate_check=true" in warning
+    assert ctx.taint_tracker.snapshot().max_tier == SourceTrustTier.UNKNOWN_EXTERNAL
 
 
 @pytest.mark.asyncio

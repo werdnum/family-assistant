@@ -24,6 +24,11 @@ from family_assistant.calendar_integration import (
     fetch_ical_events_async,
     resolve_calendar_sources,
 )
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+)
 from family_assistant.similarity import create_similarity_strategy_from_config
 
 if TYPE_CHECKING:
@@ -395,6 +400,18 @@ async def check_for_duplicate_events(
         error_lines.append(
             "If you believe this is NOT a duplicate, retry with bypass_duplicate_check=true."
         )
+
+        has_ical_events = any(e.get("source_kind") == "ical" for e in similar_events)
+        if has_ical_events and exec_context.taint_tracker is not None:
+            exec_context.taint_tracker.add_source(
+                TaintSource(
+                    source_type=TaintSourceType.TOOL_OUTPUT,
+                    source_id=f"ical_duplicate_{similar_events[0].get('uid', 'event')}",
+                    tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                    labels=frozenset(),
+                    reason="External iCal event contributed to duplicate detection warning.",
+                )
+            )
 
         return "\n".join(error_lines)
 
