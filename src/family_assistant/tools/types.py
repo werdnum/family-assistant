@@ -24,19 +24,35 @@ from typing import (
 # The Pydantic CalendarConfig in config_models.py is used for config file validation
 
 
+class CalDavCalendarEntryConfig(TypedDict, total=False):
+    """Configuration for an individual CalDAV calendar collection."""
+
+    url: str
+    id: str | None
+    name: str | None
+
+
+class ICalFeedEntryConfig(TypedDict, total=False):
+    """Configuration for an individual iCal feed."""
+
+    url: str
+    id: str | None
+    name: str | None
+
+
 class CalDavConfig(TypedDict, total=False):
     """CalDAV configuration for calendar access."""
 
     username: str | None
     password: str | None
-    calendar_urls: list[str]
+    calendar_urls: list[str | CalDavCalendarEntryConfig]
     base_url: str | None
 
 
 class ICalConfig(TypedDict, total=False):
     """iCal URL configuration."""
 
-    urls: list[str]
+    urls: list[str | ICalFeedEntryConfig]
 
 
 class CalendarConfig(TypedDict, total=False):
@@ -340,6 +356,10 @@ class CalendarEvent(TypedDict):
     all_day: bool
     calendar_url: str | None
     similarity: float | None
+    source_id: NotRequired[str | None]
+    source_name: NotRequired[str | None]
+    source_kind: NotRequired[Literal["caldav", "ical"] | None]
+    writable: NotRequired[bool | None]
 
 
 @dataclass

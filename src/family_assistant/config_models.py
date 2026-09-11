@@ -695,6 +695,26 @@ class SkillsConfig(BaseModel):
     builtin_dir: str | None = None
 
 
+class CalDAVCalendarConfig(BaseModel):
+    """Configuration for an individual CalDAV calendar collection."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str
+    id: str | None = None
+    name: str | None = None
+
+
+class ICalFeedConfig(BaseModel):
+    """Configuration for an individual iCal feed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str
+    id: str | None = None
+    name: str | None = None
+
+
 class CalDAVConfig(BaseModel):
     """CalDAV server configuration."""
 
@@ -702,7 +722,7 @@ class CalDAVConfig(BaseModel):
 
     username: str | None = None
     password: SecretStr | None = None
-    calendar_urls: list[str] = Field(default_factory=list)
+    calendar_urls: list[str | CalDAVCalendarConfig] = Field(default_factory=list)
     base_url: str | None = None
 
 
@@ -711,7 +731,7 @@ class ICalConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    urls: list[str] = Field(default_factory=list)
+    urls: list[str | ICalFeedConfig] = Field(default_factory=list)
 
 
 class DuplicateDetectionEmbeddingConfig(BaseModel):

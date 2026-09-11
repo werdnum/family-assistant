@@ -15,10 +15,10 @@ calendar_context_header: |
 
   Upcoming Events (Next 2 Weeks, max 10 shown):
   {next_two_weeks_events}
-# Format for each event item. Use {start_time}, {end_time}, {summary}.
+# Format for each event item. Use {start_time}, {end_time}, {summary}, {source_name}.
 # Special format for all-day events.
-event_item_format: "- {start_time} to {end_time}: {summary}"
-all_day_event_item_format: "- {start_time} (All Day): {summary}"
+event_item_format: "- {start_time} to {end_time}: {summary} [{source_name}]"
+all_day_event_item_format: "- {start_time} (All Day): {summary} [{source_name}]"
 no_events_today_tomorrow: "No events scheduled for today or tomorrow."
 no_events_next_two_weeks: "No further events scheduled in the next two weeks."
 # --- Notes Formatting ---
