@@ -86,8 +86,8 @@ The v1 invariants, each of which is enforced by code rather than by prompt:
 - **Bounded, recoverable review.** A durable per-conversation watermark, reviews over bounded
   chunks, and a sweep that recovers from any crash by re-evaluating stored state.
 - **No silent stale overwrite.** A memory write is short, atomic with its watermark advance, and
-  conditional on the store revision it read; a person's edit always wins over in-flight curator
-  work.
+  conditional on the store revision it read; an edit list proposed against a store a person has
+  since changed is never committed.
 - **Household scope and correct attribution.** Memory is household-wide by stated policy, and every
   entry names who said it.
 - **Inspectable.** Memory is plain notes with dates and source references, editable in the notes UI,
@@ -229,9 +229,12 @@ abandoned by advancing the watermark past its chunk, with the reason logged and 
 recent-changes view.
 
 **Eligibility.** A stretch is reviewed only when its turns ran under a profile that contributes to
-memory. Email intake, A2A, delegation subconversations, automation-triggered turns and internal
-profiles such as the engineer, media analyst and event handler do not contribute. If the unreviewed
-stretch contains no user messages, the review is skipped and the watermark advanced.
+memory and arrived on an interface the deployment lists as contributing. Both dimensions are needed
+because Telegram and the web share the default profile: the interface list is what lets Telegram
+stay out until its attribution is trustworthy while the same profile contributes from the web. Email
+intake, A2A, delegation subconversations, automation-triggered turns and internal profiles such as
+the engineer, media analyst and event handler do not contribute. If the unreviewed stretch contains
+no user messages, the review is skipped and the watermark advanced.
 
 **Two settings, one convenience default.** Reading memory and contributing to it are separate
 profile settings. Contributing implies reading: a profile configured to contribute without reading
@@ -259,8 +262,12 @@ revision, with all model work outside it. The store has one revision for the hou
 **curator writes are serialised household-wide**: one review applies at a time. At this scale that
 costs nothing and removes every question about two reviews landing the same fact in two places at
 once. If the revision moved underneath, because a person edited or deleted memory while the review
-ran, the apply fails and the review is retried against the fresh store; a person's edit therefore
-always wins over in-flight curator work, and a stale proposal is never applied over it.
+ran, the apply fails and the review is retried against the fresh store. What that guarantees is
+narrow and mechanical: an edit list proposed against a store a person has since changed is never
+committed. The retry reads the corrected store and the same transcript, and it can still propose the
+old fact again; the curator is shown the current entries and told not to, and the recent-changes
+view shows it when that instruction fails. Making a person's correction mechanically binding on
+later reviews is the durable-forgetting item under future hardening.
 
 That is the whole protocol. There is no semantic identity for an entry, no duplicate detection
 beyond showing the curator the relevant entries and telling it to update rather than add, and no
@@ -268,14 +275,16 @@ lineage. A retried review re-reads the store and proposes against what is there.
 
 ### Forgetting in v1
 
-Deleting an entry, or a whole memory note, whether in the notes UI, through the delete tool, or by
+Deleting an entry, or a whole topic note, whether in the notes UI, through the delete tool, or by
 saying "forget that" in chat, removes the curated memory and, through the store revision,
-invalidates any curator proposal in flight. That is all it guarantees. If somebody states the fact
-again, or a conversation that mentions it is reviewed later, it can be learned again. The user
-documentation says both things plainly: forgetting removes it from memory, not from conversation
-history or search, and it may come back if it is said again. The curator prompt says never to re-add
-something a person has just removed, and the recent-changes view makes it visible if that
-instruction fails.
+invalidates any curator proposal in flight. The core note is the one memory note that cannot be
+deleted, since exactly one must exist: deleting it is refused, and clearing it is an ordinary edit
+that empties its entries and regenerates the index. That is all it guarantees. If somebody states
+the fact again, or a conversation that mentions it is reviewed later, it can be learned again. The
+user documentation says both things plainly: forgetting removes it from memory, not from
+conversation history or search, and it may come back if it is said again. The curator prompt says
+never to re-add something a person has just removed, and the recent-changes view makes it visible if
+that instruction fails.
 
 Durable semantic forgetting, in which a removed fact resists reconstruction from old evidence, is
 future hardening, gated on the product requirement showing up in use.
@@ -520,13 +529,14 @@ usefulness is the point of v1.
    is exactly the notes provider. Skip counters and skipped-volume gauges land here, on the existing
    metrics surface.
 2. **Prompts, settings and documentation.** The curator prompt in `prompts.yaml`; the read and
-   contribute settings on the profiles that carry them, with contribution on by default for the web
-   and iOS household profiles and off for Telegram until milestone 4 makes its attribution
-   trustworthy; a line in the assistant system prompt about what memory is and how to honour
-   "forget"; `docs/user/memory.md` stating the household scope and what forgetting means; the
-   settings in the configuration reference. Verified by the existing prompt-render startup check, a
-   startup validation that a contributing profile reads, and a test that a read-only profile sees
-   the core note and does not feed reviews.
+   contribute settings on the profiles that carry them and the contributing-interface list, with
+   contribution on by default for the household profile and the interface list naming web and iOS
+   only, Telegram joining it in milestone 4 once its attribution is trustworthy; a line in the
+   assistant system prompt about what memory is and how to honour "forget"; `docs/user/memory.md`
+   stating the household scope and what forgetting means; the settings in the configuration
+   reference. Verified by the existing prompt-render startup check, a startup validation that a
+   contributing profile reads, and a test that a read-only profile sees the core note and does not
+   feed reviews.
 3. **Evaluation.** A replay corpus of synthetic conversations with expected outcomes: nothing worth
    remembering, a correction, a tentative plan, an assistant mistake, several speakers, a deliberate
    forget, and useful user facts mixed with research. Each case is scored on what the curator
