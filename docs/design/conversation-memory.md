@@ -132,19 +132,21 @@ beyond what the curator writes in the text ("correction:", "decision:"). Entries
 curator edits and the user reads, not a fact schema.
 
 **Caps are enforced at the repository for every writer.** The always-loaded layer is exactly one
-note: a memory-labelled note may be `include_in_prompt` only if it is that one note, and a write
-that would leave it over its ceiling is refused, whichever tool or UI asked. The curator is told to
-condense, moving detail to a topic note; the foreground assistant gets the same tool error; the
-notes UI shows it to the user. Topic notes carry a cap of their own at the same chokepoint, sized to
-the curator's input budget, so no memory note ever exceeds what one review can read; a review that
-would overfill a topic opens a further one. Enforcing the singleton, the caps and the title-list
-exclusion together is what makes "capped" a statement about the rendered prompt rather than about a
-note, and the rendered memory contribution is measured as such. The core note's topic index is
-derived, not authored: the apply path regenerates it from the topic notes that exist, their titles
-and when each last changed, on every apply that touches a topic note, so a pointer never outlives
-its topic or its title, the projection is current, and no writer has to remember to update it. It is
-short by the same cap: it names the most recently changed topics up to a fixed share of the core,
-and a topic that has dropped off it is still reachable by title and by search.
+note: a memory-labelled note may be `include_in_prompt` only if it is that one note, that note
+cannot have the flag turned off, and a write that would leave it over its ceiling is refused,
+whichever tool or UI asked. The repository holds the shape from both sides, never a second
+always-loaded memory note and never none. The curator is told to condense, moving detail to a topic
+note; the foreground assistant gets the same tool error; the notes UI shows it to the user. Topic
+notes carry a cap of their own at the same chokepoint, sized to the curator's input budget, so no
+memory note ever exceeds what one review can read; a review that would overfill a topic opens a
+further one. Enforcing the singleton, the caps and the title-list exclusion together is what makes
+"capped" a statement about the rendered prompt rather than about a note, and the rendered memory
+contribution is measured as such. The core note's topic index is derived, not authored: the apply
+path regenerates it from the topic notes that exist, their titles and when each last changed, on
+every apply that touches a topic note, so a pointer never outlives its topic or its title, the
+projection is current, and no writer has to remember to update it. It is short by the same cap: it
+names the most recently changed topics up to a fixed share of the core, and a topic that has dropped
+off it is still reachable by title and by search.
 
 Explicit requests ("remember that...", "forget that...") keep working in the foreground turn, and
 they go through the same apply path as the curator, described below. The notes UI edits memory notes
@@ -262,10 +264,11 @@ references and cites nothing new, because it changes where an entry lives rather
 and it is how the curator makes room in a full core note. A deterministic apply path validates and
 applies them. Validation is exactly the v1 invariants: every target note carries the `memory` label
 and is within the curator's scope; every addition, replacement or removal cites at least one
-message, and every cited message lies inside the reviewed stretch; the writing turn's provenance is
-inside the trusted pole; no note ends over its cap; and the store is still at the revision the
-curator read. Validation is all-or-nothing for the list, and a rejected list is retried once with
-the reasons fed back before the review is abandoned.
+message, every cited message lies inside the reviewed stretch, and the grounding message it names is
+one of those citations and a user row; the writing turn's provenance is inside the trusted pole; no
+note ends over its cap; and the store is still at the revision the curator read. Validation is
+all-or-nothing for the list, and a rejected list is retried once with the reasons fed back before
+the review is abandoned.
 
 Application and watermark advancement happen in **one short transaction**, conditional on the store
 revision, with all model work outside it. The store has one revision for the household, and
@@ -529,18 +532,19 @@ usefulness is the point of v1.
    the chunk budget is reviewed across successive sweeps; that an abandoned review advances the
    watermark; and that a stretch carrying unknown-external taint is skipped with an audit record and
    counted. The apply path is verified to refuse an edit citing evidence outside the stretch, an
-   over-cap result, a second always-loaded memory note, and a write from a turn above the trusted
-   pole, from the UI and foreground tool paths alike; to fail a whole list on one rejected edit; and
-   to fail against a store the person edited during the review, with the retry proposing against the
-   fresh store. Serialisation is verified by two due conversations producing two applies in
-   sequence, each seeing the other's result. The read policy is verified by seeding an unlabelled
-   note, a default-labelled note and an unlabelled file-based skill and asserting none reaches the
-   curator through the context provider, the title list, the skill catalogue or `get_note`,
-   including the file-skill fallback; a conformance rule asserts every note or skill read the
-   curator can reach goes through the policy, that its write policy carries the `memory` floor, that
-   its effective tool set is exactly the memory tools, and that its effective context provider set
-   is exactly the notes provider. Skip counters and skipped-volume gauges land here, on the existing
-   metrics surface.
+   edit whose grounding message is an assistant row or an uncited row, an over-cap result, a second
+   always-loaded memory note, an edit that turns the core note's always-loaded flag off, and a write
+   from a turn above the trusted pole, from the UI and foreground tool paths alike; to fail a whole
+   list on one rejected edit; and to fail against a store the person edited during the review, with
+   the retry proposing against the fresh store. Serialisation is verified by two due conversations
+   producing two applies in sequence, each seeing the other's result. The read policy is verified by
+   seeding an unlabelled note, a default-labelled note and an unlabelled file-based skill and
+   asserting none reaches the curator through the context provider, the title list, the skill
+   catalogue or `get_note`, including the file-skill fallback; a conformance rule asserts every note
+   or skill read the curator can reach goes through the policy, that its write policy carries the
+   `memory` floor, that its effective tool set is exactly the memory tools, and that its effective
+   context provider set is exactly the notes provider. Skip counters and skipped-volume gauges land
+   here, on the existing metrics surface.
 2. **Prompts, settings and documentation.** The curator prompt in `prompts.yaml`; the read and
    contribute settings on the profiles that carry them and the contributing-interface list, both
    shipping off by default, so a deployment opts in explicitly until milestone 7 flips the default;
