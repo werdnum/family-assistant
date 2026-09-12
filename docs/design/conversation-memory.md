@@ -143,8 +143,10 @@ further one. Enforcing the singleton, the caps and the title-list exclusion toge
 "capped" a statement about the rendered prompt rather than about a note, and the rendered memory
 contribution is measured as such. The core note's topic index is derived, not authored: the apply
 path regenerates it from the topic notes that exist, their titles and when each last changed, on
-every apply that touches a topic note, so a pointer never outlives its topic or its title, the
-projection is current, and no writer has to remember to update it. It is short by the same cap: it
+every apply to any memory note, the core note included, so a pointer never outlives its topic or its
+title, the projection is current, and no writer has to remember to update it. A hand edit to the
+core note can change its entries but not its index: whatever the submitted markdown says in the
+index section, the apply path replaces it with the regenerated one. It is short by the same cap: it
 names the most recently changed topics up to a fixed share of the core, and a topic that has dropped
 off it is still reachable by title and by search.
 
