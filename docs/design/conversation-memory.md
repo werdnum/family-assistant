@@ -119,9 +119,13 @@ of the turn that wrote them. This design adds no second store. Memory is a set o
 
 A memory note is human-readable markdown, one entry per bullet. Each entry carries the date it was
 asserted, who said it, and references to the messages it came from; where it matters, the period it
-applies to. That is the whole entry model in v1. There is no semantic identity, no version lineage,
-and no machine-readable classification beyond what the curator writes in the text ("correction:",
-"inferred:"). Entries are the unit the curator edits and the user reads, not a fact schema.
+applies to. The curator writes the text; the speaker and the date are not its to type. The apply
+path derives them from the cited messages, the sender and time of the first cited user row, and
+renders them into the entry, so attribution is right whenever the citation is, and a wrong citation
+is the one thing left for the evaluation to catch. That is the whole entry model in v1. There is no
+semantic identity, no version lineage, and no machine-readable classification beyond what the
+curator writes in the text ("correction:", "inferred:"). Entries are the unit the curator edits and
+the user reads, not a fact schema.
 
 **Caps are enforced at the repository for every writer.** The always-loaded layer is exactly one
 note: a memory-labelled note may be `include_in_prompt` only if it is that one note, and a write
@@ -137,8 +141,11 @@ topic that has dropped off it is still reachable by title and by search.
 
 Explicit requests ("remember that...", "forget that...") keep working in the foreground turn, and
 they go through the same apply path as the curator, described below. The notes UI edits memory notes
-as it edits any note; those edits also land through the apply path, so the caps and the provenance
-rule hold for a hand edit too.
+as it edits any note, and those edits land through the apply path too. A person's edit has a
+different kind of evidence: the authenticated editor and the time of the edit, rendered the same way
+a curator entry renders its speaker and date, and no transcript to cite. The invariants that apply
+to it are the ones that are about the store rather than about a review: the label, the caps, the
+provenance rule, which a signed-in household member satisfies, and the store revision.
 
 ### Whose memory it is
 
@@ -231,13 +238,16 @@ The household-facing profiles enable both by default.
 ### The curator proposes edits; the apply path enforces the invariants
 
 The curator does not rewrite notes. It emits a short list of **edits**: add an entry to a named
-note, replace an entry (identified by its current text) with new text, or remove one, each addition
-or replacement citing the messages in the reviewed stretch it rests on. A deterministic apply path
-validates and applies them. Validation is exactly the v1 invariants: every target note carries the
-`memory` label and is within the curator's scope; every cited message lies inside the reviewed
-stretch; the writing turn's provenance is inside the trusted pole; no note ends over its cap; and
-the store is still at the revision the curator read. Validation is all-or-nothing for the list, and
-a rejected list is retried once with the reasons fed back before the review is abandoned.
+note, replace an entry (identified by its current text) with new text, remove one, or move one to
+another memory note. An addition or replacement cites the messages in the reviewed stretch it rests
+on; a move carries the entry's existing references and cites nothing new, because it changes where
+an entry lives rather than what it says, and it is how the curator makes room in a full core note. A
+deterministic apply path validates and applies them. Validation is exactly the v1 invariants: every
+target note carries the `memory` label and is within the curator's scope; every message cited by an
+addition or replacement lies inside the reviewed stretch; the writing turn's provenance is inside
+the trusted pole; no note ends over its cap; and the store is still at the revision the curator
+read. Validation is all-or-nothing for the list, and a rejected list is retried once with the
+reasons fed back before the review is abandoned.
 
 Application and watermark advancement happen in **one short transaction**, conditional on the store
 revision, with all model work outside it. The store has one revision for the household, and
@@ -505,12 +515,13 @@ usefulness is the point of v1.
    is exactly the notes provider. Skip counters and skipped-volume gauges land here, on the existing
    metrics surface.
 2. **Prompts, settings and documentation.** The curator prompt in `prompts.yaml`; the read and
-   contribute settings on the profiles that carry them and the household default; a line in the
-   assistant system prompt about what memory is and how to honour "forget"; `docs/user/memory.md`
-   stating the household scope and what forgetting means; the settings in the configuration
-   reference. Verified by the existing prompt-render startup check, a startup validation that a
-   contributing profile reads, and a test that a read-only profile sees the core note and does not
-   feed reviews.
+   contribute settings on the profiles that carry them, with contribution on by default for the web
+   and iOS household profiles and off for Telegram until milestone 4 makes its attribution
+   trustworthy; a line in the assistant system prompt about what memory is and how to honour
+   "forget"; `docs/user/memory.md` stating the household scope and what forgetting means; the
+   settings in the configuration reference. Verified by the existing prompt-render startup check, a
+   startup validation that a contributing profile reads, and a test that a read-only profile sees
+   the core note and does not feed reviews.
 3. **Evaluation.** A replay corpus of synthetic conversations with expected outcomes: nothing worth
    remembering, a correction, a tentative plan, an assistant mistake, several speakers, a deliberate
    forget, and useful user facts mixed with research. Each case is scored on what the curator
@@ -522,10 +533,11 @@ usefulness is the point of v1.
    with thresholds. This milestone decides whether the taint refinement is built next.
 4. **Telegram: attribution and maximum deferral.** Sender names in the rendered transcript, a
    batcher that never merges messages from different senders, mid-turn input persisted under its own
-   sender, the maximum-deferral clause of the due predicate, and the longer idle window. Verified by
-   Telegram functional tests with two senders posting inside one batching window and with the second
-   posting while the first's turn is running, each attributed correctly, and a continuously active
-   chat that is still reviewed.
+   sender, the maximum-deferral clause of the due predicate, the longer idle window, and
+   contribution turned on for the Telegram household profile. Verified by Telegram functional tests
+   with two senders posting inside one batching window and with the second posting while the first's
+   turn is running, each attributed correctly, and a continuously active chat that is still
+   reviewed.
 5. **User control.** Evidence links on entries with the owner-only text rule, the recent-changes
    view, and the chat indicator. Verified by frontend tests and by tests that a member who does not
    own the source conversation sees the provenance summary and no transcript text, that every
