@@ -198,10 +198,13 @@ design work on Telegram, where a conversation is one chat id for its whole life 
 the idle window supplies the boundary, and the watermark keeps each review to the new material. It
 also handles web conversations the user resumes days later.
 
-**Enablement boundary.** Each time contribution is turned on for a profile, the moment is recorded,
-and a review considers only rows newer than both the watermark and that moment. Turning the feature
-on therefore learns from what is said from then on, and does not spend a burst of model calls
-surfacing months of old conversations as new facts. Reviewing older history is an explicit, bounded,
+**Enablement boundary.** Contribution is a property of a profile-and-interface pair, since the same
+profile serves several interfaces. Each time a pair becomes contributing, the moment is recorded for
+that pair, and a review considers only rows newer than both the watermark and the moment for the
+pair the rows ran under. Adding Telegram to the interface list later therefore learns from Telegram
+from that moment, not from rows that accumulated while it was excluded. Turning the feature on
+therefore learns from what is said from then on, and does not spend a burst of model calls surfacing
+months of old conversations as new facts. Reviewing older history is an explicit, bounded,
 on-request backfill.
 
 **Reviews are scheduled from state, not from events.** Whether a conversation is due is a pure
