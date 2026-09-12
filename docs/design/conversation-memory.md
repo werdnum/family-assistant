@@ -248,7 +248,9 @@ no user messages, the review is skipped and the watermark advanced.
 profile settings. Contributing implies reading: a profile configured to contribute without reading
 is a configuration error that startup validation rejects. Reading does not imply contributing: a
 specialised or experimental profile can benefit from the household's preferences without teaching
-its conversations back into shared memory. The household-facing profiles enable both by default.
+its conversations back into shared memory. Contribution ships off, and turns on by default for the
+household profile only once the evaluation and the user controls below have landed, so no deployment
+receives silent model-written memory before it can measure it and correct it.
 
 ### The curator proposes edits; the apply path enforces the invariants
 
@@ -540,14 +542,13 @@ usefulness is the point of v1.
    is exactly the notes provider. Skip counters and skipped-volume gauges land here, on the existing
    metrics surface.
 2. **Prompts, settings and documentation.** The curator prompt in `prompts.yaml`; the read and
-   contribute settings on the profiles that carry them and the contributing-interface list, with
-   contribution on by default for the household profile and the interface list naming web and iOS
-   only, Telegram joining it in milestone 4 once its attribution is trustworthy; a line in the
-   assistant system prompt about what memory is and how to honour "forget"; `docs/user/memory.md`
-   stating the household scope and what forgetting means; the settings in the configuration
-   reference. Verified by the existing prompt-render startup check, a startup validation that a
-   contributing profile reads, and a test that a read-only profile sees the core note and does not
-   feed reviews.
+   contribute settings on the profiles that carry them and the contributing-interface list, both
+   shipping off by default, so a deployment opts in explicitly until milestone 7 flips the default;
+   a line in the assistant system prompt about what memory is and how to honour "forget";
+   `docs/user/memory.md` stating the household scope and what forgetting means; the settings in the
+   configuration reference. Verified by the existing prompt-render startup check, a startup
+   validation that a contributing profile reads, and a test that a read-only profile sees the core
+   note and does not feed reviews.
 3. **Evaluation.** A replay corpus of synthetic conversations with expected outcomes: nothing worth
    remembering, a correction, a tentative plan, an assistant mistake, several speakers, a deliberate
    forget, and useful user facts mixed with research. Each case is scored on what the curator
@@ -559,11 +560,10 @@ usefulness is the point of v1.
    with thresholds. This milestone decides whether the taint refinement is built next.
 4. **Telegram: attribution and maximum deferral.** Sender names in the rendered transcript, a
    batcher that never merges messages from different senders, mid-turn input persisted under its own
-   sender, the maximum-deferral clause of the due predicate, the longer idle window, and
-   contribution turned on for the Telegram household profile. Verified by Telegram functional tests
-   with two senders posting inside one batching window and with the second posting while the first's
-   turn is running, each attributed correctly, and a continuously active chat that is still
-   reviewed.
+   sender, the maximum-deferral clause of the due predicate, the longer idle window, and Telegram
+   admitted to the contributing-interface list. Verified by Telegram functional tests with two
+   senders posting inside one batching window and with the second posting while the first's turn is
+   running, each attributed correctly, and a continuously active chat that is still reviewed.
 5. **User control.** Evidence links on entries with the owner-only text rule, the recent-changes
    view, and the chat indicator. Verified by frontend tests and by tests that a member who does not
    own the source conversation sees the provenance summary and no transcript text, that every
@@ -572,6 +572,10 @@ usefulness is the point of v1.
 6. **Per-evidence provenance**, if milestone 3 says so. The user's own rows reviewed under their own
    provenance when later rows are tainted. Verified by the hotel example: the preference is learned
    and the research is not.
+7. **Default on.** Contribution on by default for the household profile, with the interface list
+   naming web and iOS, and Telegram too once milestone 4 has landed. Gated on milestones 3 and 5, so
+   the default arrives with the quality measurement and the controls to notice and correct a bad
+   entry. Verified by a startup test of the shipped defaults.
 
 ## Open questions
 
