@@ -123,10 +123,13 @@ applies to. The curator writes the text; the speaker and the date are not its to
 names one of its cited messages as the grounding message, the user row in which the claim was made,
 and the apply path checks that it is a cited user row inside the stretch and renders its sender and
 time into the entry, so attribution is right whenever the grounding citation is, and a wrong
-citation is the one thing left for the evaluation to catch. That is the whole entry model in v1.
-There is no semantic identity, no version lineage, and no machine-readable classification beyond
-what the curator writes in the text ("correction:", "inferred:"). Entries are the unit the curator
-edits and the user reads, not a fact schema.
+citation is the one thing left for the evaluation to catch. It follows that v1 records only what a
+person said: a statement, a correction, a decision. An inference the curator might draw from a
+pattern of requests has no row in which anyone said it, so it has no honest speaker or date, and it
+is excluded from v1 rather than given a provenance shape of its own. That is the whole entry model
+in v1. There is no semantic identity, no version lineage, and no machine-readable classification
+beyond what the curator writes in the text ("correction:", "decision:"). Entries are the unit the
+curator edits and the user reads, not a fact schema.
 
 **Caps are enforced at the repository for every writer.** The always-loaded layer is exactly one
 note: a memory-labelled note may be `include_in_prompt` only if it is that one note, and a write
@@ -209,14 +212,16 @@ on-request backfill.
 
 **Reviews are scheduled from state, not from events.** Whether a conversation is due is a pure
 function of stored data: it has at least one completed, eligible turn after its watermark, and
-either its last activity is older than the idle window or its oldest unreviewed row is older than
-the maximum deferral. The second clause is what guarantees a busy Telegram group that never goes
-quiet is still reviewed. A recurring system task evaluates that predicate every few minutes and
-enqueues one review per due conversation, keyed on the conversation so the same conversation never
-has two reviews in flight. Nothing is enqueued when a message is persisted, so there is no race
-between a message landing and a task completing: a message that arrives during a review leaves rows
-after the watermark, and the next sweep sees them. Freshness is quantised to the sweep interval,
-which is negligible against a thirty-minute idle window.
+either its last eligible activity is older than the idle window or its oldest unreviewed eligible
+row is older than the maximum deferral, both measured over the rows the profile-and-interface
+boundary admits, so an excluded backlog neither hurries nor delays a review. The second clause is
+what guarantees a busy Telegram group that never goes quiet is still reviewed. A recurring system
+task evaluates that predicate every few minutes and enqueues one review per due conversation, keyed
+on the conversation so the same conversation never has two reviews in flight. Nothing is enqueued
+when a message is persisted, so there is no race between a message landing and a task completing: a
+message that arrives during a review leaves rows after the watermark, and the next sweep sees them.
+Freshness is quantised to the sweep interval, which is negligible against a thirty-minute idle
+window.
 
 **A review covers a bounded chunk of completed turns.** A review takes rows after the watermark up
 to a fixed budget of rendered size, cut on a turn boundary so the curator never sees a request
@@ -369,9 +374,9 @@ The curator prompt is short and operational. Its instructions, at approach level
 - Do not remember one-off requests, appointment timing (the calendar owns when things happen),
   device state, verbatim tool output, secrets or credentials, anything a speaker plainly meant for
   one person, or sensitive personal matters the user did not ask to have kept.
-- Say what kind of thing an entry is, in the text. An explicit statement, an explicit correction and
-  an inference are different, and an assistant suggestion is not a household fact until a person
-  accepted it.
+- Record only what a person said: a statement, a correction, a decision. Do not infer a preference
+  from a pattern; if nobody said it, it is not a memory. An assistant suggestion is not a household
+  fact until a person accepted it. Say in the text when an entry is a correction or a decision.
 - Date every entry with when it was asserted, and where it matters, the period it applies to. A
   statement made today about how things were years ago does not supersede a current preference.
 - Update rather than add. A changed fact replaces its entry; a contradicted one is removed with the
@@ -487,12 +492,15 @@ Nothing here is built until the stated evidence appears. Each item names the tri
   Trigger: the never-finished marker or the orphaned-reply residual showing up in practice.
 - **Personal scopes.** One core note per scope, an audience rule, a total injection bound. Trigger:
   a household wanting memory that is not shared.
+- **Inferred entries.** Entries the curator derives from a pattern rather than a statement, with a
+  provenance shape that says so instead of naming a speaker. Trigger: the evaluation showing that
+  statements alone miss preferences people expected the assistant to pick up.
 - **Per-turn consideration.** Trigger: the evaluation showing the idle review misses things people
   wanted kept.
 
 ## Residual risks
 
-- A wrong inference from a clean conversation becomes a standing entry until someone notices.
+- A misread statement from a clean conversation becomes a standing entry until someone notices.
   Evidence links, the recent-changes view and the small core note bound the damage.
 - A removed fact can return from a later statement or a later review of an old conversation. The
   docs say so, and the recent-changes view shows it.
