@@ -210,10 +210,10 @@ def create_similarity_strategy_from_config(
         ... }
         >>> strategy = create_similarity_strategy_from_config(config)
     """
-    dup_detection = calendar_config.get("duplicate_detection", {})
+    dup_detection = calendar_config.get("duplicate_detection")
 
     # Check if duplicate detection is enabled
-    if not dup_detection.get("enabled", True):
+    if not dup_detection or not dup_detection.get("enabled", True):
         logger.info("Duplicate detection is disabled, using fuzzy strategy as fallback")
         return FuzzySimilarityStrategy()
 
@@ -222,11 +222,11 @@ def create_similarity_strategy_from_config(
     if strategy_type == "fuzzy":
         return FuzzySimilarityStrategy()
     elif strategy_type == "embedding":
-        embedding_config = dup_detection.get("embedding", {})
-        model_name = embedding_config.get(
-            "model", "sentence-transformers/all-MiniLM-L6-v2"
+        embedding_config = dup_detection.get("embedding") or {}
+        model_name = str(
+            embedding_config.get("model", "sentence-transformers/all-MiniLM-L6-v2")
         )
-        device = embedding_config.get("device", "cpu")
+        device = str(embedding_config.get("device", "cpu"))
         return EmbeddingSimilarityStrategy(model_name=model_name, device=device)
     else:
         logger.warning(

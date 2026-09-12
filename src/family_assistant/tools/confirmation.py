@@ -11,6 +11,7 @@ import logging
 from typing import TYPE_CHECKING, Protocol, cast
 
 from family_assistant import calendar_integration
+from family_assistant.tools.calendar import resolve_target_caldav_url
 from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
 
 if TYPE_CHECKING:
@@ -204,25 +205,31 @@ async def render_delete_calendar_event_confirmation(
     event_details = None
     raw_uid = args.get("uid")
     raw_calendar_url = args.get("calendar_url")
+    raw_calendar_id = args.get("calendar_id")
     uid = raw_uid if isinstance(raw_uid, str) else None
     calendar_url = raw_calendar_url if isinstance(raw_calendar_url, str) else None
+    calendar_id = raw_calendar_id if isinstance(raw_calendar_id, str) else None
 
-    if uid and calendar_url:
-        # Get calendar config from the tools provider
-        calendar_config = _extract_calendar_config_from_provider(
-            getattr(context, "tools_provider", None)
+    calendar_config = _extract_calendar_config_from_provider(
+        getattr(context, "tools_provider", None)
+    )
+
+    if (calendar_url or calendar_id) and calendar_config:
+        resolved_url, err = resolve_target_caldav_url(
+            calendar_config=calendar_config,
+            calendar_url=calendar_url,
+            calendar_id=calendar_id,
+            operation_verb="delete",
         )
+        calendar_url = resolved_url if not err else None
 
-        if calendar_config:
-            # fetch_event_details_for_confirmation returns None on error
-            event_details = (
-                await calendar_integration.fetch_event_details_for_confirmation(
-                    uid=uid,
-                    calendar_url=calendar_url,
-                    calendar_config=calendar_config,
-                    timezone=context.timezone,
-                )
-            )
+    if uid and calendar_url and calendar_config:
+        event_details = await calendar_integration.fetch_event_details_for_confirmation(
+            uid=uid,
+            calendar_url=calendar_url,
+            calendar_config=calendar_config,
+            timezone=context.timezone,
+        )
 
     # Use the helper to format event details
     # It handles the None case by returning "Event details not found."
@@ -250,25 +257,31 @@ async def render_modify_calendar_event_confirmation(
     event_details = None
     raw_uid = args.get("uid")
     raw_calendar_url = args.get("calendar_url")
+    raw_calendar_id = args.get("calendar_id")
     uid = raw_uid if isinstance(raw_uid, str) else None
     calendar_url = raw_calendar_url if isinstance(raw_calendar_url, str) else None
+    calendar_id = raw_calendar_id if isinstance(raw_calendar_id, str) else None
 
-    if uid and calendar_url:
-        # Get calendar config from the tools provider
-        calendar_config = _extract_calendar_config_from_provider(
-            getattr(context, "tools_provider", None)
+    calendar_config = _extract_calendar_config_from_provider(
+        getattr(context, "tools_provider", None)
+    )
+
+    if (calendar_url or calendar_id) and calendar_config:
+        resolved_url, err = resolve_target_caldav_url(
+            calendar_config=calendar_config,
+            calendar_url=calendar_url,
+            calendar_id=calendar_id,
+            operation_verb="modify",
         )
+        calendar_url = resolved_url if not err else None
 
-        if calendar_config:
-            # fetch_event_details_for_confirmation returns None on error
-            event_details = (
-                await calendar_integration.fetch_event_details_for_confirmation(
-                    uid=uid,
-                    calendar_url=calendar_url,
-                    calendar_config=calendar_config,
-                    timezone=context.timezone,
-                )
-            )
+    if uid and calendar_url and calendar_config:
+        event_details = await calendar_integration.fetch_event_details_for_confirmation(
+            uid=uid,
+            calendar_url=calendar_url,
+            calendar_config=calendar_config,
+            timezone=context.timezone,
+        )
 
     # Use the helper to format event details
     # It handles the None case by returning "Event details not found."
@@ -313,13 +326,52 @@ async def render_add_calendar_event_confirmation(
     context: ToolExecutionContext,
 ) -> str:
     """Render a confirmation prompt for creating a calendar event."""
-    _ = context
     fields = [
         _confirmation_field("Title", args.get("summary")),
+    ]
+
+    calendar_config = _extract_calendar_config_from_provider(
+        getattr(context, "tools_provider", None)
+    )
+    raw_calendar_id = args.get("calendar_id")
+    raw_calendar_url = args.get("calendar_url")
+    calendar_id = raw_calendar_id if isinstance(raw_calendar_id, str) else None
+    calendar_url = raw_calendar_url if isinstance(raw_calendar_url, str) else None
+
+    calendar_label: str | None = None
+    if calendar_config:
+        sources = calendar_integration.resolve_calendar_sources(calendar_config)
+        target_source: calendar_integration.CalendarSource | None = None
+        if calendar_id:
+            target_source = next(
+                (s for s in sources if s.source_id == calendar_id), None
+            )
+        elif calendar_url:
+            target_source = next((s for s in sources if s.url == calendar_url), None)
+        elif sources:
+            target_source = next(
+                (s for s in sources if s.writable and s.is_default), None
+            )
+
+        if target_source:
+            calendar_label = f"{target_source.name} ({target_source.source_id})"
+        elif calendar_id:
+            calendar_label = calendar_id
+        elif calendar_url:
+            calendar_label = calendar_url
+    elif calendar_id:
+        calendar_label = calendar_id
+    elif calendar_url:
+        calendar_label = calendar_url
+
+    if calendar_label:
+        fields.append(_confirmation_field("Calendar", calendar_label))
+
+    fields.extend([
         _confirmation_field("Start", args.get("start_time")),
         _confirmation_field("End", args.get("end_time")),
         _confirmation_field("All day", args.get("all_day", False)),
-    ]
+    ])
     if args.get("location"):
         fields.append(_confirmation_field("Location", args.get("location")))
     if args.get("recurrence_rule"):

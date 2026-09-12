@@ -1,7 +1,10 @@
 import asyncio  # Import asyncio for run_in_executor
 import logging
+import re
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta  # Added time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from zoneinfo import ZoneInfo  # Import ZoneInfo
 
 import caldav
@@ -24,6 +27,167 @@ logger = logging.getLogger(__name__)
 
 # --- Configuration (Now passed via function arguments) ---
 # Environment variables are still read here for the standalone test section (__main__)
+
+# --- Calendar Sources ---
+
+
+@dataclass(frozen=True)
+class CalendarSource:
+    """Represents a resolved calendar source (CalDAV collection or iCal feed)."""
+
+    source_id: str
+    name: str
+    kind: Literal["caldav", "ical"]
+    url: str
+    writable: bool
+    is_default: bool = False
+
+
+def _derive_slug_from_url(url: str) -> str | None:
+    """Extract a sanitized identifier slug from the terminal segment of a calendar URL."""
+    try:
+        parsed = httpx.URL(url)
+    except Exception:
+        return None
+    path = parsed.path.rstrip("/")
+    if not path:
+        return None
+    last_segment = path.split("/")[-1]
+    if last_segment.lower().endswith(".ics"):
+        last_segment = last_segment[:-4]
+    cleaned = re.sub(r"[^a-zA-Z0-9_-]", "_", last_segment).strip("_")
+    return cleaned.lower() if cleaned else None
+
+
+def _format_slug_as_name(slug: str) -> str:
+    """Convert an identifier slug into a title-cased display name."""
+    words = slug.replace("-", "_").split("_")
+    capitalized_words: list[str] = []
+    for word in words:
+        if not word:
+            continue
+        # Preserve acronyms like NSW, UK, US if uppercase in slug, else capitalize
+        if word.isupper() and len(word) <= 4:
+            capitalized_words.append(word)
+        else:
+            capitalized_words.append(word.capitalize())
+    return " ".join(capitalized_words) if capitalized_words else "Calendar"
+
+
+def resolve_calendar_sources(
+    calendar_config: "CalendarConfig | None",
+) -> list[CalendarSource]:
+    """Resolve configured CalDAV collections and iCal feeds into CalendarSource instances.
+
+    Generates stable, unique source_id slugs and friendly names if not explicitly configured.
+    Identifies the default writable CalDAV calendar collection for new events.
+    """
+    if not calendar_config:
+        return []
+
+    sources: list[CalendarSource] = []
+    seen_ids: set[str] = set()
+
+    def _unique_id(base_id: str) -> str:
+        clean = re.sub(r"[^a-zA-Z0-9_-]", "_", base_id).strip("_").lower()
+        if not clean:
+            clean = "calendar"
+        candidate = clean
+        counter = 2
+        while candidate in seen_ids:
+            candidate = f"{clean}_{counter}"
+            counter += 1
+        seen_ids.add(candidate)
+        return candidate
+
+    # 1. CalDAV sources
+    caldav_config = calendar_config.get("caldav")
+    if caldav_config:
+        calendar_urls = caldav_config.get("calendar_urls", [])
+        explicit_default_idx: int | None = None
+        for i, entry in enumerate(calendar_urls):
+            if isinstance(entry, dict) and entry.get("default") is True:
+                explicit_default_idx = i
+                break
+
+        for idx, entry in enumerate(calendar_urls):
+            entry_url: str
+            explicit_id: str | None = None
+            explicit_name: str | None = None
+            if isinstance(entry, dict):
+                entry_url = entry.get("url", "")
+                explicit_id = entry.get("id")
+                explicit_name = entry.get("name")
+            else:
+                entry_url = str(entry)
+
+            if not entry_url:
+                continue
+
+            if explicit_id:
+                source_id = _unique_id(explicit_id)
+            else:
+                slug = _derive_slug_from_url(entry_url) or f"caldav_{idx + 1}"
+                source_id = _unique_id(slug)
+
+            source_name = explicit_name or _format_slug_as_name(source_id)
+            if explicit_default_idx is not None:
+                is_default = idx == explicit_default_idx
+            else:
+                is_default = (
+                    len(sources) == 0
+                )  # First CalDAV source is default by default
+
+            sources.append(
+                CalendarSource(
+                    source_id=source_id,
+                    name=source_name,
+                    kind="caldav",
+                    url=entry_url,
+                    writable=True,
+                    is_default=is_default,
+                )
+            )
+
+    # 2. iCal sources
+    ical_config = calendar_config.get("ical")
+    if ical_config:
+        urls = ical_config.get("urls", [])
+        for idx, entry in enumerate(urls):
+            ical_url: str
+            ical_explicit_id: str | None = None
+            ical_explicit_name: str | None = None
+            if isinstance(entry, dict):
+                ical_url = entry.get("url", "")
+                ical_explicit_id = entry.get("id")
+                ical_explicit_name = entry.get("name")
+            else:
+                ical_url = str(entry)
+
+            if not ical_url:
+                continue
+
+            if ical_explicit_id:
+                source_id = _unique_id(ical_explicit_id)
+            else:
+                slug = _derive_slug_from_url(ical_url) or f"ical_{idx + 1}"
+                source_id = _unique_id(slug)
+
+            source_name = ical_explicit_name or _format_slug_as_name(source_id)
+
+            sources.append(
+                CalendarSource(
+                    source_id=source_id,
+                    name=source_name,
+                    kind="ical",
+                    url=ical_url,
+                    writable=False,
+                    is_default=False,
+                )
+            )
+
+    return sources
+
 
 # --- Helper Functions ---
 
@@ -237,59 +401,89 @@ def _parse_icalendar_event_component(
 # --- Core Fetching Functions ---
 
 
-async def _fetch_ical_events_async(
-    ical_urls: list[str],
+async def fetch_ical_events_async(
+    ical_sources: Sequence[CalendarSource | str],
     timezone: ZoneInfo,
     clock: Clock | None = None,
+    start_date: datetime | date | None = None,
+    end_date: datetime | date | None = None,
 ) -> list["CalendarEvent"]:
-    """Asynchronously fetches and parses events from a list of iCal URLs."""
+    """Asynchronously fetches and parses events from a list of iCal sources or URLs."""
+    if not ical_sources:
+        return []
+
     if clock is None:
         clock = SystemClock()
 
-    all_events: list[CalendarEvent] = []
-    async with httpx.AsyncClient(timeout=30.0) as client:  # Increased timeout
-        fetch_tasks: list[asyncio.Task[httpx.Response]] = []
-        for url_item in ical_urls:
-            logger.info(f"Fetching iCal data from: {url_item}")
-            # client.get returns a coroutine, ensure it's wrapped in a task for gather if not already
-            fetch_tasks.append(
-                asyncio.create_task(client.get(url_item, follow_redirects=True))
+    normalized_sources: list[CalendarSource] = []
+    for item in ical_sources:
+        if isinstance(item, CalendarSource):
+            normalized_sources.append(item)
+        else:
+            url_str = str(item)
+            slug = _derive_slug_from_url(url_str) or "ical"
+            normalized_sources.append(
+                CalendarSource(
+                    source_id=slug,
+                    name=_format_slug_as_name(slug),
+                    kind="ical",
+                    url=url_str,
+                    writable=False,
+                )
             )
 
-        # `results` will be a list of httpx.Response objects or exceptions
+    all_events: list[CalendarEvent] = []
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        fetch_tasks: list[asyncio.Task[httpx.Response]] = []
+        for src in normalized_sources:
+            logger.info(f"Fetching iCal data from: {src.url}")
+            fetch_tasks.append(
+                asyncio.create_task(client.get(src.url, follow_redirects=True))
+            )
+
         results: list[httpx.Response | BaseException] = await asyncio.gather(
             *fetch_tasks, return_exceptions=True
         )
 
         for i, result in enumerate(results):
-            url = ical_urls[i]  # Assuming ical_urls maps directly to fetch_tasks
+            src = normalized_sources[i]
             if isinstance(result, httpx.Response):
                 if result.status_code != 200:
                     logger.error(
-                        f"Failed to fetch iCal URL {url}: Status {result.status_code}"
+                        f"Failed to fetch iCal URL {src.url}: Status {result.status_code}"
                     )
                     continue
                 try:
                     all_events.extend(
-                        _parse_ical_response(result.text, url, timezone, clock)
+                        _parse_ical_response(
+                            result.text,
+                            src.url,
+                            timezone,
+                            clock,
+                            source=src,
+                            start_date=start_date,
+                            end_date=end_date,
+                        )
                     )
                 except Exception as e:
-                    logger.exception(f"Error parsing iCal data from {url}: {e}")
+                    logger.exception(f"Error parsing iCal data from {src.url}: {e}")
             elif isinstance(result, Exception):
                 logger.error(
-                    f"Error fetching iCal URL {url}: {result}", exc_info=result
+                    f"Error fetching iCal URL {src.url}: {result}", exc_info=result
                 )
-                # continue is implicit as this is an elif block
             else:
-                # This case should ideally not be reached if gather behaves as expected
                 logger.error(
-                    f"Unexpected type in results for {url}: {type(result)}. Skipping."
+                    f"Unexpected type in results for {src.url}: {type(result)}. Skipping."
                 )
 
     logger.info(
-        f"Fetched and parsed {len(all_events)} total events from {len(ical_urls)} iCal URL(s)."
+        f"Fetched and parsed {len(all_events)} total events from {len(normalized_sources)} iCal source(s)."
     )
     return all_events
+
+
+# Backward compatibility alias
+_fetch_ical_events_async = fetch_ical_events_async
 
 
 def _parse_ical_response(
@@ -297,15 +491,34 @@ def _parse_ical_response(
     url: str,
     timezone: ZoneInfo,
     clock: Clock,
+    source: CalendarSource | None = None,
+    start_date: datetime | date | None = None,
+    end_date: datetime | date | None = None,
 ) -> list["CalendarEvent"]:
     logger.debug(
         f"Parsing iCal data from {url} (first 500 chars):\n{ical_data[:500]}..."
     )
     calendar = ICalendar.from_ical(ical_data)
-    start_date = clock.now().astimezone(timezone)
+
+    source_name = source.name if source else "Calendar"
+    if source and source.name == _format_slug_as_name(source.source_id):
+        raw_calname = calendar.get("X-WR-CALNAME")
+        if raw_calname:
+            source_name = str(raw_calname).strip()
+
+    search_start = (
+        start_date if start_date is not None else clock.now().astimezone(timezone)
+    )
+    search_end = end_date if end_date is not None else search_start + timedelta(days=16)
+
+    if isinstance(search_start, datetime) and search_start.tzinfo is None:
+        search_start = search_start.replace(tzinfo=timezone)
+    if isinstance(search_end, datetime) and search_end.tzinfo is None:
+        search_end = search_end.replace(tzinfo=timezone)
+
     expanded_events = recurring_ical_events.of(calendar).between(
-        start_date,
-        start_date + timedelta(days=16),
+        search_start,
+        search_end,
     )
     parsed_events: list[CalendarEvent] = []
     for event_component in expanded_events:
@@ -322,6 +535,12 @@ def _parse_ical_response(
             )
             continue
         if parsed:
+            parsed["calendar_url"] = None  # Withhold iCal URL to protect bearer tokens
+            if source:
+                parsed["source_id"] = source.source_id
+                parsed["source_name"] = source_name
+                parsed["source_kind"] = "ical"
+                parsed["writable"] = False
             parsed_events.append(parsed)
     logger.info(f"Parsed {len(parsed_events)} events from iCal URL: {url}")
     return parsed_events
@@ -330,27 +549,42 @@ def _parse_ical_response(
 def _fetch_caldav_events_sync(
     username: str,
     password: str,
-    calendar_urls: list[str],
+    caldav_sources: Sequence[CalendarSource | str],
     timezone: ZoneInfo,
-    base_url: str | None = None,  # Added base_url parameter
+    base_url: str | None = None,
 ) -> list["CalendarEvent"]:
     """Synchronous function to connect to CalDAV servers using specific calendar URLs and fetch events."""
     logger.debug("Executing synchronous CalDAV fetch using direct calendar URLs.")
     all_events: list[CalendarEvent] = []
 
-    if not calendar_urls:
-        logger.error("No calendar URLs provided to _fetch_caldav_events_sync.")
+    if not caldav_sources:
+        logger.error("No calendar sources provided to _fetch_caldav_events_sync.")
         return []
 
-    # Determine the client URL: use provided base_url or infer from the first calendar_url
+    normalized_sources: list[CalendarSource] = []
+    for item in caldav_sources:
+        if isinstance(item, CalendarSource):
+            normalized_sources.append(item)
+        else:
+            url_str = str(item)
+            slug = _derive_slug_from_url(url_str) or "caldav"
+            normalized_sources.append(
+                CalendarSource(
+                    source_id=slug,
+                    name=_format_slug_as_name(slug),
+                    kind="caldav",
+                    url=url_str,
+                    writable=True,
+                    is_default=(len(normalized_sources) == 0),
+                )
+            )
+
     client_url = base_url
-    if not client_url and calendar_urls:
-        # Basic inference: take the scheme and netloc from the first calendar URL.
-        # This might not be robust for all CalDAV server setups.
+    if not client_url and normalized_sources:
         try:
-            parsed_first_cal_url = httpx.URL(calendar_urls[0])
+            parsed_first_cal_url = httpx.URL(normalized_sources[0].url)
             client_url = f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}:{parsed_first_cal_url.port}"
-            if parsed_first_cal_url.port is None:  # Handle default ports
+            if parsed_first_cal_url.port is None:
                 client_url = (
                     f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}"
                 )
@@ -360,32 +594,28 @@ def _fetch_caldav_events_sync(
             )
         except Exception as e:
             logger.error(
-                f"Could not infer CalDAV base_url from '{calendar_urls[0]}': {e}. Cannot proceed with CalDAV fetch."
+                f"Could not infer CalDAV base_url from '{normalized_sources[0].url}': {e}. Cannot proceed with CalDAV fetch."
             )
             return []
-    elif (
-        not client_url and not calendar_urls
-    ):  # Should be caught by earlier check but defensive
-        logger.error("No CalDAV base_url provided and no calendar_urls to infer from.")
+    elif not client_url and not normalized_sources:
+        logger.error(
+            "No CalDAV base_url provided and no calendar sources to infer from."
+        )
         return []
 
-    # Define date range based on the provided timezone
     local_tz = timezone
     start_date = datetime.now(local_tz).date()
-    end_date = start_date + timedelta(
-        days=16
-    )  # Search up to 16 days out (exclusive end)
+    end_date = start_date + timedelta(days=16)
 
-    if not client_url:  # Ensure client_url is not None before use
+    if not client_url:
         logger.error(
             "CalDAV client URL could not be determined. Cannot proceed with CalDAV fetch."
         )
         return []
 
-    # Initialize one client with the determined client_url (server base or inferred)
     try:
         client = caldav.DAVClient(
-            url=client_url,  # Use the determined base URL for the client
+            url=client_url,
             username=username,
             password=password,
             timeout=30,
@@ -396,33 +626,26 @@ def _fetch_caldav_events_sync(
         )
         return []
 
-    # Iterate through each specific calendar URL
-    for calendar_url_item in calendar_urls:
-        logger.info(
-            f"Attempting to fetch from calendar collection: {calendar_url_item}"
-        )
+    for src in normalized_sources:
+        logger.info(f"Attempting to fetch from calendar collection: {src.url}")
         try:
             _fetch_caldav_calendar(
                 client,
-                calendar_url_item,
+                src.url,
                 start_date,
                 end_date,
                 timezone,
                 all_events,
+                source=src,
             )
         except NotFoundError:
-            logger.error(
-                f"Calendar collection not found at URL {calendar_url_item}. Skipping."
-            )
+            logger.error(f"Calendar collection not found at URL {src.url}. Skipping.")
         except DAVError as e:
-            logger.exception(
-                f"CalDAV error while processing calendar {calendar_url_item}: {e}"
-            )
+            logger.exception(f"CalDAV error while processing calendar {src.url}: {e}")
         except Exception as e:
             logger.exception(
-                f"Unexpected error during CalDAV fetch for calendar {calendar_url_item}: {e}"
+                f"Unexpected error during CalDAV fetch for calendar {src.url}: {e}"
             )
-        # Continue to the next calendar URL if one fails
 
     # Sort events by start time
     def get_sort_key_caldav(event: "CalendarEvent") -> datetime:
@@ -466,6 +689,7 @@ def _fetch_caldav_calendar(
     end_date: date,
     timezone: ZoneInfo,
     all_events: list["CalendarEvent"],
+    source: CalendarSource | None = None,
 ) -> None:
     target_calendar = client.calendar(url=calendar_url)  # type: ignore[no-untyped-call]
     logger.info(
@@ -482,7 +706,13 @@ def _fetch_caldav_calendar(
     )
     for event_resource in caldav_results:
         try:
-            _append_caldav_event(event_resource, calendar_url, timezone, all_events)
+            _append_caldav_event(
+                event_resource,
+                calendar_url,
+                timezone,
+                all_events,
+                source=source,
+            )
         except (DAVError, NotFoundError, Exception) as event_error:
             logger.exception(
                 f"Error processing individual event {getattr(event_resource, 'url', 'N/A')} in {calendar_url}: {event_error}"
@@ -494,12 +724,19 @@ def _append_caldav_event(
     calendar_url: str,
     timezone: ZoneInfo,
     all_events: list["CalendarEvent"],
+    source: CalendarSource | None = None,
 ) -> None:
     raw_resource = cast("Any", event_resource)
     event_url = getattr(raw_resource, "url", "N/A")
     event_data: str = raw_resource.data
     parsed = parse_event(event_data, timezone=timezone)
     if parsed:
+        parsed["calendar_url"] = calendar_url
+        if source:
+            parsed["source_id"] = source.source_id
+            parsed["source_name"] = source.name
+            parsed["source_kind"] = "caldav"
+            parsed["writable"] = True
         all_events.append(parsed)
     else:
         logger.warning(
@@ -521,19 +758,18 @@ async def fetch_upcoming_events(
     # Allow tasks list to hold both Futures (from run_in_executor) and Tasks
     tasks: list[asyncio.Future[Any] | asyncio.Task[Any]] = []
 
+    resolved_sources = resolve_calendar_sources(calendar_config)
+    caldav_sources = [s for s in resolved_sources if s.kind == "caldav"]
+    ical_sources = [s for s in resolved_sources if s.kind == "ical"]
+
     # --- Schedule CalDAV Fetch (if configured) ---
     caldav_config = calendar_config.get("caldav")
-    if caldav_config:
+    if caldav_config and caldav_sources:
         username = caldav_config.get("username")
         password = caldav_config.get("password")
-        calendar_urls = caldav_config.get(
-            "calendar_urls", []
-        )  # These are full URLs to collections
-        base_url = caldav_config.get("base_url")  # This is the server base URL
+        base_url = caldav_config.get("base_url")
 
-        if (
-            username and password and calendar_urls
-        ):  # base_url is optional but recommended
+        if username and password:
             loop = asyncio.get_running_loop()
             logger.debug("Scheduling synchronous CalDAV fetch in executor.")
             caldav_task = loop.run_in_executor(
@@ -541,31 +777,24 @@ async def fetch_upcoming_events(
                 _fetch_caldav_events_sync,
                 username,
                 password,
-                calendar_urls,  # Pass list of full collection URLs
+                caldav_sources,
                 timezone,
-                base_url,  # Pass the server base_url
+                base_url,
             )
             tasks.append(caldav_task)
         else:
             logger.warning(
-                "CalDAV config present (%r) but incomplete (missing user/pass or calendar_urls). Skipping CalDAV fetch.",
+                "CalDAV config present (%r) but incomplete (missing username or password). Skipping CalDAV fetch.",
                 caldav_config,
             )
 
     # --- Schedule iCal Fetch (if configured) ---
-    ical_config = calendar_config.get("ical")
-    if ical_config:
-        ical_urls = ical_config.get("urls", [])
-        if ical_urls:
-            logger.debug("Scheduling asynchronous iCal fetch.")
-            ical_task = asyncio.create_task(
-                _fetch_ical_events_async(ical_urls, timezone, clock=clock)
-            )
-            tasks.append(ical_task)
-        else:
-            logger.warning(
-                "iCal config present but no URLs provided. Skipping iCal fetch."
-            )
+    if ical_sources:
+        logger.debug("Scheduling asynchronous iCal fetch.")
+        ical_task = asyncio.create_task(
+            _fetch_ical_events_async(ical_sources, timezone, clock=clock)
+        )
+        tasks.append(ical_task)
 
     # --- Gather Results ---
     if not tasks:
@@ -723,7 +952,17 @@ def format_events_for_prompt(
         summary = event["summary"]
 
         fmt = all_day_fmt if event["all_day"] else event_fmt
-        event_str = fmt.format(start_time=start_str, end_time=end_str, summary=summary)
+        source_name = event.get("source_name") or "Calendar"
+        source_id = event.get("source_id") or ""
+        source_kind = event.get("source_kind") or ""
+        event_str = fmt.format(
+            start_time=start_str,
+            end_time=end_str,
+            summary=summary,
+            source_name=source_name,
+            source_id=source_id,
+            source_kind=source_kind,
+        )
 
         # Categorize event based on local date
         if start_date_only <= tomorrow_local:

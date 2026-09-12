@@ -10,7 +10,7 @@ import asyncio
 import logging
 import uuid
 from datetime import date, datetime, time, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 from zoneinfo import ZoneInfo
 
 import caldav
@@ -19,12 +19,21 @@ import vobject
 from caldav.lib.error import DAVError, NotFoundError
 from dateutil.parser import isoparse
 
+from family_assistant.calendar_integration import (
+    CalendarSource,
+    fetch_ical_events_async,
+    resolve_calendar_sources,
+)
+from family_assistant.security.taint import (
+    SourceTrustTier,
+    TaintSource,
+    TaintSourceType,
+)
 from family_assistant.similarity import create_similarity_strategy_from_config
 
 if TYPE_CHECKING:
     from family_assistant.tools.types import (
         CalendarConfig,
-        CalendarEvent,
         ToolDefinition,
         ToolExecutionContext,
     )
@@ -32,8 +41,262 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class CalendarSearchResult(TypedDict):
+    """Structured calendar event result for search and duplicate detection."""
+
+    summary: str
+    uid: str
+    start: str
+    end: str
+    calendar_url: str | None
+    similarity: NotRequired[float | None]
+    source_id: NotRequired[str | None]
+    source_name: NotRequired[str | None]
+    source_kind: NotRequired[Literal["caldav", "ical"] | None]
+    writable: NotRequired[bool | None]
+    start_dt: NotRequired[datetime | date | None]
+
+
+def _event_sort_key(event: CalendarSearchResult, local_tz: ZoneInfo) -> datetime:
+    s_dt = event.get("start_dt")
+    if isinstance(s_dt, datetime):
+        if s_dt.tzinfo is None:
+            return s_dt.replace(tzinfo=local_tz)
+        return s_dt.astimezone(local_tz)
+    if isinstance(s_dt, date):
+        return datetime.combine(s_dt, time.min, tzinfo=local_tz)
+    s_str = event.get("start", "")
+    try:
+        parsed = isoparse(s_str)
+        if isinstance(parsed, datetime):
+            return (
+                parsed.replace(tzinfo=local_tz)
+                if parsed.tzinfo is None
+                else parsed.astimezone(local_tz)
+            )
+        if isinstance(parsed, date):
+            return datetime.combine(parsed, time.min, tzinfo=local_tz)
+    except Exception:
+        pass
+    return datetime.min.replace(tzinfo=local_tz)
+
+
+def _format_event_time_for_display(
+    dt_or_date: datetime | date | str,
+    local_tz: ZoneInfo,
+) -> str:
+    """Formats a datetime, date, or date string into a user-friendly display string."""
+    if isinstance(dt_or_date, str):
+        return dt_or_date
+    if isinstance(dt_or_date, datetime):
+        if dt_or_date.tzinfo is None:
+            dt_or_date = dt_or_date.replace(tzinfo=local_tz)
+        return dt_or_date.astimezone(local_tz).strftime("%Y-%m-%d %H:%M %Z")
+    return str(dt_or_date)
+
+
+def _parse_caldav_event_component(
+    event: caldav.objects.Event,
+    src: CalendarSource,
+    local_tz: ZoneInfo,
+) -> CalendarSearchResult | None:
+    try:
+        vevent = event.icalendar_component
+        summary = str(vevent.get("summary", ""))
+        uid = str(vevent.get("uid", ""))
+        dtstart = vevent.get("dtstart")
+        dtend = vevent.get("dtend")
+    except Exception as e:
+        logger.warning(f"Error reading CalDAV event component: {e}")
+        return None
+
+    start_str = (
+        _format_event_time_for_display(dtstart.dt, local_tz)
+        if dtstart
+        else "Unknown time"
+    )
+    end_str = (
+        _format_event_time_for_display(dtend.dt, local_tz) if dtend else "No end time"
+    )
+
+    return {
+        "summary": summary,
+        "uid": uid,
+        "start": start_str,
+        "end": end_str,
+        "calendar_url": src.url,
+        "source_id": src.source_id,
+        "source_name": src.name,
+        "source_kind": "caldav",
+        "writable": True,
+        "start_dt": dtstart.dt if dtstart else None,
+    }
+
+
+def _search_single_caldav_source(
+    client: caldav.DAVClient,
+    src: CalendarSource,
+    search_start: datetime,
+    search_end: datetime,
+    local_tz: ZoneInfo,
+    use_naive_datetimes: bool,
+) -> list[CalendarSearchResult]:
+    start_arg = (
+        datetime.combine(search_start.date(), time.min)
+        if use_naive_datetimes
+        else search_start
+    )
+    end_arg = (
+        datetime.combine(search_end.date(), time.max)
+        if use_naive_datetimes
+        else search_end
+    )
+    try:
+        calendar_obj = client.calendar(url=src.url)
+        if not calendar_obj:
+            logger.warning(f"Could not access calendar at {src.url}")
+            return []
+        events = calendar_obj.search(
+            start=start_arg,
+            end=end_arg,
+            event=True,
+            expand=True,
+        )
+    except Exception as e:
+        logger.error(f"Error searching calendar {src.url}: {e}")
+        return []
+
+    results: list[CalendarSearchResult] = []
+    for event in events:
+        parsed = _parse_caldav_event_component(event, src, local_tz)
+        if parsed is not None:
+            results.append(parsed)
+    return results
+
+
+def _search_caldav_sources_sync(
+    client_url: str,
+    username: str,
+    password: str,
+    sources: list[CalendarSource],
+    search_start: datetime,
+    search_end: datetime,
+    local_tz: ZoneInfo,
+    use_naive_datetimes: bool = False,
+) -> list[CalendarSearchResult]:
+    """Synchronously queries CalDAV collections for events in the specified range."""
+    logger.debug(f"Connecting to CalDAV server: {client_url}")
+    all_events: list[CalendarSearchResult] = []
+    with caldav.DAVClient(
+        url=client_url,
+        username=username,
+        password=password,
+        timeout=30,
+    ) as client:
+        for src in sources:
+            cal_events = _search_single_caldav_source(
+                client=client,
+                src=src,
+                search_start=search_start,
+                search_end=search_end,
+                local_tz=local_tz,
+                use_naive_datetimes=use_naive_datetimes,
+            )
+            all_events.extend(cal_events)
+    return all_events
+
+
+async def _search_events_in_range(
+    exec_context: ToolExecutionContext,
+    calendar_config: CalendarConfig,
+    search_start: datetime,
+    search_end: datetime,
+    sources: list[CalendarSource] | None = None,
+) -> list[CalendarSearchResult]:
+    """Queries both CalDAV and iCal sources for events within [search_start, search_end]."""
+    target_sources = (
+        sources if sources is not None else resolve_calendar_sources(calendar_config)
+    )
+    if not target_sources:
+        return []
+
+    local_tz = exec_context.timezone
+    caldav_sources = [s for s in target_sources if s.kind == "caldav"]
+    ical_sources = [s for s in target_sources if s.kind == "ical"]
+
+    all_events: list[CalendarSearchResult] = []
+
+    # CalDAV fetch
+    caldav_config = calendar_config.get("caldav")
+    if caldav_config and caldav_sources:
+        username = caldav_config.get("username")
+        password = caldav_config.get("password")
+        base_url = caldav_config.get("base_url")
+
+        client_url_to_use = base_url
+        if not client_url_to_use and caldav_sources:
+            try:
+                parsed_first = httpx.URL(caldav_sources[0].url)
+                client_url_to_use = f"{parsed_first.scheme}://{parsed_first.host}"
+                if parsed_first.port is not None:
+                    client_url_to_use += f":{parsed_first.port}"
+            except Exception as e:
+                logger.error(f"Could not infer CalDAV base_url: {e}")
+
+        if username and password and client_url_to_use:
+            use_naive = caldav_config.get("_use_naive_datetimes_for_search", False)
+            loop = asyncio.get_running_loop()
+            try:
+                caldav_events = await loop.run_in_executor(
+                    None,
+                    _search_caldav_sources_sync,
+                    client_url_to_use,
+                    username,
+                    password,
+                    caldav_sources,
+                    search_start,
+                    search_end,
+                    local_tz,
+                    use_naive,
+                )
+                all_events.extend(caldav_events)
+            except Exception as e:
+                logger.exception(f"Error executing CalDAV search: {e}")
+
+    # iCal fetch
+    if ical_sources:
+        try:
+            raw_ical_events = await fetch_ical_events_async(
+                ical_sources,
+                timezone=local_tz,
+                clock=exec_context.clock,
+                start_date=search_start,
+                end_date=search_end,
+            )
+            for evt in raw_ical_events:
+                start_str = _format_event_time_for_display(evt["start"], local_tz)
+                end_str = _format_event_time_for_display(evt["end"], local_tz)
+                all_events.append({
+                    "summary": evt["summary"],
+                    "uid": evt["uid"],
+                    "start": start_str,
+                    "end": end_str,
+                    "calendar_url": None,
+                    "source_id": evt.get("source_id", ""),
+                    "source_name": evt.get("source_name", "iCal feed"),
+                    "source_kind": "ical",
+                    "writable": False,
+                    "start_dt": evt["start"],
+                })
+        except Exception as e:
+            logger.exception(f"Error fetching iCal events for search: {e}")
+
+    all_events.sort(key=lambda e: _event_sort_key(e, local_tz))
+    return all_events
+
+
 # Calendar Tool Definitions
-async def _check_for_duplicate_events(
+async def check_for_duplicate_events(
     exec_context: ToolExecutionContext,
     calendar_config: CalendarConfig,
     summary: str,
@@ -42,7 +305,7 @@ async def _check_for_duplicate_events(
     all_day: bool,
 ) -> str | None:
     """
-    Check for similar events in a time window around the newly created event.
+    Check for similar events in a time window around the newly created event across all sources.
 
     Returns a warning message if similar events are found, None otherwise.
 
@@ -63,175 +326,34 @@ async def _check_for_duplicate_events(
     """
 
     async def check_for_duplicates() -> str | None:
-        # Parse the event time to determine search window
         local_tz = exec_context.timezone
         if all_day:
-            # For all-day events, search on the same date
             event_date = isoparse(start_time).date()
-            search_start_date = str(event_date)
-            search_end_date = str(event_date)
+            search_start = datetime.combine(event_date, time.min, tzinfo=local_tz)
+            search_end = datetime.combine(event_date, time(23, 59, 59), tzinfo=local_tz)
         else:
-            # For timed events, search ±2 hours
             event_dt = isoparse(start_time)
             if event_dt.tzinfo is None:
                 event_dt = event_dt.replace(tzinfo=local_tz)
 
-            dup_detection = calendar_config.get("duplicate_detection", {})
+            dup_detection = calendar_config.get("duplicate_detection") or {}
             time_window_hours = dup_detection.get("time_window_hours", 2)
 
             search_start = event_dt - timedelta(hours=time_window_hours)
             search_end = event_dt + timedelta(hours=time_window_hours)
 
-            search_start_date = search_start.isoformat()
-            search_end_date = search_end.isoformat()
-
-        # Search for events in the time window using the existing search infrastructure
-        # This will apply similarity-based filtering
-        caldav_config = calendar_config.get("caldav")
-        if not caldav_config:
-            return None
-
-        username: str | None = caldav_config.get("username")
-        password: str | None = caldav_config.get("password")
-        calendar_urls_list: list[str] | None = caldav_config.get("calendar_urls", [])
-        base_url: str | None = caldav_config.get("base_url")
-
-        if not username or not password or not calendar_urls_list:
-            return None
-
-        # Determine client_url
-        client_url_to_use = base_url
-        if not client_url_to_use:
-            try:
-                parsed_first_cal_url = httpx.URL(calendar_urls_list[0])
-                client_url_to_use = (
-                    f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}"
-                )
-                if parsed_first_cal_url.port is not None:
-                    client_url_to_use += f":{parsed_first_cal_url.port}"
-            except Exception:
-                return None
-
-        if not client_url_to_use:
-            return None
-
-        # Parse search dates for CalDAV query
-        if all_day:
-            search_start_dt = datetime.combine(
-                isoparse(search_start_date).date(), time.min, tzinfo=local_tz
-            )
-            search_end_dt = datetime.combine(
-                isoparse(search_end_date).date(), time(23, 59, 59), tzinfo=local_tz
-            )
-        else:
-            search_start_dt = isoparse(search_start_date)
-            search_end_dt = isoparse(search_end_date)
-            if search_start_dt.tzinfo is None:
-                search_start_dt = search_start_dt.replace(tzinfo=local_tz)
-            if search_end_dt.tzinfo is None:
-                search_end_dt = search_end_dt.replace(tzinfo=local_tz)
-
-        # Search events in time window (synchronous, run in executor)
-        def search_events_sync() -> list[CalendarEvent]:
-            with caldav.DAVClient(
-                url=client_url_to_use,
-                username=username,
-                password=password,
-                timeout=30,
-            ) as client:
-                all_events = []
-                for cal_url in calendar_urls_list:  # type: ignore
-
-                    def search_calendar(calendar_url: str) -> None:
-                        calendar_obj = client.calendar(url=calendar_url)
-                        if not calendar_obj:
-                            logger.warning(
-                                f"Could not get calendar object for {calendar_url}"
-                            )
-                            return
-
-                        # WORKAROUND FOR CALDAV SERVERS WITH TIMEZONE ISSUES:
-                        # Some CalDAV servers (e.g., Radicale) don't handle timezone-aware
-                        # datetime searches reliably. If _use_naive_datetimes_for_search is set,
-                        # convert to naive datetimes using only date parts.
-                        # This is primarily for testing with Radicale.
-                        if caldav_config.get("_use_naive_datetimes_for_search", False):
-                            search_start_naive = datetime.combine(
-                                search_start_dt.date(), time.min
-                            )
-                            search_end_naive = datetime.combine(
-                                search_end_dt.date(), time.max
-                            )
-                            events = calendar_obj.search(
-                                start=search_start_naive,
-                                end=search_end_naive,
-                                event=True,
-                                expand=True,  # Include recurring event instances
-                            )
-                        else:
-                            # Standard search with timezone-aware datetimes
-                            events = calendar_obj.search(
-                                start=search_start_dt,
-                                end=search_end_dt,
-                                event=True,
-                                expand=True,  # Include recurring event instances
-                            )
-
-                        for event in events:
-
-                            def process_event(
-                                calendar_event: caldav.objects.Event,
-                            ) -> None:
-                                vevent = calendar_event.icalendar_component
-                                event_summary = str(vevent.get("summary", ""))
-                                uid = str(vevent.get("uid", ""))
-                                dtstart = vevent.get("dtstart")
-
-                                # Format start time for display in user's timezone
-                                if dtstart:
-                                    start_val = dtstart.dt
-                                    if isinstance(start_val, datetime):
-                                        if start_val.tzinfo is None:
-                                            start_val = start_val.replace(
-                                                tzinfo=local_tz
-                                            )
-                                        start_str = start_val.astimezone(
-                                            local_tz
-                                        ).strftime("%Y-%m-%d %H:%M %Z")
-                                    else:
-                                        start_str = str(start_val)
-                                else:
-                                    start_str = "Unknown time"
-
-                                all_events.append({
-                                    "summary": event_summary,
-                                    "uid": uid,
-                                    "start": start_str,
-                                })
-
-                            try:
-                                process_event(event)
-                            except Exception as e:
-                                logger.warning(f"Error processing event: {e}")
-                                continue
-
-                    try:
-                        search_calendar(cal_url)
-                    except Exception as e:
-                        logger.error(f"Error searching calendar {cal_url}: {e}")
-                        continue
-
-                return all_events
-
-        # Search for events
-        loop = asyncio.get_running_loop()
-        events_in_window = await loop.run_in_executor(None, search_events_sync)
+        events_in_window = await _search_events_in_range(
+            exec_context=exec_context,
+            calendar_config=calendar_config,
+            search_start=search_start,
+            search_end=search_end,
+        )
 
         if not events_in_window:
             return None
 
         # Apply similarity filtering to find similar events
-        dup_detection = calendar_config.get("duplicate_detection", {})
+        dup_detection = calendar_config.get("duplicate_detection") or {}
         similarity_threshold = dup_detection.get("similarity_threshold", 0.30)
 
         try:
@@ -279,6 +401,18 @@ async def _check_for_duplicate_events(
             "If you believe this is NOT a duplicate, retry with bypass_duplicate_check=true."
         )
 
+        has_ical_events = any(e.get("source_kind") == "ical" for e in similar_events)
+        if has_ical_events and exec_context.taint_tracker is not None:
+            exec_context.taint_tracker.add_source(
+                TaintSource(
+                    source_type=TaintSourceType.TOOL_OUTPUT,
+                    source_id=f"ical_duplicate_{similar_events[0].get('uid', 'event')}",
+                    tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+                    labels=frozenset(),
+                    reason="External iCal event contributed to duplicate detection warning.",
+                )
+            )
+
         return "\n".join(error_lines)
 
     try:
@@ -288,7 +422,23 @@ async def _check_for_duplicate_events(
         return None
 
 
+_check_for_duplicate_events = check_for_duplicate_events
+
+
 CALENDAR_TOOLS_DEFINITION: list[ToolDefinition] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "list_calendars",
+            "description": (
+                "Lists all configured calendars and event sources, including their IDs, friendly names, source type (CalDAV or iCal feed), and whether they are writable or read-only. Use this to discover available calendars before searching with source filters or adding events to a specific calendar."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -335,6 +485,12 @@ CALENDAR_TOOLS_DEFINITION: list[ToolDefinition] = [
                             "Set to true to bypass duplicate detection and create the event anyway. Use this if you've reviewed the similar events and determined this is NOT a duplicate (e.g., different doctors, different purposes). Default: false."
                         ),
                     },
+                    "calendar_id": {
+                        "type": "string",
+                        "description": (
+                            "Optional ID of the calendar to add the event to (from list_calendars). If omitted, adds to the default calendar."
+                        ),
+                    },
                 },
                 "required": ["summary", "start_time", "end_time"],
             },
@@ -362,6 +518,11 @@ CALENDAR_TOOLS_DEFINITION: list[ToolDefinition] = [
                         "type": "string",
                         "description": "Optional end date for the search range in ISO 8601 format. If not provided, searches up to 3 months from start date.",
                     },
+                    "source_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of calendar source IDs to limit the search to (obtained from list_calendars). If omitted, searches all configured calendars and feeds.",
+                    },
                 },
             },
         },
@@ -371,7 +532,7 @@ CALENDAR_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "modify_calendar_event",
             "description": (
-                "Modifies an existing calendar event. You must first use search_calendar_events to find the event's UID and calendar_url. Leave fields as None to keep existing values."
+                "Modifies an existing calendar event. You must first use search_calendar_events to find the event's UID and calendar_url or calendar_id. Leave fields as None to keep existing values."
             ),
             "parameters": {
                 "type": "object",
@@ -383,6 +544,10 @@ CALENDAR_TOOLS_DEFINITION: list[ToolDefinition] = [
                     "calendar_url": {
                         "type": "string",
                         "description": "The calendar URL where the event is stored (obtained from search_calendar_events).",
+                    },
+                    "calendar_id": {
+                        "type": "string",
+                        "description": "Optional ID of the calendar where the event is stored (from list_calendars). Can be provided instead of calendar_url.",
                     },
                     "new_summary": {
                         "type": "string",
@@ -407,7 +572,7 @@ CALENDAR_TOOLS_DEFINITION: list[ToolDefinition] = [
                         ),
                     },
                 },
-                "required": ["uid", "calendar_url"],
+                "required": ["uid"],
             },
         },
     },
@@ -416,7 +581,7 @@ CALENDAR_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "delete_calendar_event",
             "description": (
-                "Deletes a calendar event. You must first use search_calendar_events to find the event's UID and calendar_url."
+                "Deletes a calendar event. You must first use search_calendar_events to find the event's UID and calendar_url or calendar_id."
             ),
             "parameters": {
                 "type": "object",
@@ -429,12 +594,38 @@ CALENDAR_TOOLS_DEFINITION: list[ToolDefinition] = [
                         "type": "string",
                         "description": "The calendar URL where the event is stored (obtained from search_calendar_events).",
                     },
+                    "calendar_id": {
+                        "type": "string",
+                        "description": "Optional ID of the calendar where the event is stored (from list_calendars). Can be provided instead of calendar_url.",
+                    },
                 },
-                "required": ["uid", "calendar_url"],
+                "required": ["uid"],
             },
         },
     },
 ]
+
+
+async def list_calendars_tool(
+    exec_context: ToolExecutionContext,
+    calendar_config: CalendarConfig,
+) -> str:
+    """Lists all configured calendars and event sources."""
+    logger.info("Executing list_calendars_tool")
+    sources = resolve_calendar_sources(calendar_config)
+    if not sources:
+        return "No calendars configured."
+
+    lines = ["Available calendars:"]
+    for src in sources:
+        kind_label = "CalDAV" if src.kind == "caldav" else "iCal feed"
+        writable_label = "writable" if src.writable else "read-only"
+        default_label = " [default for new events]" if src.is_default else ""
+        lines.append(
+            f"- {src.source_id}: {src.name} ({kind_label}, {writable_label}){default_label}"
+        )
+
+    return "\n".join(lines)
 
 
 async def add_calendar_event_tool(
@@ -447,14 +638,16 @@ async def add_calendar_event_tool(
     all_day: bool = False,
     recurrence_rule: str | None = None,
     bypass_duplicate_check: bool = False,
+    calendar_id: str | None = None,
 ) -> str:
     """
-    Adds an event to the first configured CalDAV calendar.
+    Adds an event to a configured CalDAV calendar.
     Can create recurring events if an RRULE string is provided.
 
     Args:
         bypass_duplicate_check: If True, skip duplicate detection and create the event anyway.
                                 Use this if you've determined the event is not actually a duplicate.
+        calendar_id: Optional ID of target calendar (from list_calendars). Defaults to primary calendar.
     """
     logger.info(
         f"Executing add_calendar_event_tool: {summary}, RRULE: {recurrence_rule}"
@@ -467,17 +660,47 @@ async def add_calendar_event_tool(
 
     username: str | None = caldav_config.get("username")
     password: str | None = caldav_config.get("password")
-    calendar_urls_list: list[str] | None = caldav_config.get("calendar_urls", [])
-    base_url: str | None = caldav_config.get("base_url")
+    if not username or not password:
+        return "Error: CalDAV configuration is incomplete (missing user or pass). Cannot add event."
 
-    if not username or not password or not calendar_urls_list:
-        return "Error: CalDAV configuration is incomplete (missing user, pass, or calendar_urls). Cannot add event."
+    all_sources = resolve_calendar_sources(calendar_config)
+    caldav_sources = [s for s in all_sources if s.kind == "caldav"]
+
+    target_source: CalendarSource | None = None
+    if calendar_id:
+        matching = [s for s in all_sources if s.source_id == calendar_id]
+        if not matching:
+            writable_ids = ", ".join(s.source_id for s in caldav_sources if s.writable)
+            return (
+                f"Error: Calendar '{calendar_id}' not found. "
+                f"Available writable calendars: {writable_ids or 'none'}."
+            )
+        matched = matching[0]
+        if not matched.writable or matched.kind == "ical":
+            return (
+                f"Error: Calendar '{matched.name}' ({calendar_id}) is read-only (iCal subscription). "
+                f"Events cannot be added to it. Use a writable CalDAV calendar instead."
+            )
+        target_source = matched
+    else:
+        # Default calendar: look for is_default CalDAV source, or first writable CalDAV source
+        default_sources = [s for s in caldav_sources if s.is_default and s.writable]
+        if default_sources:
+            target_source = default_sources[0]
+        elif caldav_sources:
+            target_source = caldav_sources[0]
+
+    if not target_source:
+        return "Error: CalDAV configuration is incomplete (missing calendar_urls). Cannot add event."
+
+    target_calendar_url = target_source.url
+    base_url: str | None = caldav_config.get("base_url")
 
     # Determine client_url and target_calendar_url
     client_url_to_use = base_url
     if not client_url_to_use:
         try:
-            parsed_first_cal_url = httpx.URL(calendar_urls_list[0])
+            parsed_first_cal_url = httpx.URL(target_calendar_url)
             client_url_to_use = f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}:{parsed_first_cal_url.port}"
             if parsed_first_cal_url.port is None:
                 client_url_to_use = (
@@ -496,9 +719,6 @@ async def add_calendar_event_tool(
     if not client_url_to_use:  # Should be caught above, but defensive
         return "Error: CalDAV client URL could not be determined."
 
-    target_calendar_url: str = calendar_urls_list[
-        0
-    ]  # Use the first configured full calendar URL
     logger.info(
         f"Targeting CalDAV server '{client_url_to_use}' and calendar collection '{target_calendar_url}'"
     )
@@ -588,7 +808,7 @@ async def add_calendar_event_tool(
 
         async def save_event() -> str:
             # Check for duplicate events BEFORE creation (if duplicate detection is enabled and not bypassed)
-            dup_detection = calendar_config.get("duplicate_detection", {})
+            dup_detection = calendar_config.get("duplicate_detection") or {}
             if dup_detection.get("enabled", True) and not bypass_duplicate_check:
                 try:
                     error_message = await _check_for_duplicate_events(
@@ -645,285 +865,279 @@ async def add_calendar_event_tool(
         return f"Error: An unexpected error occurred while adding the event. {e}"
 
 
+def _parse_search_date_range(
+    start_date: str | None,
+    end_date: str | None,
+    local_tz: ZoneInfo,
+    now: datetime,
+) -> tuple[datetime, datetime]:
+    if start_date:
+        search_start = isoparse(start_date)
+        if isinstance(search_start, date) and not isinstance(search_start, datetime):
+            search_start = datetime.combine(search_start, time.min, tzinfo=local_tz)
+        elif search_start.tzinfo is None:
+            search_start = search_start.replace(tzinfo=local_tz)
+    else:
+        search_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    if end_date:
+        search_end = isoparse(end_date)
+        if isinstance(search_end, date) and not isinstance(search_end, datetime):
+            search_end = datetime.combine(search_end, time(23, 59, 59), tzinfo=local_tz)
+        elif search_end.tzinfo is None:
+            search_end = search_end.replace(tzinfo=local_tz)
+    else:
+        search_end = search_start + timedelta(days=90)
+
+    return search_start, search_end
+
+
+async def _filter_events_by_similarity(
+    events: list[CalendarSearchResult],
+    search_text: str,
+    calendar_config: CalendarConfig,
+) -> tuple[list[CalendarSearchResult], float]:
+    dup_detection = calendar_config.get("duplicate_detection") or {}
+    similarity_threshold = dup_detection.get("similarity_threshold", 0.30)
+
+    try:
+        similarity_strategy = create_similarity_strategy_from_config(calendar_config)
+        logger.info(
+            f"Using similarity strategy: {similarity_strategy.name} with threshold {similarity_threshold}"
+        )
+    except Exception as e:
+        logger.warning(
+            f"Failed to create similarity strategy: {e}. Falling back to substring matching."
+        )
+        filtered = [
+            event for event in events if search_text.lower() in event["summary"].lower()
+        ]
+        return filtered, similarity_threshold
+
+    events_with_similarity: list[CalendarSearchResult] = []
+    for event in events:
+        similarity = await similarity_strategy.compute_similarity(
+            search_text, event["summary"]
+        )
+        if similarity >= similarity_threshold:
+            event_with_sim: CalendarSearchResult = dict(event)  # type: ignore[assignment]
+            event_with_sim["similarity"] = similarity
+            events_with_similarity.append(event_with_sim)
+
+    events_with_similarity.sort(
+        key=lambda e: e.get("similarity", 0.0) or 0.0, reverse=True
+    )
+    return events_with_similarity, similarity_threshold
+
+
+def _format_search_results(events: list[CalendarSearchResult]) -> str:
+    result_lines = [f"Found {len(events)} event(s):"]
+    for idx, event in enumerate(events, 1):
+        similarity = event.get("similarity")
+        similarity_str = (
+            f" (similarity: {similarity:.2f})" if similarity is not None else ""
+        )
+        result_lines.append(f"\n{idx}. {event['summary']}{similarity_str}")
+        result_lines.append(f"   Start: {event['start']}")
+        result_lines.append(f"   End: {event['end']}")
+        result_lines.append(f"   UID: {event['uid']}")
+        if event.get("calendar_url"):
+            result_lines.append(f"   Calendar: {event['calendar_url']}")
+        else:
+            result_lines.append(
+                f"   Calendar: {event.get('source_name', 'iCal feed')} (read-only)"
+            )
+        source_id = event.get("source_id")
+        if source_id:
+            result_lines.append(f"   Source ID: {source_id}")
+
+    return "\n".join(result_lines)
+
+
 async def search_calendar_events_tool(
     exec_context: ToolExecutionContext,
     calendar_config: CalendarConfig,
     search_text: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
+    source_ids: list[str] | None = None,
 ) -> str:
     """
-    Searches for calendar events by summary text or within a date range.
-    Returns a list of events with their UIDs, calendar URLs, and similarity scores.
+    Searches for calendar events across configured CalDAV calendars and iCal feeds.
+    Returns a list of events with their UIDs, calendar locations, and similarity scores.
 
     When search_text is provided, uses similarity strategy from config to find
     semantically similar events, not just exact substring matches.
     """
     logger.info(
-        f"Executing search_calendar_events_tool: text='{search_text}', start={start_date}, end={end_date}"
+        f"Executing search_calendar_events_tool: text='{search_text}', start={start_date}, end={end_date}, source_ids={source_ids}"
     )
-    # calendar_config is now a direct parameter
-    caldav_config = calendar_config.get("caldav")
 
-    if not caldav_config:
-        return "Error: CalDAV is not configured. Cannot search calendar events."
+    all_sources = resolve_calendar_sources(calendar_config)
+    if not all_sources:
+        return "Error: No calendars configured. Cannot search calendar events."
 
-    username: str | None = caldav_config.get("username")
-    password: str | None = caldav_config.get("password")
-    calendar_urls_list: list[str] | None = caldav_config.get("calendar_urls", [])
-    base_url: str | None = caldav_config.get("base_url")
-
-    if not username or not password or not calendar_urls_list:
-        return "Error: CalDAV configuration is incomplete. Cannot search events."
-
-    # Determine client_url
-    client_url_to_use = base_url
-    if not client_url_to_use:
-        try:
-            parsed_first_cal_url = httpx.URL(calendar_urls_list[0])
-            client_url_to_use = f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}:{parsed_first_cal_url.port}"
-            if parsed_first_cal_url.port is None:
-                client_url_to_use = (
-                    f"{parsed_first_cal_url.scheme}://{parsed_first_cal_url.host}"
-                )
-            logger.warning(
-                f"CalDAV base_url not provided for search_calendar_events_tool, inferred '{client_url_to_use}'"
+    target_sources: list[CalendarSource]
+    if source_ids:
+        sources_by_id = {s.source_id: s for s in all_sources}
+        matching = [sources_by_id[sid] for sid in source_ids if sid in sources_by_id]
+        if not matching:
+            available = ", ".join(s.source_id for s in all_sources)
+            return (
+                f"Error: None of the requested calendar source IDs ({', '.join(source_ids)}) were found. "
+                f"Available sources: {available}."
             )
-        except Exception as e:
-            logger.error(
-                f"Could not infer CalDAV base_url for search_calendar_events_tool: {e}"
-            )
-            return "Error: CalDAV base_url missing and could not be inferred."
+        target_sources = matching
+    else:
+        target_sources = all_sources
 
-    if not client_url_to_use:
-        return "Error: CalDAV client URL could not be determined."
+    # Check for CalDAV configuration if CalDAV sources are targeted without any iCal sources
+    caldav_sources = [s for s in target_sources if s.kind == "caldav"]
+    ical_sources = [s for s in target_sources if s.kind == "ical"]
+    if caldav_sources and not ical_sources:
+        caldav_config = calendar_config.get("caldav")
+        if not caldav_config:
+            return "Error: CalDAV is not configured. Cannot search calendar events."
+        username = caldav_config.get("username")
+        password = caldav_config.get("password")
+        if not username or not password:
+            return "Error: CalDAV configuration is incomplete. Cannot search events."
 
-    async def search_events() -> str:
-        # Parse search dates
-        local_tz = exec_context.timezone
-        now = datetime.now(local_tz)
-
-        if start_date:
-            search_start = isoparse(start_date)
-            if isinstance(search_start, date) and not isinstance(
-                search_start, datetime
-            ):
-                search_start = datetime.combine(search_start, time.min, tzinfo=local_tz)
-            elif search_start.tzinfo is None:
-                search_start = search_start.replace(tzinfo=local_tz)
-        else:
-            search_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
-
-        if end_date:
-            search_end = isoparse(end_date)
-            if isinstance(search_end, date) and not isinstance(search_end, datetime):
-                # For end date, use end of day
-                search_end = datetime.combine(
-                    search_end, time(23, 59, 59), tzinfo=local_tz
-                )
-            elif search_end.tzinfo is None:
-                search_end = search_end.replace(tzinfo=local_tz)
-        else:
-            # Default to 3 months from start
-            search_end = search_start + timedelta(days=90)
-
-        logger.info(f"Searching from {search_start} to {search_end}")
-
-        # Search events (synchronous, run in executor) - returns structured data
-        def search_events_sync() -> list[CalendarEvent]:
-            logger.debug(f"Connecting to CalDAV server: {client_url_to_use}")
-            with caldav.DAVClient(
-                url=client_url_to_use,
-                username=username,
-                password=password,
-                timeout=30,
-            ) as client:
-                all_events = []
-                for cal_url in calendar_urls_list:  # type: ignore
-
-                    def search_calendar(calendar_url: str) -> None:
-                        calendar_obj = client.calendar(url=calendar_url)
-                        if not calendar_obj:
-                            logger.warning(
-                                f"Could not access calendar at {calendar_url}"
-                            )
-                            return
-
-                        # Search for events in the date range
-                        events = calendar_obj.search(
-                            start=search_start,
-                            end=search_end,
-                            event=True,
-                            expand=True,  # Expand recurring events
-                        )
-
-                        for event in events:
-
-                            def process_event(
-                                calendar_event: caldav.objects.Event,
-                            ) -> None:
-                                vevent = calendar_event.icalendar_component
-                                summary = str(vevent.get("summary", ""))
-
-                                # Don't filter by text here - we'll do similarity-based filtering after
-                                # retrieving all events
-
-                                uid = str(vevent.get("uid", ""))
-                                dtstart = vevent.get("dtstart")
-                                dtend = vevent.get("dtend")
-
-                                # Format event info in user's timezone
-                                if dtstart:
-                                    start_val = dtstart.dt
-                                    if isinstance(start_val, datetime):
-                                        if start_val.tzinfo is None:
-                                            start_val = start_val.replace(
-                                                tzinfo=local_tz
-                                            )
-                                        start_str = start_val.astimezone(
-                                            local_tz
-                                        ).strftime("%Y-%m-%d %H:%M %Z")
-                                    else:
-                                        start_str = str(start_val)
-                                else:
-                                    start_str = "No start time"
-
-                                if dtend:
-                                    end_val = dtend.dt
-                                    if isinstance(end_val, datetime):
-                                        if end_val.tzinfo is None:
-                                            end_val = end_val.replace(tzinfo=local_tz)
-                                        end_str = end_val.astimezone(local_tz).strftime(
-                                            "%Y-%m-%d %H:%M %Z"
-                                        )
-                                    else:
-                                        end_str = str(end_val)
-                                else:
-                                    end_str = "No end time"
-
-                                all_events.append({
-                                    "summary": summary,
-                                    "uid": uid,
-                                    "start": start_str,
-                                    "end": end_str,
-                                    "calendar_url": calendar_url,
-                                })
-
-                            try:
-                                process_event(event)
-                            except Exception as e:
-                                logger.warning(f"Error processing event: {e}")
-                                continue
-
-                    try:
-                        search_calendar(cal_url)
-                    except Exception as e:
-                        logger.error(f"Error searching calendar {cal_url}: {e}")
-                        continue
-
-                return all_events
-
-        async def run_search() -> str:
-            loop = asyncio.get_running_loop()
-            all_events = await loop.run_in_executor(None, search_events_sync)
-
-            if not all_events:
-                return "No events found matching the search criteria."
-
-            # Apply similarity-based filtering if search_text is provided
-            if search_text:
-                # Get duplicate detection config for similarity strategy and threshold
-                dup_detection = calendar_config.get("duplicate_detection", {})
-                similarity_threshold = dup_detection.get("similarity_threshold", 0.30)
-
-                # Create similarity strategy from config
-                try:
-                    similarity_strategy = create_similarity_strategy_from_config(
-                        calendar_config
-                    )
-                    logger.info(
-                        f"Using similarity strategy: {similarity_strategy.name} with threshold {similarity_threshold}"
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to create similarity strategy: {e}. Falling back to substring matching."
-                    )
-                    # Fallback to old substring matching behavior
-                    filtered_events = [
-                        event
-                        for event in all_events
-                        if search_text.lower() in event["summary"].lower()
-                    ]
-                    all_events = filtered_events
-                else:
-                    # Compute similarity for each event
-                    events_with_similarity = []
-                    for event in all_events:
-                        similarity = await similarity_strategy.compute_similarity(
-                            search_text, event["summary"]
-                        )
-                        if similarity >= similarity_threshold:
-                            event["similarity"] = similarity
-                            events_with_similarity.append(event)
-
-                    # Sort by similarity (highest first)
-                    events_with_similarity.sort(
-                        key=lambda e: e.get("similarity", 0.0), reverse=True
-                    )
-                    all_events = events_with_similarity
-
-            if not all_events:
-                return f"No events found matching '{search_text}' (threshold: {similarity_threshold if search_text else 'N/A'})."
-
-            # Format results
-            result_lines = [f"Found {len(all_events)} event(s):"]
-            for idx, event in enumerate(all_events, 1):
-                similarity_str = (
-                    f" (similarity: {event['similarity']:.2f})"
-                    if "similarity" in event
-                    else ""
-                )
-                result_lines.append(f"\n{idx}. {event['summary']}{similarity_str}")
-                result_lines.append(f"   Start: {event['start']}")
-                result_lines.append(f"   End: {event['end']}")
-                result_lines.append(f"   UID: {event['uid']}")
-                result_lines.append(f"   Calendar: {event['calendar_url']}")
-
-            return "\n".join(result_lines)
-
-        try:
-            return await run_search()
-        except Exception as sync_err:
-            logger.exception(f"Error during calendar search: {sync_err}")
-            return f"Error: Failed to search calendar events. {sync_err}"
+    local_tz = exec_context.timezone
+    now = (
+        exec_context.clock.now().astimezone(local_tz)
+        if exec_context.clock
+        else datetime.now(local_tz)
+    )
 
     try:
-        return await search_events()
+        search_start, search_end = _parse_search_date_range(
+            start_date, end_date, local_tz, now
+        )
     except ValueError as ve:
         logger.error(f"Invalid search parameters: {ve}")
         return f"Error: Invalid search parameters. {ve}"
+
+    try:
+        all_events = await _search_events_in_range(
+            exec_context=exec_context,
+            calendar_config=calendar_config,
+            search_start=search_start,
+            search_end=search_end,
+            sources=target_sources,
+        )
     except Exception as e:
         logger.exception(f"Unexpected error searching calendar events: {e}")
         return f"Error: An unexpected error occurred while searching events. {e}"
+
+    if not all_events:
+        if search_text:
+            dup_detection = calendar_config.get("duplicate_detection") or {}
+            similarity_threshold = dup_detection.get("similarity_threshold", 0.30)
+            return f"No events found matching '{search_text}' (threshold: {similarity_threshold})."
+        return "No events found matching the search criteria."
+
+    # Apply similarity-based filtering if search_text is provided
+    if search_text:
+        all_events, similarity_threshold = await _filter_events_by_similarity(
+            all_events, search_text, calendar_config
+        )
+        if not all_events:
+            return f"No events found matching '{search_text}' (threshold: {similarity_threshold})."
+    else:
+        all_events.sort(key=lambda e: _event_sort_key(e, local_tz))
+
+    return _format_search_results(all_events)
+
+
+def resolve_target_caldav_url(
+    calendar_config: CalendarConfig,
+    calendar_url: str | None,
+    calendar_id: str | None,
+    operation_verb: str = "modify",
+) -> tuple[str | None, str | None]:
+    """Resolves target CalDAV calendar URL for write operations (modify/delete).
+
+    Returns (resolved_url, error_message). Exactly one will be non-None.
+    """
+    all_sources = resolve_calendar_sources(calendar_config)
+    operation_past = "modified" if operation_verb == "modify" else "deleted"
+
+    if calendar_id and calendar_url:
+        matching = [s for s in all_sources if s.source_id == calendar_id]
+        if matching:
+            matched = matching[0]
+            if matched.url != calendar_url:
+                return None, (
+                    f"Error: Conflicting calendar targets provided: calendar_id '{calendar_id}' "
+                    f"resolves to '{matched.url}', but calendar_url '{calendar_url}' was also specified."
+                )
+
+    if calendar_id:
+        matching = [s for s in all_sources if s.source_id == calendar_id]
+        if matching:
+            matched = matching[0]
+            if not matched.writable or matched.kind == "ical":
+                return None, (
+                    f"Error: Calendar '{matched.name}' ({calendar_id}) is a read-only subscription. "
+                    f"Events cannot be {operation_past}."
+                )
+            return matched.url, None
+
+        writable_ids = ", ".join(
+            s.source_id for s in all_sources if s.writable and s.kind == "caldav"
+        )
+        return None, (
+            f"Error: Calendar '{calendar_id}' not found. "
+            f"Available writable calendars: {writable_ids or 'none'}."
+        )
+
+    if calendar_url:
+        for s in all_sources:
+            if s.url == calendar_url and (s.kind == "ical" or not s.writable):
+                return None, (
+                    f"Error: Calendar '{s.name}' is a read-only subscription. "
+                    f"Events cannot be {operation_past}."
+                )
+        return calendar_url, None
+
+    return (
+        None,
+        f"Error: Either calendar_id or calendar_url must be provided to {operation_verb} an event.",
+    )
+
+
+_resolve_target_caldav_url = resolve_target_caldav_url
 
 
 async def modify_calendar_event_tool(
     exec_context: ToolExecutionContext,
     calendar_config: CalendarConfig,
     uid: str,
-    calendar_url: str,
+    calendar_url: str | None = None,
+    calendar_id: str | None = None,
     new_summary: str | None = None,
     new_start_time: str | None = None,
     new_end_time: str | None = None,
     new_description: str | None = None,
     recurrence_rule: str | None = None,
 ) -> str:
-    """
-    Modifies an existing calendar event identified by UID.
+    """Modifies an existing calendar event identified by UID.
+
     Leave parameters as None to keep existing values.
     """
     logger.info(f"Executing modify_calendar_event_tool for UID: {uid}")
-    # calendar_config is now a direct parameter
+
+    target_cal_url, err = _resolve_target_caldav_url(
+        calendar_config=calendar_config,
+        calendar_url=calendar_url,
+        calendar_id=calendar_id,
+        operation_verb="modify",
+    )
+    if err:
+        return err
+    assert target_cal_url is not None
+
     caldav_config = calendar_config.get("caldav")
 
     if not caldav_config:
@@ -940,7 +1154,7 @@ async def modify_calendar_event_tool(
     client_url_to_use = base_url
     if not client_url_to_use:
         try:
-            parsed_cal_url = httpx.URL(calendar_url)
+            parsed_cal_url = httpx.URL(target_cal_url)
             client_url_to_use = (
                 f"{parsed_cal_url.scheme}://{parsed_cal_url.host}:{parsed_cal_url.port}"
             )
@@ -969,10 +1183,10 @@ async def modify_calendar_event_tool(
                 timeout=30,
             ) as client:
                 # Get the specific calendar
-                calendar_obj = client.calendar(url=calendar_url)
+                calendar_obj = client.calendar(url=target_cal_url)
                 if not calendar_obj:
                     raise ConnectionError(
-                        f"Failed to obtain calendar object for URL: {calendar_url}"
+                        f"Failed to obtain calendar object for URL: {target_cal_url}"
                     )
 
                 # Search for the event by UID
@@ -1154,13 +1368,22 @@ async def delete_calendar_event_tool(
     exec_context: ToolExecutionContext,
     calendar_config: CalendarConfig,
     uid: str,
-    calendar_url: str,
+    calendar_url: str | None = None,
+    calendar_id: str | None = None,
 ) -> str:
-    """
-    Deletes a calendar event identified by UID.
-    """
+    """Deletes a calendar event identified by UID."""
     logger.info(f"Executing delete_calendar_event_tool for UID: {uid}")
-    # calendar_config is now a direct parameter
+
+    target_cal_url, err = _resolve_target_caldav_url(
+        calendar_config=calendar_config,
+        calendar_url=calendar_url,
+        calendar_id=calendar_id,
+        operation_verb="delete",
+    )
+    if err:
+        return err
+    assert target_cal_url is not None
+
     caldav_config = calendar_config.get("caldav")
 
     if not caldav_config:
@@ -1177,7 +1400,7 @@ async def delete_calendar_event_tool(
     client_url_to_use = base_url
     if not client_url_to_use:
         try:
-            parsed_cal_url = httpx.URL(calendar_url)
+            parsed_cal_url = httpx.URL(target_cal_url)
             client_url_to_use = (
                 f"{parsed_cal_url.scheme}://{parsed_cal_url.host}:{parsed_cal_url.port}"
             )
@@ -1206,10 +1429,10 @@ async def delete_calendar_event_tool(
                 timeout=30,
             ) as client:
                 # Get the specific calendar
-                calendar_obj = client.calendar(url=calendar_url)
+                calendar_obj = client.calendar(url=target_cal_url)
                 if not calendar_obj:
                     raise ConnectionError(
-                        f"Failed to obtain calendar object for URL: {calendar_url}"
+                        f"Failed to obtain calendar object for URL: {target_cal_url}"
                     )
 
                 # Search for the event by UID

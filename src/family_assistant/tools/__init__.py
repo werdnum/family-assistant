@@ -41,6 +41,7 @@ from family_assistant.tools.calendar import (
     CALENDAR_TOOLS_DEFINITION,
     add_calendar_event_tool,
     delete_calendar_event_tool,
+    list_calendars_tool,
     modify_calendar_event_tool,
     search_calendar_events_tool,
 )
@@ -463,6 +464,7 @@ __all__ = [
     "highlight_image_tool",
     "ingest_document_from_url_tool",
     "jq_query_tool",
+    "list_calendars_tool",
     "list_cameras_tool",
     "list_delegations_tool",
     "list_home_assistant_actions_tool",
@@ -597,6 +599,7 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "reindex_email": reindex_email_tool,
     "send_message_to_user": send_message_to_user_tool,
     # Calendar tools
+    "list_calendars": list_calendars_tool,
     "add_calendar_event": add_calendar_event_tool,
     "search_calendar_events": search_calendar_events_tool,
     "modify_calendar_event": modify_calendar_event_tool,
@@ -1001,6 +1004,13 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.MEDIA,
         ToolTag.OUTPUT_UNTRUSTED,
     ),
+    "list_calendars": _metadata(
+        ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.CALENDAR,
+        ToolTag.SCHEDULING,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
     "add_calendar_event": _metadata(
         ToolTag.STATE_CHANGING,
         ToolTag.SENSITIVE_DATA,
@@ -1013,7 +1023,9 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
         ToolTag.SENSITIVE_DATA,
         ToolTag.CALENDAR,
         ToolTag.SCHEDULING,
-        ToolTag.OUTPUT_TRUSTED,
+        # OUTPUT_UNTRUSTED: queries both internal CalDAV calendars and external
+        # subscribed iCal feeds where event summaries may be externally authored.
+        ToolTag.OUTPUT_UNTRUSTED,
     ),
     "modify_calendar_event": _metadata(
         ToolTag.STATE_CHANGING,

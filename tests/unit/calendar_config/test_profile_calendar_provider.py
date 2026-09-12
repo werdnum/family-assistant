@@ -71,7 +71,7 @@ def _calendar_urls(provider: ToolsProvider) -> list[str]:
     assert caldav is not None
     urls = caldav.get("calendar_urls")
     assert urls is not None
-    return list(urls)
+    return [u if isinstance(u, str) else u.get("url", "") for u in urls]
 
 
 def test_a_profile_with_its_own_calendar_gets_its_own_local_provider() -> None:
