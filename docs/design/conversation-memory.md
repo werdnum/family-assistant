@@ -135,9 +135,12 @@ notes UI shows it to the user. Topic notes carry a cap of their own at the same 
 the curator's input budget, so no memory note ever exceeds what one review can read; a review that
 would overfill a topic opens a further one. Enforcing the singleton, the caps and the title-list
 exclusion together is what makes "capped" a statement about the rendered prompt rather than about a
-note, and the rendered memory contribution is measured as such. The core note's topic index is short
-by the same cap: it names the most recently changed topics up to a fixed share of the core, and a
-topic that has dropped off it is still reachable by title and by search.
+note, and the rendered memory contribution is measured as such. The core note's topic index is
+derived, not authored: the apply path regenerates it from the topic notes that exist and their
+titles whenever an apply creates, renames or removes a topic, so a pointer never outlives its topic
+or its title and no writer has to remember to update it. It is short by the same cap: it names the
+most recently changed topics up to a fixed share of the core, and a topic that has dropped off it is
+still reachable by title and by search.
 
 Explicit requests ("remember that...", "forget that...") keep working in the foreground turn, and
 they go through the same apply path as the curator, described below. The notes UI edits memory notes
@@ -230,24 +233,25 @@ profiles such as the engineer, media analyst and event handler do not contribute
 stretch contains no user messages, the review is skipped and the watermark advanced.
 
 **Two settings, one convenience default.** Reading memory and contributing to it are separate
-profile settings. Contributing implies reading, and startup validation treats the reverse as a
-configuration error. Reading does not imply contributing: a specialised or experimental profile can
-benefit from the household's preferences without teaching its conversations back into shared memory.
-The household-facing profiles enable both by default.
+profile settings. Contributing implies reading: a profile configured to contribute without reading
+is a configuration error that startup validation rejects. Reading does not imply contributing: a
+specialised or experimental profile can benefit from the household's preferences without teaching
+its conversations back into shared memory. The household-facing profiles enable both by default.
 
 ### The curator proposes edits; the apply path enforces the invariants
 
 The curator does not rewrite notes. It emits a short list of **edits**: add an entry to a named
 note, replace an entry (identified by its current text) with new text, remove one, or move one to
-another memory note. An addition or replacement cites the messages in the reviewed stretch it rests
-on; a move carries the entry's existing references and cites nothing new, because it changes where
-an entry lives rather than what it says, and it is how the curator makes room in a full core note. A
-deterministic apply path validates and applies them. Validation is exactly the v1 invariants: every
-target note carries the `memory` label and is within the curator's scope; every message cited by an
-addition or replacement lies inside the reviewed stretch; the writing turn's provenance is inside
-the trusted pole; no note ends over its cap; and the store is still at the revision the curator
-read. Validation is all-or-nothing for the list, and a rejected list is retried once with the
-reasons fed back before the review is abandoned.
+another memory note. An addition, replacement or removal cites the messages in the reviewed stretch
+it rests on, a removal citing the contradiction that grounds it; a move carries the entry's existing
+references and cites nothing new, because it changes where an entry lives rather than what it says,
+and it is how the curator makes room in a full core note. A deterministic apply path validates and
+applies them. Validation is exactly the v1 invariants: every target note carries the `memory` label
+and is within the curator's scope; every addition, replacement or removal cites at least one
+message, and every cited message lies inside the reviewed stretch; the writing turn's provenance is
+inside the trusted pole; no note ends over its cap; and the store is still at the revision the
+curator read. Validation is all-or-nothing for the list, and a rejected list is retried once with
+the reasons fed back before the review is abandoned.
 
 Application and watermark advancement happen in **one short transaction**, conditional on the store
 revision, with all model work outside it. The store has one revision for the household, and
