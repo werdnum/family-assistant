@@ -119,13 +119,14 @@ of the turn that wrote them. This design adds no second store. Memory is a set o
 
 A memory note is human-readable markdown, one entry per bullet. Each entry carries the date it was
 asserted, who said it, and references to the messages it came from; where it matters, the period it
-applies to. The curator writes the text; the speaker and the date are not its to type. The apply
-path derives them from the cited messages, the sender and time of the first cited user row, and
-renders them into the entry, so attribution is right whenever the citation is, and a wrong citation
-is the one thing left for the evaluation to catch. That is the whole entry model in v1. There is no
-semantic identity, no version lineage, and no machine-readable classification beyond what the
-curator writes in the text ("correction:", "inferred:"). Entries are the unit the curator edits and
-the user reads, not a fact schema.
+applies to. The curator writes the text; the speaker and the date are not its to type. Each edit
+names one of its cited messages as the grounding message, the user row in which the claim was made,
+and the apply path checks that it is a cited user row inside the stretch and renders its sender and
+time into the entry, so attribution is right whenever the grounding citation is, and a wrong
+citation is the one thing left for the evaluation to catch. That is the whole entry model in v1.
+There is no semantic identity, no version lineage, and no machine-readable classification beyond
+what the curator writes in the text ("correction:", "inferred:"). Entries are the unit the curator
+edits and the user reads, not a fact schema.
 
 **Caps are enforced at the repository for every writer.** The always-loaded layer is exactly one
 note: a memory-labelled note may be `include_in_prompt` only if it is that one note, and a write
@@ -136,11 +137,11 @@ the curator's input budget, so no memory note ever exceeds what one review can r
 would overfill a topic opens a further one. Enforcing the singleton, the caps and the title-list
 exclusion together is what makes "capped" a statement about the rendered prompt rather than about a
 note, and the rendered memory contribution is measured as such. The core note's topic index is
-derived, not authored: the apply path regenerates it from the topic notes that exist and their
-titles whenever an apply creates, renames or removes a topic, so a pointer never outlives its topic
-or its title and no writer has to remember to update it. It is short by the same cap: it names the
-most recently changed topics up to a fixed share of the core, and a topic that has dropped off it is
-still reachable by title and by search.
+derived, not authored: the apply path regenerates it from the topic notes that exist, their titles
+and when each last changed, on every apply that touches a topic note, so a pointer never outlives
+its topic or its title, the projection is current, and no writer has to remember to update it. It is
+short by the same cap: it names the most recently changed topics up to a fixed share of the core,
+and a topic that has dropped off it is still reachable by title and by search.
 
 Explicit requests ("remember that...", "forget that...") keep working in the foreground turn, and
 they go through the same apply path as the curator, described below. The notes UI edits memory notes
