@@ -10,10 +10,11 @@ rather than skipping every tool that takes one.
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Mapping
+from typing import Any
 
-from jsonschema import Draft202012Validator, SchemaError, validators
-from jsonschema.exceptions import UnknownType
+from jsonschema import Draft202012Validator, validators
 
 TOOL_ARGUMENT_VALIDATOR = validators.extend(
     Draft202012Validator,
@@ -21,6 +22,36 @@ TOOL_ARGUMENT_VALIDATOR = validators.extend(
         "attachment", lambda _checker, instance: isinstance(instance, str)
     ),
 )
+
+
+def check_parameter_schema(parameters: Mapping[str, object]) -> None:
+    """Raise ``jsonschema.SchemaError`` unless ``parameters`` is a usable schema.
+
+    Called where tool definitions enter the process — a local provider's
+    constructor, an MCP server's discovery — so a tool that cannot be
+    validated against fails there, at startup, rather than when a model first
+    calls it. The ``attachment`` type is checked as a string, which is what it
+    is on the wire.
+    """
+    Draft202012Validator.check_schema(_with_attachments_as_strings(parameters))
+
+
+# ast-grep-ignore: no-dict-any - JSON Schema is arbitrary nested JSON
+def _with_attachments_as_strings(schema: Mapping[str, object]) -> dict[str, Any]:
+    return {
+        key: ("string" if key == "type" and value == "attachment" else value)
+        if key == "type"
+        else _rewrite(value)
+        for key, value in schema.items()
+    }
+
+
+def _rewrite(schema: object) -> object:
+    if isinstance(schema, Mapping):
+        return _with_attachments_as_strings(schema)
+    if isinstance(schema, list):
+        return [_rewrite(item) for item in schema]
+    return copy.deepcopy(schema)
 
 
 def argument_schema_errors(
@@ -32,24 +63,20 @@ def argument_schema_errors(
     JSON Schema permits undeclared properties by default: a tool's arguments
     are bound to a function signature, so an undeclared name can never be
     used and is almost always an invented one. A schema that opts in with
-    ``additionalProperties`` or ``patternProperties`` keeps its extra keys.
+    ``additionalProperties`` (anything but ``false``, including the empty
+    schema ``{}``) or ``patternProperties`` keeps its extra keys.
 
-    Raises ``jsonschema.SchemaError`` when ``parameters`` names a type the
-    validator does not know, which is the tool's defect rather than the
-    arguments'. The meta-schema is deliberately not checked first: it would
-    reject the ``attachment`` type this validator exists to accept.
+    ``parameters`` is expected to have passed ``check_parameter_schema``.
     """
-    try:
-        errors = sorted(
-            TOOL_ARGUMENT_VALIDATOR(parameters).iter_errors(arguments),
-            key=lambda error: list(error.path),
-        )
-    except UnknownType as exc:
-        raise SchemaError(str(exc)) from exc
+    errors = sorted(
+        TOOL_ARGUMENT_VALIDATOR(parameters).iter_errors(arguments),
+        key=lambda error: list(error.path),
+    )
     messages = [_describe(error) for error in errors]
     declared = parameters.get("properties")
-    permits_extra = parameters.get("additionalProperties") or parameters.get(
-        "patternProperties"
+    permits_extra = (
+        parameters.get("additionalProperties", False) is not False
+        or "patternProperties" in parameters
     )
     if isinstance(declared, Mapping) and not permits_extra:
         messages.extend(

@@ -26,8 +26,6 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
-import jsonschema
-
 from family_assistant.tools.argument_schema import argument_schema_errors
 from family_assistant.tools.infrastructure import (
     ToolDescriptorProvider,
@@ -390,18 +388,7 @@ def _reject_mismatched_arguments(
     parameters = function.get("parameters")
     if not isinstance(parameters, dict):
         return None
-    try:
-        problems = argument_schema_errors(parameters, arguments)
-    except jsonschema.SchemaError as exc:
-        # The tool's own declaration is broken, which the model cannot fix;
-        # the call proceeds as it would have for a declared tool.
-        logger.warning(
-            "Tool '%s' declares an invalid parameter schema (%s); "
-            "call_tool is dispatching its arguments unchecked",
-            name,
-            exc.message,
-        )
-        return None
+    problems = argument_schema_errors(parameters, arguments)
     if not problems:
         return None
     logger.warning(

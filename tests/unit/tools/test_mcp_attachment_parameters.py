@@ -12,6 +12,7 @@ from unittest import mock
 from zoneinfo import ZoneInfo
 
 import anyio
+import jsonschema
 import pytest
 from mcp.types import CallToolResult, TextContent, Tool
 
@@ -174,6 +175,18 @@ def test_array_parameters_are_marked_on_their_items() -> None:
     assert image_urls["type"] == "array"
     assert image_urls["items"]["type"] == "attachment"
     assert "format" not in image_urls["items"]
+
+
+def test_a_tool_with_a_broken_schema_fails_the_servers_discovery() -> None:
+    provider = _provider()
+    broken = Tool(
+        name="broken",
+        description="Declares a schema no validator can check.",
+        inputSchema={"type": "object", "properties": {"x": {"type": "nonsense"}}},
+    )
+
+    with pytest.raises(jsonschema.SchemaError):
+        provider._format_mcp_definitions_to_dicts([broken], SERVER_ID)
 
 
 def test_unconfigured_tools_keep_their_schema() -> None:

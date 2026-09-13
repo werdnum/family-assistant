@@ -27,6 +27,7 @@ from mcp.client.streamable_http import streamablehttp_client
 from mcp.types import TextContent  # Import TextContent from mcp.types
 
 from family_assistant.config_inspection import redact_sensitive_text
+from family_assistant.tools.argument_schema import check_parameter_schema
 from family_assistant.tools.attachment_utils import process_attachment_arguments
 from family_assistant.tools.infrastructure import translate_attachment_schemas_for_llm
 from family_assistant.tools.mcp_attachments import (
@@ -872,6 +873,11 @@ class MCPToolsProvider:
                     f"Error formatting MCP tool definition to dict: {getattr(tool, 'name', 'UnknownName')}. Error: {e}"
                 )
 
+        # Outside the per-tool guard on purpose: a schema no validator can
+        # check is a defect the model cannot work around, and it fails the
+        # server's discovery here rather than a call in a voice session.
+        for formatted in formatted_defs:
+            check_parameter_schema(formatted["function"].get("parameters", {}))
         return formatted_defs
 
     async def get_tool_definitions(

@@ -91,7 +91,10 @@ endpoint's behaviour for existing callers is unchanged.
   `invalid_tool_arguments` result carrying the problems, the tool's description and its full schema
   without running anything. That makes a guessed call cost exactly one round trip, the same as the
   search it skipped, and hands the model what it needs to correct itself in the next call rather
-  than a Python argument-binding error. The validator is shared with the tool-call-review eval
+  than a Python argument-binding error. A tool whose own schema cannot be checked never gets this
+  far: every definition is checked against the JSON Schema meta-schema where it enters the process,
+  in the local provider's constructor and in an MCP server's discovery, so a registry defect fails
+  at startup instead of in a voice session. The validator is shared with the tool-call-review eval
   loader (`tools/argument_schema.py`), which checks recorded cases against the same schemas.
 - **Input schemas only.** The registry declares argument schemas (OpenAI function-calling format)
   and describes results in prose. `search_tools` returns the `parameters` schema verbatim alongside

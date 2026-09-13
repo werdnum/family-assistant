@@ -5,7 +5,10 @@ from __future__ import annotations
 import jsonschema
 import pytest
 
-from family_assistant.tools.argument_schema import argument_schema_errors
+from family_assistant.tools.argument_schema import (
+    argument_schema_errors,
+    check_parameter_schema,
+)
 
 HOME_ASSISTANT_SCHEMA = {
     "type": "object",
@@ -60,13 +63,25 @@ def test_extra_keys_are_allowed_where_the_schema_says_so() -> None:
         )
         == []
     )
-    assert (
-        argument_schema_errors(
-            {"type": "object", "properties": {}, "additionalProperties": True},
-            {"anything": 1},
+    for permissive in (True, {}, {"type": "integer"}):
+        assert (
+            argument_schema_errors(
+                {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": permissive,
+                },
+                {"anything": 1},
+            )
+            == []
         )
-        == []
-    )
+    assert argument_schema_errors(
+        {"type": "object", "properties": {}, "additionalProperties": False},
+        {"anything": 1},
+    ) == [
+        "Additional properties are not allowed ('anything' was unexpected)",
+        "'anything' is not an argument of this tool",
+    ]
 
 
 def test_an_attachment_parameter_accepts_an_id() -> None:
@@ -82,9 +97,24 @@ def test_an_attachment_parameter_accepts_an_id() -> None:
     ]
 
 
-def test_an_invalid_schema_is_the_tools_fault_not_the_arguments() -> None:
+def test_a_parameter_schema_may_use_the_attachment_type() -> None:
+    check_parameter_schema({
+        "type": "object",
+        "properties": {
+            "file": {"type": "attachment"},
+            "files": {"type": "array", "items": {"type": "attachment"}},
+        },
+    })
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        {"type": "object", "properties": {"x": {"type": "nonsense"}}},
+        {"type": "object", "properties": {"x": {"type": "string"}}, "required": "x"},
+        {"type": "object", "properties": ["x"]},
+    ],
+)
+def test_a_broken_parameter_schema_is_rejected(parameters: dict[str, object]) -> None:
     with pytest.raises(jsonschema.SchemaError):
-        argument_schema_errors(
-            {"type": "object", "properties": {"x": {"type": "nonsense"}}},
-            {"x": 1},
-        )
+        check_parameter_schema(parameters)
