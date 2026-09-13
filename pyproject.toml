@@ -145,6 +145,7 @@ dependencies = [
     "greenlet>=3.2.3",
     "prometheus-client>=0.21.0",
     "jsonschema>=4.24.0",
+    "referencing>=0.36.2",
 ]
 
 [project.optional-dependencies]

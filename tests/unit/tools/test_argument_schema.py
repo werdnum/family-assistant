@@ -78,10 +78,26 @@ def test_extra_keys_are_allowed_where_the_schema_says_so() -> None:
     assert argument_schema_errors(
         {"type": "object", "properties": {}, "additionalProperties": False},
         {"anything": 1},
-    ) == [
-        "Additional properties are not allowed ('anything' was unexpected)",
-        "'anything' is not an argument of this tool",
+    ) == ["'anything' is not an argument of this tool"]
+
+
+def test_properties_declared_through_applicators_are_known() -> None:
+    schema = {
+        "type": "object",
+        "properties": {"a": {"type": "string"}},
+        "allOf": [{"properties": {"x": {"type": "integer"}}, "required": ["x"]}],
+        "$ref": "#/$defs/more",
+        "$defs": {"more": {"properties": {"b": {"type": "boolean"}}}},
+    }
+
+    assert argument_schema_errors(schema, {"a": "s", "x": 1, "b": True}) == []
+    assert argument_schema_errors(schema, {"x": 1, "y": 2, "z": 3}) == [
+        "'y', 'z' are not arguments of this tool"
     ]
+
+
+def test_a_schema_without_a_properties_map_is_not_made_strict() -> None:
+    assert argument_schema_errors({"type": "object"}, {"anything": 1}) == []
 
 
 def test_an_attachment_parameter_accepts_an_id() -> None:
@@ -95,6 +111,14 @@ def test_an_attachment_parameter_accepts_an_id() -> None:
     assert argument_schema_errors(schema, {"file": 7}) == [
         "'file': 7 is not of type 'attachment'"
     ]
+
+
+def test_a_resolvable_reference_passes_the_check() -> None:
+    check_parameter_schema({
+        "type": "object",
+        "properties": {"x": {"$ref": "#/$defs/thing"}},
+        "$defs": {"thing": {"type": "string"}},
+    })
 
 
 def test_a_parameter_schema_may_use_the_attachment_type() -> None:
@@ -113,6 +137,11 @@ def test_a_parameter_schema_may_use_the_attachment_type() -> None:
         {"type": "object", "properties": {"x": {"type": "nonsense"}}},
         {"type": "object", "properties": {"x": {"type": "string"}}, "required": "x"},
         {"type": "object", "properties": ["x"]},
+        {"type": "object", "properties": {"x": {"$ref": "#/$defs/missing"}}},
+        {
+            "type": "object",
+            "properties": {"x": {"$ref": "https://example.invalid/schema.json"}},
+        },
     ],
 )
 def test_a_broken_parameter_schema_is_rejected(parameters: dict[str, object]) -> None:
