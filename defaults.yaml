@@ -465,15 +465,17 @@ mcp_config:
         GOOGLE_MAPS_API_KEY: "$GOOGLE_MAPS_API_KEY"
     # --- GitHub (hosted, read-only) ---
     # Version history, pull requests and issues for the `engineer` profile,
-    # which otherwise cannot see either: the production image excludes `.git`
-    # (see .dockerignore), so the only version fact the running app holds is
-    # the GIT_COMMIT baked in at build time and reported by get_system_info.
+    # which can otherwise see none of them: the production image excludes
+    # `.git` (see .dockerignore), so the only version fact the running app
+    # holds is the GIT_COMMIT baked in at build time, which get_system_info
+    # reports.
     #
     # GitHub hosts these servers, so there is no binary to install, pin or
-    # keep alive -- the trade GitHub's own README describes. The `/readonly`
-    # URL suffix is what makes them read-only, enforced by GitHub rather than
-    # by our policy, and tests/functional/tools/test_github_mcp_defaults.py pins it so an
-    # edit that drops it fails a test instead of silently granting writes.
+    # keep alive inside the MCP initialization timeout. The `/readonly` URL
+    # suffix is what makes them read-only, enforced by GitHub rather than by
+    # our policy; tests/functional/tools/test_github_mcp_defaults.py pins the
+    # suffix so an edit that drops it fails a test instead of silently
+    # granting writes.
     # Split by toolset (`/x/<toolset>/`) rather than using the combined
     # `/mcp/readonly` endpoint, which would advertise every toolset GitHub
     # offers -- actions, gists, notifications, projects and more -- for three
