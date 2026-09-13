@@ -27,6 +27,7 @@ TOOL_ARGUMENT_VALIDATOR = validators.extend(
     ),
 )
 
+_REFERENCE_KEYWORDS = frozenset({"$ref", "$dynamicRef"})
 _EXTRA_KEY_KEYWORDS = frozenset({
     "additionalProperties",
     "patternProperties",
@@ -40,7 +41,8 @@ def check_parameter_schema(parameters: Mapping[str, object]) -> None:
     Called where tool definitions enter the process — a local provider's
     constructor, an MCP server's discovery — so a tool that cannot be
     validated against fails there, at startup, rather than when a model first
-    calls it. That covers the meta-schema and every ``$ref`` the schema makes:
+    calls it. That covers the meta-schema and every ``$ref`` or ``$dynamicRef`` the
+    schema makes:
     the meta-schema only checks a reference's shape, and one pointing nowhere
     would otherwise surface as an exception on the first argument that
     reaches it. The ``attachment`` type is checked as a string, which is what
@@ -66,7 +68,7 @@ def check_parameter_schema(parameters: Mapping[str, object]) -> None:
 def _references(node: object) -> Iterator[str]:
     if isinstance(node, Mapping):
         for key, value in node.items():
-            if key == "$ref" and isinstance(value, str):
+            if key in _REFERENCE_KEYWORDS and isinstance(value, str):
                 yield value
             else:
                 yield from _references(value)

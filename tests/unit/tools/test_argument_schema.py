@@ -119,6 +119,11 @@ def test_a_resolvable_reference_passes_the_check() -> None:
         "properties": {"x": {"$ref": "#/$defs/thing"}},
         "$defs": {"thing": {"type": "string"}},
     })
+    check_parameter_schema({
+        "type": "object",
+        "properties": {"x": {"$dynamicRef": "#node"}},
+        "$defs": {"node": {"$dynamicAnchor": "node", "type": "string"}},
+    })
 
 
 def test_a_parameter_schema_may_use_the_attachment_type() -> None:
@@ -138,6 +143,7 @@ def test_a_parameter_schema_may_use_the_attachment_type() -> None:
         {"type": "object", "properties": {"x": {"type": "string"}}, "required": "x"},
         {"type": "object", "properties": ["x"]},
         {"type": "object", "properties": {"x": {"$ref": "#/$defs/missing"}}},
+        {"type": "object", "properties": {"x": {"$dynamicRef": "#missing"}}},
         {
             "type": "object",
             "properties": {"x": {"$ref": "https://example.invalid/schema.json"}},
