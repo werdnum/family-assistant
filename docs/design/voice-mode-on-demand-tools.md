@@ -35,7 +35,7 @@ only how it is reached. A Live session declares
   - **`call_tool(name, arguments_json)`** — runs one of them.
 
 Because the declaration list is static, nothing needs to be injected mid-session: the schema the
-model needs arrives as tool *output* rather than as a new declaration. The **names** of the hidden
+model needs arrives as tool _output_ rather than as a new declaration. The **names** of the hidden
 tools go into the system instruction as a catalog, so the model knows what is worth searching for.
 
 Names only, without the summaries the chat path's catalog carries. A live session holds its system
@@ -81,6 +81,18 @@ endpoint's behaviour for existing callers is unchanged.
 - **Arguments as a JSON string.** Gemini function declarations require a typed schema for every
   property, so an open-ended argument object is not expressible. `arguments_json` is a string
   holding a JSON object; a malformed value comes back as an error the model can correct.
+- **Inner arguments are checked against the tool's schema before dispatch.** A declared tool has its
+  arguments shaped by the model's own function calling; a tool reached through `call_tool` has only
+  the schema the model read — or skipped — in a `search_tools` result, and a voice model under
+  pressure to answer quickly does sometimes skip it and guess (`{"name": "vacuum_clean_..."}` for a
+  tool that takes `domain`/`action`). `call_tool` validates the decoded object against the tool's
+  `parameters` (missing required arguments, wrong types, and any top-level name the schema does not
+  declare, since an undeclared name can never bind) and, on a mismatch, returns a structured
+  `invalid_tool_arguments` result carrying the problems, the tool's description and its full schema
+  without running anything. That makes a guessed call cost exactly one round trip, the same as the
+  search it skipped, and hands the model what it needs to correct itself in the next call rather
+  than a Python argument-binding error. The validator is shared with the tool-call-review eval
+  loader (`tools/argument_schema.py`), which checks recorded cases against the same schemas.
 - **Input schemas only.** The registry declares argument schemas (OpenAI function-calling format)
   and describes results in prose. `search_tools` returns the `parameters` schema verbatim alongside
   the description — precisely what a declared tool would have given the model.
@@ -98,6 +110,18 @@ endpoint's behaviour for existing callers is unchanged.
 - **The transcript shows `call_tool`.** Web and iOS transcripts render the meta call with the inner
   tool name in its arguments rather than as the inner tool. Voice transcripts are a debug
   affordance; special-casing the display is not worth a second rendering path.
+- **Search-first is guidance, not a protocol invariant.** A lookup token from `search_tools` that
+  `call_tool` would demand, or per-session state recording which schemas the model has seen, would
+  turn "search first" into something the server enforces. Neither is worth its state and latency:
+  schema validation already makes a skipped search fail closed and self-correcting, and a model that
+  has genuinely retained a schema from earlier in the session is right to call without searching
+  again.
+- **Inner failures travel in the result channel.** A tool that runs and fails reports it the same
+  way it would on the chat path, as an error result the model reads; `call_tool` does not turn a
+  nested failure into a non-2xx response from `/api/tools/execute`, because the HTTP status
+  describes the meta-tool's dispatch, and the voice clients relay a 200 body to the model verbatim.
+  The validation rejection above is structured (`error.type`) precisely so it reads as an error
+  without a second transport contract.
 - **Search is lexical.** Matching is token overlap against tool names and summaries, ranked with
   name matches first. The catalog in the system instruction means the model normally searches for a
   name it has already seen, so an embedding search would add a dependency and a failure mode for no

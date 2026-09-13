@@ -1131,8 +1131,11 @@ def test_a_non_finite_number_is_rejected_at_load(
 
 
 def test_a_finite_number_in_arguments_still_loads(tmp_path: Path) -> None:
+    # The finite number has to sit in an argument the tool declares, because
+    # arguments are also checked against the tool's schema at load.
     case = yaml.safe_load(_CONVERSATION_CASE_YAML)
-    case["payload"]["arguments"]["weight"] = 1.5
+    case["payload"]["tool_name"] = "create_vega_chart"
+    case["payload"]["arguments"] = {"spec": "{}", "scale": 1.5}
     path = tmp_path / "case.yaml"
     path.write_text(yaml.safe_dump(case), encoding="utf-8")
 

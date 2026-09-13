@@ -47,7 +47,12 @@ def _registration(
     description: str,
     # ast-grep-ignore: no-dict-any - JSON Schema fragment for a test fixture
     properties: dict[str, Any] | None = None,
+    required: list[str] | None = None,
 ) -> ToolRegistration:
+    # ast-grep-ignore: no-dict-any - JSON Schema fragment for a test fixture
+    parameters: dict[str, Any] = {"type": "object", "properties": properties or {}}
+    if required:
+        parameters["required"] = required
     return ToolRegistration(
         definition=cast(
             "ToolDefinition",
@@ -56,10 +61,7 @@ def _registration(
                 "function": {
                     "name": name,
                     "description": description,
-                    "parameters": {
-                        "type": "object",
-                        "properties": properties or {},
-                    },
+                    "parameters": parameters,
                 },
             },
         ),
@@ -87,16 +89,26 @@ def _build_provider(
                     },
                     "action": {"type": "string", "description": "Action name."},
                 },
+                required=["entity_id", "action"],
             ),
             _registration(
                 "generate_image", description="Draw a picture from a prompt."
+            ),
+            _registration(
+                "broken_schema",
+                description="Declares a schema jsonschema cannot check.",
+                properties={"x": {"type": "nonsense"}},
             ),
         ]
     )
     view = OnDemandToolsView(
         wrapped_provider=local_provider,
         on_demand_tool_names=(
-            {"call_home_assistant_action", "generate_image"}
+            {
+                "call_home_assistant_action",
+                "generate_image",
+                "broken_schema",
+            }
             if on_demand_names is None
             else on_demand_names
         ),
@@ -158,7 +170,12 @@ async def test_no_meta_tools_when_nothing_is_on_demand() -> None:
         for definition in await provider.get_tool_definitions()
     }
 
-    assert names == {"list_notes", "call_home_assistant_action", "generate_image"}
+    assert names == {
+        "list_notes",
+        "call_home_assistant_action",
+        "generate_image",
+        "broken_schema",
+    }
 
 
 @pytest.mark.asyncio
@@ -233,7 +250,7 @@ async def test_search_without_a_query_lists_everything_within_the_limit() -> Non
 
     assert isinstance(result, ToolResult)
     data = cast("dict[str, Any]", result.get_data())
-    assert data["match_count"] == 3
+    assert data["match_count"] == 4
     assert data["returned"] == 2
 
 
@@ -312,6 +329,74 @@ async def test_call_tool_reports_malformed_json_without_running_anything() -> No
     assert isinstance(result, ToolResult)
     assert "not valid JSON" in (result.text or "")
     assert CALLS == []
+
+
+@pytest.mark.asyncio
+async def test_call_tool_rejects_invented_arguments_with_the_schema() -> None:
+    """The shape a model produces when it skips search_tools and guesses."""
+    provider = _build_provider()
+
+    result = await provider.execute_tool(
+        CALL_TOOL_TOOL_NAME,
+        {
+            "name": "call_home_assistant_action",
+            "arguments_json": '{"name": "vacuum_clean_under_dining_table"}',
+        },
+        _context(),
+    )
+
+    assert isinstance(result, ToolResult)
+    assert isinstance(result.data, dict)
+    error = result.data["error"]
+    assert error["type"] == "invalid_tool_arguments"
+    assert error["tool"] == "call_home_assistant_action"
+    assert error["problems"] == [
+        "'entity_id' is a required property",
+        "'action' is a required property",
+        "'name' is not an argument of this tool",
+    ]
+    assert error["description"] == "Run a Home Assistant action on an entity."
+    assert error["parameters"]["required"] == ["entity_id", "action"]
+    assert "search_tools" not in error["message"]
+    assert CALLS == []
+
+
+@pytest.mark.asyncio
+async def test_call_tool_rejects_a_mistyped_argument() -> None:
+    provider = _build_provider()
+
+    result = await provider.execute_tool(
+        CALL_TOOL_TOOL_NAME,
+        {
+            "name": "call_home_assistant_action",
+            "arguments_json": '{"entity_id": 5, "action": "turn_on"}',
+        },
+        _context(),
+    )
+
+    assert isinstance(result, ToolResult)
+    assert isinstance(result.data, dict)
+    assert result.data["error"]["problems"] == [
+        "'entity_id': 5 is not of type 'string'"
+    ]
+    assert CALLS == []
+
+
+@pytest.mark.asyncio
+async def test_call_tool_dispatches_unchecked_when_the_tools_schema_is_broken(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    provider = _build_provider()
+
+    with caplog.at_level("WARNING", logger="family_assistant.tools.live_meta"):
+        await provider.execute_tool(
+            CALL_TOOL_TOOL_NAME,
+            {"name": "broken_schema", "arguments_json": '{"x": 1}'},
+            _context(),
+        )
+
+    assert CALLS == [("called", {"x": 1})]
+    assert "invalid parameter schema" in caplog.text
 
 
 @pytest.mark.asyncio
