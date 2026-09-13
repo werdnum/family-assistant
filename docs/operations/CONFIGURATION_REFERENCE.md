@@ -2244,9 +2244,11 @@ With `on_demand: true` (the default) a voice session declares the profile's eage
 meta-tools, `search_tools` and `call_tool`. Everything the profile lists in
 `tools_config.on_demand_local_tools` / `on_demand_mcp_server_ids` stays out of the declaration list
 and is named in the system instruction instead; the model looks a tool's argument schema up with
-`search_tools` and runs it with `call_tool`. The inner call is dispatched through the profile's
-ordinary provider chain, so tool policy, taint tracking and tool-call review apply exactly as they
-do for a declared tool.
+`search_tools` and runs it with `call_tool`. The inner call's arguments are checked against the
+tool's schema first — a call with invented, missing or mistyped arguments is refused with the schema
+attached, so the model can correct it — and then dispatched through the profile's ordinary provider
+chain, so tool policy, taint tracking and tool-call review apply exactly as they do for a declared
+tool.
 
 Set it to `false` to declare every advertisable tool up front, as before. Either way, a voice
 session has no confirmation channel, so tools that require confirmation are never advertised to it

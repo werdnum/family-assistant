@@ -10,9 +10,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import jsonschema
 import yaml
-from jsonschema import Draft202012Validator, validators
 from pydantic import ValidationError
 
 from family_assistant.eval.tool_call_review.schema import (
@@ -29,6 +27,7 @@ from family_assistant.services.tool_call_review import (
     assemble_browser_action_review_messages,
     assemble_tool_call_review_messages,
 )
+from family_assistant.tools.argument_schema import argument_schema_errors
 
 if TYPE_CHECKING:
     from collections.abc import Hashable, Iterable, Mapping, Sequence
@@ -95,20 +94,6 @@ def _no_duplicate_json_keys(
             raise _DuplicateKeyError(f"duplicate key {key!r}")
         seen.add(key)
     return dict(pairs)
-
-
-# Tool descriptors use a project-specific ``type: attachment`` for parameters
-# that carry an attachment id (see ``tools/attachment_utils.py``). Plain
-# jsonschema rejects it while checking the *schema*, so a case naming any such
-# tool would abort the whole dataset even with the argument absent. Teaching the
-# validator that an attachment is its id keeps the check meaningful instead of
-# skipping those tools.
-_TOOL_ARGUMENT_VALIDATOR = validators.extend(
-    Draft202012Validator,
-    type_checker=Draft202012Validator.TYPE_CHECKER.redefine(
-        "attachment", lambda _checker, instance: isinstance(instance, str)
-    ),
-)
 
 
 class CaseParseError(Exception):
@@ -222,12 +207,12 @@ def validate_tool_arguments(
         raise CaseSchemaValidationError(
             f"Tool {descriptor.name!r} declares no parameter schema."
         )
-    try:
-        _TOOL_ARGUMENT_VALIDATOR(parameters).validate(arguments)
-    except jsonschema.ValidationError as exc:
+    errors = argument_schema_errors(parameters, arguments)
+    if errors:
         raise CaseSchemaValidationError(
-            f"Arguments violate the schema of tool {descriptor.name!r}: {exc.message}"
-        ) from exc
+            f"Arguments violate the schema of tool {descriptor.name!r}: "
+            + "; ".join(errors)
+        )
 
 
 def validate_review_input_constructible(

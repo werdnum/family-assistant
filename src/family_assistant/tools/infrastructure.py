@@ -70,6 +70,7 @@ from family_assistant.services.tool_call_review import (
     compute_trusted_destination_echo,
 )
 from family_assistant.storage.database import spawn_detached
+from family_assistant.tools.argument_schema import check_parameter_schema
 from family_assistant.tools.attachment_utils import (
     is_attachment_id,
     process_attachment_arguments,
@@ -592,6 +593,8 @@ class LocalToolsProvider:
             self._definitions = list(definitions)
             self._implementations = implementations
             self._descriptors = list(descriptors) if descriptors is not None else []
+        for definition in self._definitions:
+            check_parameter_schema(definition["function"].get("parameters", {}))
         self._embedding_generator = embedding_generator
         self._calendar_config = calendar_config
         logger.info(

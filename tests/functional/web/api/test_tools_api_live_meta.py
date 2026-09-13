@@ -92,6 +92,38 @@ async def test_call_tool_runs_a_tool_the_session_never_declared(
 
 
 @pytest.mark.asyncio
+async def test_call_tool_with_invented_arguments_returns_the_schema_instead(
+    app_fixture: FastAPI,
+    api_test_client: AsyncClient,
+) -> None:
+    """A guessed inner call must come back as a correction, not a binding error.
+
+    The voice clients relay whatever this endpoint returns to the model, so the
+    correction has to be in the body of a successful response.
+    """
+    RECEIVED.clear()
+    _install_on_demand_provider(app_fixture)
+
+    response = await api_test_client.post(
+        "/api/tools/execute/call_tool",
+        json={
+            "arguments": {
+                "name": "turn_on_light",
+                "arguments_json": '{"name": "kitchen_light_on"}',
+            }
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    error = cast("dict[str, Any]", response.json()["result"]["data"]["error"])
+    assert error["type"] == "invalid_tool_arguments"
+    assert error["tool"] == "turn_on_light"
+    assert error["problems"] == ["'name' is not an argument of this tool"]
+    assert error["parameters"]["properties"] == {"entity_id": {"type": "string"}}
+    assert RECEIVED == []
+
+
+@pytest.mark.asyncio
 async def test_search_tools_returns_the_hidden_tools_schema(
     app_fixture: FastAPI,
     api_test_client: AsyncClient,

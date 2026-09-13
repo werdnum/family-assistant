@@ -26,6 +26,7 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
+from family_assistant.tools.argument_schema import argument_schema_errors
 from family_assistant.tools.infrastructure import (
     ToolDescriptorProvider,
     get_tool_definitions_for_advertisement,
@@ -54,10 +55,14 @@ CATALOG_HEADING = "## Tools you can reach with search_tools"
 # needs anyway. The names are what make the search reliable, because the model
 # then searches a name it has already seen rather than guessing a keyword.
 CATALOG_INSTRUCTION = (
-    "These tools exist but are not declared in this session. Call "
-    "`search_tools` with one of these names to get its description and "
-    "argument schema, then run it with `call_tool`. Do not guess a tool's "
-    "arguments without searching first."
+    "These tools exist but are not declared in this session. To use one: "
+    "first call `search_tools` with its exact name from this list, then read "
+    "the argument schema it returns, then call `call_tool` with "
+    "`arguments_json` holding only the argument names that schema declares. "
+    "Never invent an argument name, and never fold the request into a made-up "
+    "argument value: a call whose arguments do not match the schema is "
+    "rejected without running and the rejection carries the schema, so a "
+    "guessed call costs a round trip and achieves nothing. Search first."
 )
 
 SEARCH_TOOLS_DEFINITION: ToolDefinition = {
@@ -98,8 +103,10 @@ CALL_TOOL_DEFINITION: ToolDefinition = {
         "name": CALL_TOOL_TOOL_NAME,
         "description": (
             "Run a tool that is not declared in this session. Look its "
-            "argument schema up with search_tools first; a tool called with "
-            "guessed arguments will fail."
+            "argument schema up with search_tools first and pass only the "
+            "argument names that schema declares. A call with invented or "
+            "mistyped arguments is rejected without running and returns the "
+            "schema to correct it against."
         ),
         "parameters": {
             "type": "object",
@@ -321,13 +328,18 @@ class LiveMetaToolsProvider:
             return ToolResult(text=parsed)
 
         advertised = await self._advertised_definitions()
-        if inner_name not in advertised:
+        definition = advertised.get(inner_name)
+        if definition is None:
             return ToolResult(
                 text=(
                     f"Tool '{inner_name}' is not available in this voice "
                     "session. Use search_tools to find one that is."
                 )
             )
+
+        rejection = _reject_mismatched_arguments(inner_name, definition, parsed)
+        if rejection is not None:
+            return rejection
 
         logger.info("call_tool dispatching to '%s'", inner_name)
         return await self._wrapped_provider.execute_tool(
@@ -354,6 +366,52 @@ class LiveMetaToolsProvider:
     async def close(self) -> None:
         """Close the wrapped provider chain."""
         await self._wrapped_provider.close()
+
+
+def _reject_mismatched_arguments(
+    name: str,
+    definition: ToolDefinition,
+    # ast-grep-ignore: no-dict-any - Tool arguments are dynamic JSON from the LLM
+    arguments: dict[str, Any],
+) -> ToolResult | None:
+    """Return the correction to send the model, or None to dispatch.
+
+    A declared tool has its arguments checked by the model's own function
+    calling; a tool reached through ``call_tool`` has only the schema the model
+    read (or skipped) in a ``search_tools`` result, so this is the one place
+    an invented argument can be caught before it becomes a Python binding
+    error inside the tool. The rejection carries the schema and description,
+    which is what a model that skipped the search needs to correct itself in
+    one round trip.
+    """
+    function = definition.get("function", {})
+    parameters = function.get("parameters")
+    if not isinstance(parameters, dict):
+        return None
+    problems = argument_schema_errors(parameters, arguments)
+    if not problems:
+        return None
+    logger.warning(
+        "call_tool did not run '%s': arguments do not match its schema: %s",
+        name,
+        "; ".join(problems),
+    )
+    return ToolResult(
+        data={
+            "error": {
+                "type": "invalid_tool_arguments",
+                "tool": name,
+                "message": (
+                    f"'{name}' was not run because its arguments do not match "
+                    "its schema. Call again with arguments_json using only the "
+                    "argument names declared in 'parameters' below."
+                ),
+                "problems": problems,
+                "description": function.get("description", ""),
+                "parameters": parameters,
+            }
+        }
+    )
 
 
 def _parse_arguments_json(

@@ -16,6 +16,7 @@ from typing import (
 )  # Added Tuple
 
 import anyio
+import jsonschema
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -27,6 +28,7 @@ from mcp.client.streamable_http import streamablehttp_client
 from mcp.types import TextContent  # Import TextContent from mcp.types
 
 from family_assistant.config_inspection import redact_sensitive_text
+from family_assistant.tools.argument_schema import check_parameter_schema
 from family_assistant.tools.attachment_utils import process_attachment_arguments
 from family_assistant.tools.infrastructure import translate_attachment_schemas_for_llm
 from family_assistant.tools.mcp_attachments import (
@@ -872,6 +874,11 @@ class MCPToolsProvider:
                     f"Error formatting MCP tool definition to dict: {getattr(tool, 'name', 'UnknownName')}. Error: {e}"
                 )
 
+        # Outside the per-tool guard on purpose: a schema no validator can
+        # check is a defect the model cannot work around, and it fails the
+        # server's discovery here rather than a call in a voice session.
+        for formatted in formatted_defs:
+            check_parameter_schema(formatted["function"].get("parameters", {}))
         return formatted_defs
 
     async def get_tool_definitions(
@@ -999,7 +1006,22 @@ class MCPToolsProvider:
             else:
                 logger.debug(f"Health check passed for server '{server_id}'")
                 self._reset_reconnect_backoff(server_id)
-                self._refresh_server_tools(server_id, server_tools)
+                try:
+                    self._refresh_server_tools(server_id, server_tools)
+                except jsonschema.SchemaError as exc:
+                    # The same defect that fails discovery at startup, arriving
+                    # mid-life. The server's cached tools cannot stay callable
+                    # against a schema nobody can check, and one bad server
+                    # must not starve the checks and retries queued behind it.
+                    logger.error(
+                        "MCP server '%s' now reports a tool with an invalid "
+                        "parameter schema (%s); dropping its tools until it "
+                        "reports a checkable list",
+                        server_id,
+                        exc.message,
+                    )
+                    self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
+                    await self._teardown_server(server_id)
 
     async def _retry_disconnected_servers(self, server_ids: Sequence[str]) -> None:
         """Reconnect failed/cancelled servers whose backoff window has elapsed."""
