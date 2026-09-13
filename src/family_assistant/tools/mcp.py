@@ -16,6 +16,7 @@ from typing import (
 )  # Added Tuple
 
 import anyio
+import jsonschema
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -1005,7 +1006,22 @@ class MCPToolsProvider:
             else:
                 logger.debug(f"Health check passed for server '{server_id}'")
                 self._reset_reconnect_backoff(server_id)
-                self._refresh_server_tools(server_id, server_tools)
+                try:
+                    self._refresh_server_tools(server_id, server_tools)
+                except jsonschema.SchemaError as exc:
+                    # The same defect that fails discovery at startup, arriving
+                    # mid-life. The server's cached tools cannot stay callable
+                    # against a schema nobody can check, and one bad server
+                    # must not starve the checks and retries queued behind it.
+                    logger.error(
+                        "MCP server '%s' now reports a tool with an invalid "
+                        "parameter schema (%s); dropping its tools until it "
+                        "reports a checkable list",
+                        server_id,
+                        exc.message,
+                    )
+                    self._server_statuses[server_id] = MCP_SERVER_STATUS_FAILED
+                    await self._teardown_server(server_id)
 
     async def _retry_disconnected_servers(self, server_ids: Sequence[str]) -> None:
         """Reconnect failed/cancelled servers whose backoff window has elapsed."""

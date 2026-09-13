@@ -10,7 +10,10 @@ import pytest
 from mcp.types import ListToolsResult, Tool, ToolAnnotations
 
 from family_assistant.tools import MCPServerConfig, MCPToolsProvider
-from family_assistant.tools.mcp import MCP_SERVER_STATUS_CONNECTED
+from family_assistant.tools.mcp import (
+    MCP_SERVER_STATUS_CONNECTED,
+    MCP_SERVER_STATUS_FAILED,
+)
 from family_assistant.tools.metadata import ToolTag
 
 if TYPE_CHECKING:
@@ -100,6 +103,26 @@ async def test_tools_appear_when_a_server_starts_reporting_them() -> None:
 
     assert _tool_names(provider) == {"search"}
     assert provider.get_tool_to_server_mapping() == {"search": SERVER_ID}
+
+
+@pytest.mark.asyncio
+async def test_a_server_that_starts_reporting_a_broken_schema_is_retired() -> None:
+    """One bad server drops its own tools and does not stall the others."""
+    provider = _provider(SERVER_ID, OTHER_SERVER_ID)
+    _register(provider, SERVER_ID, [_tool("search")])
+    broken = Tool(
+        name="search",
+        description="does a thing",
+        inputSchema={"type": "object", "properties": {"q": {"type": "nonsense"}}},
+    )
+    provider._sessions[SERVER_ID] = _session([broken])
+    provider._sessions[OTHER_SERVER_ID] = _session([_tool("other")])
+
+    await provider._run_health_checks()
+
+    assert _tool_names(provider) == {"other"}
+    assert provider._server_statuses[SERVER_ID] == MCP_SERVER_STATUS_FAILED
+    assert SERVER_ID not in provider._sessions
 
 
 @pytest.mark.asyncio
