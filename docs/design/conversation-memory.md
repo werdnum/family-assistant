@@ -151,12 +151,13 @@ names the most recently changed topics up to a fixed share of the core, and a to
 off it is still reachable by title and by search.
 
 Explicit requests ("remember that...", "forget that...") keep working in the foreground turn, and
-they go through the same apply path as the curator, described below. The notes UI edits memory notes
-as it edits any note, and those edits land through the apply path too. A person's edit has a
-different kind of evidence: the authenticated editor and the time of the edit, rendered the same way
-a curator entry renders its speaker and date, and no transcript to cite. The invariants that apply
-to it are the ones that are about the store rather than about a review: the label, the caps, the
-provenance rule, which a signed-in household member satisfies, and the store revision.
+they go through the same apply path as the curator, described below; their evidence scope is the
+current turn, so a foreground edit cites the message in which the person asked. The notes UI edits
+memory notes as it edits any note, and those edits land through the apply path too. A person's edit
+has a different kind of evidence: the authenticated editor and the time of the edit, rendered the
+same way a curator entry renders its speaker and date, and no transcript to cite. The invariants
+that apply to it are the ones that are about the store rather than about a review: the label, the
+caps, the provenance rule, which a signed-in household member satisfies, and the store revision.
 
 ### Whose memory it is
 
@@ -258,8 +259,9 @@ it rests on, a removal citing the contradiction that grounds it; a move carries 
 references and cites nothing new, because it changes where an entry lives rather than what it says,
 and it is how the curator makes room in a full core note. A deterministic apply path validates and
 applies them. Validation is exactly the v1 invariants: every target note carries the `memory` label
-and is within the curator's scope; every addition, replacement or removal cites at least one
-message, and every cited message lies inside the reviewed stretch; the writing turn's provenance is
+and is within the writer's scope; every addition, replacement or removal cites at least one message,
+and every cited message lies inside the evidence scope the writer supplies, the reviewed stretch for
+the curator and the current turn for the foreground assistant; the writing turn's provenance is
 inside the trusted pole; no note ends over its cap; and the store is still at the revision the
 curator read. Validation is all-or-nothing for the list, and a rejected list is retried once with
 the reasons fed back before the review is abandoned.
