@@ -87,6 +87,57 @@ consistent with the project-wide invariant that self-delegation is never a privi
 capability. The confirmation gate therefore applies to delegation *between distinct* profiles, which
 is where the trust boundary is actually crossed.
 
+### Repository History, Pull Requests and Issues
+
+The engineer diagnoses a *deployed* build, and until now it could read that build's code but not its
+history. The production image excludes `.git` (`.dockerignore`), so there is no local repository to
+run `git log` against, and no amount of source reading answers "did this break in the last deploy?"
+The answer is the diff, and the diff lives on GitHub.
+
+Three of GitHub's hosted read-only MCP servers supply it — `github-repos` (commits, diffs, file
+contents at a revision, code search), `github-pull-requests` and `github-issues` — with
+`get_system_info` extended to report the `GIT_COMMIT` the image was built from, so a history query
+can be anchored to the running build rather than to whatever is on the default branch today. Without
+that anchor the profile would be comparing against a tree it is not running.
+
+**Hosted rather than a local binary.** GitHub runs these servers, so there is no package to install,
+pin, or keep alive inside the MCP initialization timeout — the failure mode that made `time` and
+`brave` invoke pinned entry points rather than resolving at startup. The token travels to GitHub
+either way: `create_github_issue` already sends one to `api.github.com` on every call, so routing a
+read through GitHub's own endpoint adds no exposure that the write path did not already have. What
+the hosted choice does cost is schema stability, since GitHub can rename a tool under us. That
+failure is visible (a tool goes missing, which this profile's prompt already tells it to read as
+configuration rather than as a bug) rather than silent, which is the right way round.
+
+**Read-only is enforced by the URL, not by us.** The grant is by `mcp_server_ids`, not by tool name,
+because a name list would decay into silently withdrawing access as GitHub's surface moves. A
+wholesale grant cannot distinguish a read from a write, so the `/readonly` endpoints are what keep
+the profile read-only, and a test pins the suffix so an edit that drops it fails loudly instead of
+quietly turning the engineer into an account that can open, close and comment. The toolsets are
+split one per server rather than using the combined `/mcp/readonly` endpoint, which would advertise
+every toolset GitHub offers; all three are on-demand, so they cost nothing on the turns that never
+ask for history.
+
+**Repository text is untrusted input.** A `"*"` wildcard in `tool_metadata` classifies every tool
+these servers expose — today's and tomorrow's — as `read_only`, `low_bandwidth_external` and
+`output_untrusted`. Low-bandwidth because the endpoint is fixed by configuration and the model
+chooses a repository and a query, never a recipient: the same distinction that makes
+`generate_image` low-bandwidth and `download_media` external communication. Untrusted because commit
+messages, issue bodies, PR descriptions and review comments are written by anyone who can reach the
+repository, bots and drive-by contributors included, and content the household did not author must
+never render to the tool-call reviewer as the user's own words.
+
+**A deliberate over-classification, for now.** `output_untrusted` resolves to `UNKNOWN_EXTERNAL`,
+the same tier as a scraped web page, which overstates the risk of one's own repository. The tier
+vocabulary already has the better answer — `KNOWN_CONTACT` and `RECOGNIZED_MACHINE` sit between the
+trusted pole and the open internet, and the taint design nominates private calendars and Home
+Assistant state for exactly that middle — but a *tool* cannot currently reach it: the output tags
+are binary, `output_trusted` or `output_untrusted`, with nothing in between. Closing that gap means
+a tier-valued output tag, which is a change to the tag vocabulary and to every classification that
+depends on it, and it is deliberately not bundled here. The cost of waiting is small: the sink class
+is `low_bandwidth_external` either way, so the practical difference is extra audit rows and a
+coarser provenance digest, not a change in what the engineer can do.
+
 ### Confirmation and Judged Review for Side Effects
 
 Engineer tools with external side effects are gated to protect the profile's read-only posture:
@@ -133,6 +184,13 @@ engineer itself.
 | `reconnect_mcp_server` | Re-establish a failed MCP server session               | Reconnects (allowed)                  |
 | `spawn_worker`         | Launch an isolated AI coding worker to implement a fix | Starts worker (requires review)       |
 | `cancel_worker_task`   | Cancel a running AI worker task                        | Stops worker (allowed)                |
+
+Repository history, pull requests and issues come from GitHub's hosted read-only MCP servers
+(`github-repos`, `github-pull-requests`, `github-issues`) rather than from local tools. They are
+granted by server id, loaded on demand, and reachable by no other profile. See **Repository History,
+Pull Requests and Issues** above, and
+[CONFIGURATION_REFERENCE.md](../operations/CONFIGURATION_REFERENCE.md) for the token an operator
+sets.
 
 The profile also includes existing read-only tools: `list_notes`, `get_note`, `search_documents`,
 `get_full_document_content`, `get_user_documentation_content`, `list_pending_callbacks`,

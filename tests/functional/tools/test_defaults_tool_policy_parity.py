@@ -43,6 +43,9 @@ MCP_SERVER_IDS = (
     "google-maps",
     "scrape",
     "browser",
+    "github-repos",
+    "github-issues",
+    "github-pull-requests",
 )
 
 CONFINED_NON_SENSITIVE_READ_ALLOWLIST = {
