@@ -134,9 +134,9 @@ trusted pole and the open internet, and the taint design nominates private calen
 Assistant state for exactly that middle — but a *tool* cannot currently reach it: the output tags
 are binary, `output_trusted` or `output_untrusted`, with nothing in between. Closing that gap means
 a tier-valued output tag, which is a change to the tag vocabulary and to every classification that
-depends on it, and it is deliberately not bundled here. The cost of waiting is small: the sink class
-is `low_bandwidth_external` either way, so the practical difference is extra audit rows and a
-coarser provenance digest, not a change in what the engineer can do.
+depends on it, and it is deliberately not bundled here (tracked in issue #1226). The cost of waiting
+is small: the sink class is `low_bandwidth_external` either way, so the practical difference is
+extra audit rows and a coarser provenance digest, not a change in what the engineer can do.
 
 ### Confirmation and Judged Review for Side Effects
 
