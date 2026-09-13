@@ -6,6 +6,10 @@ format, which is JSON Schema with one project-specific extension: a
 attachment id on the wire. Plain jsonschema rejects that while checking the
 *schema*, so the validator here teaches it that an attachment is a string
 rather than skipping every tool that takes one.
+
+The purpose is to catch arguments a model invented that plainly do not fit
+the schema, not to re-implement JSON Schema: every check here is the
+library's own. See docs/design/voice-mode-on-demand-tools.md.
 """
 
 from __future__ import annotations
@@ -13,16 +17,9 @@ from __future__ import annotations
 import copy
 import re
 from collections.abc import Mapping
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from jsonschema import Draft202012Validator, SchemaError, validators
-from referencing import Registry, Resource
-from referencing.exceptions import Unresolvable
-from referencing.jsonschema import DRAFT202012
-
-if TYPE_CHECKING:
-    # The resolver type is not re-exported from the package's public surface.
-    from referencing._core import Resolver
+from jsonschema import Draft202012Validator, validators
 
 TOOL_ARGUMENT_VALIDATOR = validators.extend(
     Draft202012Validator,
@@ -31,8 +28,6 @@ TOOL_ARGUMENT_VALIDATOR = validators.extend(
     ),
 )
 
-_REFERENCE_KEYWORDS = frozenset({"$ref", "$dynamicRef"})
-_INSTANCE_DATA_KEYWORDS = frozenset({"const", "default", "enum", "examples"})
 _EXTRA_KEY_KEYWORDS = frozenset({
     "additionalProperties",
     "patternProperties",
@@ -41,56 +36,17 @@ _EXTRA_KEY_KEYWORDS = frozenset({
 
 
 def check_parameter_schema(parameters: Mapping[str, object]) -> None:
-    """Raise ``jsonschema.SchemaError`` unless ``parameters`` is a usable schema.
+    """Raise ``jsonschema.SchemaError`` unless ``parameters`` is a valid schema.
 
     Called where tool definitions enter the process — a local provider's
-    constructor, an MCP server's discovery — so a tool that cannot be
-    validated against fails there, at startup, rather than when a model first
-    calls it. That covers the meta-schema and every ``$ref`` or ``$dynamicRef`` the
-    schema makes:
-    the meta-schema only checks a reference's shape, and one pointing nowhere
-    would otherwise surface as an exception on the first argument that
-    reaches it. The ``attachment`` type is checked as a string, which is what
-    it is on the wire.
+    constructor, an MCP server's discovery — so a tool whose schema is not a
+    schema fails there, at startup, rather than when a model first calls it.
+    This is the meta-schema check and nothing more; a reference that resolves
+    to nothing is only detectable during evaluation and surfaces on the first
+    call that reaches it. The ``attachment`` type is checked as a string,
+    which is what it is on the wire.
     """
-    schema = _with_attachments_as_strings(parameters)
-    Draft202012Validator.check_schema(schema)
-    try:
-        root = Resource.from_contents(schema, default_specification=DRAFT202012)
-        base_uri = root.id() or ""
-        registry = Registry().with_resource(base_uri, root).crawl()
-        _check_references(schema, registry.resolver(base_uri=base_uri))
-    except (Unresolvable, ValueError) as exc:
-        # ValueError is how the referencing library reports an ``$id`` it
-        # cannot parse as a URI; the meta-schema does not assert URI formats.
-        msg = f"schema references cannot be resolved: {exc}"
-        raise SchemaError(msg) from exc
-
-
-def _check_references(node: object, resolver: Resolver[Any]) -> None:
-    """Resolve every reference under ``node`` in the scope that declares it.
-
-    A subschema carrying ``$id`` changes the base URI for the references
-    beneath it, which is what ``in_subresource`` tracks; resolving everything
-    from the root would reject a valid relative reference. Keywords whose
-    value is instance data rather than a schema are not descended into: a
-    ``$ref`` key inside a ``default`` is data. Raises ``Unresolvable``.
-    """
-    if isinstance(node, Mapping):
-        if isinstance(node.get("$id"), str):
-            resolver = resolver.in_subresource(
-                Resource.from_contents(node, default_specification=DRAFT202012)
-            )
-        for key, value in node.items():
-            if key in _INSTANCE_DATA_KEYWORDS:
-                continue
-            if key in _REFERENCE_KEYWORDS and isinstance(value, str):
-                resolver.lookup(value)
-            else:
-                _check_references(value, resolver)
-    elif isinstance(node, list):
-        for item in node:
-            _check_references(item, resolver)
+    Draft202012Validator.check_schema(_with_attachments_as_strings(parameters))
 
 
 # ast-grep-ignore: no-dict-any - JSON Schema is arbitrary nested JSON

@@ -128,50 +128,6 @@ def test_an_attachment_parameter_accepts_an_id() -> None:
     ]
 
 
-def test_a_resolvable_reference_passes_the_check() -> None:
-    check_parameter_schema({
-        "type": "object",
-        "properties": {"x": {"$ref": "#/$defs/thing"}},
-        "$defs": {"thing": {"type": "string"}},
-    })
-    check_parameter_schema({
-        "type": "object",
-        "properties": {"x": {"$dynamicRef": "#node"}},
-        "$defs": {"node": {"$dynamicAnchor": "node", "type": "string"}},
-    })
-
-
-def test_reference_shaped_instance_data_is_not_a_reference() -> None:
-    check_parameter_schema({
-        "type": "object",
-        "properties": {
-            "payload": {
-                "type": "object",
-                "default": {"$ref": "literal-user-data"},
-                "examples": [{"$ref": "also-literal"}],
-            },
-            "mode": {"const": {"$dynamicRef": "#nope"}},
-            "kind": {"enum": [{"$ref": "still-data"}]},
-        },
-    })
-
-
-def test_a_relative_reference_resolves_in_its_declaring_scope() -> None:
-    check_parameter_schema({
-        "$id": "https://example.test/root",
-        "type": "object",
-        "properties": {"x": {"$ref": "a"}},
-        "$defs": {
-            "a": {
-                "$id": "a",
-                "type": "object",
-                "properties": {"y": {"$ref": "#/$defs/inner"}},
-                "$defs": {"inner": {"type": "string"}},
-            }
-        },
-    })
-
-
 def test_a_parameter_schema_may_use_the_attachment_type() -> None:
     check_parameter_schema({
         "type": "object",
@@ -188,13 +144,6 @@ def test_a_parameter_schema_may_use_the_attachment_type() -> None:
         {"type": "object", "properties": {"x": {"type": "nonsense"}}},
         {"type": "object", "properties": {"x": {"type": "string"}}, "required": "x"},
         {"type": "object", "properties": ["x"]},
-        {"type": "object", "properties": {"x": {"$ref": "#/$defs/missing"}}},
-        {"type": "object", "properties": {"x": {"$dynamicRef": "#missing"}}},
-        {
-            "type": "object",
-            "properties": {"x": {"$ref": "https://example.invalid/schema.json"}},
-        },
-        {"$id": "http://[bad", "type": "object"},
     ],
 )
 def test_a_broken_parameter_schema_is_rejected(parameters: dict[str, object]) -> None:

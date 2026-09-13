@@ -91,10 +91,10 @@ endpoint's behaviour for existing callers is unchanged.
   `invalid_tool_arguments` result carrying the problems, the tool's description and its full schema
   without running anything. That makes a guessed call cost exactly one round trip, the same as the
   search it skipped, and hands the model what it needs to correct itself in the next call rather
-  than a Python argument-binding error. A tool whose own schema cannot be checked never gets this
-  far: every definition is checked against the JSON Schema meta-schema where it enters the process,
-  in the local provider's constructor and in an MCP server's discovery, so a registry defect fails
-  at startup instead of in a voice session. The validator is shared with the tool-call-review eval
+  than a Python argument-binding error. A tool whose own schema is not a schema never gets this far:
+  every definition is checked against the JSON Schema meta-schema where it enters the process, in
+  the local provider's constructor and in an MCP server's discovery, so a registry defect fails at
+  startup instead of in a voice session. The validator is shared with the tool-call-review eval
   loader (`tools/argument_schema.py`), which checks recorded cases against the same schemas.
 - **Input schemas only.** The registry declares argument schemas (OpenAI function-calling format)
   and describes results in prose. `search_tools` returns the `parameters` schema verbatim alongside
@@ -125,6 +125,15 @@ endpoint's behaviour for existing callers is unchanged.
   describes the meta-tool's dispatch, and the voice clients relay a 200 body to the model verbatim.
   The validation rejection above is structured (`error.type`) precisely so it reads as an error
   without a second transport contract.
+- **Validation is the library's, not ours.** The goal is to catch arguments a model invented that
+  plainly do not fit the schema, not to prove every schema sound. Every check is one jsonschema
+  already implements: the meta-schema at ingress, and evaluation (with `unevaluatedProperties` for
+  undeclared names) at call time. There is deliberately no static pass that resolves `$ref`s ahead
+  of evaluation: resolvability is only defined relative to the evaluating scope, so any such pass is
+  a partial re-implementation of the spec, and the first attempt at one grew a new unimplemented
+  rule on every review round. The residual is that an MCP tool whose reference points nowhere passes
+  ingress and raises on the first call that reaches it; that is the server's defect, it surfaces
+  with a stack trace naming the tool, and it recurs on every call until fixed.
 - **Search is lexical.** Matching is token overlap against tool names and summaries, ranked with
   name matches first. The catalog in the system instruction means the model normally searches for a
   name it has already seen, so an embedding search would add a dependency and a failure mode for no
