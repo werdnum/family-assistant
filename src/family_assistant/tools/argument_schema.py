@@ -32,6 +32,7 @@ TOOL_ARGUMENT_VALIDATOR = validators.extend(
 )
 
 _REFERENCE_KEYWORDS = frozenset({"$ref", "$dynamicRef"})
+_INSTANCE_DATA_KEYWORDS = frozenset({"const", "default", "enum", "examples"})
 _EXTRA_KEY_KEYWORDS = frozenset({
     "additionalProperties",
     "patternProperties",
@@ -54,10 +55,16 @@ def check_parameter_schema(parameters: Mapping[str, object]) -> None:
     """
     schema = _with_attachments_as_strings(parameters)
     Draft202012Validator.check_schema(schema)
-    root = Resource.from_contents(schema, default_specification=DRAFT202012)
-    base_uri = root.id() or ""
-    registry = Registry().with_resource(base_uri, root).crawl()
-    _check_references(schema, registry.resolver(base_uri=base_uri))
+    try:
+        root = Resource.from_contents(schema, default_specification=DRAFT202012)
+        base_uri = root.id() or ""
+        registry = Registry().with_resource(base_uri, root).crawl()
+        _check_references(schema, registry.resolver(base_uri=base_uri))
+    except (Unresolvable, ValueError) as exc:
+        # ValueError is how the referencing library reports an ``$id`` it
+        # cannot parse as a URI; the meta-schema does not assert URI formats.
+        msg = f"schema references cannot be resolved: {exc}"
+        raise SchemaError(msg) from exc
 
 
 def _check_references(node: object, resolver: Resolver[Any]) -> None:
@@ -65,7 +72,9 @@ def _check_references(node: object, resolver: Resolver[Any]) -> None:
 
     A subschema carrying ``$id`` changes the base URI for the references
     beneath it, which is what ``in_subresource`` tracks; resolving everything
-    from the root would reject a valid relative reference.
+    from the root would reject a valid relative reference. Keywords whose
+    value is instance data rather than a schema are not descended into: a
+    ``$ref`` key inside a ``default`` is data. Raises ``Unresolvable``.
     """
     if isinstance(node, Mapping):
         if isinstance(node.get("$id"), str):
@@ -73,12 +82,10 @@ def _check_references(node: object, resolver: Resolver[Any]) -> None:
                 Resource.from_contents(node, default_specification=DRAFT202012)
             )
         for key, value in node.items():
+            if key in _INSTANCE_DATA_KEYWORDS:
+                continue
             if key in _REFERENCE_KEYWORDS and isinstance(value, str):
-                try:
-                    resolver.lookup(value)
-                except Unresolvable as exc:
-                    msg = f"{key} {value!r} cannot be resolved"
-                    raise SchemaError(msg) from exc
+                resolver.lookup(value)
             else:
                 _check_references(value, resolver)
     elif isinstance(node, list):

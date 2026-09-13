@@ -141,6 +141,21 @@ def test_a_resolvable_reference_passes_the_check() -> None:
     })
 
 
+def test_reference_shaped_instance_data_is_not_a_reference() -> None:
+    check_parameter_schema({
+        "type": "object",
+        "properties": {
+            "payload": {
+                "type": "object",
+                "default": {"$ref": "literal-user-data"},
+                "examples": [{"$ref": "also-literal"}],
+            },
+            "mode": {"const": {"$dynamicRef": "#nope"}},
+            "kind": {"enum": [{"$ref": "still-data"}]},
+        },
+    })
+
+
 def test_a_relative_reference_resolves_in_its_declaring_scope() -> None:
     check_parameter_schema({
         "$id": "https://example.test/root",
@@ -179,6 +194,7 @@ def test_a_parameter_schema_may_use_the_attachment_type() -> None:
             "type": "object",
             "properties": {"x": {"$ref": "https://example.invalid/schema.json"}},
         },
+        {"$id": "http://[bad", "type": "object"},
     ],
 )
 def test_a_broken_parameter_schema_is_rejected(parameters: dict[str, object]) -> None:
