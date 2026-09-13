@@ -2811,6 +2811,49 @@ userinfo password or a `token=`-style query parameter in a `url`, and the same i
 but it does not, for instance, pair `args: ["--token", "secret"]` with its value. Keep credentials
 in `env` and `token`.
 
+#### GitHub history for the engineer profile
+
+`defaults.yaml` ships three hosted GitHub MCP servers — `github-repos`, `github-issues` and
+`github-pull-requests` — which give the engineer profile the repository history the running
+application cannot see for itself. The production image excludes `.git`, so without them the only
+version fact available is the `GIT_COMMIT` baked in at build time, which `get_system_info` reports.
+
+Set one variable to turn them on:
+
+| Variable           | Purpose                                                            |
+| ------------------ | ------------------------------------------------------------------ |
+| `GITHUB_MCP_TOKEN` | Token sent to GitHub's hosted MCP endpoint as a bearer credential. |
+
+The token is required, including for a public repository. The hosted endpoint authenticates the MCP
+session itself, before any repository is named, and answers an unauthenticated `initialize` with
+`401` — so there is no anonymous mode to fall back on, unlike GitHub's REST API. Without the
+variable the servers are marked `failed` like any other server missing its credential; the
+application still starts, and the engineer simply has no history tools.
+
+Give the token read access only: repository contents, issues, pull requests and metadata. It is a
+separate credential from the `GITHUB_TOKEN` that `create_github_issue` uses, which needs write scope
+— keep them apart so a read path never carries the ability to post.
+
+Three properties are load-bearing, and each is pinned by a test in
+`tests/functional/tools/test_github_mcp_defaults.py`:
+
+- **The URLs end in `/readonly`.** GitHub enforces read-only server-side for those endpoints. The
+  tool policy grants each server wholesale by id, so it cannot tell a read from a write; the URL is
+  what makes the grant safe. Removing the suffix silently turns the engineer into an account that
+  can open, close and comment.
+- **One toolset per server** (`/mcp/x/<toolset>/readonly`) rather than the combined `/mcp/readonly`
+  endpoint, which would advertise every toolset GitHub offers for three toolsets' worth of use.
+- **`tool_metadata` classifies them with a `"*"` wildcard**, as `read_only`,
+  `low_bandwidth_external` and `output_untrusted`. Low-bandwidth because the endpoint is fixed by
+  configuration and the model chooses only a repository and a query, never a recipient. Untrusted
+  because commit messages, issue bodies and review comments are written by anyone who can reach the
+  repository. A wildcard rather than a tool list so a tool GitHub adds tomorrow inherits the same
+  classification instead of falling back to whatever its annotations happen to say.
+
+The servers are on-demand for the engineer, so they cost nothing in profiles and turns that never
+ask for history. No other profile names these ids, and every shipped profile is deny-by-default, so
+nothing else in the deployment can reach them.
+
 #### The environment a stdio server actually receives
 
 A stdio server is spawned with a whitelisted environment — `HOME`, `LOGNAME`, `PATH`, `SHELL`,

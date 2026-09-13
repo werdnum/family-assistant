@@ -81,6 +81,43 @@ async def test_get_system_info_returns_runtime_metadata(
 
 
 @pytest.mark.anyio
+async def test_get_system_info_reports_the_build_it_is_running(
+    exec_context_with_db: ToolExecutionContext,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The commit is what a history query has to be anchored against.
+
+    The image carries no repository, so without this the profile has no way to
+    tell which revision it is diagnosing and "what changed since" degrades to
+    whatever is on the default branch today.
+    """
+    monkeypatch.setenv("GIT_COMMIT", "abc1234")
+    monkeypatch.setenv("BUILD_DATE", "2026-09-13T00:00:00Z")
+
+    data = (await get_system_info(exec_context_with_db)).get_data()
+
+    assert isinstance(data, dict)
+    assert data["git_commit"] == "abc1234"
+    assert data["build_date"] == "2026-09-13T00:00:00Z"
+
+
+@pytest.mark.anyio
+async def test_get_system_info_build_falls_back_when_unstamped(
+    exec_context_with_db: ToolExecutionContext,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A local run has no build stamp; say so rather than omitting the key."""
+    monkeypatch.delenv("GIT_COMMIT", raising=False)
+    monkeypatch.delenv("BUILD_DATE", raising=False)
+
+    data = (await get_system_info(exec_context_with_db)).get_data()
+
+    assert isinstance(data, dict)
+    assert data["git_commit"] == "unknown"
+    assert data["build_date"] == "unknown"
+
+
+@pytest.mark.anyio
 async def test_get_system_info_handles_missing_engine() -> None:
     """If the db_context lacks an engine, dialect falls back to 'unknown'."""
     db = Mock(spec=[])  # no `engine` attribute

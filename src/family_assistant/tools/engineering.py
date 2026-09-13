@@ -22,6 +22,7 @@ import httpx
 import sqlparse
 from sqlalchemy import text
 
+from family_assistant.build_info import get_build_date, get_git_commit
 from family_assistant.config_inspection import (
     dump_profile_like,
     redact_sensitive_config,
@@ -1120,7 +1121,7 @@ async def resolve_tool_policy(
 async def get_system_info(
     exec_context: ToolExecutionContext,
 ) -> ToolResult:
-    """Return runtime environment info (Python, platform, database dialect).
+    """Return runtime environment info (Python, platform, database, build).
 
     Mirrors the ``system_info`` block of the ``/api/diagnostics/export``
     endpoint so the engineer profile can include it in bug reports without
@@ -1140,6 +1141,12 @@ async def get_system_info(
             "python_version": sys.version.split()[0],
             "platform": platform.platform(),
             "database_dialect": db_dialect,
+            # The revision this deployment was built from. The image has no
+            # repository, so this is what a history query must be anchored
+            # against: "what changed since" means since this commit, not since
+            # whatever is on main today.
+            "git_commit": get_git_commit(),
+            "build_date": get_build_date(),
         }
     )
 
@@ -1548,9 +1555,12 @@ ENGINEERING_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "get_system_info",
             "description": (
-                "Return runtime environment info (Python version, OS platform, "
-                "database dialect). Mirrors the system_info block of "
-                "/api/diagnostics/export so it can be included in bug reports."
+                "Return runtime environment info: Python version, OS platform, "
+                "database dialect, and the git commit and build date this "
+                "deployment was built from. Mirrors the system_info block of "
+                "/api/diagnostics/export so it can be included in bug reports. "
+                "Call this before querying repository history, so 'what changed "
+                "since' is anchored to the running build rather than to HEAD."
             ),
             "parameters": {
                 "type": "object",
