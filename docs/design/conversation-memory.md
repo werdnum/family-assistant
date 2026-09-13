@@ -88,8 +88,7 @@ The v1 invariants, each of which is enforced by code rather than by prompt:
 - **No silent stale overwrite.** A memory write is short, atomic with its watermark advance, and
   conditional on the store revision it read; an edit list proposed against a store a person has
   since changed is never committed.
-- **Household scope and correct attribution.** Memory is household-wide by stated policy, and every
-  entry names who said it.
+- **Household scope.** Memory is household-wide by stated policy.
 - **Inspectable.** Memory is plain notes with dates and source references, editable in the notes UI,
   with a recent-changes view.
 
@@ -119,17 +118,18 @@ of the turn that wrote them. This design adds no second store. Memory is a set o
 
 A memory note is human-readable markdown, one entry per bullet. Each entry carries the date it was
 asserted, who said it, and references to the messages it came from; where it matters, the period it
-applies to. The curator writes the text; the speaker and the date are not its to type. Each edit
-names one of its cited messages as the grounding message, the user row in which the claim was made,
-and the apply path checks that it is a cited user row inside the stretch and renders its sender and
-time into the entry, so attribution is right whenever the grounding citation is, and a wrong
-citation is the one thing left for the evaluation to catch. It follows that v1 records only what a
-person said: a statement, a correction, a decision. An inference the curator might draw from a
-pattern of requests has no row in which anyone said it, so it has no honest speaker or date, and it
-is excluded from v1 rather than given a provenance shape of its own. That is the whole entry model
-in v1. There is no semantic identity, no version lineage, and no machine-readable classification
-beyond what the curator writes in the text ("correction:", "decision:"). Entries are the unit the
-curator edits and the user reads, not a fact schema.
+applies to. The curator writes all of it, the speaker and date included, from a transcript that
+names the sender of every message. Attribution is model behaviour, not a code-enforced invariant:
+the apply path checks that the cited messages exist inside the reviewed stretch, and the evaluation
+scores whether the curator credited the right person. An earlier revision had the apply path derive
+the speaker from a nominated grounding row, which was sound but made an inference, a preference
+shown by a pattern rather than stated in one message, impossible to record honestly. Models can be
+trusted to ground approximately, a misattributed bullet is visible in the notes UI beside its
+evidence and cheap to fix, and inferences are among the most useful things a notebook can hold, so
+the curator writes "inferred:" and the evaluation watches the error rate. That is the whole entry
+model in v1. There is no semantic identity, no version lineage, and no machine-readable
+classification beyond what the curator writes in the text ("correction:", "inferred:"). Entries are
+the unit the curator edits and the user reads, not a fact schema.
 
 **Caps are enforced at the repository for every writer.** The always-loaded layer is exactly one
 note: a memory-labelled note may be `include_in_prompt` only if it is that one note, that note
@@ -205,27 +205,23 @@ design work on Telegram, where a conversation is one chat id for its whole life 
 the idle window supplies the boundary, and the watermark keeps each review to the new material. It
 also handles web conversations the user resumes days later.
 
-**Enablement boundary.** Contribution is a property of a profile-and-interface pair, since the same
-profile serves several interfaces. Each time a pair becomes contributing, the moment is recorded for
-that pair, and a review considers only rows newer than both the watermark and the moment for the
-pair the rows ran under. Adding Telegram to the interface list later therefore learns from Telegram
-from that moment, not from rows that accumulated while it was excluded. Turning the feature on
-therefore learns from what is said from then on, and does not spend a burst of model calls surfacing
-months of old conversations as new facts. Reviewing older history is an explicit, bounded,
+**Enablement boundary.** Each time contribution is turned on for a profile, the moment is recorded,
+and a review considers only rows newer than both the watermark and that moment. Turning the feature
+on therefore learns from what is said from then on, and does not spend a burst of model calls
+surfacing months of old conversations as new facts. Reviewing older history is an explicit, bounded,
 on-request backfill.
 
 **Reviews are scheduled from state, not from events.** Whether a conversation is due is a pure
 function of stored data: it has at least one completed, eligible turn after its watermark, and
 either its last eligible activity is older than the idle window or its oldest unreviewed eligible
-row is older than the maximum deferral, both measured over the rows the profile-and-interface
-boundary admits, so an excluded backlog neither hurries nor delays a review. The second clause is
-what guarantees a busy Telegram group that never goes quiet is still reviewed. A recurring system
-task evaluates that predicate every few minutes and enqueues one review per due conversation, keyed
-on the conversation so the same conversation never has two reviews in flight. Nothing is enqueued
-when a message is persisted, so there is no race between a message landing and a task completing: a
-message that arrives during a review leaves rows after the watermark, and the next sweep sees them.
-Freshness is quantised to the sweep interval, which is negligible against a thirty-minute idle
-window.
+row is older than the maximum deferral, both measured over the rows the enablement boundary admits,
+so an excluded backlog neither hurries nor delays a review. The second clause is what guarantees a
+busy Telegram group that never goes quiet is still reviewed. A recurring system task evaluates that
+predicate every few minutes and enqueues one review per due conversation, keyed on the conversation
+so the same conversation never has two reviews in flight. Nothing is enqueued when a message is
+persisted, so there is no race between a message landing and a task completing: a message that
+arrives during a review leaves rows after the watermark, and the next sweep sees them. Freshness is
+quantised to the sweep interval, which is negligible against a thirty-minute idle window.
 
 **A review covers a bounded chunk of completed turns.** A review takes rows after the watermark up
 to a fixed budget of rendered size, cut on a turn boundary so the curator never sees a request
@@ -241,12 +237,9 @@ abandoned by advancing the watermark past its chunk, with the reason logged and 
 recent-changes view.
 
 **Eligibility.** A stretch is reviewed only when its turns ran under a profile that contributes to
-memory and arrived on an interface the deployment lists as contributing. Both dimensions are needed
-because Telegram and the web share the default profile: the interface list is what lets Telegram
-stay out until its attribution is trustworthy while the same profile contributes from the web. Email
-intake, A2A, delegation subconversations, automation-triggered turns and internal profiles such as
-the engineer, media analyst and event handler do not contribute. If the unreviewed stretch contains
-no user messages, the review is skipped and the watermark advanced.
+memory. Email intake, A2A, delegation subconversations, automation-triggered turns and internal
+profiles such as the engineer, media analyst and event handler do not contribute. If the unreviewed
+stretch contains no user messages, the review is skipped and the watermark advanced.
 
 **Two settings, one convenience default.** Reading memory and contributing to it are separate
 profile settings. Contributing implies reading: a profile configured to contribute without reading
@@ -266,11 +259,10 @@ references and cites nothing new, because it changes where an entry lives rather
 and it is how the curator makes room in a full core note. A deterministic apply path validates and
 applies them. Validation is exactly the v1 invariants: every target note carries the `memory` label
 and is within the curator's scope; every addition, replacement or removal cites at least one
-message, every cited message lies inside the reviewed stretch, and the grounding message it names is
-one of those citations and a user row; the writing turn's provenance is inside the trusted pole; no
-note ends over its cap; and the store is still at the revision the curator read. Validation is
-all-or-nothing for the list, and a rejected list is retried once with the reasons fed back before
-the review is abandoned.
+message, and every cited message lies inside the reviewed stretch; the writing turn's provenance is
+inside the trusted pole; no note ends over its cap; and the store is still at the revision the
+curator read. Validation is all-or-nothing for the list, and a rejected list is retried once with
+the reasons fed back before the review is abandoned.
 
 Application and watermark advancement happen in **one short transaction**, conditional on the store
 revision, with all model work outside it. The store has one revision for the household, and
@@ -381,9 +373,9 @@ The curator prompt is short and operational. Its instructions, at approach level
 - Do not remember one-off requests, appointment timing (the calendar owns when things happen),
   device state, verbatim tool output, secrets or credentials, anything a speaker plainly meant for
   one person, or sensitive personal matters the user did not ask to have kept.
-- Record only what a person said: a statement, a correction, a decision. Do not infer a preference
-  from a pattern; if nobody said it, it is not a memory. An assistant suggestion is not a household
-  fact until a person accepted it. Say in the text when an entry is a correction or a decision.
+- Say what kind of thing an entry is, in the text. A statement, a correction and an inference drawn
+  from a pattern are different, and an inference is marked as one. An assistant suggestion is not a
+  household fact until a person accepted it.
 - Date every entry with when it was asserted, and where it matters, the period it applies to. A
   statement made today about how things were years ago does not supersede a current preference.
 - Update rather than add. A changed fact replaces its entry; a contradicted one is removed with the
@@ -409,13 +401,13 @@ Telegram needs no separate mechanism, but three of the rules above exist because
 
 - The watermark and maximum deferral, because a chat id never ends.
 - Per-person attribution, because a group chat is one conversation with several speakers, and the
-  rendered transcript names the sender of each user message. That requires the persisted rows to
-  carry it: the Telegram batcher today joins messages that arrive within its window and persists
-  them under the last sender's identity, and a message that arrives while another member's turn is
-  running is steered into that turn carrying only a display name. The rule is that every persisted
-  user row carries its own sender: the batcher must never merge messages from different senders, and
-  mid-turn input must carry the sender's identity through to persistence. Both changes are part of
-  the Telegram milestone, since attribution that the transcript cannot support is not attribution.
+  rendered transcript names the sender of each user message. Two known persistence bugs can put the
+  wrong sender on a row: the Telegram batcher joins messages that arrive within its window and
+  persists them under the last sender's identity, and a message that arrives while another member's
+  turn is running is steered into that turn carrying only a display name. Both are bugs in message
+  history independent of memory and are fixed separately; they are not a gate on Telegram
+  contribution, since no deployment currently runs a multi-member Telegram chat and a misattributed
+  bullet is visible and correctable in any case.
 - A longer idle window than the web, because Telegram conversation is bursty and a household member
   replying twenty minutes later is still the same exchange.
 
@@ -456,6 +448,10 @@ Each of these is a chosen limitation of v1, with the reason it is acceptable.
 - **Forgetting is not durable.** A removed fact can be learned again from a later statement or a
   later review of an old conversation. The docs say so; the recent-changes view shows it when it
   happens.
+- **Attribution is model behaviour, not a code-enforced invariant.** The curator writes the speaker
+  and date from a transcript that names every sender; the evaluation measures how often it gets them
+  wrong. Enforcing it in code was tried and withdrawn because it made inferences impossible to
+  record honestly and added machinery for a failure that is visible and cheap to fix.
 - **No semantic undo.** Reverting a curator change is an ordinary human edit.
 - **No uniqueness guarantee.** The same fact can appear twice in different words; the curator is
   shown relevant entries and told to update rather than add, and a person can tidy the rest.
@@ -499,16 +495,14 @@ Nothing here is built until the stated evidence appears. Each item names the tri
   Trigger: the never-finished marker or the orphaned-reply residual showing up in practice.
 - **Personal scopes.** One core note per scope, an audience rule, a total injection bound. Trigger:
   a household wanting memory that is not shared.
-- **Inferred entries.** Entries the curator derives from a pattern rather than a statement, with a
-  provenance shape that says so instead of naming a speaker. Trigger: the evaluation showing that
-  statements alone miss preferences people expected the assistant to pick up.
 - **Per-turn consideration.** Trigger: the evaluation showing the idle review misses things people
   wanted kept.
 
 ## Residual risks
 
-- A misread statement from a clean conversation becomes a standing entry until someone notices.
-  Evidence links, the recent-changes view and the small core note bound the damage.
+- A misread or misattributed statement, or a wrong inference, from a clean conversation becomes a
+  standing entry until someone notices. Evidence links, the recent-changes view and the small core
+  note bound the damage.
 - A removed fact can return from a later statement or a later review of an old conversation. The
   docs say so, and the recent-changes view shows it.
 - A conversation whose last turn never finished is not reviewed until the next turn in it completes,
@@ -534,27 +528,25 @@ usefulness is the point of v1.
    the chunk budget is reviewed across successive sweeps; that an abandoned review advances the
    watermark; and that a stretch carrying unknown-external taint is skipped with an audit record and
    counted. The apply path is verified to refuse an edit citing evidence outside the stretch, an
-   edit whose grounding message is an assistant row or an uncited row, an over-cap result, a second
-   always-loaded memory note, an edit that turns the core note's always-loaded flag off, and a write
-   from a turn above the trusted pole, from the UI and foreground tool paths alike; to fail a whole
-   list on one rejected edit; and to fail against a store the person edited during the review, with
-   the retry proposing against the fresh store. Serialisation is verified by two due conversations
-   producing two applies in sequence, each seeing the other's result. The read policy is verified by
-   seeding an unlabelled note, a default-labelled note and an unlabelled file-based skill and
-   asserting none reaches the curator through the context provider, the title list, the skill
-   catalogue or `get_note`, including the file-skill fallback; a conformance rule asserts every note
-   or skill read the curator can reach goes through the policy, that its write policy carries the
-   `memory` floor, that its effective tool set is exactly the memory tools, and that its effective
-   context provider set is exactly the notes provider. Skip counters and skipped-volume gauges land
-   here, on the existing metrics surface.
+   over-cap result, a second always-loaded memory note, an edit that turns the core note's
+   always-loaded flag off, and a write from a turn above the trusted pole, from the UI and
+   foreground tool paths alike; to fail a whole list on one rejected edit; and to fail against a
+   store the person edited during the review, with the retry proposing against the fresh store.
+   Serialisation is verified by two due conversations producing two applies in sequence, each seeing
+   the other's result. The read policy is verified by seeding an unlabelled note, a default-labelled
+   note and an unlabelled file-based skill and asserting none reaches the curator through the
+   context provider, the title list, the skill catalogue or `get_note`, including the file-skill
+   fallback; a conformance rule asserts every note or skill read the curator can reach goes through
+   the policy, that its write policy carries the `memory` floor, that its effective tool set is
+   exactly the memory tools, and that its effective context provider set is exactly the notes
+   provider. Skip counters and skipped-volume gauges land here, on the existing metrics surface.
 2. **Prompts, settings and documentation.** The curator prompt in `prompts.yaml`; the read and
-   contribute settings on the profiles that carry them and the contributing-interface list, both
-   shipping off by default, so a deployment opts in explicitly until milestone 7 flips the default;
-   a line in the assistant system prompt about what memory is and how to honour "forget";
-   `docs/user/memory.md` stating the household scope and what forgetting means; the settings in the
-   configuration reference. Verified by the existing prompt-render startup check, a startup
-   validation that a contributing profile reads, and a test that a read-only profile sees the core
-   note and does not feed reviews.
+   contribute settings on the profiles that carry them, shipping off by default so a deployment opts
+   in explicitly until milestone 7 flips the default; a line in the assistant system prompt about
+   what memory is and how to honour "forget"; `docs/user/memory.md` stating the household scope and
+   what forgetting means; the settings in the configuration reference. Verified by the existing
+   prompt-render startup check, a startup validation that a contributing profile reads, and a test
+   that a read-only profile sees the core note and does not feed reviews.
 3. **Evaluation.** A replay corpus of synthetic conversations with expected outcomes: nothing worth
    remembering, a correction, a tentative plan, an assistant mistake, several speakers, a deliberate
    forget, and useful user facts mixed with research. Each case is scored on what the curator
@@ -564,12 +556,11 @@ usefulness is the point of v1.
    against a stronger model before the cheaper one is taken as sufficient, and a sample of skipped
    stretches from a real deployment is scored for lost facts. Verified by the corpus running in CI
    with thresholds. This milestone decides whether the taint refinement is built next.
-4. **Telegram: attribution and maximum deferral.** Sender names in the rendered transcript, a
-   batcher that never merges messages from different senders, mid-turn input persisted under its own
-   sender, the maximum-deferral clause of the due predicate, the longer idle window, and Telegram
-   admitted to the contributing-interface list. Verified by Telegram functional tests with two
-   senders posting inside one batching window and with the second posting while the first's turn is
-   running, each attributed correctly, and a continuously active chat that is still reviewed.
+4. **Telegram: sender names and maximum deferral.** Sender names in the rendered transcript, the
+   maximum-deferral clause of the due predicate, and the longer idle window. Verified by a Telegram
+   functional test in which two senders' messages are rendered under their own names and a
+   continuously active chat is still reviewed. The batcher and mid-turn sender bugs are tracked and
+   fixed outside this plan.
 5. **User control.** Evidence links on entries with the owner-only text rule, the recent-changes
    view, and the chat indicator. Verified by frontend tests and by tests that a member who does not
    own the source conversation sees the provenance summary and no transcript text, that every
@@ -578,10 +569,9 @@ usefulness is the point of v1.
 6. **Per-evidence provenance**, if milestone 3 says so. The user's own rows reviewed under their own
    provenance when later rows are tainted. Verified by the hotel example: the preference is learned
    and the research is not.
-7. **Default on.** Contribution on by default for the household profile, with the interface list
-   naming web and iOS, and Telegram too once milestone 4 has landed. Gated on milestones 3 and 5, so
-   the default arrives with the quality measurement and the controls to notice and correct a bad
-   entry. Verified by a startup test of the shipped defaults.
+7. **Default on.** Contribution on by default for the household profile. Gated on milestones 3 and
+   5, so the default arrives with the quality measurement and the controls to notice and correct a
+   bad entry. Verified by a startup test of the shipped defaults.
 
 ## Open questions
 
