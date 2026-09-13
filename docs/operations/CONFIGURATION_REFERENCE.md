@@ -2822,13 +2822,15 @@ Set one variable to turn them on:
 | ------------------ | ------------------------------------------------------------------ |
 | `GITHUB_MCP_TOKEN` | Token sent to GitHub's hosted MCP endpoint as a bearer credential. |
 
-Without the variable the servers connect unauthenticated, GitHub refuses them, and they are marked
-`failed` like any other server missing its credential — the application still starts, and the
-engineer simply has no history tools. Give the token read access only: repository contents, issues,
-pull requests and metadata. It is a separate credential from the `GITHUB_TOKEN` that
-`create_github_issue` uses, which needs write scope — keep them apart so a read path never carries
-the ability to post. The repository may be public, in which case an unauthenticated server also
-works, but the 60-requests-per-hour anonymous limit will interrupt an investigation partway.
+The token is required, including for a public repository. The hosted endpoint authenticates the MCP
+session itself, before any repository is named, and answers an unauthenticated `initialize` with
+`401` — so there is no anonymous mode to fall back on, unlike GitHub's REST API. Without the
+variable the servers are marked `failed` like any other server missing its credential; the
+application still starts, and the engineer simply has no history tools.
+
+Give the token read access only: repository contents, issues, pull requests and metadata. It is a
+separate credential from the `GITHUB_TOKEN` that `create_github_issue` uses, which needs write scope
+— keep them apart so a read path never carries the ability to post.
 
 Three properties are load-bearing, and each is pinned by a test in
 `tests/functional/tools/test_github_mcp_defaults.py`:
