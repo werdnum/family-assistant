@@ -12,13 +12,17 @@ from __future__ import annotations
 
 import copy
 import re
-from collections.abc import Iterator, Mapping
-from typing import Any
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
 
 from jsonschema import Draft202012Validator, SchemaError, validators
 from referencing import Registry, Resource
 from referencing.exceptions import Unresolvable
 from referencing.jsonschema import DRAFT202012
+
+if TYPE_CHECKING:
+    # The resolver type is not re-exported from the package's public surface.
+    from referencing._core import Resolver
 
 TOOL_ARGUMENT_VALIDATOR = validators.extend(
     Draft202012Validator,
@@ -50,31 +54,36 @@ def check_parameter_schema(parameters: Mapping[str, object]) -> None:
     """
     schema = _with_attachments_as_strings(parameters)
     Draft202012Validator.check_schema(schema)
-    resolver = (
-        Registry()
-        .with_resource(
-            "", Resource.from_contents(schema, default_specification=DRAFT202012)
-        )
-        .resolver()
-    )
-    for ref in _references(schema):
-        try:
-            resolver.lookup(ref)
-        except Unresolvable as exc:
-            msg = f"$ref {ref!r} cannot be resolved"
-            raise SchemaError(msg) from exc
+    root = Resource.from_contents(schema, default_specification=DRAFT202012)
+    base_uri = root.id() or ""
+    registry = Registry().with_resource(base_uri, root).crawl()
+    _check_references(schema, registry.resolver(base_uri=base_uri))
 
 
-def _references(node: object) -> Iterator[str]:
+def _check_references(node: object, resolver: Resolver[Any]) -> None:
+    """Resolve every reference under ``node`` in the scope that declares it.
+
+    A subschema carrying ``$id`` changes the base URI for the references
+    beneath it, which is what ``in_subresource`` tracks; resolving everything
+    from the root would reject a valid relative reference.
+    """
     if isinstance(node, Mapping):
+        if isinstance(node.get("$id"), str):
+            resolver = resolver.in_subresource(
+                Resource.from_contents(node, default_specification=DRAFT202012)
+            )
         for key, value in node.items():
             if key in _REFERENCE_KEYWORDS and isinstance(value, str):
-                yield value
+                try:
+                    resolver.lookup(value)
+                except Unresolvable as exc:
+                    msg = f"{key} {value!r} cannot be resolved"
+                    raise SchemaError(msg) from exc
             else:
-                yield from _references(value)
+                _check_references(value, resolver)
     elif isinstance(node, list):
         for item in node:
-            yield from _references(item)
+            _check_references(item, resolver)
 
 
 # ast-grep-ignore: no-dict-any - JSON Schema is arbitrary nested JSON
@@ -105,16 +114,14 @@ def argument_schema_errors(
     are bound to a function signature, so an undeclared name can never be
     used and is almost always an invented one. "Declared" is what the schema
     evaluates, so a property reached through ``$ref``, ``allOf`` or another
-    applicator counts; the check is JSON Schema's own
-    ``unevaluatedProperties``, applied only when the schema has a top-level
-    ``properties`` map and says nothing itself about extra keys.
+    applicator counts, and a schema that declares nothing takes no arguments;
+    the check is JSON Schema's own ``unevaluatedProperties``, applied unless
+    the schema says something itself about extra keys.
 
     ``parameters`` is expected to have passed ``check_parameter_schema``.
     """
     schema = dict(parameters)
-    if isinstance(schema.get("properties"), Mapping) and not (
-        _EXTRA_KEY_KEYWORDS & schema.keys()
-    ):
+    if not _EXTRA_KEY_KEYWORDS & schema.keys():
         schema["unevaluatedProperties"] = False
     errors = sorted(
         TOOL_ARGUMENT_VALIDATOR(schema).iter_errors(arguments),

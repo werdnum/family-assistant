@@ -96,8 +96,23 @@ def test_properties_declared_through_applicators_are_known() -> None:
     ]
 
 
-def test_a_schema_without_a_properties_map_is_not_made_strict() -> None:
-    assert argument_schema_errors({"type": "object"}, {"anything": 1}) == []
+def test_a_root_reference_schema_still_rejects_invented_arguments() -> None:
+    schema = {
+        "$ref": "#/$defs/Args",
+        "$defs": {"Args": {"type": "object", "properties": {"x": {"type": "integer"}}}},
+    }
+
+    assert argument_schema_errors(schema, {"x": 1}) == []
+    assert argument_schema_errors(schema, {"x": 1, "invented": 2}) == [
+        "'invented' is not an argument of this tool"
+    ]
+
+
+def test_a_schema_that_declares_nothing_takes_no_arguments() -> None:
+    assert argument_schema_errors({"type": "object"}, {}) == []
+    assert argument_schema_errors({"type": "object"}, {"anything": 1}) == [
+        "'anything' is not an argument of this tool"
+    ]
 
 
 def test_an_attachment_parameter_accepts_an_id() -> None:
@@ -123,6 +138,22 @@ def test_a_resolvable_reference_passes_the_check() -> None:
         "type": "object",
         "properties": {"x": {"$dynamicRef": "#node"}},
         "$defs": {"node": {"$dynamicAnchor": "node", "type": "string"}},
+    })
+
+
+def test_a_relative_reference_resolves_in_its_declaring_scope() -> None:
+    check_parameter_schema({
+        "$id": "https://example.test/root",
+        "type": "object",
+        "properties": {"x": {"$ref": "a"}},
+        "$defs": {
+            "a": {
+                "$id": "a",
+                "type": "object",
+                "properties": {"y": {"$ref": "#/$defs/inner"}},
+                "$defs": {"inner": {"type": "string"}},
+            }
+        },
     })
 
 
