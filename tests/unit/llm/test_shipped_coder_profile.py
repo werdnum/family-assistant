@@ -8,6 +8,8 @@ answer from a chat model's own knowledge instead of running the task. Each is a
 plausible-looking answer rather than an error, so each is pinned here.
 """
 
+from zoneinfo import ZoneInfo
+
 import pytest
 
 from family_assistant.assistant import validate_antigravity_agent_config
@@ -16,11 +18,17 @@ from family_assistant.config_models import (
     ProcessingConfig,
     RetryConfig,
     RetryModelConfig,
+    ToolsConfig,
 )
-from family_assistant.llm.messages import UserMessage
+from family_assistant.delegation_security import DelegationSecurityLevel
+from family_assistant.llm.messages import SystemMessage, UserMessage
 from family_assistant.llm.providers.google_genai_client import (
     GoogleGenAIClient,
     is_interactions_agent_model,
+)
+from family_assistant.processing import ProcessingServiceConfig
+from family_assistant.processing.interactions_agent_service import (
+    InteractionsAgentProcessingService,
 )
 from family_assistant.security.taint import (
     SinkClass,
@@ -34,6 +42,7 @@ from family_assistant.security.taint import (
     TurnTaintState,
     merge_taint_policy_config,
 )
+from family_assistant.tools import LocalToolsProvider
 from tests.unit.conftest import shipped_profile
 
 
@@ -244,3 +253,70 @@ def test_antigravity_profile_on_a_non_google_provider_is_rejected(
             ),
             "antigravity-preview-05-2026",
         )
+
+
+def _coder_system_instruction(shipped_config: AppConfig) -> str:
+    """What the shipped `coder` profile actually sends as `system_instruction`."""
+    profile = shipped_profile(shipped_config, "coder")
+    processing_config = profile.processing_config
+    assert processing_config.antigravity_config is not None
+
+    client = GoogleGenAIClient(
+        api_key="test",
+        model=processing_config.llm_model or "",
+        antigravity_model=processing_config.antigravity_config.model,
+    )
+    service = InteractionsAgentProcessingService(
+        llm_client=client,
+        tools_provider=LocalToolsProvider(definitions=[], implementations={}),
+        service_config=ProcessingServiceConfig(
+            prompts=processing_config.prompts,
+            timezone=ZoneInfo("UTC"),
+            max_history_messages=10,
+            history_max_age_hours=24,
+            tools_config=ToolsConfig(),
+            delegation_security_level=DelegationSecurityLevel.BLOCKED,
+            id=profile.id,
+            description=profile.description,
+        ),
+        context_providers=[],
+        server_url="http://testserver",
+        app_config=AppConfig(),
+    )
+
+    kwargs = client._build_agent_create_kwargs([  # pyright: ignore[reportPrivateUsage]
+        SystemMessage(content=service.format_system_prompt(user_name="Tester")),
+        UserMessage(content="Reverse this CSV."),
+    ])
+    return str(kwargs["system_instruction"])
+
+
+def test_coder_system_instruction_carries_no_caller_facing_routing_guidance(
+    shipped_config: AppConfig,
+) -> None:
+    """The profile's `description` is written to whoever picks a profile.
+
+    It says things like "choose it over spawn_worker" in the second person; the
+    agent reads that "you" as itself and is handed alternatives it cannot
+    reach. What the agent is for is its own `system_prompt`'s job.
+    """
+    instruction = _coder_system_instruction(shipped_config)
+
+    assert "spawn_worker" not in instruction
+    assert "complex_tasks" not in instruction
+    assert "Profile purpose:" not in instruction
+    assert "You are a coding agent working for Tester" in instruction
+
+
+def test_coder_system_instruction_is_unmarked(shipped_config: AppConfig) -> None:
+    """Antigravity takes a first-class system field, so nothing labels it.
+
+    The `System:` marker exists for the paths that have to carry system content
+    as something else -- `generateContent` parts, Deep Research's single input
+    string -- and prefixing a native `system_instruction` only spends the first
+    line of the prompt saying what the field already says.
+    """
+    instruction = _coder_system_instruction(shipped_config)
+
+    assert not instruction.startswith("System:")
+    assert instruction.startswith("[Active Processing Profile: coder]")

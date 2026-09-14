@@ -1751,12 +1751,15 @@ class GoogleGenAIClient(BaseLLMClient):
                 )
 
     def _extract_agent_system_prompt(self, messages: Sequence[LLMMessage]) -> str:
-        """Concatenate every system message into one instruction string."""
-        system_prompt = ""
-        for msg in messages:
-            if msg.role == "system" and msg.content:
-                system_prompt += f"{_system_prefixed_content(msg.content)}\n\n"
-        return system_prompt
+        """Concatenate every system message into one instruction string.
+
+        Returned unmarked: the ``System:`` prefix disambiguates system content
+        only where it has to travel as something else, and which of the two
+        agent shapes applies is the caller's to decide.
+        """
+        return "\n\n".join(
+            msg.content for msg in messages if msg.role == "system" and msg.content
+        ).strip()
 
     def _resolve_previous_interaction_id(
         self, messages: Sequence[LLMMessage], explicit: str | None
@@ -1823,9 +1826,12 @@ class GoogleGenAIClient(BaseLLMClient):
                 "visualization": "auto",
             }
             # Deep Research exposes no system_instruction, so the prompt is
-            # folded into the single input string.
+            # folded into the single input string -- where it does need the
+            # marker, being otherwise indistinguishable from the task text.
             if system_prompt:
-                input_text = system_prompt + input_text
+                input_text = (
+                    f"{_system_prefixed_content(system_prompt)}\n\n{input_text}"
+                )
 
         create_kwargs["input"] = input_text
 

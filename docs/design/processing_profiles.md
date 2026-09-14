@@ -82,7 +82,13 @@ default_profile_settings:
 A top-level list `service_profiles` will define individual profiles. Each profile object will have:
 
 - `id` (string): A unique identifier for the profile.
-- `description` (string, optional): A human-readable description.
+- `description` (string, optional): The profile's catalog entry, **written for whoever is choosing a
+  profile** -- the delegating assistant reading the delegation catalog, the slash-command menu,
+  `/api/profiles`, the A2A agent card. Say when to pick this profile over the alternatives. It is
+  not sent to the profile itself: what the profile should *do* goes in its
+  `processing_config.prompts.system_prompt`, written in the voice of the model that will execute it.
+  A profile's own instructions carry only a `[Active Processing Profile: <id>]` header ahead of that
+  prompt.
 - `processing_config` (object, optional): Overrides for `ProcessingServiceConfig` settings. This
   includes `delegation_security_level` and `include_system_docs`.
 - `tools_config` (object, optional): Operational tool settings such as timeouts and on-demand
