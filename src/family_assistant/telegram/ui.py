@@ -595,11 +595,11 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                 if durable_confirmation and self.confirmation_service is not None:
                     await self.confirmation_service.mark_expired(now=datetime.now(UTC))
                 try:
-                    await self.application.bot.edit_message_reply_markup(
-                        chat_id=chat_id_int,
-                        message_id=sent_message.message_id,
-                        reply_markup=None,
-                    )
+                    # Editing the text drops the keyboard on its own. A separate
+                    # markup edit would be rejected as "not modified" on a
+                    # message that never had one — a web hand-off notice — and
+                    # that error would skip the text edit below, leaving the
+                    # notice claiming an expired request is still pending.
                     await self.application.bot.edit_message_text(
                         chat_id=chat_id_int,
                         message_id=sent_message.message_id,
@@ -609,6 +609,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                             "\n\n(Confirmation timed out)",
                         ),
                         parse_mode=parse_mode,
+                        reply_markup=None,
                     )
                 except TelegramError as edit_err:
                     logger.warning(

@@ -117,7 +117,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _TOOL_CALL_REVIEW_AUDIT_REASON = "Automatic reviewer decision recorded; reviewer rationale omitted from durable audit."
-_NAMED_SINK_CONFIRMATION_MAX_CHARS = 3800
 _NO_TAINT_GATE_MODE = "none"
 """Recorded mode for a gate no runtime taint policy participated in."""
 
@@ -1843,13 +1842,10 @@ class TaintTrackingToolsProvider(ToolsProvider):
             f"Complete request payload:\n{rendered_arguments}\n\n"
             f"Automatic review reason:\n{quoted_reason}"
         )
-        if len(prompt) > _NAMED_SINK_CONFIRMATION_MAX_CHARS:
-            raise ToolPolicyDeniedError(
-                name,
-                "live confirmation refused because the complete request payload "
-                f"does not fit in the {_NAMED_SINK_CONFIRMATION_MAX_CHARS}-character "
-                "confirmation message",
-            )
+        # No size rule here: the prompt is rendered whole and the selected
+        # manager decides whether its interface can display it, routing to one
+        # that can where it cannot. See
+        # docs/design/confirmation-prompt-capacity.md.
         try:
             outcome = await manager.request_confirmation(
                 conversation_id=context.conversation_id,

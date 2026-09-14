@@ -368,6 +368,45 @@ async def test_over_budget_durable_prompt_is_approvable_in_the_web() -> None:
 
 
 @pytest.mark.asyncio
+async def test_an_expired_handoff_notice_is_marked_timed_out() -> None:
+    """The notice has no keyboard, so nothing may depend on removing one.
+
+    Telegram rejects a no-op markup edit as "message is not modified"; sharing
+    a try block with the text edit would let that error skip the timeout text
+    and leave the notice claiming an expired request is still pending.
+    """
+    confirmation_service = RecordingConfirmationService()
+    confirmation_waiters = ConfirmationResultWaiterRegistry()
+    bot = RecordingTelegramBot()
+    manager = TelegramConfirmationUIManager(
+        application=cast("Any", SimpleNamespace(bot=bot)),
+        confirmation_timeout=0.2,
+        confirmation_service=cast("Any", confirmation_service),
+        confirmation_result_waiters=confirmation_waiters,
+    )
+
+    outcome = await manager.request_confirmation(
+        conversation_id=str(USER_CHAT_ID),
+        interface_type="telegram",
+        turn_id="turn-id",
+        prompt_text="Do you want to run this tool call?\n" + ("x" * 10000),
+        tool_name="record_tool",
+        tool_args={"value": "x" * 10000},
+        timeout=0.2,
+        target_user_id=str(USER_ID),
+        tool_call_id="call-id",
+        source_message_internal_id=1,
+    )
+
+    assert outcome.kind == "timed_out"
+    assert bot.edited_markups == []
+    assert any(
+        "Confirmation timed out" in cast("str", edit["text"])
+        for edit in bot.edited_texts
+    )
+
+
+@pytest.mark.asyncio
 async def test_over_budget_prompt_fails_when_nothing_else_can_approve_it() -> None:
     """With no durable record there is no other channel, so the call is refused."""
     bot = RecordingTelegramBot()
