@@ -319,6 +319,17 @@ download. This works the same way whether the specialist runs here or on another
 Very large files are the exception: if one is too big to hand over, the assistant tells you rather
 than quietly leaving it out.
 
+Sometimes a delegation is reported as failed and then turns out to have worked after all: the
+specialist runs elsewhere, and it can keep going — or finish — after the assistant has given up
+waiting on it. When that happens the result is delivered to you later, in the same conversation, and
+says that the task failed earlier and finished after all, so it makes sense even if you never saw
+the failure notice. If a specialist reports that it finished but returns nothing at all, that is
+treated as a failure rather than an empty answer.
+
+A delegation the assistant stops waiting on is asked to stop, but it may not have: until the
+specialist confirms it, the assistant will tell you the run timed out and that cancellation was
+requested, rather than that it was cancelled.
+
 If the follow-up can't be delivered on the channel you asked from — a result too long for the chat
 app to accept, say — the assistant is told so and sends you something that does fit, such as a
 shorter summary or a note it saved with the full text. The complete result is kept in the

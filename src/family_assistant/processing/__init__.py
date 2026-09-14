@@ -8,8 +8,12 @@ from .protocol import (
     DelegationPermanentError,
     DelegationTaskNotFoundError,
     DelegationTransientError,
+    ObservableDelegationService,
     PendingPoll,
     PollableDelegationService,
+    RemoteDisposition,
+    RemoteObservation,
+    RemoteObservationMetadata,
     RemoteSubmission,
 )
 from .service import ProcessingService
@@ -23,10 +27,14 @@ __all__ = [
     "DelegationSecurityLevel",
     "DelegationTaskNotFoundError",
     "DelegationTransientError",
+    "ObservableDelegationService",
     "PendingPoll",
     "PollableDelegationService",
     "ProcessingService",
     "ProcessingServiceConfig",
+    "RemoteDisposition",
+    "RemoteObservation",
+    "RemoteObservationMetadata",
     "RemoteServiceConfig",
     "RemoteSubmission",
 ]

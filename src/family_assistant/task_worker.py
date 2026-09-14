@@ -44,8 +44,12 @@ from family_assistant.processing import (
     DelegationPermanentError,
     DelegationTaskNotFoundError,
     DelegationTransientError,
+    ObservableDelegationService,
+    PendingPoll,
     PollableDelegationService,
     ProcessingService,
+    RemoteDisposition,
+    RemoteObservation,
     RemoteSubmission,
 )
 from family_assistant.scripting import (
@@ -82,7 +86,9 @@ from family_assistant.security.taint import (
     machine_authored_taint_metadata,
 )
 from family_assistant.storage.delegation_runs import (
+    RECONCILABLE_FAILURE_KINDS,
     TERMINAL_DELEGATION_STATUSES,
+    DelegationLocalFailureKind,
     DelegationNotifyStage,
 )
 from family_assistant.tools.services import short_error_summary
@@ -370,25 +376,39 @@ _DELEGATION_WAKE_TURN_NAMESPACE = uuid.UUID("2b6b7f52-0f8a-4a6f-9b3d-7c5e1a0d8f2
 
 
 def _turn_id_for_delegation_wake(
-    delegation_id: str, stage: DelegationNotifyStage = "initial"
+    run: DelegationRunDict, stage: DelegationNotifyStage = "initial"
 ) -> str:
     """The turn id every attempt at waking the source profile shares.
 
-    A run notifies at most once (``notified_at``), so the delegation id is the
-    identity of the wake turn, and every retry of the notification lands on the
-    same turn rather than generating a fresh one.
+    Every retry of one notification lands on the same turn rather than
+    generating a fresh one, so the turn's delivery checkpoint can resume a
+    reply that was generated but never delivered.
 
     The stage is part of that identity because a fail-forward turn is a
     different turn from the one whose reply could not be delivered: sharing an
     id would make the checkpoint resume the undelivered reply instead of asking
     the model what to do about it. The stage is persisted rather than counted,
     so a retried *delivery* still lands on the same turn and never re-runs the
-    model. ``initial`` keeps the original derivation so runs already in flight
-    resume onto the turn they started.
+    model.
+
+    A late recovery is part of it for the same reason, and it is the case that
+    broke the older rule that a run notifies at most once: recovery clears
+    ``notified_at`` so the run notifies a *second* time, at the same ``initial``
+    stage. Sharing the failure's turn id would leave the checkpoint looking at
+    that turn's reply -- which on a history interface is stored with no
+    ``interface_message_id`` even when it was delivered -- and replay the
+    superseded failure as the late result, never processing the result at all.
+
+    ``initial`` on a run that was not recovered keeps the original derivation,
+    so runs already in flight resume onto the turn they started.
     """
+    name = run["delegation_id"]
+    recovered_at = run["late_recovered_at"]
+    if recovered_at is not None:
+        name = f"{name}:late:{recovered_at.isoformat()}"
     if stage == "initial":
-        return str(uuid.uuid5(_DELEGATION_WAKE_TURN_NAMESPACE, delegation_id))
-    return str(uuid.uuid5(_DELEGATION_WAKE_TURN_NAMESPACE, f"{delegation_id}:{stage}"))
+        return str(uuid.uuid5(_DELEGATION_WAKE_TURN_NAMESPACE, name))
+    return str(uuid.uuid5(_DELEGATION_WAKE_TURN_NAMESPACE, f"{name}:{stage}"))
 
 
 _NEXT_NOTIFY_STAGE: dict[DelegationNotifyStage, DelegationNotifyStage] = {
@@ -862,9 +882,21 @@ class DelegationPollPayload(TypedDict):
     user_name: str
 
 
+class DelegationReconcilePayload(TypedDict):
+    """Payload for delegation_reconcile tasks (one re-read of a failed run)."""
+
+    delegation_id: str
+    interface_type: str
+    conversation_id: str
+    user_name: str
+
+
 # Task type for the per-run, self-rescheduling poll of an awaiting_remote
 # delegation (the submit-then-poll path shared by every PollableDelegationService).
 DELEGATION_POLL_TASK_TYPE = "delegation_poll"
+# Task type for the per-run, self-rescheduling re-read of a run this
+# application already failed (see docs/design/delegation-remote-reconciliation.md).
+DELEGATION_RECONCILE_TASK_TYPE = "delegation_reconcile"
 SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE = "schedule_automation_advance"
 SCHEDULE_AUTOMATION_ADVANCE_OUTBOX_KEY = "_schedule_automation_advance"
 
@@ -886,6 +918,41 @@ DELEGATION_MAX_ASYNC_SECONDS = 3600.0
 # RemoteServiceConfig.timeout_seconds default); used by the reaper to recover a
 # stuck NULL-id run without racing an in-flight submit.
 DELEGATION_SUBMIT_GRACE_SECONDS = 300.0
+
+
+# Reconciliation bounds. A locally failed run is re-read a handful of times
+# with exponential backoff -- soon after the failure, which is where the useful
+# late completions were found, and then progressively more rarely -- and is
+# abandoned once it has used its reads or aged out. Together these cap the work
+# at a few reads per failed run over a few hours.
+DELEGATION_RECONCILE_FIRST_DELAY_SECONDS = 60.0
+DELEGATION_RECONCILE_MAX_INTERVAL_SECONDS = 3600.0
+DELEGATION_RECONCILE_MAX_ATTEMPTS = 8
+DELEGATION_RECONCILE_MAX_AGE_SECONDS = 24 * 3600.0
+
+
+def _delegation_reconcile_backoff(attempts: int) -> float:
+    """Exponential backoff between reconciliation reads, capped at the max."""
+    delay = DELEGATION_RECONCILE_FIRST_DELAY_SECONDS * (
+        2 ** min(max(attempts - 1, 0), 8)
+    )
+    return min(delay, DELEGATION_RECONCILE_MAX_INTERVAL_SECONDS)
+
+
+def _failure_kind_for_observation(
+    observation: RemoteObservation | None,
+) -> DelegationLocalFailureKind:
+    """Why a poll's error result happened, from the reading that produced it.
+
+    ``remote_status`` when the provider reported a terminal error and when
+    there is no observation to go on (a target that classifies its own polls),
+    because in both cases the failure is the provider's account of the run.
+    """
+    if observation is not None and (
+        observation.disposition is RemoteDisposition.EMPTY_COMPLETION
+    ):
+        return "empty_completion"
+    return "remote_status"
 
 
 def _delegation_poll_backoff(attempts: int, base_interval: float) -> float:
@@ -2032,6 +2099,7 @@ class TaskWorker:
         delegation_id: str,
         result: ChatInteractionResult,
         on_committed: Callable[[], Awaitable[None]] | None = None,
+        local_failure_kind: DelegationLocalFailureKind | None = None,
     ) -> bool:
         """Persist a delegation run's terminal result and notify if needed.
 
@@ -2057,6 +2125,7 @@ class TaskWorker:
                 delegation_id=delegation_id,
                 error=result.error_traceback,
                 completed_at=completed_at,
+                local_failure_kind=local_failure_kind,
             )
         else:
             terminal_run = await exec_context.db_context.delegation_runs.mark_completed(
@@ -2075,6 +2144,7 @@ class TaskWorker:
             return False
         if on_committed is not None:
             await on_committed()
+        await self._schedule_delegation_reconcile(exec_context, terminal_run)
         await self._deliver_terminal_delegation(exec_context, terminal_run, force=False)
         return True
 
@@ -2190,6 +2260,10 @@ class TaskWorker:
             exec_context,
             delegation_id=delegation_id,
             error="".join(traceback.format_exception(exc)),
+            # A refused submit is our side of the wire giving up, not the
+            # provider reporting a status: the run has no remote id, so nothing
+            # can be re-read, but recording why keeps the distinction honest.
+            local_failure_kind="transport",
         )
 
     async def _resubmit_with_backoff(
@@ -2398,6 +2472,7 @@ class TaskWorker:
                     f"Target service '{run['target_service_id']}' is no longer a "
                     "pollable remote profile."
                 ),
+                local_failure_kind="not_pollable",
             )
             return
 
@@ -2417,7 +2492,10 @@ class TaskWorker:
             # to poll, so give up.
             if past_cap:
                 await self._fail_delegation_run(
-                    exec_context, delegation_id=delegation_id, error=timed_out_error
+                    exec_context,
+                    delegation_id=delegation_id,
+                    error=timed_out_error,
+                    local_failure_kind="timeout",
                 )
                 return
             await self._resubmit_with_backoff(
@@ -2433,9 +2511,11 @@ class TaskWorker:
         # before this (late) poll fired, and a completed result must be delivered
         # rather than discarded as a timeout. The cap is enforced below, only for
         # a still-pending result.
+        observation: RemoteObservation | None = None
+        reading_superseded = False
         try:
-            result = await target_service.poll_async(
-                remote_task_id, run["remote_context_id"]
+            result, observation, reading_superseded = await self._observe_or_poll(
+                exec_context, run, target_service, remote_task_id
             )
         except DelegationTaskNotFoundError:
             # The target has no such task — it lost the task (e.g. a restart).
@@ -2447,6 +2527,7 @@ class TaskWorker:
                     exec_context,
                     delegation_id=delegation_id,
                     error=timed_out_error,
+                    local_failure_kind="timeout",
                     on_committed=self._terminal_metrics_recorder(
                         target_service, remote_task_id, outcome="error"
                     ),
@@ -2471,6 +2552,7 @@ class TaskWorker:
                 exec_context,
                 delegation_id=delegation_id,
                 error=error,
+                local_failure_kind="remote_status",
                 on_committed=self._terminal_metrics_recorder(
                     target_service, remote_task_id, outcome="error"
                 ),
@@ -2502,6 +2584,7 @@ class TaskWorker:
                 exec_context,
                 delegation_id=delegation_id,
                 error=error,
+                local_failure_kind="internal_error",
                 on_committed=self._terminal_metrics_recorder(
                     target_service, remote_task_id, outcome="error"
                 ),
@@ -2511,15 +2594,23 @@ class TaskWorker:
         if result is PENDING:
             # Still not terminal: now enforce the wall-clock cap — only a pending
             # task is cancelled and failed, never one that just finished above.
-            if past_cap:
-                await target_service.cancel_async(remote_task_id)
+            # A superseded reading is exempt: it is not evidence the run is
+            # still going, and a concurrent poll holding a newer one may be
+            # about to commit its result. Failing the run on it would hand the
+            # user a spurious timeout and leave reconciliation to undo it.
+            if past_cap and not reading_superseded:
+                await self._request_remote_cancellation(
+                    exec_context, delegation_id, target_service, remote_task_id
+                )
                 await self._fail_delegation_run(
                     exec_context,
                     delegation_id=delegation_id,
                     error=(
                         "The remote profile did not finish within the allowed "
-                        f"time ({max_async_seconds:.0f}s) and was cancelled."
+                        f"time ({max_async_seconds:.0f}s); cancellation was "
+                        "requested."
                     ),
+                    local_failure_kind="timeout",
                     on_committed=self._terminal_metrics_recorder(
                         target_service, remote_task_id, cancelled=True
                     ),
@@ -2549,6 +2640,72 @@ class TaskWorker:
                 remote_task_id,
                 outcome="error" if result.error_traceback else "success",
             ),
+            local_failure_kind=(
+                _failure_kind_for_observation(observation)
+                if result.error_traceback
+                else None
+            ),
+        )
+
+    async def _observe_or_poll(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+        target_service: PollableDelegationService,
+        remote_task_id: str,
+    ) -> tuple[ChatInteractionResult | PendingPoll, RemoteObservation | None, bool]:
+        """One read of the remote run, recorded when the target can describe it.
+
+        An observable target classifies the read once and the worker derives
+        the poll outcome from that same classification, so a poll and a later
+        reconciliation of the same run cannot disagree about what its status
+        meant. A target that is only pollable keeps its own ``poll_async`` and
+        contributes no observation.
+
+        The third element says the reading was superseded by a newer one. It is
+        reported apart from the outcome because "we learned nothing" is not the
+        same fact as "the run is still going", and the caller treats them
+        differently at the wall-clock cap.
+        """
+        if not isinstance(target_service, ObservableDelegationService):
+            result = await target_service.poll_async(
+                remote_task_id, run["remote_context_id"]
+            )
+            return result, None, False
+        observation = await target_service.observe_async(remote_task_id)
+        accepted = (
+            await exec_context.db_context.delegation_runs.record_remote_observation(
+                run["delegation_id"],
+                observation=observation.to_metadata(),
+                observed_at=observation.observed_at,
+                remote_status=observation.status,
+                cancel_confirmed=observation.disposition is RemoteDisposition.CANCELLED,
+            )
+        )
+        if accepted is None:
+            # A newer reading already landed, so this one says nothing current
+            # about the run -- acting on it would finalize and notify from
+            # state the provider has since left.
+            return PENDING, None, True
+        return target_service.result_for_observation(observation), observation, False
+
+    async def _request_remote_cancellation(
+        self,
+        exec_context: ToolExecutionContext,
+        delegation_id: str,
+        target_service: PollableDelegationService,
+        remote_task_id: str,
+    ) -> None:
+        """Ask the provider to cancel, and record only that we asked.
+
+        ``cancel_async`` is best-effort on every target and returns nothing, so
+        a successful call is not evidence the run stopped -- providers have
+        been observed carrying on and completing afterwards. Only a later
+        reading that says ``cancelled`` sets ``cancel_confirmed_at``.
+        """
+        await target_service.cancel_async(remote_task_id)
+        await exec_context.db_context.delegation_runs.mark_cancel_requested(
+            delegation_id, now=(exec_context.clock or self.clock).now()
         )
 
     async def handle_delegation_run_cleanup(
@@ -2618,6 +2775,10 @@ class TaskWorker:
             )
         for run in unnotified:
             await self._force_notify_delegation(exec_context, run)
+
+        # Re-read failed runs whose provider may since have produced something,
+        # recovering any reconciliation task that was lost on the way.
+        await self._reconcile_lost_runs(exec_context, now=now)
 
     async def _reap_stale_awaiting_remote(
         self,
@@ -2699,16 +2860,22 @@ class TaskWorker:
                 delegation_id=run["delegation_id"],
                 error=(
                     "The remote profile did not finish within the allowed "
-                    "time and was cancelled."
+                    "time; cancellation was requested."
                 ),
                 completed_at=now,
+                local_failure_kind="timeout",
             )
             if failed is None:
                 # A poll finalized this run between the snapshot and now.
                 continue
             remote_task_id = run["remote_task_id"]
             if isinstance(target_service, PollableDelegationService) and remote_task_id:
-                await target_service.cancel_async(remote_task_id)
+                await self._request_remote_cancellation(
+                    exec_context,
+                    run["delegation_id"],
+                    target_service,
+                    remote_task_id,
+                )
                 # This reaper won the CAS, so it owes the run's accounting for
                 # the same reason a poll does -- and before the notification,
                 # which can raise.
@@ -2717,6 +2884,7 @@ class TaskWorker:
                 )
                 if record is not None:
                     await record()
+            await self._schedule_delegation_reconcile(exec_context, failed)
             await self._force_notify_delegation(exec_context, failed)
 
     async def _force_notify_delegation(
@@ -2967,6 +3135,7 @@ class TaskWorker:
         *,
         delegation_id: str,
         error: str,
+        local_failure_kind: DelegationLocalFailureKind | None = None,
         on_committed: Callable[[], Awaitable[None]] | None = None,
     ) -> bool:
         """Mark a delegation run failed (committed immediately) and notify.
@@ -2976,6 +3145,12 @@ class TaskWorker:
         :meth:`_finalize_delegation_run`: delivery can raise, and the run is
         terminal either way.
 
+        ``local_failure_kind`` records why *this application* gave up, which is
+        what decides whether the provider may still be holding the run.
+        Scheduling the first reconciliation read here, rather than at each
+        failure site, is what keeps every path that fails a run -- poll,
+        timeout, reaper, code fault -- reconciled on the same terms.
+
         Returns whether this caller won the CAS.
         """
         clock = exec_context.clock or self.clock
@@ -2983,13 +3158,287 @@ class TaskWorker:
             delegation_id=delegation_id,
             error=error,
             completed_at=clock.now(),
+            local_failure_kind=local_failure_kind,
         )
         if run is None:
             return False
         if on_committed is not None:
             await on_committed()
+        await self._schedule_delegation_reconcile(exec_context, run)
         await self._deliver_terminal_delegation(exec_context, run, force=False)
         return True
+
+    def _observable_target_for(
+        self, exec_context: ToolExecutionContext, run: DelegationRunDict
+    ) -> ObservableDelegationService | None:
+        """The target able to re-read this run's remote state, if there is one.
+
+        A target that cannot be observed is not guessed at: reconciliation
+        simply does not apply to its runs.
+        """
+        processing_service = exec_context.processing_service
+        registry = (
+            processing_service.processing_services_registry
+            if processing_service is not None
+            else None
+        )
+        target_service = registry.get(run["target_service_id"]) if registry else None
+        if isinstance(target_service, ObservableDelegationService):
+            return target_service
+        return None
+
+    def _run_is_reconcilable(self, run: DelegationRunDict) -> bool:
+        """Whether a locally failed run is still worth re-reading.
+
+        Mirrors ``DelegationRunsRepository.list_reconcilable`` so the task and
+        the sweep agree on eligibility; the age and attempt bounds are applied
+        by the handler, against the values it just read.
+        """
+        return (
+            run["status"] == "failed"
+            and run["reconciled_at"] is None
+            and bool(run["remote_task_id"])
+            and run["local_failure_kind"] in RECONCILABLE_FAILURE_KINDS
+        )
+
+    async def _schedule_delegation_reconcile(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+        *,
+        delay_seconds: float = DELEGATION_RECONCILE_FIRST_DELAY_SECONDS,
+    ) -> None:
+        """Enqueue one reconciliation read for a failed run, if it earns one.
+
+        Runs in the background lane: nobody is waiting on it (the failure has
+        already been delivered), and it must not compete with live work.
+        """
+        if not self._run_is_reconcilable(run):
+            return
+        if self._observable_target_for(exec_context, run) is None:
+            return
+        clock = exec_context.clock or self.clock
+        payload: DelegationReconcilePayload = {
+            "delegation_id": run["delegation_id"],
+            "interface_type": run["interface_type"],
+            "conversation_id": run["conversation_id"],
+            "user_name": run["user_name"] or exec_context.user_name,
+        }
+        await exec_context.db_context.tasks.enqueue(
+            task_id=f"{DELEGATION_RECONCILE_TASK_TYPE}_{uuid.uuid4().hex}",
+            task_type=DELEGATION_RECONCILE_TASK_TYPE,
+            payload=payload,
+            scheduled_at=clock.now() + timedelta(seconds=delay_seconds),
+            max_retries_override=3,
+            priority=TaskPriority.BACKGROUND,
+        )
+
+    async def handle_delegation_reconcile(
+        self,
+        exec_context: ToolExecutionContext,
+        payload: DelegationReconcilePayload,
+    ) -> None:
+        """Re-read one locally failed run's remote state; recover a late result.
+
+        Read-only against the provider: it never cancels, deletes, resumes or
+        re-submits. The most it can do is notice that a run we gave up on has
+        since produced something and put that result through the ordinary
+        delivery path, exactly once.
+
+        A run is left eligible (and so re-read again) until it recovers, until
+        the provider forgets it, or until it runs out of reads or age. That is
+        deliberate: provider status has been observed to move backwards from
+        ``cancelled`` to ``in_progress``, so a terminal-looking reading is not
+        taken as proof the run has settled.
+        """
+        delegation_id = payload.get("delegation_id")
+        if not delegation_id:
+            raise ValueError("delegation_reconcile payload missing delegation_id")
+
+        clock = exec_context.clock or self.clock
+        runs = exec_context.db_context.delegation_runs
+        run = await runs.get_by_delegation_id(delegation_id)
+        if run is None or not self._run_is_reconcilable(run):
+            return
+        target_service = self._observable_target_for(exec_context, run)
+        if target_service is None:
+            await runs.mark_reconciled(delegation_id, now=clock.now())
+            return
+
+        completed_at = _as_aware_utc(run["completed_at"] or run["created_at"])
+        if clock.now() - completed_at > timedelta(
+            seconds=DELEGATION_RECONCILE_MAX_AGE_SECONDS
+        ):
+            await runs.mark_reconciled(delegation_id, now=clock.now())
+            return
+
+        remote_task_id = run["remote_task_id"]
+        if not remote_task_id:
+            # Unreachable through _run_is_reconcilable; narrows the Optional
+            # rather than assuming it, so a future change to eligibility fails
+            # visibly instead of polling a null id.
+            await runs.mark_reconciled(delegation_id, now=clock.now())
+            return
+        attempts = (
+            await runs.bump_reconcile_attempt(delegation_id, now=clock.now())
+            or run["reconcile_attempts"] + 1
+        )
+
+        try:
+            observation = await target_service.observe_async(remote_task_id)
+        except DelegationTaskNotFoundError:
+            # The provider no longer knows this run, so there is nothing left
+            # to learn from it. Settle rather than spend the remaining reads.
+            logger.info(
+                "Reconciliation: provider has no record of delegation %s; settling.",
+                delegation_id,
+            )
+            await runs.mark_reconciled(delegation_id, now=clock.now())
+            return
+        except DelegationPermanentError:
+            logger.warning(
+                "Reconciliation of delegation %s hit a permanent error; settling.",
+                delegation_id,
+                exc_info=True,
+            )
+            await runs.mark_reconciled(delegation_id, now=clock.now())
+            return
+        except DelegationTransientError:
+            logger.info(
+                "Reconciliation read for delegation %s failed transiently.",
+                delegation_id,
+                exc_info=True,
+            )
+            await self._reschedule_or_settle_reconcile(
+                exec_context, run, attempts=attempts
+            )
+            return
+
+        accepted = await runs.record_remote_observation(
+            delegation_id,
+            observation=observation.to_metadata(),
+            observed_at=observation.observed_at,
+            remote_status=observation.status,
+            cancel_confirmed=observation.disposition is RemoteDisposition.CANCELLED,
+        )
+
+        # Only act on a reading the stale-write guard accepted. A rejected one
+        # means another reader already holds newer information, and recovering
+        # from it would deliver a result that a later reading has superseded --
+        # which is the guard being bypassed at the one point where it matters
+        # most. Nothing is lost by declining: recovery is not a one-shot
+        # opportunity, and the run stays eligible for the next read.
+        if accepted is not None and await self._recover_late_completion(
+            exec_context, run, observation
+        ):
+            return
+
+        await self._reschedule_or_settle_reconcile(exec_context, run, attempts=attempts)
+
+    async def _recover_late_completion(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+        observation: RemoteObservation,
+    ) -> bool:
+        """Deliver a result the provider produced after we failed the run.
+
+        Returns whether this caller won the recovery CAS and delivered. A
+        loser does nothing at all: the winner owns the delivery, which is what
+        makes a late result reach the user exactly once however many
+        reconcilers, sweeps and task retries raced for it.
+        """
+        if (
+            observation.disposition is not RemoteDisposition.COMPLETED
+            or observation.result is None
+        ):
+            return False
+        clock = exec_context.clock or self.clock
+        result = observation.result
+        recovered = (
+            await exec_context.db_context.delegation_runs.recover_late_completion(
+                delegation_id=run["delegation_id"],
+                result_text=result.text_reply,
+                result_attachment_ids=result.attachment_ids or [],
+                recovered_at=clock.now(),
+                # Pinned to the reading this recovery came from, so a newer one
+                # landing since the observation write blocks the transition
+                # rather than letting a superseded result through.
+                observed_at=observation.observed_at,
+            )
+        )
+        if recovered is None:
+            return False
+        logger.info(
+            "Recovered a late result for delegation %s (%d chars) that was "
+            "locally failed as %s.",
+            run["delegation_id"],
+            observation.output_chars,
+            run["local_failure_kind"],
+        )
+        await self._force_notify_delegation(exec_context, recovered)
+        return True
+
+    async def _reschedule_or_settle_reconcile(
+        self,
+        exec_context: ToolExecutionContext,
+        run: DelegationRunDict,
+        *,
+        attempts: int,
+    ) -> None:
+        """Book the next reconciliation read, or settle the run at its bound."""
+        clock = exec_context.clock or self.clock
+        if attempts >= DELEGATION_RECONCILE_MAX_ATTEMPTS:
+            await exec_context.db_context.delegation_runs.mark_reconciled(
+                run["delegation_id"], now=clock.now()
+            )
+            return
+        await self._schedule_delegation_reconcile(
+            exec_context,
+            run,
+            delay_seconds=_delegation_reconcile_backoff(attempts + 1),
+        )
+
+    async def _reconcile_lost_runs(
+        self,
+        exec_context: ToolExecutionContext,
+        *,
+        now: datetime,
+    ) -> None:
+        """Re-enqueue reconciliation for eligible runs with no live task.
+
+        The idempotent half of the mechanism: a reconciliation task lost to a
+        crash or to exhausted retries would otherwise strand its run
+        unreconciled forever, and a run failed by a path that could not
+        enqueue would never start. Skips runs a live task already owns, so
+        repeated sweeps do not multiply the reads.
+        """
+        runs = exec_context.db_context.delegation_runs
+        eligible = await runs.list_reconcilable(
+            completed_after=now
+            - timedelta(seconds=DELEGATION_RECONCILE_MAX_AGE_SECONDS),
+            completed_before=now,
+            max_attempts=DELEGATION_RECONCILE_MAX_ATTEMPTS,
+        )
+        if not eligible:
+            return
+        live = await exec_context.db_context.tasks.get_all(
+            task_type=DELEGATION_RECONCILE_TASK_TYPE, status="pending", limit=500
+        )
+        live += await exec_context.db_context.tasks.get_all(
+            task_type=DELEGATION_RECONCILE_TASK_TYPE, status="processing", limit=500
+        )
+        owned: set[str] = set()
+        for task in live:
+            task_payload = task.get("payload")
+            if task_payload and "delegation_id" in task_payload:
+                owned.add(task_payload["delegation_id"])
+        for run in eligible:
+            if run["delegation_id"] in owned:
+                continue
+            await self._schedule_delegation_reconcile(
+                exec_context, run, delay_seconds=0.0
+            )
 
     def _chat_interface_for_interface(
         self,
@@ -3208,7 +3657,7 @@ class TaskWorker:
             else self._delegation_wakeup_text(run)
         )
         source_subconversation_id = run["source_subconversation_id"]
-        wake_turn_id = _turn_id_for_delegation_wake(run["delegation_id"], stage)
+        wake_turn_id = _turn_id_for_delegation_wake(run, stage)
 
         # --- Delivery checkpoint ---
         # Under commit-as-you-go this turn's messages and its tools' writes are
@@ -3637,10 +4086,19 @@ class TaskWorker:
                 run["result_text"]
                 or "The delegated profile completed without a textual response."
             )
+            late_note = (
+                "This task failed earlier and the target finished it "
+                "afterwards. The user may be holding the failure notice, so "
+                "account for the reversal rather than only reporting the "
+                "result.\n"
+                if run["late_recovered_at"] is not None
+                else ""
+            )
             return (
                 "Delegated profile task completed data.\n\n"
                 f"Delegation reference: {run['delegation_id']}\n"
                 f"Target profile: {run['target_service_id']}\n"
+                f"{late_note}"
                 f"Original request: {run['request_text']}\n\n"
                 "Delegated result:\n"
                 f"{result_text}"
@@ -3673,12 +4131,25 @@ class TaskWorker:
         )
 
     def _delegation_notification_text(self, run: DelegationRunDict) -> str:
-        """Build concise terminal notification text for a delegation run."""
+        """Build concise terminal notification text for a delegation run.
+
+        A recovered run says so, in terms of what the run did rather than what
+        the requester was told: a message that simply announces a result
+        contradicts a failure notice they may be holding, while asserting they
+        received one would be a claim this cannot check -- the failure notice
+        can itself have failed to deliver.
+        """
         if run["status"] == "completed":
             result_text = (
                 run["result_text"]
                 or "The delegated profile completed without a textual response."
             )
+            if run["late_recovered_at"] is not None:
+                return (
+                    f"Delegated task {run['delegation_id']} failed earlier, but "
+                    f"{run['target_service_id']} finished it after all. Late "
+                    f"result:\n\n{result_text}"
+                )
             return (
                 f"Delegated task {run['delegation_id']} completed via "
                 f"{run['target_service_id']}.\n\n{result_text}"
