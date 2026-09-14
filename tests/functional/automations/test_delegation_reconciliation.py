@@ -244,12 +244,14 @@ async def test_a_cancelled_run_that_later_completes_is_recovered(
 async def test_a_late_result_says_that_it_is_late(
     db_engine: AsyncEngine,
 ) -> None:
-    """The requester was told this failed, so the result has to explain itself.
+    """A late result accounts for the failure it reverses, without overclaiming.
 
-    A message that simply announces a result contradicts the failure notice
-    they already have without accounting for it. The run's status summary
-    carries the same correction, so an assistant asked about the delegation
-    can explain rather than just change its answer.
+    A message that simply announces a result contradicts a failure notice the
+    requester may be holding. It says the run failed earlier rather than that
+    they were told so: the failure notice can itself have failed to deliver,
+    and this has no way to know. The run's status summary carries the same
+    correction, so an assistant asked about the delegation can explain the
+    reversal rather than just change its answer.
     """
     target = FakeObservableService([
         _observation(RemoteDisposition.COMPLETED, output_text="the finished work")
@@ -264,7 +266,7 @@ async def test_a_late_result_says_that_it_is_late(
     )
 
     text = chat_interface.send_message.await_args.kwargs["text"]
-    assert "reported failed" in text
+    assert "failed earlier" in text
     assert "the finished work" in text
 
     run = await db_context.delegation_runs.get_by_delegation_id(
@@ -278,14 +280,17 @@ async def test_a_late_result_says_that_it_is_late(
 
 
 @pytest.mark.asyncio
-async def test_a_late_result_is_delivered_exactly_once(
+async def test_racing_reconcilers_recover_a_late_result_once(
     db_engine: AsyncEngine,
 ) -> None:
-    """Two reconcilers racing the same late completion deliver one message.
+    """Two reconcilers racing the same late completion recover it once.
 
-    Exactly-once is a property of the recovery transition, not of the
-    scheduler, so it has to hold when the same run is reconciled twice with no
-    coordination between the attempts.
+    The guarantee is on the recovery transition rather than the scheduler, so
+    it has to hold when the same run is reconciled twice with no coordination
+    between the attempts. It is a guarantee about recovery, not about
+    delivery: terminal delivery sends before recording ``notified_at``, so a
+    crash in that window re-sends -- a property of the existing delivery
+    protocol that a late result inherits like any other terminal result.
     """
     target = FakeObservableService([
         _observation(RemoteDisposition.COMPLETED, output_text="late result")

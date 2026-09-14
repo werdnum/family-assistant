@@ -4044,8 +4044,10 @@ class TaskWorker:
                 or "The delegated profile completed without a textual response."
             )
             late_note = (
-                "This task was reported failed earlier and the target finished "
-                "it afterwards, so the user has already been told it failed.\n"
+                "This task failed earlier and the target finished it "
+                "afterwards. The user may be holding the failure notice, so "
+                "account for the reversal rather than only reporting the "
+                "result.\n"
                 if run["late_recovered_at"] is not None
                 else ""
             )
@@ -4088,10 +4090,11 @@ class TaskWorker:
     def _delegation_notification_text(self, run: DelegationRunDict) -> str:
         """Build concise terminal notification text for a delegation run.
 
-        A recovered run says so. The requester was already told this task had
-        failed, so a message that simply announces the result contradicts what
-        they were told without explaining it; naming it a late result makes the
-        sequence read correctly.
+        A recovered run says so, in terms of what the run did rather than what
+        the requester was told: a message that simply announces a result
+        contradicts a failure notice they may be holding, while asserting they
+        received one would be a claim this cannot check -- the failure notice
+        can itself have failed to deliver.
         """
         if run["status"] == "completed":
             result_text = (
@@ -4100,8 +4103,8 @@ class TaskWorker:
             )
             if run["late_recovered_at"] is not None:
                 return (
-                    f"Delegated task {run['delegation_id']} was reported failed, "
-                    f"but {run['target_service_id']} finished it after all. Late "
+                    f"Delegated task {run['delegation_id']} failed earlier, but "
+                    f"{run['target_service_id']} finished it after all. Late "
                     f"result:\n\n{result_text}"
                 )
             return (

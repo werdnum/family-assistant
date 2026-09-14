@@ -62,10 +62,17 @@ taint, the same tool-call-review rules. The run's original failure is retained i
 history is not rewritten, it is annotated — and `late_recovered_at` marks the run as reconciled
 rather than as a run that simply succeeded.
 
-Exactly-once delivery is a property of the transition, not of the scheduler: recovery is a
-compare-and-set on `status = 'failed' AND late_recovered_at IS NULL`, so concurrent reconcilers, a
-re-enqueued sweep and a retried task can all attempt it and exactly one wins. Stale observations are
-rejected the same way, by refusing to write an observation older than the one already stored.
+Recovery happens exactly once, and that is a property of the transition rather than of the
+scheduler: it is a compare-and-set on `status = 'failed' AND late_recovered_at IS NULL`, so
+concurrent reconcilers, a re-enqueued sweep and a retried task can all attempt it and exactly one
+wins. Stale observations are rejected the same way, by refusing to write an observation stamped
+earlier than the one already stored — stamped when the read was *issued*, since that is the only
+bound this side can prove on how old the state it describes may be.
+
+Recovering once is not the same as delivering once, and this does not claim the latter: terminal
+delivery sends before recording `notified_at`, so a crash in that window re-sends on the next sweep.
+That at-least-once window is the existing delegation delivery protocol's, not something
+reconciliation introduces, and a late result inherits it like any other terminal result.
 
 ### Bounded work
 
@@ -86,6 +93,10 @@ scheduler.
 - **Reconciliation never mutates remote state.** It does not chase a run to a conclusion by
   cancelling it, which keeps the sweep safe to run against runs whose provider semantics we do not
   fully know.
+- **A recovered result does not assert that the failure notice was delivered.** It says the run
+  failed earlier and finished after all, which is true of the run whether or not the notice reached
+  anyone. Tracking delivery of a superseded notice, so the wording could assert it, would buy
+  nothing the reader needs.
 - **Empty completion is judged per profile, not per provider.** A profile whose whole purpose is to
   return a result declares that it expects output; a completion with no output and no execution
   evidence is then classified as empty rather than successful. Profiles that do not declare it keep

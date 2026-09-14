@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
@@ -65,6 +65,7 @@ from family_assistant.services.tool_call_review import (
 from family_assistant.storage.database import Database
 from family_assistant.tools import LocalToolsProvider, TaintTrackingToolsProvider
 from family_assistant.tools.types import ConfirmationOutcome
+from family_assistant.utils.clock import Clock, MockClock
 from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
     RuleBasedMockLLMClient,
 )
@@ -177,6 +178,7 @@ def _make_service(
     taint_sink_class: SinkClass | None = None,
     taint_policy: TaintPolicyConfig | None = None,
     tools_provider: ToolsProvider | None = None,
+    clock: Clock | None = None,
 ) -> InteractionsAgentProcessingService:
     config = ProcessingServiceConfig(
         prompts={"system_prompt": "You are a research assistant for {user_name}."},
@@ -197,6 +199,7 @@ def _make_service(
         app_config=AppConfig(),
         attachment_registry=attachment_registry,
         taint_policy=taint_policy,
+        clock=clock,
     )
 
 
@@ -1463,3 +1466,31 @@ async def test_an_observations_error_summary_is_truncated() -> None:
     summary = metadata["error_summary"]
     assert summary is not None
     assert len(summary) == MAX_OBSERVATION_ERROR_CHARS
+
+
+@pytest.mark.asyncio
+async def test_an_observation_is_stamped_when_the_read_was_issued() -> None:
+    """The timestamp bounds how old the state may be, so it precedes the read.
+
+    Two reads can overlap: the one that snapshotted the older state can still
+    return last. Stamping on return would hand that stale reading the later
+    timestamp, and ``record_remote_observation``'s stale-write guard -- which
+    compares exactly this field -- would then accept it over the fresher one.
+    Stamping when the request goes out is the only bound this side can prove.
+    """
+    clock = MockClock(datetime(2026, 1, 1, tzinfo=UTC))
+    llm_client = _google_client()
+
+    async def slow_read(_interaction_id: str) -> Interaction:
+        # Time passes while the provider is answering, as it does for a real
+        # read that overlaps another.
+        clock.advance(timedelta(seconds=30))
+        return Interaction(status="in_progress")
+
+    llm_client.get_agent_interaction = AsyncMock(side_effect=slow_read)
+    service = _make_service(llm_client, clock=clock)
+
+    observation = await service.observe_async("inter_x")
+
+    assert observation.observed_at == datetime(2026, 1, 1, tzinfo=UTC)
+    assert observation.observed_at < clock.now()

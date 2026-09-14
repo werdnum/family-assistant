@@ -546,8 +546,15 @@ class InteractionsAgentProcessingService(ProcessingService):
         enumerate (e.g. a capacity-queueing ``queued`` state) is treated as
         still pending instead of failing the delegation outright.
         """
-        interaction = await self._google_client().get_agent_interaction(remote_task_id)
+        # Stamped before the read, not after. A reading describes the provider
+        # state at some instant between the request and its response, and the
+        # only bound this side can prove is that the state is no older than
+        # when the request went out. Stamping on return would give a slow read
+        # -- one that snapshotted an older state but finished last -- the later
+        # timestamp, which is exactly what lets it overwrite a fresher reading
+        # through ``record_remote_observation``'s stale-write guard.
         observed_at = self.clock.now()
+        interaction = await self._google_client().get_agent_interaction(remote_task_id)
         status = str(interaction.status or "")
         output_text = interaction.output_text or ""
         steps = getattr(interaction, "steps", None)
