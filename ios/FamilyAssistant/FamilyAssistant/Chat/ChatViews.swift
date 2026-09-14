@@ -255,12 +255,14 @@ private struct ConversationListView: View {
                 )
             }
             if searchFailed {
-                Label("Search unavailable — showing matching previews only", systemImage: "exclamationmark.triangle")
+                Label("Couldn’t search chats. Edit the search to try again.", systemImage: "exclamationmark.triangle")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("conversation-search-failed")
             }
-            if displayedConversations.isEmpty && !viewModel.isLoadingConversations && !isAwaitingSearchResults {
+            if displayedConversations.isEmpty && !viewModel.isLoadingConversations && !isAwaitingSearchResults
+                && !searchFailed
+            {
                 if searchQuery.isEmpty {
                     ContentUnavailableView("No Chats", systemImage: "message", description: Text("Start a new chat."))
                 } else {

@@ -293,7 +293,6 @@ def _visible_message_condition() -> ColumnElement[bool]:
     return message_history_table.c.is_internal.is_(False)
 
 
-_MAX_CONVERSATION_SEARCH_TERMS = 8
 _EXCERPT_CONTEXT_BEFORE = 40
 _EXCERPT_LENGTH = 140
 
@@ -2864,9 +2863,7 @@ class MessageHistoryRepository(BaseRepository):
             re.sub(r"^\W+|\W+$", "", chunk)
             for chunk in (search_query or "").lower().split()
         )
-        return list(dict.fromkeys(term for term in terms if term))[
-            :_MAX_CONVERSATION_SEARCH_TERMS
-        ]
+        return list(dict.fromkeys(term for term in terms if term))
 
     def _content_matches_search_term(self, word: str) -> ColumnElement[bool]:
         """Whether a message's content has a word starting with ``word``.

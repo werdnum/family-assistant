@@ -39,19 +39,26 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
     const abortController = new AbortController();
     const timer = setTimeout(async () => {
       try {
-        const params = new URLSearchParams({
-          interface_type: 'web',
-          limit: '100',
-          q: trimmedQuery,
-        });
-        const response = await fetch(`/api/v1/chat/conversations?${params}`, {
-          signal: abortController.signal,
-        });
-        if (!response.ok) {
-          throw new Error(`Conversation search failed with status ${response.status}`);
+        const matches: Conversation[] = [];
+        let hasMore = true;
+        while (hasMore) {
+          const params = new URLSearchParams({
+            interface_type: 'web',
+            limit: '100',
+            offset: String(matches.length),
+            q: trimmedQuery,
+          });
+          const response = await fetch(`/api/v1/chat/conversations?${params}`, {
+            signal: abortController.signal,
+          });
+          if (!response.ok) {
+            throw new Error(`Conversation search failed with status ${response.status}`);
+          }
+          const data: { conversations: Conversation[]; count: number } = await response.json();
+          matches.push(...data.conversations);
+          hasMore = data.conversations.length > 0 && matches.length < data.count;
         }
-        const data = await response.json();
-        setSearchResults({ query: trimmedQuery, conversations: data.conversations });
+        setSearchResults({ query: trimmedQuery, conversations: matches });
       } catch (error) {
         if (!abortController.signal.aborted) {
           console.error('Conversation search failed:', error);
@@ -159,9 +166,11 @@ const ConversationSidebar: React.FC<ConversationSidebarProps> = ({
               {isAwaitingSearch ? 'Searching...' : 'Loading...'}
             </div>
           ) : displayedConversations.length === 0 ? (
-            <div className="py-8 text-center text-sm text-muted-foreground/60">
-              {trimmedQuery ? 'No matches' : 'No conversations yet'}
-            </div>
+            !searchFailed && (
+              <div className="py-8 text-center text-sm text-muted-foreground/60">
+                {trimmedQuery ? 'No matches' : 'No conversations yet'}
+              </div>
+            )
           ) : (
             <div className="space-y-0.5">
               {displayedConversations.map((conv: Conversation) => {

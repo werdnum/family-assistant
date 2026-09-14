@@ -13,11 +13,19 @@ struct ChatAPIClient {
     }()
 
     func listConversations() async throws -> [ChatConversationSummary] {
+        try await listAllConversationPages(query: nil)
+    }
+
+    private func listAllConversationPages(query: String?) async throws -> [ChatConversationSummary] {
         var conversations: [ChatConversationSummary] = []
         var offset = 0
 
         while true {
-            let response = try await listConversationPage(limit: Self.conversationPageSize, offset: offset)
+            let response = try await listConversationPage(
+                limit: Self.conversationPageSize,
+                offset: offset,
+                query: query
+            )
             conversations.append(contentsOf: response.conversations)
 
             if response.conversations.isEmpty || conversations.count >= response.count {
@@ -37,10 +45,9 @@ struct ChatAPIClient {
     }
 
     /// Search the caller's conversations by what was said anywhere in them,
-    /// most recent first. One page only: a search finds a chat, it doesn't
-    /// enumerate history.
+    /// most recent first, paging through every match.
     func searchConversations(query: String) async throws -> [ChatConversationSummary] {
-        try await listConversationPage(limit: Self.conversationPageSize, offset: 0, query: query).conversations
+        try await listAllConversationPages(query: query)
     }
 
     private func listConversationPage(
