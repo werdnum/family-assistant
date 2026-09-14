@@ -2246,6 +2246,10 @@ class TaskWorker:
             exec_context,
             delegation_id=delegation_id,
             error="".join(traceback.format_exception(exc)),
+            # A refused submit is our side of the wire giving up, not the
+            # provider reporting a status: the run has no remote id, so nothing
+            # can be re-read, but recording why keeps the distinction honest.
+            local_failure_kind="transport",
         )
 
     async def _resubmit_with_backoff(

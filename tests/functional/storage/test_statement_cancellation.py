@@ -13,11 +13,16 @@ from typing import TYPE_CHECKING
 
 import pytest
 import sqlalchemy as sa
+from alembic.script import ScriptDirectory
 from sqlalchemy.exc import DBAPIError
 
+from alembic import command as alembic_command
 from family_assistant.llm.messages import UserMessage
 from family_assistant.request_side_effects import begin_tracking, state_changed
-from family_assistant.storage import init_db
+from family_assistant.storage import (
+    _get_alembic_config,  # noqa: PLC2701
+    init_db,
+)
 from family_assistant.storage.base import (
     POSTGRES_STATEMENT_TIMEOUT_MS,
     create_engine_with_sqlite_optimizations,
@@ -29,16 +34,6 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
 _MARKER = "test_statement_cancellation_marker"
-# The revision before head: the test rewinds to it so a migration is actually
-# pending while the tight ceiling is in force. Both this and the head asserted
-# below move with each new migration.
-_PREVIOUS_REVISION = "d7065490c04e"
-_HEAD_REVISION = "add_task_priority"
-# Columns the head revision adds, by table: the test drops them to make the
-# migration genuinely pending, then asserts they came back.
-_HEAD_REVISION_COLUMNS_BY_TABLE = {
-    "tasks": ("priority",),
-}
 
 _alembic_version_table = sa.Table(
     "alembic_version",
@@ -179,25 +174,30 @@ async def test_connections_carry_a_statement_timeout(
 @pytest.mark.asyncio
 async def test_migrations_still_run_under_a_ceiling_that_aborts_queries(
     db_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Startup migrations commit on an engine whose ceiling is tight.
 
     ``init_db`` hands Alembic a connection from the application's own pool, so
     migrations would otherwise inherit ``POSTGRES_STATEMENT_TIMEOUT_MS`` -- and
     a long index build or backfill is the one place that ceiling is wrong.
+
+    Whatever the newest migration happens to be is the one exercised: the test
+    rewinds by one revision through Alembic itself and reads the target head
+    out of the script directory, so it never has to be edited when a migration
+    lands. ``env.py`` drives its own event loop, so Alembic runs on a thread.
     """
     url = db_engine.url.render_as_string(hide_password=False)
-    db = Database(db_engine)
+    alembic_config = _get_alembic_config(db_engine)
+    head_revision = ScriptDirectory.from_config(alembic_config).get_current_head()
+    assert head_revision is not None
 
-    async def regress_to_previous_revision(txn: DatabaseTransaction) -> None:
-        for table, columns in _HEAD_REVISION_COLUMNS_BY_TABLE.items():
-            for column in columns:
-                await txn.execute(sa.text(f"ALTER TABLE {table} DROP COLUMN {column}"))
-        await txn.execute(
-            sa.update(_alembic_version_table).values(version_num=_PREVIOUS_REVISION)
-        )
-
-    await db.atomic(regress_to_previous_revision)
+    # Rewind one revision so there is genuinely a migration pending while the
+    # tight ceiling is in force. Standalone Alembic reads its URL from the
+    # environment (see ``alembic/env.py``), which is also how a developer runs
+    # a downgrade, so point it at this test's database.
+    monkeypatch.setenv("DATABASE_URL", url)
+    await asyncio.to_thread(alembic_command.downgrade, alembic_config, "-1")
 
     # Well above connection setup: below roughly 25ms the abort lands outside
     # SQLAlchemy's cursor wrapper and surfaces as a raw asyncpg error.
@@ -218,21 +218,10 @@ async def test_migrations_still_run_under_a_ceiling_that_aborts_queries(
     verification_engine = create_engine_with_sqlite_optimizations(url)
     try:
         async with verification_engine.connect() as conn:
-            columns_by_table = {
-                table: await conn.run_sync(
-                    lambda sync_conn, table=table: {
-                        column["name"]
-                        for column in sa.inspect(sync_conn).get_columns(table)
-                    }
-                )
-                for table in _HEAD_REVISION_COLUMNS_BY_TABLE
-            }
             revision = await conn.scalar(
                 sa.select(_alembic_version_table.c.version_num)
             )
-        for table, expected in _HEAD_REVISION_COLUMNS_BY_TABLE.items():
-            assert set(expected) <= columns_by_table[table], table
-        assert revision == _HEAD_REVISION
+        assert revision == head_revision
     finally:
         await verification_engine.dispose()
 
