@@ -298,9 +298,16 @@ _EXCERPT_CONTEXT_BEFORE = 40
 _EXCERPT_LENGTH = 140
 
 
-def _prefix_tsquery(word: str) -> ColumnElement[Any]:
-    """A tsquery for words starting with ``word``, in the index's text config."""
-    return sql_func.to_tsquery(MESSAGE_CONTENT_SEARCH_CONFIG, f"{word}:*")
+def _prefix_tsquery(term: str) -> ColumnElement[Any]:
+    """A tsquery for tokens starting with ``term``, in the index's text config.
+
+    ``term`` is passed as one quoted lexeme so PostgreSQL's parser tokenizes it
+    exactly as it tokenized the indexed content: an address or a decimal stays a
+    single token, where splitting it on punctuation here would require pieces
+    the index never stored.
+    """
+    quoted = term.replace("\\", "\\\\").replace("'", "''")
+    return sql_func.to_tsquery(MESSAGE_CONTENT_SEARCH_CONFIG, f"'{quoted}':*")
 
 
 def _excerpt_around(content: str, term: str) -> str:
@@ -2847,9 +2854,19 @@ class MessageHistoryRepository(BaseRepository):
 
     @staticmethod
     def _conversation_search_terms(search_query: str | None) -> list[str]:
-        """Split a conversation-list search into the words every result must contain."""
-        words = list(dict.fromkeys(re.findall(r"\w+", (search_query or "").lower())))
-        return words[:_MAX_CONVERSATION_SEARCH_TERMS]
+        """Split a conversation-list search into the terms every result must contain.
+
+        Splits on whitespace only, leaving the rest of the tokenizing to the
+        database, and trims punctuation from each term's ends ("(3.25)", "renew,")
+        so it can also be found literally for the excerpt.
+        """
+        terms = (
+            re.sub(r"^\W+|\W+$", "", chunk)
+            for chunk in (search_query or "").lower().split()
+        )
+        return list(dict.fromkeys(term for term in terms if term))[
+            :_MAX_CONVERSATION_SEARCH_TERMS
+        ]
 
     def _content_matches_search_term(self, word: str) -> ColumnElement[bool]:
         """Whether a message's content has a word starting with ``word``.

@@ -204,6 +204,30 @@ async def test_content_search_can_use_the_gin_index_on_postgres(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "query",
+    ["alice@example.com", "alice", "3.25", "(3.25)"],
+)
+async def test_search_finds_addresses_and_numbers_as_typed(
+    db_engine: AsyncEngine, query: str
+) -> None:
+    """Text PostgreSQL indexes as one token (an address, a decimal) is found whole."""
+    db = Database(engine=db_engine)
+    await _seed(db)
+    await _add_exchange(
+        db,
+        "conv_invoice",
+        "Forward the invoice to alice@example.com please",
+        "Sent. The total was 3.25 after the discount.",
+        minutes=20,
+    )
+
+    results, _ = await _search(db, query)
+
+    assert list(results) == ["conv_invoice"]
+
+
+@pytest.mark.asyncio
 async def test_search_matches_whole_words_by_prefix_only_on_postgres(
     db_engine: AsyncEngine,
 ) -> None:
