@@ -20,12 +20,14 @@ from sqlalchemy import (
     Table,
     Text,
     insert,
+    literal_column,
     select,
     text,
     update,  # Add update import
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.sql import func as sql_func
 
 from family_assistant.storage.base import metadata
 from family_assistant.storage.database import (
@@ -35,6 +37,14 @@ from family_assistant.storage.database import (
 from family_assistant.storage.types import MessageHistoryRow
 
 logger = logging.getLogger(__name__)
+
+# Text-search config for conversation-list search, a constant rather than a bound
+# parameter so queries can match the GIN index expression. 'simple' (lowercased
+# words, no stemming or stopwords) is what makes prefix matching work while a word
+# is still being typed: stemmed, "shopping" is indexed as "shop", which "shopp"
+# never prefixes. SQLite has no full-text search and searches by substring
+# instead, so the index is PostgreSQL-only.
+MESSAGE_CONTENT_SEARCH_CONFIG = literal_column("'simple'::regconfig")
 
 # Define the message history table
 message_history_table = Table(
@@ -111,6 +121,18 @@ message_history_table = Table(
         sqlite_where=text("role = 'user' AND user_id IS NOT NULL"),
         postgresql_where=text("role = 'user' AND user_id IS NOT NULL"),
     ),
+    # Backs conversation-list search; see MESSAGE_CONTENT_TSVECTOR below.
+    Index(
+        "ix_message_history_content_fts_gin",
+        sql_func.to_tsvector(MESSAGE_CONTENT_SEARCH_CONFIG, literal_column("content")),
+        postgresql_using="gin",
+    ).ddl_if(dialect="postgresql"),
+)
+
+# The conversation-list search predicate uses this expression, and it must match
+# the GIN index above exactly, or PostgreSQL cannot use the index.
+MESSAGE_CONTENT_TSVECTOR = sql_func.to_tsvector(
+    MESSAGE_CONTENT_SEARCH_CONFIG, message_history_table.c.content
 )
 
 

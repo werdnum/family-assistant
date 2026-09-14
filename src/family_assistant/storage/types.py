@@ -257,3 +257,4 @@ class ConversationSummaryRow(TypedDict):
     last_timestamp: datetime
     message_count: int
     interface_type: str
+    match_excerpt: str | None
