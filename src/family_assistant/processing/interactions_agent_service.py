@@ -174,13 +174,15 @@ def _interaction_timestamp(value: str | datetime | None) -> datetime | None:
     The SDK types these as ISO-8601 strings, not datetimes, so they have to be
     parsed rather than subtracted. Accepts a datetime too, in case a later SDK
     starts returning one, and returns None for anything unparseable -- which
-    is logged rather than silently treated as zero.
+    is logged rather than silently treated as zero. ``TypeError`` counts as
+    unparseable alongside ``ValueError``: a provider that returns a number, or
+    a field the SDK models loosely, must not fail the read that carries it.
     """
     if value is None or isinstance(value, datetime):
         return value
     try:
         return datetime.fromisoformat(value)
-    except ValueError:
+    except (TypeError, ValueError):
         logger.warning("Unparseable Interactions API timestamp: %r", value)
         return None
 

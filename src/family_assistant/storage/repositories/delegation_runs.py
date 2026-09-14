@@ -126,6 +126,11 @@ class DelegationRunSummary(TypedDict):
     handed_off_at: str | None
     result_text: NotRequired[str | None]
     error: NotRequired[str | None]
+    # Present only on a run recovered from a late provider success, so a
+    # caller asking after a delegation it was told had failed can see why the
+    # answer changed rather than only that it did.
+    late_recovered_at: NotRequired[str]
+    original_error: NotRequired[str | None]
 
 
 class DelegationRunsRepository(BaseRepository):
@@ -778,6 +783,10 @@ class DelegationRunsRepository(BaseRepository):
         )
         if run["status"] == "completed":
             summary["result_text"] = run["result_text"]
+            late_recovered_at = self._to_iso(run["late_recovered_at"])
+            if late_recovered_at is not None:
+                summary["late_recovered_at"] = late_recovered_at
+                summary["original_error"] = run["error"]
         if run["status"] == "failed":
             summary["error"] = run["error"]
         return summary

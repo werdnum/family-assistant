@@ -255,15 +255,20 @@ TERMINAL_REMOTE_DISPOSITIONS: frozenset[RemoteDisposition] = frozenset({
 # file, so both are truncated rather than trusted to be small.
 MAX_OBSERVATION_ERROR_CHARS = 2000
 MAX_OBSERVATION_STATUS_CHARS = 64
+# Identifiers and model names: generous, but still a ceiling, because they are
+# provider strings rather than anything this application minted.
+MAX_OBSERVATION_ID_CHARS = 255
 
 
-class RemoteObservationMetadata(TypedDict, total=False):
+class RemoteObservationMetadata(TypedDict):
     """The bounded, JSON-safe form of a :class:`RemoteObservation`.
 
     A closed set of keys, built field by field rather than by copying a
     provider object, so a provider that grows a field carrying prompts,
     reasoning traces, command output or credentials cannot start persisting it
-    by default.
+    by default. Total rather than partial: ``to_metadata`` writes every key,
+    using ``None`` for what the provider did not report, so a reader never has
+    to distinguish "absent" from "not reported".
     """
 
     remote_task_id: str
@@ -312,30 +317,53 @@ class RemoteObservation:
         return self.disposition in TERMINAL_REMOTE_DISPOSITIONS
 
     def to_metadata(self) -> RemoteObservationMetadata:
-        """Render the bounded record that gets persisted on the run."""
+        """Render the bounded record that gets persisted on the run.
+
+        Every field is coerced and truncated here rather than trusted from the
+        adapter that built the observation. That is what makes "bounded and
+        JSON-safe" a property of this one function: a provider field that is a
+        loosely-typed SDK object, or a string of unbounded length, cannot reach
+        the database through any adapter.
+        """
         return RemoteObservationMetadata(
-            remote_task_id=self.remote_task_id,
-            status=self.status[:MAX_OBSERVATION_STATUS_CHARS],
+            remote_task_id=_bounded_str(self.remote_task_id, MAX_OBSERVATION_ID_CHARS)
+            or "",
+            status=(_bounded_str(self.status) or "")[:MAX_OBSERVATION_STATUS_CHARS],
             disposition=self.disposition.value,
             observed_at=self.observed_at.isoformat(),
             remote_created_at=_isoformat_or_none(self.remote_created_at),
             remote_updated_at=_isoformat_or_none(self.remote_updated_at),
             has_output=self.output_chars > 0,
             output_chars=self.output_chars,
-            step_count=self.step_count,
-            total_tokens=self.total_tokens,
-            resolved_model=self.resolved_model,
+            step_count=_bounded_int(self.step_count),
+            total_tokens=_bounded_int(self.total_tokens),
+            resolved_model=_bounded_str(self.resolved_model, MAX_OBSERVATION_ID_CHARS),
             error_summary=(
-                self.error_summary[:MAX_OBSERVATION_ERROR_CHARS]
-                if self.error_summary
-                else None
+                _bounded_str(self.error_summary, MAX_OBSERVATION_ERROR_CHARS)
             ),
-            event_cursor=self.event_cursor,
+            event_cursor=_bounded_str(self.event_cursor, MAX_OBSERVATION_ID_CHARS),
         )
 
 
 def _isoformat_or_none(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
+
+
+def _bounded_str(
+    value: object, limit: int = MAX_OBSERVATION_STATUS_CHARS
+) -> str | None:
+    """Coerce a provider value to a bounded string, or None when it is empty."""
+    if value is None:
+        return None
+    text = value if isinstance(value, str) else str(value)
+    return text[:limit] or None
+
+
+def _bounded_int(value: object) -> int | None:
+    """Coerce a provider value to an int, or None when it is not one."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return int(value)
 
 
 @runtime_checkable

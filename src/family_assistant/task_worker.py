@@ -4039,10 +4039,17 @@ class TaskWorker:
                 run["result_text"]
                 or "The delegated profile completed without a textual response."
             )
+            late_note = (
+                "This task was reported failed earlier and the target finished "
+                "it afterwards, so the user has already been told it failed.\n"
+                if run["late_recovered_at"] is not None
+                else ""
+            )
             return (
                 "Delegated profile task completed data.\n\n"
                 f"Delegation reference: {run['delegation_id']}\n"
                 f"Target profile: {run['target_service_id']}\n"
+                f"{late_note}"
                 f"Original request: {run['request_text']}\n\n"
                 "Delegated result:\n"
                 f"{result_text}"
@@ -4075,12 +4082,24 @@ class TaskWorker:
         )
 
     def _delegation_notification_text(self, run: DelegationRunDict) -> str:
-        """Build concise terminal notification text for a delegation run."""
+        """Build concise terminal notification text for a delegation run.
+
+        A recovered run says so. The requester was already told this task had
+        failed, so a message that simply announces the result contradicts what
+        they were told without explaining it; naming it a late result makes the
+        sequence read correctly.
+        """
         if run["status"] == "completed":
             result_text = (
                 run["result_text"]
                 or "The delegated profile completed without a textual response."
             )
+            if run["late_recovered_at"] is not None:
+                return (
+                    f"Delegated task {run['delegation_id']} was reported failed, "
+                    f"but {run['target_service_id']} finished it after all. Late "
+                    f"result:\n\n{result_text}"
+                )
             return (
                 f"Delegated task {run['delegation_id']} completed via "
                 f"{run['target_service_id']}.\n\n{result_text}"
