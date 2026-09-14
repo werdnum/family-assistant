@@ -55,6 +55,7 @@ from tests.functional.automations.test_async_delegation import (
     TEST_USER_NAME,
     FakeDelegatableService,
     FakePollableService,
+    FakeWakeCapableSourceService,
     _build_worker,
     _create_run,
     _source_processing_service,
@@ -721,3 +722,166 @@ async def test_an_observable_target_satisfies_the_protocol() -> None:
     observable = FakeObservableService([_observation(RemoteDisposition.PENDING)])
     assert isinstance(observable, ObservableDelegationService)
     assert not isinstance(FakePollableService(), ObservableDelegationService)
+
+
+@pytest.mark.asyncio
+async def test_a_recovered_run_wakes_the_source_again_instead_of_replaying_the_failure(
+    db_engine: AsyncEngine,
+) -> None:
+    """Recovery is a second notification of one run, and needs its own turn.
+
+    The wake turn's delivery checkpoint resumes a reply that was generated but
+    never delivered, and it identifies that turn by delegation id and stage.
+    Recovery clears ``notified_at`` so the run notifies again at the same
+    ``initial`` stage -- and on a history interface the failure's reply is
+    stored with no ``interface_message_id`` even though it *was* delivered. A
+    shared turn id would therefore make the checkpoint mistake the superseded
+    failure for an undelivered reply, redeliver it as the late result, and
+    never process the result at all.
+    """
+    target = FakeObservableService([
+        _observation(RemoteDisposition.COMPLETED, output_text="the late result")
+    ])
+    source = FakeWakeCapableSourceService(cast("FakeDelegatableService", target))
+    processing_service = cast("ProcessingService", source)
+    chat_interface = AsyncMock()
+    chat_interface.send_message.return_value = "external_message_id"
+    worker = _build_worker(db_engine, processing_service, chat_interface)
+
+    db_context = Database(engine=db_engine)
+    await _create_run(
+        db_context, delegation_id="delegation_rewake", interface_type="web"
+    )
+    await db_context.delegation_runs.update_remote_task(
+        "delegation_rewake", remote_task_id=REMOTE_TASK_ID, remote_context_id=None
+    )
+    failed = await db_context.delegation_runs.mark_failed(
+        delegation_id="delegation_rewake",
+        error="The target_profile run cancelled.",
+        completed_at=SystemClock().now(),
+        local_failure_kind="remote_status",
+    )
+    assert failed is not None
+
+    context = _tool_context(db_context, processing_service, chat_interface)
+    # The real failure notification, which leaves the wake turn's reply stored
+    # with no interface_message_id because "web" is a history interface.
+    await worker._force_notify_delegation(context, failed)
+    assert source.wake_call_count == 1
+
+    await worker.handle_delegation_reconcile(
+        context, _reconcile_payload("delegation_rewake")
+    )
+
+    run = await db_context.delegation_runs.get_by_delegation_id("delegation_rewake")
+    assert run is not None
+    assert run["status"] == "completed"
+    assert run["result_text"] == "the late result"
+    # The source profile saw the late result, rather than the checkpoint
+    # resurfacing the failure reply it had already delivered.
+    assert source.wake_call_count == 2
+    assert run["notified_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_recovery_is_refused_when_a_newer_reading_has_landed(
+    db_engine: AsyncEngine,
+) -> None:
+    """Freshness is part of the recovery transition, not a check before it.
+
+    Accepting an observation and then recovering from it are two statements
+    with an await between them, so a newer reading can land in the gap. The
+    recovery CAS therefore carries the reading it is based on: if the run has
+    moved past it, the transition does not apply.
+    """
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_raced_recovery")
+    now = SystemClock().now()
+    await db_context.delegation_runs.mark_failed(
+        delegation_id="delegation_raced_recovery",
+        error="The target_profile run cancelled.",
+        completed_at=now,
+        local_failure_kind="remote_status",
+    )
+    newer = _observation(
+        RemoteDisposition.PENDING, status="in_progress", observed_at=now
+    )
+    await db_context.delegation_runs.record_remote_observation(
+        "delegation_raced_recovery",
+        observation=newer.to_metadata(),
+        observed_at=newer.observed_at,
+        remote_status=newer.status,
+        cancel_confirmed=False,
+    )
+
+    recovered = await db_context.delegation_runs.recover_late_completion(
+        delegation_id="delegation_raced_recovery",
+        result_text="superseded",
+        result_attachment_ids=[],
+        recovered_at=now,
+        observed_at=now - timedelta(minutes=1),
+    )
+
+    assert recovered is None
+    run = await db_context.delegation_runs.get_by_delegation_id(
+        "delegation_raced_recovery"
+    )
+    assert run is not None
+    assert run["status"] == "failed"
+    assert run["late_recovered_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_stale_poll_reading_does_not_finalize_the_run(
+    db_engine: AsyncEngine,
+) -> None:
+    """A poll reading the guard rejects is inconclusive, not a terminal verdict.
+
+    Two poll tasks can be live for one run -- a retried ``delegated_profile_run``
+    enqueues one for a run that already has a poll scheduled -- so the older
+    request can return last. Finalizing from it would fail and notify a run on
+    state the provider has already left.
+    """
+    now = SystemClock().now()
+    target = FakeObservableService([
+        _observation(
+            RemoteDisposition.CANCELLED,
+            observed_at=now - timedelta(minutes=5),
+        )
+    ])
+    worker, processing_service, chat_interface = _worker_for(db_engine, target)
+
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_stale_poll")
+    await db_context.delegation_runs.mark_awaiting_remote(
+        "delegation_stale_poll",
+        remote_task_id=REMOTE_TASK_ID,
+        remote_context_id=None,
+        started_at=now,
+    )
+    newer = _observation(
+        RemoteDisposition.PENDING, status="in_progress", observed_at=now
+    )
+    await db_context.delegation_runs.record_remote_observation(
+        "delegation_stale_poll",
+        observation=newer.to_metadata(),
+        observed_at=newer.observed_at,
+        remote_status=newer.status,
+        cancel_confirmed=False,
+    )
+
+    await worker.handle_delegation_poll(
+        _tool_context(db_context, processing_service, chat_interface),
+        {
+            "delegation_id": "delegation_stale_poll",
+            "interface_type": TEST_INTERFACE_TYPE,
+            "conversation_id": TEST_CONVERSATION_ID,
+            "user_name": TEST_USER_NAME,
+        },
+    )
+
+    run = await db_context.delegation_runs.get_by_delegation_id("delegation_stale_poll")
+    assert run is not None
+    assert run["status"] == "awaiting_remote"
+    assert run["remote_status"] == "in_progress"
+    chat_interface.send_message.assert_not_awaited()

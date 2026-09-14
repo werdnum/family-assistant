@@ -376,25 +376,39 @@ _DELEGATION_WAKE_TURN_NAMESPACE = uuid.UUID("2b6b7f52-0f8a-4a6f-9b3d-7c5e1a0d8f2
 
 
 def _turn_id_for_delegation_wake(
-    delegation_id: str, stage: DelegationNotifyStage = "initial"
+    run: DelegationRunDict, stage: DelegationNotifyStage = "initial"
 ) -> str:
     """The turn id every attempt at waking the source profile shares.
 
-    A run notifies at most once (``notified_at``), so the delegation id is the
-    identity of the wake turn, and every retry of the notification lands on the
-    same turn rather than generating a fresh one.
+    Every retry of one notification lands on the same turn rather than
+    generating a fresh one, so the turn's delivery checkpoint can resume a
+    reply that was generated but never delivered.
 
     The stage is part of that identity because a fail-forward turn is a
     different turn from the one whose reply could not be delivered: sharing an
     id would make the checkpoint resume the undelivered reply instead of asking
     the model what to do about it. The stage is persisted rather than counted,
     so a retried *delivery* still lands on the same turn and never re-runs the
-    model. ``initial`` keeps the original derivation so runs already in flight
-    resume onto the turn they started.
+    model.
+
+    A late recovery is part of it for the same reason, and it is the case that
+    broke the older rule that a run notifies at most once: recovery clears
+    ``notified_at`` so the run notifies a *second* time, at the same ``initial``
+    stage. Sharing the failure's turn id would leave the checkpoint looking at
+    that turn's reply -- which on a history interface is stored with no
+    ``interface_message_id`` even when it was delivered -- and replay the
+    superseded failure as the late result, never processing the result at all.
+
+    ``initial`` on a run that was not recovered keeps the original derivation,
+    so runs already in flight resume onto the turn they started.
     """
+    name = run["delegation_id"]
+    recovered_at = run["late_recovered_at"]
+    if recovered_at is not None:
+        name = f"{name}:late:{recovered_at.isoformat()}"
     if stage == "initial":
-        return str(uuid.uuid5(_DELEGATION_WAKE_TURN_NAMESPACE, delegation_id))
-    return str(uuid.uuid5(_DELEGATION_WAKE_TURN_NAMESPACE, f"{delegation_id}:{stage}"))
+        return str(uuid.uuid5(_DELEGATION_WAKE_TURN_NAMESPACE, name))
+    return str(uuid.uuid5(_DELEGATION_WAKE_TURN_NAMESPACE, f"{name}:{stage}"))
 
 
 _NEXT_NOTIFY_STAGE: dict[DelegationNotifyStage, DelegationNotifyStage] = {
@@ -2649,13 +2663,21 @@ class TaskWorker:
             )
             return result, None
         observation = await target_service.observe_async(remote_task_id)
-        await exec_context.db_context.delegation_runs.record_remote_observation(
-            run["delegation_id"],
-            observation=observation.to_metadata(),
-            observed_at=observation.observed_at,
-            remote_status=observation.status,
-            cancel_confirmed=observation.disposition is RemoteDisposition.CANCELLED,
+        accepted = (
+            await exec_context.db_context.delegation_runs.record_remote_observation(
+                run["delegation_id"],
+                observation=observation.to_metadata(),
+                observed_at=observation.observed_at,
+                remote_status=observation.status,
+                cancel_confirmed=observation.disposition is RemoteDisposition.CANCELLED,
+            )
         )
+        if accepted is None:
+            # A newer reading already landed, so this one says nothing current
+            # about the run -- and acting on it would finalize and notify from
+            # state the provider has since left. Report it inconclusive: the
+            # run reschedules, and the wall-clock cap still bounds it.
+            return PENDING, None
         return target_service.result_for_observation(observation), observation
 
     async def _request_remote_cancellation(
@@ -3330,6 +3352,10 @@ class TaskWorker:
                 result_text=result.text_reply,
                 result_attachment_ids=result.attachment_ids or [],
                 recovered_at=clock.now(),
+                # Pinned to the reading this recovery came from, so a newer one
+                # landing since the observation write blocks the transition
+                # rather than letting a superseded result through.
+                observed_at=observation.observed_at,
             )
         )
         if recovered is None:
@@ -3622,7 +3648,7 @@ class TaskWorker:
             else self._delegation_wakeup_text(run)
         )
         source_subconversation_id = run["source_subconversation_id"]
-        wake_turn_id = _turn_id_for_delegation_wake(run["delegation_id"], stage)
+        wake_turn_id = _turn_id_for_delegation_wake(run, stage)
 
         # --- Delivery checkpoint ---
         # Under commit-as-you-go this turn's messages and its tools' writes are

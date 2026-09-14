@@ -6,7 +6,7 @@ import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, NotRequired, Required, TypedDict, cast
 
-from sqlalchemy import insert, or_, select, update
+from sqlalchemy import insert, or_, select, true, update
 from sqlalchemy.sql import functions as func
 
 from family_assistant.storage.delegation_runs import (
@@ -529,6 +529,7 @@ class DelegationRunsRepository(BaseRepository):
         result_text: str | None,
         result_attachment_ids: list[str],
         recovered_at: datetime,
+        observed_at: datetime | None = None,
     ) -> DelegationRunDict | None:
         """Turn a locally failed run into a completed one, exactly once.
 
@@ -546,12 +547,26 @@ class DelegationRunsRepository(BaseRepository):
 
         ``completed_at`` moves to the recovery time so the unnotified-run sweep
         measures the delivery that is now owed, not the one already made.
+
+        ``observed_at`` is the reading this recovery is based on. Passing it
+        folds the freshness check into the same statement: a newer reading
+        landing between the caller's observation write and this transition
+        means the result is already superseded, and separating the two checks
+        would leave exactly that window open.
         """
         stmt = (
             update(delegation_runs_table)
             .where(delegation_runs_table.c.delegation_id == delegation_id)
             .where(delegation_runs_table.c.status == "failed")
             .where(delegation_runs_table.c.late_recovered_at.is_(None))
+            .where(
+                or_(
+                    delegation_runs_table.c.remote_observed_at.is_(None),
+                    delegation_runs_table.c.remote_observed_at <= observed_at,
+                )
+                if observed_at is not None
+                else true()
+            )
             .values(
                 status="completed",
                 result_text=result_text,
