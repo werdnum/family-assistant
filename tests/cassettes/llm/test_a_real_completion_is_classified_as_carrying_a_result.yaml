@@ -1,6 +1,6 @@
 interactions:
   - request:
-      body: '{"agent":"antigravity-preview-05-2026","input":"Using Python, print the numbers 1 to 3, one per line, then stop.","stream":false,"background":true,"system_instruction":"System: You are a coding agent. Run the code and report the output.","environment":{"type":"remote"},"agent_config":{"model":"gemini-3.7-flash","type":"antigravity"}}'
+      body: '{"agent":"antigravity-preview-05-2026","input":"Using Python, print the numbers 1 to 3, one per line, then stop.","stream":false,"background":true,"system_instruction":"You are a coding agent. Run the code and report the output.","environment":{"type":"remote"},"agent_config":{"model":"gemini-3.7-flash","type":"antigravity"}}'
       headers:
         accept:
           - application/json

@@ -69,25 +69,23 @@ class ContextPreparer:
             )
 
     def prepend_profile_preamble(self, system_prompt: str) -> str:
-        """Prepend a profile-identification preamble to *system_prompt*.
+        """Prepend a profile-identification header to *system_prompt*.
 
-        The preamble tells the model which processing profile is active and
-        that the user explicitly selected it.  If *system_prompt* is empty the
-        preamble is returned without a trailing newline.
+        The header states which profile is active and nothing else. What the
+        profile is *for* belongs in its own ``system_prompt``, which is written
+        in the voice of the model that will execute it; ``config.description``
+        is the caller-facing catalog entry (the delegation catalog, the slash
+        command menu, the A2A agent card) and is addressed to whoever is
+        choosing a profile, so it reads as contradictory instructions to the
+        profile itself -- ``coder``'s tells the agent to consider
+        ``spawn_worker``, a tool it does not hold.
+
+        Nothing is asserted here about *how* the profile was reached: a
+        delegated run and an explicit slash command arrive identically, so a
+        claim that the user selected it would be false for the common path.
+        If *system_prompt* is empty the header is returned on its own.
         """
-        profile_id = self.config.id
-        description = self.config.description
-        lines = [
-            f"[Active Processing Profile: {profile_id}]",
-            f'The user has explicitly selected the "{profile_id}" processing profile.',
-        ]
-        if description:
-            lines.append(f"Profile purpose: {description}")
-        lines.append(
-            "Your available tools and capabilities are specific to this profile. "
-            "Do not attempt actions outside your profile's scope."
-        )
-        preamble = "\n".join(lines)
+        preamble = f"[Active Processing Profile: {self.config.id}]"
         if system_prompt:
             return preamble + "\n\n" + system_prompt
         return preamble
