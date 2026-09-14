@@ -21,6 +21,42 @@ TERMINAL_DELEGATION_STATUSES: frozenset[DelegationRunStatus] = frozenset({
     "failed",
 })
 
+DelegationLocalFailureKind = Literal[
+    "timeout",
+    "transport",
+    "remote_status",
+    "empty_completion",
+    "internal_error",
+    "not_pollable",
+    "stranded",
+]
+"""Why *Family Assistant* failed a run, which is not why the provider did.
+
+``status`` records the decision this application took; this records what drove
+it. ``timeout`` and ``transport`` are local calls made without the provider
+agreeing, ``remote_status`` is a terminal status the provider reported,
+``empty_completion`` is a provider "completed" that carried nothing,
+``internal_error`` is a fault on this side, ``not_pollable`` is a target that
+stopped being pollable under a live run, and ``stranded`` is the cleanup
+reaper failing a run that never reached a provider at all.
+"""
+
+RECONCILABLE_FAILURE_KINDS: frozenset[DelegationLocalFailureKind] = frozenset({
+    "timeout",
+    "transport",
+    "remote_status",
+    "empty_completion",
+    "internal_error",
+})
+"""Failure kinds where the remote run may still be running, or may have finished.
+
+Everything here is a decision taken while the provider was, as far as we know,
+still holding the run -- including ``remote_status``, because a reported
+``cancelled`` or ``failed`` has been observed to change back. The two excluded
+kinds are the ones with nothing to re-read: ``not_pollable`` leaves no service
+able to observe the run, and ``stranded`` never reached a provider.
+"""
+
 DelegationNotifyStage = Literal[
     "initial",
     "failed_forward",
@@ -96,6 +132,33 @@ delegation_runs_table = Table(
     Column("remote_task_id", String(255), nullable=True),
     Column("remote_context_id", String(255), nullable=True),
     Column("poll_attempts", Integer, nullable=False, server_default="0"),
+    # Why this application failed the run, kept apart from ``error`` (which is
+    # prose for the user) and from ``remote_status`` (which is the provider's
+    # own account). Null for a run that did not fail.
+    Column("local_failure_kind", String(32), nullable=True),
+    # Cancellation, split into the two facts it was previously collapsed from:
+    # when we asked, and when a later read actually showed the provider had
+    # done it. A run may have the first without ever getting the second, and
+    # must not claim to have been cancelled on the strength of the request.
+    Column("cancel_requested_at", DateTime(timezone=True), nullable=True),
+    Column("cancel_confirmed_at", DateTime(timezone=True), nullable=True),
+    # The last remote read: the provider's verbatim status, when we took the
+    # reading, and the bounded record (see ``RemoteObservation.to_metadata``).
+    Column("remote_status", String(64), nullable=True),
+    Column("remote_observed_at", DateTime(timezone=True), nullable=True),
+    Column(
+        "remote_observation_json",
+        JSON().with_variant(JSONB, "postgresql"),
+        nullable=True,
+    ),
+    # Reconciliation bookkeeping. ``reconciled_at`` is the stable-terminal
+    # marker: set when the run settled or reconciliation gave up on it, and
+    # the reason a settled run is never re-read.
+    Column("reconcile_attempts", Integer, nullable=False, server_default="0"),
+    Column("reconciled_at", DateTime(timezone=True), nullable=True),
+    # When a locally failed run was recovered from a late provider success.
+    # Also the exactly-once guard: recovery is conditioned on it being NULL.
+    Column("late_recovered_at", DateTime(timezone=True), nullable=True),
     Column(
         "created_at",
         DateTime(timezone=True),
@@ -111,6 +174,13 @@ delegation_runs_table = Table(
         "ix_delegation_runs_status_created",
         "status",
         "created_at",
+    ),
+    # Drives the reconciliation sweep, which asks for failed runs that have
+    # not settled yet, newest first.
+    Index(
+        "ix_delegation_runs_reconciled_completed",
+        "reconciled_at",
+        "completed_at",
     ),
     # At most one non-terminal (queued/running/awaiting_remote) run may target a
     # given subconversation. A fresh delegation always mints a unique

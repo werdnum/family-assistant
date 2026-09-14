@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
@@ -34,8 +34,10 @@ from family_assistant.processing.interactions_agent_service import (
     InteractionsAgentProcessingService,
 )
 from family_assistant.processing.protocol import (
+    MAX_OBSERVATION_ERROR_CHARS,
     PENDING,
     DelegationPermanentError,
+    RemoteDisposition,
     TaintedSinkRefusedError,
 )
 from family_assistant.processing.types import (
@@ -63,6 +65,7 @@ from family_assistant.services.tool_call_review import (
 from family_assistant.storage.database import Database
 from family_assistant.tools import LocalToolsProvider, TaintTrackingToolsProvider
 from family_assistant.tools.types import ConfirmationOutcome
+from family_assistant.utils.clock import Clock, MockClock
 from tests.mocks.mock_llm import (  # pylint: disable=no-name-in-module
     RuleBasedMockLLMClient,
 )
@@ -175,6 +178,7 @@ def _make_service(
     taint_sink_class: SinkClass | None = None,
     taint_policy: TaintPolicyConfig | None = None,
     tools_provider: ToolsProvider | None = None,
+    clock: Clock | None = None,
 ) -> InteractionsAgentProcessingService:
     config = ProcessingServiceConfig(
         prompts={"system_prompt": "You are a research assistant for {user_name}."},
@@ -195,6 +199,7 @@ def _make_service(
         app_config=AppConfig(),
         attachment_registry=attachment_registry,
         taint_policy=taint_policy,
+        clock=clock,
     )
 
 
@@ -1310,3 +1315,182 @@ def test_deep_research_prompt_carries_the_clock() -> None:
     prompt = service.format_system_prompt(user_name="tester")
 
     assert "Current time:" in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("in_progress", RemoteDisposition.PENDING),
+        ("requires_action", RemoteDisposition.PENDING),
+        ("queued", RemoteDisposition.PENDING),
+        ("cancelled", RemoteDisposition.CANCELLED),
+        ("failed", RemoteDisposition.FAILED),
+        ("incomplete", RemoteDisposition.FAILED),
+        ("budget_exceeded", RemoteDisposition.FAILED),
+    ],
+)
+async def test_observe_async_classifies_each_status(
+    status: str, expected: RemoteDisposition
+) -> None:
+    """Every provider status maps to exactly one disposition.
+
+    ``cancelled`` is its own disposition rather than another terminal error:
+    it is the only reading that can confirm a cancellation this application
+    asked for, and collapsing it into "failed" is what let a run claim a
+    cancellation nobody had confirmed.
+    """
+    llm_client = _google_client()
+    llm_client.get_agent_interaction = AsyncMock(
+        return_value=Interaction(status=cast("InteractionStatus", status))
+    )
+    service = _make_service(llm_client)
+
+    observation = await service.observe_async("inter_x")
+
+    assert observation.disposition is expected
+    assert observation.status == status
+
+
+@pytest.mark.asyncio
+async def test_polling_derives_its_answer_from_the_same_classification() -> None:
+    """A poll is an observation, not a second opinion about the same state.
+
+    The whole point of the single classifier is that reconciliation cannot
+    reach a different verdict from the poll it follows, so the poll's result
+    has to be derived from the observation rather than recomputed.
+    """
+    llm_client = _google_client()
+    interaction = Interaction(
+        status="completed",
+        steps=[ModelOutputStep(content=[TextContent(text="The report.")])],
+    )
+    llm_client.get_agent_interaction = AsyncMock(return_value=interaction)
+    service = _make_service(llm_client)
+
+    observation = await service.observe_async("inter_x")
+    derived = service.result_for_observation(observation)
+    polled = await service.poll_async("inter_x", None)
+
+    assert isinstance(derived, ChatInteractionResult)
+    assert isinstance(polled, ChatInteractionResult)
+    assert derived.text_reply == polled.text_reply
+    assert derived.has_error == polled.has_error
+
+
+@pytest.mark.asyncio
+async def test_a_completion_with_nothing_in_it_is_not_a_success() -> None:
+    """A bare ``completed`` with no output, no steps and no usage is empty.
+
+    Observed in production from runs that plainly never executed. Delivering
+    it as a success shows the user a blank reply from an assistant claiming to
+    have finished, so it is classified as an empty completion instead.
+    """
+    llm_client = _google_client()
+    llm_client.get_agent_interaction = AsyncMock(
+        return_value=Interaction(status="completed", steps=[], usage=None)
+    )
+    service = _make_service(llm_client)
+
+    observation = await service.observe_async("inter_x")
+
+    assert observation.disposition is RemoteDisposition.EMPTY_COMPLETION
+    assert observation.result is None
+    result = service.result_for_observation(observation)
+    assert isinstance(result, ChatInteractionResult)
+    assert result.has_error
+    assert "no result" in result.text_reply
+
+
+@pytest.mark.asyncio
+async def test_a_completion_that_executed_is_a_success_even_without_text() -> None:
+    """Having run is evidence, so a step-bearing completion is not empty.
+
+    "Did work and returned nothing" is a real answer; "did nothing at all" is
+    the shape worth rejecting. Conflating them would turn legitimate silent
+    runs into failures.
+    """
+    llm_client = _google_client()
+    llm_client.get_agent_interaction = AsyncMock(
+        return_value=Interaction(
+            status="completed",
+            steps=[UserInputStep(content=[TextContent(text="do the thing")])],
+        )
+    )
+    service = _make_service(llm_client)
+
+    observation = await service.observe_async("inter_x")
+
+    assert observation.disposition is RemoteDisposition.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_an_observation_persists_no_provider_output() -> None:
+    """The persisted record measures the output; it never carries it.
+
+    The bounded form is what ends up in the database, so an agent's own text
+    -- which can quote a whole file, a prompt or a command's output -- must be
+    describable from it without being present in it.
+    """
+    secret = "SENSITIVE-SANDBOX-CONTENT"
+    llm_client = _google_client()
+    llm_client.get_agent_interaction = AsyncMock(
+        return_value=Interaction(
+            status="completed",
+            steps=[ModelOutputStep(content=[TextContent(text=secret)])],
+        )
+    )
+    service = _make_service(llm_client)
+
+    metadata = (await service.observe_async("inter_x")).to_metadata()
+
+    assert secret not in str(metadata)
+    assert metadata["has_output"] is True
+    assert metadata["output_chars"] == len(secret)
+
+
+@pytest.mark.asyncio
+async def test_an_observations_error_summary_is_truncated() -> None:
+    """A provider error is a diagnostic, and is bounded like one."""
+    llm_client = _google_client()
+    llm_client.get_agent_interaction = AsyncMock(
+        return_value=Interaction(
+            status="failed",
+            errors=[Error(code="boom", message="x" * 10_000)],
+        )
+    )
+    service = _make_service(llm_client)
+
+    metadata = (await service.observe_async("inter_x")).to_metadata()
+
+    summary = metadata["error_summary"]
+    assert summary is not None
+    assert len(summary) == MAX_OBSERVATION_ERROR_CHARS
+
+
+@pytest.mark.asyncio
+async def test_an_observation_is_stamped_when_the_read_was_issued() -> None:
+    """The timestamp bounds how old the state may be, so it precedes the read.
+
+    Two reads can overlap: the one that snapshotted the older state can still
+    return last. Stamping on return would hand that stale reading the later
+    timestamp, and ``record_remote_observation``'s stale-write guard -- which
+    compares exactly this field -- would then accept it over the fresher one.
+    Stamping when the request goes out is the only bound this side can prove.
+    """
+    clock = MockClock(datetime(2026, 1, 1, tzinfo=UTC))
+    llm_client = _google_client()
+
+    async def slow_read(_interaction_id: str) -> Interaction:
+        # Time passes while the provider is answering, as it does for a real
+        # read that overlaps another.
+        clock.advance(timedelta(seconds=30))
+        return Interaction(status="in_progress")
+
+    llm_client.get_agent_interaction = AsyncMock(side_effect=slow_read)
+    service = _make_service(llm_client, clock=clock)
+
+    observation = await service.observe_async("inter_x")
+
+    assert observation.observed_at == datetime(2026, 1, 1, tzinfo=UTC)
+    assert observation.observed_at < clock.now()

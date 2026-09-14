@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, TypedDict, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from datetime import datetime
 
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.content_parts import ContentPartDict
@@ -206,3 +207,194 @@ class PollableDelegationService(Protocol):
     ) -> ChatInteractionResult | PendingPoll: ...
 
     async def cancel_async(self, remote_task_id: str) -> None: ...
+
+
+class RemoteDisposition(enum.Enum):
+    """What one read of a remote run says about it, classified once.
+
+    Deliberately not the provider's own status: providers spell their states
+    differently and add new ones, and the decisions the worker makes from a
+    read (poll again? deliver? recover a late result?) are the same five
+    either way. The provider's verbatim status rides alongside on
+    :class:`RemoteObservation` for diagnostics.
+    """
+
+    PENDING = "pending"
+    """Still running (or in a state this provider has not taught us about)."""
+
+    COMPLETED = "completed"
+    """Finished with a result worth delivering."""
+
+    EMPTY_COMPLETION = "empty_completion"
+    """Finished, but with no output and no evidence of having executed.
+
+    Distinct from :attr:`COMPLETED` because a profile expected to return
+    something has not returned it. Delivering it as a success shows the user
+    an empty answer; treating it as merely "failed" would lose the fact that
+    the provider believes it finished.
+    """
+
+    CANCELLED = "cancelled"
+    """The provider reports the run cancelled -- the only proof of that."""
+
+    FAILED = "failed"
+    """The provider reports a terminal error."""
+
+
+TERMINAL_REMOTE_DISPOSITIONS: frozenset[RemoteDisposition] = frozenset({
+    RemoteDisposition.COMPLETED,
+    RemoteDisposition.EMPTY_COMPLETION,
+    RemoteDisposition.CANCELLED,
+    RemoteDisposition.FAILED,
+})
+
+
+# Ceilings on the free-text an observation may persist. The observation is a
+# diagnostic record attached to a run, not a copy of the provider's payload:
+# an agent's errors can quote its own output, and its output can be a whole
+# file, so both are truncated rather than trusted to be small.
+MAX_OBSERVATION_ERROR_CHARS = 2000
+MAX_OBSERVATION_STATUS_CHARS = 64
+# Identifiers and model names: generous, but still a ceiling, because they are
+# provider strings rather than anything this application minted.
+MAX_OBSERVATION_ID_CHARS = 255
+
+
+class RemoteObservationMetadata(TypedDict):
+    """The bounded, JSON-safe form of a :class:`RemoteObservation`.
+
+    A closed set of keys, built field by field rather than by copying a
+    provider object, so a provider that grows a field carrying prompts,
+    reasoning traces, command output or credentials cannot start persisting it
+    by default. Total rather than partial: ``to_metadata`` writes every key,
+    using ``None`` for what the provider did not report, so a reader never has
+    to distinguish "absent" from "not reported".
+    """
+
+    remote_task_id: str
+    status: str
+    disposition: str
+    observed_at: str
+    remote_created_at: str | None
+    remote_updated_at: str | None
+    has_output: bool
+    output_chars: int
+    step_count: int | None
+    total_tokens: int | None
+    resolved_model: str | None
+    error_summary: str | None
+    event_cursor: str | None
+
+
+@dataclass(frozen=True)
+class RemoteObservation:
+    """One bounded read of a remote run's state.
+
+    Carries both what the worker needs to act (``disposition``, and
+    ``result`` when there is one) and what a person debugging the run needs to
+    see (``to_metadata``). ``result`` is never persisted on the run as part of
+    the observation -- a completed run's text is persisted as the run's
+    result, through the ordinary result path.
+    """
+
+    remote_task_id: str
+    status: str
+    disposition: RemoteDisposition
+    observed_at: datetime
+    result: ChatInteractionResult | None = None
+    remote_created_at: datetime | None = None
+    remote_updated_at: datetime | None = None
+    output_chars: int = 0
+    step_count: int | None = None
+    total_tokens: int | None = None
+    resolved_model: str | None = None
+    error_summary: str | None = None
+    event_cursor: str | None = None
+
+    @property
+    def is_terminal(self) -> bool:
+        """Whether the provider considers the run finished."""
+        return self.disposition in TERMINAL_REMOTE_DISPOSITIONS
+
+    def to_metadata(self) -> RemoteObservationMetadata:
+        """Render the bounded record that gets persisted on the run.
+
+        Every field is coerced and truncated here rather than trusted from the
+        adapter that built the observation. That is what makes "bounded and
+        JSON-safe" a property of this one function: a provider field that is a
+        loosely-typed SDK object, or a string of unbounded length, cannot reach
+        the database through any adapter.
+        """
+        return RemoteObservationMetadata(
+            remote_task_id=_bounded_str(self.remote_task_id, MAX_OBSERVATION_ID_CHARS)
+            or "",
+            status=(_bounded_str(self.status) or "")[:MAX_OBSERVATION_STATUS_CHARS],
+            disposition=self.disposition.value,
+            observed_at=self.observed_at.isoformat(),
+            remote_created_at=_isoformat_or_none(self.remote_created_at),
+            remote_updated_at=_isoformat_or_none(self.remote_updated_at),
+            has_output=self.output_chars > 0,
+            output_chars=self.output_chars,
+            step_count=_bounded_int(self.step_count),
+            total_tokens=_bounded_int(self.total_tokens),
+            resolved_model=_bounded_str(self.resolved_model, MAX_OBSERVATION_ID_CHARS),
+            error_summary=(
+                _bounded_str(self.error_summary, MAX_OBSERVATION_ERROR_CHARS)
+            ),
+            event_cursor=_bounded_str(self.event_cursor, MAX_OBSERVATION_ID_CHARS),
+        )
+
+
+def _isoformat_or_none(value: datetime | None) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+def _bounded_str(
+    value: object, limit: int = MAX_OBSERVATION_STATUS_CHARS
+) -> str | None:
+    """Coerce a provider value to a bounded string, or None when it is empty."""
+    if value is None:
+        return None
+    text = value if isinstance(value, str) else str(value)
+    return text[:limit] or None
+
+
+def _bounded_int(value: object) -> int | None:
+    """Coerce a provider value to an int, or None when it is not one."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return int(value)
+
+
+@runtime_checkable
+class ObservableDelegationService(Protocol):
+    """A pollable target whose remote run can be re-read after we gave up.
+
+    Separate from :class:`PollableDelegationService` rather than folded into
+    it: that Protocol decides whether a target polls at all, so adding a
+    member would silently demote every implementation lacking it back to the
+    inline path. A target that cannot be re-read simply does not implement
+    this, and reconciliation leaves its runs alone instead of guessing at
+    them.
+    """
+
+    async def observe_async(self, remote_task_id: str) -> RemoteObservation:
+        """Read the remote run once and classify it.
+
+        Raises the same delegation error taxonomy as ``poll_async``:
+        :class:`DelegationTaskNotFoundError` when the provider has no such
+        run, :class:`DelegationPermanentError` for a definitive negative, and
+        :class:`DelegationTransientError` for anything that may recover.
+        """
+        ...
+
+    def result_for_observation(
+        self, observation: RemoteObservation
+    ) -> ChatInteractionResult | PendingPoll:
+        """Turn a classified observation into what a poller should do with it.
+
+        Paired with :meth:`observe_async` so a poll is one read classified
+        once, rather than a second classification of the same provider state
+        that can disagree with the reconciler's.
+        """
+        ...

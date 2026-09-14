@@ -38,6 +38,8 @@ from family_assistant.processing.protocol import (
     DelegationPermanentError,
     DelegationTransientError,
     PendingPoll,
+    RemoteDisposition,
+    RemoteObservation,
     RemoteSubmission,
     TaintedSinkRefusedError,
 )
@@ -172,13 +174,15 @@ def _interaction_timestamp(value: str | datetime | None) -> datetime | None:
     The SDK types these as ISO-8601 strings, not datetimes, so they have to be
     parsed rather than subtracted. Accepts a datetime too, in case a later SDK
     starts returning one, and returns None for anything unparseable -- which
-    is logged rather than silently treated as zero.
+    is logged rather than silently treated as zero. ``TypeError`` counts as
+    unparseable alongside ``ValueError``: a provider that returns a number, or
+    a field the SDK models loosely, must not fail the read that carries it.
     """
     if value is None or isinstance(value, datetime):
         return value
     try:
         return datetime.fromisoformat(value)
-    except ValueError:
+    except (TypeError, ValueError):
         logger.warning("Unparseable Interactions API timestamp: %r", value)
         return None
 
@@ -229,6 +233,12 @@ class InteractionsAgentProcessingService(ProcessingService):
     subclass to these profiles keeps ordinary local delegation targets on the
     existing inline path.
     """
+
+    # An Interactions agent profile exists to hand a result back into the
+    # conversation, so a "completed" run with nothing in it is a failure to
+    # answer rather than an answer. Declared as an attribute so a profile whose
+    # empty completion would be legitimate can say so.
+    expects_output: bool = True
 
     # These agents collapse the prompt into a single `input` string (plus, for
     # Antigravity, a `system_instruction`) and the client drops scaffolding on
@@ -523,12 +533,12 @@ class InteractionsAgentProcessingService(ProcessingService):
             terminal_result=None,
         )
 
-    async def poll_async(
-        self,
-        remote_task_id: str,
-        remote_context_id: str | None,
-    ) -> ChatInteractionResult | PendingPoll:
-        """Poll the interaction once; PENDING until it reaches a terminal state.
+    async def observe_async(self, remote_task_id: str) -> RemoteObservation:
+        """Read the interaction once and classify it. The only classifier.
+
+        Both polling and reconciliation go through here, so "which statuses are
+        terminal" and "which completions are empty" are decided in one place
+        and cannot drift apart as the provider grows states.
 
         Classifies by deny-listing known terminal-error statuses (mirrors the
         streaming path's own ``interaction.status_update`` handling) rather
@@ -536,30 +546,137 @@ class InteractionsAgentProcessingService(ProcessingService):
         enumerate (e.g. a capacity-queueing ``queued`` state) is treated as
         still pending instead of failing the delegation outright.
         """
-        _ = remote_context_id
+        # Stamped before the read, not after. A reading describes the provider
+        # state at some instant between the request and its response, and the
+        # only bound this side can prove is that the state is no older than
+        # when the request went out. Stamping on return would give a slow read
+        # -- one that snapshotted an older state but finished last -- the later
+        # timestamp, which is exactly what lets it overwrite a fresher reading
+        # through ``record_remote_observation``'s stale-write guard.
+        observed_at = self.clock.now()
         interaction = await self._google_client().get_agent_interaction(remote_task_id)
-        if interaction.status == "completed":
-            return ChatInteractionResult.success(
-                text_reply=interaction.output_text or ""
+        status = str(interaction.status or "")
+        output_text = interaction.output_text or ""
+        steps = getattr(interaction, "steps", None)
+        step_count = len(steps) if isinstance(steps, list) else None
+        usage = self._google_client().reasoning_info_from_interaction(interaction)
+        total_tokens = usage.get("total_tokens") if usage is not None else None
+        error_summary = _describe_interaction_errors(interaction) or None
+
+        if status == "completed":
+            disposition = (
+                RemoteDisposition.COMPLETED
+                if self._completion_is_useful(
+                    output_text, step_count=step_count, total_tokens=total_tokens
+                )
+                else RemoteDisposition.EMPTY_COMPLETION
             )
-        if is_interaction_terminal_error_status(interaction.status):
-            error_detail = _describe_interaction_errors(interaction)
-            logger.warning(
-                "Interactions API run on '%s' ended with status %s (interaction %s)%s",
-                self.service_config.id,
-                interaction.status,
-                remote_task_id,
-                f"; errors: {error_detail}" if error_detail else "",
-            )
+        elif status == "cancelled":
+            disposition = RemoteDisposition.CANCELLED
+        elif is_interaction_terminal_error_status(status):
+            disposition = RemoteDisposition.FAILED
+        else:
+            disposition = RemoteDisposition.PENDING
+
+        return RemoteObservation(
+            remote_task_id=remote_task_id,
+            status=status,
+            disposition=disposition,
+            observed_at=observed_at,
+            result=(
+                ChatInteractionResult.success(text_reply=output_text)
+                if disposition is RemoteDisposition.COMPLETED
+                else None
+            ),
+            remote_created_at=_interaction_timestamp(
+                getattr(interaction, "created", None)
+            ),
+            remote_updated_at=_interaction_timestamp(
+                getattr(interaction, "updated", None)
+            ),
+            output_chars=len(output_text),
+            step_count=step_count,
+            total_tokens=total_tokens,
+            resolved_model=interaction.model,
+            error_summary=error_summary,
+            event_cursor=getattr(interaction, "previous_interaction_id", None),
+        )
+
+    def _completion_is_useful(
+        self,
+        output_text: str,
+        *,
+        step_count: int | None,
+        total_tokens: int | None,
+    ) -> bool:
+        """Whether a provider ``completed`` actually carries a result.
+
+        A profile whose job is to answer has not answered if it returns no
+        text, ran no steps and spent no tokens: that shape has been observed
+        from runs that plainly never executed, and delivering it as a success
+        shows the user a blank reply from an assistant that claims to have
+        finished. Any one of the three is enough evidence -- a run that did
+        work and returned nothing is a different (real) answer from a run that
+        did nothing at all.
+
+        Profiles that are not expected to return output opt out via
+        ``expects_output``, which keeps this from judging a target whose empty
+        completion is legitimate.
+        """
+        if not self.expects_output:
+            return True
+        return bool(output_text) or bool(step_count) or bool(total_tokens)
+
+    async def poll_async(
+        self,
+        remote_task_id: str,
+        remote_context_id: str | None,
+    ) -> ChatInteractionResult | PendingPoll:
+        """Poll the interaction once; PENDING until it reaches a terminal state."""
+        _ = remote_context_id
+        observation = await self.observe_async(remote_task_id)
+        return self.result_for_observation(observation)
+
+    def result_for_observation(
+        self, observation: RemoteObservation
+    ) -> ChatInteractionResult | PendingPoll:
+        """Turn a classified observation into what a poller should do with it."""
+        if observation.disposition is RemoteDisposition.PENDING:
+            return PENDING
+        if observation.result is not None:
+            return observation.result
+        logger.warning(
+            "Interactions API run on '%s' ended with status %s (interaction %s)%s",
+            self.service_config.id,
+            observation.status,
+            observation.remote_task_id,
+            f"; errors: {observation.error_summary}"
+            if observation.error_summary
+            else "",
+        )
+        if observation.disposition is RemoteDisposition.EMPTY_COMPLETION:
             return ChatInteractionResult.error(
-                text_reply=f"The {self.service_config.id} run {interaction.status}.",
+                text_reply=(
+                    f"The {self.service_config.id} run reported that it finished "
+                    "but returned no result."
+                ),
                 error_traceback=(
-                    f"Interaction {remote_task_id} ended with status "
-                    f"{interaction.status!r}."
-                    + (f" Errors: {error_detail}" if error_detail else "")
+                    f"Interaction {observation.remote_task_id} reported status "
+                    "'completed' with no output, no steps and no token usage."
                 ),
             )
-        return PENDING
+        return ChatInteractionResult.error(
+            text_reply=f"The {self.service_config.id} run {observation.status}.",
+            error_traceback=(
+                f"Interaction {observation.remote_task_id} ended with status "
+                f"{observation.status!r}."
+                + (
+                    f" Errors: {observation.error_summary}"
+                    if observation.error_summary
+                    else ""
+                )
+            ),
+        )
 
     async def record_terminal_metrics(
         self,
