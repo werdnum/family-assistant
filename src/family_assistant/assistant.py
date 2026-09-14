@@ -2445,6 +2445,10 @@ class Assistant:
             worker.handle_delegation_poll,
         )
         worker.register_task_handler(
+            "delegation_reconcile",
+            worker.handle_delegation_reconcile,
+        )
+        worker.register_task_handler(
             "delegation_run_cleanup",
             worker.handle_delegation_run_cleanup,
         )
