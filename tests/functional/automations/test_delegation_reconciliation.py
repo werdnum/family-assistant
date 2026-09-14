@@ -885,3 +885,65 @@ async def test_a_stale_poll_reading_does_not_finalize_the_run(
     assert run["status"] == "awaiting_remote"
     assert run["remote_status"] == "in_progress"
     chat_interface.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_superseded_reading_past_the_cap_does_not_time_the_run_out(
+    db_engine: AsyncEngine,
+) -> None:
+    """ "We learned nothing" must not be read as "the run is still going".
+
+    Past the wall-clock cap a pending poll cancels and fails the run. A reading
+    the stale guard rejected is not evidence of pending -- a concurrent poll
+    holding a newer one may be about to commit a result -- so treating it as
+    such hands the user a spurious timeout and leaves reconciliation to undo
+    work that had already finished.
+    """
+    now = SystemClock().now()
+    target = FakeObservableService([
+        _observation(
+            RemoteDisposition.PENDING,
+            status="in_progress",
+            observed_at=now - timedelta(minutes=5),
+        )
+    ])
+    worker, processing_service, chat_interface = _worker_for(db_engine, target)
+
+    db_context = Database(engine=db_engine)
+    await _create_run(db_context, delegation_id="delegation_capped_stale")
+    await db_context.delegation_runs.mark_awaiting_remote(
+        "delegation_capped_stale",
+        remote_task_id=REMOTE_TASK_ID,
+        remote_context_id=None,
+        # Started far enough back that the run is well past its cap.
+        started_at=now - timedelta(days=1),
+    )
+    newer = _observation(
+        RemoteDisposition.COMPLETED, output_text="about to land", observed_at=now
+    )
+    await db_context.delegation_runs.record_remote_observation(
+        "delegation_capped_stale",
+        observation=newer.to_metadata(),
+        observed_at=newer.observed_at,
+        remote_status=newer.status,
+        cancel_confirmed=False,
+    )
+
+    await worker.handle_delegation_poll(
+        _tool_context(db_context, processing_service, chat_interface),
+        {
+            "delegation_id": "delegation_capped_stale",
+            "interface_type": TEST_INTERFACE_TYPE,
+            "conversation_id": TEST_CONVERSATION_ID,
+            "user_name": TEST_USER_NAME,
+        },
+    )
+
+    run = await db_context.delegation_runs.get_by_delegation_id(
+        "delegation_capped_stale"
+    )
+    assert run is not None
+    assert run["status"] == "awaiting_remote"
+    assert run["cancel_requested_at"] is None
+    assert target.cancelled == []
+    chat_interface.send_message.assert_not_awaited()

@@ -2512,8 +2512,9 @@ class TaskWorker:
         # rather than discarded as a timeout. The cap is enforced below, only for
         # a still-pending result.
         observation: RemoteObservation | None = None
+        reading_superseded = False
         try:
-            result, observation = await self._observe_or_poll(
+            result, observation, reading_superseded = await self._observe_or_poll(
                 exec_context, run, target_service, remote_task_id
             )
         except DelegationTaskNotFoundError:
@@ -2593,7 +2594,11 @@ class TaskWorker:
         if result is PENDING:
             # Still not terminal: now enforce the wall-clock cap — only a pending
             # task is cancelled and failed, never one that just finished above.
-            if past_cap:
+            # A superseded reading is exempt: it is not evidence the run is
+            # still going, and a concurrent poll holding a newer one may be
+            # about to commit its result. Failing the run on it would hand the
+            # user a spurious timeout and leave reconciliation to undo it.
+            if past_cap and not reading_superseded:
                 await self._request_remote_cancellation(
                     exec_context, delegation_id, target_service, remote_task_id
                 )
@@ -2648,7 +2653,7 @@ class TaskWorker:
         run: DelegationRunDict,
         target_service: PollableDelegationService,
         remote_task_id: str,
-    ) -> tuple[ChatInteractionResult | PendingPoll, RemoteObservation | None]:
+    ) -> tuple[ChatInteractionResult | PendingPoll, RemoteObservation | None, bool]:
         """One read of the remote run, recorded when the target can describe it.
 
         An observable target classifies the read once and the worker derives
@@ -2656,12 +2661,17 @@ class TaskWorker:
         reconciliation of the same run cannot disagree about what its status
         meant. A target that is only pollable keeps its own ``poll_async`` and
         contributes no observation.
+
+        The third element says the reading was superseded by a newer one. It is
+        reported apart from the outcome because "we learned nothing" is not the
+        same fact as "the run is still going", and the caller treats them
+        differently at the wall-clock cap.
         """
         if not isinstance(target_service, ObservableDelegationService):
             result = await target_service.poll_async(
                 remote_task_id, run["remote_context_id"]
             )
-            return result, None
+            return result, None, False
         observation = await target_service.observe_async(remote_task_id)
         accepted = (
             await exec_context.db_context.delegation_runs.record_remote_observation(
@@ -2674,11 +2684,10 @@ class TaskWorker:
         )
         if accepted is None:
             # A newer reading already landed, so this one says nothing current
-            # about the run -- and acting on it would finalize and notify from
-            # state the provider has since left. Report it inconclusive: the
-            # run reschedules, and the wall-clock cap still bounds it.
-            return PENDING, None
-        return target_service.result_for_observation(observation), observation
+            # about the run -- acting on it would finalize and notify from
+            # state the provider has since left.
+            return PENDING, None, True
+        return target_service.result_for_observation(observation), observation, False
 
     async def _request_remote_cancellation(
         self,
