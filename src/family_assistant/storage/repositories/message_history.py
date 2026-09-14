@@ -3,6 +3,7 @@
 import json
 import logging
 import random
+import re
 import uuid
 from collections import OrderedDict
 from collections.abc import Mapping
@@ -49,7 +50,11 @@ from family_assistant.security.taint import (
     strip_legacy_labeled_echoes,
 )
 from family_assistant.storage.database import DatabaseExecutor, DatabaseTransaction
-from family_assistant.storage.message_history import message_history_table
+from family_assistant.storage.message_history import (
+    MESSAGE_CONTENT_SEARCH_CONFIG,
+    MESSAGE_CONTENT_TSVECTOR,
+    message_history_table,
+)
 from family_assistant.storage.repositories.base import BaseRepository
 from family_assistant.storage.tasks import TaskPriority
 from family_assistant.storage.types import ConversationSummaryRow, MessageHistoryRow
@@ -286,6 +291,39 @@ def _subconversation_filter(
 def _visible_message_condition() -> ColumnElement[bool]:
     """Return the predicate for rows shown through user-facing history APIs."""
     return message_history_table.c.is_internal.is_(False)
+
+
+_EXCERPT_CONTEXT_BEFORE = 40
+_EXCERPT_LENGTH = 140
+
+
+def _prefix_tsquery(term: str) -> ColumnElement[Any]:
+    """A tsquery for tokens starting with ``term``, in the index's text config.
+
+    ``term`` is passed as one quoted lexeme so PostgreSQL's parser tokenizes it
+    exactly as it tokenized the indexed content: an address or a decimal stays a
+    single token, where splitting it on punctuation here would require pieces
+    the index never stored.
+    """
+    quoted = term.replace("\\", "\\\\").replace("'", "''")
+    return sql_func.to_tsquery(MESSAGE_CONTENT_SEARCH_CONFIG, f"'{quoted}':*")
+
+
+def _excerpt_around(content: str, term: str) -> str:
+    """A one-line snippet of ``content`` around the first occurrence of ``term``.
+
+    If the database matched a word that differs from ``term`` in case folding
+    alone, the snippet starts at the beginning of the message instead.
+    """
+    flattened = " ".join(content.split())
+    position = flattened.lower().find(term)
+    start = max(position - _EXCERPT_CONTEXT_BEFORE, 0) if position >= 0 else 0
+    excerpt = flattened[start : start + _EXCERPT_LENGTH]
+    if start > 0:
+        excerpt = f"…{excerpt}"
+    if start + _EXCERPT_LENGTH < len(flattened):
+        excerpt = f"{excerpt}…"
+    return excerpt
 
 
 @dataclass(frozen=True, slots=True)
@@ -2813,6 +2851,30 @@ class MessageHistoryRepository(BaseRepository):
         rows = await self._db.fetch_all(stmt)
         return {str(row["user_id"]) for row in rows}
 
+    @staticmethod
+    def _conversation_search_terms(search_query: str | None) -> list[str]:
+        """Split a conversation-list search into the terms every result must contain.
+
+        Splits on whitespace only, leaving the rest of the tokenizing to the
+        database, and trims punctuation from each term's ends ("(3.25)", "renew,")
+        so it can also be found literally for the excerpt.
+        """
+        terms = (
+            re.sub(r"^\W+|\W+$", "", chunk)
+            for chunk in (search_query or "").lower().split()
+        )
+        return list(dict.fromkeys(term for term in terms if term))
+
+    def _content_matches_search_term(self, word: str) -> ColumnElement[bool]:
+        """Whether a message's content has a word starting with ``word``.
+
+        PostgreSQL matches words by prefix through the GIN index on
+        ``MESSAGE_CONTENT_TSVECTOR``; SQLite falls back to a substring match.
+        """
+        if self._db.dialect_name == "postgresql":
+            return MESSAGE_CONTENT_TSVECTOR.bool_op("@@")(_prefix_tsquery(word))
+        return message_history_table.c.content.icontains(word, autoescape=True)
+
     async def get_conversation_summaries(
         self,
         interface_type: str | None = None,
@@ -2823,11 +2885,17 @@ class MessageHistoryRepository(BaseRepository):
         date_to: datetime | None = None,
         include_subconversations: bool = True,
         owner_user_ids: set[str] | None = None,
+        search_query: str | None = None,
     ) -> tuple[list[ConversationSummaryRow], int]:
         """
         Get conversation summaries with pagination, optimized for performance.
 
         Args:
+            search_query: When provided, restrict results to conversations in which
+                every whitespace-separated word appears (case-insensitively) in
+                some visible user or assistant message -- not necessarily the
+                same one. Each returned summary then carries a ``match_excerpt``
+                from the most recent message containing the longest word.
             interface_type: Filter by interface type (None for all interfaces)
             limit: Maximum number of conversations to return
             offset: Number of conversations to skip for pagination
@@ -2875,6 +2943,32 @@ class MessageHistoryRepository(BaseRepository):
 
         if not include_subconversations:
             base_conditions.append(message_history_table.c.subconversation_id.is_(None))
+
+        search_terms = self._conversation_search_terms(search_query)
+        # Rows a search term may match: the visible chat transcript, not tool
+        # payloads, which would match nearly every conversation that used a tool.
+        searchable_conditions = [
+            _visible_message_condition(),
+            message_history_table.c.role.in_(["user", "assistant"]),
+            message_history_table.c.content.isnot(None),
+        ]
+        if not include_subconversations:
+            searchable_conditions.append(
+                message_history_table.c.subconversation_id.is_(None)
+            )
+        # A term may match anywhere in the conversation, so each is its own
+        # conversation-level predicate rather than a filter on the rows
+        # aggregated below: the latest-message preview and message count must
+        # stay those of the whole conversation.
+        for term in search_terms:
+            base_conditions.append(
+                message_history_table.c.conversation_id.in_(
+                    select(message_history_table.c.conversation_id).where(
+                        *searchable_conditions,
+                        self._content_matches_search_term(term),
+                    )
+                )
+            )
 
         # Select the requested page of *conversations* before computing anything
         # per-conversation. Ordering by each conversation's latest timestamp is
@@ -3022,6 +3116,14 @@ class MessageHistoryRepository(BaseRepository):
         count_row = await self._db.fetch_one(count_query)
         total_count = count_row["count"] if count_row else 0
 
+        excerpts: dict[str, str] = {}
+        if search_terms and summaries_rows:
+            excerpts = await self._search_match_excerpts(
+                conversation_ids=[row["conversation_id"] for row in summaries_rows],
+                term=max(search_terms, key=len),
+                searchable_conditions=searchable_conditions,
+            )
+
         # Process results
         summaries: list[ConversationSummaryRow] = []
         for row in summaries_rows:
@@ -3032,7 +3134,40 @@ class MessageHistoryRepository(BaseRepository):
                     last_timestamp=row["timestamp"],
                     message_count=row["message_count"],
                     interface_type=row["interface_type"],
+                    match_excerpt=excerpts.get(row["conversation_id"]),
                 )
             )
 
         return summaries, total_count
+
+    async def _search_match_excerpts(
+        self,
+        *,
+        conversation_ids: list[str],
+        term: str,
+        searchable_conditions: list[ColumnElement[bool]],
+    ) -> dict[str, str]:
+        """Snippet from each conversation's most recent message matching ``term``."""
+        latest_match = (
+            select(func.max(message_history_table.c.internal_id).label("internal_id"))
+            .where(
+                *searchable_conditions,
+                message_history_table.c.conversation_id.in_(conversation_ids),
+                self._content_matches_search_term(term),
+            )
+            .group_by(message_history_table.c.conversation_id)
+            .subquery()
+        )
+        rows = await self._db.fetch_all(
+            select(
+                message_history_table.c.conversation_id,
+                message_history_table.c.content,
+            ).join(
+                latest_match,
+                message_history_table.c.internal_id == latest_match.c.internal_id,
+            )
+        )
+        return {
+            row["conversation_id"]: _excerpt_around(row["content"], term)
+            for row in rows
+        }

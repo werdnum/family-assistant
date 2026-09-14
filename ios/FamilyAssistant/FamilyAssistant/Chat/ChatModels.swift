@@ -52,6 +52,8 @@ struct ChatConversationSummary: Codable, Equatable, Identifiable {
     let lastMessage: String
     let lastTimestamp: Date
     let messageCount: Int
+    /// Present only on search results: a snippet of a message that matched.
+    var matchExcerpt: String?
 
     var id: String { conversationID }
 
@@ -60,6 +62,7 @@ struct ChatConversationSummary: Codable, Equatable, Identifiable {
         case lastMessage = "last_message"
         case lastTimestamp = "last_timestamp"
         case messageCount = "message_count"
+        case matchExcerpt = "match_excerpt"
     }
 }
 

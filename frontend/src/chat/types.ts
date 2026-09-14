@@ -3,6 +3,8 @@ export interface Conversation {
   last_message: string;
   last_timestamp: string;
   message_count: number;
+  /** Present only on search results: a snippet of a message that matched. */
+  match_excerpt?: string | null;
 }
 
 export interface ConversationSidebarProps {

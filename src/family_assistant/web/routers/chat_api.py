@@ -481,6 +481,10 @@ class ConversationSummary(BaseModel):
     last_message: str = Field(..., description="Preview of the last message")
     last_timestamp: datetime = Field(..., description="Timestamp of the last message")
     message_count: int = Field(..., description="Total number of messages")
+    match_excerpt: str | None = Field(
+        None,
+        description="When the list was searched, a snippet of a message that matched",
+    )
 
 
 class ConversationListResponse(BaseModel):
@@ -2581,6 +2585,7 @@ async def get_conversations(
     conversation_id: str | None = None,
     date_from: str | None = None,  # Expected as YYYY-MM-DD string
     date_to: str | None = None,  # Expected as YYYY-MM-DD string
+    q: str | None = None,
 ) -> ConversationListResponse:
     """
     Get a list of chat conversations for the web interface.
@@ -2667,6 +2672,7 @@ async def get_conversations(
         date_to=date_to_dt,
         include_subconversations=False,
         owner_user_ids=owner_user_ids,
+        search_query=q,
     )
 
     conversations = [
@@ -2675,6 +2681,7 @@ async def get_conversations(
             last_message=summary["last_message"],
             last_timestamp=summary["last_timestamp"],
             message_count=summary["message_count"],
+            match_excerpt=summary["match_excerpt"],
         )
         for summary in summaries
     ]

@@ -111,6 +111,41 @@ final class ChatAPIClientTests: XCTestCase {
         XCTAssertEqual(conversations.map(\.conversationID), ["web_conv_1", "web_conv_2"])
     }
 
+    func testSearchConversationsPagesThroughEveryMatch() async throws {
+        var offsets: [String] = []
+        ChatMockBackendURLProtocol.respond { request in
+            XCTAssertEqual(request.url?.path, "/api/v1/chat/conversations")
+            let queryItems = Self.queryItems(from: request)
+            XCTAssertEqual(queryItems["q"], "passport renewal")
+            XCTAssertEqual(queryItems["interface_type"], "web")
+            let offset = queryItems["offset"] ?? ""
+            offsets.append(offset)
+            let conversationID = offset == "0" ? "web_conv_passport" : "web_conv_old_passport"
+            return .json(
+                """
+                {
+                  "conversations": [
+                    {
+                      "conversation_id": "\(conversationID)",
+                      "last_message": "Thanks!",
+                      "last_timestamp": "2026-06-08T12:00:00Z",
+                      "message_count": 6,
+                      "match_excerpt": "…book the passport renewal appointment…"
+                    }
+                  ],
+                  "count": 2
+                }
+                """
+            )
+        }
+
+        let conversations = try await makeClient().searchConversations(query: "passport renewal")
+
+        XCTAssertEqual(offsets, ["0", "1"])
+        XCTAssertEqual(conversations.map(\.conversationID), ["web_conv_passport", "web_conv_old_passport"])
+        XCTAssertEqual(conversations.first?.matchExcerpt, "…book the passport renewal appointment…")
+    }
+
     func testGetSharedConversationUsesScopedAuthenticatedEndpoint() async throws {
         ChatMockBackendURLProtocol.respond { request in
             XCTAssertEqual(request.httpMethod, "GET")

@@ -13,11 +13,19 @@ struct ChatAPIClient {
     }()
 
     func listConversations() async throws -> [ChatConversationSummary] {
+        try await listAllConversationPages(query: nil)
+    }
+
+    private func listAllConversationPages(query: String?) async throws -> [ChatConversationSummary] {
         var conversations: [ChatConversationSummary] = []
         var offset = 0
 
         while true {
-            let response = try await listConversationPage(limit: Self.conversationPageSize, offset: offset)
+            let response = try await listConversationPage(
+                limit: Self.conversationPageSize,
+                offset: offset,
+                query: query
+            )
             conversations.append(contentsOf: response.conversations)
 
             if response.conversations.isEmpty || conversations.count >= response.count {
@@ -36,9 +44,19 @@ struct ChatAPIClient {
         try await listConversationPage(limit: Self.conversationPageSize, offset: 0).conversations
     }
 
-    private func listConversationPage(limit: Int, offset: Int) async throws -> ChatConversationListResponse {
+    /// Search the caller's conversations by what was said anywhere in them,
+    /// most recent first, paging through every match.
+    func searchConversations(query: String) async throws -> [ChatConversationSummary] {
+        try await listAllConversationPages(query: query)
+    }
+
+    private func listConversationPage(
+        limit: Int,
+        offset: Int,
+        query: String? = nil
+    ) async throws -> ChatConversationListResponse {
         let (data, response) = try await authorizedGETWithAuthRetry(
-            url: conversationListURL(limit: limit, offset: offset)
+            url: conversationListURL(limit: limit, offset: offset, query: query)
         )
         try validate(response: response, data: data)
         return try JSONDecoder.chatDecoder.decode(ChatConversationListResponse.self, from: data)
@@ -677,13 +695,17 @@ struct ChatAPIClient {
         return UTType(filenameExtension: ext)?.preferredMIMEType ?? "application/octet-stream"
     }
 
-    private func conversationListURL(limit: Int, offset: Int) throws -> URL {
+    private func conversationListURL(limit: Int, offset: Int, query: String?) throws -> URL {
         var components = URLComponents(url: try apiURL("/api/v1/chat/conversations"), resolvingAgainstBaseURL: false)
-        components?.queryItems = [
+        var queryItems = [
             URLQueryItem(name: "interface_type", value: ChatConstants.interfaceType),
             URLQueryItem(name: "limit", value: String(limit)),
             URLQueryItem(name: "offset", value: String(offset)),
         ]
+        if let query {
+            queryItems.append(URLQueryItem(name: "q", value: query))
+        }
+        components?.queryItems = queryItems
         guard let url = components?.url else {
             throw ChatAPIError.invalidServerURL
         }

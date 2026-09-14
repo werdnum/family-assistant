@@ -149,6 +149,50 @@ describe('ConversationSidebar', () => {
     }
   });
 
+  it('searches conversations on the server and shows where each matched', async () => {
+    const user = userEvent.setup();
+    const searchQueries: string[] = [];
+    server.use(
+      http.get('/api/v1/chat/conversations', ({ request }) => {
+        const query = new URL(request.url).searchParams.get('q');
+        if (query === null) {
+          return HttpResponse.json({
+            conversations: [
+              {
+                conversation_id: 'conv-latest',
+                last_message: 'Thanks, bye',
+                last_timestamp: '2025-01-01T10:00:00Z',
+                message_count: 4,
+              },
+            ],
+            count: 1,
+          });
+        }
+        searchQueries.push(query);
+        return HttpResponse.json({
+          conversations: [
+            {
+              conversation_id: 'conv-passport',
+              last_message: 'You are welcome',
+              last_timestamp: '2025-01-01T09:00:00Z',
+              message_count: 6,
+              match_excerpt: 'renew the passport before the trip',
+            },
+          ],
+          count: 1,
+        });
+      })
+    );
+
+    await renderChatApp({ waitForReady: true });
+    await user.type(screen.getByPlaceholderText('Search...'), 'passport');
+
+    expect(await screen.findByText('renew the passport before the trip')).toBeInTheDocument();
+    expect(screen.getByTestId('conversation-item-conv-passport')).toBeInTheDocument();
+    expect(screen.queryByTestId('conversation-item-conv-latest')).not.toBeInTheDocument();
+    expect(searchQueries).toEqual(['passport']);
+  });
+
   it('shows conversation previews', async () => {
     // Mock conversations with preview text
     server.use(
