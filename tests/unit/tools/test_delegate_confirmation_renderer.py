@@ -14,10 +14,7 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from family_assistant.tools.confirmation import (
-    CONFIRMATION_VALUE_MAX_CHARS,
-    MAX_DELEGATION_REQUEST_CHARS,
-    confirmation_payload_block_reason,
-    over_length_delegation_block_reason,
+    confirmation_arguments_block_reason,
     render_delegate_to_service_confirmation,
 )
 
@@ -107,14 +104,10 @@ async def test_delegate_confirmation_omits_resume_note_for_fresh_handoff() -> No
 
 
 @pytest.mark.asyncio
-async def test_delegate_confirmation_shows_request_in_full_above_generic_bound() -> (
-    None
-):
-    # A request longer than the generic 1200-char field bound but within the
-    # delegation budget must still be shown in full so the approver reviews the
-    # complete payload.
-    request = "x" * (CONFIRMATION_VALUE_MAX_CHARS + 500)
-    assert len(request) <= MAX_DELEGATION_REQUEST_CHARS
+async def test_delegate_confirmation_shows_a_long_request_in_full() -> None:
+    # The renderer applies no size rule of its own: the whole request is shown,
+    # and whether an interface can display it is decided at delivery.
+    request = "x" * 20_000
 
     prompt = await render_delegate_to_service_confirmation(
         {"target_service_id": "complex_tasks", "user_request": request},
@@ -126,56 +119,19 @@ async def test_delegate_confirmation_shows_request_in_full_above_generic_bound()
     assert "will be refused" not in prompt
 
 
-@pytest.mark.asyncio
-async def test_delegate_confirmation_refuses_over_limit_request() -> None:
-    over_limit = "y" * (MAX_DELEGATION_REQUEST_CHARS + 1)
-
-    prompt = await render_delegate_to_service_confirmation(
-        {"target_service_id": "engineer", "user_request": over_limit},
-        _no_context(),
-    )
-
-    # No partial body is shown (which could be rubber-stamped); the prompt states
-    # the hand-off will be refused so the approver isn't misled.
-    assert over_limit not in prompt
-    assert "will be refused" in prompt
-    assert str(len(over_limit)) in prompt
-
-
-def test_over_length_block_reason_only_fires_above_the_cap() -> None:
+def test_a_large_delegation_is_not_blocked() -> None:
+    # Refusing on size was the old behaviour and is gone: an over-long request
+    # is approvable wherever the prompt can be rendered (see
+    # docs/design/confirmation-prompt-capacity.md).
     assert (
-        over_length_delegation_block_reason("x" * MAX_DELEGATION_REQUEST_CHARS) is None
-    )
-    reason = over_length_delegation_block_reason(
-        "x" * (MAX_DELEGATION_REQUEST_CHARS + 1)
-    )
-    assert reason is not None
-    assert str(MAX_DELEGATION_REQUEST_CHARS) in reason
-    assert "exceeds" in reason
-
-
-def test_confirmation_payload_block_reason_applies_only_to_scoped_tools() -> None:
-    over_limit = "x" * (MAX_DELEGATION_REQUEST_CHARS + 1)
-
-    # An unrelated tool is never size-capped by this hook.
-    assert (
-        confirmation_payload_block_reason(
-            "add_calendar_event", {"user_request": over_limit}
+        confirmation_arguments_block_reason(
+            "delegate_to_service", {"user_request": "x" * 20_000}
         )
         is None
     )
-
-    # A delegation with an over-limit request is refused.
     assert (
-        confirmation_payload_block_reason(
-            "delegate_to_service", {"user_request": over_limit}
-        )
-        is not None
-    )
-    # A delegation within the cap is allowed through.
-    assert (
-        confirmation_payload_block_reason(
-            "delegate_to_service", {"user_request": "short"}
+        confirmation_arguments_block_reason(
+            "add_calendar_event", {"user_request": "x" * 20_000}
         )
         is None
     )

@@ -718,12 +718,17 @@ async def test_safety_confirmation_completed_result_preserved_with_ack() -> None
 
 
 @pytest.mark.asyncio
-async def test_safety_confirmation_oversized_type_text_refused() -> None:
-    """A safety-gated type call whose text can't be fully shown is refused."""
+async def test_safety_confirmation_prompts_for_a_long_type_text() -> None:
+    """A long safety-gated payload is put to the approver, not refused first.
+
+    Whether the text can be displayed is settled by the interface rendering the
+    prompt; see docs/design/confirmation-prompt-capacity.md.
+    """
     provider = MinimalToolsProvider()
     executor = make_tool_executor(provider)
 
     callback = StubConfirmationCallback(outcome=ConfirmationOutcome(kind="approved"))
+    long_text = "x" * 20_000
 
     tool_call = ToolCallItem(
         id="call_123",
@@ -731,7 +736,7 @@ async def test_safety_confirmation_oversized_type_text_refused() -> None:
         function=ToolCallFunction(
             name="type",
             arguments={
-                "text": "x" * 2000,
+                "text": long_text,
                 "safety_decision": {
                     "decision": "require_confirmation",
                     "explanation": "typing a lot",
@@ -740,7 +745,7 @@ async def test_safety_confirmation_oversized_type_text_refused() -> None:
         ),
     )
 
-    result = await executor.execute(
+    await executor.execute(
         tool_call,
         interface_type="test",
         conversation_id="conv_123",
@@ -751,10 +756,9 @@ async def test_safety_confirmation_oversized_type_text_refused() -> None:
         request_confirmation_callback=callback,
     )
 
-    assert isinstance(result, ToolExecutionResult)
-    assert provider.executed_tool_names == []
-    assert callback.calls == []
-    assert "smaller pieces" in result.llm_message.content
+    assert len(callback.calls) == 1
+    assert callback.calls[0]["tool_args"]["text"] == long_text
+    assert provider.executed_tool_names == ["type"]
 
 
 @pytest.mark.asyncio

@@ -2,9 +2,13 @@
 
 MarkdownV2 escaping expands the prompt (a backslash before each reserved
 character), so a prompt that fits raw can overflow Telegram's single-message
-limit once converted. When that happens the message must fall back to the
-already length-bounded plain text rather than be sent over-limit and fail —
-otherwise the user can never approve the confirmation.
+limit once converted. When that happens the message must fall back to the plain
+text rather than be sent over-limit and fail — otherwise the user can never
+approve the confirmation.
+
+A prompt whose *raw* length is over budget never reaches this selection: it is
+handed off to the web instead of being trimmed to fit (see
+docs/design/confirmation-prompt-capacity.md).
 """
 
 from __future__ import annotations
@@ -13,7 +17,9 @@ from telegram.constants import ParseMode
 
 from family_assistant.telegram.ui import (
     TELEGRAM_CONFIRMATION_MESSAGE_LIMIT,
+    confirmation_prompt_fits_telegram,
     confirmation_text_and_parse_mode,
+    web_handoff_notice,
 )
 
 
@@ -46,8 +52,29 @@ def test_selected_text_never_exceeds_the_limit() -> None:
         "short",
         "a_b*c[d]e",
         "." * 3000,
-        "(arg) " * 900,
-        "x" * (TELEGRAM_CONFIRMATION_MESSAGE_LIMIT * 2),
+        "(arg) " * 600,
     ):
+        assert confirmation_prompt_fits_telegram(prompt), prompt
         text, _ = _select(prompt)
         assert len(text) <= TELEGRAM_CONFIRMATION_MESSAGE_LIMIT, prompt
+
+
+def test_an_over_budget_prompt_does_not_fit() -> None:
+    assert not confirmation_prompt_fits_telegram(
+        "x" * (TELEGRAM_CONFIRMATION_MESSAGE_LIMIT + 1)
+    )
+
+
+def test_web_handoff_notice_previews_without_offering_approval() -> None:
+    prompt = "Do you want to run this tool call?\n" + "x" * 20_000
+
+    notice = web_handoff_notice(prompt)
+
+    # It says where to approve, states the real size, and previews the start so
+    # the user knows what is waiting — but the whole payload is not here, and
+    # the caller attaches no buttons to it.
+    assert "web app" in notice
+    assert str(len(prompt)) in notice
+    assert "Do you want to run this tool call?" in notice
+    assert prompt not in notice
+    assert len(notice) <= TELEGRAM_CONFIRMATION_MESSAGE_LIMIT

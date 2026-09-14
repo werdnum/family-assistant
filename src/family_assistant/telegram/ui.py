@@ -45,11 +45,15 @@ if TYPE_CHECKING:
     from family_assistant.tools.types import ToolCallReviewAuthorization
 
 logger = logging.getLogger(__name__)
+# Telegram's single-message ceiling is 4096; the headroom absorbs MarkdownV2
+# escaping. This is the ONLY place a confirmation prompt length is enforced:
+# how much an approver can read is a property of the interface rendering it.
+# See docs/design/confirmation-prompt-capacity.md.
 TELEGRAM_CONFIRMATION_MESSAGE_LIMIT = 3800
-TELEGRAM_CONFIRMATION_TRUNCATION_NOTICE = (
-    "\n\n[Confirmation details truncated for Telegram. Review the full "
-    "pending confirmation before approving.]"
-)
+
+# How much of an over-budget prompt the hand-off notice previews. It is shown
+# WITHOUT approval buttons, so a partial view can never be approved from here.
+TELEGRAM_CONFIRMATION_PREVIEW_CHARS = 1500
 
 
 def _is_durable_confirmation_request_id(request_id: str) -> bool:
@@ -86,14 +90,27 @@ type TelegramConfirmationSendResult = (
 )
 
 
-def _truncate_confirmation_prompt_for_telegram(prompt_text: str) -> str:
-    """Keep confirmation messages under Telegram's single-message limit."""
-    if len(prompt_text) <= TELEGRAM_CONFIRMATION_MESSAGE_LIMIT:
-        return prompt_text
-    max_prompt_chars = TELEGRAM_CONFIRMATION_MESSAGE_LIMIT - len(
-        TELEGRAM_CONFIRMATION_TRUNCATION_NOTICE
+def confirmation_prompt_fits_telegram(prompt_text: str) -> bool:
+    """Return whether Telegram can show this confirmation prompt in full."""
+    return len(prompt_text) <= TELEGRAM_CONFIRMATION_MESSAGE_LIMIT
+
+
+def web_handoff_notice(prompt_text: str) -> str:
+    """Build the message shown instead of a prompt Telegram cannot fit.
+
+    Carries a preview so the user knows which action is waiting, and no
+    approval control: approving is done in the web app, where the whole
+    prompt is rendered.
+    """
+    preview = prompt_text[:TELEGRAM_CONFIRMATION_PREVIEW_CHARS].rstrip()
+    return (
+        f"⚠️ A tool call is waiting for your approval, but its details are "
+        f"{len(prompt_text)} characters — too long to show in full here.\n\n"
+        "Open the web app's pending confirmations to read the whole request and "
+        "approve or reject it. It stays pending until you do, or until it "
+        "expires.\n\nThe first part of it:\n\n"
+        f"{preview}\n\n[…]"
     )
-    return prompt_text[:max_prompt_chars] + TELEGRAM_CONFIRMATION_TRUNCATION_NOTICE
 
 
 def confirmation_text_and_parse_mode(
@@ -104,15 +121,14 @@ def confirmation_text_and_parse_mode(
     MarkdownV2 escaping can expand the text past Telegram's single-message limit
     even when the raw prompt fit — which would make ``send_message`` fail with a
     length error and leave the user unable to approve. So only use MarkdownV2 when
-    the *converted* text still fits; otherwise fall back to the already
-    length-bounded plain text.
+    the *converted* text still fits; otherwise fall back to the plain text.
+
+    Callers must only pass prompts that already fit
+    (``confirmation_prompt_fits_telegram``); an over-budget prompt is handed off
+    to the web rather than trimmed to size.
     """
-    prompt_text_to_send = _truncate_confirmation_prompt_for_telegram(prompt_text)
-    if prompt_text_to_send != prompt_text:
-        # Already truncated; send as plain text (see _send_confirmation_message).
-        return prompt_text_to_send, None
     text_to_send, parse_mode_str = convert_to_telegram_markdown_within_limit(
-        prompt_text_to_send, TELEGRAM_CONFIRMATION_MESSAGE_LIMIT
+        prompt_text, TELEGRAM_CONFIRMATION_MESSAGE_LIMIT
     )
     return text_to_send, ParseMode.MARKDOWN_V2 if parse_mode_str else None
 
@@ -155,13 +171,73 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
         except UserIdentityResolutionError as exc:
             raise ConfirmationAuthorizationError(str(exc)) from exc
 
+    async def _send_web_handoff_notice(
+        self,
+        *,
+        chat_id: int,
+        prompt_text: str,
+    ) -> TelegramConfirmationSendResult:
+        """Announce a confirmation that must be approved in the web app."""
+        notice = web_handoff_notice(prompt_text)
+        try:
+            message = await self.application.bot.send_message(
+                chat_id=chat_id,
+                text=notice,
+                parse_mode=None,
+                # No approval control: a partial view must never be approvable.
+                reply_markup=None,
+            )
+        except TelegramError as send_err:
+            failure = (
+                f"Failed to send confirmation hand-off notice to chat "
+                f"{chat_id}: {send_err}"
+            )
+            logger.exception(failure)
+            return TelegramConfirmationSendFailure(message=failure)
+        logger.info(
+            "Confirmation prompt (%d chars) exceeds Telegram's budget; sent a "
+            "web hand-off notice to chat %s instead.",
+            len(prompt_text),
+            chat_id,
+        )
+        return SentTelegramConfirmationMessage(
+            message=message,
+            text=notice,
+            parse_mode=None,
+        )
+
     async def _send_confirmation_message(
         self,
         *,
         chat_id: int,
         request_id: str,
         prompt_text: str,
+        approvable_elsewhere: bool,
     ) -> TelegramConfirmationSendResult:
+        """Send the confirmation UI, or hand an over-budget prompt to the web.
+
+        Telegram cannot render a prompt past its single-message budget. Rather
+        than trim one to fit and attach approval buttons to the fragment, an
+        over-budget prompt is announced without buttons and left to the web app,
+        which renders it in full — provided the request is durable enough to be
+        approved there (``approvable_elsewhere``). When it is not, there is no
+        channel that could take the approval and the send fails.
+        """
+        if not confirmation_prompt_fits_telegram(prompt_text):
+            if not approvable_elsewhere:
+                return TelegramConfirmationSendFailure(
+                    message=(
+                        f"The confirmation prompt is {len(prompt_text)} characters, "
+                        "which Telegram cannot display, and this request was not "
+                        "recorded durably so it cannot be approved in the web app "
+                        "either. Retry from the web interface, or with a smaller "
+                        "payload."
+                    )
+                )
+            return await self._send_web_handoff_notice(
+                chat_id=chat_id, prompt_text=prompt_text
+            )
+
         keyboard = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton(
@@ -173,7 +249,6 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
             ]
         ])
 
-        prompt_text_to_send = _truncate_confirmation_prompt_for_telegram(prompt_text)
         text_to_send, parse_mode = confirmation_text_and_parse_mode(prompt_text)
 
         try:
@@ -199,13 +274,13 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                 try:
                     message = await self.application.bot.send_message(
                         chat_id=chat_id,
-                        text=prompt_text_to_send,
+                        text=prompt_text,
                         parse_mode=None,
                         reply_markup=keyboard,
                     )
                     return SentTelegramConfirmationMessage(
                         message=message,
-                        text=prompt_text_to_send,
+                        text=prompt_text,
                         parse_mode=None,
                     )
                 except TelegramError as fallback_err:
@@ -254,6 +329,9 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
             chat_id=chat_id_int,
             request_id=request_id,
             prompt_text=prompt_text,
+            # The durable record already exists — that is what makes this an
+            # "existing" request — so the web app can always take the approval.
+            approvable_elsewhere=True,
         )
         if isinstance(sent_message, TelegramConfirmationSendFailure):
             return ConfirmationOutcome(
@@ -418,6 +496,10 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                 chat_id=chat_id_int,
                 request_id=confirm_uuid,
                 prompt_text=prompt_text,
+                # A durable request is listed per user rather than per
+                # interface, so the web app can approve it even when Telegram
+                # cannot render it. Without one, this send is the only channel.
+                approvable_elsewhere=durable_confirmation,
             )
             if isinstance(sent_confirmation, TelegramConfirmationSendFailure):
                 await reject_unsent_confirmation()
@@ -513,11 +595,11 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                 if durable_confirmation and self.confirmation_service is not None:
                     await self.confirmation_service.mark_expired(now=datetime.now(UTC))
                 try:
-                    await self.application.bot.edit_message_reply_markup(
-                        chat_id=chat_id_int,
-                        message_id=sent_message.message_id,
-                        reply_markup=None,
-                    )
+                    # Editing the text drops the keyboard on its own. A separate
+                    # markup edit would be rejected as "not modified" on a
+                    # message that never had one — a web hand-off notice — and
+                    # that error would skip the text edit below, leaving the
+                    # notice claiming an expired request is still pending.
                     await self.application.bot.edit_message_text(
                         chat_id=chat_id_int,
                         message_id=sent_message.message_id,
@@ -527,6 +609,7 @@ class TelegramConfirmationUIManager(ConfirmationUIManager):
                             "\n\n(Confirmation timed out)",
                         ),
                         parse_mode=parse_mode,
+                        reply_markup=None,
                     )
                 except TelegramError as edit_err:
                     logger.warning(

@@ -2076,10 +2076,15 @@ async def test_named_sink_reviewer_allow_cannot_bypass_later_confirm_floor(
     assert "Automatic review reason:" in prompt
 
 
-async def test_named_sink_confirmation_refuses_payload_that_cannot_be_shown(
+async def test_named_sink_confirmation_puts_a_large_payload_to_the_interface(
     db_engine: AsyncEngine,
 ) -> None:
-    """A decision-only approval must never hide a truncated egress payload."""
+    """A large egress payload is shown whole, not refused before anyone is asked.
+
+    Whether it can be displayed is the confirming interface's call, and it is
+    rendered here in full either way, so a decision-only approval never hides a
+    truncated payload. See docs/design/confirmation-prompt-capacity.md.
+    """
 
     async def execute(**_kwargs: object) -> ToolResult:
         return ToolResult(text="unused")
@@ -2096,28 +2101,31 @@ async def test_named_sink_confirmation_refuses_payload_that_cannot_be_shown(
     context = _context(
         db_engine,
         _unknown_external_state(),
-        turn_id="oversized-named-sink",
+        turn_id="large-named-sink",
     )
     context.confirmation_ui_managers = cast(
         "dict[str, ConfirmationUIManager]",
         {"test": manager},
     )
+    body = "x" * 20_000
 
-    with pytest.raises(ToolPolicyDeniedError, match="does not fit"):
-        await provider.authorize_taint_sink(
-            name="keychute_http_request",
-            sink_class=SinkClass.SANDBOX_NETWORK,
-            arguments={
-                "url": "https://example.test/upload",
-                "method": "POST",
-                "body": "x" * 4000,
-            },
-            context=context,
-            call_id="oversized-keychute-request",
-            taint_policy=taint_policy,
-        )
+    await provider.authorize_taint_sink(
+        name="keychute_http_request",
+        sink_class=SinkClass.SANDBOX_NETWORK,
+        arguments={
+            "url": "https://example.test/upload",
+            "method": "POST",
+            "body": body,
+        },
+        context=context,
+        call_id="large-keychute-request",
+        taint_policy=taint_policy,
+    )
 
-    assert manager.calls == 0
+    assert manager.calls == 1
+    prompt = manager.requests[0]["prompt_text"]
+    assert isinstance(prompt, str)
+    assert body in prompt
 
 
 async def test_named_sink_reviewer_confirmation_is_carried_but_deny_floor_wins(

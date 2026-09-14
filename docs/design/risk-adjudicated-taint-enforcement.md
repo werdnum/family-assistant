@@ -701,9 +701,9 @@ them (two children each rejecting once would both return N+1 and merge to N+1, l
 fan-out duck the escalation threshold indefinitely). A delegated-run escalation test — including a
 parallel fan-out case — joins the acceptance criteria alongside the temporal-evidence one.
 
-Hard `deny` floors (unattended `sandbox_network`, malformed-payload refusals from
-`confirmation_payload_block_reason`) keep raising: those exist precisely so no continuation pressure
-erodes them.
+Hard `deny` floors (unattended `sandbox_network`, malformed-argument refusals from
+`confirmation_arguments_block_reason`) keep raising: those exist precisely so no continuation
+pressure erodes them.
 
 ### Escalate-only injection probe (contingent tier)
 

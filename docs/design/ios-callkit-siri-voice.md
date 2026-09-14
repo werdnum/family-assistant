@@ -167,8 +167,8 @@ stops arbitrating and the app decides in code that can be tested.
 much weaker claim about who is in the car, and the stricter reading is the safe default.
 
 **A refused call fails visibly.** By the time the route exists, CallKit is already showing the call,
-so there is no quiet way to refuse it: it ends as a failed call. The only way to refuse quietly is to
-decide before the call exists, which means deciding on a route that does not exist yet. A locked
+so there is no quiet way to refuse it: it ends as a failed call. The only way to refuse quietly is
+to decide before the call exists, which means deciding on a route that does not exist yet. A locked
 phone away from the car therefore shows a call that fails within a couple of seconds — the correct
 outcome, and a more honest explanation of it than silence. Assistant calls are kept out of Recents,
 so neither kind lingers in the call history.

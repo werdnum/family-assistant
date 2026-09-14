@@ -75,7 +75,7 @@ from family_assistant.tools.attachment_utils import (
     is_attachment_id,
     process_attachment_arguments,
 )
-from family_assistant.tools.confirmation import confirmation_payload_block_reason
+from family_assistant.tools.confirmation import confirmation_arguments_block_reason
 from family_assistant.tools.metadata import (
     ToolDescriptor,
     ToolRegistration,
@@ -117,7 +117,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _TOOL_CALL_REVIEW_AUDIT_REASON = "Automatic reviewer decision recorded; reviewer rationale omitted from durable audit."
-_NAMED_SINK_CONFIRMATION_MAX_CHARS = 3800
 _NO_TAINT_GATE_MODE = "none"
 """Recorded mode for a gate no runtime taint policy participated in."""
 
@@ -1168,11 +1167,11 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
             ToolPolicyDecision.CONFIRM,
             ToolPolicyDecision.REVIEW,
         }:
-            # Refuse a confirm-gated call whose confirmation prompt could not show
-            # the approver the full payload, instead of rendering a misleading
-            # prompt. Scoped to confirm-gated calls, so unconfirmed calls are
-            # never constrained by it.
-            block_reason = confirmation_payload_block_reason(name, arguments)
+            # Refuse a confirm-gated call whose arguments no prompt could
+            # describe faithfully, instead of rendering a misleading prompt.
+            # Scoped to confirm-gated calls, so unconfirmed calls are never
+            # constrained by it.
+            block_reason = confirmation_arguments_block_reason(name, arguments)
             if block_reason is not None:
                 logger.info("Refusing confirm-gated tool '%s': %s", name, block_reason)
                 return ToolResult(text=block_reason, attachments=None)
@@ -1843,13 +1842,10 @@ class TaintTrackingToolsProvider(ToolsProvider):
             f"Complete request payload:\n{rendered_arguments}\n\n"
             f"Automatic review reason:\n{quoted_reason}"
         )
-        if len(prompt) > _NAMED_SINK_CONFIRMATION_MAX_CHARS:
-            raise ToolPolicyDeniedError(
-                name,
-                "live confirmation refused because the complete request payload "
-                f"does not fit in the {_NAMED_SINK_CONFIRMATION_MAX_CHARS}-character "
-                "confirmation message",
-            )
+        # No size rule here: the prompt is rendered whole and the selected
+        # manager decides whether its interface can display it, routing to one
+        # that can where it cannot. See
+        # docs/design/confirmation-prompt-capacity.md.
         try:
             outcome = await manager.request_confirmation(
                 conversation_id=context.conversation_id,
@@ -3264,7 +3260,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 f"{reason}; confirmation required but unavailable",
             )
 
-        block_reason = confirmation_payload_block_reason(name, arguments)
+        block_reason = confirmation_arguments_block_reason(name, arguments)
         if block_reason is not None:
             logger.info(
                 "Refusing taint confirm-gated tool '%s': %s", name, block_reason

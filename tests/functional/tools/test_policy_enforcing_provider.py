@@ -13,7 +13,6 @@ from family_assistant.tools import (
     LocalToolsProvider,
     PolicyEnforcingToolsProvider,
 )
-from family_assistant.tools.confirmation import MAX_DELEGATION_REQUEST_CHARS
 from family_assistant.tools.metadata import ToolTag
 from family_assistant.tools.policy import (
     PolicyEngine,
@@ -22,7 +21,11 @@ from family_assistant.tools.policy import (
     ToolPolicyConfig,
     ToolPolicyDecision,
 )
-from family_assistant.tools.types import ToolExecutionContext, ToolResult
+from family_assistant.tools.types import (
+    ConfirmationOutcome,
+    ToolExecutionContext,
+    ToolResult,
+)
 
 if TYPE_CHECKING:
     from family_assistant.processing import ProcessingService
@@ -78,30 +81,30 @@ def _exec_context(
 
 
 @pytest.mark.asyncio
-async def test_confirm_gated_delegation_refuses_over_length_request() -> None:
+async def test_confirm_gated_delegation_prompts_for_a_long_request() -> None:
+    # A large payload is put to the approver rather than refused before anyone
+    # is asked (docs/design/confirmation-prompt-capacity.md).
     policy_provider = PolicyEnforcingToolsProvider(
         wrapped_provider=LocalToolsProvider(registrations=LOCAL_TOOL_REGISTRATIONS),
         policy_engine=_delegate_policy(ToolPolicyDecision.CONFIRM),
     )
-    confirmation_callback = AsyncMock()
+    confirmation_callback = AsyncMock(
+        return_value=ConfirmationOutcome(kind="rejected", result="no")
+    )
     context = _exec_context(
         confirmation_callback=confirmation_callback, processing_service=None
     )
 
-    result = await policy_provider.execute_tool(
+    await policy_provider.execute_tool(
         "delegate_to_service",
         {
             "target_service_id": "engineer",
-            "user_request": "x" * (MAX_DELEGATION_REQUEST_CHARS + 1),
+            "user_request": "x" * 20_000,
         },
         context,
     )
 
-    assert isinstance(result, ToolResult)
-    assert result.text is not None
-    assert str(MAX_DELEGATION_REQUEST_CHARS) in result.text
-    # The over-long request is refused before a confirmation prompt is ever shown.
-    confirmation_callback.assert_not_awaited()
+    confirmation_callback.assert_awaited()
 
 
 @pytest.mark.asyncio
@@ -110,8 +113,8 @@ async def test_unconfirmed_delegation_is_not_size_capped() -> None:
         wrapped_provider=LocalToolsProvider(registrations=LOCAL_TOOL_REGISTRATIONS),
         policy_engine=_delegate_policy(ToolPolicyDecision.ALLOW),
     )
-    # No registry, so the underlying tool reports that — proving the size guard
-    # did NOT short-circuit an ordinary (unconfirmed) hand-off.
+    # No registry, so the underlying tool reports that — proving nothing
+    # short-circuited an ordinary (unconfirmed) hand-off.
     source_service = SimpleNamespace(processing_services_registry=None)
     context = _exec_context(
         confirmation_callback=None, processing_service=source_service
@@ -121,13 +124,12 @@ async def test_unconfirmed_delegation_is_not_size_capped() -> None:
         "delegate_to_service",
         {
             "target_service_id": "complex_tasks",
-            "user_request": "x" * (MAX_DELEGATION_REQUEST_CHARS + 1),
+            "user_request": "x" * 20_000,
         },
         context,
     )
 
     text = result.get_text() if isinstance(result, ToolResult) else str(result)
-    assert str(MAX_DELEGATION_REQUEST_CHARS) not in text
     assert "registry is not available" in text
 
 

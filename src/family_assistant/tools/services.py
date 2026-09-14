@@ -29,10 +29,6 @@ from family_assistant.services.tool_call_review import (
 )
 from family_assistant.storage.delegation_runs import TERMINAL_DELEGATION_STATUSES
 from family_assistant.storage.tasks import TaskPriority
-from family_assistant.tools.confirmation import (
-    MAX_DELEGATION_REQUEST_CHARS,
-    over_length_delegation_block_reason,
-)
 from family_assistant.tools.types import (
     ConfirmationOutcome,
     ToolArguments,
@@ -807,19 +803,9 @@ async def _confirm_delegation_if_required(
     resume_delegation_id: str | None,
     model_tier: str | None,
 ) -> ToolResult | None:
-    """Apply delegation-specific confirmation limits and durable authorization."""
+    """Apply the delegation's durable authorization and confirmation gate."""
     if not confirm_delegation:
         return None
-
-    over_length_reason = over_length_delegation_block_reason(user_request)
-    if over_length_reason is not None:
-        logger.warning(
-            "Refusing confirm-gated delegation to '%s': request is %d chars (limit %d).",
-            target_service_id,
-            len(user_request),
-            MAX_DELEGATION_REQUEST_CHARS,
-        )
-        return ToolResult(text=over_length_reason, attachments=None)
 
     confirmation_tool_args = _confirmation_tool_arguments(
         target_service_id=target_service_id,

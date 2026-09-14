@@ -29,7 +29,7 @@ from family_assistant.tools import (
 )
 from family_assistant.tools.attachment_utils import is_attachment_id
 from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
-from family_assistant.tools.confirmation import confirmation_payload_block_reason
+from family_assistant.tools.confirmation import confirmation_arguments_block_reason
 from family_assistant.tools.infrastructure import (
     ToolDescriptorProvider,
     confirmation_outcome_to_tool_result,
@@ -1052,9 +1052,9 @@ class ToolExecutor:
                         taint_metadata=initial_taint_metadata,
                     )
 
-                # Refuse when the confirmation prompt could not show the
-                # approver the full payload (same rule as policy confirms).
-                block_reason = confirmation_payload_block_reason(
+                # Refuse arguments no confirmation prompt could describe
+                # faithfully (same rule as policy confirms).
+                block_reason = confirmation_arguments_block_reason(
                     function_name, arguments
                 )
                 if block_reason is not None:
