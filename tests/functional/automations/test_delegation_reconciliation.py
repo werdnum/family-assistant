@@ -109,12 +109,8 @@ class FakeObservableService(FakePollableService):
     provider does.
     """
 
-    def __init__(
-        self,
-        observations: list[RemoteObservation | BaseException],
-        **kwargs: object,
-    ) -> None:
-        super().__init__(**kwargs)  # type: ignore[arg-type]
+    def __init__(self, observations: list[RemoteObservation | BaseException]) -> None:
+        super().__init__()
         self._observations = list(observations)
         self.observe_calls: list[str] = []
 

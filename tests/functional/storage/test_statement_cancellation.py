@@ -13,16 +13,15 @@ from typing import TYPE_CHECKING
 
 import pytest
 import sqlalchemy as sa
+from alembic.config import Config as AlembicConfig
 from alembic.script import ScriptDirectory
 from sqlalchemy.exc import DBAPIError
 
 from alembic import command as alembic_command
 from family_assistant.llm.messages import UserMessage
+from family_assistant.paths import PROJECT_ROOT
 from family_assistant.request_side_effects import begin_tracking, state_changed
-from family_assistant.storage import (
-    _get_alembic_config,  # noqa: PLC2701
-    init_db,
-)
+from family_assistant.storage import init_db
 from family_assistant.storage.base import (
     POSTGRES_STATEMENT_TIMEOUT_MS,
     create_engine_with_sqlite_optimizations,
@@ -188,7 +187,11 @@ async def test_migrations_still_run_under_a_ceiling_that_aborts_queries(
     lands. ``env.py`` drives its own event loop, so Alembic runs on a thread.
     """
     url = db_engine.url.render_as_string(hide_password=False)
-    alembic_config = _get_alembic_config(db_engine)
+    # The project's own alembic.ini, exactly as the CLI loads it. The
+    # application's config builder is not needed here: it exists to pin
+    # ``sqlalchemy.url`` to a specific engine, and standalone ``env.py``
+    # overrides that from the environment anyway (set below).
+    alembic_config = AlembicConfig(str(PROJECT_ROOT / "alembic.ini"))
     head_revision = ScriptDirectory.from_config(alembic_config).get_current_head()
     assert head_revision is not None
 
