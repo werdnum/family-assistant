@@ -3283,7 +3283,7 @@ class TaskWorker:
             )
             return
 
-        await runs.record_remote_observation(
+        accepted = await runs.record_remote_observation(
             delegation_id,
             observation=observation.to_metadata(),
             observed_at=observation.observed_at,
@@ -3291,7 +3291,15 @@ class TaskWorker:
             cancel_confirmed=observation.disposition is RemoteDisposition.CANCELLED,
         )
 
-        if await self._recover_late_completion(exec_context, run, observation):
+        # Only act on a reading the stale-write guard accepted. A rejected one
+        # means another reader already holds newer information, and recovering
+        # from it would deliver a result that a later reading has superseded --
+        # which is the guard being bypassed at the one point where it matters
+        # most. Nothing is lost by declining: recovery is not a one-shot
+        # opportunity, and the run stays eligible for the next read.
+        if accepted is not None and await self._recover_late_completion(
+            exec_context, run, observation
+        ):
             return
 
         await self._reschedule_or_settle_reconcile(exec_context, run, attempts=attempts)

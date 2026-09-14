@@ -363,6 +363,60 @@ async def test_a_recovered_result_carries_the_runs_own_taint(
 
 
 @pytest.mark.asyncio
+async def test_a_stale_completion_does_not_recover_a_late_result(
+    db_engine: AsyncEngine,
+) -> None:
+    """A reading the guard rejects must not drive the one action that matters.
+
+    Two reconciliation reads can overlap, and the one that snapshotted the
+    older state can return last. Rejecting its write but still recovering from
+    it would deliver a result that a newer reading has already superseded --
+    the stale guard bypassed at exactly the point it exists to protect. The
+    run stays eligible, so a genuine completion is still recovered by the next
+    read; nothing is lost by declining this one.
+    """
+    now = SystemClock().now()
+    target = FakeObservableService([
+        _observation(
+            RemoteDisposition.COMPLETED,
+            output_text="superseded result",
+            observed_at=now - timedelta(minutes=5),
+        )
+    ])
+    worker, processing_service, chat_interface = _worker_for(db_engine, target)
+    await _failed_run(db_engine, "delegation_stale_recovery")
+
+    # A newer reading is already on the run when the stale one arrives.
+    db_context = Database(engine=db_engine)
+    newer = _observation(
+        RemoteDisposition.PENDING, status="in_progress", observed_at=now
+    )
+    await db_context.delegation_runs.record_remote_observation(
+        "delegation_stale_recovery",
+        observation=newer.to_metadata(),
+        observed_at=newer.observed_at,
+        remote_status=newer.status,
+        cancel_confirmed=False,
+    )
+
+    await worker.handle_delegation_reconcile(
+        _tool_context(db_context, processing_service, chat_interface),
+        _reconcile_payload("delegation_stale_recovery"),
+    )
+
+    run = await db_context.delegation_runs.get_by_delegation_id(
+        "delegation_stale_recovery"
+    )
+    assert run is not None
+    assert run["status"] == "failed"
+    assert run["late_recovered_at"] is None
+    assert run["remote_status"] == "in_progress"
+    chat_interface.send_message.assert_not_awaited()
+    # Declining is not settling: the run is read again.
+    assert run["reconciled_at"] is None
+
+
+@pytest.mark.asyncio
 async def test_a_run_still_in_progress_is_read_again_and_not_resurrected(
     db_engine: AsyncEngine,
 ) -> None:
