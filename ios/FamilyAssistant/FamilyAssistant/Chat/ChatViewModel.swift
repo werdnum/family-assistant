@@ -700,6 +700,20 @@ final class ChatViewModel {
         return succeeded
     }
 
+    /// Server-side conversation search. Leaves `conversations` untouched — the
+    /// caller shows the results only while its query is current — and reports a
+    /// failure unless it was a superseded (cancelled) search.
+    func searchConversations(matching query: String) async throws -> [ChatConversationSummary] {
+        do {
+            return try await apiClient.searchConversations(query: query)
+        } catch {
+            if !Task.isCancelled {
+                errorReporter.report(error, component: "Chat.conversationSearch")
+            }
+            throw error
+        }
+    }
+
     /// Refresh only the most recent page of conversation summaries.
     ///
     /// Used after a turn or live event: the changed conversation surfaces on the

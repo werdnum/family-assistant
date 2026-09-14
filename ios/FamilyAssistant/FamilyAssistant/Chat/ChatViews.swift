@@ -215,15 +215,32 @@ private struct ConversationShareToolbar: View {
 private struct ConversationListView: View {
     var viewModel: ChatViewModel
     @State private var searchText = ""
+    /// Server results for the query they were fetched for; results for an older
+    /// query are never shown against newer text.
+    @State private var searchResults: (query: String, conversations: [ChatConversationSummary])?
+    @State private var searchFailed = false
 
-    private var filteredConversations: [ChatConversationSummary] {
-        guard !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+    private static let searchDebounce: Duration = .milliseconds(300)
+
+    private var searchQuery: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isAwaitingSearchResults: Bool {
+        !searchQuery.isEmpty && searchResults?.query != searchQuery && !searchFailed
+    }
+
+    /// The whole list, or the server's matches for the current query (empty
+    /// until they arrive).
+    private var displayedConversations: [ChatConversationSummary] {
+        let query = searchQuery
+        guard !query.isEmpty else {
             return viewModel.conversations
         }
-        return viewModel.conversations.filter {
-            $0.conversationID.localizedCaseInsensitiveContains(searchText)
-                || $0.lastMessage.localizedCaseInsensitiveContains(searchText)
+        guard let searchResults, searchResults.query == query else {
+            return []
         }
+        return searchResults.conversations
     }
 
     var body: some View {
@@ -237,10 +254,20 @@ private struct ConversationListView: View {
                     message: viewModel.conversationsRefreshFailureMessage
                 )
             }
-            if filteredConversations.isEmpty && !viewModel.isLoadingConversations {
-                ContentUnavailableView("No Chats", systemImage: "message", description: Text("Start a new chat."))
+            if searchFailed {
+                Label("Search unavailable — showing matching previews only", systemImage: "exclamationmark.triangle")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("conversation-search-failed")
+            }
+            if displayedConversations.isEmpty && !viewModel.isLoadingConversations && !isAwaitingSearchResults {
+                if searchQuery.isEmpty {
+                    ContentUnavailableView("No Chats", systemImage: "message", description: Text("Start a new chat."))
+                } else {
+                    ContentUnavailableView.search(text: searchQuery)
+                }
             } else {
-                ForEach(filteredConversations) { conversation in
+                ForEach(displayedConversations) { conversation in
                     ConversationRow(conversation: conversation)
                         .tag(conversation.conversationID)
                         .accessibilityIdentifier("conversation-row-\(conversation.conversationID)")
@@ -248,12 +275,36 @@ private struct ConversationListView: View {
             }
         }
         .searchable(text: $searchText, prompt: "Search chats")
+        .task(id: searchQuery) {
+            await runSearch(for: searchQuery)
+        }
         .refreshable {
             await viewModel.refreshConversations()
         }
         .overlay {
             if viewModel.isLoadingConversations && viewModel.conversations.isEmpty {
                 ProgressView("Loading chats...")
+            } else if isAwaitingSearchResults && displayedConversations.isEmpty {
+                ProgressView()
+            }
+        }
+    }
+
+    /// Runs as the `.task(id:)` for the current query, so typing another
+    /// character cancels both the debounce and any request still in flight.
+    private func runSearch(for query: String) async {
+        searchFailed = false
+        guard !query.isEmpty else {
+            searchResults = nil
+            return
+        }
+        do {
+            try await Task.sleep(for: Self.searchDebounce)
+            let conversations = try await viewModel.searchConversations(matching: query)
+            searchResults = (query, conversations)
+        } catch {
+            if !Task.isCancelled {
+                searchFailed = true
             }
         }
     }
@@ -306,6 +357,12 @@ private struct ConversationRow: View {
                 Text(conversation.lastTimestamp, style: .date)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+            if let matchExcerpt = conversation.matchExcerpt, !matchExcerpt.isEmpty {
+                Text(matchExcerpt)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
             }
             HStack(spacing: 8) {
                 Label("\(conversation.messageCount)", systemImage: "text.bubble")
