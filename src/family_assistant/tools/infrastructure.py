@@ -75,7 +75,7 @@ from family_assistant.tools.attachment_utils import (
     is_attachment_id,
     process_attachment_arguments,
 )
-from family_assistant.tools.confirmation import confirmation_payload_block_reason
+from family_assistant.tools.confirmation import confirmation_arguments_block_reason
 from family_assistant.tools.metadata import (
     ToolDescriptor,
     ToolRegistration,
@@ -1168,11 +1168,11 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
             ToolPolicyDecision.CONFIRM,
             ToolPolicyDecision.REVIEW,
         }:
-            # Refuse a confirm-gated call whose confirmation prompt could not show
-            # the approver the full payload, instead of rendering a misleading
-            # prompt. Scoped to confirm-gated calls, so unconfirmed calls are
-            # never constrained by it.
-            block_reason = confirmation_payload_block_reason(name, arguments)
+            # Refuse a confirm-gated call whose arguments no prompt could
+            # describe faithfully, instead of rendering a misleading prompt.
+            # Scoped to confirm-gated calls, so unconfirmed calls are never
+            # constrained by it.
+            block_reason = confirmation_arguments_block_reason(name, arguments)
             if block_reason is not None:
                 logger.info("Refusing confirm-gated tool '%s': %s", name, block_reason)
                 return ToolResult(text=block_reason, attachments=None)
@@ -3264,7 +3264,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 f"{reason}; confirmation required but unavailable",
             )
 
-        block_reason = confirmation_payload_block_reason(name, arguments)
+        block_reason = confirmation_arguments_block_reason(name, arguments)
         if block_reason is not None:
             logger.info(
                 "Refusing taint confirm-gated tool '%s': %s", name, block_reason

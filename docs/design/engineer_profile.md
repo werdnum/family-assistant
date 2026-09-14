@@ -69,15 +69,12 @@ The review requirement preserves the engineer's read-only posture in practice: a
 verifies the handoff alignment before the engineer hands work to a *different* profile (the engineer
 diagnoses and reports; a human or another profile implements fixes), while still letting
 investigation and hand-off flow without friction for benign tasks. The `delegate_to_service` payload
-shows the full target, the **complete** request text, and any attachment ids. So the reviewer /
-approver can never evaluate a silently-cut request, `delegate_to_service` refuses any request longer
-than `MAX_DELEGATION_REQUEST_CHARS` (3000 — well above the generic 1200-char field bound, and sized
-to keep the whole prompt within Telegram's single-message confirmation budget): the tool returns an
-error instead of delegating, and any confirmation prompt for such a request states plainly that the
-hand-off will be refused rather than displaying a partial body. Bulk content therefore belongs in an
-attachment (referenced via `attachment_ids`), not the request string. Read-only delegation status
-tools (`get_delegation_status`, `list_delegations`) are allowed without review so the engineer can
-track an async hand-off.
+shows the full target, the **complete** request text, and any attachment ids — at any length, never
+truncated, so the reviewer / approver can never evaluate a silently-cut request. Whether a given
+interface can display a large payload is that interface's own call at delivery time, not a size cap
+on the tool; see [confirmation-prompt-capacity.md](confirmation-prompt-capacity.md). Read-only
+delegation status tools (`get_delegation_status`, `list_delegations`) are allowed without review so
+the engineer can track an async hand-off.
 
 **Self-delegation.** `engineer → engineer` is *not* confirm-gated: the runtime injects a synthetic
 self-delegation `ALLOW` rule (in `_build_profile_policy_engine`) that, by design, lets every profile
@@ -151,9 +148,7 @@ Engineer tools with external side effects are gated to protect the profile's rea
 
 The worker actions carry custom confirmation renderers so when human review is needed, the approver
 reviews the actual payload, not a bare tool name: `spawn_worker` shows the agent, the **complete**
-task description (refusing, like delegation, any description over
-`MAX_WORKER_TASK_DESCRIPTION_CHARS` = 3000 or a `context_paths` rendering over the generic 1200-char
-bound, rather than truncating what the approver sees), the context paths, and the timeout;
+task description (never truncated, whatever its length), the context paths, and the timeout;
 `cancel_worker_task` looks the task up and shows its status and description alongside the id.
 
 ### Self-Awareness of Restrictions

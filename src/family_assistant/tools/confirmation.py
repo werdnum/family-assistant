@@ -27,41 +27,6 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
-CONFIRMATION_VALUE_MAX_CHARS = 1200
-
-# A delegation hand-off is approved against its confirmation prompt, so the
-# approver must be able to read the ENTIRE delegated request — not a silently cut
-# slice. We therefore show the full request (well above the generic 1200-char
-# field bound) and refuse, rather than truncate, anything longer. The cap keeps
-# the whole prompt within Telegram's single-message confirmation budget
-# (TELEGRAM_CONFIRMATION_MESSAGE_LIMIT = 3800 in telegram/ui.py), reserving
-# headroom for the source prefix, field labels, the target id, attachment ids,
-# and code fences. Bulk content belongs in an attachment, not the request string.
-MAX_DELEGATION_REQUEST_CHARS = 3000
-
-# Approving spawn_worker launches a code-running agent against the shared
-# workspace, so the approver must see the ENTIRE task description — the same
-# full-review contract as delegation, with the same Telegram-budget cap. There
-# is no side channel for bulk content (the worker sandbox mounts only its own
-# task directory; backends do not mount context_paths), so a longer brief must
-# be shortened or split into smaller worker tasks.
-MAX_WORKER_TASK_DESCRIPTION_CHARS = 3000
-
-# The per-field caps alone cannot guarantee the WHOLE spawn_worker prompt fits
-# Telegram's single-message confirmation budget (3800 chars in telegram/ui.py):
-# a near-cap description plus context paths would render over it and be
-# truncated, letting an approver approve fields they never saw. The payload
-# guard therefore also refuses on the total rendered prompt, with headroom
-# under 3800 for the interface's own additions (e.g. the source prefix).
-MAX_WORKER_CONFIRMATION_PROMPT_CHARS = 3400
-
-# A tool with no dedicated renderer is confirmed against its raw arguments, so
-# the same full-review contract applies: the approver sees every argument or the
-# call is refused. The cap is the spawn_worker one, for the same reason — it
-# keeps the whole prompt inside Telegram's single-message confirmation budget
-# (TELEGRAM_CONFIRMATION_MESSAGE_LIMIT = 3800 in telegram/ui.py) with headroom
-# for the interface's own additions.
-MAX_GENERIC_CONFIRMATION_PROMPT_CHARS = 3400
 
 
 def _markdown_code_block(text: str) -> str:
@@ -72,20 +37,19 @@ def _markdown_code_block(text: str) -> str:
     return f"{fence}\n{text}\n{fence}"
 
 
-def _confirmation_value(value: object, *, max_chars: int = 1200) -> str:
-    """Return a bounded value for confirmation prompts."""
-    text = "" if value is None else str(value)
-    if len(text) > max_chars:
-        text = text[:max_chars] + "... [truncated]"
-    return text
+def _confirmation_value(value: object) -> str:
+    """Render a value for a confirmation prompt.
+
+    Never truncates: an approver must see the whole payload they are approving,
+    and whether it can be displayed is the delivering interface's call, not a
+    renderer's (see docs/design/confirmation-prompt-capacity.md).
+    """
+    return "" if value is None else str(value)
 
 
 def _confirmation_field(label: str, value: object) -> str:
     """Format a single confirmation field."""
-    return (
-        f"- {label}:\n"
-        f"{_markdown_code_block(_confirmation_value(value, max_chars=CONFIRMATION_VALUE_MAX_CHARS))}"
-    )
+    return f"- {label}:\n{_markdown_code_block(_confirmation_value(value))}"
 
 
 def _extract_calendar_config_from_provider(
@@ -605,22 +569,9 @@ async def render_delegate_to_service_confirmation(
     )
 
     _ = context
-    if len(user_request) > MAX_DELEGATION_REQUEST_CHARS:
-        # A confirm-gated delegation over this length is refused before it runs
-        # (see confirmation_payload_block_reason), so never show a partial body
-        # the approver might rubber-stamp — say plainly that it will be refused.
-        request_field = (
-            f"- Request: ⚠️ This request is {len(user_request)} characters, longer than the "
-            f"{MAX_DELEGATION_REQUEST_CHARS}-character limit that keeps it fully reviewable here. "
-            "The delegation will be refused — ask the delegating profile to shorten the request or "
-            "move bulk content into an attachment."
-        )
-    else:
-        request_field = f"- Request:\n{_markdown_code_block(user_request)}"
-
     fields = [
         _confirmation_field("Target profile", target_service_id or "target service"),
-        request_field,
+        f"- Request:\n{_markdown_code_block(user_request)}",
     ]
     if attachment_ids:
         fields.append(_confirmation_field("Attachments", ", ".join(attachment_ids)))
@@ -649,32 +600,12 @@ async def render_delegate_to_service_confirmation(
 
 
 def _spawn_worker_confirmation_prompt(arguments: Mapping[str, object]) -> str:
-    """Build the full spawn_worker confirmation prompt.
-
-    Shared by the async renderer and the payload guard so the total-length
-    refusal in ``confirmation_payload_block_reason`` measures exactly the
-    prompt the approver would see.
-    """
+    """Build the full spawn_worker confirmation prompt."""
     task_description = str(arguments.get("task_description", "")).strip()
-
-    if len(task_description) > MAX_WORKER_TASK_DESCRIPTION_CHARS:
-        # An over-length spawn is refused before it runs (see
-        # confirmation_payload_block_reason), so never show a partial body the
-        # approver might rubber-stamp — say plainly that it will be refused.
-        description_field = (
-            f"- Task description: ⚠️ This description is {len(task_description)} characters, "
-            f"longer than the {MAX_WORKER_TASK_DESCRIPTION_CHARS}-character limit that keeps it "
-            "fully reviewable here. The worker will not be launched — shorten the task "
-            "description or split the work into smaller worker tasks."
-        )
-    else:
-        description_field = (
-            f"- Task description:\n{_markdown_code_block(task_description)}"
-        )
 
     fields = [
         _confirmation_field("Agent", arguments.get("agent", "claude")),
-        description_field,
+        f"- Task description:\n{_markdown_code_block(task_description)}",
     ]
     raw_context_paths = arguments.get("context_paths")
     if isinstance(raw_context_paths, (list, tuple)):
@@ -688,7 +619,7 @@ def _spawn_worker_confirmation_prompt(arguments: Mapping[str, object]) -> str:
         # Script callers bypass JSON-schema validation, so a non-list value
         # (e.g. a mapping whose keys the tool would later iterate as paths)
         # must not be silently omitted from the prompt: the guard refuses the
-        # call (see confirmation_payload_block_reason), and the prompt says so.
+        # call (see confirmation_arguments_block_reason), and the prompt says so.
         fields.append(
             f"- Context paths: ⚠️ Malformed value of type "
             f"{type(raw_context_paths).__name__} — context_paths must be an array of "
@@ -750,25 +681,6 @@ async def render_cancel_worker_task_confirmation(
     return "Do you want to *cancel* this worker task?\n" + "\n".join(fields)
 
 
-def over_length_delegation_block_reason(user_request: str) -> str | None:
-    """Return an error if a delegation request is too long to confirm, else None.
-
-    A confirm-gated hand-off is approved against its confirmation prompt, so a
-    request that cannot be shown there in full must be refused rather than
-    delegated on the strength of a partial preview. This applies only to
-    delegations that are actually confirm-gated; unconfirmed hand-offs are not
-    size-capped (bulk content there is legitimate and never shown for approval).
-    """
-    if len(user_request) <= MAX_DELEGATION_REQUEST_CHARS:
-        return None
-    return (
-        f"Error: delegation request is {len(user_request)} characters, which exceeds the "
-        f"{MAX_DELEGATION_REQUEST_CHARS}-character limit that keeps it fully reviewable in a "
-        "confirmation prompt. Shorten the request, or move bulk content into an attachment and "
-        "reference it via attachment_ids."
-    )
-
-
 def _generic_arguments_json(arguments: Mapping[str, object]) -> str:
     """Serialize arbitrary tool arguments for a confirmation prompt."""
     return json.dumps(dict(arguments), indent=2, sort_keys=True, default=str)
@@ -785,60 +697,34 @@ def render_generic_tool_confirmation(
     from the server, so no static renderer can exist for them. Naming the tool
     alone would let an approver authorize arguments they never saw -- a shell
     command, a request body -- so the arguments themselves are the prompt.
-
-    An over-length payload is announced rather than truncated, and
-    ``confirmation_payload_block_reason`` refuses the call, so there is no
-    partial body to rubber-stamp.
     """
     arguments_json = _generic_arguments_json(arguments)
-    if len(arguments_json) > MAX_GENERIC_CONFIRMATION_PROMPT_CHARS:
-        arguments_field = (
-            f"- Arguments: ⚠️ These arguments render to {len(arguments_json)} characters, "
-            f"longer than the {MAX_GENERIC_CONFIRMATION_PROMPT_CHARS}-character limit that "
-            "keeps them fully reviewable here. The call will be refused — ask for a "
-            "smaller payload."
-        )
-    else:
-        arguments_field = f"- Arguments:\n{_markdown_code_block(arguments_json)}"
     return (
         "Do you want to run this tool call? It runs with the arguments below, "
         "exactly as shown:\n"
         f"{_confirmation_field('Tool', tool_name)}\n"
-        f"{arguments_field}"
+        f"- Arguments:\n{_markdown_code_block(arguments_json)}"
     )
 
 
-def confirmation_payload_block_reason(
+def confirmation_arguments_block_reason(
     tool_name: str,
     arguments: Mapping[str, object],
 ) -> str | None:
-    """Return why a confirm-gated tool call must be refused before prompting, else None.
+    """Return why a confirm-gated call cannot be rendered faithfully, else None.
 
-    Lets the policy and safety layers refuse a call whose confirmation prompt
-    could not show the approver the full payload they would be approving,
-    instead of rendering a truncated or misleading prompt. Only invoked once a
-    call is known to be confirm-gated, so it never constrains unconfirmed calls.
-    Delegations, worker spawns, authored Google writes, and every executable
-    computer-use argument must remain fully reviewable.
+    This is not a size rule. How much of a prompt an approver can read is a
+    property of the interface that renders it, and only that interface may
+    refuse on those grounds -- see
+    docs/design/confirmation-prompt-capacity.md. What is left here are
+    arguments no interface could show correctly at any length, because the
+    prompt they produce would not describe what the tool would do.
     """
-    if tool_name == "delegate_to_service":
-        return over_length_delegation_block_reason(
-            str(arguments.get("user_request", ""))
-        )
     if tool_name == "spawn_worker":
-        task_description = str(arguments.get("task_description", ""))
-        if len(task_description) > MAX_WORKER_TASK_DESCRIPTION_CHARS:
-            return (
-                f"Error: the worker task_description is {len(task_description)} characters, "
-                f"which exceeds the {MAX_WORKER_TASK_DESCRIPTION_CHARS}-character limit that "
-                "keeps it fully reviewable in a confirmation prompt. Shorten it or split "
-                "the work into smaller worker tasks."
-            )
-        # The context paths scope what the worker can read, so they must be
-        # fully reviewable too. Script callers bypass JSON-schema validation,
-        # so a present-but-non-list value is refused outright: the tool would
-        # later iterate it (a mapping's keys would become paths) while the
-        # prompt showed the approver no paths at all.
+        # The context paths scope what the worker can read. Script callers
+        # bypass JSON-schema validation, so a present-but-non-list value is
+        # refused outright: the tool would later iterate it (a mapping's keys
+        # would become paths) while the prompt showed the approver no paths.
         raw_context_paths = arguments.get("context_paths")
         if raw_context_paths is not None and not isinstance(
             raw_context_paths, (list, tuple)
@@ -848,71 +734,6 @@ def confirmation_payload_block_reason(
                 f"got {type(raw_context_paths).__name__}. Pass the paths as a JSON "
                 'array (e.g. ["shared/data/input.csv"]).'
             )
-        if isinstance(raw_context_paths, (list, tuple)):
-            rendered_paths = ", ".join(str(path) for path in raw_context_paths)
-            if len(rendered_paths) > CONFIRMATION_VALUE_MAX_CHARS:
-                return (
-                    f"Error: the worker context_paths render to {len(rendered_paths)} "
-                    f"characters, which exceeds the {CONFIRMATION_VALUE_MAX_CHARS}-character "
-                    "confirmation limit. Pass fewer paths (e.g. a shared parent directory)."
-                )
-        # The per-field caps can individually pass while the combined prompt
-        # still exceeds Telegram's single-message budget (and gets truncated),
-        # so also refuse on the total rendered prompt.
-        rendered_prompt = _spawn_worker_confirmation_prompt(arguments)
-        if len(rendered_prompt) > MAX_WORKER_CONFIRMATION_PROMPT_CHARS:
-            return (
-                f"Error: the spawn_worker confirmation prompt renders to "
-                f"{len(rendered_prompt)} characters, which exceeds the "
-                f"{MAX_WORKER_CONFIRMATION_PROMPT_CHARS}-character limit that keeps the "
-                "whole prompt reviewable in a single confirmation message. Shorten the "
-                "task description or pass fewer context paths."
-            )
-    if tool_name not in TOOL_CONFIRMATION_RENDERERS:
-        # Every MCP tool lands here: no static renderer can exist for a name the
-        # server supplies, so the generic renderer shows the raw arguments and
-        # this refuses whatever it could not show in full.
-        arguments_json = _generic_arguments_json(arguments)
-        if len(arguments_json) > MAX_GENERIC_CONFIRMATION_PROMPT_CHARS:
-            return (
-                f"Error: the '{tool_name}' arguments render to {len(arguments_json)} "
-                f"characters, which exceeds the {MAX_GENERIC_CONFIRMATION_PROMPT_CHARS}-"
-                "character limit that keeps them fully reviewable in a confirmation "
-                "prompt. Call the tool with a smaller payload."
-            )
-    if tool_name == "gmail_create_draft":
-        for field in ("to", "cc", "bcc", "subject", "body", "attachment_ids"):
-            rendered = str(arguments.get(field, ""))
-            if len(rendered) > CONFIRMATION_VALUE_MAX_CHARS:
-                return (
-                    f"Error: the Gmail draft '{field}' field is {len(rendered)} "
-                    f"characters, which exceeds the {CONFIRMATION_VALUE_MAX_CHARS}-character "
-                    "confirmation limit. Shorten it or move bulk content into an attachment."
-                )
-    if tool_name == "drive_write_file" and not arguments.get("attachment_id"):
-        for field in ("name", "content"):
-            rendered = str(arguments.get(field, ""))
-            if len(rendered) > CONFIRMATION_VALUE_MAX_CHARS:
-                return (
-                    f"Error: the Drive write '{field}' field is {len(rendered)} characters, "
-                    f"which exceeds the {CONFIRMATION_VALUE_MAX_CHARS}-character confirmation "
-                    "limit. Shorten it or upload the content as an attachment."
-                )
-    if tool_name in COMPUTER_USE_FUNCTION_NAMES:
-        # Every executable argument must be fully reviewable: a truncated
-        # navigate URL or typed text would let the user approve payload they
-        # never saw. safety_decision is display-only metadata, not executed.
-        for key, value in sorted(arguments.items()):
-            if key == "safety_decision":
-                continue
-            rendered = str(value)
-            if len(rendered) > CONFIRMATION_VALUE_MAX_CHARS:
-                return (
-                    f"Error: the '{key}' argument is {len(rendered)} characters, which "
-                    f"exceeds the {CONFIRMATION_VALUE_MAX_CHARS}-character limit that keeps "
-                    "it fully reviewable in a confirmation prompt. Shorten it (for typed "
-                    "text, type the content in smaller pieces)."
-                )
     return None
 
 

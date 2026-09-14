@@ -34,6 +34,15 @@ requested in Telegram can also be approved in the web interface.
 
 The assistant waits for your answer before proceeding.
 
+### Requests too large for Telegram
+
+Telegram messages hold about 4000 characters. When what you'd be approving is longer than that — a
+long delegated brief, a big document being written, a lengthy tool payload — Telegram sends a notice
+with the beginning of the request and no buttons, because approving something you can only partly
+see isn't approving it. Open the pending confirmations in the web interface to read the whole thing
+and approve or reject it there; the request stays open until you do. Nothing is refused for being
+large.
+
 ## Approvals when you're not there
 
 The assistant sometimes acts without you in the chat — a scheduled reminder firing, an automation

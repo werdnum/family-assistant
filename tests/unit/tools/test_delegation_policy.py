@@ -41,7 +41,6 @@ from family_assistant.security.taint import (
 )
 from family_assistant.storage.database import Database
 from family_assistant.tools import LOCAL_TOOL_DESCRIPTORS
-from family_assistant.tools.confirmation import MAX_DELEGATION_REQUEST_CHARS
 from family_assistant.tools.policy import ToolPolicyDecision
 from family_assistant.tools.services import (
     _confirmation_tool_arguments,  # noqa: PLC2701 - the drift these guard is between two private helpers
@@ -49,6 +48,7 @@ from family_assistant.tools.services import (
     delegate_to_service_tool,
 )
 from family_assistant.tools.types import (
+    ConfirmationOutcome,
     ToolArguments,
     ToolConfirmationAuthorization,
     ToolExecutionContext,
@@ -195,9 +195,10 @@ async def test_delegate_to_service_blocks_disallowed_source_profile() -> None:
 
 
 @pytest.mark.asyncio
-async def test_delegate_to_service_refuses_over_length_request_when_confirming() -> (
-    None
-):
+async def test_a_long_confirm_gated_request_reaches_the_confirmation() -> None:
+    # The delegation tool no longer applies a size rule of its own: a long
+    # request is put to the approver, whose interface decides whether it can
+    # render it (docs/design/confirmation-prompt-capacity.md).
     target_handler = AsyncMock()
     target_service = _Namespace(
         service_config=_Namespace(
@@ -214,6 +215,9 @@ async def test_delegate_to_service_refuses_over_length_request_when_confirming()
         processing_services_registry={"target_profile": target_service},
     )
 
+    confirmation_callback = AsyncMock(
+        return_value=ConfirmationOutcome(kind="rejected", result="not now")
+    )
     context = ToolExecutionContext(
         interface_type="test",
         conversation_id="conversation",
@@ -229,24 +233,21 @@ async def test_delegate_to_service_refuses_over_length_request_when_confirming()
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,
+        request_confirmation_callback=confirmation_callback,
     )
 
-    over_limit = "x" * (MAX_DELEGATION_REQUEST_CHARS + 1)
-    # confirm_delegation=True means this hand-off will be approved against a
-    # confirmation prompt, so the over-long request must be refused.
-    result = await delegate_to_service_tool(
+    long_request = "x" * 20_000
+    await delegate_to_service_tool(
         exec_context=context,
         target_service_id="target_profile",
-        user_request=over_limit,
+        user_request=long_request,
         confirm_delegation=True,
     )
 
-    assert isinstance(result, ToolResult)
-    assert result.text is not None
-    assert str(MAX_DELEGATION_REQUEST_CHARS) in result.text
-    assert "exceeds" in result.text
-    # The over-long request must never reach the target profile.
-    target_handler.assert_not_awaited()
+    confirmation_callback.assert_awaited_once()
+    await_args = confirmation_callback.await_args
+    assert await_args is not None
+    assert await_args.kwargs["tool_args"]["user_request"] == long_request
 
 
 @pytest.mark.asyncio

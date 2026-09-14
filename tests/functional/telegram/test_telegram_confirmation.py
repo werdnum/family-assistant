@@ -310,6 +310,89 @@ async def test_durable_telegram_confirmation_timeout_stops_after_approval() -> N
 
 
 @pytest.mark.asyncio
+async def test_over_budget_durable_prompt_is_approvable_in_the_web() -> None:
+    """Telegram announces it without buttons; the web approval still resolves it.
+
+    The old behaviour refused the call outright, which is what made a payload
+    reviewable on one interface unusable everywhere. See
+    docs/design/confirmation-prompt-capacity.md.
+    """
+    confirmation_service = RecordingConfirmationService()
+    confirmation_waiters = ConfirmationResultWaiterRegistry()
+    bot = RecordingTelegramBot()
+    manager = TelegramConfirmationUIManager(
+        application=cast("Any", SimpleNamespace(bot=bot)),
+        confirmation_timeout=5.0,
+        confirmation_service=cast("Any", confirmation_service),
+        confirmation_result_waiters=confirmation_waiters,
+    )
+
+    confirmation_task = asyncio.create_task(
+        manager.request_confirmation(
+            conversation_id=str(USER_CHAT_ID),
+            interface_type="telegram",
+            turn_id="turn-id",
+            prompt_text="Do you want to run this tool call?\n" + ("x" * 10000),
+            tool_name="record_tool",
+            tool_args={"value": "x" * 10000},
+            timeout=5.0,
+            target_user_id=str(USER_ID),
+            tool_call_id="call-id",
+            source_message_internal_id=1,
+        )
+    )
+
+    await wait_for_condition(
+        lambda: bool(bot.sent_messages),
+        timeout=2.0,
+        description="Telegram hand-off notice to be sent",
+    )
+    sent = bot.sent_messages[0]
+    assert sent["reply_markup"] is None
+    assert "web app" in cast("str", sent["text"])
+
+    # The durable record exists and the wait is still running, so a web
+    # approval resolves the very call Telegram could not render.
+    assert confirmation_service.last_created_request is not None
+    assert not confirmation_task.done()
+    confirmation_service.status = "approved"
+    assert confirmation_waiters.resolve_completed(
+        confirmation_service.created_request_id,
+        "executed:web-approval",
+        taint_metadata=TurnTaintState.empty().to_metadata(),
+    )
+
+    outcome = await asyncio.wait_for(confirmation_task, timeout=5.0)
+    assert outcome.kind == "completed"
+    assert outcome.result == "executed:web-approval"
+
+
+@pytest.mark.asyncio
+async def test_over_budget_prompt_fails_when_nothing_else_can_approve_it() -> None:
+    """With no durable record there is no other channel, so the call is refused."""
+    bot = RecordingTelegramBot()
+    manager = TelegramConfirmationUIManager(
+        application=cast("Any", SimpleNamespace(bot=bot)),
+        confirmation_timeout=5.0,
+    )
+
+    outcome = await manager.request_confirmation(
+        conversation_id=str(USER_CHAT_ID),
+        interface_type="telegram",
+        turn_id="turn-id",
+        prompt_text="Do you want to run this tool call?\n" + ("x" * 10000),
+        tool_name="record_tool",
+        tool_args={"value": "x" * 10000},
+        timeout=5.0,
+    )
+
+    assert outcome.kind == "failed"
+    assert isinstance(outcome.result, str)
+    assert "web app" in outcome.result
+    assert bot.sent_messages == []
+
+
+@pytest.mark.asyncio
 async def test_durable_telegram_confirmation_persists_taint_policy_context() -> None:
     confirmation_service = RecordingConfirmationService()
     confirmation_waiters = ConfirmationResultWaiterRegistry()
@@ -450,24 +533,33 @@ async def test_existing_durable_confirmation_sends_inline_keyboard() -> None:
 
 
 @pytest.mark.asyncio
-async def test_existing_durable_confirmation_truncates_long_telegram_prompt() -> None:
-    """Long durable confirmation prompts should still produce a sendable message."""
+async def test_existing_durable_confirmation_hands_a_long_prompt_to_the_web() -> None:
+    """Telegram cannot show it, so it points at the web instead of trimming it.
+
+    The durable request is listed per user rather than per interface, so it is
+    already waiting in the web app's pending confirmations. Sending a fragment
+    with Confirm/Cancel attached would let the user approve payload they never
+    saw; sending nothing would strand a request they were never told about.
+    """
     bot = RecordingTelegramBot()
     manager = TelegramConfirmationUIManager(
         application=cast("Any", SimpleNamespace(bot=bot)),
     )
+    prompt = "From your email — approve to run:\n\n" + ("x" * 10000)
 
     outcome = await manager.send_existing_confirmation_request(
         conversation_id=str(USER_CHAT_ID),
         request_id="confirm_long",
-        prompt_text="From your email — approve to run:\n\n" + ("x" * 10000),
+        prompt_text=prompt,
     )
 
     assert outcome.kind == "completed"
-    sent_text = bot.sent_messages[0]["text"]
+    sent = bot.sent_messages[0]
+    sent_text = sent["text"]
     assert isinstance(sent_text, str)
     assert len(sent_text) < 4096
-    assert "Confirmation details truncated" in sent_text
+    assert "web app" in sent_text
+    assert sent["reply_markup"] is None
 
 
 @pytest.mark.asyncio
