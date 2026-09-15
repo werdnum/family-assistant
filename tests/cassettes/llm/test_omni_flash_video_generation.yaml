@@ -1,6 +1,6 @@
 interactions:
   - request:
-      body: '{"model":"gemini-omni-flash-preview","input":"A short clip of a paper airplane gliding across a bright office","response_format":{"type":"video","delivery":"uri","aspect_ratio":"16:9","duration":"3s"}}'
+      body: '{"model":"gemini-omni-1.1-flash","input":"A short clip of a paper airplane gliding across a bright office","response_format":{"type":"video","delivery":"uri","aspect_ratio":"16:9","duration":"3s"}}'
       headers:
         accept:
           - application/json
@@ -11,7 +11,7 @@ interactions:
         connection:
           - keep-alive
         content-length:
-          - '201'
+          - '197'
         content-type:
           - application/json
         host:
