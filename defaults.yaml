@@ -249,7 +249,7 @@ model_routing:
 # See: https://ai.google.dev/gemini-api/docs/live
 gemini_live_config:
   # Model to use for Gemini Live voice sessions
-  model: "gemini-3.1-flash-live-preview"
+  model: "gemini-3.8-live"
   # How a voice session reaches the profile's tools
   tools:
     # A Live session's tool declarations are fixed when the session starts, so

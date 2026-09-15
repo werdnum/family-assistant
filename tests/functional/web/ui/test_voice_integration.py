@@ -133,9 +133,9 @@ async def _setup_mock_token_endpoint(page: Page, base_url: str) -> None:
                     }
                 ],
                 "system_instruction": "You are a helpful voice assistant.",
-                "model": "gemini-3.1-flash-live-preview",
+                "model": "gemini-3.8-live",
                 "config": {
-                    "model": "gemini-3.1-flash-live-preview",
+                    "model": "gemini-3.8-live",
                     "voice": {"name": "Puck"},
                     "session": {"max_duration_minutes": 15},
                     "transcription": {"input_enabled": True, "output_enabled": True},

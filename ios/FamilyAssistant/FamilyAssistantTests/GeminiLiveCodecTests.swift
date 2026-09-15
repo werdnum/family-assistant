@@ -13,7 +13,7 @@ final class GeminiLiveCodecTests: XCTestCase {
     }
 
     private func makeToken(
-        model: String = "gemini-3.1-flash-live-preview",
+        model: String = "gemini-3.8-live",
         voiceName: String = "Puck",
         inputTranscription: Bool = true,
         outputTranscription: Bool = true,
@@ -44,7 +44,7 @@ final class GeminiLiveCodecTests: XCTestCase {
         let root = try jsonObject(message)
         let setup = try XCTUnwrap(root["setup"] as? [String: Any])
 
-        XCTAssertEqual(setup["model"] as? String, "models/gemini-3.1-flash-live-preview")
+        XCTAssertEqual(setup["model"] as? String, "models/gemini-3.8-live")
 
         let generationConfig = try XCTUnwrap(setup["generationConfig"] as? [String: Any])
         XCTAssertEqual(generationConfig["responseModalities"] as? [String], ["AUDIO"])

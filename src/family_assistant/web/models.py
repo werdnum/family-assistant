@@ -100,7 +100,7 @@ class GeminiLiveToolsConfig(BaseModel):
 class GeminiLiveConfig(BaseModel):
     """Full Gemini Live Voice API configuration."""
 
-    model: str = "gemini-3.1-flash-live-preview"
+    model: str = "gemini-3.8-live"
     tools: GeminiLiveToolsConfig = GeminiLiveToolsConfig()
     voice: GeminiLiveVoiceConfig = GeminiLiveVoiceConfig()
     session: GeminiLiveSessionConfig = GeminiLiveSessionConfig()
