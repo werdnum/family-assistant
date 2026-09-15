@@ -945,7 +945,7 @@ class GeminiLiveConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    model: str = "gemini-3.1-flash-live-preview"
+    model: str = "gemini-3.8-live"
     tools: GeminiLiveToolsConfig = Field(default_factory=GeminiLiveToolsConfig)
     voice: GeminiVoiceConfig = Field(default_factory=GeminiVoiceConfig)
     session: GeminiSessionConfig = Field(default_factory=GeminiSessionConfig)

@@ -31,13 +31,13 @@ final class EphemeralTokenTests: XCTestCase {
     {
       "token": "auth_tokens/xyz",
       "expires_at": "2026-06-20T12:30:00Z",
-      "model": "gemini-3.1-flash-live-preview",
+      "model": "gemini-3.8-live",
       "system_instruction": "You are a helpful voice assistant.",
       "tools": [
         {"functionDeclarations": [{"name": "get_weather", "description": "Weather"}]}
       ],
       "config": {
-        "model": "gemini-3.1-flash-live-preview",
+        "model": "gemini-3.8-live",
         "voice": {"name": "Charon"},
         "session": {"max_duration_minutes": 10},
         "transcription": {"input_enabled": true, "output_enabled": false}
@@ -52,7 +52,7 @@ final class EphemeralTokenTests: XCTestCase {
             from: Data(Self.sampleResponse.utf8)
         )
         XCTAssertEqual(token.token, "auth_tokens/xyz")
-        XCTAssertEqual(token.model, "gemini-3.1-flash-live-preview")
+        XCTAssertEqual(token.model, "gemini-3.8-live")
         XCTAssertEqual(token.systemInstruction, "You are a helpful voice assistant.")
         XCTAssertEqual(token.tools.count, 1)
         XCTAssertEqual(token.config.voiceName, "Charon")
