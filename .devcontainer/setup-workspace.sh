@@ -72,9 +72,13 @@ if mountpoint -q /home/claude 2>/dev/null || [ -n "$(findmnt -n -o SOURCE --targ
     HOME_IS_MOUNTED=true
 fi
 
-# Install npm tools individually if missing (e.g., when home is mounted from an older image).
-# We check each binary in /home/claude/.npm-global/bin directly: relying on `which claude`
-# would falsely succeed because the wrapper symlink in /usr/local/bin always exists.
+# Everything the Dockerfile installs under /home/claude is hidden when the home
+# directory is a mounted volume from an older image, so reinstall whatever is
+# missing. Keep this list in step with the Dockerfile: a tool the image gains
+# but this block does not is simply absent on every existing container, which
+# is how deno and agy went missing.
+# We check each binary directly rather than with `which`: the wrapper symlinks
+# in /usr/local/bin always exist and would falsely report success.
 if [ "$HOME_IS_MOUNTED" = "true" ]; then
     NPM_BIN_DIR=/home/claude/.npm-global/bin
     mkdir -p "$NPM_BIN_DIR"
@@ -100,27 +104,43 @@ if [ "$HOME_IS_MOUNTED" = "true" ]; then
         installed_any=true
     fi
 
-    install_npm_tool gemini "@google/gemini-cli@nightly"
-    install_npm_tool codex "@openai/codex"
-    install_npm_tool playwright playwright
+    # Version pins live in .devcontainer/Dockerfile; keep them in step.
+    install_npm_tool codex "@openai/codex@0.154.0"
+
+    if [ ! -x /home/claude/.deno/bin/deno ]; then
+        echo "Installing deno..."
+        curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/home/claude/.deno sh
+        installed_any=true
+    fi
+
+    if [ ! -x /home/claude/.local/bin/agy ]; then
+        echo "Installing the Antigravity CLI..."
+        curl -fsSL https://antigravity.google/cli/install.sh | bash
+        installed_any=true
+    fi
+
+    # Playwright browsers live in the mounted cache, so a home volume from an
+    # older image can be missing the revision /venv's playwright expects. The
+    # image installs them with that same interpreter.
+    if [ -n "$PLAYWRIGHT_BROWSERS_PATH" ] && [ -x /venv/bin/python ]; then
+        /venv/bin/python -m playwright install chromium
+    fi
+
+    # Idempotent: uv tool install is a no-op if the tool is already present.
+    export PATH="/home/claude/.local/bin:$PATH"
+    uv tool install --with llm-gemini --with llm-openrouter --with llm-fragments-github llm
+    uv tool install poethepoet
 
     if [ "$installed_any" = "true" ]; then
-        # Install Playwright browsers
-        if [ -n "$PLAYWRIGHT_BROWSERS_PATH" ]; then
-            npx playwright install chromium
-        fi
-
-        # Install LLM tools using uv (idempotent: uv tool install is a no-op if already present)
-        export PATH="/home/claude/.local/bin:$PATH"
-        uv tool install --with llm-gemini --with llm-openrouter --with llm-fragments-github llm
 
         # Ensure proper ownership of installed tools (avoid recursive chown on large dirs)
         # Only chown the bin directory and key files, not the entire node_modules
         chown claude:claude /home/claude/.npm-global
         chown -R claude:claude /home/claude/.npm-global/bin
         [ -d "/home/claude/.local" ] && chown -R claude:claude /home/claude/.local
+        [ -d "/home/claude/.deno" ] && chown -R claude:claude /home/claude/.deno
 
-        echo "npm tools installation complete"
+        echo "Tool installation complete"
     fi
 fi
 

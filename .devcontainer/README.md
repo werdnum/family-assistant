@@ -28,7 +28,7 @@ separation of concerns:
 │ - Language runtimes (Python, uv, Deno)               │
 │ - Build tools (ripgrep, fd, ast-grep, yq)            │
 │ - Playwright + browsers (for CI tests)               │
-│ - NO dev tools (claude-code, gemini-cli, etc.)       │
+│ - NO dev tools (claude-code, codex, etc.)            │
 └──────────────────────────────────────────────────────┘
                        ▲
                        │
@@ -40,9 +40,8 @@ separation of concerns:
 │                   │    │ - Pre-built frontend       │
 │ - Dev tools:      │    │ - Python test deps         │
 │   * claude-code   │    │ - NO dev tools (smaller!)  │
-│   * gemini-cli    │    │                            │
-│   * codex         │    │ Used by: CI workflows      │
-│   * agy           │    │                            │
+│   * codex         │    │                            │
+│   * agy           │    │ Used by: CI workflows      │
 │   * llm           │    │                            │
 │   * claudecodeui  │    │                            │
 │                   │    │                            │
