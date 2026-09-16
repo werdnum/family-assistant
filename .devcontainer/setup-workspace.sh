@@ -122,14 +122,27 @@ if [ "$HOME_IS_MOUNTED" = "true" ]; then
     # Playwright browsers live in the mounted cache, so a home volume from an
     # older image can be missing the revision /venv's playwright expects. The
     # image installs them with that same interpreter.
-    if [ -n "$PLAYWRIGHT_BROWSERS_PATH" ] && [ -x /venv/bin/python ]; then
+    if [ -n "$PLAYWRIGHT_BROWSERS_PATH" ] && [ -x /venv/bin/python ] &&
+        ! compgen -G "$PLAYWRIGHT_BROWSERS_PATH/chromium-*" >/dev/null; then
+        echo "Installing Playwright browsers..."
         /venv/bin/python -m playwright install chromium
+        installed_any=true
     fi
 
-    # Idempotent: uv tool install is a no-op if the tool is already present.
+    # These are checked rather than reinstalled blindly: uv tool install is
+    # idempotent but still resolves over the network, and this runs on every
+    # container start.
     export PATH="/home/claude/.local/bin:$PATH"
-    uv tool install --with llm-gemini --with llm-openrouter --with llm-fragments-github llm
-    uv tool install poethepoet
+    if [ ! -x /home/claude/.local/bin/llm ]; then
+        echo "Installing llm..."
+        uv tool install --with llm-gemini --with llm-openrouter --with llm-fragments-github llm
+        installed_any=true
+    fi
+    if [ ! -x /home/claude/.local/bin/poe ]; then
+        echo "Installing poethepoet..."
+        uv tool install poethepoet
+        installed_any=true
+    fi
 
     if [ "$installed_any" = "true" ]; then
 
