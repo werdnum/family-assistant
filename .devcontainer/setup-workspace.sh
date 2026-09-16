@@ -1,6 +1,11 @@
 #!/bin/bash
 set -e
 
+# Shared helpers; installed next to this script in the image, and alongside it
+# in the repo checkout.
+# shellcheck disable=SC1091
+source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/wrapper-common.sh"
+
 # Ensure uv is in PATH and include user paths and PostgreSQL binaries
 export PATH="/workspace/main/.venv/bin:/home/claude/.npm-global/bin:/home/claude/.deno/bin:/home/claude/.local/bin:/root/.local/bin:/usr/lib/postgresql/17/bin:$PATH"
 
@@ -86,7 +91,15 @@ if [ "$HOME_IS_MOUNTED" = "true" ]; then
         fi
     }
 
-    install_npm_tool claude "@anthropic-ai/claude-code"
+    # Claude Code is exempt from the npm-prefix check above: it self-updates
+    # into ~/.local/share/claude and removes its own npm package, so an absent
+    # npm-global binary means "migrated", not "missing".
+    if ! wrapper_common_claude_bin >/dev/null; then
+        echo "Installing @anthropic-ai/claude-code..."
+        npm install -g "@anthropic-ai/claude-code"
+        installed_any=true
+    fi
+
     install_npm_tool gemini "@google/gemini-cli@nightly"
     install_npm_tool codex "@openai/codex"
     install_npm_tool playwright playwright
@@ -389,7 +402,10 @@ UVX_PATH=$(which uvx 2>/dev/null || echo "uvx")
 NPX_PATH=$(which npx 2>/dev/null || echo "npx")
 
 # Configure MCP servers with full paths (bypass wrapper to avoid git pull)
-CLAUDE_BIN="/home/claude/.npm-global/bin/claude"
+if ! CLAUDE_BIN=$(wrapper_common_claude_bin); then
+    echo "ERROR: no Claude Code binary found; cannot configure MCP servers" >&2
+    exit 1
+fi
 # Remove existing servers if any exist
 # Filter out status messages like "Checking MCP server health..." by only matching lines
 # that look like server entries (start with alphanumeric, no spaces before colon)
