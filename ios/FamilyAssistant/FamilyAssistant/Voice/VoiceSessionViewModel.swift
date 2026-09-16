@@ -56,12 +56,7 @@ final class VoiceSessionViewModel {
 
     private(set) var phase: Phase = .idle
     private(set) var transcript = VoiceTranscript()
-    private(set) var isAssistantSpeaking = false {
-        didSet {
-            guard isAssistantSpeaking != oldValue else { return }
-            updateMicDucking()
-        }
-    }
+    private(set) var isAssistantSpeaking = false
     private(set) var inputLevel = 0.0
     private(set) var lastInputLevelAt: Date?
     var isMuted = false {
@@ -101,8 +96,6 @@ final class VoiceSessionViewModel {
     /// can be told apart as a real barge-in or the model hearing itself.
     private var assistantSpeechStartedAt: ContinuousClock.Instant?
     private var interruptionCount = 0
-    private var isMicDucked = false
-    private var duckingReleaseTask: Task<Void, Never>?
     private var activityDetectionProfile = "default"
 
     var pendingToolCallIDs: Set<String> {
@@ -353,34 +346,13 @@ final class VoiceSessionViewModel {
             "interruption_index": String(interruptionCount),
             "vad_profile": activityDetectionProfile,
             "assistant_was_speaking": String(isAssistantSpeaking),
-            "mic_ducked": String(isMicDucked),
+            "mic_ducked": String(audio.isDucked),
         ]
         if isAssistantSpeaking, let assistantSpeechStartedAt {
             let elapsed = ContinuousClock.now - assistantSpeechStartedAt
             fields["assistant_speech_ms"] = String(Int(elapsed / .milliseconds(1)))
         }
         diagnostics.record("interrupted", fields: fields.merging(audio.routeSnapshot.telemetryFields) { current, _ in current })
-    }
-
-    /// Duck capture as soon as the assistant speaks; release it only after
-    /// ``VoiceMicDucking/releaseDelay``, and not at all if it speaks again first.
-    private func updateMicDucking() {
-        duckingReleaseTask?.cancel()
-        duckingReleaseTask = nil
-        if isAssistantSpeaking {
-            setMicDucked(true)
-        } else if isMicDucked {
-            duckingReleaseTask = Task { [weak self] in
-                try? await Task.sleep(for: VoiceMicDucking.releaseDelay)
-                guard !Task.isCancelled else { return }
-                self?.setMicDucked(false)
-            }
-        }
-    }
-
-    private func setMicDucked(_ ducked: Bool) {
-        isMicDucked = ducked
-        audio.setDucked(ducked)
     }
 
     private func handleToolCalls(_ calls: [GeminiFunctionCall], session: VoiceLiveSession) {
@@ -511,8 +483,6 @@ final class VoiceSessionViewModel {
         audio.onInputLevel = nil
         audio.onEngineFailure = nil
         audio.onDiagnostic = nil
-        duckingReleaseTask?.cancel()
-        duckingReleaseTask = nil
         audioOut?.finish()
         audioOut = nil
         audioPumpTask?.cancel()

@@ -127,6 +127,39 @@ final class GeminiLiveCodecTests: XCTestCase {
         XCTAssertEqual(samples, [1000, -1000, 3276, 0])
     }
 
+    func testDuckingHoldsUntilTheLastBufferFinishes() throws {
+        var ducking = VoiceMicDucking()
+        let first = ducking.bufferScheduled()
+        let second = ducking.bufferScheduled()
+        XCTAssertTrue(ducking.isDucked)
+
+        XCTAssertNil(ducking.bufferFinished(generation: first))
+        let token = try XCTUnwrap(ducking.bufferFinished(generation: second))
+        XCTAssertTrue(ducking.isDucked, "released only after the tail")
+        ducking.release(token: token)
+        XCTAssertFalse(ducking.isDucked)
+    }
+
+    func testDuckingReleaseIsCancelledByNewPlayback() {
+        var ducking = VoiceMicDucking()
+        let generation = ducking.bufferScheduled()
+        let token = ducking.bufferFinished(generation: generation)
+        _ = ducking.bufferScheduled()
+        ducking.release(token: token ?? -1)
+        XCTAssertTrue(ducking.isDucked)
+    }
+
+    func testFlushReleasesAfterTailAndIgnoresDiscardedBuffers() {
+        var ducking = VoiceMicDucking()
+        let generation = ducking.bufferScheduled()
+        _ = ducking.bufferScheduled()
+        let token = ducking.flushed()
+        XCTAssertNil(ducking.bufferFinished(generation: generation))
+        XCTAssertTrue(ducking.isDucked)
+        ducking.release(token: token ?? -1)
+        XCTAssertFalse(ducking.isDucked)
+    }
+
     func testQualifiedModelNamePreservesExistingPrefix() {
         XCTAssertEqual(GeminiLiveCodec.qualifiedModelName("models/foo"), "models/foo")
         XCTAssertEqual(GeminiLiveCodec.qualifiedModelName("foo"), "models/foo")

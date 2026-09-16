@@ -30,11 +30,9 @@ protocol VoiceAudioIO: AnyObject {
     func flushPlayback()
     /// Mute or unmute the microphone without tearing down the session.
     func setMuted(_ muted: Bool)
-    /// Turn captured audio down to ``VoiceMicDucking/duckedGain`` while the
-    /// assistant speaks, so what echo cancellation misses of its own voice is
-    /// too quiet to register as the user interrupting. Not a mute: a user who
-    /// speaks up over the assistant still barges in.
-    func setDucked(_ ducked: Bool)
+    /// Whether captured audio is currently turned down because assistant audio
+    /// is playing (see ``VoiceMicDucking``).
+    var isDucked: Bool { get }
     /// Where audio is going right now, and whether echo cancellation is on.
     var routeSnapshot: VoiceAudioRouteSnapshot { get }
     /// Called on the main thread with breadcrumbs about the audio path (route
@@ -43,12 +41,62 @@ protocol VoiceAudioIO: AnyObject {
     var onDiagnostic: ((String, [String: String], Error?) -> Void)? { get set }
 }
 
-/// Software ducking of captured audio, matching the web client's.
-enum VoiceMicDucking {
+/// Software ducking of captured audio, as the web client does: while assistant
+/// audio plays, capture is turned down so what echo cancellation misses of the
+/// assistant's own voice is too quiet to register as the user interrupting. Not
+/// a mute, so a user who speaks up over the assistant still barges in.
+///
+/// Driven by playback, not by the server's turn events: Gemini generates audio
+/// faster than it plays, so a turn is complete on the wire seconds before the
+/// speakers fall silent.
+struct VoiceMicDucking {
     static let duckedGain: Float = 0.1
-    /// How long capture stays ducked after the assistant stops, so the tail of
-    /// its echo in the room (or car) has died down.
+    /// How long capture stays ducked after playback stops, so the tail of the
+    /// echo in the room (or car) has died down.
     static let releaseDelay: Duration = .milliseconds(200)
+
+    private(set) var isDucked = false
+    private var pendingBuffers = 0
+    /// Advanced by a flush, so completions of buffers it discarded are ignored.
+    private var generation = 0
+    /// Advanced by anything that makes a scheduled release stale.
+    private var releaseToken = 0
+
+    /// A buffer was scheduled; returns the generation its completion reports.
+    mutating func bufferScheduled() -> Int {
+        pendingBuffers += 1
+        isDucked = true
+        releaseToken += 1
+        return generation
+    }
+
+    /// A buffer finished playing. Returns a token to release with after
+    /// ``releaseDelay`` when that was the last one playing.
+    mutating func bufferFinished(generation: Int) -> Int? {
+        guard generation == self.generation, pendingBuffers > 0 else { return nil }
+        pendingBuffers -= 1
+        return pendingBuffers == 0 ? releaseToken : nil
+    }
+
+    /// Queued playback was discarded (barge-in). The echo of what already played
+    /// still needs its tail, so this also returns a release token.
+    mutating func flushed() -> Int? {
+        generation += 1
+        pendingBuffers = 0
+        return isDucked ? releaseToken : nil
+    }
+
+    mutating func release(token: Int) {
+        guard token == releaseToken, pendingBuffers == 0 else { return }
+        isDucked = false
+    }
+
+    mutating func reset() {
+        generation += 1
+        releaseToken += 1
+        pendingBuffers = 0
+        isDucked = false
+    }
 
     /// Scale 16-bit PCM samples in place.
     static func apply(gain: Float, toPCM16 data: inout Data) {
@@ -220,7 +268,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
     /// data race that can crash.
     private struct TapState {
         var muted = false
-        var ducked = false
+        var ducking = VoiceMicDucking()
         var converter: StreamingPCMConverter?
         var onCaptured: (@Sendable (Data) -> Void)?
         var onInputLevel: (@Sendable (Double) -> Void)?
@@ -355,7 +403,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
             let (muted, ducked, converter, audioCallback, levelCallback) = self.tapState.withLock {
                 $0.lastCaptureAt = .now
                 $0.captureCount &+= 1
-                return ($0.muted, $0.ducked, $0.converter, $0.onCaptured, $0.onInputLevel)
+                return ($0.muted, $0.ducking.isDucked, $0.converter, $0.onCaptured, $0.onInputLevel)
             }
             guard !muted, let converter, var data = converter.convertToData(buffer) else { return }
             if ducked {
@@ -394,6 +442,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
         tapState.withLock {
             $0.converter = nil
             $0.lastCaptureAt = nil
+            $0.ducking.reset()
         }
         if activation.isSelfManaged {
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
@@ -406,7 +455,12 @@ final class VoiceAudioEngine: VoiceAudioIO {
         else {
             return
         }
-        playerNode.scheduleBuffer(buffer, completionHandler: nil)
+        let generation = tapState.withLock { $0.ducking.bufferScheduled() }
+        playerNode.scheduleBuffer(buffer) { [weak self] in
+            guard let self else { return }
+            let token = self.tapState.withLock { $0.ducking.bufferFinished(generation: generation) }
+            self.scheduleDuckingRelease(token: token)
+        }
         if !playerNode.isPlaying {
             playerNode.play()
         }
@@ -416,7 +470,9 @@ final class VoiceAudioEngine: VoiceAudioIO {
         guard isRunning else { return }
         // Stopping clears all scheduled buffers; immediately restart so the next
         // assistant turn can play.
+        let token = tapState.withLock { $0.ducking.flushed() }
         playerNode.stop()
+        scheduleDuckingRelease(token: token)
         playerNode.play()
     }
 
@@ -424,8 +480,16 @@ final class VoiceAudioEngine: VoiceAudioIO {
         tapState.withLock { $0.muted = muted }
     }
 
-    func setDucked(_ ducked: Bool) {
-        tapState.withLock { $0.ducked = ducked }
+    var isDucked: Bool {
+        tapState.withLock { $0.ducking.isDucked }
+    }
+
+    private func scheduleDuckingRelease(token: Int?) {
+        guard let token else { return }
+        Task { [weak self] in
+            try? await Task.sleep(for: VoiceMicDucking.releaseDelay)
+            self?.tapState.withLock { $0.ducking.release(token: token) }
+        }
     }
 
     var routeSnapshot: VoiceAudioRouteSnapshot {
@@ -744,7 +808,7 @@ final class SimulatorVoiceAudioIO: VoiceAudioIO {
     }
 
     /// Scripted prompts are not a microphone, so there is no echo to duck.
-    func setDucked(_: Bool) {}
+    var isDucked: Bool { false }
 
     var routeSnapshot: VoiceAudioRouteSnapshot { .unavailable }
 
