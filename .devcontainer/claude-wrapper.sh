@@ -27,12 +27,18 @@ if [ -f "/home/claude/.claude/CLAUDE.local.md" ] && [ ! -f ".claude/CLAUDE.local
     cp /home/claude/.claude/CLAUDE.local.md .claude/
 fi
 
+if ! CLAUDE_BIN=$(wrapper_common_claude_bin); then
+    echo "❌ No Claude Code binary found under ~/.local/bin or ~/.npm-global/bin" >&2
+    echo "   Reinstall it with: curl -fsSL https://claude.ai/install.sh | bash" >&2
+    exit 127
+fi
+
 # Update Claude plugin marketplaces (fetches latest from GitHub)
 echo "🔄 Updating Claude plugin marketplaces..."
-/home/claude/.npm-global/bin/claude plugin marketplace update >/dev/null 2>&1 || {
+"$CLAUDE_BIN" plugin marketplace update >/dev/null 2>&1 || {
     echo "⚠️  Warning: Failed to update plugin marketplaces"
 }
 
 export CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR=1
 
-exec /home/claude/.npm-global/bin/claude "$@"
+exec "$CLAUDE_BIN" "$@"
