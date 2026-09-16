@@ -456,7 +456,9 @@ final class VoiceAudioEngine: VoiceAudioIO {
             return
         }
         let generation = tapState.withLock { $0.ducking.bufferScheduled() }
-        playerNode.scheduleBuffer(buffer) { [weak self] in
+        // `.dataPlayedBack`, not the default: the default fires when the data is
+        // consumed, which can precede hearing it by the route's output latency.
+        playerNode.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             guard let self else { return }
             let token = self.tapState.withLock { $0.ducking.bufferFinished(generation: generation) }
             self.scheduleDuckingRelease(token: token)
