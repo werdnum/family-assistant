@@ -16,6 +16,9 @@ ARG YQ_VERSION=v4.47.1
 ARG PLAYWRIGHT_VERSION=1.52.0
 ARG CODEX_VERSION=0.154.0
 
+# COPY --from cannot expand a build arg, but FROM can: name the stage here.
+FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
+
 # Build stage for gh-token
 FROM golang:1.24 AS gh-token-builder
 ARG GH_TOKEN_VERSION
@@ -62,8 +65,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 
 # Binary tools
 COPY --from=gh-token-builder /go/bin/gh-token /usr/local/bin/gh-token
-ARG UV_VERSION
-COPY --from=ghcr.io/astral-sh/uv:${UV_VERSION} /uv /uvx /bin/
+COPY --from=uv /uv /uvx /bin/
 
 ARG AST_GREP_VERSION
 ARG YQ_VERSION
