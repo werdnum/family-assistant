@@ -89,6 +89,12 @@ private final class FakeAudioIO: VoiceAudioIO {
     func setMuted(_ muted: Bool) {
         self.muted = muted
     }
+
+    private(set) var duckedHistory: [Bool] = []
+
+    func setDucked(_ ducked: Bool) {
+        duckedHistory.append(ducked)
+    }
 }
 
 private struct FakePermission: VoiceMicrophonePermission {
@@ -527,6 +533,31 @@ final class VoiceSessionViewModelTests: XCTestCase {
         XCTAssertEqual(record.0, "voice_processing_failed")
         XCTAssertEqual(record.1["route_inputs"], "CarAudio")
         XCTAssertTrue(record.2)
+    }
+
+    func testMicIsDuckedWhileAssistantSpeaksAndReleasedAfterTheTail() async throws {
+        let model = makeModel()
+        await model.start()
+        session.emit(.audio(Data([0x01])))
+        try await waitUntil { self.audio.duckedHistory == [true] }
+
+        session.emit(.turnComplete)
+        try await waitUntil { model.isAssistantSpeaking == false }
+        XCTAssertEqual(audio.duckedHistory, [true], "released before the echo tail")
+        try await waitUntil { self.audio.duckedHistory == [true, false] }
+    }
+
+    func testSpeakingAgainWithinTheTailKeepsTheMicDucked() async throws {
+        let model = makeModel()
+        await model.start()
+        session.emit(.audio(Data([0x01])))
+        session.emit(.turnComplete)
+        session.emit(.audio(Data([0x02])))
+        try await waitUntil { self.audio.enqueued.count == 2 }
+        try await Task.sleep(for: VoiceMicDucking.releaseDelay * 2)
+        XCTAssertTrue(model.isAssistantSpeaking)
+        XCTAssertEqual(audio.duckedHistory.last, true)
+        XCTAssertFalse(audio.duckedHistory.contains(false))
     }
 
     func testTranscriptionAccumulates() async throws {

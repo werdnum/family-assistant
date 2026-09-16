@@ -117,6 +117,16 @@ final class GeminiLiveCodecTests: XCTestCase {
         ])
     }
 
+    func testMicDuckingScalesPCM16Samples() {
+        var data = Data()
+        for sample: Int16 in [10000, -10000, Int16.max, 0] {
+            withUnsafeBytes(of: sample.littleEndian) { data.append(contentsOf: $0) }
+        }
+        VoiceMicDucking.apply(gain: VoiceMicDucking.duckedGain, toPCM16: &data)
+        let samples = data.withUnsafeBytes { Array($0.bindMemory(to: Int16.self)) }
+        XCTAssertEqual(samples, [1000, -1000, 3276, 0])
+    }
+
     func testQualifiedModelNamePreservesExistingPrefix() {
         XCTAssertEqual(GeminiLiveCodec.qualifiedModelName("models/foo"), "models/foo")
         XCTAssertEqual(GeminiLiveCodec.qualifiedModelName("foo"), "models/foo")

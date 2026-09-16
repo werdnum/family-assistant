@@ -129,6 +129,7 @@ private final class FakeVoiceAudioIO: VoiceAudioIO {
     func enqueue(_: Data) {}
     func flushPlayback() {}
     func setMuted(_: Bool) {}
+    func setDucked(_: Bool) {}
 }
 
 @MainActor

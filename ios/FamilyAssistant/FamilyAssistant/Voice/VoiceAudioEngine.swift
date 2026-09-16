@@ -30,12 +30,36 @@ protocol VoiceAudioIO: AnyObject {
     func flushPlayback()
     /// Mute or unmute the microphone without tearing down the session.
     func setMuted(_ muted: Bool)
+    /// Turn captured audio down to ``VoiceMicDucking/duckedGain`` while the
+    /// assistant speaks, so what echo cancellation misses of its own voice is
+    /// too quiet to register as the user interrupting. Not a mute: a user who
+    /// speaks up over the assistant still barges in.
+    func setDucked(_ ducked: Bool)
     /// Where audio is going right now, and whether echo cancellation is on.
     var routeSnapshot: VoiceAudioRouteSnapshot { get }
     /// Called on the main thread with breadcrumbs about the audio path (route
     /// changes, interruptions) and with failures that do not end the session
     /// but degrade it, which are passed with their error.
     var onDiagnostic: ((String, [String: String], Error?) -> Void)? { get set }
+}
+
+/// Software ducking of captured audio, matching the web client's.
+enum VoiceMicDucking {
+    static let duckedGain: Float = 0.1
+    /// How long capture stays ducked after the assistant stops, so the tail of
+    /// its echo in the room (or car) has died down.
+    static let releaseDelay: Duration = .milliseconds(200)
+
+    /// Scale 16-bit PCM samples in place.
+    static func apply(gain: Float, toPCM16 data: inout Data) {
+        guard gain != 1 else { return }
+        data.withUnsafeMutableBytes { rawBuffer in
+            let samples = rawBuffer.bindMemory(to: Int16.self)
+            for index in samples.indices {
+                samples[index] = Int16(Float(samples[index]) * gain)
+            }
+        }
+    }
 }
 
 /// The audio route as telemetry needs it. Port names are recorded, not judged,
@@ -196,6 +220,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
     /// data race that can crash.
     private struct TapState {
         var muted = false
+        var ducked = false
         var converter: StreamingPCMConverter?
         var onCaptured: (@Sendable (Data) -> Void)?
         var onInputLevel: (@Sendable (Double) -> Void)?
@@ -327,12 +352,15 @@ final class VoiceAudioEngine: VoiceAudioIO {
 
         input.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { [weak self] buffer, _ in
             guard let self else { return }
-            let (muted, converter, audioCallback, levelCallback) = self.tapState.withLock {
+            let (muted, ducked, converter, audioCallback, levelCallback) = self.tapState.withLock {
                 $0.lastCaptureAt = .now
                 $0.captureCount &+= 1
-                return ($0.muted, $0.converter, $0.onCaptured, $0.onInputLevel)
+                return ($0.muted, $0.ducked, $0.converter, $0.onCaptured, $0.onInputLevel)
             }
-            guard !muted, let converter, let data = converter.convertToData(buffer) else { return }
+            guard !muted, let converter, var data = converter.convertToData(buffer) else { return }
+            if ducked {
+                VoiceMicDucking.apply(gain: VoiceMicDucking.duckedGain, toPCM16: &data)
+            }
             levelCallback?(Self.normalizedLevel(forPCM16: data))
             audioCallback?(data)
         }
@@ -394,6 +422,10 @@ final class VoiceAudioEngine: VoiceAudioIO {
 
     func setMuted(_ muted: Bool) {
         tapState.withLock { $0.muted = muted }
+    }
+
+    func setDucked(_ ducked: Bool) {
+        tapState.withLock { $0.ducked = ducked }
     }
 
     var routeSnapshot: VoiceAudioRouteSnapshot {
@@ -710,6 +742,9 @@ final class SimulatorVoiceAudioIO: VoiceAudioIO {
     func setMuted(_ muted: Bool) {
         state.withLock { $0.muted = muted }
     }
+
+    /// Scripted prompts are not a microphone, so there is no echo to duck.
+    func setDucked(_: Bool) {}
 
     var routeSnapshot: VoiceAudioRouteSnapshot { .unavailable }
 
