@@ -25,6 +25,24 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
+      - name: Check no file imports both SwiftUI and Markdown
+        # Markdown.Text and SwiftUI.Text collide, and for a String argument the
+        # non-generic Markdown.Text(_:) is the better overload, so Text(someString)
+        # in a file importing both can resolve to the markup node and fail with
+        # "requires that 'Text' conform to 'View'". Which toolchain picks which
+        # varies, so keep the two imports in separate files.
+        run: |
+          offenders=""
+          for file in $(grep -rl '^import Markdown$' --include='*.swift' .); do
+            if grep -q '^import SwiftUI$' "$file"; then
+              offenders="$offenders $file"
+            fi
+          done
+          if [ -n "$offenders" ]; then
+            echo "These files import both SwiftUI and Markdown:" >&2
+            echo "$offenders" >&2
+            exit 1
+          fi
       - name: Show toolchain
         run: |
           xcodebuild -version

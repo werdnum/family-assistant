@@ -67,6 +67,7 @@
 		A10021 /* SSEParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10024 /* SSEParser.swift */; };
 		A10022 /* ChatViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10025 /* ChatViewModel.swift */; };
 		A10023 /* ChatViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10026 /* ChatViews.swift */; };
+		A10999 /* NativeMarkdownRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10999 /* NativeMarkdownRenderer.swift */; };
 		A10024 /* Markdown in Frameworks */ = {isa = PBXBuildFile; productRef = H10002 /* Markdown */; };
 		A10025 /* ConfirmationModalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10027 /* ConfirmationModalView.swift */; };
 		A10030 /* RootTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10030 /* RootTabView.swift */; };
@@ -281,6 +282,7 @@
 		B10024 /* SSEParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSEParser.swift; sourceTree = "<group>"; };
 		B10025 /* ChatViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViewModel.swift; sourceTree = "<group>"; };
 		B10026 /* ChatViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViews.swift; sourceTree = "<group>"; };
+		B10999 /* NativeMarkdownRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeMarkdownRenderer.swift; sourceTree = "<group>"; };
 		B10027 /* ConfirmationModalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfirmationModalView.swift; sourceTree = "<group>"; };
 		B10030 /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTabView.swift; sourceTree = "<group>"; };
 		B10031 /* WebDestinationView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebDestinationView.swift; sourceTree = "<group>"; };
@@ -580,6 +582,7 @@
 				B10024 /* SSEParser.swift */,
 				B10025 /* ChatViewModel.swift */,
 				B10026 /* ChatViews.swift */,
+				B10999 /* NativeMarkdownRenderer.swift */,
 				B10047 /* PathMonitoring.swift */,
 				B10048 /* SyncCoordinator.swift */,
 				B10049 /* ActiveTurnSession.swift */,
@@ -941,6 +944,7 @@
 				A10049 /* ActiveTurnSession.swift in Sources */,
 				A10022 /* ChatViewModel.swift in Sources */,
 				A10023 /* ChatViews.swift in Sources */,
+				A10999 /* NativeMarkdownRenderer.swift in Sources */,
 				A10040 /* IntentSupport.swift in Sources */,
 				A10041 /* AskAssistantIntent.swift in Sources */,
 				A10042 /* QuickCaptureIntent.swift in Sources */,
