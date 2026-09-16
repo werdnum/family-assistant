@@ -40,7 +40,9 @@ final class EphemeralTokenTests: XCTestCase {
         "model": "gemini-3.8-live",
         "voice": {"name": "Charon"},
         "session": {"max_duration_minutes": 10},
-        "transcription": {"input_enabled": true, "output_enabled": false}
+        "transcription": {"input_enabled": true, "output_enabled": false},
+        "vad": {"automatic": true, "start_of_speech_sensitivity": "DEFAULT", "silence_duration_ms": 700},
+        "car_audio_vad": {"start_of_speech_sensitivity": "START_SENSITIVITY_LOW", "prefix_padding_ms": 300}
       },
       "profile_id": "default_assistant"
     }
@@ -59,6 +61,11 @@ final class EphemeralTokenTests: XCTestCase {
         XCTAssertEqual(token.config.maxSessionMinutes, 10)
         XCTAssertTrue(token.config.inputTranscriptionEnabled)
         XCTAssertFalse(token.config.outputTranscriptionEnabled)
+        XCTAssertEqual(token.config.activityDetection, VoiceActivityDetectionConfig(silenceDurationMs: 700))
+        XCTAssertEqual(
+            token.config.carAudioActivityDetection,
+            VoiceActivityDetectionConfig(startOfSpeechSensitivity: "START_SENSITIVITY_LOW", prefixPaddingMs: 300)
+        )
         XCTAssertNotNil(token.expiresAt)
         XCTAssertEqual(token.profileID, "default_assistant")
     }
@@ -79,6 +86,8 @@ final class EphemeralTokenTests: XCTestCase {
         XCTAssertEqual(token.config.maxSessionMinutes, VoiceLiveConfig.defaultMaxSessionMinutes)
         XCTAssertTrue(token.config.inputTranscriptionEnabled)
         XCTAssertTrue(token.config.outputTranscriptionEnabled)
+        XCTAssertEqual(token.config.activityDetection, VoiceActivityDetectionConfig())
+        XCTAssertEqual(token.config.carAudioActivityDetection, VoiceActivityDetectionConfig())
         XCTAssertTrue(token.tools.isEmpty)
     }
 

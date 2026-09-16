@@ -30,6 +30,38 @@ protocol VoiceAudioIO: AnyObject {
     func flushPlayback()
     /// Mute or unmute the microphone without tearing down the session.
     func setMuted(_ muted: Bool)
+    /// Where audio is going right now, and whether echo cancellation is on.
+    var routeSnapshot: VoiceAudioRouteSnapshot { get }
+    /// Called on the main thread with breadcrumbs about the audio path (route
+    /// changes, interruptions) and with failures that do not end the session
+    /// but degrade it, which are passed with their error.
+    var onDiagnostic: ((String, [String: String], Error?) -> Void)? { get set }
+}
+
+/// The audio route as telemetry needs it. Port names are recorded, not judged,
+/// apart from the one decision a session makes from them.
+struct VoiceAudioRouteSnapshot: Equatable {
+    var inputs: [String]
+    var outputs: [String]
+    /// The audio runs through a car (CarPlay), whose microphone hears the
+    /// assistant through the cabin speakers.
+    var isCarAudio: Bool
+    /// Nil where the source has no voice-processing IO to ask.
+    var voiceProcessingEnabled: Bool?
+
+    static let unavailable = VoiceAudioRouteSnapshot(inputs: [], outputs: [], isCarAudio: false, voiceProcessingEnabled: nil)
+
+    var telemetryFields: [String: String] {
+        var fields = [
+            "route_inputs": inputs.joined(separator: ","),
+            "route_outputs": outputs.joined(separator: ","),
+            "route_is_car_audio": String(isCarAudio),
+        ]
+        if let voiceProcessingEnabled {
+            fields["voice_processing_enabled"] = String(voiceProcessingEnabled)
+        }
+        return fields
+    }
 }
 
 /// Requests microphone permission. Wrapped in a protocol so tests can inject a
@@ -186,6 +218,8 @@ final class VoiceAudioEngine: VoiceAudioIO {
 
     var onEngineFailure: ((Error) -> Void)?
 
+    var onDiagnostic: ((String, [String: String], Error?) -> Void)?
+
     // Recreated on a media-services reset (which invalidates every audio object),
     // so the engine-scoped configuration-change observer must be rebound too.
     private var engine = AVAudioEngine()
@@ -243,7 +277,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
             // Voice processing must be toggled while the engine is stopped, and
             // the input format must be read only after it, because engaging the
             // voice-processing IO unit changes the hardware format.
-            try? engine.inputNode.setVoiceProcessingEnabled(true)
+            enableVoiceProcessing()
             // Observe from before the first start: engaging voice processing
             // makes the engine stop itself and post a configuration change
             // immediately after `engine.start()` returns.
@@ -362,6 +396,40 @@ final class VoiceAudioEngine: VoiceAudioIO {
         tapState.withLock { $0.muted = muted }
     }
 
+    var routeSnapshot: VoiceAudioRouteSnapshot {
+        let route = AVAudioSession.sharedInstance().currentRoute
+        let inputs = route.inputs.map(\.portType)
+        let outputs = route.outputs.map(\.portType)
+        #if os(iOS)
+        let isCarAudio = inputs.contains(.carAudio) || outputs.contains(.carAudio)
+        #else
+        let isCarAudio = false
+        #endif
+        return VoiceAudioRouteSnapshot(
+            inputs: inputs.map(\.rawValue),
+            outputs: outputs.map(\.rawValue),
+            isCarAudio: isCarAudio,
+            voiceProcessingEnabled: engine.inputNode.isVoiceProcessingEnabled
+        )
+    }
+
+    /// Echo cancellation is what keeps the assistant's own speech out of the
+    /// microphone. Without it the session still works, but the model hears
+    /// itself and cuts itself off, so the failure is reported rather than
+    /// swallowed.
+    private func enableVoiceProcessing() {
+        do {
+            try engine.inputNode.setVoiceProcessingEnabled(true)
+        } catch {
+            logger.error("Could not enable voice processing: \(error.localizedDescription, privacy: .public)")
+            onDiagnostic?("voice_processing_failed", routeSnapshot.telemetryFields, error)
+        }
+    }
+
+    private func recordAudioEvent(_ event: String, fields: [String: String] = [:]) {
+        onDiagnostic?(event, routeSnapshot.telemetryFields.merging(fields) { _, new in new }, nil)
+    }
+
     private static func normalizedLevel(forPCM16 data: Data) -> Double {
         guard data.count >= MemoryLayout<Int16>.size else { return 0 }
         let sampleCount = data.count / MemoryLayout<Int16>.size
@@ -418,6 +486,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
         guard isRunning, !isInterrupted else { return }
         logger.info("Audio engine configuration change; rebuilding graph")
         restartOrFail()
+        recordAudioEvent("audio_configuration_change")
     }
 
     private func handleInterruption(_ notification: Notification) {
@@ -433,6 +502,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
             // The system took the audio route (call/Siri); pause and wait.
             isInterrupted = true
             engine.pause()
+            recordAudioEvent("audio_interruption_began")
         case .ended:
             let options = (info[AVAudioSessionInterruptionOptionKey] as? UInt)
                 .map(AVAudioSession.InterruptionOptions.init(rawValue:))
@@ -454,6 +524,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
             // The interruption may have changed the route/formats; a plain
             // start can silently come back with a dead graph, so rebuild.
             restartOrFail()
+            recordAudioEvent("audio_interruption_ended")
         @unknown default:
             break
         }
@@ -465,12 +536,13 @@ final class VoiceAudioEngine: VoiceAudioIO {
         // the old engine/player can fail or crash, so discard them, rebind the
         // engine-scoped observer to the fresh engine, and rebuild the whole graph.
         logger.info("Media services were reset; recreating audio engine")
+        onDiagnostic?("media_services_reset", [:], nil)
         do {
             removeObservers()
             engine = AVAudioEngine()
             playerNode = AVAudioPlayerNode()
             try configureAudioSession()
-            try? engine.inputNode.setVoiceProcessingEnabled(true)
+            enableVoiceProcessing()
             registerObservers()
             try buildGraphAndStart()
         } catch {
@@ -638,6 +710,10 @@ final class SimulatorVoiceAudioIO: VoiceAudioIO {
     func setMuted(_ muted: Bool) {
         state.withLock { $0.muted = muted }
     }
+
+    var routeSnapshot: VoiceAudioRouteSnapshot { .unavailable }
+
+    var onDiagnostic: ((String, [String: String], Error?) -> Void)?
 
     private func waitForCaptureSink() async {
         while !Task.isCancelled {

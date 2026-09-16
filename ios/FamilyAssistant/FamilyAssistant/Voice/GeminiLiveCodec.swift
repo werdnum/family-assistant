@@ -19,7 +19,10 @@ enum GeminiLiveCodec {
 
     /// The first frame on a new connection: model, audio response config, system
     /// instruction, tools, and transcription toggles.
-    static func setupMessage(for token: EphemeralToken) throws -> String {
+    static func setupMessage(
+        for token: EphemeralToken,
+        activityDetection: VoiceActivityDetectionConfig
+    ) throws -> String {
         var setup: [String: JSONValue] = [
             "model": .string(qualifiedModelName(token.model)),
             "generationConfig": .object([
@@ -45,7 +48,66 @@ enum GeminiLiveCodec {
         if token.config.outputTranscriptionEnabled {
             setup["outputAudioTranscription"] = .object([:])
         }
+        let detection = automaticActivityDetection(for: activityDetection).wire
+        if !detection.isEmpty {
+            setup["realtimeInputConfig"] = .object(["automaticActivityDetection": .object(detection)])
+        }
         return try encode(.object(["setup": .object(setup)]))
+    }
+
+    /// The `automaticActivityDetection` fields for a VAD block, omitting every
+    /// setting left at Gemini's default, plus whatever could not be honoured.
+    static func automaticActivityDetection(
+        for config: VoiceActivityDetectionConfig
+    ) -> (wire: [String: JSONValue], issues: [VoiceActivityDetectionIssue]) {
+        var wire: [String: JSONValue] = [:]
+        var issues: [VoiceActivityDetectionIssue] = []
+        if !config.automatic {
+            issues.append(.manualDetectionUnsupported)
+        }
+        switch sensitivity(config.startOfSpeechSensitivity, prefix: "START_SENSITIVITY") {
+        case .default:
+            break
+        case .value(let value):
+            wire["startOfSpeechSensitivity"] = .string(value)
+        case .unknown:
+            issues.append(.unknownStartSensitivity(config.startOfSpeechSensitivity))
+        }
+        switch sensitivity(config.endOfSpeechSensitivity, prefix: "END_SENSITIVITY") {
+        case .default:
+            break
+        case .value(let value):
+            wire["endOfSpeechSensitivity"] = .string(value)
+        case .unknown:
+            issues.append(.unknownEndSensitivity(config.endOfSpeechSensitivity))
+        }
+        if let prefixPaddingMs = config.prefixPaddingMs {
+            wire["prefixPaddingMs"] = .number(Double(prefixPaddingMs))
+        }
+        if let silenceDurationMs = config.silenceDurationMs {
+            wire["silenceDurationMs"] = .number(Double(silenceDurationMs))
+        }
+        return (wire, issues)
+    }
+
+    private enum Sensitivity {
+        case `default`
+        case value(String)
+        case unknown
+    }
+
+    /// Accepts the API's enum names and the bare `LOW`/`HIGH` shorthand.
+    private static func sensitivity(_ raw: String, prefix: String) -> Sensitivity {
+        switch raw.uppercased() {
+        case "", "DEFAULT", "\(prefix)_UNSPECIFIED":
+            .default
+        case "LOW", "\(prefix)_LOW":
+            .value("\(prefix)_LOW")
+        case "HIGH", "\(prefix)_HIGH":
+            .value("\(prefix)_HIGH")
+        default:
+            .unknown
+        }
     }
 
     /// A chunk of microphone audio (base64 of 16 kHz mono PCM16).

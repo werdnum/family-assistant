@@ -77,21 +77,31 @@ struct VoiceLiveConfig: Equatable, Decodable {
     let maxSessionMinutes: Int
     let inputTranscriptionEnabled: Bool
     let outputTranscriptionEnabled: Bool
+    let activityDetection: VoiceActivityDetectionConfig
+    /// Replaces ``activityDetection`` when the audio runs through a car, whose
+    /// microphone hears the assistant from the cabin speakers.
+    let carAudioActivityDetection: VoiceActivityDetectionConfig
 
     init(
         voiceName: String,
         maxSessionMinutes: Int,
         inputTranscriptionEnabled: Bool,
-        outputTranscriptionEnabled: Bool
+        outputTranscriptionEnabled: Bool,
+        activityDetection: VoiceActivityDetectionConfig = VoiceActivityDetectionConfig(),
+        carAudioActivityDetection: VoiceActivityDetectionConfig = VoiceActivityDetectionConfig()
     ) {
         self.voiceName = voiceName
         self.maxSessionMinutes = maxSessionMinutes
         self.inputTranscriptionEnabled = inputTranscriptionEnabled
         self.outputTranscriptionEnabled = outputTranscriptionEnabled
+        self.activityDetection = activityDetection
+        self.carAudioActivityDetection = carAudioActivityDetection
     }
 
     private enum CodingKeys: String, CodingKey {
         case voice, session, transcription
+        case vad
+        case carAudioVAD = "car_audio_vad"
     }
 
     private enum VoiceKeys: String, CodingKey { case name }
@@ -127,10 +137,91 @@ struct VoiceLiveConfig: Equatable, Decodable {
             inputTranscriptionEnabled = true
             outputTranscriptionEnabled = true
         }
+
+        activityDetection = try container.decodeIfPresent(VoiceActivityDetectionConfig.self, forKey: .vad)
+            ?? VoiceActivityDetectionConfig()
+        carAudioActivityDetection = try container.decodeIfPresent(
+            VoiceActivityDetectionConfig.self,
+            forKey: .carAudioVAD
+        ) ?? activityDetection
     }
 
     static let defaultVoiceName = "Puck"
     static let defaultMaxSessionMinutes = 15
+}
+
+/// The backend's voice activity detection block, which decides when the user
+/// has started talking (interrupting the assistant) and when they have finished.
+/// Sensitivities are the backend's strings, validated when they are put on the
+/// wire so a value this client does not know is reported rather than dropped.
+struct VoiceActivityDetectionConfig: Equatable, Decodable {
+    var automatic = true
+    var startOfSpeechSensitivity = "DEFAULT"
+    var endOfSpeechSensitivity = "DEFAULT"
+    var prefixPaddingMs: Int?
+    var silenceDurationMs: Int?
+
+    init(
+        automatic: Bool = true,
+        startOfSpeechSensitivity: String = "DEFAULT",
+        endOfSpeechSensitivity: String = "DEFAULT",
+        prefixPaddingMs: Int? = nil,
+        silenceDurationMs: Int? = nil
+    ) {
+        self.automatic = automatic
+        self.startOfSpeechSensitivity = startOfSpeechSensitivity
+        self.endOfSpeechSensitivity = endOfSpeechSensitivity
+        self.prefixPaddingMs = prefixPaddingMs
+        self.silenceDurationMs = silenceDurationMs
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case automatic
+        case startOfSpeechSensitivity = "start_of_speech_sensitivity"
+        case endOfSpeechSensitivity = "end_of_speech_sensitivity"
+        case prefixPaddingMs = "prefix_padding_ms"
+        case silenceDurationMs = "silence_duration_ms"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        automatic = try container.decodeIfPresent(Bool.self, forKey: .automatic) ?? true
+        startOfSpeechSensitivity = try container.decodeIfPresent(String.self, forKey: .startOfSpeechSensitivity)
+            ?? "DEFAULT"
+        endOfSpeechSensitivity = try container.decodeIfPresent(String.self, forKey: .endOfSpeechSensitivity)
+            ?? "DEFAULT"
+        prefixPaddingMs = try container.decodeIfPresent(Int.self, forKey: .prefixPaddingMs)
+        silenceDurationMs = try container.decodeIfPresent(Int.self, forKey: .silenceDurationMs)
+    }
+}
+
+/// A setting in ``VoiceActivityDetectionConfig`` that could not be honoured.
+/// The session still starts, on Gemini's default for that setting.
+enum VoiceActivityDetectionIssue: LocalizedError, Equatable {
+    case unknownStartSensitivity(String)
+    case unknownEndSensitivity(String)
+    /// Push-to-talk needs the client to mark speech itself, which this client
+    /// has no control for.
+    case manualDetectionUnsupported
+
+    var telemetryName: String {
+        switch self {
+        case .unknownStartSensitivity: "unknown_start_sensitivity"
+        case .unknownEndSensitivity: "unknown_end_sensitivity"
+        case .manualDetectionUnsupported: "manual_detection_unsupported"
+        }
+    }
+
+    var errorDescription: String? {
+        switch self {
+        case .unknownStartSensitivity(let value):
+            "Unknown start_of_speech_sensitivity '\(value)'; using Gemini's default."
+        case .unknownEndSensitivity(let value):
+            "Unknown end_of_speech_sensitivity '\(value)'; using Gemini's default."
+        case .manualDetectionUnsupported:
+            "vad.automatic is false, which the native app does not support; keeping automatic detection."
+        }
+    }
 }
 
 /// A function call requested by Gemini during a live turn.

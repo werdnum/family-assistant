@@ -61,10 +61,10 @@ final class GeminiLiveClient {
     }
 
     /// Open the socket and send the setup frame. Begins receiving on success.
-    func connect(token: EphemeralToken) async throws {
+    func connect(token: EphemeralToken, activityDetection: VoiceActivityDetectionConfig) async throws {
         guard socket == nil, !isClosed else { return }
         let url = try Self.endpointURL(token: token.token, host: host)
-        let setup = try GeminiLiveCodec.setupMessage(for: token)
+        let setup = try GeminiLiveCodec.setupMessage(for: token, activityDetection: activityDetection)
         diagnostics?.record("socket_start", fields: ["api_version": Self.apiVersion, "setup_bytes": String(setup.utf8.count)])
         let socket = socketFactory(url)
         self.socket = socket

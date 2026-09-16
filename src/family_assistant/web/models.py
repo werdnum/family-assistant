@@ -106,6 +106,9 @@ class GeminiLiveConfig(BaseModel):
     session: GeminiLiveSessionConfig = GeminiLiveSessionConfig()
     transcription: GeminiLiveTranscriptionConfig = GeminiLiveTranscriptionConfig()
     vad: GeminiLiveVADConfig = GeminiLiveVADConfig()
+    car_audio_vad: GeminiLiveVADConfig = GeminiLiveVADConfig(
+        start_of_speech_sensitivity="START_SENSITIVITY_LOW", prefix_padding_ms=300
+    )
     affective_dialog: GeminiLiveAffectiveDialogConfig = (
         GeminiLiveAffectiveDialogConfig()
     )
@@ -126,6 +129,11 @@ class GeminiLiveConfig(BaseModel):
                 **config_dict.get("transcription", {})
             ),
             vad=GeminiLiveVADConfig(**config_dict.get("vad", {})),
+            car_audio_vad=(
+                GeminiLiveVADConfig(**config_dict["car_audio_vad"])
+                if "car_audio_vad" in config_dict
+                else cls.model_fields["car_audio_vad"].default
+            ),
             affective_dialog=GeminiLiveAffectiveDialogConfig(
                 **config_dict.get("affective_dialog", {})
             ),

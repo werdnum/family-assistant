@@ -278,13 +278,24 @@ gemini_live_config:
     # Whether automatic activity detection is enabled
     # Set to false to use manual/push-to-talk mode
     automatic: true
-    # Sensitivity for detecting speech start: "DISABLED", "LOW", "DEFAULT", "HIGH"
+    # Sensitivity for detecting speech start:
+    # "DEFAULT", "START_SENSITIVITY_LOW", "START_SENSITIVITY_HIGH"
     start_of_speech_sensitivity: "DEFAULT"
-    # Sensitivity for detecting speech end: "DISABLED", "LOW", "DEFAULT", "HIGH"
+    # Sensitivity for detecting speech end:
+    # "DEFAULT", "END_SENSITIVITY_LOW", "END_SENSITIVITY_HIGH"
     end_of_speech_sensitivity: "DEFAULT"
-    # Buffer in ms before speech detection (null for default)
+    # Speech that must be heard before start of speech is committed (null for default)
     prefix_padding_ms: null
     # Pause duration in ms to consider speech ended (null for default)
+    silence_duration_ms: null
+  # Replaces `vad` for the native iOS app when its audio runs through a car
+  # (CarPlay). The car's microphone picks up the assistant from the cabin
+  # speakers, which default sensitivity mistakes for the user interrupting.
+  car_audio_vad:
+    automatic: true
+    start_of_speech_sensitivity: "START_SENSITIVITY_LOW"
+    end_of_speech_sensitivity: "DEFAULT"
+    prefix_padding_ms: 300
     silence_duration_ms: null
   # Advanced features (require v1alpha API)
   # Affective dialog allows the model to adapt response style to user's tone

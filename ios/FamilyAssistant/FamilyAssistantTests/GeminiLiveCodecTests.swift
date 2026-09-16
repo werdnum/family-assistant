@@ -40,7 +40,7 @@ final class GeminiLiveCodecTests: XCTestCase {
         let tools: [JSONValue] = [.object([
             "functionDeclarations": .array([.object(["name": .string("get_weather")])])
         ])]
-        let message = try GeminiLiveCodec.setupMessage(for: makeToken(tools: tools))
+        let message = try GeminiLiveCodec.setupMessage(for: makeToken(tools: tools), activityDetection: VoiceActivityDetectionConfig())
         let root = try jsonObject(message)
         let setup = try XCTUnwrap(root["setup"] as? [String: Any])
 
@@ -62,7 +62,8 @@ final class GeminiLiveCodecTests: XCTestCase {
 
     func testSetupMessageOmitsTranscriptionWhenDisabled() throws {
         let message = try GeminiLiveCodec.setupMessage(
-            for: makeToken(inputTranscription: false, outputTranscription: false)
+            for: makeToken(inputTranscription: false, outputTranscription: false),
+            activityDetection: VoiceActivityDetectionConfig()
         )
         let setup = try XCTUnwrap(try jsonObject(message)["setup"] as? [String: Any])
         XCTAssertNil(setup["inputAudioTranscription"])
@@ -70,9 +71,50 @@ final class GeminiLiveCodecTests: XCTestCase {
     }
 
     func testSetupMessageOmitsToolsWhenEmpty() throws {
-        let message = try GeminiLiveCodec.setupMessage(for: makeToken(tools: []))
+        let message = try GeminiLiveCodec.setupMessage(for: makeToken(tools: []), activityDetection: VoiceActivityDetectionConfig())
         let setup = try XCTUnwrap(try jsonObject(message)["setup"] as? [String: Any])
         XCTAssertNil(setup["tools"])
+    }
+
+    func testSetupMessageOmitsRealtimeInputConfigForDefaultActivityDetection() throws {
+        let message = try GeminiLiveCodec.setupMessage(for: makeToken(), activityDetection: VoiceActivityDetectionConfig())
+        let setup = try XCTUnwrap(try jsonObject(message)["setup"] as? [String: Any])
+        XCTAssertNil(setup["realtimeInputConfig"])
+    }
+
+    func testSetupMessageCarriesActivityDetection() throws {
+        let message = try GeminiLiveCodec.setupMessage(
+            for: makeToken(),
+            activityDetection: VoiceActivityDetectionConfig(
+                startOfSpeechSensitivity: "START_SENSITIVITY_LOW",
+                endOfSpeechSensitivity: "HIGH",
+                prefixPaddingMs: 300,
+                silenceDurationMs: 800
+            )
+        )
+        let setup = try XCTUnwrap(try jsonObject(message)["setup"] as? [String: Any])
+        let detection = try XCTUnwrap(
+            (setup["realtimeInputConfig"] as? [String: Any])?["automaticActivityDetection"] as? [String: Any]
+        )
+        XCTAssertEqual(detection["startOfSpeechSensitivity"] as? String, "START_SENSITIVITY_LOW")
+        XCTAssertEqual(detection["endOfSpeechSensitivity"] as? String, "END_SENSITIVITY_HIGH")
+        XCTAssertEqual(detection["prefixPaddingMs"] as? Int, 300)
+        XCTAssertEqual(detection["silenceDurationMs"] as? Int, 800)
+        XCTAssertNil(detection["disabled"])
+    }
+
+    func testActivityDetectionReportsWhatItCannotHonour() {
+        let result = GeminiLiveCodec.automaticActivityDetection(for: VoiceActivityDetectionConfig(
+            automatic: false,
+            startOfSpeechSensitivity: "START_SENSITIVITY_MEDIUM",
+            endOfSpeechSensitivity: "START_SENSITIVITY_LOW"
+        ))
+        XCTAssertTrue(result.wire.isEmpty)
+        XCTAssertEqual(result.issues, [
+            .manualDetectionUnsupported,
+            .unknownStartSensitivity("START_SENSITIVITY_MEDIUM"),
+            .unknownEndSensitivity("START_SENSITIVITY_LOW"),
+        ])
     }
 
     func testQualifiedModelNamePreservesExistingPrefix() {

@@ -12,6 +12,7 @@ private final class FakeVoiceLiveSession: VoiceLiveSession {
     var connectError: Error?
     var onConnect: (() -> Void)?
     private(set) var connected = false
+    private(set) var connectedActivityDetection: VoiceActivityDetectionConfig?
     private(set) var closed = false
     private(set) var sentAudio: [Data] = []
     private(set) var sentToolResponses: [[GeminiFunctionResponse]] = []
@@ -20,10 +21,11 @@ private final class FakeVoiceLiveSession: VoiceLiveSession {
         (events, continuation) = AsyncStream.makeStream(of: GeminiLiveServerEvent.self)
     }
 
-    func connect(token _: EphemeralToken) async throws {
+    func connect(token _: EphemeralToken, activityDetection: VoiceActivityDetectionConfig) async throws {
         onConnect?()
         if let connectError { throw connectError }
         connected = true
+        connectedActivityDetection = activityDetection
     }
 
     func sendAudio(_ pcm16: Data) async throws {
@@ -54,6 +56,8 @@ private final class FakeAudioIO: VoiceAudioIO {
     var onCapturedAudio: (@Sendable (Data) -> Void)?
     var onInputLevel: (@Sendable (Double) -> Void)?
     var onEngineFailure: ((Error) -> Void)?
+    var onDiagnostic: ((String, [String: String], Error?) -> Void)?
+    var routeSnapshot = VoiceAudioRouteSnapshot.unavailable
     var startError: Error?
     var beforeStart: (() async -> Void)?
     private(set) var started = false
@@ -119,6 +123,8 @@ private final class FakeTokenProvider: VoiceTokenProviding {
     var error: Error?
     var beforeFetch: (() async -> Void)?
     var maxSessionMinutes = 15
+    var activityDetection = VoiceActivityDetectionConfig()
+    var carAudioActivityDetection = VoiceActivityDetectionConfig()
     /// What the backend reports the session resolved onto. Nil models a server
     /// that predates the field.
     var resolvedProfileID: String?
@@ -138,7 +144,9 @@ private final class FakeTokenProvider: VoiceTokenProviding {
                 voiceName: "Puck",
                 maxSessionMinutes: maxSessionMinutes,
                 inputTranscriptionEnabled: true,
-                outputTranscriptionEnabled: true
+                outputTranscriptionEnabled: true,
+                activityDetection: activityDetection,
+                carAudioActivityDetection: carAudioActivityDetection
             ),
             profileID: resolvedProfileID
         )
@@ -254,7 +262,7 @@ final class VoiceSessionViewModelTests: XCTestCase {
         session.connectError = NSError(domain: NSPOSIXErrorDomain, code: 57)
         let model = makeModel(diagnostics: recorder.diagnostics)
         await model.start()
-        XCTAssertEqual(recorder.records.map { $0.0 }, ["permission_start", "token_start", "token_received", "audio_start", "audio_ready", "failed"])
+        XCTAssertEqual(recorder.records.map { $0.0 }, ["permission_start", "token_start", "token_received", "audio_start", "audio_ready", "vad_selected", "failed"])
         XCTAssertEqual(Set(recorder.records.compactMap { $0.1["attempt_id"] }).count, 1)
         let failure = try XCTUnwrap(recorder.records.last)
         XCTAssertTrue(failure.2)
@@ -440,6 +448,85 @@ final class VoiceSessionViewModelTests: XCTestCase {
         session.emit(.interrupted)
         try await waitUntil { self.audio.flushCount == 1 }
         XCTAssertFalse(model.isAssistantSpeaking)
+    }
+
+    func testCarAudioRouteConnectsWithCarAudioActivityDetection() async throws {
+        let recorder = VoiceDiagnosticRecorder()
+        tokenProvider.carAudioActivityDetection = VoiceActivityDetectionConfig(
+            startOfSpeechSensitivity: "START_SENSITIVITY_LOW",
+            prefixPaddingMs: 300
+        )
+        audio.routeSnapshot = VoiceAudioRouteSnapshot(
+            inputs: ["CarAudio"],
+            outputs: ["CarAudio"],
+            isCarAudio: true,
+            voiceProcessingEnabled: true
+        )
+        let model = makeModel(diagnostics: recorder.diagnostics)
+        await model.start()
+
+        XCTAssertEqual(session.connectedActivityDetection, tokenProvider.carAudioActivityDetection)
+        let ready = try XCTUnwrap(recorder.records.first { $0.0 == "audio_ready" })
+        XCTAssertEqual(ready.1["route_inputs"], "CarAudio")
+        XCTAssertEqual(ready.1["voice_processing_enabled"], "true")
+        let selected = try XCTUnwrap(recorder.records.first { $0.0 == "vad_selected" })
+        XCTAssertEqual(selected.1["vad_profile"], "car_audio")
+        XCTAssertEqual(selected.1["vad_startOfSpeechSensitivity"], "START_SENSITIVITY_LOW")
+        XCTAssertEqual(selected.1["vad_prefixPaddingMs"], "300")
+        XCTAssertFalse(selected.2)
+    }
+
+    func testOtherRoutesConnectWithDefaultActivityDetection() async throws {
+        tokenProvider.activityDetection = VoiceActivityDetectionConfig(silenceDurationMs: 800)
+        tokenProvider.carAudioActivityDetection = VoiceActivityDetectionConfig(startOfSpeechSensitivity: "LOW")
+        let model = makeModel()
+        await model.start()
+        XCTAssertEqual(session.connectedActivityDetection, tokenProvider.activityDetection)
+    }
+
+    func testUnusableActivityDetectionIsRecordedAsFailure() async throws {
+        let recorder = VoiceDiagnosticRecorder()
+        tokenProvider.activityDetection = VoiceActivityDetectionConfig(
+            automatic: false,
+            startOfSpeechSensitivity: "SOMETIMES"
+        )
+        let model = makeModel(diagnostics: recorder.diagnostics)
+        await model.start()
+
+        let invalid = recorder.records.filter { $0.0 == "vad_config_invalid" }
+        XCTAssertEqual(invalid.map { $0.1["issue"] }, ["manual_detection_unsupported", "unknown_start_sensitivity"])
+        XCTAssertTrue(invalid.allSatisfy { $0.2 })
+        XCTAssertTrue(session.connected)
+    }
+
+    func testInterruptionsAreRecordedAndSummarised() async throws {
+        let recorder = VoiceDiagnosticRecorder()
+        let model = makeModel(diagnostics: recorder.diagnostics)
+        await model.start()
+        session.emit(.audio(Data([0x01])))
+        try await waitUntil { model.isAssistantSpeaking }
+        session.emit(.interrupted)
+        try await waitUntil { self.audio.flushCount == 1 }
+
+        let interrupted = try XCTUnwrap(recorder.records.first { $0.0 == "interrupted" })
+        XCTAssertEqual(interrupted.1["interruption_index"], "1")
+        XCTAssertEqual(interrupted.1["assistant_was_speaking"], "true")
+        XCTAssertNotNil(interrupted.1["assistant_speech_ms"])
+
+        model.end()
+        XCTAssertEqual(recorder.records.last?.0, "ended")
+        XCTAssertEqual(recorder.records.last?.1["interruption_count"], "1")
+    }
+
+    func testAudioDiagnosticsReachTheConnectionLane() async throws {
+        let recorder = VoiceDiagnosticRecorder()
+        _ = makeModel(diagnostics: recorder.diagnostics)
+        audio.onDiagnostic?("voice_processing_failed", ["route_inputs": "CarAudio"], SampleError())
+
+        let record = try XCTUnwrap(recorder.records.last)
+        XCTAssertEqual(record.0, "voice_processing_failed")
+        XCTAssertEqual(record.1["route_inputs"], "CarAudio")
+        XCTAssertTrue(record.2)
     }
 
     func testTranscriptionAccumulates() async throws {
