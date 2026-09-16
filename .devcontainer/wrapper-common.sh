@@ -1,5 +1,5 @@
 #!/bin/bash
-# Shared setup for dev-container CLI wrappers (claude, gemini, codex).
+# Shared setup for dev-container CLI wrappers (claude, codex).
 # Source this script from a tool-specific wrapper; it performs the shared
 # workspace setup (git auto-pull, Python venv activation, frontend deps)
 # so every tool inherits the same environment.
