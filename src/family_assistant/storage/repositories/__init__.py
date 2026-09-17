@@ -10,6 +10,7 @@ from .email import EmailRepository
 from .error_logs import ErrorLogsRepository
 from .events import EventsRepository
 from .ios_push_token import IosPushTokenRepository
+from .memory_store import MemoryStoreRepository
 from .message_history import MessageHistoryRepository
 from .notes import NotesRepository
 from .oauth_connections import OAuthConnectionsRepository
@@ -32,6 +33,7 @@ __all__ = [
     "ErrorLogsRepository",
     "EventsRepository",
     "IosPushTokenRepository",
+    "MemoryStoreRepository",
     "MessageHistoryRepository",
     "NotesRepository",
     "OAuthConnectionsRepository",
