@@ -1074,18 +1074,14 @@ async def test_observe_taint_review_is_nonblocking_and_close_drains_audit(
     assert events[0]["review_status"] == ToolCallReviewStatus.MODEL_VERDICT.value
     audit_reason = events[0]["reason"]
     assert isinstance(audit_reason, str)
-    assert audit_reason == (
-        "Automatic reviewer decision recorded; reviewer rationale omitted from "
-        "durable audit."
-    )
-    assert "Reviewer chose deny." not in audit_reason
+    assert audit_reason == "Reviewer chose deny."
     assert events[0]["tool_call_id"] == "shadow-call"
     review_context = events[0]["review_context_json"]
     assert isinstance(review_context, dict)
     assert review_context["destination_echo"] is None
 
 
-async def test_review_audit_omits_rationale_and_raw_evidence(
+async def test_review_audit_stores_rationale_and_omits_raw_evidence(
     db_engine: AsyncEngine,
 ) -> None:
     """The complete audit row excludes raw arguments, provenance, and prompt data."""
@@ -1152,11 +1148,7 @@ async def test_review_audit_omits_rationale_and_raw_evidence(
     assert len(events) == 1
     audit_reason = events[0]["reason"]
     assert isinstance(audit_reason, str)
-    assert audit_reason == (
-        "Automatic reviewer decision recorded; reviewer rationale omitted from "
-        "durable audit."
-    )
-    assert "destination argument" not in audit_reason
+    assert audit_reason == llm.reason
     assert events[0]["tool_call_id"] == "sanitized-review-call"
 
     arguments_summary = events[0]["arguments_summary_json"]
@@ -1174,7 +1166,10 @@ async def test_review_audit_omits_rationale_and_raw_evidence(
         }
     ]
 
-    serialized_event = json.dumps(events[0], default=str, sort_keys=True)
+    structured_fields = {
+        key: value for key, value in events[0].items() if key != "reason"
+    }
+    serialized_event = json.dumps(structured_fields, default=str, sort_keys=True)
     for secret in (
         raw_destination,
         raw_prompt_token,

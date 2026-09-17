@@ -116,7 +116,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_TOOL_CALL_REVIEW_AUDIT_REASON = "Automatic reviewer decision recorded; reviewer rationale omitted from durable audit."
 _NO_TAINT_GATE_MODE = "none"
 """Recorded mode for a gate no runtime taint policy participated in."""
 
@@ -2946,7 +2945,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
             requested_outcome="review",
             effective_outcome=result.verdict.value,
             mode=mode.value if mode is not None else None,
-            reason=_TOOL_CALL_REVIEW_AUDIT_REASON,
+            reason=result.reason,
             arguments_summary=_summarize_tool_arguments(
                 arguments,
                 safe_keys=_descriptor_argument_keys(descriptor),
