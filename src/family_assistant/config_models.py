@@ -871,6 +871,12 @@ class GeminiVADConfig(BaseModel):
     silence_duration_ms: int | None = None
 
 
+def _car_audio_vad_default() -> GeminiVADConfig:
+    return GeminiVADConfig(
+        start_of_speech_sensitivity="START_SENSITIVITY_LOW", prefix_padding_ms=300
+    )
+
+
 class GeminiAffectiveDialogConfig(BaseModel):
     """Gemini affective dialog settings."""
 
@@ -953,6 +959,10 @@ class GeminiLiveConfig(BaseModel):
         default_factory=GeminiTranscriptionConfig
     )
     vad: GeminiVADConfig = Field(default_factory=GeminiVADConfig)
+    # Replaces `vad` when a native client's audio runs through a car (CarPlay).
+    # The car's mic hears the assistant through the cabin speakers, and default
+    # sensitivity takes that echo for the user barging in.
+    car_audio_vad: GeminiVADConfig = Field(default_factory=_car_audio_vad_default)
     affective_dialog: GeminiAffectiveDialogConfig = Field(
         default_factory=GeminiAffectiveDialogConfig
     )

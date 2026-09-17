@@ -95,7 +95,7 @@ final class GeminiLiveClientTests: XCTestCase {
         let recorder = VoiceDiagnosticRecorder()
         let socket = FakeGeminiLiveSocket()
         let client = GeminiLiveClient(diagnostics: recorder.diagnostics, socketFactory: { _ in socket })
-        try await client.connect(token: makeToken(token: "auth_tokens/private-secret"))
+        try await client.connect(token: makeToken(token: "auth_tokens/private-secret"), activityDetection: VoiceActivityDetectionConfig())
         XCTAssertEqual(recorder.records.map { $0.0 }, ["socket_start", "setup_sent"])
         let fields = try XCTUnwrap(recorder.records.first?.1)
         XCTAssertEqual(fields["api_version"], "v1alpha")
@@ -213,7 +213,7 @@ final class GeminiLiveClientTests: XCTestCase {
         let suspended = expectation(description: "Setup send is suspended")
         socket.onSendSuspended = { suspended.fulfill() }
         let client = GeminiLiveClient(socketFactory: { _ in socket })
-        let connection = Task { try await client.connect(token: makeToken()) }
+        let connection = Task { try await client.connect(token: makeToken(), activityDetection: VoiceActivityDetectionConfig()) }
         await fulfillment(of: [suspended], timeout: 2)
 
         client.close()
@@ -230,7 +230,7 @@ final class GeminiLiveClientTests: XCTestCase {
     func testConnectSendsSetupFrame() async throws {
         let socket = FakeGeminiLiveSocket()
         let client = GeminiLiveClient(host: "h", socketFactory: { _ in socket })
-        try await client.connect(token: makeToken())
+        try await client.connect(token: makeToken(), activityDetection: VoiceActivityDetectionConfig())
         XCTAssertEqual(socket.sentFrames.count, 1)
         XCTAssertTrue(socket.sentFrames[0].contains("\"setup\""))
         client.close()
@@ -242,7 +242,7 @@ final class GeminiLiveClientTests: XCTestCase {
         let collector = EventCollector()
         collector.start(client)
 
-        try await client.connect(token: makeToken())
+        try await client.connect(token: makeToken(), activityDetection: VoiceActivityDetectionConfig())
         socket.push(#"{"setupComplete":{}}"#)
         socket.push(#"{"serverContent":{"outputTranscription":{"text":"hi"},"turnComplete":true}}"#)
 
@@ -256,7 +256,7 @@ final class GeminiLiveClientTests: XCTestCase {
     func testSendAudioEmitsRealtimeFrame() async throws {
         let socket = FakeGeminiLiveSocket()
         let client = GeminiLiveClient(host: "h", socketFactory: { _ in socket })
-        try await client.connect(token: makeToken())
+        try await client.connect(token: makeToken(), activityDetection: VoiceActivityDetectionConfig())
         try await client.sendAudio(Data([0x01, 0x02]))
         XCTAssertTrue(socket.sentFrames.last?.contains("\"realtimeInput\"") == true)
         XCTAssertTrue(socket.sentFrames.last?.contains("\"audio\"") == true)
@@ -267,7 +267,7 @@ final class GeminiLiveClientTests: XCTestCase {
     func testSendToolResponsesEmitsToolResponseFrame() async throws {
         let socket = FakeGeminiLiveSocket()
         let client = GeminiLiveClient(host: "h", socketFactory: { _ in socket })
-        try await client.connect(token: makeToken())
+        try await client.connect(token: makeToken(), activityDetection: VoiceActivityDetectionConfig())
         try await client.sendToolResponses([
             GeminiFunctionResponse(id: "c1", name: "noop", response: .object([:])),
         ])
@@ -292,7 +292,7 @@ final class GeminiLiveClientTests: XCTestCase {
         collector.start(client)
         socket.finish()
 
-        try await client.connect(token: makeToken())
+        try await client.connect(token: makeToken(), activityDetection: VoiceActivityDetectionConfig())
         try await waitUntil { collector.finished }
 
         XCTAssertNil(client.lastError)
@@ -306,7 +306,7 @@ final class GeminiLiveClientTests: XCTestCase {
         let collector = EventCollector()
         collector.start(client)
 
-        try await client.connect(token: makeToken())
+        try await client.connect(token: makeToken(), activityDetection: VoiceActivityDetectionConfig())
         socket.fail(DropError())
 
         try await waitUntil { client.lastError != nil }
@@ -320,7 +320,7 @@ final class GeminiLiveClientTests: XCTestCase {
         let collector = EventCollector()
         collector.start(client)
 
-        try await client.connect(token: makeToken())
+        try await client.connect(token: makeToken(), activityDetection: VoiceActivityDetectionConfig())
         socket.push("this is not valid json {")
 
         try await waitUntil { client.lastError != nil }
@@ -330,7 +330,7 @@ final class GeminiLiveClientTests: XCTestCase {
     func testCloseIsIdempotent() async throws {
         let socket = FakeGeminiLiveSocket()
         let client = GeminiLiveClient(host: "h", socketFactory: { _ in socket })
-        try await client.connect(token: makeToken())
+        try await client.connect(token: makeToken(), activityDetection: VoiceActivityDetectionConfig())
         client.close()
         client.close()
         XCTAssertTrue(socket.didClose)

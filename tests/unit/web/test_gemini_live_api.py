@@ -21,6 +21,7 @@ from family_assistant.tools.metadata import (
     make_local_tool_metadata,
 )
 from family_assistant.tools.on_demand import OnDemandToolsView
+from family_assistant.web.models import GeminiLiveConfig
 from family_assistant.web.routers.gemini_live_api import (
     _convert_json_schema_type_to_gemini,  # noqa: PLC2701 - unit tests need direct access to internal helper
     _convert_properties_to_gemini,  # noqa: PLC2701 - unit tests need direct access to internal helper
@@ -400,3 +401,28 @@ async def test_ephemeral_token_declares_everything_when_on_demand_is_off(
         for declaration in response.json()["tools"][0]["functionDeclarations"]
     }
     assert declared == {"list_notes", "generate_image"}
+
+
+def test_client_config_carries_car_audio_vad_by_default() -> None:
+    config = GeminiLiveConfig.from_dict(AppConfig().gemini_live_config.model_dump())
+
+    assert config.vad.start_of_speech_sensitivity == "DEFAULT"
+    assert config.car_audio_vad.start_of_speech_sensitivity == "START_SENSITIVITY_LOW"
+    assert config.car_audio_vad.prefix_padding_ms == 300
+
+
+def test_client_config_takes_operator_car_audio_vad() -> None:
+    app_config = AppConfig.model_validate({
+        "gemini_live_config": {
+            "car_audio_vad": {
+                "start_of_speech_sensitivity": "START_SENSITIVITY_HIGH",
+                "silence_duration_ms": 900,
+            }
+        }
+    })
+
+    config = GeminiLiveConfig.from_dict(app_config.gemini_live_config.model_dump())
+
+    assert config.car_audio_vad.start_of_speech_sensitivity == "START_SENSITIVITY_HIGH"
+    assert config.car_audio_vad.silence_duration_ms == 900
+    assert config.car_audio_vad.prefix_padding_ms is None

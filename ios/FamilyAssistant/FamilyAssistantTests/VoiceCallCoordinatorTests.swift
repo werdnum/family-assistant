@@ -108,6 +108,8 @@ private final class FakeVoiceAudioIO: VoiceAudioIO {
     var onCapturedAudio: (@Sendable (Data) -> Void)?
     var onInputLevel: (@Sendable (Double) -> Void)?
     var onEngineFailure: ((Error) -> Void)?
+    var onDiagnostic: ((String, [String: String], Error?) -> Void)?
+    var routeSnapshot = VoiceAudioRouteSnapshot.unavailable
     var configureError: Error?
     private(set) var configureCount = 0
     private let log: EventLog?
@@ -127,6 +129,7 @@ private final class FakeVoiceAudioIO: VoiceAudioIO {
     func enqueue(_: Data) {}
     func flushPlayback() {}
     func setMuted(_: Bool) {}
+    var isDucked: Bool { false }
 }
 
 @MainActor

@@ -40,7 +40,7 @@ final class GeminiLiveCodecTests: XCTestCase {
         let tools: [JSONValue] = [.object([
             "functionDeclarations": .array([.object(["name": .string("get_weather")])])
         ])]
-        let message = try GeminiLiveCodec.setupMessage(for: makeToken(tools: tools))
+        let message = try GeminiLiveCodec.setupMessage(for: makeToken(tools: tools), activityDetection: VoiceActivityDetectionConfig())
         let root = try jsonObject(message)
         let setup = try XCTUnwrap(root["setup"] as? [String: Any])
 
@@ -62,7 +62,8 @@ final class GeminiLiveCodecTests: XCTestCase {
 
     func testSetupMessageOmitsTranscriptionWhenDisabled() throws {
         let message = try GeminiLiveCodec.setupMessage(
-            for: makeToken(inputTranscription: false, outputTranscription: false)
+            for: makeToken(inputTranscription: false, outputTranscription: false),
+            activityDetection: VoiceActivityDetectionConfig()
         )
         let setup = try XCTUnwrap(try jsonObject(message)["setup"] as? [String: Any])
         XCTAssertNil(setup["inputAudioTranscription"])
@@ -70,9 +71,93 @@ final class GeminiLiveCodecTests: XCTestCase {
     }
 
     func testSetupMessageOmitsToolsWhenEmpty() throws {
-        let message = try GeminiLiveCodec.setupMessage(for: makeToken(tools: []))
+        let message = try GeminiLiveCodec.setupMessage(for: makeToken(tools: []), activityDetection: VoiceActivityDetectionConfig())
         let setup = try XCTUnwrap(try jsonObject(message)["setup"] as? [String: Any])
         XCTAssertNil(setup["tools"])
+    }
+
+    func testSetupMessageOmitsRealtimeInputConfigForDefaultActivityDetection() throws {
+        let message = try GeminiLiveCodec.setupMessage(for: makeToken(), activityDetection: VoiceActivityDetectionConfig())
+        let setup = try XCTUnwrap(try jsonObject(message)["setup"] as? [String: Any])
+        XCTAssertNil(setup["realtimeInputConfig"])
+    }
+
+    func testSetupMessageCarriesActivityDetection() throws {
+        let message = try GeminiLiveCodec.setupMessage(
+            for: makeToken(),
+            activityDetection: VoiceActivityDetectionConfig(
+                startOfSpeechSensitivity: "START_SENSITIVITY_LOW",
+                endOfSpeechSensitivity: "HIGH",
+                prefixPaddingMs: 300,
+                silenceDurationMs: 800
+            )
+        )
+        let setup = try XCTUnwrap(try jsonObject(message)["setup"] as? [String: Any])
+        let detection = try XCTUnwrap(
+            (setup["realtimeInputConfig"] as? [String: Any])?["automaticActivityDetection"] as? [String: Any]
+        )
+        XCTAssertEqual(detection["startOfSpeechSensitivity"] as? String, "START_SENSITIVITY_LOW")
+        XCTAssertEqual(detection["endOfSpeechSensitivity"] as? String, "END_SENSITIVITY_HIGH")
+        XCTAssertEqual(detection["prefixPaddingMs"] as? Int, 300)
+        XCTAssertEqual(detection["silenceDurationMs"] as? Int, 800)
+        XCTAssertNil(detection["disabled"])
+    }
+
+    func testActivityDetectionReportsWhatItCannotHonour() {
+        let result = GeminiLiveCodec.automaticActivityDetection(for: VoiceActivityDetectionConfig(
+            automatic: false,
+            startOfSpeechSensitivity: "START_SENSITIVITY_MEDIUM",
+            endOfSpeechSensitivity: "START_SENSITIVITY_LOW"
+        ))
+        XCTAssertTrue(result.wire.isEmpty)
+        XCTAssertEqual(result.issues, [
+            .manualDetectionUnsupported,
+            .unknownStartSensitivity("START_SENSITIVITY_MEDIUM"),
+            .unknownEndSensitivity("START_SENSITIVITY_LOW"),
+        ])
+    }
+
+    func testMicDuckingScalesPCM16Samples() {
+        var data = Data()
+        for sample: Int16 in [10000, -10000, Int16.max, 0] {
+            withUnsafeBytes(of: sample.littleEndian) { data.append(contentsOf: $0) }
+        }
+        VoiceMicDucking.apply(gain: VoiceMicDucking.duckedGain, toPCM16: &data)
+        let samples = data.withUnsafeBytes { Array($0.bindMemory(to: Int16.self)) }
+        XCTAssertEqual(samples, [1000, -1000, 3276, 0])
+    }
+
+    func testDuckingHoldsUntilTheLastBufferFinishes() throws {
+        var ducking = VoiceMicDucking()
+        let first = ducking.bufferScheduled()
+        let second = ducking.bufferScheduled()
+        XCTAssertTrue(ducking.isDucked)
+
+        XCTAssertNil(ducking.bufferFinished(generation: first))
+        let token = try XCTUnwrap(ducking.bufferFinished(generation: second))
+        XCTAssertTrue(ducking.isDucked, "released only after the tail")
+        ducking.release(token: token)
+        XCTAssertFalse(ducking.isDucked)
+    }
+
+    func testDuckingReleaseIsCancelledByNewPlayback() {
+        var ducking = VoiceMicDucking()
+        let generation = ducking.bufferScheduled()
+        let token = ducking.bufferFinished(generation: generation)
+        _ = ducking.bufferScheduled()
+        ducking.release(token: token ?? -1)
+        XCTAssertTrue(ducking.isDucked)
+    }
+
+    func testFlushReleasesAfterTailAndIgnoresDiscardedBuffers() {
+        var ducking = VoiceMicDucking()
+        let generation = ducking.bufferScheduled()
+        _ = ducking.bufferScheduled()
+        let token = ducking.flushed()
+        XCTAssertNil(ducking.bufferFinished(generation: generation))
+        XCTAssertTrue(ducking.isDucked)
+        ducking.release(token: token ?? -1)
+        XCTAssertFalse(ducking.isDucked)
     }
 
     func testQualifiedModelNamePreservesExistingPrefix() {

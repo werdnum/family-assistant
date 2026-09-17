@@ -2258,6 +2258,36 @@ See [voice-mode-on-demand-tools.md](../design/voice-mode-on-demand-tools.md).
 
 ______________________________________________________________________
 
+## Voice Activity Detection (`gemini_live_config.vad`, `car_audio_vad`)
+
+Voice activity detection decides when the user has started talking — which also interrupts the
+assistant mid-reply — and when they have finished.
+
+```yaml
+gemini_live_config:
+  vad:
+    start_of_speech_sensitivity: "DEFAULT"   # or START_SENSITIVITY_LOW / START_SENSITIVITY_HIGH
+    end_of_speech_sensitivity: "DEFAULT"     # or END_SENSITIVITY_LOW / END_SENSITIVITY_HIGH
+    prefix_padding_ms: null
+    silence_duration_ms: null
+  car_audio_vad:
+    start_of_speech_sensitivity: "START_SENSITIVITY_LOW"
+    prefix_padding_ms: 300
+```
+
+The native iOS app sends `vad` with every session, except when its audio is routed through a car
+(CarPlay), where it sends `car_audio_vad` instead. A car's microphone hears the assistant through the
+cabin speakers, and at default sensitivity that echo is taken for the user interrupting; the car
+block trades a slightly less eager barge-in for not cutting the assistant off. `car_audio_vad`
+replaces `vad` whole rather than overriding individual fields. Every session records which block it
+used, and each interruption, in the `Voice.connection` telemetry lane.
+
+`automatic: false` (push-to-talk) is not supported by the native app, which has no control to mark
+the start and end of speech; it logs the setting as an error and keeps automatic detection. Phone
+calls over Asterisk use `vad` with `telephone_overrides.vad` applied on top.
+
+______________________________________________________________________
+
 ## Advanced Configuration
 
 ### DEFAULT_SERVICE_PROFILE_ID

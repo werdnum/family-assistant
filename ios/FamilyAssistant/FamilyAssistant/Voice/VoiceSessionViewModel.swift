@@ -6,7 +6,7 @@ import Foundation
 protocol VoiceLiveSession: AnyObject {
     var events: AsyncStream<GeminiLiveServerEvent> { get }
     var lastError: Error? { get }
-    func connect(token: EphemeralToken) async throws
+    func connect(token: EphemeralToken, activityDetection: VoiceActivityDetectionConfig) async throws
     func sendAudio(_ pcm16: Data) async throws
     func endAudioStream() async throws
     func sendToolResponses(_ responses: [GeminiFunctionResponse]) async throws
@@ -92,6 +92,11 @@ final class VoiceSessionViewModel {
     private var audioOut: AsyncStream<Data>.Continuation?
     private var didStart = false
     private var didPersist = false
+    /// When the assistant's current reply started playing, so an interruption
+    /// can be told apart as a real barge-in or the model hearing itself.
+    private var assistantSpeechStartedAt: ContinuousClock.Instant?
+    private var interruptionCount = 0
+    private var activityDetectionProfile = "default"
 
     var pendingToolCallIDs: Set<String> {
         Set(toolTasks.keys)
@@ -133,6 +138,9 @@ final class VoiceSessionViewModel {
             Task { @MainActor in
                 self?.fail(error)
             }
+        }
+        audio.onDiagnostic = { [diagnostics] event, fields, error in
+            diagnostics.record(event, fields: fields, error: error)
         }
     }
 
@@ -221,11 +229,13 @@ final class VoiceSessionViewModel {
             session.close()
             return
         }
-        diagnostics.record("audio_ready")
+        let route = audio.routeSnapshot
+        diagnostics.record("audio_ready", fields: route.telemetryFields)
+        let activityDetection = selectActivityDetection(config: token.config, route: route)
 
         do {
             startupStage = "setup"
-            try await session.connect(token: token)
+            try await session.connect(token: token, activityDetection: activityDetection)
         } catch {
             fail(error)
             return
@@ -236,10 +246,45 @@ final class VoiceSessionViewModel {
         }
     }
 
+    /// A car's microphone hears the assistant through the cabin speakers, which
+    /// default sensitivity takes for the user interrupting, so car audio gets
+    /// its own block. The choice and anything in it that cannot be honoured are
+    /// recorded, the latter as failures.
+    private func selectActivityDetection(
+        config: VoiceLiveConfig,
+        route: VoiceAudioRouteSnapshot
+    ) -> VoiceActivityDetectionConfig {
+        let selected = route.isCarAudio ? config.carAudioActivityDetection : config.activityDetection
+        activityDetectionProfile = route.isCarAudio ? "car_audio" : "default"
+        let (wire, issues) = GeminiLiveCodec.automaticActivityDetection(for: selected)
+        var fields = ["vad_profile": activityDetectionProfile]
+        for (key, value) in wire {
+            switch value {
+            case .string(let text): fields["vad_\(key)"] = text
+            case .number(let number): fields["vad_\(key)"] = String(Int(number))
+            default: break
+            }
+        }
+        diagnostics.record("vad_selected", fields: fields)
+        for issue in issues {
+            diagnostics.record("vad_config_invalid", fields: [
+                "vad_profile": activityDetectionProfile,
+                "issue": issue.telemetryName,
+            ], error: issue)
+        }
+        return selected
+    }
+
+    /// Fields every terminal breadcrumb carries, so one record summarises how
+    /// often the session was cut off.
+    private var sessionSummaryFields: [String: String] {
+        ["stage": startupStage, "interruption_count": String(interruptionCount), "vad_profile": activityDetectionProfile]
+    }
+
     /// End the session at the user's request.
     func end() {
         guard !isTerminal else { return }
-        diagnostics.record("ended", fields: ["stage": startupStage])
+        diagnostics.record("ended", fields: sessionSummaryFields)
         phase = .finished
         teardown()
     }
@@ -268,6 +313,9 @@ final class VoiceSessionViewModel {
                 startAudioPump(session: session)
             }
         case let .audio(data):
+            if !isAssistantSpeaking {
+                assistantSpeechStartedAt = .now
+            }
             isAssistantSpeaking = true
             audio.enqueue(data)
         case let .outputTranscription(text):
@@ -277,6 +325,7 @@ final class VoiceSessionViewModel {
         case .turnComplete, .generationComplete:
             isAssistantSpeaking = false
         case .interrupted:
+            recordInterruption()
             isAssistantSpeaking = false
             audio.flushPlayback()
         case let .toolCall(calls):
@@ -289,6 +338,21 @@ final class VoiceSessionViewModel {
             // drives teardown via handleDisconnect — rather than cutting it short.
             break
         }
+    }
+
+    private func recordInterruption() {
+        interruptionCount += 1
+        var fields = [
+            "interruption_index": String(interruptionCount),
+            "vad_profile": activityDetectionProfile,
+            "assistant_was_speaking": String(isAssistantSpeaking),
+            "mic_ducked": String(audio.isDucked),
+        ]
+        if isAssistantSpeaking, let assistantSpeechStartedAt {
+            let elapsed = ContinuousClock.now - assistantSpeechStartedAt
+            fields["assistant_speech_ms"] = String(Int(elapsed / .milliseconds(1)))
+        }
+        diagnostics.record("interrupted", fields: fields.merging(audio.routeSnapshot.telemetryFields) { current, _ in current })
     }
 
     private func handleToolCalls(_ calls: [GeminiFunctionCall], session: VoiceLiveSession) {
@@ -329,7 +393,7 @@ final class VoiceSessionViewModel {
         if let error = session.lastError {
             fail(error)
         } else {
-            diagnostics.record("disconnected", fields: ["stage": startupStage])
+            diagnostics.record("disconnected", fields: sessionSummaryFields)
             phase = .finished
             teardown()
         }
@@ -367,8 +431,9 @@ final class VoiceSessionViewModel {
 
     private func fail(_ error: Error) {
         guard !isTerminal else { return }
-        diagnostics.record("failed", fields: ["stage": startupStage,
-                                              "failure_kind": error is VoiceConnectionTimeout ? "startup_timeout" : "operation"], error: error)
+        var fields = sessionSummaryFields
+        fields["failure_kind"] = error is VoiceConnectionTimeout ? "startup_timeout" : "operation"
+        diagnostics.record("failed", fields: fields, error: error)
         reportError(error)
         phase = .failed(error.localizedDescription)
         teardown()
@@ -417,6 +482,7 @@ final class VoiceSessionViewModel {
         audio.onCapturedAudio = nil
         audio.onInputLevel = nil
         audio.onEngineFailure = nil
+        audio.onDiagnostic = nil
         audioOut?.finish()
         audioOut = nil
         audioPumpTask?.cancel()

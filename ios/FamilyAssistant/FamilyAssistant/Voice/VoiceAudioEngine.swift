@@ -30,6 +30,110 @@ protocol VoiceAudioIO: AnyObject {
     func flushPlayback()
     /// Mute or unmute the microphone without tearing down the session.
     func setMuted(_ muted: Bool)
+    /// Whether captured audio is currently turned down because assistant audio
+    /// is playing (see ``VoiceMicDucking``).
+    var isDucked: Bool { get }
+    /// Where audio is going right now, and whether echo cancellation is on.
+    var routeSnapshot: VoiceAudioRouteSnapshot { get }
+    /// Called on the main thread with breadcrumbs about the audio path (route
+    /// changes, interruptions) and with failures that do not end the session
+    /// but degrade it, which are passed with their error.
+    var onDiagnostic: ((String, [String: String], Error?) -> Void)? { get set }
+}
+
+/// Software ducking of captured audio, as the web client does: while assistant
+/// audio plays, capture is turned down so what echo cancellation misses of the
+/// assistant's own voice is too quiet to register as the user interrupting. Not
+/// a mute, so a user who speaks up over the assistant still barges in.
+///
+/// Driven by playback, not by the server's turn events: Gemini generates audio
+/// faster than it plays, so a turn is complete on the wire seconds before the
+/// speakers fall silent.
+struct VoiceMicDucking {
+    static let duckedGain: Float = 0.1
+    /// How long capture stays ducked after playback stops, so the tail of the
+    /// echo in the room (or car) has died down.
+    static let releaseDelay: Duration = .milliseconds(200)
+
+    private(set) var isDucked = false
+    private var pendingBuffers = 0
+    /// Advanced by a flush, so completions of buffers it discarded are ignored.
+    private var generation = 0
+    /// Advanced by anything that makes a scheduled release stale.
+    private var releaseToken = 0
+
+    /// A buffer was scheduled; returns the generation its completion reports.
+    mutating func bufferScheduled() -> Int {
+        pendingBuffers += 1
+        isDucked = true
+        releaseToken += 1
+        return generation
+    }
+
+    /// A buffer finished playing. Returns a token to release with after
+    /// ``releaseDelay`` when that was the last one playing.
+    mutating func bufferFinished(generation: Int) -> Int? {
+        guard generation == self.generation, pendingBuffers > 0 else { return nil }
+        pendingBuffers -= 1
+        return pendingBuffers == 0 ? releaseToken : nil
+    }
+
+    /// Queued playback was discarded (barge-in). The echo of what already played
+    /// still needs its tail, so this also returns a release token.
+    mutating func flushed() -> Int? {
+        generation += 1
+        pendingBuffers = 0
+        return isDucked ? releaseToken : nil
+    }
+
+    mutating func release(token: Int) {
+        guard token == releaseToken, pendingBuffers == 0 else { return }
+        isDucked = false
+    }
+
+    mutating func reset() {
+        generation += 1
+        releaseToken += 1
+        pendingBuffers = 0
+        isDucked = false
+    }
+
+    /// Scale 16-bit PCM samples in place.
+    static func apply(gain: Float, toPCM16 data: inout Data) {
+        guard gain != 1 else { return }
+        data.withUnsafeMutableBytes { rawBuffer in
+            let samples = rawBuffer.bindMemory(to: Int16.self)
+            for index in samples.indices {
+                samples[index] = Int16(Float(samples[index]) * gain)
+            }
+        }
+    }
+}
+
+/// The audio route as telemetry needs it. Port names are recorded, not judged,
+/// apart from the one decision a session makes from them.
+struct VoiceAudioRouteSnapshot: Equatable {
+    var inputs: [String]
+    var outputs: [String]
+    /// The audio runs through a car (CarPlay), whose microphone hears the
+    /// assistant through the cabin speakers.
+    var isCarAudio: Bool
+    /// Nil where the source has no voice-processing IO to ask.
+    var voiceProcessingEnabled: Bool?
+
+    static let unavailable = VoiceAudioRouteSnapshot(inputs: [], outputs: [], isCarAudio: false, voiceProcessingEnabled: nil)
+
+    var telemetryFields: [String: String] {
+        var fields = [
+            "route_inputs": inputs.joined(separator: ","),
+            "route_outputs": outputs.joined(separator: ","),
+            "route_is_car_audio": String(isCarAudio),
+        ]
+        if let voiceProcessingEnabled {
+            fields["voice_processing_enabled"] = String(voiceProcessingEnabled)
+        }
+        return fields
+    }
 }
 
 /// Requests microphone permission. Wrapped in a protocol so tests can inject a
@@ -164,6 +268,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
     /// data race that can crash.
     private struct TapState {
         var muted = false
+        var ducking = VoiceMicDucking()
         var converter: StreamingPCMConverter?
         var onCaptured: (@Sendable (Data) -> Void)?
         var onInputLevel: (@Sendable (Double) -> Void)?
@@ -185,6 +290,8 @@ final class VoiceAudioEngine: VoiceAudioIO {
     }
 
     var onEngineFailure: ((Error) -> Void)?
+
+    var onDiagnostic: ((String, [String: String], Error?) -> Void)?
 
     // Recreated on a media-services reset (which invalidates every audio object),
     // so the engine-scoped configuration-change observer must be rebound too.
@@ -243,7 +350,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
             // Voice processing must be toggled while the engine is stopped, and
             // the input format must be read only after it, because engaging the
             // voice-processing IO unit changes the hardware format.
-            try? engine.inputNode.setVoiceProcessingEnabled(true)
+            enableVoiceProcessing()
             // Observe from before the first start: engaging voice processing
             // makes the engine stop itself and post a configuration change
             // immediately after `engine.start()` returns.
@@ -293,12 +400,15 @@ final class VoiceAudioEngine: VoiceAudioIO {
 
         input.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { [weak self] buffer, _ in
             guard let self else { return }
-            let (muted, converter, audioCallback, levelCallback) = self.tapState.withLock {
+            let (muted, ducked, converter, audioCallback, levelCallback) = self.tapState.withLock {
                 $0.lastCaptureAt = .now
                 $0.captureCount &+= 1
-                return ($0.muted, $0.converter, $0.onCaptured, $0.onInputLevel)
+                return ($0.muted, $0.ducking.isDucked, $0.converter, $0.onCaptured, $0.onInputLevel)
             }
-            guard !muted, let converter, let data = converter.convertToData(buffer) else { return }
+            guard !muted, let converter, var data = converter.convertToData(buffer) else { return }
+            if ducked {
+                VoiceMicDucking.apply(gain: VoiceMicDucking.duckedGain, toPCM16: &data)
+            }
             levelCallback?(Self.normalizedLevel(forPCM16: data))
             audioCallback?(data)
         }
@@ -311,6 +421,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
     /// Tear down the current graph (engine stopped first — manipulating nodes on
     /// a running engine can trap) and rebuild it from freshly-read formats.
     private func rebuildGraphAndRestart() throws {
+        discardQueuedPlaybackDucking()
         playerNode.stop()
         engine.stop()
         engine.inputNode.removeTap(onBus: 0)
@@ -332,6 +443,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
         tapState.withLock {
             $0.converter = nil
             $0.lastCaptureAt = nil
+            $0.ducking.reset()
         }
         if activation.isSelfManaged {
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
@@ -344,7 +456,14 @@ final class VoiceAudioEngine: VoiceAudioIO {
         else {
             return
         }
-        playerNode.scheduleBuffer(buffer, completionHandler: nil)
+        let generation = tapState.withLock { $0.ducking.bufferScheduled() }
+        // `.dataPlayedBack`, not the default: the default fires when the data is
+        // consumed, which can precede hearing it by the route's output latency.
+        playerNode.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            guard let self else { return }
+            let token = self.tapState.withLock { $0.ducking.bufferFinished(generation: generation) }
+            self.scheduleDuckingRelease(token: token)
+        }
         if !playerNode.isPlaying {
             playerNode.play()
         }
@@ -354,12 +473,67 @@ final class VoiceAudioEngine: VoiceAudioIO {
         guard isRunning else { return }
         // Stopping clears all scheduled buffers; immediately restart so the next
         // assistant turn can play.
+        discardQueuedPlaybackDucking()
         playerNode.stop()
         playerNode.play()
     }
 
     func setMuted(_ muted: Bool) {
         tapState.withLock { $0.muted = muted }
+    }
+
+    var isDucked: Bool {
+        tapState.withLock { $0.ducking.isDucked }
+    }
+
+    /// Queued buffers are about to be dropped (flush, graph rebuild, or a
+    /// discarded player) and may never report finishing, so stop waiting on them
+    /// and release after the echo tail instead of staying ducked for good.
+    private func discardQueuedPlaybackDucking() {
+        let token = tapState.withLock { $0.ducking.flushed() }
+        scheduleDuckingRelease(token: token)
+    }
+
+    private func scheduleDuckingRelease(token: Int?) {
+        guard let token else { return }
+        Task { [weak self] in
+            try? await Task.sleep(for: VoiceMicDucking.releaseDelay)
+            self?.tapState.withLock { $0.ducking.release(token: token) }
+        }
+    }
+
+    var routeSnapshot: VoiceAudioRouteSnapshot {
+        let route = AVAudioSession.sharedInstance().currentRoute
+        let inputs = route.inputs.map(\.portType)
+        let outputs = route.outputs.map(\.portType)
+        #if os(iOS)
+        let isCarAudio = inputs.contains(.carAudio) || outputs.contains(.carAudio)
+        #else
+        let isCarAudio = false
+        #endif
+        return VoiceAudioRouteSnapshot(
+            inputs: inputs.map(\.rawValue),
+            outputs: outputs.map(\.rawValue),
+            isCarAudio: isCarAudio,
+            voiceProcessingEnabled: engine.inputNode.isVoiceProcessingEnabled
+        )
+    }
+
+    /// Echo cancellation is what keeps the assistant's own speech out of the
+    /// microphone. Without it the session still works, but the model hears
+    /// itself and cuts itself off, so the failure is reported rather than
+    /// swallowed.
+    private func enableVoiceProcessing() {
+        do {
+            try engine.inputNode.setVoiceProcessingEnabled(true)
+        } catch {
+            logger.error("Could not enable voice processing: \(error.localizedDescription, privacy: .public)")
+            onDiagnostic?("voice_processing_failed", routeSnapshot.telemetryFields, error)
+        }
+    }
+
+    private func recordAudioEvent(_ event: String, fields: [String: String] = [:]) {
+        onDiagnostic?(event, routeSnapshot.telemetryFields.merging(fields) { _, new in new }, nil)
     }
 
     private static func normalizedLevel(forPCM16 data: Data) -> Double {
@@ -418,6 +592,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
         guard isRunning, !isInterrupted else { return }
         logger.info("Audio engine configuration change; rebuilding graph")
         restartOrFail()
+        recordAudioEvent("audio_configuration_change")
     }
 
     private func handleInterruption(_ notification: Notification) {
@@ -433,6 +608,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
             // The system took the audio route (call/Siri); pause and wait.
             isInterrupted = true
             engine.pause()
+            recordAudioEvent("audio_interruption_began")
         case .ended:
             let options = (info[AVAudioSessionInterruptionOptionKey] as? UInt)
                 .map(AVAudioSession.InterruptionOptions.init(rawValue:))
@@ -454,6 +630,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
             // The interruption may have changed the route/formats; a plain
             // start can silently come back with a dead graph, so rebuild.
             restartOrFail()
+            recordAudioEvent("audio_interruption_ended")
         @unknown default:
             break
         }
@@ -465,12 +642,14 @@ final class VoiceAudioEngine: VoiceAudioIO {
         // the old engine/player can fail or crash, so discard them, rebind the
         // engine-scoped observer to the fresh engine, and rebuild the whole graph.
         logger.info("Media services were reset; recreating audio engine")
+        onDiagnostic?("media_services_reset", [:], nil)
         do {
             removeObservers()
+            discardQueuedPlaybackDucking()
             engine = AVAudioEngine()
             playerNode = AVAudioPlayerNode()
             try configureAudioSession()
-            try? engine.inputNode.setVoiceProcessingEnabled(true)
+            enableVoiceProcessing()
             registerObservers()
             try buildGraphAndStart()
         } catch {
@@ -638,6 +817,13 @@ final class SimulatorVoiceAudioIO: VoiceAudioIO {
     func setMuted(_ muted: Bool) {
         state.withLock { $0.muted = muted }
     }
+
+    /// Scripted prompts are not a microphone, so there is no echo to duck.
+    var isDucked: Bool { false }
+
+    var routeSnapshot: VoiceAudioRouteSnapshot { .unavailable }
+
+    var onDiagnostic: ((String, [String: String], Error?) -> Void)?
 
     private func waitForCaptureSink() async {
         while !Task.isCancelled {
