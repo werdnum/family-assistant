@@ -470,6 +470,19 @@ Each of these is a chosen limitation of v1, with the reason it is acceptable.
   are written to a memory note; the user or the foreground assistant can merge them.
 - **No approval queue for ordinary memories.** Wrong memories are corrected after the fact. An
   approval step for every fact would go unused and then be turned off.
+- **The review shows the curator whole memory topics, not relevant ones.** The design says "the
+  topic entries most relevant to that stretch"; the implementation shows every topic that fits what
+  the transcript leaves of the input budget, most recently changed first. Relevance selection would
+  need a retrieval step over the corpus the curator is deliberately confined away from, and the
+  per-note caps are small enough that the whole store usually fits. The budget split is the lever if
+  it stops fitting.
+- **Skipped volume is counted, not gauged.** The skip measurement the taint refinement is gated on
+  is a pair of counters (rows, and characters a person wrote) rather than gauges: the question is
+  how much is lost over a period, and a gauge would keep only the last skip's numbers.
+- **A review gives up rather than waiting out a person who keeps editing.** A revision conflict
+  re-runs the review once against the fresh store; a second conflict abandons the chunk. Whoever is
+  editing wins, which is the intended precedence, and the conversation's later rows are reviewed
+  normally.
 
 ## Future hardening
 

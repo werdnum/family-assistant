@@ -455,7 +455,10 @@ async def _run_curator_turn(
         trigger_interface_message_id=None,
         user_name=exec_context.user_name,
         user_id=None,
-        subconversation_id=f"memory-review-{uuid.uuid4()}",
+        # A bare uuid: the column is 36 characters wide, which a prefix would
+        # overflow on PostgreSQL. The subconversation is identified by the
+        # rows' profile, not by its name.
+        subconversation_id=str(uuid.uuid4()),
         # Nobody wrote this request, so it stays out of user-facing history and
         # the turn runs at the profile's configured tier rather than routed.
         trigger_is_internal=True,
