@@ -28,7 +28,7 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 from family_assistant.memory.edits import CITING_OPS, MemoryEdit, MemoryEditOp
 from family_assistant.memory.index import strip_topic_index
@@ -160,11 +160,18 @@ async def apply_memory_edits(
     limits = txn.memory_limits
     batch = batch_id or str(uuid.uuid4())
 
+    # Read once, before the compare-and-set below moves it. Every rejection
+    # rolls the transaction back, so the revision a rejected outcome reports
+    # must be the one that survives the rollback; reading it again after the
+    # bump would hand the writer a number that was never committed, and a retry
+    # against it would conflict for ever.
+    revision_before = await txn.memory_store.get_revision()
+
     if len(edits) > limits.max_edits_per_review:
         raise MemoryEditsRejected(
             ApplyOutcome(
                 applied=False,
-                revision=await txn.memory_store.get_revision(),
+                revision=revision_before,
                 rejections=(
                     EditRejection(
                         index=None,
@@ -179,7 +186,9 @@ async def apply_memory_edits(
             )
         )
 
-    await _check_evidence(txn, edits, evidence_scope=evidence_scope)
+    await _check_evidence(
+        txn, edits, evidence_scope=evidence_scope, revision=revision_before
+    )
 
     try:
         await txn.memory_store.bump_revision(expected_revision=expected_revision)
@@ -187,13 +196,13 @@ async def apply_memory_edits(
         raise MemoryEditsRejected(
             ApplyOutcome(
                 applied=False,
-                revision=await txn.memory_store.get_revision(),
+                revision=revision_before,
                 conflict=True,
                 rejections=(EditRejection(index=None, reason=str(conflict)),),
             )
         ) from conflict
 
-    workspace = _Workspace(txn)
+    workspace = _Workspace(txn, revision_before)
     records = [
         await _stage_edit(workspace, index, edit) for index, edit in enumerate(edits)
     ]
@@ -274,6 +283,7 @@ async def _check_evidence(
     edits: Sequence[MemoryEdit],
     *,
     evidence_scope: EvidenceScope,
+    revision: int,
 ) -> None:
     """Refuse the list if any edit cites a message outside the writer's scope.
 
@@ -319,7 +329,7 @@ async def _check_evidence(
         raise MemoryEditsRejected(
             ApplyOutcome(
                 applied=False,
-                revision=await txn.memory_store.get_revision(),
+                revision=revision,
                 rejections=rejections,
             )
         )
@@ -449,6 +459,8 @@ class _Workspace:
     """The notes this apply touches, loaded once and written once."""
 
     txn: DatabaseTransaction
+    revision: int
+    """The store revision a rejection from this workspace reports."""
     notes: dict[str, _WorkingNote] = field(default_factory=dict)
     touched_titles: list[str] = field(default_factory=list)
 
@@ -467,8 +479,8 @@ class _Workspace:
             title, read_policy=NoteReadPolicy.UNRESTRICTED
         )
         if note is not None and MEMORY_LABEL not in note.visibility_labels:
-            await reject(
-                self.txn,
+            reject(
+                self.revision,
                 index,
                 f"'{title}' is an existing note that is not part of memory. "
                 "Memory edits may only touch memory notes; choose another title.",
@@ -517,13 +529,17 @@ class _Workspace:
                     provenance_metadata=provenance_metadata,
                 )
             except MemoryWriteError as error:
-                await reject(self.txn, None, error.message)
+                reject(self.revision, None, error.message)
             except NoteWritePolicyError as error:
-                await reject(self.txn, None, str(error))
+                reject(self.revision, None, str(error))
 
 
-async def reject(txn: DatabaseTransaction, index: int | None, reason: str) -> None:
+def reject(revision: int, index: int | None, reason: str) -> NoReturn:
     """Refuse the whole list, rolling back whatever it had already applied.
+
+    ``revision`` is the store revision as it stood before this apply touched
+    it, which is what survives the rollback and what a retry must propose
+    against.
 
     Raises:
         MemoryEditsRejected: always.
@@ -531,7 +547,7 @@ async def reject(txn: DatabaseTransaction, index: int | None, reason: str) -> No
     raise MemoryEditsRejected(
         ApplyOutcome(
             applied=False,
-            revision=await txn.memory_store.get_revision(),
+            revision=revision,
             rejections=(EditRejection(index=index, reason=reason),),
         )
     )
@@ -621,14 +637,13 @@ async def _locate(
         "\n".join(f"  - {text}" for text in current) if current else "  (no entries)"
     )
     trouble = "no entry matches" if not matches else f"{len(matches)} entries match"
-    await reject(
-        workspace.txn,
+    reject(
+        workspace.revision,
         index,
         f"{edit.op} on '{note.title}': {trouble} the given target_text. "
         f"The note's entries are:\n{listing}\n"
         "Quote one of them exactly.",
     )
-    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def _with_refs(entry: str, message_ids: Sequence[int]) -> str:

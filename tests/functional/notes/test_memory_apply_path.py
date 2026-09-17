@@ -427,6 +427,69 @@ async def test_one_bad_edit_refuses_the_whole_list(db_engine: AsyncEngine) -> No
 
 
 @pytest.mark.asyncio
+async def test_a_rejected_list_reports_the_revision_that_survived_it(
+    db_engine: AsyncEngine,
+) -> None:
+    """The number a rejection hands back has to be one a retry can use.
+
+    The apply bumps the store before it stages the edits, so a rejection read
+    after that point reports a revision the rollback threw away; a retry
+    against it would conflict for ever.
+    """
+    db = _db(db_engine)
+    ids = await _seed_turn(db)
+    await _apply(
+        db,
+        [
+            MemoryEdit(
+                op=MemoryEditOp.ADD,
+                note_title="Sam",
+                entry="Sam likes trams.",
+                message_ids=[ids[0]],
+            )
+        ],
+    )
+
+    rejected = await _apply(
+        db,
+        [
+            MemoryEdit(
+                op=MemoryEditOp.ADD,
+                note_title="Sam",
+                entry="Sam also likes the ferry.",
+                message_ids=[ids[0]],
+            ),
+            MemoryEdit(
+                op=MemoryEditOp.REMOVE,
+                note_title="Sam",
+                target_text="something that is not there",
+                message_ids=[ids[1]],
+            ),
+        ],
+    )
+
+    assert rejected.applied is False
+    assert rejected.conflict is False
+    assert rejected.revision == await db.memory_store.get_revision()
+
+    retried = await _apply(
+        db,
+        [
+            MemoryEdit(
+                op=MemoryEditOp.ADD,
+                note_title="Sam",
+                entry="Sam also likes the ferry.",
+                message_ids=[ids[0]],
+            )
+        ],
+        expected_revision=rejected.revision,
+    )
+
+    assert retried.applied is True
+    assert retried.conflict is False
+
+
+@pytest.mark.asyncio
 async def test_a_result_over_the_note_cap_is_refused(db_engine: AsyncEngine) -> None:
     db = _db(db_engine)
     ids = await _seed_turn(db, count=1)
