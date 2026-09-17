@@ -48,7 +48,15 @@ function historyRow(index: number) {
   };
 }
 
-describe('Loading earlier messages', () => {
+// Each test renders 100-150 real messages through the chat UI: several times
+// the CPU work of a typical ChatApp test, all of which stretches when the
+// machine is busy. The suite-wide 10s budget is sized for the typical test;
+// with the CPU oversubscribed about 4x, the widening test takes over 20s. These
+// budgets exist only to catch a hang, so they sit well clear of that.
+const TEST_TIMEOUT_MS = 60_000;
+const WAIT_TIMEOUT_MS = 20_000;
+
+describe('Loading earlier messages', { timeout: TEST_TIMEOUT_MS }, () => {
   let originalEventSource: typeof EventSource;
   let requestedLimits: number[];
   let rows: Array<ReturnType<typeof historyRow>>;
@@ -96,13 +104,25 @@ describe('Loading earlier messages', () => {
     globalThis.EventSource = originalEventSource;
   });
 
+  // With this many messages rendered the usual queries become a large share of
+  // the test's CPU time: `*ByRole` with a name computes the accessible name of
+  // every button in the thread, and `findBy*` pretty-prints the whole DOM for
+  // each poll that misses. Look the button up by its label and poll with
+  // non-throwing queries instead.
+  const loadEarlierLabel = /load earlier messages/i;
+
+  const waitForText = (text: string) =>
+    waitFor(() => expect(screen.queryByText(text)).toBeInTheDocument(), {
+      timeout: WAIT_TIMEOUT_MS,
+    });
+
   const openConversation = async () => {
     await renderChatApp({ waitForReady: true });
-    await screen.findByText(`Message ${INITIAL_ROWS - 1}`, {}, { timeout: 5000 });
+    await waitForText(`Message ${INITIAL_ROWS - 1}`);
   };
 
   const clickLoadEarlier = () => {
-    fireEvent.click(screen.getByRole('button', { name: /load earlier messages/i }));
+    fireEvent.click(screen.getByText(loadEarlierLabel));
   };
 
   it('opens on the latest page and widens the window a page at a time', async () => {
@@ -112,24 +132,22 @@ describe('Loading earlier messages', () => {
     expect(requestedLimits).toEqual([50]);
 
     clickLoadEarlier();
-    await screen.findByText('Message 20', {}, { timeout: 5000 });
+    await waitForText('Message 20');
     expect(screen.queryByText('Message 19')).not.toBeInTheDocument();
     expect(requestedLimits[requestedLimits.length - 1]).toBe(100);
 
     clickLoadEarlier();
-    await screen.findByText('Message 0', {}, { timeout: 5000 });
+    await waitForText('Message 0');
     expect(requestedLimits[requestedLimits.length - 1]).toBe(150);
     await waitFor(() => {
-      expect(
-        screen.queryByRole('button', { name: /load earlier messages/i })
-      ).not.toBeInTheDocument();
+      expect(screen.queryByText(loadEarlierLabel)).not.toBeInTheDocument();
     });
   });
 
   it('keeps the oldest loaded message when a reload brings new messages', async () => {
     await openConversation();
     clickLoadEarlier();
-    await screen.findByText('Message 20', {}, { timeout: 5000 });
+    await waitForText('Message 20');
 
     // The follow stream connects once the browser is idle, not at mount.
     const followStream = await waitFor(
@@ -140,16 +158,16 @@ describe('Loading earlier messages', () => {
         expect(streams.length).toBeGreaterThan(0);
         return streams[streams.length - 1];
       },
-      { timeout: 3000 }
+      { timeout: WAIT_TIMEOUT_MS }
     );
     rows.push(historyRow(120), historyRow(121), historyRow(122));
     followStream.emit('turn_ended', { seq: 1, status: 'complete' });
 
-    await screen.findByText('Message 122', {}, { timeout: 5000 });
+    await waitForText('Message 122');
     expect(requestedLimits[requestedLimits.length - 1]).toBe(150);
     expect(screen.getByText('Message 20')).toBeInTheDocument();
     expect(screen.queryByText('Message 19')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /load earlier messages/i })).toBeInTheDocument();
+    expect(screen.getByText(loadEarlierLabel)).toBeInTheDocument();
   });
 
   it('drops an earlier-history load that finishes after starting a new chat', async () => {
@@ -164,7 +182,7 @@ describe('Loading earlier messages', () => {
       expect(requestedLimits).toContain(100);
     });
     fireEvent.click(screen.getAllByTestId('new-chat-button')[0]);
-    await screen.findByText('How can I help you?', {}, { timeout: 5000 });
+    await screen.findByText('How can I help you?', {}, { timeout: WAIT_TIMEOUT_MS });
 
     releaseWidenedLoad?.();
     await waitFor(() => {
