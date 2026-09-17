@@ -474,7 +474,14 @@ class _Workspace:
             title=title,
             items=parse_entries(strip_topic_index(note.content)) if note else [],
             exists=note is not None,
-            include_in_prompt=note.include_in_prompt if note else False,
+            # A new note is a topic note, with one exception: the very first
+            # edit of a fresh store may name the core note, which the
+            # repository requires to be always-loaded.
+            include_in_prompt=(
+                note.include_in_prompt
+                if note
+                else title == self.txn.memory_limits.core_note_title
+            ),
         )
         self.notes[title] = working
         if title not in self.touched_titles:

@@ -1,7 +1,11 @@
-"""Repository for the memory change log."""
+"""Repository for the memory change log.
 
-from __future__ import annotations
+No ``from __future__ import annotations`` here: pydantic resolves
+``MemoryChangeLogEntry``'s annotations at runtime, and a deferred ``datetime``
+leaves the model undefined. The type-only names below are quoted instead.
+"""
 
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
@@ -12,7 +16,6 @@ from family_assistant.storage.repositories.base import BaseRepository
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from datetime import datetime
 
     from family_assistant.memory.actor import MemoryActor
     from family_assistant.storage.memory_change_log import MemoryChangeOutcome
@@ -45,13 +48,13 @@ class MemoryChangeLogRepository(BaseRepository):
         self,
         *,
         batch_id: str,
-        actor: MemoryActor,
+        actor: "MemoryActor",
         op: str,
         note_title: str,
         destination_note_title: str | None,
         before_text: str | None,
         after_text: str | None,
-        evidence_message_ids: Sequence[int],
+        evidence_message_ids: "Sequence[int]",
         now: datetime,
         reason: str | None = None,
     ) -> None:
@@ -83,8 +86,8 @@ class MemoryChangeLogRepository(BaseRepository):
         self,
         *,
         batch_id: str,
-        actor: MemoryActor,
-        outcome: MemoryChangeOutcome,
+        actor: "MemoryActor",
+        outcome: "MemoryChangeOutcome",
         reason: str,
         now: datetime,
     ) -> None:

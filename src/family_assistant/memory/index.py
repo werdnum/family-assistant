@@ -51,7 +51,8 @@ def strip_topic_index(core_markdown: str) -> str:
         return core_markdown
     end = core_markdown.find(INDEX_END_MARKER, start)
     after = "" if end == -1 else core_markdown[end + len(INDEX_END_MARKER) :]
-    return (core_markdown[:start].rstrip() + "\n" + after.lstrip("\n")).strip()
+    parts = [core_markdown[:start].strip(), after.strip()]
+    return "\n\n".join(part for part in parts if part)
 
 
 def regenerate_topic_index(
