@@ -1805,9 +1805,10 @@ contain its result, while disclosures after return see the recorded read and can
 
 `GET /api/diagnostics/taint-audit` includes verdict and resolution-status counts. Individual
 `tool_call_review` audit events include the verdict, reason, latency, fallback use, delegating
-contexts, allowed verdicts, and destination-echo signal without storing raw tool arguments or the
-reviewer's free-form rationale. The reason is fixed trusted text; trusted local-schema argument
-names may appear in the argument summary, while every argument value is omitted and MCP or
+contexts, allowed verdicts, and destination-echo signal without storing raw tool arguments. The
+reason is the reviewer's free-form rationale, stored verbatim so an observe-mode verdict can be
+explained after the fact; it is model output and may quote reviewed content. Trusted local-schema
+argument names may appear in the argument summary, while every argument value is omitted and MCP or
 unexpected mapping keys are pseudonymized. For message-originated calls, `turn_id` and
 `tool_call_id` can locate the canonical stored assistant message for later reconstruction without
 duplicating it in the audit table. Direct named-sink and other non-message-originated authorizations

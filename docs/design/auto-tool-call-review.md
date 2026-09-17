@@ -271,16 +271,18 @@ Malformed output, timeout, or provider error resolves to the delegating cell or 
 outcome, per design principle 4 — the pre-adjudication matrix outcome for taint cells, `confirm` for
 static `review` rules. Every verdict — including shadow-mode verdicts — writes a
 `taint_audit_events` row with structured verdict, status, latency, and delegating context, and the
-diagnostics endpoint grows verdict counts. Durable rows use a fixed trusted reason and deliberately
-omit the reviewer's free-form rationale; that rationale remains available only to the live
-confirmation or deny result. Argument summaries retain names declared by a trusted local tool schema
-and pseudonymize unexpected keys; MCP schema keys remain untrusted. All argument values are omitted
-regardless of origin. Source provenance retains closed-vocabulary type and tier, while externally
-authored identifiers, labels, and reasons are omitted. The audit row's `turn_id` and `tool_call_id`
-locate the canonical assistant message for later reconstruction when the call came from stored
-message history, without duplicating the conversation or arguments in the audit table. Direct
-named-sink and other non-message-originated authorizations can have no corresponding message row;
-their structured audit evidence is intentionally the complete durable record.
+diagnostics endpoint grows verdict counts. The row's reason is the reviewer's own rationale, stored
+verbatim: it is the only durable explanation of a shadow-mode verdict, and it is untrusted model
+output that can quote reviewed evidence — no more than the stored LLM requests and message history
+already hold, so readers treat it as data, not as a finding to act on. Argument summaries retain
+names declared by a trusted local tool schema and pseudonymize unexpected keys; MCP schema keys
+remain untrusted. All argument values are omitted regardless of origin. Source provenance retains
+closed-vocabulary type and tier, while externally authored identifiers, labels, and reasons are
+omitted. The audit row's `turn_id` and `tool_call_id` locate the canonical assistant message for
+later reconstruction when the call came from stored message history, without duplicating the
+conversation or arguments in the audit table. Direct named-sink and other non-message-originated
+authorizations can have no corresponding message row; their structured audit evidence is
+intentionally the complete durable record.
 
 ### Escalation and cost bounds
 

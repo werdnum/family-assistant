@@ -624,8 +624,8 @@ proof — holds structurally forever.
 existing durable confirmation machinery, judge's reason included in the rendered prompt so the human
 sees *why*), `deny_and_continue` (structured refusal tool result). Malformed output, timeout, or
 provider error ⇒ `confirm`. Every verdict writes a `taint_audit_events` row with verdict, status,
-latency, delegating context, and a fixed trusted reason; the judge's free-form rationale is not
-copied into durable audit storage. For message-originated calls, the existing `turn_id` plus
+latency, delegating context, and the judge's free-form rationale (see the auto tool-call review
+design for why it is stored verbatim). For message-originated calls, the existing `turn_id` plus
 `tool_call_id` correlation locates the canonical stored assistant message if later reconstruction is
 needed. Direct named-sink and other non-message-originated authorizations may have no corresponding
 message row and retain only the structured audit evidence. The existing diagnostics endpoint grows
