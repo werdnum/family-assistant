@@ -512,6 +512,7 @@ def _processing_service(
         required_note_read_labels=None,
         allowed_note_visibility_labels=None,
         allow_wake_llm=True,
+        memory_read=False,
         note_registry=None,
     )
     service = SimpleNamespace(
