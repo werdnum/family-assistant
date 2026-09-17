@@ -2038,7 +2038,10 @@ memory_config:
   one review can read.
 - **topic_index_max_chars** — the share of the core note its derived index of topic notes may
   occupy.
-- **review_input_max_chars** — ceiling on the transcript one memory review is given.
+- **review_input_max_chars** — ceiling on everything one memory review is given: the rendered
+  transcript of the stretch plus the current memory topic entries shown beside it. The transcript
+  takes two thirds of it, and the entries whatever is left, most recently changed first; that split
+  is not configurable.
 - **max_edits_per_review** — how many note edits one review may propose.
 - **core_note_title** — the title the core note is created under. It is created automatically on the
   first memory write, identified thereafter by id, so renaming it in the notes UI is safe. If a note
