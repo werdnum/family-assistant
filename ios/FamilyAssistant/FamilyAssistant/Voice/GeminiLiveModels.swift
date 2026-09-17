@@ -77,6 +77,9 @@ struct VoiceLiveConfig: Equatable, Decodable {
     let maxSessionMinutes: Int
     let inputTranscriptionEnabled: Bool
     let outputTranscriptionEnabled: Bool
+    /// BCP-47 codes for the user's speech. Empty lets Gemini auto-detect, which
+    /// misreads short or noisy phrases as another language.
+    let inputTranscriptionLanguageCodes: [String]
     let activityDetection: VoiceActivityDetectionConfig
     /// Replaces ``activityDetection`` when the audio runs through a car, whose
     /// microphone hears the assistant from the cabin speakers.
@@ -87,6 +90,7 @@ struct VoiceLiveConfig: Equatable, Decodable {
         maxSessionMinutes: Int,
         inputTranscriptionEnabled: Bool,
         outputTranscriptionEnabled: Bool,
+        inputTranscriptionLanguageCodes: [String] = [],
         activityDetection: VoiceActivityDetectionConfig = VoiceActivityDetectionConfig(),
         carAudioActivityDetection: VoiceActivityDetectionConfig = VoiceActivityDetectionConfig()
     ) {
@@ -94,6 +98,7 @@ struct VoiceLiveConfig: Equatable, Decodable {
         self.maxSessionMinutes = maxSessionMinutes
         self.inputTranscriptionEnabled = inputTranscriptionEnabled
         self.outputTranscriptionEnabled = outputTranscriptionEnabled
+        self.inputTranscriptionLanguageCodes = inputTranscriptionLanguageCodes
         self.activityDetection = activityDetection
         self.carAudioActivityDetection = carAudioActivityDetection
     }
@@ -109,6 +114,7 @@ struct VoiceLiveConfig: Equatable, Decodable {
     private enum TranscriptionKeys: String, CodingKey {
         case inputEnabled = "input_enabled"
         case outputEnabled = "output_enabled"
+        case languageCodes = "language_codes"
     }
 
     init(from decoder: Decoder) throws {
@@ -133,9 +139,14 @@ struct VoiceLiveConfig: Equatable, Decodable {
         ) {
             inputTranscriptionEnabled = try transcription.decodeIfPresent(Bool.self, forKey: .inputEnabled) ?? true
             outputTranscriptionEnabled = try transcription.decodeIfPresent(Bool.self, forKey: .outputEnabled) ?? true
+            inputTranscriptionLanguageCodes = try transcription.decodeIfPresent(
+                [String].self,
+                forKey: .languageCodes
+            ) ?? []
         } else {
             inputTranscriptionEnabled = true
             outputTranscriptionEnabled = true
+            inputTranscriptionLanguageCodes = []
         }
 
         activityDetection = try container.decodeIfPresent(VoiceActivityDetectionConfig.self, forKey: .vad)

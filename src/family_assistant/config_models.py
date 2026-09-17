@@ -859,6 +859,9 @@ class GeminiTranscriptionConfig(BaseModel):
 
     input_enabled: bool = True
     output_enabled: bool = True
+    # BCP-47 codes for the user's speech. Empty means Gemini auto-detects, which
+    # misreads short or noisy utterances as another language.
+    language_codes: list[str] = Field(default_factory=list)
 
 
 class GeminiVADConfig(BaseModel):

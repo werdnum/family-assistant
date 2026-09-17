@@ -106,6 +106,7 @@ export interface GeminiLiveSessionConfig {
 export interface GeminiLiveTranscriptionConfig {
   input_enabled: boolean;
   output_enabled: boolean;
+  language_codes: string[];
 }
 
 /**

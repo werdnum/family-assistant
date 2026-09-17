@@ -40,7 +40,7 @@ final class EphemeralTokenTests: XCTestCase {
         "model": "gemini-3.8-live",
         "voice": {"name": "Charon"},
         "session": {"max_duration_minutes": 10},
-        "transcription": {"input_enabled": true, "output_enabled": false},
+        "transcription": {"input_enabled": true, "output_enabled": false, "language_codes": ["en-AU"]},
         "vad": {"automatic": true, "start_of_speech_sensitivity": "DEFAULT", "silence_duration_ms": 700},
         "car_audio_vad": {"start_of_speech_sensitivity": "START_SENSITIVITY_LOW", "prefix_padding_ms": 300}
       },
@@ -61,6 +61,7 @@ final class EphemeralTokenTests: XCTestCase {
         XCTAssertEqual(token.config.maxSessionMinutes, 10)
         XCTAssertTrue(token.config.inputTranscriptionEnabled)
         XCTAssertFalse(token.config.outputTranscriptionEnabled)
+        XCTAssertEqual(token.config.inputTranscriptionLanguageCodes, ["en-AU"])
         XCTAssertEqual(token.config.activityDetection, VoiceActivityDetectionConfig(silenceDurationMs: 700))
         XCTAssertEqual(
             token.config.carAudioActivityDetection,

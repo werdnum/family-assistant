@@ -2279,6 +2279,21 @@ See [voice-mode-on-demand-tools.md](../design/voice-mode-on-demand-tools.md).
 
 ______________________________________________________________________
 
+## Voice Transcription Language (`gemini_live_config.transcription.language_codes`)
+
+```yaml
+gemini_live_config:
+  transcription:
+    language_codes: ["en-AU"]
+```
+
+BCP-47 codes for the language(s) the user speaks, sent by the native iOS app as a hint for
+transcribing the user's speech. With an empty list Gemini auto-detects the language, which misreads
+short or noisy phrases (common in a car) as another language. `defaults.yaml` ships `["en"]`; set a
+regional code to hint the accent as well. The web client's SDK does not yet accept the setting.
+
+______________________________________________________________________
+
 ## Voice Activity Detection (`gemini_live_config.vad`, `car_audio_vad`)
 
 Voice activity detection decides when the user has started talking — which also interrupts the

@@ -43,7 +43,10 @@ enum GeminiLiveCodec {
             setup["tools"] = .array(token.tools)
         }
         if token.config.inputTranscriptionEnabled {
-            setup["inputAudioTranscription"] = .object([:])
+            let languageCodes = token.config.inputTranscriptionLanguageCodes
+            setup["inputAudioTranscription"] = .object(
+                languageCodes.isEmpty ? [:] : ["languageCodes": .array(languageCodes.map(JSONValue.string))]
+            )
         }
         if token.config.outputTranscriptionEnabled {
             setup["outputAudioTranscription"] = .object([:])

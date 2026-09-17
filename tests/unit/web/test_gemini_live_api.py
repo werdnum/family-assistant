@@ -184,6 +184,8 @@ async def test_ephemeral_token_uses_confirmation_aware_tool_advertisement(
     declarations = body["tools"][0]["functionDeclarations"]
     assert [declaration["name"] for declaration in declarations] == ["safe_tool"]
     assert tools_provider.calls == [False]
+    # Tool calls are silent on the user's end, so voice must narrate them.
+    assert "Before you call a tool, briefly say" in body["system_instruction"]
 
 
 class _RecordingContextProvider:
@@ -486,3 +488,13 @@ def test_client_config_takes_operator_car_audio_vad() -> None:
     assert config.car_audio_vad.start_of_speech_sensitivity == "START_SENSITIVITY_HIGH"
     assert config.car_audio_vad.silence_duration_ms == 900
     assert config.car_audio_vad.prefix_padding_ms is None
+
+
+def test_client_config_carries_transcription_language_codes() -> None:
+    app_config = AppConfig.model_validate({
+        "gemini_live_config": {"transcription": {"language_codes": ["en-AU"]}}
+    })
+
+    config = GeminiLiveConfig.from_dict(app_config.gemini_live_config.model_dump())
+
+    assert config.transcription.language_codes == ["en-AU"]

@@ -70,6 +70,34 @@ final class GeminiLiveCodecTests: XCTestCase {
         XCTAssertNil(setup["outputAudioTranscription"])
     }
 
+    func testSetupMessageCarriesTranscriptionLanguageCodes() throws {
+        let token = EphemeralToken(
+            token: "auth_tokens/abc",
+            expiresAt: nil,
+            model: "gemini-3.8-live",
+            systemInstruction: "You are helpful.",
+            tools: [],
+            config: VoiceLiveConfig(
+                voiceName: "Puck",
+                maxSessionMinutes: 15,
+                inputTranscriptionEnabled: true,
+                outputTranscriptionEnabled: true,
+                inputTranscriptionLanguageCodes: ["en-AU"]
+            )
+        )
+        let message = try GeminiLiveCodec.setupMessage(for: token, activityDetection: VoiceActivityDetectionConfig())
+        let setup = try XCTUnwrap(try jsonObject(message)["setup"] as? [String: Any])
+        let transcription = try XCTUnwrap(setup["inputAudioTranscription"] as? [String: Any])
+        XCTAssertEqual(transcription["languageCodes"] as? [String], ["en-AU"])
+    }
+
+    func testSetupMessageOmitsLanguageCodesWhenUnset() throws {
+        let message = try GeminiLiveCodec.setupMessage(for: makeToken(), activityDetection: VoiceActivityDetectionConfig())
+        let setup = try XCTUnwrap(try jsonObject(message)["setup"] as? [String: Any])
+        let transcription = try XCTUnwrap(setup["inputAudioTranscription"] as? [String: Any])
+        XCTAssertTrue(transcription.isEmpty)
+    }
+
     func testSetupMessageOmitsToolsWhenEmpty() throws {
         let message = try GeminiLiveCodec.setupMessage(for: makeToken(tools: []), activityDetection: VoiceActivityDetectionConfig())
         let setup = try XCTUnwrap(try jsonObject(message)["setup"] as? [String: Any])

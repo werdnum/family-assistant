@@ -95,6 +95,10 @@ final class VoiceSessionViewModel {
     /// When the assistant's current reply started playing, so an interruption
     /// can be told apart as a real barge-in or the model hearing itself.
     private var assistantSpeechStartedAt: ContinuousClock.Instant?
+    /// When tool results last went back to Gemini, until it next speaks or asks
+    /// for another tool. The gap is the model's own silence, which is invisible
+    /// to the backend and indistinguishable from a dropped call on the user's end.
+    private var toolResultsSentAt: ContinuousClock.Instant?
     private var interruptionCount = 0
     private var activityDetectionProfile = "default"
 
@@ -313,6 +317,12 @@ final class VoiceSessionViewModel {
                 startAudioPump(session: session)
             }
         case let .audio(data):
+            if let toolResultsSentAt {
+                diagnostics.record("audio_after_tool_results", fields: [
+                    "silence_ms": Self.milliseconds(since: toolResultsSentAt)
+                ])
+                self.toolResultsSentAt = nil
+            }
             if !isAssistantSpeaking {
                 assistantSpeechStartedAt = .now
             }
@@ -355,10 +365,36 @@ final class VoiceSessionViewModel {
         diagnostics.record("interrupted", fields: fields.merging(audio.routeSnapshot.telemetryFields) { current, _ in current })
     }
 
+    private static func milliseconds(since instant: ContinuousClock.Instant) -> String {
+        String(Int((ContinuousClock.now - instant) / .milliseconds(1)))
+    }
+
+    /// Tool names only: `call_tool`'s inner tool is named in its arguments, and
+    /// nothing else from the arguments is recorded.
+    private static func toolNames(_ calls: [GeminiFunctionCall]) -> String {
+        calls.map { call in
+            if case .string(let inner) = call.args["name"], inner.count <= 64 {
+                return "\(call.name):\(inner)"
+            }
+            return call.name
+        }.joined(separator: ",")
+    }
+
     private func handleToolCalls(_ calls: [GeminiFunctionCall], session: VoiceLiveSession) {
         guard !calls.isEmpty else { return }
         let keys = calls.map { $0.id ?? UUID().uuidString }
         let previousTask = toolExecutionTail
+        let receivedAt = ContinuousClock.now
+        var receivedFields = [
+            "call_count": String(calls.count),
+            "tools": Self.toolNames(calls),
+            "queued_behind_batch": String(previousTask != nil),
+        ]
+        if let toolResultsSentAt {
+            receivedFields["since_tool_results_ms"] = Self.milliseconds(since: toolResultsSentAt)
+            self.toolResultsSentAt = nil
+        }
+        diagnostics.record("tool_call_received", fields: receivedFields)
         let task = Task { [weak self] in
             guard let self else { return }
             defer {
@@ -368,9 +404,27 @@ final class VoiceSessionViewModel {
             }
             await previousTask?.value
             guard !Task.isCancelled else { return }
+            let startedAt = ContinuousClock.now
             let responses = await self.toolRunner.run(calls)
             guard !Task.isCancelled else { return }
-            try? await session.sendToolResponses(responses)
+            var fields = [
+                "call_count": String(responses.count),
+                "error_count": String(responses.filter { $0.response["error"] != nil }.count),
+                "queue_ms": String(Int((startedAt - receivedAt) / .milliseconds(1))),
+                "execution_ms": Self.milliseconds(since: startedAt),
+            ]
+            do {
+                try await session.sendToolResponses(responses)
+            } catch {
+                // Gemini waits on these results; without them the conversation
+                // goes silent for good, so end it visibly instead.
+                fields["stage"] = "tool_response"
+                self.diagnostics.record("tool_results_send_failed", fields: fields, error: error)
+                self.fail(error)
+                return
+            }
+            self.diagnostics.record("tool_results_sent", fields: fields)
+            self.toolResultsSentAt = .now
         }
         // A Gemini tool-call event is one ordered batch. Map every call ID to
         // the shared task so cancelling any member suppresses the whole batch
@@ -382,6 +436,10 @@ final class VoiceSessionViewModel {
     }
 
     private func cancelToolCalls(_ ids: [String]) {
+        diagnostics.record("tool_call_cancelled", fields: [
+            "call_count": String(ids.count),
+            "pending_count": String(ids.filter { toolTasks[$0] != nil }.count),
+        ])
         for id in ids {
             toolTasks[id]?.cancel()
             toolTasks[id] = nil
@@ -483,6 +541,7 @@ final class VoiceSessionViewModel {
         audio.onInputLevel = nil
         audio.onEngineFailure = nil
         audio.onDiagnostic = nil
+        toolResultsSentAt = nil
         audioOut?.finish()
         audioOut = nil
         audioPumpTask?.cancel()
