@@ -1417,6 +1417,85 @@ service_profiles:
       - "jq_query"
       - "report_technical_problem"
     slash_commands: []
+  - id: "memory_curator"
+    description: "Internal background profile that reviews a settled conversation and proposes edits to the household memory notes. Not a delegation target: it is run by the memory review task with a rendered transcript as its request."
+    # Rule of Two: the curator reads the household's memory [B] and writes it
+    # [C], so both are confined to memory-labelled notes and it gets nothing
+    # else. See docs/design/conversation-memory.md, "The curator is a confined
+    # agent".
+    #
+    # Reads. Grants alone do not confine a reader: a note is visible when its
+    # labels are a *subset* of the grants, so every unlabelled note -- and every
+    # label-less file skill -- would pass a grant of ["memory"]. The floor in
+    # required_note_read_labels is what closes that, applied at both boundaries
+    # that resolve notes for a profile (the notes repository and the skill
+    # registry) through one NoteReadPolicy.
+    visibility_grants: ["memory"]
+    processing_config:
+      model_tier: "standard"
+      # The notes provider is the whole point: it is what puts the core memory
+      # note in front of the curator. Every other provider would hand it the
+      # household's calendar, contacts, home state and location, which the read
+      # floor does not cover because none of it comes from the notes table.
+      include_aggregated_context: true
+      excluded_context_providers:
+        - "calendar"
+        - "known_users"
+        - "weather"
+        - "home_assistant"
+      # Writes. The floor makes the repository refuse any note that is not a
+      # memory note, so a bad review cannot damage the household's own notes.
+      default_note_visibility_labels: ["memory"]
+      required_note_visibility_labels: ["memory"]
+      # Reads, mirror of the floor above.
+      required_note_read_labels: ["memory"]
+      # A woken turn would run outside the review's evidence scope and store
+      # revision, with no transcript to ground an edit in.
+      allow_wake_llm: false
+      # Nobody delegates here. The review task runs this profile directly, and
+      # an empty source list is what refuses every profile that tries.
+      allowed_delegation_sources: []
+      delegation_security_level: "blocked"
+      # What one review needs: a few get_note calls for the topics it was
+      # pointed at, one propose_memory_edits, one retry after a rejection, and
+      # a final reply. Anything higher only buys loops over a store it has
+      # already read.
+      max_iterations: 6
+      max_history_messages: 1
+      history_max_age_hours: 0.5
+      prompts:
+        # Placeholder. Milestone 2 of docs/design/conversation-memory.md
+        # replaces this with the real operational prompt.
+        system_prompt: |
+          You maintain the household memory notes.
+
+          Review the transcript you were given and propose edits with propose_memory_edits, or reply that nothing durable happened.
+    # Reading memory notes and proposing edits, and nothing else. No
+    # search_documents (the widest path from the indexed corpus into a turn with
+    # no human in it), no delete_note (deletion is not a write under the
+    # confinement policy, so it would remove any note the curator can see --
+    # removals are edits in the proposed list), no messaging, calendar,
+    # scheduling, egress or delegation.
+    tools_policy:
+      default_decision: "deny"
+      rules:
+        - match:
+            names:
+              - "get_note"
+              - "propose_memory_edits"
+          decision: "allow"
+          priority: 10
+    # global_tools_policy is injected at the `profile` layer, which outranks the
+    # `defaults` layer this profile's own tools_policy occupies, so the deny
+    # above cannot refuse the three globally granted tools at any priority.
+    # read_text_attachment and jq_query resolve any attachment the acting user
+    # owns rather than this turn's, and report_technical_problem persists
+    # model-supplied text; none belongs in a silent background turn.
+    excluded_global_tools:
+      - "read_text_attachment"
+      - "jq_query"
+      - "report_technical_problem"
+    slash_commands: []
   - id: "artist"
     description: "Creative assistant specialized in generating and manipulating images and videos using advanced AI models."
     processing_config:

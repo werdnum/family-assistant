@@ -1967,6 +1967,49 @@ grant the reports are readable only through the web interface. See
 
 ______________________________________________________________________
 
+## Profile Note Visibility
+
+A note is visible to a profile when its visibility labels are a **subset** of the profile's
+`visibility_grants`. Four `processing_config` keys narrow that on a per-profile basis, and all four
+are enforced at the storage layer rather than in a tool, so they hold for every path that reaches
+notes — the assistant's note tools, scripts, and the context provider that renders notes into the
+system prompt.
+
+```yaml
+- id: "some_profile"
+  visibility_grants: ["memory"]
+  processing_config:
+    default_note_visibility_labels: ["memory"]
+    required_note_visibility_labels: ["memory"]
+    allowed_note_visibility_labels: ["memory"]
+    required_note_read_labels: ["memory"]
+```
+
+- **default_note_visibility_labels** — applied when the profile creates a note without naming
+  labels.
+- **required_note_visibility_labels** — write floor: every note the profile writes carries these,
+  and it may not modify a note that does not already.
+- **allowed_note_visibility_labels** — write ceiling: no note the profile writes may carry a label
+  outside this set.
+- **required_note_read_labels** — read floor, the mirror of the write floor: a note or file-based
+  skill must carry every label listed here for the profile to read it at all.
+
+The read floor is what a grant set cannot express. Because visibility is a subset test, an
+**unlabelled** note is visible to every reader, and a file-based skill — which carries no labels —
+passes any grant set for the same reason. A profile granted only `memory` therefore still sees every
+unlabelled household note until a read floor is set. Setting one confines the profile to notes
+labelled for it, at both boundaries that resolve notes: the notes repository and the skill registry.
+
+Memory topic notes are left out of the "Other available notes" title list for every reader, so the
+memory contribution to a rendered prompt is the core note alone. They remain reachable by title
+through `get_note`, through search, and in `list_notes` output.
+
+The shipped `memory_curator` profile sets all four to `memory`, which is what confines the
+background curator to the memory notes in both directions. See
+[docs/design/conversation-memory.md](../design/conversation-memory.md).
+
+______________________________________________________________________
+
 ## Conversation Memory
 
 `memory_config` bounds the household memory store — the notes carrying the `memory` visibility
