@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from family_assistant.services.credential_encryption import CredentialEncryption
     from family_assistant.services.notifier import Notifier
     from family_assistant.services.oauth_provider import OAuthProviderSpec
+    from family_assistant.storage.database import Database
     from family_assistant.storage.repositories.oauth_connections import (
         OAuthConnectionModel,
     )
@@ -164,6 +165,16 @@ class OAuthCredentialResolver:
         """Return the app-loop lock for one user's serialized provider operation."""
         return self._operation_locks.setdefault((user_id, operation), asyncio.Lock())
 
+    @property
+    def configured_scopes(self) -> frozenset[str]:
+        """The data scopes this deployment requests at consent.
+
+        Features that are not tools (and so are not scope-gated at registration)
+        check this before touching the provider, so a deployment that never asked
+        for a scope does not tell its users to reconnect for it.
+        """
+        return frozenset(self._config.scopes)
+
     async def access_token_for(
         self, exec_context: ToolExecutionContext, scope: str
     ) -> str:
@@ -172,12 +183,25 @@ class OAuthCredentialResolver:
         Raises one of the ``OAuthCredentialError`` subclasses — all rendered as
         actionable tool errors — when a token cannot be produced.
         """
+        return await self.access_token_for_user(
+            exec_context.db_context, exec_context.user_id, scope
+        )
+
+    async def access_token_for_user(
+        self, db: Database, user_id: str | None, scope: str
+    ) -> str:
+        """Return a valid access token for a turn's acting user.
+
+        For callers that run inside a turn but outside tool execution (the
+        per-turn context providers). ``user_id`` must be the turn's acting user,
+        never a value derived from model output: tools go through
+        :meth:`access_token_for` so no tool argument can reach this lookup.
+        """
         display_name = self._provider.display_name
-        user_id = exec_context.user_id
         if not user_id:
             raise OAuthNoActingUserError(display_name)
 
-        connection = await exec_context.db_context.oauth_connections.get_connection(
+        connection = await db.oauth_connections.get_connection(
             user_id, self._provider.name
         )
         if connection is None:
@@ -198,7 +222,7 @@ class OAuthCredentialResolver:
             cached = self._get_cached(user_id, generation)
             if cached is not None:
                 return cached
-            return await self._refresh_locked(exec_context, user_id, connection)
+            return await self._refresh_locked(db, user_id, connection)
 
     def evict_cached_token(self, user_id: str) -> None:
         """Drop the user's cached access token(s).
@@ -223,7 +247,7 @@ class OAuthCredentialResolver:
 
     async def _refresh_locked(
         self,
-        exec_context: ToolExecutionContext,
+        db: Database,
         user_id: str,
         connection: OAuthConnectionModel,
     ) -> str:
@@ -253,7 +277,7 @@ class OAuthCredentialResolver:
 
         if self._is_invalid_grant(response):
             await self._handle_invalid_grant(
-                exec_context, user_id, connection.provider, generation
+                db, user_id, connection.provider, generation
             )
             raise OAuthReauthRequiredError(display_name)
 
@@ -309,7 +333,7 @@ class OAuthCredentialResolver:
 
     async def _handle_invalid_grant(
         self,
-        exec_context: ToolExecutionContext,
+        db: Database,
         user_id: str,
         provider: str,
         generation: str,
@@ -320,7 +344,7 @@ class OAuthCredentialResolver:
         so a refresh cannot invalidate a *replacement* connection created by a
         concurrent reconnect. Notify only when we actually flipped the row.
         """
-        flipped = await exec_context.db_context.oauth_connections.mark_needs_reauth(
+        flipped = await db.oauth_connections.mark_needs_reauth(
             user_id, provider, expected_generation=generation
         )
         if not flipped:
@@ -331,11 +355,9 @@ class OAuthCredentialResolver:
             )
             return
         self.evict_cached_token(user_id)
-        await self._notify_reauth(exec_context, user_id)
+        await self._notify_reauth(db, user_id)
 
-    async def _notify_reauth(
-        self, exec_context: ToolExecutionContext, user_id: str
-    ) -> None:
+    async def _notify_reauth(self, db: Database, user_id: str) -> None:
         """Best-effort user notification that re-authorization is required."""
         if self._notifier is None:
             logger.info("No notifier configured; skipping needs_reauth alert")
@@ -347,7 +369,7 @@ class OAuthCredentialResolver:
                 f"{display_name} connection needs attention",
                 f"Your {display_name} connection needs re-authorization — "
                 "reconnect from Settings.",
-                exec_context.db_context,
+                db,
             )
         except Exception:
             logger.exception("Failed to send needs_reauth notification to %s", user_id)

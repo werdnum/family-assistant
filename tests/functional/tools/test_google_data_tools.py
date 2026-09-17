@@ -137,10 +137,21 @@ class FakeCredentialResolver:
     evicted: list[str] = field(default_factory=list)
     operation_locks: dict[tuple[str, str], asyncio.Lock] = field(default_factory=dict)
 
+    @property
+    def configured_scopes(self) -> frozenset[str]:
+        return frozenset(scope.value for scope in GoogleScope)
+
     async def access_token_for(
         self, exec_context: ToolExecutionContext, scope: GoogleScope
     ) -> str:
-        user_id = exec_context.user_id
+        return await self.access_token_for_user(
+            exec_context.db_context, exec_context.user_id, scope
+        )
+
+    async def access_token_for_user(
+        self, db: Database, user_id: str | None, scope: GoogleScope
+    ) -> str:
+        del db
         if user_id is None:
             raise OAuthNoActingUserError("Google")
         if user_id in self.raise_for_user:

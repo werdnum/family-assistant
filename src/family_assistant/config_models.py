@@ -816,7 +816,7 @@ class OAuthIntegrationConfig(BaseModel):
 
 
 class GoogleIntegrationConfig(OAuthIntegrationConfig):
-    """Per-user Gmail/Drive integration configuration.
+    """Per-user Gmail/Drive/Calendar integration configuration.
 
     Enables the user-scoped Google data feature: OAuth client credentials, the
     Fernet key used to encrypt stored refresh tokens at rest, the operator-tunable
@@ -830,6 +830,8 @@ class GoogleIntegrationConfig(OAuthIntegrationConfig):
             "https://www.googleapis.com/auth/gmail.compose",
             "https://www.googleapis.com/auth/drive.readonly",
             "https://www.googleapis.com/auth/drive.file",
+            "https://www.googleapis.com/auth/calendar.readonly",
+            "https://www.googleapis.com/auth/calendar.events",
         ]
     )
 

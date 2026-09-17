@@ -1,4 +1,4 @@
-"""The Google (Gmail/Drive) instance of the generic OAuth-provider layer."""
+"""The Google (Gmail/Drive/Calendar) instance of the generic OAuth-provider layer."""
 
 from __future__ import annotations
 
@@ -15,6 +15,8 @@ class GoogleScope(StrEnum):
     DRIVE_READONLY = "https://www.googleapis.com/auth/drive.readonly"
     DRIVE_METADATA_READONLY = "https://www.googleapis.com/auth/drive.metadata.readonly"
     DRIVE_FILE = "https://www.googleapis.com/auth/drive.file"
+    CALENDAR_READONLY = "https://www.googleapis.com/auth/calendar.readonly"
+    CALENDAR_EVENTS = "https://www.googleapis.com/auth/calendar.events"
 
 
 GOOGLE_PROVIDER = OAuthProviderSpec(

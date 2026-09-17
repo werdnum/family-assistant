@@ -650,9 +650,10 @@ taint_policy:
     known_contact: ["source_known_contact"]
     recognized_machine: ["source_recognized_machine"]
     unknown_external: ["source_unknown_external"]
-# --- Google Integration (per-user Gmail & Drive) ---
-# Enables the user-scoped "Connect your Google account" flow and scoped
-# Gmail/Drive tools. Secrets default empty and are supplied via environment:
+# --- Google Integration (per-user Gmail, Drive & Calendar) ---
+# Enables the user-scoped "Connect your Google account" flow, the scoped
+# Gmail/Drive tools, and each user's Google calendars in the calendar tools and
+# calendar context. Secrets default empty and are supplied via environment:
 #   GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET (OAuth client)
 #   CREDENTIAL_ENCRYPTION_KEY (urlsafe-base64 Fernet key; encrypts stored refresh
 #     tokens at rest). Generate one with scripts/generate_credential_key.py.
@@ -668,6 +669,11 @@ google_integration:
     - "https://www.googleapis.com/auth/gmail.compose"
     - "https://www.googleapis.com/auth/drive.readonly"
     - "https://www.googleapis.com/auth/drive.file"
+    # Google Calendar: calendar.readonly lets the calendar tools and the calendar
+    # context read the user's calendars; calendar.events lets the calendar tools
+    # add, change and delete events on calendars the user can edit.
+    - "https://www.googleapis.com/auth/calendar.readonly"
+    - "https://www.googleapis.com/auth/calendar.events"
   # Require taint_policy.mode=enforce (plus the matrix floor) before registering
   # the Gmail/Drive tools. Set false to accept running them under observe mode;
   # the waiver is logged and shown on the integration status endpoint.
