@@ -581,6 +581,36 @@ async def test_add_all_day_event_to_named_google_calendar(
 
 
 @pytest.mark.asyncio
+async def test_add_event_refused_when_duplicate_check_cannot_read_google(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(db_engine)
+    await _connect(db)
+    backend = _alice_backend()
+    backend.serve(
+        "tok-alice",
+        "GET",
+        "/users/me/calendarList",
+        {"error": {"message": "Backend Error"}},
+        status=503,
+    )
+    ctx = _context(db, resolver=_alice_resolver(), backend=backend)
+
+    result = await add_calendar_event_tool(
+        ctx,
+        {"duplicate_detection": {"enabled": True, "similarity_strategy": "fuzzy"}},
+        summary="Parent-teacher night",
+        start_time="2026-09-20T18:00:00+00:00",
+        end_time="2026-09-20T19:00:00+00:00",
+        calendar_id="google:primary",
+    )
+
+    assert "duplicate check could not read your Google calendars" in result
+    assert "Backend Error" in result
+    assert all(request.method == "GET" for request in backend.requests)
+
+
+@pytest.mark.asyncio
 async def test_writes_refused_when_events_scope_not_requested(
     db_engine: AsyncEngine,
 ) -> None:

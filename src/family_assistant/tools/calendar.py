@@ -504,11 +504,19 @@ async def check_for_duplicate_events(
     start_time: str,
     end_time: str,
     all_day: bool,
+    *,
+    fail_on_google_lookup_error: bool = False,
 ) -> str | None:
     """
     Check for similar events in a time window around the newly created event across all sources.
 
     Returns a warning message if similar events are found, None otherwise.
+
+    With ``fail_on_google_lookup_error`` (set for writes to a Google calendar),
+    a failure to list or search the user's Google calendars returns an error
+    instead of "no duplicates": the calendars most likely to hold a duplicate
+    of a Google event could not be checked, so the write needs an explicit
+    bypass rather than silently skipping the check.
 
     Time windows:
     - Timed events: ±2 hours from start time
@@ -544,6 +552,7 @@ async def check_for_duplicate_events(
             search_end = event_dt + timedelta(hours=time_window_hours)
 
         turn_sources = await _resolve_turn_sources(exec_context, calendar_config)
+        lookup_notes: list[str] = []
         events_in_window = await _search_events_in_range(
             exec_context=exec_context,
             calendar_config=calendar_config,
@@ -551,7 +560,19 @@ async def check_for_duplicate_events(
             search_end=search_end,
             sources=turn_sources.default_search_sources(),
             google_client=turn_sources.google_client,
+            notes=lookup_notes,
         )
+        if fail_on_google_lookup_error:
+            google_note = turn_sources.google_error_note(include_not_connected=True)
+            failures = [note for note in [google_note, *lookup_notes] if note]
+            if failures:
+                return "\n".join([
+                    f"Error: Cannot create event '{summary}' - duplicate check "
+                    "could not read your Google calendars.",
+                    *failures,
+                    "Retry later, or retry with bypass_duplicate_check=true to "
+                    "create the event without checking for duplicates.",
+                ])
 
         if not events_in_window:
             return None
@@ -1240,6 +1261,7 @@ async def _add_google_event(
             start_time=start_time,
             end_time=end_time,
             all_day=all_day,
+            fail_on_google_lookup_error=True,
         )
         if duplicate_error:
             return duplicate_error
