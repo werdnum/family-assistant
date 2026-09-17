@@ -369,11 +369,12 @@ final class VoiceSessionViewModel {
         String(Int((ContinuousClock.now - instant) / .milliseconds(1)))
     }
 
-    /// Tool names only: `call_tool`'s inner tool is named in its arguments, and
-    /// nothing else from the arguments is recorded.
+    /// Tool names only. `call_tool`'s target is named in its `name` argument;
+    /// any other tool's `name` argument is user content, and nothing else from
+    /// the arguments is recorded.
     private static func toolNames(_ calls: [GeminiFunctionCall]) -> String {
         calls.map { call in
-            if case .string(let inner) = call.args["name"], inner.count <= 64 {
+            if call.name == "call_tool", case .string(let inner) = call.args["name"], inner.count <= 64 {
                 return "\(call.name):\(inner)"
             }
             return call.name

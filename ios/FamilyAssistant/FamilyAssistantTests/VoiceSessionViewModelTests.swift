@@ -566,10 +566,14 @@ final class VoiceSessionViewModelTests: XCTestCase {
         session.emit(.toolCall([GeminiFunctionCall(
             id: "c1",
             name: "call_tool",
-            args: .object(["name": .string("ha_call_read_tool"), "arguments": .object(["entity": .string("pool")])])
+            args: .object(["name": .string("ha_call_read_tool"), "arguments_json": .string(#"{"entity": "pool"}"#)])
         )]))
         try await waitUntil { recorder.records.contains { $0.0 == "tool_results_sent" } }
-        session.emit(.toolCall([GeminiFunctionCall(id: "c2", name: "noop", args: .object([:]))]))
+        session.emit(.toolCall([GeminiFunctionCall(
+            id: "c2",
+            name: "create_automation",
+            args: .object(["name": .string("Medication reminder")])
+        )]))
         try await waitUntil { recorder.records.filter { $0.0 == "tool_results_sent" }.count == 2 }
         session.emit(.audio(Data([0x01])))
         try await waitUntil { recorder.records.contains { $0.0 == "audio_after_tool_results" } }
@@ -577,8 +581,10 @@ final class VoiceSessionViewModelTests: XCTestCase {
         let received = recorder.records.filter { $0.0 == "tool_call_received" }
         XCTAssertEqual(received.first?.1["tools"], "call_tool:ha_call_read_tool")
         XCTAssertNil(received.first?.1["since_tool_results_ms"])
+        XCTAssertEqual(received.last?.1["tools"], "create_automation")
         XCTAssertNotNil(received.last?.1["since_tool_results_ms"])
-        XCTAssertFalse(recorder.records.contains { $0.1.values.contains("pool") }, "arguments stay out of telemetry")
+        let recorded = String(describing: recorder.records)
+        XCTAssertFalse(recorded.contains("pool") || recorded.contains("Medication"), "arguments stay out of telemetry")
         let sent = try XCTUnwrap(recorder.records.first { $0.0 == "tool_results_sent" })
         XCTAssertEqual(sent.1["error_count"], "0")
         XCTAssertNotNil(sent.1["execution_ms"])
