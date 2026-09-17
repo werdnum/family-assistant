@@ -8,6 +8,7 @@ note's topic index, and records every change.
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
@@ -24,6 +25,7 @@ from family_assistant.memory.edits import EvidenceScope, MemoryEdit, MemoryEditO
 from family_assistant.memory.index import INDEX_START_MARKER, strip_topic_index
 from family_assistant.memory.invariants import MEMORY_LABEL
 from family_assistant.memory.limits import MemoryLimits
+from family_assistant.memory.review_context import MemoryReviewContext
 from family_assistant.security.taint import (
     SourceTrustTier,
     TaintSource,
@@ -125,12 +127,24 @@ async def _entries(db: Database, title: str) -> str:
     return strip_topic_index(note.content)
 
 
+def _review_context(
+    scope: EvidenceScope, expected_revision: int
+) -> MemoryReviewContext:
+    return MemoryReviewContext(
+        evidence_scope=scope,
+        expected_revision=expected_revision,
+        batch_id=str(uuid.uuid4()),
+        interface_type="web",
+        conversation_id=CONVERSATION,
+        watermark_target=scope.last_internal_id or 0,
+    )
+
+
 def _tool_context(
     db: Database,
     *,
     turn_id: str | None = TURN,
-    evidence_scope: EvidenceScope | None = None,
-    expected_revision: int | None = None,
+    memory_review: MemoryReviewContext | None = None,
 ) -> ToolExecutionContext:
     return ToolExecutionContext(
         interface_type="web",
@@ -149,8 +163,7 @@ def _tool_context(
         credential_resolvers=None,
         api_backend=None,
         memory_read=True,
-        memory_evidence_scope=evidence_scope,
-        memory_expected_revision=expected_revision,
+        memory_review=memory_review,
     )
 
 
@@ -1148,13 +1161,15 @@ async def test_the_tool_uses_the_supplied_scope_and_revision(
         _tool_context(
             db,
             turn_id="curator-run",
-            evidence_scope=EvidenceScope.for_stretch(
-                interface_type="web",
-                conversation_id=CONVERSATION,
-                first_internal_id=reviewed[0],
-                last_internal_id=reviewed[-1],
+            memory_review=_review_context(
+                EvidenceScope.for_stretch(
+                    interface_type="web",
+                    conversation_id=CONVERSATION,
+                    first_internal_id=reviewed[0],
+                    last_internal_id=reviewed[-1],
+                ),
+                read_revision,
             ),
-            expected_revision=read_revision,
         ),
         edits=[
             {

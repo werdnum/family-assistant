@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.model_selection import ResolvedModelSelection
     from family_assistant.llm.tool_call import ToolCallItem
+    from family_assistant.memory.review_context import MemoryReviewContext
     from family_assistant.security.taint import TaintSource, TurnTaintTracker
     from family_assistant.services.tool_call_review import TriggerReviewInput
     from family_assistant.storage.database import Database
@@ -193,6 +194,7 @@ class LLMStreamingLoop:
         initial_taint_sources: Sequence[TaintSource] | None = None,
         taint_tracker: TurnTaintTracker | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
+        memory_review: MemoryReviewContext | None = None,
     ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
@@ -230,6 +232,7 @@ class LLMStreamingLoop:
             initial_taint_sources=initial_taint_sources,
             taint_tracker=taint_tracker,
             tool_call_review_trigger=tool_call_review_trigger,
+            memory_review=memory_review,
         ):
             if message is not None:
                 turn_messages.append(message)
@@ -267,6 +270,7 @@ class LLMStreamingLoop:
         initial_taint_sources: Sequence[TaintSource] | None = None,
         taint_tracker: TurnTaintTracker | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
+        memory_review: MemoryReviewContext | None = None,
     ) -> AsyncIterator[tuple[LLMStreamEvent, LLMMessage | None]]:
         """Run a turn, attributing its telemetry to this profile.
 
@@ -298,6 +302,7 @@ class LLMStreamingLoop:
             initial_taint_sources=initial_taint_sources,
             taint_tracker=taint_tracker,
             tool_call_review_trigger=tool_call_review_trigger,
+            memory_review=memory_review,
         )
         try:
             attribution = CallAttribution(
@@ -341,6 +346,7 @@ class LLMStreamingLoop:
         initial_taint_sources: Sequence[TaintSource] | None = None,
         taint_tracker: TurnTaintTracker | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
+        memory_review: MemoryReviewContext | None = None,
         # AsyncGenerator rather than AsyncIterator: run_stream closes this
         # deterministically, and only the generator protocol offers aclose().
     ) -> AsyncGenerator[tuple[LLMStreamEvent, LLMMessage | None]]:
@@ -437,6 +443,7 @@ class LLMStreamingLoop:
                 tool_call_review_state=tool_call_review_state,
                 tool_call_review_messages=tuple(messages),
                 tool_call_review_trigger=tool_call_review_trigger,
+                memory_review=memory_review,
             )
             try:
                 await taint_provider.authorize_taint_sink(
@@ -1017,6 +1024,7 @@ class LLMStreamingLoop:
                     tool_call_review_state=tool_call_review_state,
                     tool_call_review_messages=review_messages,
                     tool_call_review_trigger=tool_call_review_trigger,
+                    memory_review=memory_review,
                 )
 
             tool_execution_tasks = [

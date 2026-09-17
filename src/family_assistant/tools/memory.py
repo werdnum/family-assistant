@@ -23,8 +23,26 @@ from family_assistant.tools.notes import note_provenance_from_taint
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from family_assistant.memory.apply import ApplyOutcome
+    from family_assistant.memory.review_context import MemoryReviewContext
+    from family_assistant.storage.database import DatabaseTransaction
     from family_assistant.tools.types import ToolExecutionContext
+
+_REVIEW_EXHAUSTED = (
+    "No memory edits were applied, and this review will not look at another "
+    "proposal. A review gets one edit list and one retry after the reasons are "
+    "fed back, and both have now been refused. Stop proposing edits and reply "
+    "with a short note of what you would have kept, so the reason this review "
+    "was given up on is on the record."
+)
+"""The reply to a third proposal, which the review budget refuses outright.
+
+docs/design/conversation-memory.md allows one retry with the reasons fed back;
+counting the attempts here rather than saying so in the prompt is what makes
+that a bound rather than a request.
+"""
 
 MEMORY_TOOLS_DEFINITION: list[ToolDefinition] = [
     {
@@ -136,9 +154,15 @@ async def propose_memory_edits_tool(
             )
         )
 
+    review = exec_context.memory_review
+    if review is not None and review.proposals_exhausted:
+        return ToolResult(text=_REVIEW_EXHAUSTED)
+
     try:
         proposal = MemoryEditList(edits=edits)  # type: ignore[arg-type] # validated from raw tool arguments
     except ValidationError as error:
+        if review is not None:
+            review.progress.refused_proposals += 1
         return ToolResult(
             text=f"No memory edits were applied. The proposal is malformed:\n{error}"
         )
@@ -153,15 +177,27 @@ async def propose_memory_edits_tool(
         )
 
     db_context = exec_context.db_context
-    expected_revision = exec_context.memory_expected_revision
-    if expected_revision is None:
-        expected_revision = await db_context.memory_store.get_revision()
-
     now = (
         exec_context.clock.now()
         if exec_context.clock is not None
         else datetime.now(UTC)
     )
+
+    after_apply: Callable[[DatabaseTransaction], Awaitable[None]] | None = None
+    batch_id: str | None = None
+    if review is None:
+        expected_revision = await db_context.memory_store.get_revision()
+    else:
+        settled = review
+        expected_revision = settled.expected_revision
+        batch_id = settled.batch_id
+
+        async def _advance(txn: DatabaseTransaction) -> None:
+            """Commit the review's watermark with the edits it applied."""
+            await settled.advance_watermark(txn, now=now)
+
+        after_apply = _advance
+
     outcome = await apply_memory_edits_atomically(
         db_context,
         proposal.edits,
@@ -170,14 +206,27 @@ async def propose_memory_edits_tool(
         actor=_resolve_actor(exec_context),
         provenance_metadata=note_provenance_from_taint(exec_context),
         now=now,
+        batch_id=batch_id,
+        after_apply=after_apply,
     )
+    if review is not None:
+        _record_progress(review, outcome)
     return ToolResult(text=_render(outcome), data=_summarise(outcome))
+
+
+def _record_progress(review: MemoryReviewContext, outcome: ApplyOutcome) -> None:
+    """Tell the review task what its turn did, since the reply will not."""
+    if outcome.applied:
+        review.progress.applied_revision = outcome.revision
+        return
+    review.progress.refused_proposals += 1
+    review.progress.conflicted = outcome.conflict
 
 
 def _resolve_scope(exec_context: ToolExecutionContext) -> EvidenceScope | None:
     """The evidence this turn may cite: the review's stretch, or the turn itself."""
-    if exec_context.memory_evidence_scope is not None:
-        return exec_context.memory_evidence_scope
+    if exec_context.memory_review is not None:
+        return exec_context.memory_review.evidence_scope
     if exec_context.turn_id is None:
         return None
     return EvidenceScope.for_turn(
@@ -190,12 +239,12 @@ def _resolve_scope(exec_context: ToolExecutionContext) -> EvidenceScope | None:
 def _resolve_actor(exec_context: ToolExecutionContext) -> MemoryActor:
     """Who this apply is attributed to in the change log.
 
-    A review is the only caller that supplies its own evidence scope, so that
-    is what distinguishes a curator from a foreground "remember this".
+    A review is the only caller that runs under a review context, so that is
+    what distinguishes a curator from a foreground "remember this".
     """
     kind = (
         MemoryActorKind.CURATOR
-        if exec_context.memory_evidence_scope is not None
+        if exec_context.memory_review is not None
         else MemoryActorKind.ASSISTANT
     )
     return MemoryActor(

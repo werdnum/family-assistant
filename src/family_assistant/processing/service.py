@@ -80,6 +80,7 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface
     from family_assistant.llm.model_routing import ModelRouter, RoutingDecision
     from family_assistant.llm.model_selection import RoutingOutcome
+    from family_assistant.memory.review_context import MemoryReviewContext
     from family_assistant.processing.protocol import DelegatableService
     from family_assistant.processing.types import MidTurnInputProvider
     from family_assistant.security.taint import (
@@ -1687,6 +1688,7 @@ class ProcessingService:
         initial_taint_sources: Sequence[TaintSource] | None = None,
         taint_tracker: TurnTaintTracker | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
+        memory_review: MemoryReviewContext | None = None,
     ) -> tuple[list[LLMMessage], MessageReasoningInfo | None, list[str] | None]:
         """
         Non-streaming version of process_message that uses the streaming generator internally.
@@ -1725,6 +1727,7 @@ class ProcessingService:
             initial_taint_sources=initial_taint_sources,
             taint_tracker=taint_tracker,
             tool_call_review_trigger=tool_call_review_trigger,
+            memory_review=memory_review,
         )
 
     async def process_message_stream(
@@ -1809,6 +1812,7 @@ class ProcessingService:
         initial_taint_sources: Sequence[TaintSource] | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
         model_selection: ResolvedModelSelection | None = None,
+        memory_review: MemoryReviewContext | None = None,
     ) -> ChatInteractionResult:
         """
         Handles a complete chat interaction from user input to final response.
@@ -1930,6 +1934,7 @@ class ProcessingService:
                     *(initial_taint_sources or ()),
                 ),
                 tool_call_review_trigger=tool_call_review_trigger,
+                memory_review=memory_review,
             )
             final_reasoning_info = final_reasoning_info_from_process_msg
 

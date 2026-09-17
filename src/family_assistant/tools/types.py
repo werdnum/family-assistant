@@ -268,7 +268,7 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface  # Import the new interface
     from family_assistant.llm import LLMInterface
     from family_assistant.llm.messages import LLMMessage
-    from family_assistant.memory.edits import EvidenceScope
+    from family_assistant.memory.review_context import MemoryReviewContext
     from family_assistant.processing import ProcessingService
     from family_assistant.security.definition_records import (
         DefinitionGateOutcome,
@@ -572,21 +572,16 @@ class ToolExecutionContext:
     Fail-closed by default: a context built without it reads no memory and so
     may not write any either. See ``ProcessingConfig.memory_read``.
     """
-    memory_evidence_scope: EvidenceScope | None = None
-    """Which message rows a memory edit proposed in this turn may cite.
+    memory_review: MemoryReviewContext | None = None
+    """The curator review this turn is running for, when it is one.
 
-    Set by a curator review to the stretch it was given. ``None`` in the
-    foreground, where the tool derives the scope from this context's own
-    ``turn_id`` -- a "remember this" cites the message in which the person
-    asked, and can cite nothing else.
-    """
-    memory_expected_revision: int | None = None
-    """The memory store revision the model's proposal was computed against.
-
-    Set by a curator review to the revision it read before the model call, so
-    an edit list is never committed against a store a person changed while the
-    review ran. ``None`` in the foreground, where the tool reads the current
-    revision itself immediately before applying.
+    Carries the stretch a memory edit may cite, the store revision the
+    proposal is computed against, and the watermark a successful apply
+    advances -- as one value, so a turn can never hold the scope without the
+    revision that guards it. ``None`` in the foreground, where the tool
+    derives the scope from this context's own ``turn_id`` (a "remember this"
+    cites the message in which the person asked, and can cite nothing else)
+    and reads the current revision immediately before applying.
     """
     note_registry: NoteRegistry | None = None
     confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None

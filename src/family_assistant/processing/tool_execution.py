@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     from family_assistant.llm.google_types import GeminiProviderMetadata
     from family_assistant.llm.messages import LLMMessage
     from family_assistant.llm.tool_call import ToolCallItem
+    from family_assistant.memory.review_context import MemoryReviewContext
     from family_assistant.security.taint import (
         TaintMetadata,
         TurnTaintTracker,
@@ -250,6 +251,7 @@ class ToolExecutor:
         tool_call_review_state: ToolCallReviewTurnState | None,
         tool_call_review_messages: Sequence[LLMMessage] | None,
         tool_call_review_trigger: TriggerReviewInput | None,
+        memory_review: MemoryReviewContext | None,
         tool_call_id: str | None = None,
         tool_call_batch: ToolCallBatch | None = None,
     ) -> ToolExecutionContext:
@@ -302,6 +304,7 @@ class ToolExecutor:
             ),
             tool_call_review_messages=tool_call_review_messages,
             tool_call_review_trigger=tool_call_review_trigger,
+            memory_review=memory_review,
             tool_call_id=tool_call_id,
             tool_call_batch=tool_call_batch,
         )
@@ -876,6 +879,7 @@ class ToolExecutor:
         tool_call_review_state: ToolCallReviewTurnState | None = None,
         tool_call_review_messages: Sequence[LLMMessage] | None = None,
         tool_call_review_trigger: TriggerReviewInput | None = None,
+        memory_review: MemoryReviewContext | None = None,
         tool_call_batch: ToolCallBatch | None = None,
     ) -> ToolExecutionResult:
         """Execute a single tool call and return the result.
@@ -1028,6 +1032,7 @@ class ToolExecutor:
                 tool_call_review_state=tool_call_review_state,
                 tool_call_review_messages=tool_call_review_messages,
                 tool_call_review_trigger=tool_call_review_trigger,
+                memory_review=memory_review,
                 tool_call_id=call_id,
                 tool_call_batch=tool_call_batch,
             )
