@@ -85,6 +85,11 @@ from family_assistant.llm.providers.google_genai_client import (
     is_antigravity_model,
     is_interactions_agent_model,
 )
+from family_assistant.memory.sweep import (
+    MEMORY_REVIEW_SWEEP_TASK_ID,
+    MEMORY_REVIEW_SWEEP_TASK_TYPE,
+    make_memory_review_sweep_handler,
+)
 from family_assistant.observability.exporter import start_metrics_exporter
 from family_assistant.observability.metrics import record_task_queue_state
 from family_assistant.paths import PACKAGE_ROOT
@@ -2154,6 +2159,8 @@ class Assistant:
             # Create system cleanup task
             await self._setup_system_tasks()
 
+        await self._record_memory_enablement()
+
         # Reconcile stale worker tasks asynchronously
         asyncio.create_task(self._reconcile_worker_tasks())
 
@@ -2207,6 +2214,76 @@ class Assistant:
         reconciled = await reconcile_stale_tasks(db_ctx, backend)
         if reconciled:
             logger.info(f"Reconciled {reconciled} stale worker tasks on startup")
+
+    def _memory_contributing_profiles(self) -> set[str]:
+        """The profiles an operator has configured to feed the memory curator."""
+        return {
+            profile.id
+            for profile in self.config.service_profiles
+            if profile.processing_config.memory_contribute
+        }
+
+    async def _record_memory_enablement(self) -> None:
+        """Reconcile the stored contribution boundary with the configuration.
+
+        See docs/design/conversation-memory.md, "Enablement boundary": each time
+        contribution is turned on for a profile the moment is recorded, and a
+        review considers only rows newer than it, so turning the feature on
+        learns from what is said next rather than spending a burst of model
+        calls on months of old conversation. Run at startup because that is
+        when the configuration is read; a profile already recorded as
+        contributing keeps the moment it has, so a restart does not re-stamp
+        the boundary and discard everything said since.
+        """
+        assert self.database_engine is not None, (
+            "Database engine must be initialized before recording memory enablement"
+        )
+        await Database(self.database_engine).memory_review.record_enablement(
+            profile_ids_contributing=self._memory_contributing_profiles(),
+            now=datetime.now(UTC),
+        )
+
+    async def _seed_memory_review_sweep(self, db_ctx: Database) -> None:
+        """Schedule the recurring review sweep, when there is anything to sweep.
+
+        Two conditions, and both are deliberate. The master switch is what a
+        deployment turns the whole mechanism off with; the contributor check is
+        what keeps the shipped configuration -- contribution off everywhere --
+        from running a query every few minutes that can only ever return
+        nothing. A sweep seeded by an earlier configuration and left behind by a
+        later one is harmless: the handler reads the same two conditions and
+        returns immediately.
+        """
+        settings = self.config.memory_config.to_review_settings()
+        contributors = self._memory_contributing_profiles()
+        if not settings.enabled or not contributors:
+            logger.info(
+                "Memory review sweep not scheduled: "
+                f"enabled={settings.enabled}, contributing profiles={len(contributors)}."
+            )
+            return
+        try:
+            await db_ctx.tasks.enqueue(
+                task_id=MEMORY_REVIEW_SWEEP_TASK_ID,
+                task_type=MEMORY_REVIEW_SWEEP_TASK_TYPE,
+                payload={},
+                scheduled_at=datetime.now(UTC),
+                recurrence_rule=(
+                    f"FREQ=MINUTELY;INTERVAL={settings.sweep_interval_minutes}"
+                ),
+                max_retries_override=5,
+                priority=TaskPriority.BACKGROUND,
+            )
+            logger.info(
+                "Memory review sweep scheduled every "
+                f"{settings.sweep_interval_minutes} minute(s) for "
+                f"{len(contributors)} contributing profile(s)."
+            )
+        except Exception:
+            # Logged rather than raised, as every other system task setup is:
+            # a sweep that failed to seed is re-seeded on the next restart, and
+            # nothing else in startup depends on it.
+            logger.exception("Memory review sweep task setup failed")
 
     async def _setup_system_tasks(self) -> None:
         """Upsert system tasks on startup."""
@@ -2370,6 +2447,8 @@ class Assistant:
                 # leaves the reaper with no caller until the next restart.
                 logger.exception("Attachment cleanup task setup failed")
 
+            await self._seed_memory_review_sweep(db_ctx)
+
             if self.embedding_generator is None:
                 logger.info(
                     "No embedding generator configured; skipping the message "
@@ -2506,6 +2585,13 @@ class Assistant:
         )
         worker.register_task_handler("attachment_cleanup", handle_attachment_cleanup)
         worker.register_task_handler("reindex_document", self.handle_reindex_document)
+        worker.register_task_handler(
+            MEMORY_REVIEW_SWEEP_TASK_TYPE,
+            make_memory_review_sweep_handler(
+                settings=self.config.memory_config.to_review_settings(),
+                configured_contributors=self._memory_contributing_profiles(),
+            ),
+        )
         logger.info(f"Registered task handlers for worker {worker.worker_id}")
         return worker
 

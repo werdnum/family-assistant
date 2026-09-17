@@ -72,6 +72,7 @@ if TYPE_CHECKING:
 from .config_sources import DeepMergedYamlSource
 from .delegation_security import DelegationSecurityLevel
 from .memory.limits import MemoryLimits
+from .memory.review_settings import MemoryReviewSettings
 from .security.taint import SinkClass, TaintPolicyConfig
 from .telegram.commands import BUILT_IN_SLASH_COMMANDS, normalize_slash_command
 from .tools.mcp_attachments import (
@@ -722,6 +723,31 @@ class MemoryConfig(BaseModel):
     max_edits_per_review: int = MemoryLimits.DEFAULTS.max_edits_per_review
     core_note_title: str = MemoryLimits.DEFAULTS.core_note_title
 
+    enabled: bool = MemoryReviewSettings.DEFAULTS.enabled
+    """The master switch. With it off nothing is swept and nothing is reviewed.
+
+    On by default, which costs a deployment nothing while contribution ships
+    off on every profile: the sweep is not even seeded until some profile is
+    configured to contribute.
+    """
+    sweep_interval_minutes: int = Field(
+        default=MemoryReviewSettings.DEFAULTS.sweep_interval_minutes, gt=0
+    )
+    idle_window_minutes: dict[str, int] = Field(
+        default_factory=lambda: dict(MemoryReviewSettings.DEFAULTS.idle_window_minutes)
+    )
+    default_idle_window_minutes: int = Field(
+        default=MemoryReviewSettings.DEFAULTS.default_idle_window_minutes, gt=0
+    )
+    max_deferral_hours: int = Field(
+        default=MemoryReviewSettings.DEFAULTS.max_deferral_hours, gt=0
+    )
+    contributing_interfaces: list[str] = Field(
+        default_factory=lambda: sorted(
+            MemoryReviewSettings.DEFAULTS.contributing_interfaces
+        )
+    )
+
     def to_limits(self) -> MemoryLimits:
         """The runtime value the storage layer enforces."""
         return MemoryLimits(
@@ -731,6 +757,17 @@ class MemoryConfig(BaseModel):
             review_input_max_chars=self.review_input_max_chars,
             max_edits_per_review=self.max_edits_per_review,
             core_note_title=self.core_note_title,
+        )
+
+    def to_review_settings(self) -> MemoryReviewSettings:
+        """The value the sweep and the due predicate are evaluated against."""
+        return MemoryReviewSettings(
+            enabled=self.enabled,
+            sweep_interval_minutes=self.sweep_interval_minutes,
+            idle_window_minutes=dict(self.idle_window_minutes),
+            default_idle_window_minutes=self.default_idle_window_minutes,
+            max_deferral_hours=self.max_deferral_hours,
+            contributing_interfaces=frozenset(self.contributing_interfaces),
         )
 
 

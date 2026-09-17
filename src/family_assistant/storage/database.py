@@ -68,6 +68,7 @@ if TYPE_CHECKING:
         EventsRepository,
         IosPushTokenRepository,
         MemoryChangeLogRepository,
+        MemoryReviewRepository,
         MemoryStoreRepository,
         MessageHistoryRepository,
         NotesRepository,
@@ -478,6 +479,15 @@ class DatabaseExecutor(ABC):
         )
 
         return self._repository(MemoryChangeLogRepository)
+
+    @property
+    def memory_review(self) -> MemoryReviewRepository:
+        """Get the memory review watermark and enablement repository instance."""
+        from family_assistant.storage.repositories.memory_review import (  # noqa: PLC0415
+            MemoryReviewRepository,
+        )
+
+        return self._repository(MemoryReviewRepository)
 
     @property
     def memory_store(self) -> MemoryStoreRepository:

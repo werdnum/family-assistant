@@ -36,7 +36,7 @@ from family_assistant.llm.call_context import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Mapping
 
     from family_assistant.llm.messages import MessageReasoningInfo
 
@@ -48,6 +48,8 @@ __all__ = [
     "LLM_CALL_DURATION",
     "LLM_TIME_TO_FIRST_OUTPUT",
     "LLM_TOKENS",
+    "MEMORY_CONVERSATIONS_DUE",
+    "MEMORY_REVIEWS_ENQUEUED",
     "MODEL_ROUTING_DECISIONS",
     "MODEL_ROUTING_LATENCY",
     "TASKS_ENQUEUED",
@@ -68,6 +70,8 @@ __all__ = [
     "normalized_token_buckets",
     "record_indexing_documents",
     "record_llm_call",
+    "record_memory_conversations_due",
+    "record_memory_review_enqueued",
     "record_model_routing",
     "record_task_enqueued",
     "record_task_processed",
@@ -317,6 +321,25 @@ TASKS_QUEUED = Gauge(
         "state, and the processed counter already has them."
     ),
     ("priority", "state"),
+)
+
+MEMORY_CONVERSATIONS_DUE = Gauge(
+    "family_assistant_memory_conversations_due",
+    (
+        "Conversations the last memory review sweep found ready to review, by "
+        "the clause that made them due -- idle, or the maximum deferral."
+    ),
+    ("reason",),
+)
+
+MEMORY_REVIEWS_ENQUEUED = Counter(
+    "family_assistant_memory_reviews_enqueued",
+    (
+        "Memory reviews written to the queue, by interface and by whether the "
+        "sweep enqueued one or found a review of that conversation already in "
+        "flight."
+    ),
+    ("interface_type", "outcome"),
 )
 
 TASK_DUE_LATENCY = Gauge(
@@ -574,6 +597,33 @@ def record_task_processed(
             TASK_DURATION.labels(task_type, priority).observe(duration_seconds)
     except Exception:
         logger.debug("Failed to record task processing metrics", exc_info=True)
+
+
+def record_memory_conversations_due(counts: Mapping[str, int]) -> None:
+    """Publish one sweep's view of the review backlog. Never raises.
+
+    Every reason is reported on every sweep, zeroes included, so a series does
+    not go stale at its last non-zero value once the backlog clears.
+    """
+    try:
+        for reason, count in counts.items():
+            MEMORY_CONVERSATIONS_DUE.labels(reason).set(count)
+    except Exception:
+        logger.debug("Failed to record memory conversations due metric", exc_info=True)
+
+
+def record_memory_review_enqueued(*, interface_type: str, outcome: str) -> None:
+    """Count one due conversation the sweep acted on. Never raises.
+
+    ``outcome`` separates a review that was enqueued from one that was skipped
+    because a review of the same conversation was already in flight, which is
+    how a conversation whose reviews never finish shows up as a flat enqueue
+    rate against a rising skip rate.
+    """
+    try:
+        MEMORY_REVIEWS_ENQUEUED.labels(interface_type, outcome).inc()
+    except Exception:
+        logger.debug("Failed to record memory review enqueue metric", exc_info=True)
 
 
 def record_task_queue_state(

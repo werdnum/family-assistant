@@ -2078,6 +2078,51 @@ Contributing without reading is a startup error. Contribution feeds a profile's 
 curator, which then writes entries the profile itself cannot see, so it could neither honour what it
 taught nor be corrected by it.
 
+Turning contribution on for a profile records the moment, and reviews consider only conversation
+from then on — turning the feature on does not spend a burst of model calls on months of old
+conversation. Turning it off and on again records a new moment, which discards anything said in
+between that had not yet been reviewed. Reviewing older history is a separate, explicit backfill.
+
+### When conversations are reviewed
+
+`memory_config` also holds the timing of the background review. A recurring system task evaluates a
+predicate over stored state every few minutes and enqueues one review per due conversation; nothing
+is enqueued when a message is persisted, so there is no state to lose across a restart.
+
+```yaml
+memory_config:
+  enabled: true
+  sweep_interval_minutes: 5
+  idle_window_minutes:
+    web: 30
+    telegram: 90
+  default_idle_window_minutes: 30
+  max_deferral_hours: 24
+  contributing_interfaces: ["telegram", "web"]
+```
+
+- **enabled** — the master switch for the whole mechanism. With it off nothing is swept and nothing
+  is reviewed, whatever any profile is configured to do. The sweep is only scheduled at all when
+  this is on **and** at least one profile contributes, so the shipped configuration schedules
+  nothing.
+- **sweep_interval_minutes** — how often the predicate is evaluated. Freshness is quantised to this,
+  which is negligible against the idle windows.
+- **idle_window_minutes** — per interface, how long a conversation must have been quiet before it is
+  reviewed. An idle stretch is a settled discussion, and how long that takes differs by interface:
+  Telegram is bursty, and a household member replying twenty minutes later is still the same
+  exchange.
+- **default_idle_window_minutes** — the window for an interface the map does not name.
+- **max_deferral_hours** — how long the oldest unreviewed message may wait before the conversation
+  is reviewed whether it has gone quiet or not. This is what guarantees a busy group chat that never
+  settles is still reviewed.
+- **contributing_interfaces** — which interfaces may contribute at all. Telephone calls and iOS
+  native-voice sessions are deliberately absent: a call is saved as a transcript note rather than as
+  message rows, and a native-voice session is persisted with every assistant row stamped at the
+  untrusted extreme, so a review of one would be skipped on provenance in any case. Both read memory
+  like any other interface; they only do not feed it. Email intake, A2A, delegation subconversations
+  and automation-triggered turns are excluded whatever this says, by the profile they run under, by
+  their subconversation, or by being application-generated rather than a person speaking.
+
 ______________________________________________________________________
 
 ## Shopping (Universal Commerce Protocol)
