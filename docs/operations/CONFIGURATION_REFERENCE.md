@@ -1484,14 +1484,16 @@ sends go to the right host.
 
 ______________________________________________________________________
 
-## Google Integration (Gmail & Drive)
+## Google Integration (Gmail, Drive & Calendar)
 
-Per-user Gmail and Drive access needs an OAuth client from Google Cloud Console plus a Fernet key
-for encrypting refresh tokens at rest. All three secrets must be present; if any is missing the
-integration is disabled at startup with an error naming the unmet condition.
+Per-user Gmail, Drive and Google Calendar access needs an OAuth client from Google Cloud Console
+plus a Fernet key for encrypting refresh tokens at rest. All three secrets must be present; if any
+is missing the integration is disabled at startup with an error naming the unmet condition.
 
 See [docs/design/user-scoped-google-data-access.md](../design/user-scoped-google-data-access.md) and
-the user-facing [Gmail and Google Drive guide](../user/google-workspace.md).
+the user-facing [Gmail and Google Drive guide](../user/google-workspace.md). Google Calendar is
+covered in [docs/design/google-calendar-per-user.md](../design/google-calendar-per-user.md) and the
+[calendar guide](../user/calendar.md).
 
 **OAuth client setup.** Create an OAuth 2.0 client in Google Cloud Console with the redirect URI
 pointing at `<your-server>/api/integrations/google/callback`, and add every household member who
@@ -1512,6 +1514,8 @@ google_integration:
     - "https://www.googleapis.com/auth/gmail.compose"
     - "https://www.googleapis.com/auth/drive.readonly"
     - "https://www.googleapis.com/auth/drive.file"
+    - "https://www.googleapis.com/auth/calendar.readonly"
+    - "https://www.googleapis.com/auth/calendar.events"
   require_taint_enforcement: true
 ```
 
@@ -1571,12 +1575,12 @@ ______________________________________________________________________
 
 Allowlist of Google OAuth data scopes requested at consent.
 
-| Property  | Value                                                             |
-| --------- | ----------------------------------------------------------------- |
-| Required  | No                                                                |
-| Default   | `gmail.readonly`, `gmail.compose`, `drive.readonly`, `drive.file` |
-| Sensitive | No                                                                |
-| Example   | `["https://www.googleapis.com/auth/gmail.readonly"]`              |
+| Property  | Value                                                                                                     |
+| --------- | --------------------------------------------------------------------------------------------------------- |
+| Required  | No                                                                                                        |
+| Default   | `gmail.readonly`, `gmail.compose`, `drive.readonly`, `drive.file`, `calendar.readonly`, `calendar.events` |
+| Sensitive | No                                                                                                        |
+| Example   | `["https://www.googleapis.com/auth/gmail.readonly"]`                                                      |
 
 The `scopes` list *narrows* the grant — remove the Drive scopes to get a Gmail-only integration, for
 example. Only scopes used by shipped deterministic tools are allowed; adding an unsupported scope
@@ -1592,6 +1596,21 @@ Tool registration follows the configured scopes:
 | `drive_search`                                              | `drive.readonly` or `drive.metadata.readonly` |
 | `drive_get_file`                                            | `drive.readonly`                              |
 | `drive_write_file`                                          | `drive.file`                                  |
+
+Google Calendar has no tools of its own; it extends the calendar tools (`list_calendars`,
+`search_calendar_events`, `add_calendar_event`, `modify_calendar_event`, `delete_calendar_event`)
+and the calendar context, which keep working without it:
+
+| Scope               | Enables                                                                                                               |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `calendar.readonly` | The user's Google calendars in the calendar tools, and their primary Google calendar in the per-turn calendar context |
+| `calendar.events`   | Adding, changing and deleting events on those calendars (needs `calendar.readonly` as well)                           |
+
+Calendar writes never add attendees and always ask Google not to send updates, so they cannot email
+anyone. When calendar access is configured, every profile that allows a calendar tool is held to the
+taint floor described under `require_taint_enforcement`, not only profiles allowing the Gmail/Drive
+tools. Users who connected before calendar scopes were added keep working for Gmail and Drive and
+must **Reconnect** to grant calendar access.
 
 The draft tool never sends email, although Google's `gmail.compose` scope itself also authorizes
 sending. Drive writes are deterministically confined to the app-created Family Assistant folder and
@@ -1609,7 +1628,8 @@ ______________________________________________________________________
 
 ### google_integration.require_taint_enforcement
 
-Whether the Gmail/Drive tools require taint enforcement before they register.
+Whether the Google integration (the Gmail/Drive tools, and Google Calendar in the calendar tools)
+requires taint enforcement before it is enabled.
 
 | Property  | Value   |
 | --------- | ------- |
@@ -2276,8 +2296,8 @@ gemini_live_config:
 ```
 
 The native iOS app sends `vad` with every session, except when its audio is routed through a car
-(CarPlay), where it sends `car_audio_vad` instead. A car's microphone hears the assistant through the
-cabin speakers, and at default sensitivity that echo is taken for the user interrupting; the car
+(CarPlay), where it sends `car_audio_vad` instead. A car's microphone hears the assistant through
+the cabin speakers, and at default sensitivity that echo is taken for the user interrupting; the car
 block trades a slightly less eager barge-in for not cutting the assistant off. `car_audio_vad`
 replaces `vad` whole rather than overriding individual fields. Every session records which block it
 used, and each interruption, in the `Voice.connection` telemetry lane.
