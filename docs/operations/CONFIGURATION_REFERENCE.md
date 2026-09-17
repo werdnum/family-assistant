@@ -1967,6 +1967,41 @@ grant the reports are readable only through the web interface. See
 
 ______________________________________________________________________
 
+## Conversation Memory
+
+`memory_config` bounds the household memory store — the notes carrying the `memory` visibility
+label. Every writer is held to these bounds at the notes repository, so a value here applies to the
+notes UI, the assistant's own note tools and the background curator alike; a write that would exceed
+a cap is refused with a message telling the writer to condense or move detail to a topic note.
+
+```yaml
+memory_config:
+  core_note_max_chars: 6000
+  topic_note_max_chars: 12000
+  topic_index_max_chars: 1500
+  review_input_max_chars: 24000
+  max_edits_per_review: 12
+  core_note_title: "Household Memory"
+```
+
+- **core_note_max_chars** — ceiling on the single always-loaded memory note, which is the whole
+  memory contribution to every prompt.
+- **topic_note_max_chars** — ceiling on each memory topic note, sized so no memory note exceeds what
+  one review can read.
+- **topic_index_max_chars** — the share of the core note its derived index of topic notes may
+  occupy.
+- **review_input_max_chars** — ceiling on the transcript one memory review is given.
+- **max_edits_per_review** — how many note edits one review may propose.
+- **core_note_title** — the title the core note is created under. It is created automatically on the
+  first memory write, identified thereafter by id, so renaming it in the notes UI is safe. If a note
+  with this title already exists and is not part of memory, memory writes are refused until it is
+  renamed.
+
+Deleting the core note is refused (exactly one must exist); clearing its contents is an ordinary
+edit. See [docs/design/conversation-memory.md](../design/conversation-memory.md).
+
+______________________________________________________________________
+
 ## Shopping (Universal Commerce Protocol)
 
 `ucp_config` publishes this deployment's own UCP platform profile at `/.well-known/ucp` and holds

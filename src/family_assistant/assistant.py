@@ -127,6 +127,7 @@ from family_assistant.storage.base import create_engine_with_sqlite_optimization
 from family_assistant.storage.database import (
     Database,
     set_engine_history_taint_epoch,
+    set_engine_memory_limits,
 )
 from family_assistant.storage.tasks import TaskPriority
 from family_assistant.task_worker import (
@@ -867,6 +868,15 @@ class Assistant:
         set_engine_history_taint_epoch(
             self.database_engine,
             self.config.taint_policy.history_taint_epoch,
+        )
+
+        # Same reasoning for the conversation-memory limits: every writer of a
+        # memory note (web notes API, foreground tool, background curator)
+        # reaches the notes repository through its own Database handle, and all
+        # of them must enforce the deployment's caps.
+        set_engine_memory_limits(
+            self.database_engine,
+            self.config.memory_config.to_limits(),
         )
 
         # Store engine in FastAPI app state for web dependencies

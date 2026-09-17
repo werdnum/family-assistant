@@ -71,6 +71,7 @@ if TYPE_CHECKING:
 
 from .config_sources import DeepMergedYamlSource
 from .delegation_security import DelegationSecurityLevel
+from .memory.limits import MemoryLimits
 from .security.taint import SinkClass, TaintPolicyConfig
 from .telegram.commands import BUILT_IN_SLASH_COMMANDS, normalize_slash_command
 from .tools.mcp_attachments import (
@@ -684,6 +685,34 @@ class NotesConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     default_visibility_labels: list[str] = Field(default_factory=list)
+
+
+class MemoryConfig(BaseModel):
+    """Bounds and naming for the conversation-memory store.
+
+    Every memory write is held to these at the notes repository, whichever
+    interface it arrives through. See docs/design/conversation-memory.md.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    core_note_max_chars: int = MemoryLimits.DEFAULTS.core_note_max_chars
+    topic_note_max_chars: int = MemoryLimits.DEFAULTS.topic_note_max_chars
+    topic_index_max_chars: int = MemoryLimits.DEFAULTS.topic_index_max_chars
+    review_input_max_chars: int = MemoryLimits.DEFAULTS.review_input_max_chars
+    max_edits_per_review: int = MemoryLimits.DEFAULTS.max_edits_per_review
+    core_note_title: str = MemoryLimits.DEFAULTS.core_note_title
+
+    def to_limits(self) -> MemoryLimits:
+        """The runtime value the storage layer enforces."""
+        return MemoryLimits(
+            core_note_max_chars=self.core_note_max_chars,
+            topic_note_max_chars=self.topic_note_max_chars,
+            topic_index_max_chars=self.topic_index_max_chars,
+            review_input_max_chars=self.review_input_max_chars,
+            max_edits_per_review=self.max_edits_per_review,
+            core_note_title=self.core_note_title,
+        )
 
 
 class SkillsConfig(BaseModel):
@@ -1917,6 +1946,7 @@ class AppConfig(BaseSettings):
         default_factory=BrowserHandoffConfig
     )
     notes_config: NotesConfig = Field(default_factory=NotesConfig)
+    memory_config: MemoryConfig = Field(default_factory=MemoryConfig)
     skills_config: SkillsConfig = Field(default_factory=SkillsConfig)
     mqtt_config: MQTTConfig = Field(default_factory=MQTTConfig)
     ucp_config: UCPConfig = Field(default_factory=UCPConfig)
