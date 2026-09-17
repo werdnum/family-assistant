@@ -15,6 +15,12 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.sql import functions as func
 
+from family_assistant.memory.invariants import (
+    MEMORY_LABEL,
+    MemoryWriteError,
+    enforce_memory_invariants,
+    is_memory_write,
+)
 from family_assistant.skills.frontmatter import parse_frontmatter
 from family_assistant.storage.database import DatabaseExecutor, DatabaseTransaction
 from family_assistant.storage.notes import notes_table
@@ -543,6 +549,22 @@ class NotesRepository(BaseRepository):
                 note_content
             )
 
+            existing_memory_labels = (
+                existing_note.visibility_labels if existing_note else []
+            )
+            if is_memory_write(visibility_labels_to_use, existing_memory_labels):
+                await self._enforce_memory_write(
+                    txn,
+                    lookup_title=title,
+                    title=title,
+                    content=note_content,
+                    include_in_prompt=include_in_prompt,
+                    resolved_labels=visibility_labels_to_use,
+                    existing_labels=existing_memory_labels,
+                    provenance_metadata=provenance_metadata_to_use,
+                    now=now,
+                )
+
             if txn.dialect_name == "postgresql":
 
                 def _build_postgres_upsert() -> tuple[
@@ -693,20 +715,95 @@ class NotesRepository(BaseRepository):
 
         return await self._db.atomic(_write)
 
+    async def _enforce_memory_write(
+        self,
+        txn: DatabaseTransaction,
+        *,
+        lookup_title: str,
+        title: str,
+        content: str,
+        include_in_prompt: bool,
+        resolved_labels: list[str],
+        existing_labels: list[str],
+        # ast-grep-ignore: no-dict-any - provenance metadata stores compact runtime taint JSON
+        provenance_metadata: Mapping[str, object] | None,
+        now: datetime,
+    ) -> None:
+        """Apply the memory-store invariants and bump the store revision.
+
+        Runs inside the caller's write transaction, so a write that violates an
+        invariant rolls back with everything else in that unit of work, and the
+        revision a concurrent proposal was computed against cannot move between
+        the check and the write.
+
+        Args:
+            lookup_title: The title the note currently has, which is how its id
+                is found — the core note is identified by id, so a rename of it
+                must still resolve to the core note.
+            title: The title the note will have after this write.
+        """
+        existing_note_id = await txn.fetch_value(
+            select(notes_table.c.id).where(notes_table.c.title == lookup_title)
+        )
+        await enforce_memory_invariants(
+            txn,
+            limits=self._db.memory_limits,
+            title=title,
+            content=content,
+            include_in_prompt=include_in_prompt,
+            resolved_labels=resolved_labels,
+            existing_note_id=existing_note_id,
+            existing_labels=existing_labels,
+            provenance_metadata=provenance_metadata,
+            now=now,
+        )
+        await txn.memory_store.bump_revision()
+
     async def delete(self, title: str) -> bool:
-        """Deletes a note by title."""
-        stmt = delete(notes_table).where(notes_table.c.title == title)
+        """Deletes a note by title.
+
+        Raises:
+            MemoryWriteError: if the note is the core memory note, which must
+                always exist. Clearing its contents is an ordinary edit.
+        """
+
+        async def _delete(txn: DatabaseTransaction) -> bool:
+            """Read the note's memory status and delete it as one unit."""
+            row = await txn.fetch_one(
+                select(notes_table.c.id, notes_table.c.visibility_labels).where(
+                    notes_table.c.title == title
+                )
+            )
+            if row is None:
+                self._logger.warning(f"Note not found for deletion: {title}")
+                return False
+
+            is_memory_note = MEMORY_LABEL in _parse_json_list(row["visibility_labels"])
+            if is_memory_note:
+                core_note_id = await txn.memory_store.get_core_note_id()
+                if core_note_id == row["id"]:
+                    raise MemoryWriteError(
+                        f"'{title}' is the core memory note and cannot be "
+                        "deleted; exactly one always-loaded memory note must "
+                        "exist. Clear its contents instead."
+                    )
+
+            result = await txn.execute(
+                delete(notes_table).where(notes_table.c.id == row["id"])
+            )
+            if result.rowcount == 0:
+                self._logger.warning(f"Note not found for deletion: {title}")
+                return False
+            if is_memory_note:
+                await txn.memory_store.bump_revision()
+            self._logger.info(f"Deleted note: {title}")
+            return True
+
         try:
-            result = await self._db.execute(stmt)
-            deleted_count = result.rowcount
+            return await self._db.atomic(_delete)
         except SQLAlchemyError as e:
             self._logger.exception(f"Database error in delete({title}): {e}")
             raise
-        if deleted_count > 0:
-            self._logger.info(f"Deleted note: {title}")
-            return True
-        self._logger.warning(f"Note not found for deletion: {title}")
-        return False
 
     async def rename_and_update(
         self,
@@ -818,6 +915,20 @@ class NotesRepository(BaseRepository):
 
         async def _rename(txn: DatabaseTransaction) -> str:
             """Update the note and enqueue its indexing task as one unit."""
+            if is_memory_write(
+                visibility_labels_to_use, existing_note.visibility_labels
+            ):
+                await self._enforce_memory_write(
+                    txn,
+                    lookup_title=original_title,
+                    title=new_title,
+                    content=content,
+                    include_in_prompt=include_in_prompt,
+                    resolved_labels=visibility_labels_to_use,
+                    existing_labels=existing_note.visibility_labels,
+                    provenance_metadata=provenance_metadata_to_use,
+                    now=datetime.now(UTC),
+                )
             stmt = (
                 update(notes_table)
                 .where(notes_table.c.title == original_title)

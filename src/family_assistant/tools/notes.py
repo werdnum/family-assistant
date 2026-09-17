@@ -10,6 +10,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any, TypedDict
 
+from family_assistant.memory.invariants import MemoryWriteError
 from family_assistant.security.taint import (
     SourceTrustTier,
     TaintMetadata,
@@ -172,6 +173,8 @@ async def add_or_update_note_tool(
             else ""
         )
         return f"Note '{title}' has been {'updated' if result == 'Success' else 'created'} successfully{attachment_info}."
+    except MemoryWriteError as e:
+        return f"Error: {e.message}"
     except NoteWritePolicyError as e:
         return f"Error: {e}"
     except Exception as e:
@@ -480,7 +483,10 @@ async def delete_note_tool(
             "success": False,
             "message": f"Note '{title}' not found.",
         }
-    deleted = await exec_context.db_context.notes.delete(title)
+    try:
+        deleted = await exec_context.db_context.notes.delete(title)
+    except MemoryWriteError as e:
+        return {"success": False, "message": e.message}
     return {
         "success": deleted,
         "message": f"Note '{title}' deleted successfully."

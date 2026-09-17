@@ -4,6 +4,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 
+from family_assistant.memory.invariants import (
+    MemoryStoreRevisionConflict,
+    MemoryWriteError,
+)
 from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.notes import (
     DuplicateNoteError,
@@ -69,6 +73,12 @@ async def create_or_update_note(
                 # Admin management surface: bypasses visibility confinement by design.
                 write_policy=NoteWritePolicy.UNCONSTRAINED,
             )
+        except MemoryStoreRevisionConflict as err:
+            raise HTTPException(status.HTTP_409_CONFLICT, err.message) from err
+        except MemoryWriteError as err:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, err.message
+            ) from err
         except NoteNotFoundError as err:
             raise HTTPException(status.HTTP_404_NOT_FOUND, str(err)) from err
         except DuplicateNoteError as err:
@@ -91,6 +101,12 @@ async def create_or_update_note(
                 # Admin management surface: bypasses visibility confinement by design.
                 write_policy=NoteWritePolicy.UNCONSTRAINED,
             )
+        except MemoryStoreRevisionConflict as err:
+            raise HTTPException(status.HTTP_409_CONFLICT, err.message) from err
+        except MemoryWriteError as err:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT, err.message
+            ) from err
         except IntegrityError as err:
             # Handle race condition where title was taken between check and create
             raise HTTPException(
@@ -107,7 +123,10 @@ async def delete_note(
     title: str, db_context: Annotated[Database, Depends(get_db)]
 ) -> dict[str, str]:
     """Delete a note by title."""
-    deleted = await db_context.notes.delete(title)
+    try:
+        deleted = await db_context.notes.delete(title)
+    except MemoryWriteError as err:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, err.message) from err
     if not deleted:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Note not found")
     logger.info("Deleted note %s", title)
