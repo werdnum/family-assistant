@@ -148,6 +148,7 @@ def _tool_context(
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,
+        memory_read=True,
         memory_evidence_scope=evidence_scope,
         memory_expected_revision=expected_revision,
     )

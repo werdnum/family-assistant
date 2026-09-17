@@ -74,6 +74,7 @@ def test_the_curator_reads_only_memory_notes(curator: ServiceProfile) -> None:
     policy = NoteReadPolicy.for_profile(
         visibility_grants=curator.visibility_grants,
         required_labels=processing_config.required_note_read_labels,
+        memory_read=processing_config.memory_read,
     )
 
     assert policy.required_labels == frozenset({MEMORY_LABEL})
@@ -114,6 +115,7 @@ def test_the_execution_context_derives_the_same_two_policies(
         timezone=ZoneInfo("UTC"),
         visibility_grants=set(curator.visibility_grants),
         required_note_read_labels=processing_config.required_note_read_labels,
+        memory_read=processing_config.memory_read,
         required_note_visibility_labels=(
             processing_config.required_note_visibility_labels
         ),

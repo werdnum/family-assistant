@@ -516,6 +516,18 @@ class ProcessingConfig(BaseModel):
     # skill -- is visible to every reader. None (the default) is the ordinary
     # reader, confined by grants only.
     required_note_read_labels: list[str] | None = None
+    # Whether this profile sees the household's conversation memory, and
+    # whether its conversations are reviewed into it. Two settings because they
+    # are two decisions: a specialised profile can benefit from the household's
+    # standing preferences without teaching its own conversations back into
+    # shared memory. Contributing implies reading, which startup validation
+    # enforces. `memory_read` is also the whole of memory's visibility: the one
+    # place a profile's NoteReadPolicy is derived grants or denies the `memory`
+    # label from it, so the setting and the profile's visibility_grants cannot
+    # disagree. See docs/design/conversation-memory.md, "Two settings, one
+    # convenience default".
+    memory_read: bool = False
+    memory_contribute: bool = False
     allow_wake_llm: bool = True
     enable_computer_use: bool = False
     computer_use_excluded_functions: list[str] = Field(default_factory=list)
@@ -2179,6 +2191,35 @@ class AppConfig(BaseSettings):
                     f"{', '.join(sorted(granted)) or '(none granted)'}."
                 )
                 raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def validate_memory_contribution_implies_reading(self) -> AppConfig:
+        """Reject a profile configured to contribute to memory but not read it.
+
+        Contribution feeds a profile's conversations to the curator, which then
+        writes entries the profile itself cannot see. That is a profile
+        teaching a notebook it is not allowed to open: it can neither honour
+        what it taught nor be corrected by it, and nothing reports the
+        asymmetry at runtime. The design makes reading the prerequisite, so the
+        contradiction is a startup error rather than a silent oddity.
+
+        Raises:
+            ValueError: naming every profile with the combination.
+        """
+        offenders = sorted(
+            profile.id
+            for profile in self.service_profiles
+            if profile.processing_config.memory_contribute
+            and not profile.processing_config.memory_read
+        )
+        if offenders:
+            raise ValueError(
+                f"Profile(s) {', '.join(offenders)} set memory_contribute "
+                "without memory_read. Contributing to the household's memory "
+                "requires reading it: set memory_read: true, or turn "
+                "memory_contribute off."
+            )
         return self
 
     @model_validator(mode="after")

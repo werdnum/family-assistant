@@ -1433,6 +1433,12 @@ service_profiles:
     visibility_grants: ["memory"]
     processing_config:
       model_tier: "standard"
+      # Reading memory is what the curator is for. It is also what the read
+      # policy derives the `memory` grant from, so the explicit grant above and
+      # this setting say the same thing in the two places that need it. The
+      # curator does not contribute: its own subconversation is not reviewed.
+      memory_read: true
+      memory_contribute: false
       # The notes provider is the whole point: it is what puts the core memory
       # note in front of the curator. Every other provider would hand it the
       # household's calendar, contacts, home state and location, which the read

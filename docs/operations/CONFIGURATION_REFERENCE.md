@@ -2008,6 +2008,11 @@ The shipped `memory_curator` profile sets all four to `memory`, which is what co
 background curator to the memory notes in both directions. See
 [docs/design/conversation-memory.md](../design/conversation-memory.md).
 
+The `memory` label itself is not granted through `visibility_grants`. It is granted, or taken away,
+by the `memory_read` setting described under [Conversation Memory](#conversation-memory) below, so
+that turning memory reading off for a profile is one switch rather than a switch and a grant list
+that have to agree.
+
 ______________________________________________________________________
 
 ## Conversation Memory
@@ -2042,6 +2047,36 @@ memory_config:
 
 Deleting the core note is refused (exactly one must exist); clearing its contents is an ordinary
 edit. See [docs/design/conversation-memory.md](../design/conversation-memory.md).
+
+### Which profiles read and contribute
+
+Two `processing_config` settings decide a profile's relationship to memory. Both are off by default,
+so a deployment opts in explicitly.
+
+```yaml
+- id: "some_profile"
+  processing_config:
+    memory_read: true
+    memory_contribute: false
+```
+
+- **memory_read** — whether the profile sees household memory. This is the whole of memory's
+  visibility: with it on, the `memory` label is added to the profile's effective read grants, so the
+  always-loaded core note reaches its prompt and `get_note` opens a topic note; with it off, the
+  label is denied even if `visibility_grants` names it, and no memory note reaches the profile
+  through any path.
+- **memory_contribute** — whether conversations run under the profile are reviewed into memory by
+  the background curator.
+
+A profile that does not read memory cannot write it either. `propose_memory_edits` refuses with that
+reason, and whole-note writes to a memory note — `add_or_update_note`, `delete_note` — are refused
+at the notes repository: a profile that cannot see the existing entries would be duplicating what is
+already there or replacing text it never read. The web notes UI is an admin surface and is
+unaffected.
+
+Contributing without reading is a startup error. Contribution feeds a profile's conversations to the
+curator, which then writes entries the profile itself cannot see, so it could neither honour what it
+taught nor be corrected by it.
 
 ______________________________________________________________________
 

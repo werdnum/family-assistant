@@ -58,6 +58,10 @@ def _tool_context(db_context: Database) -> ToolExecutionContext:
         attachment_registry=None,
         camera_backend=None,
         visibility_grants=None,
+        # These are the foreground whole-note paths, exercised as a profile
+        # that reads memory; the refusal a non-reading profile gets instead has
+        # its own tests.
+        memory_read=True,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,

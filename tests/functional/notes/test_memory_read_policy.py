@@ -48,14 +48,17 @@ PROMPTS = {
     "excluded_notes_format": "Other available notes (not included above): {excluded_titles}",
 }
 
-CURATOR_POLICY = NoteReadPolicy(
-    grants=frozenset({MEMORY_LABEL}), required_labels=frozenset({MEMORY_LABEL})
+CURATOR_POLICY = NoteReadPolicy.for_profile(
+    visibility_grants=[MEMORY_LABEL],
+    required_labels=[MEMORY_LABEL],
+    memory_read=True,
 )
 """What the shipped `memory_curator` profile's config resolves to."""
 
-ORDINARY_POLICY = NoteReadPolicy(
-    grants=frozenset({MEMORY_LABEL, "default"}), required_labels=frozenset()
+ORDINARY_POLICY = NoteReadPolicy.for_profile(
+    visibility_grants=["default"], required_labels=None, memory_read=True
 )
+"""An ordinary profile that has been turned on for memory reading."""
 
 
 def _registry() -> NoteRegistry:
@@ -121,7 +124,9 @@ def _provider(engine: AsyncEngine, read_policy: NoteReadPolicy) -> NotesContextP
     )
 
 
-def _exec_context(db: Database, read_policy: NoteReadPolicy) -> ToolExecutionContext:
+def _exec_context(
+    db: Database, read_policy: NoteReadPolicy, *, memory_read: bool = True
+) -> ToolExecutionContext:
     return ToolExecutionContext(
         conversation_id="memory-read-conv",
         interface_type="internal",
@@ -139,6 +144,7 @@ def _exec_context(db: Database, read_policy: NoteReadPolicy) -> ToolExecutionCon
         if read_policy.grants is None
         else set(read_policy.grants),
         required_note_read_labels=sorted(read_policy.required_labels) or None,
+        memory_read=memory_read,
         timezone=ZoneInfo("UTC"),
         credential_resolvers=None,
         api_backend=None,

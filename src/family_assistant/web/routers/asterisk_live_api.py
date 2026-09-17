@@ -1342,6 +1342,7 @@ class AsteriskLiveHandler:
                     required_note_read_labels=(
                         self.processing_service.service_config.required_note_read_labels
                     ),
+                    memory_read=self.processing_service.service_config.memory_read,
                     allowed_note_visibility_labels=(
                         self.processing_service.service_config.allowed_note_visibility_labels
                     ),

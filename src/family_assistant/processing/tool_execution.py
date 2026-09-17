@@ -287,6 +287,7 @@ class ToolExecutor:
             api_backend=self.api_backend,
             visibility_grants=self.config.visibility_grants,
             required_note_read_labels=self.config.required_note_read_labels,
+            memory_read=self.config.memory_read,
             default_note_visibility_labels=self.config.default_note_visibility_labels,
             required_note_visibility_labels=self.config.required_note_visibility_labels,
             allowed_note_visibility_labels=self.config.allowed_note_visibility_labels,

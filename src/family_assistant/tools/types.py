@@ -566,6 +566,12 @@ class ToolExecutionContext:
     required_note_visibility_labels: list[str] | None = None
     allowed_note_visibility_labels: list[str] | None = None
     allow_wake_llm: bool = True
+    memory_read: bool = False
+    """Whether the active profile sees the household's memory notes.
+
+    Fail-closed by default: a context built without it reads no memory and so
+    may not write any either. See ``ProcessingConfig.memory_read``.
+    """
     memory_evidence_scope: EvidenceScope | None = None
     """Which message rows a memory edit proposed in this turn may cite.
 
@@ -653,6 +659,7 @@ class ToolExecutionContext:
         # Local import: the notes repository transitively imports the tools
         # package (repositories/__init__ -> schedule_automations -> task_worker
         # -> tools), so a top-level import here would be circular.
+        from family_assistant.memory.invariants import MEMORY_LABEL  # noqa: PLC0415
         from family_assistant.storage.repositories.notes import (  # noqa: PLC0415
             NoteWritePolicy,
         )
@@ -662,6 +669,9 @@ class ToolExecutionContext:
             default_labels=self.default_note_visibility_labels,
             required_labels=self.required_note_visibility_labels,
             allowed_labels=self.allowed_note_visibility_labels,
+            denied_labels=(
+                frozenset() if self.memory_read else frozenset({MEMORY_LABEL})
+            ),
         )
 
     def note_read_policy(self) -> NoteReadPolicy:
@@ -680,6 +690,7 @@ class ToolExecutionContext:
         return NoteReadPolicy.for_profile(
             visibility_grants=self.visibility_grants,
             required_labels=self.required_note_read_labels,
+            memory_read=self.memory_read,
         )
 
 

@@ -734,6 +734,8 @@ PROFILE_OVERRIDABLE_PROCESSING_KEYS: tuple[str, ...] = (
     "required_note_visibility_labels",
     "allowed_note_visibility_labels",
     "required_note_read_labels",
+    "memory_read",
+    "memory_contribute",
     "allow_wake_llm",
     "enable_computer_use",
     "computer_use_excluded_functions",

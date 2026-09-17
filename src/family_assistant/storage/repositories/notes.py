@@ -125,16 +125,21 @@ class NoteWritePolicy:
         required_labels: Write floor — always unioned into the final labels.
         allowed_labels: Write ceiling — when set, every final label must be a
             member, or the write is rejected.
+        denied_labels: Named spaces this writer may not touch, whatever the
+            ceiling says. The mirror of ``NoteReadPolicy.denied_labels``, and
+            the reason it is not just an ``allowed_labels`` entry: a writer
+            with no ceiling has no list to leave a label out of.
 
-    ``UNCONSTRAINED`` (all fields None) reproduces the pre-confinement behavior
-    and is the explicit opt-out for trusted admin surfaces (e.g. the web notes
-    API). Its use is restricted by an ast-grep conformance rule.
+    ``UNCONSTRAINED`` (all fields None or empty) reproduces the pre-confinement
+    behavior and is the explicit opt-out for trusted admin surfaces (e.g. the
+    web notes API). Its use is restricted by an ast-grep conformance rule.
     """
 
     visibility_grants: set[str] | None
     default_labels: list[str] | None
     required_labels: list[str] | None
     allowed_labels: list[str] | None
+    denied_labels: frozenset[str] = frozenset()
 
     UNCONSTRAINED: ClassVar["NoteWritePolicy"]
 
@@ -154,6 +159,7 @@ class NoteWritePolicy:
                 if self.visibility_grants is None
                 else frozenset(self.visibility_grants)
             ),
+            denied_labels=self.denied_labels,
         )
 
     def resolve_labels(
@@ -167,9 +173,11 @@ class NoteWritePolicy:
 
         Raises:
             NoteWritePolicyError: if the resulting labels are not a subset of
-                ``allowed_labels`` (when that ceiling is set), or if a confined
-                policy (one with a floor or ceiling) targets an existing note
-                whose current labels already fall outside that confinement.
+                ``allowed_labels`` (when that ceiling is set), if the write
+                would create or touch a note in a denied space, or if a
+                confined policy (one with a floor or ceiling) targets an
+                existing note whose current labels already fall outside that
+                confinement.
         """
         # A confined writer may only update notes that are already inside its
         # confinement. Without this, updating a note that is currently
@@ -225,6 +233,17 @@ class NoteWritePolicy:
                     f"profile (allowed: {sorted(allowed)})."
                 )
 
+        # Checked against the note's current labels as well as the write's own:
+        # a writer that cannot see a denied note must not be able to reach it by
+        # submitting a label set that omits the label it already carries.
+        blocked = sorted(self.denied_labels & (set(final) | set(existing_labels)))
+        if blocked:
+            raise NoteWritePolicyError(
+                f"Visibility labels {blocked} are withheld from the active "
+                "profile, which cannot read the notes that carry them. Writing "
+                "one blind is refused."
+            )
+
         return final
 
 
@@ -254,14 +273,19 @@ class NoteReadPolicy:
             skipped (the reader sees every label set).
         required_labels: Read floor -- a note or skill must carry all of these
             to be admitted. Empty means no floor, the ordinary reader.
+        denied_labels: Read ceiling -- a note or skill carrying any of these is
+            refused whatever the grants say. Grants cannot express this on
+            their own: a reader with no grants configured sees every label set,
+            so there is no list to leave a label out of.
 
-    ``UNRESTRICTED`` (no grants, no floor) is the explicit opt-out for admin
-    surfaces that manage notes rather than read them as a profile. Its use is
-    restricted by an ast-grep conformance rule.
+    ``UNRESTRICTED`` (no grants, no floor, no ceiling) is the explicit opt-out
+    for admin surfaces that manage notes rather than read them as a profile.
+    Its use is restricted by an ast-grep conformance rule.
     """
 
     grants: frozenset[str] | None
     required_labels: frozenset[str] = frozenset()
+    denied_labels: frozenset[str] = frozenset()
 
     UNRESTRICTED: ClassVar["NoteReadPolicy"]
 
@@ -271,11 +295,24 @@ class NoteReadPolicy:
         *,
         visibility_grants: Iterable[str] | None,
         required_labels: Iterable[str] | None,
+        memory_read: bool,
     ) -> "NoteReadPolicy":
-        """Build the policy a profile's reads run under, from its config."""
+        """Build the policy a profile's reads run under, from its config.
+
+        This is the one place ``memory_read`` becomes visibility, so the
+        setting and the grant can never disagree. A profile that reads memory
+        is granted the ``memory`` label whether or not an operator listed it;
+        a profile that does not is denied it whether or not an operator did.
+        "A deployment can turn reading off" is then one switch rather than a
+        switch and a list that have to be kept in step.
+        """
+        grants = None if visibility_grants is None else frozenset(visibility_grants)
+        if memory_read and grants is not None:
+            grants |= {MEMORY_LABEL}
         return cls(
-            grants=None if visibility_grants is None else frozenset(visibility_grants),
+            grants=grants,
             required_labels=frozenset(required_labels or ()),
+            denied_labels=frozenset() if memory_read else frozenset({MEMORY_LABEL}),
         )
 
     def admits_labels(self, labels: Iterable[str]) -> bool:
@@ -287,6 +324,8 @@ class NoteReadPolicy:
         """
         label_set = frozenset(labels)
         if self.grants is not None and not label_set <= self.grants:
+            return False
+        if self.denied_labels & label_set:
             return False
         return self.required_labels <= label_set
 
@@ -328,11 +367,13 @@ class NotesRepository(BaseRepository):
     ) -> sa.Select:  # type: ignore[type-arg]  # Generic Select type params are complex with dialect-specific expressions
         """Constrain a SELECT to the rows ``read_policy`` admits.
 
-        Two clauses, and both matter. The grants clause keeps a reader out of
-        notes labelled beyond what it was granted; the required-labels clause
-        keeps it out of everything that is *not* labelled for it, which the
-        grants clause cannot do because an unlabelled note is a subset of every
-        grant set.
+        Three clauses, and each does something the others cannot. The grants
+        clause keeps a reader out of notes labelled beyond what it was granted;
+        the required-labels clause keeps it out of everything that is *not*
+        labelled for it, which the grants clause cannot do because an
+        unlabelled note is a subset of every grant set; the denied-labels
+        clause keeps a reader with no grants at all out of a named space, which
+        the grants clause cannot do because there is no list to omit from.
         """
         if read_policy.grants is not None:
             stmt = stmt.where(self._labels_subset_condition(sorted(read_policy.grants)))
@@ -340,6 +381,8 @@ class NotesRepository(BaseRepository):
             stmt = stmt.where(
                 self._labels_superset_condition(sorted(read_policy.required_labels))
             )
+        for label in sorted(read_policy.denied_labels):
+            stmt = stmt.where(sa.not_(self._labels_superset_condition([label])))
         return stmt
 
     def _labels_subset_condition(

@@ -77,6 +77,7 @@ class ToolExecutorConfig(Protocol):
     required_note_visibility_labels: list[str] | None
     allowed_note_visibility_labels: list[str] | None
     allow_wake_llm: bool
+    memory_read: bool
     note_registry: NoteRegistry | None
 
 
@@ -239,6 +240,9 @@ class ProcessingServiceConfig:
     required_note_visibility_labels: list[str] | None = None
     allowed_note_visibility_labels: list[str] | None = None
     allow_wake_llm: bool = True
+    # Whether this profile sees household memory notes. Fail-closed by default:
+    # see ProcessingConfig.memory_read.
+    memory_read: bool = False
     note_registry: NoteRegistry | None = None
     greeting_wav_path: str | None = None
     # Whether the context providers' output reaches this profile at all. See

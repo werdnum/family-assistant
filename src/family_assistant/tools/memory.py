@@ -61,7 +61,8 @@ MEMORY_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "correction, an inference) into the entry text yourself. Message references are "
                 "appended for you.\n\n"
                 "Returns a string saying whether the list was applied, and if not, exactly why each "
-                "edit was refused."
+                "edit was refused. A profile that does not read the household's memory cannot "
+                "write it either, and every call is refused with that reason."
             ),
             "parameters": {
                 "type": "object",
@@ -122,6 +123,18 @@ async def propose_memory_edits_tool(
     from family_assistant.memory.apply import (  # noqa: PLC0415
         apply_memory_edits_atomically,
     )
+
+    if not exec_context.memory_read:
+        return ToolResult(
+            text=(
+                "No memory edits were applied: this assistant profile does not "
+                "read the household's memory, so it must not write to it. A "
+                "profile that cannot see the existing entries would be editing "
+                "blind -- duplicating what is already there, or replacing "
+                "something it never read. Ask an operator to turn memory "
+                "reading on for this profile."
+            )
+        )
 
     try:
         proposal = MemoryEditList(edits=edits)  # type: ignore[arg-type] # validated from raw tool arguments

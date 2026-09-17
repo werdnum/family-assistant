@@ -1295,6 +1295,7 @@ class Assistant:
         profile_read_policy = NoteReadPolicy.for_profile(
             visibility_grants=profile_grants,
             required_labels=profile_proc_conf.required_note_read_labels,
+            memory_read=profile_proc_conf.memory_read,
         )
         context_providers = self._build_profile_context_providers(
             profile_conf, note_registry, profile_read_policy
@@ -1329,6 +1330,7 @@ class Assistant:
                 profile_proc_conf.allowed_note_visibility_labels
             ),
             allow_wake_llm=profile_proc_conf.allow_wake_llm,
+            memory_read=profile_proc_conf.memory_read,
             include_aggregated_context=(profile_proc_conf.include_aggregated_context),
             note_registry=note_registry,
             greeting_wav_path=profile_proc_conf.greeting_wav_path,
