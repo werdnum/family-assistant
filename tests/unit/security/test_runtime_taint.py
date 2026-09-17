@@ -369,9 +369,9 @@ async def test_prompt_note_taint_source_load_failure_propagates() -> None:
         async def get_prompt_notes(
             self,
             *,
-            visibility_grants: set[str] | None,
+            read_policy: NoteReadPolicy,
         ) -> list[object]:
-            _ = visibility_grants
+            _ = read_policy
             raise RuntimeError("notes unavailable")
 
     class _FailingDbContext:

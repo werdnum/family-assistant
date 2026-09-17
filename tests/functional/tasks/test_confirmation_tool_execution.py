@@ -509,6 +509,7 @@ def _processing_service(
         visibility_grants=None,
         default_note_visibility_labels=None,
         required_note_visibility_labels=None,
+        required_note_read_labels=None,
         allowed_note_visibility_labels=None,
         allow_wake_llm=True,
         note_registry=None,
