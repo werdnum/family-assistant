@@ -329,13 +329,13 @@ async def get_note_tool(
     attachment_registry = exec_context.attachment_registry
 
     note = await db_context.notes.get_by_title(
-        title, visibility_grants=exec_context.visibility_grants
+        title, read_policy=exec_context.note_read_policy()
     )
     if not note:
         # Fall back to file-based skills via NoteRegistry
         if exec_context.note_registry:
             skill = exec_context.note_registry.get_skill_by_name(
-                title, visibility_grants=exec_context.visibility_grants
+                title, exec_context.note_read_policy()
             )
             if skill:
                 result_data = {
@@ -443,7 +443,7 @@ async def list_notes_tool(
 ) -> list[dict[str, Any]]:
     """Tool wrapper for get_all_notes with optional filtering."""
     all_notes = await exec_context.db_context.notes.get_all(
-        visibility_grants=exec_context.visibility_grants
+        read_policy=exec_context.note_read_policy()
     )
 
     # Apply filtering if requested
@@ -485,7 +485,7 @@ async def delete_note_tool(
     """Tool wrapper for delete_note."""
     # Enforce visibility: only allow deleting notes the user can see
     visible = await exec_context.db_context.notes.get_by_title(
-        title, visibility_grants=exec_context.visibility_grants
+        title, read_policy=exec_context.note_read_policy()
     )
     if not visible:
         return {

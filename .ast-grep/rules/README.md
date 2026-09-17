@@ -135,6 +135,25 @@ The approved bypasses (the `NoteWritePolicy` definition itself, the web notes ad
 call-transcript writer) are listed in `.ast-grep/exemptions.yml`; a new admin surface that genuinely
 needs the bypass belongs there with a justification.
 
+### `no-unrestricted-note-read-policy`
+
+**Pattern**: any mention of `NoteReadPolicy.UNRESTRICTED`.
+
+**Why it's banned**: `UNRESTRICTED` drops both halves of read confinement — the visibility-grants
+subset check and the required-label floor. The floor is the only thing that keeps a confined profile
+(the memory curator) out of unlabelled notes and label-less file skills, because an empty label set
+is a subset of every grant set. A read that skips the policy is therefore not a narrower read, it is
+an unconfined one, and the confinement is worth only as much as the boundaries that honour it.
+
+**Replacement**: derive the policy from the active profile with `exec_context.note_read_policy()`,
+and pass that one object to both boundaries that resolve notes — `NotesRepository` for stored notes
+and `NoteRegistry` for file-based skills.
+
+The approved bypasses are listed in `.ast-grep/exemptions.yml`: the `NoteReadPolicy` definition, the
+web notes admin API, the notes indexer, the memory apply path, and the confirmation preview's
+existence lookup. Each reads on nobody's behalf, so there is no profile whose confinement could
+apply; a new surface of that kind belongs there with a justification.
+
 ## Database Engine Construction
 
 ### `no-raw-create-async-engine`

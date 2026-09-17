@@ -509,6 +509,13 @@ class ProcessingConfig(BaseModel):
     default_note_visibility_labels: list[str] | None = None
     required_note_visibility_labels: list[str] | None = None
     allowed_note_visibility_labels: list[str] | None = None
+    # Read floor, the mirror of required_note_visibility_labels. A note or file
+    # skill must carry every label listed here to be readable by this profile.
+    # Grants alone cannot express this: a note is visible when its labels are a
+    # *subset* of the grants, so an unlabelled note -- and every label-less file
+    # skill -- is visible to every reader. None (the default) is the ordinary
+    # reader, confined by grants only.
+    required_note_read_labels: list[str] | None = None
     allow_wake_llm: bool = True
     enable_computer_use: bool = False
     computer_use_excluded_functions: list[str] = Field(default_factory=list)

@@ -23,7 +23,7 @@ from family_assistant.indexing.processors import EmbeddingDispatchProcessor
 from family_assistant.indexing.tasks import handle_embed_and_store_batch
 from family_assistant.storage.database import Database
 from family_assistant.storage.notes import notes_table
-from family_assistant.storage.repositories.notes import NoteWritePolicy
+from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
 from family_assistant.storage.tasks import tasks_table
 from family_assistant.storage.vector import query_vectors
 from family_assistant.task_worker import TaskWorker
@@ -396,7 +396,7 @@ async def test_notes_indexing_e2e(
         # Verify that the original note content is still accessible via storage
         db = Database(engine=pg_vector_db_engine)
         retrieved_note = await db.notes.get_by_title(
-            unique_note_title, visibility_grants=None
+            unique_note_title, read_policy=NoteReadPolicy.UNRESTRICTED
         )
         assert retrieved_note is not None, "Could not retrieve original note"
         assert retrieved_note.content == TEST_NOTE_CONTENT

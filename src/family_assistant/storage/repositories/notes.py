@@ -2,7 +2,7 @@
 
 import json
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, ClassVar
@@ -138,6 +138,24 @@ class NoteWritePolicy:
 
     UNCONSTRAINED: ClassVar["NoteWritePolicy"]
 
+    def see_before_overwrite_read_policy(self) -> "NoteReadPolicy":
+        """The read this policy's see-before-overwrite check performs.
+
+        Grants only, no floor: the question is whether the writer can *see* the
+        note it is about to overwrite, which its grants answer. The write floor
+        is applied separately, by ``resolve_labels`` and the conflict-update
+        predicate. Callers that mirror the check ahead of the write (the
+        confirmation preview) take it from here rather than rebuilding it, so
+        the preview cannot drift from what the repository will do.
+        """
+        return NoteReadPolicy(
+            grants=(
+                None
+                if self.visibility_grants is None
+                else frozenset(self.visibility_grants)
+            ),
+        )
+
     def resolve_labels(
         self,
         *,
@@ -218,6 +236,64 @@ NoteWritePolicy.UNCONSTRAINED = NoteWritePolicy(
 )
 
 
+@dataclass(frozen=True)
+class NoteReadPolicy:
+    """Read-side visibility confinement for a profile's note and skill reads.
+
+    The read-side mirror of :class:`NoteWritePolicy`'s required labels, and the
+    one object both note-resolution boundaries consult: the notes repository
+    for stored notes and :class:`~family_assistant.skills.registry.NoteRegistry`
+    for file-based skills. Grants alone cannot confine a reader, because a note
+    is visible when its labels are a *subset* of the grants -- so an unlabelled
+    note, and every label-less file skill, is visible to every reader including
+    one granted a single label. ``required_labels`` is what closes that: a row
+    is admitted only when it also carries every required label.
+
+    Attributes:
+        grants: The reader's visibility grants. When None the subset check is
+            skipped (the reader sees every label set).
+        required_labels: Read floor -- a note or skill must carry all of these
+            to be admitted. Empty means no floor, the ordinary reader.
+
+    ``UNRESTRICTED`` (no grants, no floor) is the explicit opt-out for admin
+    surfaces that manage notes rather than read them as a profile. Its use is
+    restricted by an ast-grep conformance rule.
+    """
+
+    grants: frozenset[str] | None
+    required_labels: frozenset[str] = frozenset()
+
+    UNRESTRICTED: ClassVar["NoteReadPolicy"]
+
+    @classmethod
+    def for_profile(
+        cls,
+        *,
+        visibility_grants: Iterable[str] | None,
+        required_labels: Iterable[str] | None,
+    ) -> "NoteReadPolicy":
+        """Build the policy a profile's reads run under, from its config."""
+        return cls(
+            grants=None if visibility_grants is None else frozenset(visibility_grants),
+            required_labels=frozenset(required_labels or ()),
+        )
+
+    def admits_labels(self, labels: Iterable[str]) -> bool:
+        """Whether an object carrying ``labels`` is readable under this policy.
+
+        Used by the boundaries that hold their objects in memory rather than in
+        the notes table -- file-based skills -- so they apply the same rule the
+        SQL conditions apply to rows.
+        """
+        label_set = frozenset(labels)
+        if self.grants is not None and not label_set <= self.grants:
+            return False
+        return self.required_labels <= label_set
+
+
+NoteReadPolicy.UNRESTRICTED = NoteReadPolicy(grants=None, required_labels=frozenset())
+
+
 _NOTE_COLUMNS = [
     notes_table.c.title,
     notes_table.c.content,
@@ -245,21 +321,26 @@ def _detect_skill_metadata(content: str) -> tuple[bool, str | None, str | None]:
 class NotesRepository(BaseRepository):
     """Repository for managing notes in the database."""
 
-    def _apply_visibility_filter(
+    def _apply_read_policy(
         self,
         stmt: sa.Select,  # type: ignore[type-arg]  # Generic Select type params are complex with dialect-specific expressions
-        visibility_grants: set[str] | None,
+        read_policy: NoteReadPolicy,
     ) -> sa.Select:  # type: ignore[type-arg]  # Generic Select type params are complex with dialect-specific expressions
-        """Apply visibility label filtering to a SELECT statement.
+        """Constrain a SELECT to the rows ``read_policy`` admits.
 
-        When visibility_grants is None, no filtering is applied (backward compat).
-        When set, only notes whose labels are a subset of the grants are returned.
-        Notes with empty labels ([]) are always visible.
+        Two clauses, and both matter. The grants clause keeps a reader out of
+        notes labelled beyond what it was granted; the required-labels clause
+        keeps it out of everything that is *not* labelled for it, which the
+        grants clause cannot do because an unlabelled note is a subset of every
+        grant set.
         """
-        if visibility_grants is None:
-            return stmt
-
-        return stmt.where(self._labels_subset_condition(sorted(visibility_grants)))
+        if read_policy.grants is not None:
+            stmt = stmt.where(self._labels_subset_condition(sorted(read_policy.grants)))
+        if read_policy.required_labels:
+            stmt = stmt.where(
+                self._labels_superset_condition(sorted(read_policy.required_labels))
+            )
+        return stmt
 
     def _labels_subset_condition(
         self, target_labels: list[str]
@@ -335,12 +416,13 @@ class NotesRepository(BaseRepository):
 
     async def get_all(
         self,
-        visibility_grants: set[str] | None,
+        *,
+        read_policy: NoteReadPolicy,
     ) -> list[NoteModel]:
-        """Retrieves all notes, optionally filtered by visibility grants."""
+        """Retrieves every note the read policy admits."""
         try:
             stmt = select(*_NOTE_COLUMNS).order_by(notes_table.c.title)
-            stmt = self._apply_visibility_filter(stmt, visibility_grants)
+            stmt = self._apply_read_policy(stmt, read_policy)
             rows = await self._db.fetch_all(stmt)
             return [_row_to_note_model(row) for row in rows]
         except SQLAlchemyError as e:
@@ -349,7 +431,8 @@ class NotesRepository(BaseRepository):
 
     async def get_prompt_notes(
         self,
-        visibility_grants: set[str] | None,
+        *,
+        read_policy: NoteReadPolicy,
     ) -> list[NoteModel]:
         """Retrieves only regular notes that should be included in prompts (excludes skills)."""
         try:
@@ -359,7 +442,7 @@ class NotesRepository(BaseRepository):
                 .where(notes_table.c.is_skill.is_(False))
                 .order_by(notes_table.c.title)
             )
-            stmt = self._apply_visibility_filter(stmt, visibility_grants)
+            stmt = self._apply_read_policy(stmt, read_policy)
             rows = await self._db.fetch_all(stmt)
             return [_row_to_note_model(row) for row in rows]
         except SQLAlchemyError as e:
@@ -368,17 +451,27 @@ class NotesRepository(BaseRepository):
 
     async def get_excluded_notes_titles(
         self,
-        visibility_grants: set[str] | None,
+        *,
+        read_policy: NoteReadPolicy,
     ) -> list[str]:
-        """Retrieves titles of regular notes that are excluded from prompts (excludes skills)."""
+        """Titles of prompt-excluded notes, for the "Other available notes" line.
+
+        Memory topic notes are left out for every reader. Their pointers live
+        inside the capped core note's derived index, so the memory contribution
+        to a rendered prompt is exactly the core note and nothing grows with
+        the number of topics -- which is what makes the core note's cap a
+        statement about the prompt. They stay reachable by title through
+        ``get_note``, by search, and in the ``list_notes`` tool's output.
+        """
         try:
             stmt = (
                 select(notes_table.c.title)
                 .where(notes_table.c.include_in_prompt.is_(False))
                 .where(notes_table.c.is_skill.is_(False))
+                .where(~self._labels_superset_condition([MEMORY_LABEL]))
                 .order_by(notes_table.c.title)
             )
-            stmt = self._apply_visibility_filter(stmt, visibility_grants)
+            stmt = self._apply_read_policy(stmt, read_policy)
             rows = await self._db.fetch_all(stmt)
             return [row["title"] for row in rows]
         except SQLAlchemyError as e:
@@ -387,7 +480,8 @@ class NotesRepository(BaseRepository):
 
     async def get_skills(
         self,
-        visibility_grants: set[str] | None,
+        *,
+        read_policy: NoteReadPolicy,
     ) -> list[NoteModel]:
         """Retrieves notes that are skills, for building the skill catalog."""
         try:
@@ -396,7 +490,7 @@ class NotesRepository(BaseRepository):
                 .where(notes_table.c.is_skill.is_(True))
                 .order_by(notes_table.c.skill_name)
             )
-            stmt = self._apply_visibility_filter(stmt, visibility_grants)
+            stmt = self._apply_read_policy(stmt, read_policy)
             rows = await self._db.fetch_all(stmt)
             return [_row_to_note_model(row) for row in rows]
         except SQLAlchemyError as e:
@@ -406,19 +500,21 @@ class NotesRepository(BaseRepository):
     async def get_by_id(
         self,
         note_id: int,
-        visibility_grants: set[str] | None,
+        *,
+        read_policy: NoteReadPolicy,
     ) -> NoteRow | None:
         """Retrieves a note by its ID.
 
         Args:
             note_id: The ID of the note to retrieve
-            visibility_grants: If set, only return note if its labels are a subset
+            read_policy: Confinement the read runs under; a row the policy does
+                not admit reads as absent.
 
         Returns:
             NoteRow or None if not found/not accessible
         """
         query = select(notes_table).where(notes_table.c.id == note_id)
-        query = self._apply_visibility_filter(query, visibility_grants)
+        query = self._apply_read_policy(query, read_policy)
         row = await self._db.fetch_one(query)
         if row:
             return NoteRow(
@@ -440,12 +536,13 @@ class NotesRepository(BaseRepository):
     async def get_by_title(
         self,
         title: str,
-        visibility_grants: set[str] | None,
+        *,
+        read_policy: NoteReadPolicy,
     ) -> NoteModel | None:
         """Retrieves a specific note by its title."""
         try:
             stmt = select(*_NOTE_COLUMNS).where(notes_table.c.title == title)
-            stmt = self._apply_visibility_filter(stmt, visibility_grants)
+            stmt = self._apply_read_policy(stmt, read_policy)
             row = await self._db.fetch_one(stmt)
             if row:
                 return _row_to_note_model(row)
@@ -494,13 +591,15 @@ class NotesRepository(BaseRepository):
             now = datetime.now(UTC)
             note_content = content
 
-            existing_note = await txn.notes.get_by_title(title, visibility_grants=None)
+            existing_note = await txn.notes.get_by_title(
+                title, read_policy=NoteReadPolicy.UNRESTRICTED
+            )
 
             # See-before-overwrite: a restricted profile may not overwrite a note it
             # cannot see. Skipped when the policy carries no grants (admin bypass).
             if existing_note is not None and write_policy.visibility_grants is not None:
                 visible_existing = await txn.notes.get_by_title(
-                    title, visibility_grants=write_policy.visibility_grants
+                    title, read_policy=write_policy.see_before_overwrite_read_policy()
                 )
                 if visible_existing is None:
                     raise NoteWritePolicyError(
@@ -950,7 +1049,9 @@ class NotesRepository(BaseRepository):
         write_policy: NoteWritePolicy,
         provenance_metadata: Mapping[str, object] | None,
     ) -> str:
-        existing_note = await self.get_by_title(original_title, visibility_grants=None)
+        existing_note = await self.get_by_title(
+            original_title, read_policy=NoteReadPolicy.UNRESTRICTED
+        )
         if not existing_note:
             raise NoteNotFoundError(
                 f"Cannot rename because note '{original_title}' was not found"
@@ -958,7 +1059,8 @@ class NotesRepository(BaseRepository):
 
         if write_policy.visibility_grants is not None:
             visible_existing = await self.get_by_title(
-                original_title, visibility_grants=write_policy.visibility_grants
+                original_title,
+                read_policy=write_policy.see_before_overwrite_read_policy(),
             )
             if visible_existing is None:
                 raise NoteWritePolicyError(
@@ -968,7 +1070,7 @@ class NotesRepository(BaseRepository):
 
         if new_title != original_title:
             conflicting_note = await self.get_by_title(
-                new_title, visibility_grants=None
+                new_title, read_policy=NoteReadPolicy.UNRESTRICTED
             )
             if conflicting_note:
                 raise DuplicateNoteError(

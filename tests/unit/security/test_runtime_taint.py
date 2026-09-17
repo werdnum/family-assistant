@@ -51,7 +51,7 @@ from family_assistant.storage.database import (
     set_engine_history_taint_epoch,
 )
 from family_assistant.storage.message_history import message_history_table
-from family_assistant.storage.repositories.notes import NoteWritePolicy
+from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
 from family_assistant.tools import LOCAL_TOOL_METADATA_BY_NAME
 from family_assistant.tools.attachments import read_text_attachment_tool
 from family_assistant.tools.documents import get_full_document_content_tool
@@ -383,6 +383,7 @@ async def test_prompt_note_taint_source_load_failure_propagates() -> None:
     provider = NotesContextProvider(
         get_db_context_func=cast("Any", get_context),
         prompts={},
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
 
     with pytest.raises(RuntimeError, match="notes unavailable"):
@@ -2409,7 +2410,7 @@ async def test_tainted_note_write_stores_label_and_reread_restores_taint(
 
     note = await db_context.notes.get_by_title(
         "External digest",
-        visibility_grants=None,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
     assert note is not None
     assert note.visibility_labels == []
@@ -2448,7 +2449,11 @@ async def test_prompt_included_note_surfaces_stored_provenance_taint(
     def get_context() -> Database:
         return Database(db_engine)
 
-    provider = NotesContextProvider(get_context, prompts={})
+    provider = NotesContextProvider(
+        get_context,
+        prompts={},
+        read_policy=NoteReadPolicy.UNRESTRICTED,
+    )
 
     fragments = await provider.get_context_fragments(acting_user_id=None)
     sources = await provider.get_context_taint_sources()

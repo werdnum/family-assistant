@@ -13,7 +13,7 @@ from family_assistant.context_providers import NotesContextProvider
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
 from family_assistant.storage.notes import notes_table
-from family_assistant.storage.repositories.notes import NoteWritePolicy
+from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
 
 
 async def get_test_db_context(engine: AsyncEngine) -> Database:
@@ -71,6 +71,7 @@ async def test_notes_context_provider_respects_include_in_prompt(
     provider = NotesContextProvider(
         get_db_context_func=get_db_context_func,
         prompts=test_prompts,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
 
     # Get context fragments
@@ -134,6 +135,7 @@ async def test_notes_context_provider_empty_when_all_excluded(
     provider = NotesContextProvider(
         get_db_context_func=get_db_context_func,
         prompts=test_prompts,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
 
     # Get context fragments
@@ -189,6 +191,7 @@ async def test_notes_context_provider_mixed_visibility(
     provider = NotesContextProvider(
         get_db_context_func=get_db_context_func,
         prompts=test_prompts,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
 
     # Get context fragments
@@ -269,6 +272,7 @@ async def test_notes_context_provider_shows_excluded_notes_list(
     provider = NotesContextProvider(
         get_db_context_func=get_db_context_func,
         prompts=test_prompts,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
 
     # Get context fragments
@@ -333,6 +337,7 @@ async def test_notes_context_provider_no_excluded_list_when_all_included(
     provider = NotesContextProvider(
         get_db_context_func=get_db_context_func,
         prompts=test_prompts,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
 
     # Get context fragments
@@ -418,6 +423,7 @@ async def test_notes_context_provider_with_attachments(
         get_db_context_func=get_db_context_func,
         prompts=test_prompts,
         attachment_registry=attachment_registry,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
 
     # Get context fragments
@@ -490,6 +496,7 @@ async def test_notes_context_provider_handles_missing_attachments(
         get_db_context_func=get_db_context_func,
         prompts=test_prompts,
         attachment_registry=attachment_registry,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
 
     # Get context fragments - should not raise an exception
@@ -552,7 +559,9 @@ async def test_notes_clearing_attachments_with_empty_list(
     )
 
     # Verify attachment was added
-    note = await db.notes.get_by_title("Note With Attachments", visibility_grants=None)
+    note = await db.notes.get_by_title(
+        "Note With Attachments", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note is not None
     assert len(note.attachment_ids) == 1
 
@@ -567,7 +576,7 @@ async def test_notes_clearing_attachments_with_empty_list(
 
     # Verify attachments were cleared
     note_after = await db.notes.get_by_title(
-        "Note With Attachments", visibility_grants=None
+        "Note With Attachments", read_policy=NoteReadPolicy.UNRESTRICTED
     )
     assert note_after is not None
     attachment_ids = note_after.attachment_ids
@@ -624,7 +633,9 @@ async def test_notes_preserving_attachments_when_not_specified(
     )
 
     # Verify attachment was added
-    note = await db.notes.get_by_title("Note To Preserve", visibility_grants=None)
+    note = await db.notes.get_by_title(
+        "Note To Preserve", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note is not None
     assert len(note.attachment_ids) == 1
 
@@ -638,7 +649,9 @@ async def test_notes_preserving_attachments_when_not_specified(
     )
 
     # Verify attachments were preserved
-    note_after = await db.notes.get_by_title("Note To Preserve", visibility_grants=None)
+    note_after = await db.notes.get_by_title(
+        "Note To Preserve", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note_after is not None
     attachment_ids = note_after.attachment_ids
     # Handle case where attachment_ids is a JSON string

@@ -27,7 +27,7 @@ from family_assistant.security.taint import (
 )
 from family_assistant.storage.database import Database
 from family_assistant.storage.notes import notes_table
-from family_assistant.storage.repositories.notes import NoteWritePolicy
+from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
 from family_assistant.tools.notes import add_or_update_note_tool, delete_note_tool
 from family_assistant.tools.types import ToolExecutionContext
 
@@ -111,13 +111,16 @@ async def test_first_memory_write_bootstraps_the_core_note(
     db = _db(db_engine)
     await _write_topic(db, "Sam", "- likes trams")
 
-    core = await db.notes.get_by_title(CORE_TITLE, visibility_grants=None)
+    core = await db.notes.get_by_title(
+        CORE_TITLE, read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert core is not None
     assert core.include_in_prompt is True
     assert core.visibility_labels == [MEMORY_LABEL]
 
     core_row = await db.notes.get_by_id(
-        await db.memory_store.get_core_note_id() or 0, visibility_grants=None
+        await db.memory_store.get_core_note_id() or 0,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
     assert core_row is not None
     assert core_row.title == CORE_TITLE
@@ -187,7 +190,9 @@ async def test_renaming_the_core_note_keeps_it_the_core(
     )
 
     assert await db.memory_store.get_core_note_id() == core_id
-    renamed = await db.notes.get_by_title("Our Household", visibility_grants=None)
+    renamed = await db.notes.get_by_title(
+        "Our Household", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert renamed is not None
     assert renamed.include_in_prompt is True
 
@@ -270,7 +275,9 @@ async def test_unstamped_write_satisfies_the_provenance_rule(
     db = _db(db_engine)
     await _write_topic(db, "Trip", "- hotel", provenance_metadata=None)
 
-    stored = await db.notes.get_by_title("Trip", visibility_grants=None)
+    stored = await db.notes.get_by_title(
+        "Trip", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert stored is not None
 
 
@@ -287,7 +294,10 @@ async def test_core_note_cannot_be_deleted(db_engine: AsyncEngine) -> None:
     with pytest.raises(MemoryWriteError, match="cannot be deleted"):
         await db.notes.delete(CORE_TITLE)
 
-    assert await db.notes.get_by_title(CORE_TITLE, visibility_grants=None) is not None
+    assert (
+        await db.notes.get_by_title(CORE_TITLE, read_policy=NoteReadPolicy.UNRESTRICTED)
+        is not None
+    )
 
 
 @pytest.mark.asyncio
@@ -300,7 +310,10 @@ async def test_deleting_a_topic_note_is_allowed_and_bumps_the_revision(
 
     assert await db.notes.delete("Sam") is True
 
-    assert await db.notes.get_by_title("Sam", visibility_grants=None) is None
+    assert (
+        await db.notes.get_by_title("Sam", read_policy=NoteReadPolicy.UNRESTRICTED)
+        is None
+    )
     assert await db.memory_store.get_revision() == before + 1
 
 
@@ -342,7 +355,7 @@ async def test_removing_the_memory_label_is_a_memory_write(
 
     await _write_topic(db, "Sam", "- likes trams", labels=[])
 
-    stored = await db.notes.get_by_title("Sam", visibility_grants=None)
+    stored = await db.notes.get_by_title("Sam", read_policy=NoteReadPolicy.UNRESTRICTED)
     assert stored is not None
     assert stored.visibility_labels == []
     assert await db.memory_store.get_revision() == before + 1
@@ -391,7 +404,9 @@ async def test_a_plain_note_is_untouched_by_the_memory_invariants(
 
     assert await db.memory_store.get_revision() == before
     assert await db.memory_store.get_core_note_id() is None
-    stored = await db.notes.get_by_title("Shopping", visibility_grants=None)
+    stored = await db.notes.get_by_title(
+        "Shopping", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert stored is not None
     assert stored.include_in_prompt is True
 
@@ -414,7 +429,10 @@ async def test_tool_path_reports_the_refusal(db_engine: AsyncEngine) -> None:
     )
 
     assert "over its 60-character limit" in result
-    assert await db.notes.get_by_title("Trip", visibility_grants=None) is None
+    assert (
+        await db.notes.get_by_title("Trip", read_policy=NoteReadPolicy.UNRESTRICTED)
+        is None
+    )
 
 
 @pytest.mark.asyncio
@@ -450,7 +468,10 @@ async def test_web_api_maps_a_refusal_to_422(
     assert "over its" in response.json()["detail"]
 
     db = Database(engine=db_engine)
-    assert await db.notes.get_by_title("Trip", visibility_grants=None) is None
+    assert (
+        await db.notes.get_by_title("Trip", read_policy=NoteReadPolicy.UNRESTRICTED)
+        is None
+    )
 
 
 @pytest.mark.asyncio

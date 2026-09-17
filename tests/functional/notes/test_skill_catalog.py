@@ -10,7 +10,7 @@ from family_assistant.context_providers import NotesContextProvider
 from family_assistant.skills import NoteRegistry, ParsedSkill
 from family_assistant.storage.database import Database
 from family_assistant.storage.notes import notes_table
-from family_assistant.storage.repositories.notes import NoteWritePolicy
+from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
 
 TEST_PROMPTS = {
     "note_item_format": "- {title}: {content}",
@@ -62,6 +62,7 @@ async def test_db_skill_appears_in_catalog_not_notes(
     provider = NotesContextProvider(
         get_db_context_func=get_db_context_func,
         prompts=TEST_PROMPTS,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
 
     fragments = await provider.get_context_fragments(acting_user_id=None)
@@ -111,6 +112,7 @@ async def test_db_skill_excluded_from_other_notes_list(
     provider = NotesContextProvider(
         get_db_context_func=get_db_context_func,
         prompts=TEST_PROMPTS,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
 
     fragments = await provider.get_context_fragments(acting_user_id=None)
@@ -154,6 +156,7 @@ async def test_file_skills_appear_in_catalog(
         get_db_context_func=get_db_context_func,
         prompts=TEST_PROMPTS,
         note_registry=registry,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
 
     fragments = await provider.get_context_fragments(acting_user_id=None)
@@ -197,6 +200,7 @@ async def test_mixed_db_and_file_skills_in_catalog(
         get_db_context_func=get_db_context_func,
         prompts=TEST_PROMPTS,
         note_registry=registry,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
 
     fragments = await provider.get_context_fragments(acting_user_id=None)
@@ -240,7 +244,7 @@ async def test_file_skill_visibility_filtering(
         get_db_context_func=get_db_context_func,
         prompts=TEST_PROMPTS,
         note_registry=registry,
-        visibility_grants=set(),
+        read_policy=NoteReadPolicy(grants=frozenset(set())),
     )
 
     fragments = await provider.get_context_fragments(acting_user_id=None)
@@ -254,7 +258,7 @@ async def test_file_skill_visibility_filtering(
         get_db_context_func=get_db_context_func,
         prompts=TEST_PROMPTS,
         note_registry=registry,
-        visibility_grants={"skill_internal"},
+        read_policy=NoteReadPolicy(grants=frozenset({"skill_internal"})),
     )
 
     fragments_with_grants = await provider_with_grants.get_context_fragments(
@@ -290,6 +294,7 @@ async def test_no_catalog_when_no_skills(
     provider = NotesContextProvider(
         get_db_context_func=get_db_context_func,
         prompts=TEST_PROMPTS,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
 
     fragments = await provider.get_context_fragments(acting_user_id=None)

@@ -72,6 +72,7 @@ class ToolExecutorConfig(Protocol):
     id: str
     tools_config: ToolsConfig
     visibility_grants: set[str] | None
+    required_note_read_labels: list[str] | None
     default_note_visibility_labels: list[str] | None
     required_note_visibility_labels: list[str] | None
     allowed_note_visibility_labels: list[str] | None
@@ -233,6 +234,7 @@ class ProcessingServiceConfig:
     context_pruning_min_turns: int = 3
     # Visibility grants for note access control
     visibility_grants: set[str] | None = None
+    required_note_read_labels: list[str] | None = None
     default_note_visibility_labels: list[str] | None = None
     required_note_visibility_labels: list[str] | None = None
     allowed_note_visibility_labels: list[str] | None = None

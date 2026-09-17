@@ -39,6 +39,7 @@ from family_assistant.services.attachment_registry import (
 from family_assistant.storage import init_db
 from family_assistant.storage.base import create_engine_with_sqlite_optimizations
 from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
@@ -1204,6 +1205,8 @@ def api_test_processing_service(
     notes_provider = NotesContextProvider(
         get_db_context_func=get_entered_db_context_for_provider,
         prompts=api_mock_processing_service_config.prompts,
+        # ast-grep-ignore: no-unrestricted-note-read-policy - web API fixture stands in for the default assistant, which is unconfined
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
     calendar_provider = CalendarContextProvider(
         calendar_config=cast("CalendarConfig", {}),  # Empty calendar config for tests

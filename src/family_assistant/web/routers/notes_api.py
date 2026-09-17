@@ -13,6 +13,7 @@ from family_assistant.storage.repositories.notes import (
     DuplicateNoteError,
     NoteModel,
     NoteNotFoundError,
+    NoteReadPolicy,
     NoteWritePolicy,
 )
 from family_assistant.web.dependencies import get_db
@@ -39,7 +40,7 @@ async def list_notes(
     db_context: Annotated[Database, Depends(get_db)],
 ) -> list[NoteModel]:
     """Return all notes."""
-    notes = await db_context.notes.get_all(visibility_grants=None)
+    notes = await db_context.notes.get_all(read_policy=NoteReadPolicy.UNRESTRICTED)
     return notes
 
 
@@ -48,7 +49,9 @@ async def get_note(
     title: str, db_context: Annotated[Database, Depends(get_db)]
 ) -> NoteModel:
     """Return a note by title."""
-    note = await db_context.notes.get_by_title(title, visibility_grants=None)
+    note = await db_context.notes.get_by_title(
+        title, read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     if not note:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Note not found")
     return note

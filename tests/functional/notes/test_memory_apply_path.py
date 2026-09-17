@@ -31,7 +31,7 @@ from family_assistant.security.taint import (
     TurnTaintState,
 )
 from family_assistant.storage.database import Database, DatabaseTransaction
-from family_assistant.storage.repositories.notes import NoteWritePolicy
+from family_assistant.storage.repositories.notes import NoteReadPolicy, NoteWritePolicy
 from family_assistant.tools.memory import propose_memory_edits_tool
 from family_assistant.tools.types import ToolExecutionContext
 
@@ -120,7 +120,7 @@ async def _apply(
 
 
 async def _entries(db: Database, title: str) -> str:
-    note = await db.notes.get_by_title(title, visibility_grants=None)
+    note = await db.notes.get_by_title(title, read_policy=NoteReadPolicy.UNRESTRICTED)
     assert note is not None
     return strip_topic_index(note.content)
 
@@ -178,7 +178,7 @@ async def test_an_add_creates_a_topic_note_that_is_not_always_loaded(
     )
 
     assert outcome.applied is True
-    note = await db.notes.get_by_title("Sam", visibility_grants=None)
+    note = await db.notes.get_by_title("Sam", read_policy=NoteReadPolicy.UNRESTRICTED)
     assert note is not None
     assert note.include_in_prompt is False
     assert note.visibility_labels == [MEMORY_LABEL]
@@ -364,7 +364,10 @@ async def test_evidence_from_another_conversation_is_refused(
 
     assert outcome.applied is False
     assert f"#{outside[0]}" in outcome.rejections[0].reason
-    assert await db.notes.get_by_title("Sam", visibility_grants=None) is None
+    assert (
+        await db.notes.get_by_title("Sam", read_policy=NoteReadPolicy.UNRESTRICTED)
+        is None
+    )
 
 
 @pytest.mark.asyncio
@@ -415,7 +418,10 @@ async def test_one_bad_edit_refuses_the_whole_list(db_engine: AsyncEngine) -> No
     )
 
     assert outcome.applied is False
-    assert await db.notes.get_by_title("Sam", visibility_grants=None) is None
+    assert (
+        await db.notes.get_by_title("Sam", read_policy=NoteReadPolicy.UNRESTRICTED)
+        is None
+    )
     assert await db.memory_store.get_revision() == revision_before
     assert await db.memory_change_log.get_recent(10) == []
 
@@ -439,7 +445,10 @@ async def test_a_result_over_the_note_cap_is_refused(db_engine: AsyncEngine) -> 
 
     assert outcome.applied is False
     assert "over its 300-character limit" in outcome.rejections[0].reason
-    assert await db.notes.get_by_title("Trip", visibility_grants=None) is None
+    assert (
+        await db.notes.get_by_title("Trip", read_policy=NoteReadPolicy.UNRESTRICTED)
+        is None
+    )
 
 
 @pytest.mark.asyncio
@@ -464,7 +473,10 @@ async def test_more_edits_than_the_review_allows_are_refused(
 
     assert outcome.applied is False
     assert "over the limit of 2" in outcome.rejections[0].reason
-    assert await db.notes.get_by_title("Sam", visibility_grants=None) is None
+    assert (
+        await db.notes.get_by_title("Sam", read_policy=NoteReadPolicy.UNRESTRICTED)
+        is None
+    )
 
 
 @pytest.mark.asyncio
@@ -610,7 +622,10 @@ async def test_a_write_from_an_externally_authored_turn_is_refused(
 
     assert outcome.applied is False
     assert "outside the household" in outcome.rejections[0].reason
-    assert await db.notes.get_by_title("Trip", visibility_grants=None) is None
+    assert (
+        await db.notes.get_by_title("Trip", read_policy=NoteReadPolicy.UNRESTRICTED)
+        is None
+    )
 
 
 @pytest.mark.asyncio
@@ -647,7 +662,10 @@ async def test_a_stale_expected_revision_is_a_conflict(db_engine: AsyncEngine) -
 
     assert outcome.applied is False
     assert outcome.conflict is True
-    assert await db.notes.get_by_title("Routines", visibility_grants=None) is None
+    assert (
+        await db.notes.get_by_title("Routines", read_policy=NoteReadPolicy.UNRESTRICTED)
+        is None
+    )
     assert await db.memory_store.get_revision() == revision_after_person
 
 
@@ -675,8 +693,12 @@ async def test_the_edit_model_cannot_ask_for_a_second_always_loaded_note(
         ],
     )
 
-    topic = await db.notes.get_by_title("Routines", visibility_grants=None)
-    core = await db.notes.get_by_title(CORE_TITLE, visibility_grants=None)
+    topic = await db.notes.get_by_title(
+        "Routines", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
+    core = await db.notes.get_by_title(
+        CORE_TITLE, read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert topic is not None
     assert topic.include_in_prompt is False
     assert core is not None
@@ -715,7 +737,9 @@ async def test_a_hand_edited_index_section_is_overwritten(
         write_policy=NoteWritePolicy.UNCONSTRAINED,
     )
 
-    core = await db.notes.get_by_title(CORE_TITLE, visibility_grants=None)
+    core = await db.notes.get_by_title(
+        CORE_TITLE, read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert core is not None
     assert "Invented Topic" not in core.content
     assert "- Sam (changed" in core.content
@@ -738,13 +762,17 @@ async def test_a_deleted_topic_leaves_the_index(db_engine: AsyncEngine) -> None:
         ],
     )
 
-    listed = await db.notes.get_by_title(CORE_TITLE, visibility_grants=None)
+    listed = await db.notes.get_by_title(
+        CORE_TITLE, read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert listed is not None
     assert "- Sam (changed" in listed.content
 
     assert await db.notes.delete("Sam") is True
 
-    core = await db.notes.get_by_title(CORE_TITLE, visibility_grants=None)
+    core = await db.notes.get_by_title(
+        CORE_TITLE, read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert core is not None
     assert "Sam" not in core.content
 
@@ -773,7 +801,9 @@ async def test_a_renamed_topic_is_renamed_in_the_index(db_engine: AsyncEngine) -
         write_policy=NoteWritePolicy.UNCONSTRAINED,
     )
 
-    core = await db.notes.get_by_title(CORE_TITLE, visibility_grants=None)
+    core = await db.notes.get_by_title(
+        CORE_TITLE, read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert core is not None
     assert "- Sam (family) (changed" in core.content
 
@@ -860,7 +890,9 @@ async def test_after_apply_runs_in_the_same_transaction(
     seen: list[str] = []
 
     async def _hook(txn: DatabaseTransaction) -> None:
-        note = await txn.notes.get_by_title("Sam", visibility_grants=None)
+        note = await txn.notes.get_by_title(
+            "Sam", read_policy=NoteReadPolicy.UNRESTRICTED
+        )
         assert note is not None
         seen.append(note.content)
 
@@ -906,7 +938,10 @@ async def test_a_failing_after_apply_hook_rolls_the_edits_back(
             after_apply=_hook,
         )
 
-    assert await db.notes.get_by_title("Sam", visibility_grants=None) is None
+    assert (
+        await db.notes.get_by_title("Sam", read_policy=NoteReadPolicy.UNRESTRICTED)
+        is None
+    )
     assert await db.memory_store.get_revision() == revision_before
     assert await db.memory_change_log.get_recent(10) == []
 
@@ -971,7 +1006,10 @@ async def test_the_tool_result_text_carries_the_rejection_reasons(
     assert "No memory edits were applied" in text
     assert f"#{outside[0]}" in text
     assert "edit 2" in text
-    assert await db.notes.get_by_title("Sam", visibility_grants=None) is None
+    assert (
+        await db.notes.get_by_title("Sam", read_policy=NoteReadPolicy.UNRESTRICTED)
+        is None
+    )
 
 
 @pytest.mark.asyncio
@@ -1053,4 +1091,7 @@ async def test_the_tool_refuses_a_malformed_proposal(db_engine: AsyncEngine) -> 
     )
 
     assert "malformed" in result.get_text()
-    assert await db.notes.get_by_title("Sam", visibility_grants=None) is None
+    assert (
+        await db.notes.get_by_title("Sam", read_policy=NoteReadPolicy.UNRESTRICTED)
+        is None
+    )

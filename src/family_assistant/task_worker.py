@@ -4728,6 +4728,11 @@ class TaskWorker:
                         if self.processing_service
                         else None
                     ),
+                    required_note_read_labels=(
+                        self.processing_service.service_config.required_note_read_labels
+                        if self.processing_service
+                        else None
+                    ),
                     allowed_note_visibility_labels=(
                         self.processing_service.service_config.allowed_note_visibility_labels
                         if self.processing_service
@@ -6051,6 +6056,9 @@ async def handle_script_execution(
             required_note_visibility_labels=(
                 processing_service.service_config.required_note_visibility_labels
             ),
+            required_note_read_labels=(
+                processing_service.service_config.required_note_read_labels
+            ),
             allowed_note_visibility_labels=(
                 processing_service.service_config.allowed_note_visibility_labels
             ),
@@ -6386,6 +6394,9 @@ async def _build_confirmation_execution_context(
         ),
         required_note_visibility_labels=(
             processing_service.service_config.required_note_visibility_labels
+        ),
+        required_note_read_labels=(
+            processing_service.service_config.required_note_read_labels
         ),
         allowed_note_visibility_labels=(
             processing_service.service_config.allowed_note_visibility_labels

@@ -288,7 +288,10 @@ if TYPE_CHECKING:
     from family_assistant.services.tool_call_review import TriggerReviewInput
     from family_assistant.skills.registry import NoteRegistry
     from family_assistant.storage.database import Database
-    from family_assistant.storage.repositories.notes import NoteWritePolicy
+    from family_assistant.storage.repositories.notes import (
+        NoteReadPolicy,
+        NoteWritePolicy,
+    )
     from family_assistant.storage.tasks import TaskPriority
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools.infrastructure import ToolsProvider
@@ -558,6 +561,7 @@ class ToolExecutionContext:
     indexing_source: IndexingSource | None = None  # Add indexing_source
     tools_provider: ToolsProvider | None = None  # Add tools_provider for API access
     visibility_grants: set[str] | None = None
+    required_note_read_labels: list[str] | None = None
     default_note_visibility_labels: list[str] | None = None
     required_note_visibility_labels: list[str] | None = None
     allowed_note_visibility_labels: list[str] | None = None
@@ -658,6 +662,24 @@ class ToolExecutionContext:
             default_labels=self.default_note_visibility_labels,
             required_labels=self.required_note_visibility_labels,
             allowed_labels=self.allowed_note_visibility_labels,
+        )
+
+    def note_read_policy(self) -> NoteReadPolicy:
+        """Derive the note read policy for the active profile from this context.
+
+        The read-side mirror of :meth:`note_write_policy`, and the only way a
+        tool should resolve a note or a file skill: both boundaries take this
+        one object, so a confined profile cannot reach an unlabelled note
+        through a path that only checked grants.
+        """
+        # Local import for the same cycle reason as note_write_policy above.
+        from family_assistant.storage.repositories.notes import (  # noqa: PLC0415
+            NoteReadPolicy,
+        )
+
+        return NoteReadPolicy.for_profile(
+            visibility_grants=self.visibility_grants,
+            required_labels=self.required_note_read_labels,
         )
 
 

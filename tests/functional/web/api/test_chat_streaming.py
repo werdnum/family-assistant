@@ -32,7 +32,7 @@ from family_assistant.processing import ProcessingService, ProcessingServiceConf
 from family_assistant.services.notifier import MESSAGE_CATEGORY, NotificationMetadata
 from family_assistant.storage import init_db
 from family_assistant.storage.database import Database
-from family_assistant.storage.repositories.notes import NoteModel
+from family_assistant.storage.repositories.notes import NoteModel, NoteReadPolicy
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS as local_tool_registrations,
 )
@@ -174,6 +174,7 @@ def test_processing_service(
     notes_provider = NotesContextProvider(
         get_db_context_func=get_entered_db_context_for_provider,
         prompts=mock_processing_service_config.prompts,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
     calendar_provider = CalendarContextProvider(
         calendar_config=cast(
@@ -438,7 +439,9 @@ async def test_api_chat_send_message_stream_with_tools(
     # Retry briefly since PostgreSQL commits may not be immediately visible.
     async def _check_note_exists() -> NoteModel | None:
         fresh_ctx = Database(engine=db_engine)
-        return await fresh_ctx.notes.get_by_title(note_title, visibility_grants=None)
+        return await fresh_ctx.notes.get_by_title(
+            note_title, read_policy=NoteReadPolicy.UNRESTRICTED
+        )
 
     note = await wait_for_condition(
         _check_note_exists,

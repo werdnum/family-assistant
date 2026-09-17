@@ -28,6 +28,7 @@ from family_assistant.llm.providers.google_genai_client import GoogleGenAIClient
 from family_assistant.processing import ProcessingService, ProcessingServiceConfig
 from family_assistant.services.attachment_registry import AttachmentRegistry
 from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.tools import (
     LOCAL_TOOL_REGISTRATIONS,
     CompositeToolsProvider,
@@ -140,6 +141,7 @@ async def llm_integration_processing_service(
     notes_provider = NotesContextProvider(
         get_db_context_func=get_db_context_for_notes,
         prompts=config.prompts,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
     users_provider = KnownUsersContextProvider(
         chat_id_to_name_map={},

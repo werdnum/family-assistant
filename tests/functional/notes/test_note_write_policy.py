@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from family_assistant.storage.database import Database
 from family_assistant.storage.notes import notes_table
 from family_assistant.storage.repositories.notes import (
+    NoteReadPolicy,
     NotesRepository,
     NoteWritePolicy,
     NoteWritePolicyError,
@@ -153,7 +154,9 @@ async def test_repository_applies_required_labels(db_engine: AsyncEngine) -> Non
         content="findings",
         write_policy=_confined_policy(),
     )
-    note = await db.notes.get_by_title("Diag Report", visibility_grants=None)
+    note = await db.notes.get_by_title(
+        "Diag Report", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note is not None
     assert note.visibility_labels == ["ops_diagnostics"]
 
@@ -170,7 +173,9 @@ async def test_repository_required_labels_win_over_empty_request(
         visibility_labels=[],
         write_policy=_confined_policy(),
     )
-    note = await db.notes.get_by_title("Diag Report", visibility_grants=None)
+    note = await db.notes.get_by_title(
+        "Diag Report", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note is not None
     assert note.visibility_labels == ["ops_diagnostics"]
 
@@ -187,7 +192,12 @@ async def test_repository_ceiling_rejects_write(db_engine: AsyncEngine) -> None:
             write_policy=_confined_policy(),
         )
     # Nothing persisted.
-    assert await db.notes.get_by_title("Diag Report", visibility_grants=None) is None
+    assert (
+        await db.notes.get_by_title(
+            "Diag Report", read_policy=NoteReadPolicy.UNRESTRICTED
+        )
+        is None
+    )
 
 
 @pytest.mark.asyncio
@@ -211,7 +221,9 @@ async def test_repository_see_before_overwrite_enforced(
             write_policy=_confined_policy(),
         )
     db = Database(engine=db_engine)
-    note = await db.notes.get_by_title("Family Note", visibility_grants=None)
+    note = await db.notes.get_by_title(
+        "Family Note", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note is not None
     assert note.content == "private family content"
 
@@ -242,7 +254,9 @@ async def test_repository_refuses_relabeling_unrestricted_note(
             write_policy=_confined_policy(),
         )
     db = Database(engine=db_engine)
-    note = await db.notes.get_by_title("Shopping List", visibility_grants=None)
+    note = await db.notes.get_by_title(
+        "Shopping List", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note is not None
     assert note.content == "user content"
     assert note.visibility_labels == []
@@ -294,7 +308,9 @@ async def test_tool_confines_new_note(db_engine: AsyncEngine) -> None:
     )
     assert "successfully" in result.lower()
     db = Database(engine=db_engine)
-    note = await db.notes.get_by_title("Auto Diag", visibility_grants=None)
+    note = await db.notes.get_by_title(
+        "Auto Diag", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note is not None
     assert note.visibility_labels == ["ops_diagnostics"]
 
@@ -317,7 +333,12 @@ async def test_tool_ceiling_violation_returns_error(db_engine: AsyncEngine) -> N
     )
     assert result.lower().startswith("error")
     db = Database(engine=db_engine)
-    assert await db.notes.get_by_title("Bad Labels", visibility_grants=None) is None
+    assert (
+        await db.notes.get_by_title(
+            "Bad Labels", read_policy=NoteReadPolicy.UNRESTRICTED
+        )
+        is None
+    )
 
 
 def test_context_note_write_policy_reflects_fields() -> None:
@@ -400,7 +421,9 @@ async def test_policy_enforced_atomically_on_title_race(db_engine: AsyncEngine) 
             write_policy=_confined_policy(),
         )
     db = Database(engine=db_engine)
-    note = await db.notes.get_by_title("Raced Note", visibility_grants=None)
+    note = await db.notes.get_by_title(
+        "Raced Note", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note is not None
     assert note.content == "hidden family content"
     assert note.visibility_labels == ["family"]
@@ -430,7 +453,9 @@ async def test_atomic_policy_allows_racing_in_confinement_note(
             write_policy=_confined_policy(),
         )
     db = Database(engine=db_engine)
-    note = await db.notes.get_by_title("Raced Ops Note", visibility_grants=None)
+    note = await db.notes.get_by_title(
+        "Raced Ops Note", read_policy=NoteReadPolicy.UNRESTRICTED
+    )
     assert note is not None
     assert note.content == "new findings"
     assert note.visibility_labels == ["ops_diagnostics"]

@@ -129,6 +129,7 @@ from family_assistant.storage.database import (
     set_engine_history_taint_epoch,
     set_engine_memory_limits,
 )
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.storage.tasks import TaskPriority
 from family_assistant.task_worker import (
     SCHEDULE_AUTOMATION_ADVANCE_TASK_TYPE,
@@ -1291,8 +1292,12 @@ class Assistant:
             if profile_conf.visibility_grants
             else None
         )
+        profile_read_policy = NoteReadPolicy.for_profile(
+            visibility_grants=profile_grants,
+            required_labels=profile_proc_conf.required_note_read_labels,
+        )
         context_providers = self._build_profile_context_providers(
-            profile_conf, note_registry, profile_grants
+            profile_conf, note_registry, profile_read_policy
         )
 
         service_config = ProcessingServiceConfig(
@@ -1311,6 +1316,7 @@ class Assistant:
             id=profile_id,
             description=profile_conf.description or f"Processing profile: {profile_id}",
             visibility_grants=profile_grants,
+            required_note_read_labels=(profile_proc_conf.required_note_read_labels),
             default_note_visibility_labels=(
                 profile_proc_conf.default_note_visibility_labels
                 if profile_proc_conf.default_note_visibility_labels is not None
@@ -1422,7 +1428,7 @@ class Assistant:
         self,
         profile_conf: ServiceProfile,
         note_registry: NoteRegistry | None,
-        profile_grants: set[str] | None,
+        read_policy: NoteReadPolicy,
     ) -> list[ContextProvider]:
         """Build and filter the aggregated-context sources for one profile."""
         assert self.attachment_registry is not None
@@ -1432,7 +1438,7 @@ class Assistant:
                 get_db_context_func=self._database,
                 prompts=profile_config.prompts,
                 attachment_registry=self.attachment_registry,
-                visibility_grants=profile_grants,
+                read_policy=read_policy,
                 note_registry=note_registry,
             ),
             CalendarContextProvider(

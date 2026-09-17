@@ -286,6 +286,7 @@ class ToolExecutor:
             credential_resolvers=self.credential_resolvers,
             api_backend=self.api_backend,
             visibility_grants=self.config.visibility_grants,
+            required_note_read_labels=self.config.required_note_read_labels,
             default_note_visibility_labels=self.config.default_note_visibility_labels,
             required_note_visibility_labels=self.config.required_note_visibility_labels,
             allowed_note_visibility_labels=self.config.allowed_note_visibility_labels,

@@ -200,6 +200,11 @@ async def execute_tool_api(
             if processing_service
             else None
         ),
+        required_note_read_labels=(
+            processing_service.service_config.required_note_read_labels
+            if processing_service
+            else None
+        ),
         allowed_note_visibility_labels=(
             processing_service.service_config.allowed_note_visibility_labels
             if processing_service

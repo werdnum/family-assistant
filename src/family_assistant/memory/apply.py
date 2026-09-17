@@ -39,6 +39,7 @@ from family_assistant.memory.invariants import (
 )
 from family_assistant.storage.message_history import message_history_table
 from family_assistant.storage.repositories.notes import (
+    NoteReadPolicy,
     NoteWritePolicy,
     NoteWritePolicyError,
 )
@@ -462,7 +463,9 @@ class _Workspace:
         if cached is not None:
             return cached
 
-        note = await self.txn.notes.get_by_title(title, visibility_grants=None)
+        note = await self.txn.notes.get_by_title(
+            title, read_policy=NoteReadPolicy.UNRESTRICTED
+        )
         if note is not None and MEMORY_LABEL not in note.visibility_labels:
             await reject(
                 self.txn,

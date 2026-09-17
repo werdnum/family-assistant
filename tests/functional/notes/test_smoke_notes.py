@@ -33,6 +33,7 @@ from family_assistant.processing import (
     ProcessingServiceConfig,
 )
 from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.tools import (
     AVAILABLE_FUNCTIONS as local_tool_implementations,
 )
@@ -175,6 +176,7 @@ async def test_add_and_retrieve_note_rule_mock(
     notes_provider = NotesContextProvider(
         get_db_context_func=get_test_db_context_func,
         prompts=dummy_prompts,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
 
     # --- Create ServiceConfig ---

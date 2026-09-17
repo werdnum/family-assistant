@@ -97,6 +97,38 @@ exemptions:
     ticket: null
 
   # ===========================================================================
+  # NoteReadPolicy.UNRESTRICTED exemptions - Reads made on nobody's behalf
+  # ===========================================================================
+  - rule: no-unrestricted-note-read-policy
+    files:
+      - src/family_assistant/storage/repositories/notes.py
+      - src/family_assistant/web/routers/notes_api.py
+      - src/family_assistant/indexing/notes_indexer.py
+      - src/family_assistant/memory/apply.py
+      - src/family_assistant/tools/confirmation.py
+      - .ast-grep/tests/conformance/no-unrestricted-note-read-policy-positive.py
+      - test_*.py
+    reason: |
+      Each of these reads on nobody's behalf, so there is no profile whose read
+      confinement could apply.
+
+      notes.py defines the sentinel, and its write paths look a title up to find
+      out whether the row exists at all; the visibility-sensitive half of that
+      check goes through NoteWritePolicy.see_before_overwrite_read_policy().
+      notes_api.py is the admin management UI, which already bypasses write
+      confinement for the same reason. notes_indexer.py indexes a note by id for
+      every future reader; per-reader filtering happens at search time, in the
+      vector store. memory/apply.py must see a target memory note whatever its
+      labels in order to validate it, and its own write policy carries the
+      `memory` floor. confirmation.py's existence lookup mirrors the repository's
+      unconditional one so the approver is shown the same preflight the write
+      will run.
+
+      The positive fixture exists to violate the rule; test files (test_*.py, at
+      any depth) exercise both confined and unconfined reads.
+    ticket: null
+
+  # ===========================================================================
   # dict[str, Any] exemptions - Hook scripts with arbitrary JSON
   # ===========================================================================
   - rule: no-dict-any

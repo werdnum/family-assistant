@@ -7,6 +7,7 @@ from typing import TypedDict, cast
 
 from family_assistant.indexing.pipeline import IndexableContent, IndexingPipeline
 from family_assistant.storage.notes import NoteDocument
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.storage.vector import (
     Document,
     delete_document_embeddings,
@@ -64,7 +65,9 @@ class NotesIndexer:
         logger.info(f"Starting indexing for note ID: {note_id}")
 
         # --- 1. Fetch Note Data ---
-        note_row = await db_context.notes.get_by_id(note_id, visibility_grants=None)
+        note_row = await db_context.notes.get_by_id(
+            note_id, read_policy=NoteReadPolicy.UNRESTRICTED
+        )
         if not note_row:
             logger.warning(f"Note {note_id} not found in database. Skipping indexing.")
             # Don't raise an error, just exit gracefully. Task will be marked 'done'.
