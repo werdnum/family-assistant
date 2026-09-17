@@ -25,12 +25,16 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 from family_assistant.storage.base import metadata
 
-MemoryChangeOutcome = Literal["applied", "skipped", "abandoned"]
+MemoryChangeOutcome = Literal["applied", "skipped", "abandoned", "no_changes"]
 """What became of the work this row records.
 
-``applied`` is one committed edit. ``skipped`` and ``abandoned`` are review
-outcomes with no edit: a stretch that was not reviewed, and a review that was
-given up on after its watermark was advanced past it.
+``applied`` is one committed edit. The other three are review outcomes with no
+edit: a stretch that was not reviewed (``skipped``), a review given up on after
+its watermark was advanced past it (``abandoned``), and a review that read the
+stretch and found nothing durable in it (``no_changes``). The last is kept
+distinct from ``applied`` with no rows, because "the curator looked and decided
+nothing was worth keeping" is the common case and a person reading the
+recent-changes view should be able to tell it from a review that failed.
 """
 
 MemoryActorKindValue = Literal["curator", "assistant", "person"]

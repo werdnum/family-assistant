@@ -292,7 +292,7 @@ if TYPE_CHECKING:
         NoteReadPolicy,
         NoteWritePolicy,
     )
-    from family_assistant.storage.tasks import TaskPriority
+    from family_assistant.storage.tasks import TaskAttempt, TaskPriority
     from family_assistant.telegram.protocols import ConfirmationUIManager
     from family_assistant.tools.infrastructure import ToolsProvider
     from family_assistant.utils.clock import Clock
@@ -549,6 +549,15 @@ class ToolExecutionContext:
     request, a script run from the API. Read it through
     :meth:`inherited_task_priority` when enqueueing further work of the same
     kind.
+    """
+    task_attempt: TaskAttempt | None = None
+    """Which attempt of the running task this is, and whether it is the last.
+
+    Set by the task worker from the dequeued row, alongside ``task_priority``,
+    and the only place a running task's retry budget is known. ``None`` outside
+    a task, where there is no budget: a handler that must decide between
+    failing for a retry and giving up durably treats that as its last attempt,
+    since nothing will run it again.
     """
     subconversation_id: str | None = (
         None  # Subconversation ID for delegated conversations, None for main conversation

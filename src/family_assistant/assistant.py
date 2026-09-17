@@ -85,9 +85,11 @@ from family_assistant.llm.providers.google_genai_client import (
     is_antigravity_model,
     is_interactions_agent_model,
 )
+from family_assistant.memory.review import make_memory_review_handler
 from family_assistant.memory.sweep import (
     MEMORY_REVIEW_SWEEP_TASK_ID,
     MEMORY_REVIEW_SWEEP_TASK_TYPE,
+    MEMORY_REVIEW_TASK_TYPE,
     make_memory_review_sweep_handler,
 )
 from family_assistant.observability.exporter import start_metrics_exporter
@@ -2590,6 +2592,14 @@ class Assistant:
             make_memory_review_sweep_handler(
                 settings=self.config.memory_config.to_review_settings(),
                 configured_contributors=self._memory_contributing_profiles(),
+            ),
+        )
+        worker.register_task_handler(
+            MEMORY_REVIEW_TASK_TYPE,
+            make_memory_review_handler(
+                settings=self.config.memory_config.to_review_settings(),
+                configured_contributors=self._memory_contributing_profiles(),
+                limits=self.config.memory_config.to_limits(),
             ),
         )
         logger.info(f"Registered task handlers for worker {worker.worker_id}")

@@ -52,6 +52,19 @@ class NoteRow(NoteModel):
     updated_at: datetime
 
 
+class MemoryTopicNote(BaseModel):
+    """One memory topic note as a review reads it: its text and its recency.
+
+    Narrower than :class:`NoteModel` because a review needs nothing else, and
+    ``updated_at`` because when a topic last changed is how the request orders
+    topics when they do not all fit.
+    """
+
+    title: str
+    content: str
+    updated_at: datetime
+
+
 def _parse_json_list(value: str | list[str] | None) -> list[str]:
     """Parse a JSON string to list of strings."""
     if not value:
@@ -575,6 +588,40 @@ class NotesRepository(BaseRepository):
                 updated_at=row["updated_at"],
             )
         return None
+
+    async def get_memory_topic_notes(self) -> list[MemoryTopicNote]:
+        """Every memory topic note, most recently changed first.
+
+        No read policy: the label *is* the confinement here. A memory topic
+        note is by definition inside the curator's read scope, and the caller
+        is the review task assembling the curator's request rather than a tool
+        resolving a title a model named.
+
+        The core note is excluded: it reaches the curator through the notes
+        context provider, and repeating it in the request would spend the
+        review's input budget twice on the same text.
+        """
+        core_note_id = await self._db.memory_store.get_core_note_id()
+        stmt = (
+            select(
+                notes_table.c.title,
+                notes_table.c.content,
+                notes_table.c.updated_at,
+            )
+            .where(self._labels_superset_condition([MEMORY_LABEL]))
+            .order_by(notes_table.c.updated_at.desc(), notes_table.c.title)
+        )
+        if core_note_id is not None:
+            stmt = stmt.where(notes_table.c.id != core_note_id)
+        rows = await self._db.fetch_all(stmt)
+        return [
+            MemoryTopicNote(
+                title=row["title"],
+                content=row["content"],
+                updated_at=row["updated_at"],
+            )
+            for row in rows
+        ]
 
     async def get_by_title(
         self,

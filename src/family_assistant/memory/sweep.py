@@ -21,6 +21,12 @@ from collections import Counter
 from typing import TYPE_CHECKING, Any
 
 from family_assistant.memory.due import DueReason, select_due_conversations
+from family_assistant.memory.task_types import (
+    MEMORY_REVIEW_SWEEP_TASK_ID,
+    MEMORY_REVIEW_SWEEP_TASK_TYPE,
+    MEMORY_REVIEW_TASK_TYPE,
+    memory_review_task_id,
+)
 from family_assistant.observability.metrics import (
     record_memory_conversations_due,
     record_memory_review_enqueued,
@@ -37,18 +43,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-MEMORY_REVIEW_SWEEP_TASK_TYPE = "memory_review_sweep"
-MEMORY_REVIEW_SWEEP_TASK_ID = "system_memory_review_sweep"
-MEMORY_REVIEW_TASK_TYPE = "memory_review"
-
-
-def memory_review_task_id(interface_type: str, conversation_id: str) -> str:
-    """The one task id a review of this conversation may hold.
-
-    Deterministic on purpose: the queue's uniqueness on it is what serialises
-    reviews of a conversation.
-    """
-    return f"memory_review:{interface_type}:{conversation_id}"
+__all__ = [
+    "MEMORY_REVIEW_SWEEP_TASK_ID",
+    "MEMORY_REVIEW_SWEEP_TASK_TYPE",
+    "MEMORY_REVIEW_TASK_TYPE",
+    "make_memory_review_sweep_handler",
+    "memory_review_task_id",
+    "run_memory_review_sweep",
+]
+"""Re-exports the queue identities so callers need name only this module."""
 
 
 def make_memory_review_sweep_handler(

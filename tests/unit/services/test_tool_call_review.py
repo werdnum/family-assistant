@@ -35,6 +35,7 @@ from family_assistant.security.taint import (
     TurnTaintState,
     machine_authored_taint_metadata,
 )
+from family_assistant.security.taint_audit import taint_audit_sources
 from family_assistant.services.tool_call_review import (
     BrowserActionReviewDecision,
     BrowserActionReviewInput,
@@ -53,9 +54,6 @@ from family_assistant.services.tool_call_review import (
     build_delegation_review_trigger,
     compute_trusted_destination_echo,
     resolve_originating_request,
-)
-from family_assistant.tools.infrastructure import (
-    _taint_audit_sources,  # noqa: PLC2701 - testing internal audit source bounds
 )
 from family_assistant.tools.metadata import ToolDescriptor, ToolTag
 
@@ -1589,7 +1587,7 @@ def test_taint_audit_sources_bounded_and_fifo_order() -> None:
             )
         )
 
-    summaries = _taint_audit_sources(state)
+    summaries = taint_audit_sources(state)
     assert len(summaries) == 12
     # Verify FIFO acquisition order: source_ids match state.sources
     expected_ids = [s.source_id for s in state.sources[:12]]

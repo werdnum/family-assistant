@@ -36,5 +36,17 @@ class MemoryLimits:
 
     DEFAULTS: ClassVar["MemoryLimits"]
 
+    @property
+    def review_transcript_max_chars(self) -> int:
+        """The transcript's share of one review's input budget.
+
+        Derived rather than configured: the split between the transcript and
+        the memory entries shown beside it is a property of what a review is
+        for, not a knob a deployment tunes. Two thirds to the transcript, so a
+        long settled conversation still leaves room for the entries the curator
+        is told to update rather than duplicate.
+        """
+        return max(1, self.review_input_max_chars * 2 // 3)
+
 
 MemoryLimits.DEFAULTS = MemoryLimits()
