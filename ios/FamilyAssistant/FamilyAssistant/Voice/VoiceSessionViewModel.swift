@@ -389,7 +389,9 @@ final class VoiceSessionViewModel {
         var receivedFields = [
             "call_count": String(calls.count),
             "tools": Self.toolNames(calls),
-            "queued_behind_batch": String(previousTask != nil),
+            // A finished batch leaves `toolExecutionTail` set; only a batch still
+            // holding entries in `toolTasks` actually delays this one.
+            "queued_behind_batch": String(!toolTasks.isEmpty),
         ]
         if let toolResultsSentAt {
             receivedFields["since_tool_results_ms"] = Self.milliseconds(since: toolResultsSentAt)
@@ -417,6 +419,9 @@ final class VoiceSessionViewModel {
             do {
                 try await session.sendToolResponses(responses)
             } catch {
+                // Hanging up cancels this task and closes the socket under it;
+                // that is an ordinary end, not a failure to report.
+                guard !Task.isCancelled, !self.isTerminal else { return }
                 // Gemini waits on these results; without them the conversation
                 // goes silent for good, so end it visibly instead.
                 fields["stage"] = "tool_response"

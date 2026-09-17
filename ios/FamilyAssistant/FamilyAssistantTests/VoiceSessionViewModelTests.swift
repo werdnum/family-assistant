@@ -17,6 +17,7 @@ private final class FakeVoiceLiveSession: VoiceLiveSession {
     private(set) var sentAudio: [Data] = []
     private(set) var sentToolResponses: [[GeminiFunctionResponse]] = []
     var sendToolResponsesError: Error?
+    var beforeSendToolResponses: (() -> Void)?
 
     init() {
         (events, continuation) = AsyncStream.makeStream(of: GeminiLiveServerEvent.self)
@@ -35,6 +36,7 @@ private final class FakeVoiceLiveSession: VoiceLiveSession {
 
     func endAudioStream() async throws {}
     func sendToolResponses(_ responses: [GeminiFunctionResponse]) async throws {
+        beforeSendToolResponses?()
         if let sendToolResponsesError { throw sendToolResponsesError }
         sentToolResponses.append(responses)
     }
@@ -579,6 +581,7 @@ final class VoiceSessionViewModelTests: XCTestCase {
         try await waitUntil { recorder.records.contains { $0.0 == "audio_after_tool_results" } }
 
         let received = recorder.records.filter { $0.0 == "tool_call_received" }
+        XCTAssertEqual(received.map { $0.1["queued_behind_batch"] }, ["false", "false"])
         XCTAssertEqual(received.first?.1["tools"], "call_tool:ha_call_read_tool")
         XCTAssertNil(received.first?.1["since_tool_results_ms"])
         XCTAssertEqual(received.last?.1["tools"], "create_automation")
@@ -607,6 +610,24 @@ final class VoiceSessionViewModelTests: XCTestCase {
         XCTAssertEqual(failure.1["error_code"], "57")
         XCTAssertEqual(reportedErrors.count, 1)
         guard case .failed = model.phase else { return XCTFail("expected failed, got \(model.phase)") }
+    }
+
+    func testHangingUpDuringToolResponseSendIsNotAFailure() async throws {
+        let recorder = VoiceDiagnosticRecorder()
+        session.sendToolResponsesError = CancellationError()
+        let model = makeModel(diagnostics: recorder.diagnostics)
+        session.beforeSendToolResponses = { model.end() }
+        await model.start()
+        session.emit(.setupComplete)
+        try await waitUntil { model.phase == .active }
+
+        session.emit(.toolCall([GeminiFunctionCall(id: "c1", name: "noop", args: .object([:]))]))
+        try await waitUntil { model.isTerminal }
+        try await Task.sleep(for: .milliseconds(50))
+
+        XCTAssertEqual(model.phase, .finished)
+        XCTAssertFalse(recorder.records.contains { $0.0 == "tool_results_send_failed" })
+        XCTAssertTrue(reportedErrors.isEmpty)
     }
 
     func testCapturedAudioIsForwardedInOrder() async throws {
