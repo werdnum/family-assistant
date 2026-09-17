@@ -65,6 +65,19 @@ class GoogleUserApi:
         """Whether this deployment requests ``scope`` at consent."""
         return scope.value in self.resolver.configured_scopes
 
+    async def scope_granted(self, scope: GoogleScope) -> bool:
+        """Whether the user's own connection holds ``scope``.
+
+        Google's consent screen lets a user decline individual scopes, so a
+        configured scope may still be missing from one user's grant.
+        """
+        if not self.scope_configured(scope):
+            return False
+        connection = await self.db.oauth_connections.get_connection(
+            self.user_id, GOOGLE_PROVIDER.name
+        )
+        return connection is not None and scope.value in connection.scopes
+
     async def request(
         self,
         scope: GoogleScope,

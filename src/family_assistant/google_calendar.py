@@ -211,6 +211,10 @@ class GoogleCalendarClient:
         """Whether this deployment requests the scope that edits events."""
         return self._api.scope_configured(GoogleScope.CALENDAR_EVENTS)
 
+    async def user_can_write(self) -> bool:
+        """Whether the acting user granted the scope that edits events."""
+        return await self._api.scope_granted(GoogleScope.CALENDAR_EVENTS)
+
     async def list_calendars(self) -> list[CalendarSource]:
         """The acting user's readable calendars, primary first."""
         response = await self._api.request(
@@ -218,9 +222,10 @@ class GoogleCalendarClient:
             url=f"{GOOGLE_CALENDAR_API_BASE}/users/me/calendarList",
         )
         items = response.json().get("items")
+        can_write = await self.user_can_write()
         sources: list[CalendarSource] = []
         for item in items if isinstance(items, list) else []:
-            source = self._calendar_list_entry_to_source(item)
+            source = self._calendar_list_entry_to_source(item, can_write=can_write)
             if source is not None:
                 sources.append(source)
         sources.sort(key=lambda source: source.source_id != GOOGLE_PRIMARY_SOURCE_ID)
@@ -237,7 +242,10 @@ class GoogleCalendarClient:
             google_calendar_id="primary",
         )
 
-    def _calendar_list_entry_to_source(self, item: object) -> CalendarSource | None:
+    @staticmethod
+    def _calendar_list_entry_to_source(
+        item: object, *, can_write: bool
+    ) -> CalendarSource | None:
         if not isinstance(item, dict):
             return None
         entry = cast("GoogleJson", item)
@@ -252,7 +260,7 @@ class GoogleCalendarClient:
             name=str(name),
             kind="google",
             url="",
-            writable=self.can_write and access_role in _WRITABLE_ACCESS_ROLES,
+            writable=can_write and access_role in _WRITABLE_ACCESS_ROLES,
             google_calendar_id="primary" if primary else calendar_id,
             searched_by_default=primary
             or (entry.get("selected") is True and entry.get("hidden") is not True),

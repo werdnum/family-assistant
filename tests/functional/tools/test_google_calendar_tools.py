@@ -180,6 +180,19 @@ def _context(
     )
 
 
+async def _connect(
+    db: Database, user_id: str = "alice", scopes: frozenset[str] = ALL_SCOPES
+) -> None:
+    """Store the user's connection row, which records the scopes they granted."""
+    await db.oauth_connections.upsert_connection(
+        user_id=user_id,
+        provider="google",
+        provider_account_email=f"{user_id}@example.com",
+        scopes=sorted(scopes),
+        refresh_token_encrypted="ciphertext-not-used-by-fake-resolver",
+    )
+
+
 def _calendar_list(*entries: dict[str, object]) -> dict[str, object]:
     return {"items": list(entries)}
 
@@ -264,9 +277,9 @@ def _alice_resolver(configured: frozenset[str] = ALL_SCOPES) -> FakeResolver:
 async def test_list_calendars_includes_users_google_calendars(
     db_engine: AsyncEngine,
 ) -> None:
-    ctx = _context(
-        Database(db_engine), resolver=_alice_resolver(), backend=_alice_backend()
-    )
+    db = Database(db_engine)
+    await _connect(db)
+    ctx = _context(db, resolver=_alice_resolver(), backend=_alice_backend())
 
     result = await list_calendars_tool(ctx, NO_DUPLICATE_CHECK)
 
@@ -307,8 +320,10 @@ async def test_list_calendars_tells_unconnected_user_how_to_connect(
 async def test_list_calendars_marks_read_only_when_events_scope_not_requested(
     db_engine: AsyncEngine,
 ) -> None:
+    db = Database(db_engine)
+    await _connect(db)
     ctx = _context(
-        Database(db_engine),
+        db,
         resolver=_alice_resolver(configured=READ_ONLY_SCOPES),
         backend=_alice_backend(),
     )
@@ -316,6 +331,40 @@ async def test_list_calendars_marks_read_only_when_events_scope_not_requested(
     result = await list_calendars_tool(ctx, NO_DUPLICATE_CHECK)
 
     assert "google:primary: alice@example.com (Google Calendar, read-only" in result
+
+
+@pytest.mark.asyncio
+async def test_list_calendars_marks_read_only_when_user_declined_events_scope(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(db_engine)
+    await _connect(db, scopes=READ_ONLY_SCOPES)
+    ctx = _context(db, resolver=_alice_resolver(), backend=_alice_backend())
+
+    result = await list_calendars_tool(ctx, NO_DUPLICATE_CHECK)
+
+    assert "google:primary: alice@example.com (Google Calendar, read-only" in result
+
+
+@pytest.mark.asyncio
+async def test_add_event_does_not_default_to_google_when_user_declined_writes(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(db_engine)
+    await _connect(db, scopes=READ_ONLY_SCOPES)
+    backend = _alice_backend()
+    ctx = _context(db, resolver=_alice_resolver(), backend=backend)
+
+    result = await add_calendar_event_tool(
+        ctx,
+        NO_DUPLICATE_CHECK,
+        summary="Anything",
+        start_time="2026-09-20T18:00:00+00:00",
+        end_time="2026-09-20T19:00:00+00:00",
+    )
+
+    assert result.startswith("Error:"), result
+    assert backend.requests == []
 
 
 @pytest.mark.asyncio
@@ -474,9 +523,11 @@ async def test_each_user_searches_only_their_own_google_calendar(
 async def test_add_event_defaults_to_google_primary_without_caldav(
     db_engine: AsyncEngine,
 ) -> None:
+    db = Database(db_engine)
+    await _connect(db)
     backend = _alice_backend()
     backend.serve("tok-alice", "POST", "/calendars/primary/events", {"id": "new-1"})
-    ctx = _context(Database(db_engine), resolver=_alice_resolver(), backend=backend)
+    ctx = _context(db, resolver=_alice_resolver(), backend=backend)
 
     result = await add_calendar_event_tool(
         ctx,

@@ -24,7 +24,7 @@ from family_assistant.processing.turn_context import (
 from family_assistant.tools import get_tool_definitions_for_advertisement
 from family_assistant.tools.types import normalize_json_schema_type
 from family_assistant.web.auth import get_user_from_request
-from family_assistant.web.dependencies import get_processing_service
+from family_assistant.web.dependencies import get_current_user, get_processing_service
 from family_assistant.web.live_tools import resolve_live_tools
 from family_assistant.web.models import GeminiLiveConfig
 
@@ -192,12 +192,16 @@ async def _get_formatted_system_prompt(
     request: Request,
     processing_service: ProcessingService,
     *,
+    acting_user_id: str | None,
     tools_addition: str | None = None,
 ) -> str:
     """Get the formatted system prompt with context injected."""
     try:
         return await _format_system_prompt(
-            request, processing_service, tools_addition=tools_addition
+            request,
+            processing_service,
+            acting_user_id=acting_user_id,
+            tools_addition=tools_addition,
         )
 
     except Exception as e:
@@ -209,6 +213,7 @@ async def _format_system_prompt(
     request: Request,
     processing_service: ProcessingService,
     *,
+    acting_user_id: str | None,
     tools_addition: str | None = None,
 ) -> str:
     service_config = processing_service.service_config
@@ -216,9 +221,7 @@ async def _format_system_prompt(
     aggregated_context = ""
     if service_config.include_aggregated_context:
         aggregated_context = (
-            await processing_service.context_preparer.aggregate_context(
-                acting_user_id=None
-            )
+            await processing_service.context_preparer.aggregate_context(acting_user_id)
         )
 
     system_prompt_template = service_config.prompts.get(
@@ -299,6 +302,7 @@ async def create_ephemeral_token(
     request: Request,
     payload: EphemeralTokenRequest,
     processing_service: Annotated[ProcessingService, Depends(get_processing_service)],
+    current_user: Annotated[dict, Depends(get_current_user)],
 ) -> EphemeralTokenResponse:
     """
     Generate an ephemeral token for Gemini Live API access.
@@ -367,7 +371,10 @@ async def create_ephemeral_token(
 
     # Get formatted system prompt with context
     system_instruction = await _get_formatted_system_prompt(
-        request, target_service, tools_addition=tools_addition
+        request,
+        target_service,
+        acting_user_id=current_user["user_identifier"],
+        tools_addition=tools_addition,
     )
 
     # Create ephemeral token via Google GenAI SDK

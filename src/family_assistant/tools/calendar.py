@@ -869,7 +869,7 @@ async def add_calendar_event_tool(
     logger.info(
         f"Executing add_calendar_event_tool: {summary}, RRULE: {recurrence_rule}"
     )
-    google_target = _google_add_target(exec_context, calendar_config, calendar_id)
+    google_target = await _google_add_target(exec_context, calendar_config, calendar_id)
     if google_target is not None:
         return await _add_google_event(
             exec_context,
@@ -1095,7 +1095,7 @@ async def add_calendar_event_tool(
         return f"Error: An unexpected error occurred while adding the event. {e}"
 
 
-def _google_add_target(
+async def _google_add_target(
     exec_context: ToolExecutionContext,
     calendar_config: CalendarConfig,
     calendar_id: str | None,
@@ -1111,7 +1111,7 @@ def _google_add_target(
     if any(s.kind == "caldav" for s in resolve_calendar_sources(calendar_config)):
         return None
     client = GoogleCalendarClient.from_exec_context(exec_context)
-    if client is None or not client.can_write:
+    if client is None or not await client.user_can_write():
         return None
     return GOOGLE_PRIMARY_SOURCE_ID
 
