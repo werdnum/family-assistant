@@ -1607,7 +1607,7 @@ class ProcessingService:
         context_taint_sources: tuple[TaintSource, ...] = ()
         if self.service_config.include_aggregated_context:
             aggregated_other_context_str = (
-                await self.context_preparer.aggregate_context()
+                await self.context_preparer.aggregate_context(user_id)
             )
             context_taint_sources = (
                 await self.context_preparer.aggregate_context_taint_sources()

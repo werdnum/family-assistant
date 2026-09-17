@@ -1608,7 +1608,9 @@ async def asterisk_live_endpoint(
                     )
                     if includes_aggregated_context:
                         aggregated_context = (
-                            await telephone_service.context_preparer.aggregate_context()
+                            await telephone_service.context_preparer.aggregate_context(
+                                acting_user_id=None
+                            )
                         )
 
                 # A Live API session carries no message list, so the turn-context

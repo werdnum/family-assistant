@@ -325,7 +325,7 @@ async def test_context_provider_with_grants(
         visibility_grants={"default"},
     )
 
-    fragments = await provider.get_context_fragments()
+    fragments = await provider.get_context_fragments(acting_user_id=None)
     assert len(fragments) >= 1
     combined = "\n".join(fragments)
     assert "Public Note" in combined
@@ -370,7 +370,7 @@ async def test_context_provider_without_grants(
         visibility_grants=None,
     )
 
-    fragments = await provider.get_context_fragments()
+    fragments = await provider.get_context_fragments(acting_user_id=None)
     assert len(fragments) >= 1
     combined = "\n".join(fragments)
     assert "Public Note" in combined

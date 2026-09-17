@@ -58,7 +58,7 @@ class StaticContextProvider:
     def name(self) -> str:
         return "notes"
 
-    async def get_context_fragments(self) -> list[str]:
+    async def get_context_fragments(self, acting_user_id: str | None) -> list[str]:
         return [self._fragment]
 
 

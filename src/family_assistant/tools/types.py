@@ -370,7 +370,7 @@ class CalendarEvent(TypedDict):
     similarity: float | None
     source_id: NotRequired[str | None]
     source_name: NotRequired[str | None]
-    source_kind: NotRequired[Literal["caldav", "ical"] | None]
+    source_kind: NotRequired[Literal["caldav", "ical", "google"] | None]
     writable: NotRequired[bool | None]
 
 

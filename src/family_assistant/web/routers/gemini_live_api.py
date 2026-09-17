@@ -216,7 +216,9 @@ async def _format_system_prompt(
     aggregated_context = ""
     if service_config.include_aggregated_context:
         aggregated_context = (
-            await processing_service.context_preparer.aggregate_context()
+            await processing_service.context_preparer.aggregate_context(
+                acting_user_id=None
+            )
         )
 
     system_prompt_template = service_config.prompts.get(

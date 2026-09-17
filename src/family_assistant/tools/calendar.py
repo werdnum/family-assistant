@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 from zoneinfo import ZoneInfo
@@ -24,10 +25,27 @@ from family_assistant.calendar_integration import (
     fetch_ical_events_async,
     resolve_calendar_sources,
 )
+from family_assistant.google_calendar import (
+    GOOGLE_PRIMARY_SOURCE_ID,
+    GoogleCalendarClient,
+    build_event_time,
+    google_calendar_id_from_source_id,
+    google_event_to_calendar_event,
+    is_google_source_id,
+    iso_value_is_date_only,
+)
 from family_assistant.security.taint import (
     SourceTrustTier,
     TaintSource,
     TaintSourceType,
+)
+from family_assistant.services.api_backend import ApiBackendError
+from family_assistant.services.google_api import GoogleApiError
+from family_assistant.services.google_provider import GoogleScope
+from family_assistant.services.oauth_credentials import (
+    OAuthCredentialError,
+    OAuthNoActingUserError,
+    OAuthNotConnectedError,
 )
 from family_assistant.similarity import create_similarity_strategy_from_config
 
@@ -52,9 +70,109 @@ class CalendarSearchResult(TypedDict):
     similarity: NotRequired[float | None]
     source_id: NotRequired[str | None]
     source_name: NotRequired[str | None]
-    source_kind: NotRequired[Literal["caldav", "ical"] | None]
+    source_kind: NotRequired[Literal["caldav", "ical", "google"] | None]
     writable: NotRequired[bool | None]
     start_dt: NotRequired[datetime | date | None]
+    recurring_event_id: NotRequired[str | None]
+
+
+# The calendar tools reach a user's Google calendars when the deployment requests
+# calendar access. They are not Google tools (they work without the integration),
+# so the integration never filters them out, but profiles allowing them are held
+# to its taint floor.
+GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES: dict[str, frozenset[str]] = {
+    name: frozenset({GoogleScope.CALENDAR_READONLY.value})
+    for name in (
+        "list_calendars",
+        "add_calendar_event",
+        "search_calendar_events",
+        "modify_calendar_event",
+        "delete_calendar_event",
+    )
+}
+
+# Failures reaching a user's Google calendars. Each carries a user-renderable,
+# token-free message.
+_GOOGLE_CALENDAR_ERRORS = (OAuthCredentialError, GoogleApiError, ApiBackendError)
+
+
+@dataclass(frozen=True)
+class _TurnCalendarSources:
+    """Every calendar the acting user can reach this turn.
+
+    ``google_error`` is why the user's Google calendars are missing, when the
+    deployment offers Google Calendar but they could not be listed.
+    """
+
+    sources: list[CalendarSource]
+    google_client: GoogleCalendarClient | None
+    google_error: Exception | None = None
+
+    def default_search_sources(self) -> list[CalendarSource]:
+        return [s for s in self.sources if s.searched_by_default]
+
+    def default_write_source(self) -> CalendarSource | None:
+        """The configured default CalDAV calendar, else the user's Google primary."""
+        caldav = [s for s in self.sources if s.kind == "caldav"]
+        for source in caldav:
+            if source.is_default and source.writable:
+                return source
+        if caldav:
+            return caldav[0]
+        for source in self.sources:
+            if source.source_id == GOOGLE_PRIMARY_SOURCE_ID and source.writable:
+                return source
+        return None
+
+    def google_error_note(self, *, include_not_connected: bool) -> str | None:
+        error = self.google_error
+        if error is None:
+            return None
+        if isinstance(error, OAuthNotConnectedError) and not include_not_connected:
+            return None
+        return f"Note: Google Calendar was not included: {error}"
+
+
+async def _resolve_turn_sources(
+    exec_context: ToolExecutionContext, calendar_config: CalendarConfig
+) -> _TurnCalendarSources:
+    """Configured calendars plus the acting user's Google calendars."""
+    sources = resolve_calendar_sources(calendar_config)
+    client = GoogleCalendarClient.from_exec_context(exec_context)
+    if client is None:
+        return _TurnCalendarSources(sources=sources, google_client=None)
+    try:
+        google_sources = await client.list_calendars()
+    except OAuthNoActingUserError:
+        return _TurnCalendarSources(sources=sources, google_client=None)
+    except _GOOGLE_CALENDAR_ERRORS as exc:
+        logger.info("Google calendars unavailable for this turn: %s", exc)
+        return _TurnCalendarSources(
+            sources=sources, google_client=None, google_error=exc
+        )
+    if any(not source.owned for source in google_sources):
+        _record_external_calendar_taint(
+            exec_context,
+            source_id="google_calendar_list",
+            reason="Google calendar shared by another account named in calendar list.",
+        )
+    return _TurnCalendarSources(sources=sources + google_sources, google_client=client)
+
+
+def _record_external_calendar_taint(
+    exec_context: ToolExecutionContext, *, source_id: str, reason: str
+) -> None:
+    if exec_context.taint_tracker is None:
+        return
+    exec_context.taint_tracker.add_source(
+        TaintSource(
+            source_type=TaintSourceType.TOOL_OUTPUT,
+            source_id=source_id,
+            tier=SourceTrustTier.UNKNOWN_EXTERNAL,
+            labels=frozenset(),
+            reason=reason,
+        )
+    )
 
 
 def _event_sort_key(event: CalendarSearchResult, local_tz: ZoneInfo) -> datetime:
@@ -212,8 +330,15 @@ async def _search_events_in_range(
     search_start: datetime,
     search_end: datetime,
     sources: list[CalendarSource] | None = None,
+    google_client: GoogleCalendarClient | None = None,
+    notes: list[str] | None = None,
 ) -> list[CalendarSearchResult]:
-    """Queries both CalDAV and iCal sources for events within [search_start, search_end]."""
+    """Queries CalDAV, iCal and Google sources for events within [search_start, search_end].
+
+    Google sources need ``google_client``. A Google calendar that cannot be read
+    is skipped and the reason appended to ``notes``, so one failing calendar does
+    not hide the others' events.
+    """
     target_sources = (
         sources if sources is not None else resolve_calendar_sources(calendar_config)
     )
@@ -223,6 +348,7 @@ async def _search_events_in_range(
     local_tz = exec_context.timezone
     caldav_sources = [s for s in target_sources if s.kind == "caldav"]
     ical_sources = [s for s in target_sources if s.kind == "ical"]
+    google_sources = [s for s in target_sources if s.kind == "google"]
 
     all_events: list[CalendarSearchResult] = []
 
@@ -291,8 +417,70 @@ async def _search_events_in_range(
         except Exception as e:
             logger.exception(f"Error fetching iCal events for search: {e}")
 
+    if google_sources and google_client is not None:
+        all_events.extend(
+            await _search_google_sources(
+                google_client, google_sources, search_start, search_end, local_tz, notes
+            )
+        )
+
     all_events.sort(key=lambda e: _event_sort_key(e, local_tz))
     return all_events
+
+
+async def _search_google_sources(
+    client: GoogleCalendarClient,
+    sources: list[CalendarSource],
+    search_start: datetime,
+    search_end: datetime,
+    local_tz: ZoneInfo,
+    notes: list[str] | None,
+) -> list[CalendarSearchResult]:
+    """Fetch each Google calendar's occurrences in the range concurrently."""
+    results = await asyncio.gather(
+        *(
+            client.list_events(
+                source.google_calendar_id or "primary", search_start, search_end
+            )
+            for source in sources
+        ),
+        return_exceptions=True,
+    )
+    events: list[CalendarSearchResult] = []
+    for source, result in zip(sources, results, strict=True):
+        if isinstance(result, _GOOGLE_CALENDAR_ERRORS):
+            logger.info(
+                "Could not search Google calendar %s: %s", source.source_id, result
+            )
+            if notes is not None:
+                notes.append(
+                    f"Note: Google calendar '{source.name}' ({source.source_id}) "
+                    f"could not be searched: {result}"
+                )
+            continue
+        if isinstance(result, BaseException):
+            raise result
+        for item in result:
+            event = google_event_to_calendar_event(item, source, local_tz)
+            if event is None:
+                continue
+            recurring_event_id = item.get("recurringEventId")
+            events.append({
+                "summary": event["summary"],
+                "uid": event["uid"],
+                "start": _format_event_time_for_display(event["start"], local_tz),
+                "end": _format_event_time_for_display(event["end"], local_tz),
+                "calendar_url": None,
+                "source_id": source.source_id,
+                "source_name": source.name,
+                "source_kind": "google",
+                "writable": source.writable,
+                "start_dt": event["start"],
+                "recurring_event_id": (
+                    recurring_event_id if isinstance(recurring_event_id, str) else None
+                ),
+            })
+    return events
 
 
 # Calendar Tool Definitions
@@ -342,11 +530,14 @@ async def check_for_duplicate_events(
             search_start = event_dt - timedelta(hours=time_window_hours)
             search_end = event_dt + timedelta(hours=time_window_hours)
 
+        turn_sources = await _resolve_turn_sources(exec_context, calendar_config)
         events_in_window = await _search_events_in_range(
             exec_context=exec_context,
             calendar_config=calendar_config,
             search_start=search_start,
             search_end=search_end,
+            sources=turn_sources.default_search_sources(),
+            google_client=turn_sources.google_client,
         )
 
         if not events_in_window:
@@ -401,16 +592,17 @@ async def check_for_duplicate_events(
             "If you believe this is NOT a duplicate, retry with bypass_duplicate_check=true."
         )
 
-        has_ical_events = any(e.get("source_kind") == "ical" for e in similar_events)
-        if has_ical_events and exec_context.taint_tracker is not None:
-            exec_context.taint_tracker.add_source(
-                TaintSource(
-                    source_type=TaintSourceType.TOOL_OUTPUT,
-                    source_id=f"ical_duplicate_{similar_events[0].get('uid', 'event')}",
-                    tier=SourceTrustTier.UNKNOWN_EXTERNAL,
-                    labels=frozenset(),
-                    reason="External iCal event contributed to duplicate detection warning.",
-                )
+        has_external_events = any(
+            e.get("source_kind") in {"ical", "google"} for e in similar_events
+        )
+        if has_external_events:
+            _record_external_calendar_taint(
+                exec_context,
+                source_id=f"calendar_duplicate_{similar_events[0].get('uid', 'event')}",
+                reason=(
+                    "Subscribed iCal or Google Calendar event contributed to "
+                    "duplicate detection warning."
+                ),
             )
 
         return "\n".join(error_lines)
@@ -431,7 +623,7 @@ CALENDAR_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "list_calendars",
             "description": (
-                "Lists all configured calendars and event sources, including their IDs, friendly names, source type (CalDAV or iCal feed), and whether they are writable or read-only. Use this to discover available calendars before searching with source filters or adding events to a specific calendar."
+                "Lists all calendars available to the requesting user, including their IDs, friendly names, source type (CalDAV, iCal feed, or the user's own Google calendars when their Google account is connected), and whether they are writable or read-only. Google calendar IDs start with 'google:' (the user's primary Google calendar is 'google:primary'). Use this to discover available calendars before searching with source filters or adding events to a specific calendar."
             ),
             "parameters": {
                 "type": "object",
@@ -444,7 +636,7 @@ CALENDAR_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "add_calendar_event",
             "description": (
-                "Adds a new event to the primary family calendar (requires CalDAV configuration). Can create single or recurring events. Use this to schedule appointments, reminders with duration, or block out time. IMPORTANT: Always use search_calendar_events first to check for existing similar events and avoid creating duplicates."
+                "Adds a new event to a calendar: the default calendar unless calendar_id names another one (for example 'google:primary' for the requesting user's own Google calendar). Can create single or recurring events. Use this to schedule appointments, reminders with duration, or block out time. Never invites anyone. IMPORTANT: Always use search_calendar_events first to check for existing similar events and avoid creating duplicates."
             ),
             "parameters": {
                 "type": "object",
@@ -521,7 +713,7 @@ CALENDAR_TOOLS_DEFINITION: list[ToolDefinition] = [
                     "source_ids": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Optional list of calendar source IDs to limit the search to (obtained from list_calendars). If omitted, searches all configured calendars and feeds.",
+                        "description": "Optional list of calendar source IDs to limit the search to (obtained from list_calendars, e.g. 'google:primary'). If omitted, searches all configured calendars and feeds plus the requesting user's Google calendars that are visible in Google Calendar.",
                     },
                 },
             },
@@ -547,7 +739,7 @@ CALENDAR_TOOLS_DEFINITION: list[ToolDefinition] = [
                     },
                     "calendar_id": {
                         "type": "string",
-                        "description": "Optional ID of the calendar where the event is stored (from list_calendars). Can be provided instead of calendar_url.",
+                        "description": "Optional ID of the calendar where the event is stored (from list_calendars or the Source ID in search results). Can be provided instead of calendar_url, and is required for Google calendars ('google:...').",
                     },
                     "new_summary": {
                         "type": "string",
@@ -596,7 +788,7 @@ CALENDAR_TOOLS_DEFINITION: list[ToolDefinition] = [
                     },
                     "calendar_id": {
                         "type": "string",
-                        "description": "Optional ID of the calendar where the event is stored (from list_calendars). Can be provided instead of calendar_url.",
+                        "description": "Optional ID of the calendar where the event is stored (from list_calendars or the Source ID in search results). Can be provided instead of calendar_url, and is required for Google calendars ('google:...').",
                     },
                 },
                 "required": ["uid"],
@@ -610,21 +802,33 @@ async def list_calendars_tool(
     exec_context: ToolExecutionContext,
     calendar_config: CalendarConfig,
 ) -> str:
-    """Lists all configured calendars and event sources."""
+    """Lists configured calendars and the acting user's Google calendars."""
     logger.info("Executing list_calendars_tool")
-    sources = resolve_calendar_sources(calendar_config)
+    turn_sources = await _resolve_turn_sources(exec_context, calendar_config)
+    note = turn_sources.google_error_note(include_not_connected=True)
+    sources = turn_sources.sources
     if not sources:
-        return "No calendars configured."
+        return "\n\n".join(filter(None, ["No calendars configured.", note]))
 
+    kind_labels = {"caldav": "CalDAV", "ical": "iCal feed", "google": "Google Calendar"}
+    default_source = turn_sources.default_write_source()
     lines = ["Available calendars:"]
     for src in sources:
-        kind_label = "CalDAV" if src.kind == "caldav" else "iCal feed"
-        writable_label = "writable" if src.writable else "read-only"
-        default_label = " [default for new events]" if src.is_default else ""
-        lines.append(
-            f"- {src.source_id}: {src.name} ({kind_label}, {writable_label}){default_label}"
+        labels = [kind_labels[src.kind], "writable" if src.writable else "read-only"]
+        if src.source_id == GOOGLE_PRIMARY_SOURCE_ID:
+            labels.append("the user's primary Google calendar")
+        if not src.searched_by_default:
+            labels.append("hidden in Google Calendar; searched only when named")
+        default_label = (
+            " [default for new events]"
+            if default_source is not None and src.source_id == default_source.source_id
+            else ""
         )
-
+        lines.append(
+            f"- {src.source_id}: {src.name} ({', '.join(labels)}){default_label}"
+        )
+    if note:
+        lines.extend(["", note])
     return "\n".join(lines)
 
 
@@ -652,7 +856,20 @@ async def add_calendar_event_tool(
     logger.info(
         f"Executing add_calendar_event_tool: {summary}, RRULE: {recurrence_rule}"
     )
-    # calendar_config is now a direct parameter
+    google_target = _google_add_target(exec_context, calendar_config, calendar_id)
+    if google_target is not None:
+        return await _add_google_event(
+            exec_context,
+            calendar_config,
+            google_target,
+            summary=summary,
+            start_time=start_time,
+            end_time=end_time,
+            description=description,
+            all_day=all_day,
+            recurrence_rule=recurrence_rule,
+            bypass_duplicate_check=bypass_duplicate_check,
+        )
     caldav_config = calendar_config.get("caldav")
 
     if not caldav_config:
@@ -865,6 +1082,232 @@ async def add_calendar_event_tool(
         return f"Error: An unexpected error occurred while adding the event. {e}"
 
 
+def _google_add_target(
+    exec_context: ToolExecutionContext,
+    calendar_config: CalendarConfig,
+    calendar_id: str | None,
+) -> str | None:
+    """The Google source id a new event goes to, or None for the CalDAV path.
+
+    An explicit ``google:`` id always targets Google. With no calendar named,
+    the deployment's CalDAV default wins; the user's primary Google calendar is
+    the default only when no CalDAV calendar is configured.
+    """
+    if calendar_id:
+        return calendar_id if is_google_source_id(calendar_id) else None
+    if any(s.kind == "caldav" for s in resolve_calendar_sources(calendar_config)):
+        return None
+    client = GoogleCalendarClient.from_exec_context(exec_context)
+    if client is None or not client.can_write:
+        return None
+    return GOOGLE_PRIMARY_SOURCE_ID
+
+
+def _google_client_or_error(
+    exec_context: ToolExecutionContext, *, write: bool
+) -> tuple[GoogleCalendarClient | None, str | None]:
+    client = GoogleCalendarClient.from_exec_context(exec_context)
+    if client is None:
+        return None, (
+            "Error: Google Calendar is not available here. It needs the Google "
+            "integration with calendar access enabled for this deployment and a "
+            "request made on behalf of a specific user."
+        )
+    if write and not client.can_write:
+        return None, (
+            "Error: this deployment has read-only access to Google Calendar, so "
+            "events cannot be added, changed or deleted there."
+        )
+    return client, None
+
+
+def _google_calendar_id_or_error(source_id: str) -> tuple[str | None, str | None]:
+    calendar_id = google_calendar_id_from_source_id(source_id)
+    if calendar_id is None:
+        return None, f"Error: '{source_id}' is not a valid Google calendar ID."
+    return calendar_id, None
+
+
+def _recurrence_body(recurrence_rule: str) -> list[str]:
+    rule = recurrence_rule.strip()
+    if not rule:
+        return []
+    return [rule if rule.upper().startswith("RRULE:") else f"RRULE:{rule}"]
+
+
+def _google_new_event_times(
+    start_time: str, end_time: str, *, all_day: bool, local_tz: ZoneInfo
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Google start/end objects for a new event; ValueError if out of order."""
+    start = build_event_time(start_time, all_day=all_day, timezone=local_tz)
+    end = build_event_time(end_time, all_day=all_day, timezone=local_tz)
+    start_value, end_value = isoparse(start_time), isoparse(end_time)
+    if all_day:
+        out_of_order = end_value.date() <= start_value.date()
+    else:
+        out_of_order = end_value.replace(
+            tzinfo=end_value.tzinfo or local_tz
+        ) <= start_value.replace(tzinfo=start_value.tzinfo or local_tz)
+    if out_of_order:
+        raise ValueError("End must be after start.")
+    return start, end
+
+
+def _google_patch_body(
+    *,
+    new_summary: str | None,
+    new_start_time: str | None,
+    new_end_time: str | None,
+    new_description: str | None,
+    recurrence_rule: str | None,
+    local_tz: ZoneInfo,
+) -> tuple[dict[str, object], list[str]]:
+    """The events.patch body for a modification and a description of each change.
+
+    A new time given as a bare date makes that end of the event all-day.
+    Raises ValueError for an unparseable time.
+    """
+    body: dict[str, object] = {}
+    changes: list[str] = []
+    if new_summary is not None:
+        body["summary"] = new_summary
+        changes.append(f"title to '{new_summary}'")
+    for field, value in (("start", new_start_time), ("end", new_end_time)):
+        if value:
+            body[field] = build_event_time(
+                value, all_day=iso_value_is_date_only(value), timezone=local_tz
+            )
+            changes.append(f"{field} time to {value}")
+    if new_description is not None:
+        body["description"] = new_description
+        changes.append("description")
+    if recurrence_rule is not None:
+        body["recurrence"] = _recurrence_body(recurrence_rule)
+        changes.append("recurrence rule" if recurrence_rule else "removed recurrence")
+    return body, changes
+
+
+async def _add_google_event(
+    exec_context: ToolExecutionContext,
+    calendar_config: CalendarConfig,
+    source_id: str,
+    *,
+    summary: str,
+    start_time: str,
+    end_time: str,
+    description: str | None,
+    all_day: bool,
+    recurrence_rule: str | None,
+    bypass_duplicate_check: bool,
+) -> str:
+    """Create an event on one of the acting user's Google calendars."""
+    client, error = _google_client_or_error(exec_context, write=True)
+    if client is None:
+        return error or "Error: Google Calendar is not available."
+    calendar_id, error = _google_calendar_id_or_error(source_id)
+    if calendar_id is None:
+        return error or "Error: invalid Google calendar ID."
+
+    try:
+        start, end = _google_new_event_times(
+            start_time, end_time, all_day=all_day, local_tz=exec_context.timezone
+        )
+    except ValueError as ve:
+        return f"Error: Invalid arguments provided. {ve}"
+
+    dup_detection = calendar_config.get("duplicate_detection") or {}
+    if dup_detection.get("enabled", True) and not bypass_duplicate_check:
+        duplicate_error = await _check_for_duplicate_events(
+            exec_context=exec_context,
+            calendar_config=calendar_config,
+            summary=summary,
+            start_time=start_time,
+            end_time=end_time,
+            all_day=all_day,
+        )
+        if duplicate_error:
+            return duplicate_error
+
+    body: dict[str, object] = {"summary": summary, "start": start, "end": end}
+    if description:
+        body["description"] = description
+    if recurrence_rule:
+        body["recurrence"] = _recurrence_body(recurrence_rule)
+    try:
+        created = await client.insert_event(calendar_id, body)
+    except _GOOGLE_CALENDAR_ERRORS as exc:
+        return f"Error: Failed to add event to Google Calendar. {exc}"
+
+    result = (
+        f"OK. Event '{summary}' added to Google calendar {source_id} "
+        f"(UID: {created.get('id')})."
+    )
+    if bypass_duplicate_check:
+        result = f"{result} (duplicate check bypassed)"
+    return result
+
+
+async def _modify_google_event(
+    exec_context: ToolExecutionContext,
+    source_id: str,
+    uid: str,
+    *,
+    new_summary: str | None,
+    new_start_time: str | None,
+    new_end_time: str | None,
+    new_description: str | None,
+    recurrence_rule: str | None,
+) -> str:
+    """Patch an event on one of the acting user's Google calendars."""
+    client, error = _google_client_or_error(exec_context, write=True)
+    if client is None:
+        return error or "Error: Google Calendar is not available."
+    calendar_id, error = _google_calendar_id_or_error(source_id)
+    if calendar_id is None:
+        return error or "Error: invalid Google calendar ID."
+
+    try:
+        body, changes = _google_patch_body(
+            new_summary=new_summary,
+            new_start_time=new_start_time,
+            new_end_time=new_end_time,
+            new_description=new_description,
+            recurrence_rule=recurrence_rule,
+            local_tz=exec_context.timezone,
+        )
+    except ValueError as ve:
+        return f"Error: Invalid modification parameters. {ve}"
+
+    try:
+        existing = await client.get_event(calendar_id, uid)
+        original_summary = existing.get("summary") or "(No title)"
+        if not body:
+            return f"OK. Event '{original_summary}' checked (no changes made)."
+        await client.patch_event(calendar_id, uid, body)
+    except _GOOGLE_CALENDAR_ERRORS as exc:
+        return f"Error: Failed to modify Google Calendar event. {exc}"
+    return f"OK. Event '{original_summary}' updated: {', '.join(changes)}."
+
+
+async def _delete_google_event(
+    exec_context: ToolExecutionContext, source_id: str, uid: str
+) -> str:
+    """Delete an event from one of the acting user's Google calendars."""
+    client, error = _google_client_or_error(exec_context, write=True)
+    if client is None:
+        return error or "Error: Google Calendar is not available."
+    calendar_id, error = _google_calendar_id_or_error(source_id)
+    if calendar_id is None:
+        return error or "Error: invalid Google calendar ID."
+    try:
+        existing = await client.get_event(calendar_id, uid)
+        await client.delete_event(calendar_id, uid)
+    except _GOOGLE_CALENDAR_ERRORS as exc:
+        return f"Error: Failed to delete Google Calendar event. {exc}"
+    summary = existing.get("summary") or "(No title)"
+    return f"OK. Event '{summary}' deleted from Google calendar {source_id}."
+
+
 def _parse_search_date_range(
     start_date: str | None,
     end_date: str | None,
@@ -943,6 +1386,11 @@ def _format_search_results(events: list[CalendarSearchResult]) -> str:
         result_lines.append(f"   UID: {event['uid']}")
         if event.get("calendar_url"):
             result_lines.append(f"   Calendar: {event['calendar_url']}")
+        elif event.get("source_kind") == "google":
+            access = "writable" if event.get("writable") else "read-only"
+            result_lines.append(
+                f"   Calendar: {event.get('source_name')} (Google Calendar, {access})"
+            )
         else:
             result_lines.append(
                 f"   Calendar: {event.get('source_name', 'iCal feed')} (read-only)"
@@ -950,6 +1398,13 @@ def _format_search_results(events: list[CalendarSearchResult]) -> str:
         source_id = event.get("source_id")
         if source_id:
             result_lines.append(f"   Source ID: {source_id}")
+        recurring_event_id = event.get("recurring_event_id")
+        if recurring_event_id:
+            result_lines.append(
+                f"   Recurring series UID: {recurring_event_id} (use this UID to "
+                "change or delete every occurrence; the UID above is this "
+                "occurrence only)"
+            )
 
     return "\n".join(result_lines)
 
@@ -973,9 +1428,27 @@ async def search_calendar_events_tool(
         f"Executing search_calendar_events_tool: text='{search_text}', start={start_date}, end={end_date}, source_ids={source_ids}"
     )
 
-    all_sources = resolve_calendar_sources(calendar_config)
+    turn_sources = await _resolve_turn_sources(exec_context, calendar_config)
+    all_sources = turn_sources.sources
     if not all_sources:
-        return "Error: No calendars configured. Cannot search calendar events."
+        note = turn_sources.google_error_note(include_not_connected=True)
+        return "\n\n".join(
+            filter(
+                None,
+                [
+                    "Error: No calendars configured. Cannot search calendar events.",
+                    note,
+                ],
+            )
+        )
+
+    notes: list[str] = []
+    google_note = turn_sources.google_error_note(
+        include_not_connected=bool(source_ids)
+        and any(is_google_source_id(sid) for sid in source_ids or [])
+    )
+    if google_note:
+        notes.append(google_note)
 
     target_sources: list[CalendarSource]
     if source_ids:
@@ -983,13 +1456,14 @@ async def search_calendar_events_tool(
         matching = [sources_by_id[sid] for sid in source_ids if sid in sources_by_id]
         if not matching:
             available = ", ".join(s.source_id for s in all_sources)
-            return (
+            return "\n\n".join([
                 f"Error: None of the requested calendar source IDs ({', '.join(source_ids)}) were found. "
-                f"Available sources: {available}."
-            )
+                f"Available sources: {available}.",
+                *notes,
+            ])
         target_sources = matching
     else:
-        target_sources = all_sources
+        target_sources = turn_sources.default_search_sources()
 
     # Check for CalDAV configuration if CalDAV sources are targeted without any iCal sources
     caldav_sources = [s for s in target_sources if s.kind == "caldav"]
@@ -1025,17 +1499,24 @@ async def search_calendar_events_tool(
             search_start=search_start,
             search_end=search_end,
             sources=target_sources,
+            google_client=turn_sources.google_client,
+            notes=notes,
         )
     except Exception as e:
         logger.exception(f"Unexpected error searching calendar events: {e}")
         return f"Error: An unexpected error occurred while searching events. {e}"
 
+    def with_notes(text: str) -> str:
+        return "\n\n".join([text, *notes])
+
     if not all_events:
         if search_text:
             dup_detection = calendar_config.get("duplicate_detection") or {}
             similarity_threshold = dup_detection.get("similarity_threshold", 0.30)
-            return f"No events found matching '{search_text}' (threshold: {similarity_threshold})."
-        return "No events found matching the search criteria."
+            return with_notes(
+                f"No events found matching '{search_text}' (threshold: {similarity_threshold})."
+            )
+        return with_notes("No events found matching the search criteria.")
 
     # Apply similarity-based filtering if search_text is provided
     if search_text:
@@ -1043,11 +1524,13 @@ async def search_calendar_events_tool(
             all_events, search_text, calendar_config
         )
         if not all_events:
-            return f"No events found matching '{search_text}' (threshold: {similarity_threshold})."
+            return with_notes(
+                f"No events found matching '{search_text}' (threshold: {similarity_threshold})."
+            )
     else:
         all_events.sort(key=lambda e: _event_sort_key(e, local_tz))
 
-    return _format_search_results(all_events)
+    return with_notes(_format_search_results(all_events))
 
 
 def resolve_target_caldav_url(
@@ -1127,6 +1610,17 @@ async def modify_calendar_event_tool(
     Leave parameters as None to keep existing values.
     """
     logger.info(f"Executing modify_calendar_event_tool for UID: {uid}")
+    if calendar_id and is_google_source_id(calendar_id):
+        return await _modify_google_event(
+            exec_context,
+            calendar_id,
+            uid,
+            new_summary=new_summary,
+            new_start_time=new_start_time,
+            new_end_time=new_end_time,
+            new_description=new_description,
+            recurrence_rule=recurrence_rule,
+        )
 
     target_cal_url, err = _resolve_target_caldav_url(
         calendar_config=calendar_config,
@@ -1373,6 +1867,8 @@ async def delete_calendar_event_tool(
 ) -> str:
     """Deletes a calendar event identified by UID."""
     logger.info(f"Executing delete_calendar_event_tool for UID: {uid}")
+    if calendar_id and is_google_source_id(calendar_id):
+        return await _delete_google_event(exec_context, calendar_id, uid)
 
     target_cal_url, err = _resolve_target_caldav_url(
         calendar_config=calendar_config,

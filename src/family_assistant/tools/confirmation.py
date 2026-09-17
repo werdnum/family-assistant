@@ -11,6 +11,16 @@ import logging
 from typing import TYPE_CHECKING, Protocol, cast
 
 from family_assistant import calendar_integration
+from family_assistant.calendar_integration import CalendarSource
+from family_assistant.google_calendar import (
+    GoogleCalendarClient,
+    google_calendar_id_from_source_id,
+    google_event_to_calendar_event,
+    is_google_source_id,
+)
+from family_assistant.services.api_backend import ApiBackendError
+from family_assistant.services.google_api import GoogleApiError
+from family_assistant.services.oauth_credentials import OAuthCredentialError
 from family_assistant.tools.calendar import resolve_target_caldav_url
 from family_assistant.tools.computer_use_names import COMPUTER_USE_FUNCTION_NAMES
 
@@ -153,6 +163,70 @@ def _format_event_details_for_confirmation(
         return f"'{summary}' ({start_str} - {end_str})"
 
 
+async def _fetch_event_details_for_confirmation(
+    args: ToolArgumentsView,
+    context: ToolExecutionContext,
+    *,
+    operation_verb: str,
+) -> CalendarEvent | None:
+    """Look up the event a modify/delete call targets, or None if not found."""
+    raw_uid = args.get("uid")
+    raw_calendar_url = args.get("calendar_url")
+    raw_calendar_id = args.get("calendar_id")
+    uid = raw_uid if isinstance(raw_uid, str) else None
+    calendar_url = raw_calendar_url if isinstance(raw_calendar_url, str) else None
+    calendar_id = raw_calendar_id if isinstance(raw_calendar_id, str) else None
+    if uid is None:
+        return None
+
+    if calendar_id and is_google_source_id(calendar_id):
+        return await _fetch_google_event_for_confirmation(context, calendar_id, uid)
+
+    calendar_config = _extract_calendar_config_from_provider(
+        getattr(context, "tools_provider", None)
+    )
+    if (calendar_url or calendar_id) and calendar_config:
+        resolved_url, err = resolve_target_caldav_url(
+            calendar_config=calendar_config,
+            calendar_url=calendar_url,
+            calendar_id=calendar_id,
+            operation_verb=operation_verb,
+        )
+        calendar_url = resolved_url if not err else None
+
+    if not calendar_url or not calendar_config:
+        return None
+    return await calendar_integration.fetch_event_details_for_confirmation(
+        uid=uid,
+        calendar_url=calendar_url,
+        calendar_config=calendar_config,
+        timezone=context.timezone,
+    )
+
+
+async def _fetch_google_event_for_confirmation(
+    context: ToolExecutionContext, source_id: str, uid: str
+) -> CalendarEvent | None:
+    client = GoogleCalendarClient.from_exec_context(context)
+    calendar_id = google_calendar_id_from_source_id(source_id)
+    if client is None or calendar_id is None:
+        return None
+    try:
+        item = await client.get_event(calendar_id, uid)
+    except (OAuthCredentialError, GoogleApiError, ApiBackendError) as exc:
+        logger.info("Could not fetch Google event for confirmation: %s", exc)
+        return None
+    source = CalendarSource(
+        source_id=source_id,
+        name=source_id,
+        kind="google",
+        url="",
+        writable=True,
+        google_calendar_id=calendar_id,
+    )
+    return google_event_to_calendar_event(item, source, context.timezone)
+
+
 async def render_delete_calendar_event_confirmation(
     args: ToolArgumentsView,
     context: ToolExecutionContext,
@@ -166,34 +240,9 @@ async def render_delete_calendar_event_confirmation(
         context: Execution context with calendar config and timezone
     """
     # Fetch event details to show the user what they're deleting
-    event_details = None
-    raw_uid = args.get("uid")
-    raw_calendar_url = args.get("calendar_url")
-    raw_calendar_id = args.get("calendar_id")
-    uid = raw_uid if isinstance(raw_uid, str) else None
-    calendar_url = raw_calendar_url if isinstance(raw_calendar_url, str) else None
-    calendar_id = raw_calendar_id if isinstance(raw_calendar_id, str) else None
-
-    calendar_config = _extract_calendar_config_from_provider(
-        getattr(context, "tools_provider", None)
+    event_details = await _fetch_event_details_for_confirmation(
+        args, context, operation_verb="delete"
     )
-
-    if (calendar_url or calendar_id) and calendar_config:
-        resolved_url, err = resolve_target_caldav_url(
-            calendar_config=calendar_config,
-            calendar_url=calendar_url,
-            calendar_id=calendar_id,
-            operation_verb="delete",
-        )
-        calendar_url = resolved_url if not err else None
-
-    if uid and calendar_url and calendar_config:
-        event_details = await calendar_integration.fetch_event_details_for_confirmation(
-            uid=uid,
-            calendar_url=calendar_url,
-            calendar_config=calendar_config,
-            timezone=context.timezone,
-        )
 
     # Use the helper to format event details
     # It handles the None case by returning "Event details not found."
@@ -218,34 +267,9 @@ async def render_modify_calendar_event_confirmation(
         context: Execution context with calendar config and timezone
     """
     # Fetch event details to show the user what they're modifying
-    event_details = None
-    raw_uid = args.get("uid")
-    raw_calendar_url = args.get("calendar_url")
-    raw_calendar_id = args.get("calendar_id")
-    uid = raw_uid if isinstance(raw_uid, str) else None
-    calendar_url = raw_calendar_url if isinstance(raw_calendar_url, str) else None
-    calendar_id = raw_calendar_id if isinstance(raw_calendar_id, str) else None
-
-    calendar_config = _extract_calendar_config_from_provider(
-        getattr(context, "tools_provider", None)
+    event_details = await _fetch_event_details_for_confirmation(
+        args, context, operation_verb="modify"
     )
-
-    if (calendar_url or calendar_id) and calendar_config:
-        resolved_url, err = resolve_target_caldav_url(
-            calendar_config=calendar_config,
-            calendar_url=calendar_url,
-            calendar_id=calendar_id,
-            operation_verb="modify",
-        )
-        calendar_url = resolved_url if not err else None
-
-    if uid and calendar_url and calendar_config:
-        event_details = await calendar_integration.fetch_event_details_for_confirmation(
-            uid=uid,
-            calendar_url=calendar_url,
-            calendar_config=calendar_config,
-            timezone=context.timezone,
-        )
 
     # Use the helper to format event details
     # It handles the None case by returning "Event details not found."

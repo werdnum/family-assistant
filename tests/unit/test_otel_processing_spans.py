@@ -114,7 +114,7 @@ class MockContextProvider:
     def name(self) -> str:
         return self._name
 
-    async def get_context_fragments(self) -> list[str]:
+    async def get_context_fragments(self, acting_user_id: str | None) -> list[str]:
         return self._fragments
 
 
@@ -190,7 +190,7 @@ class TestContextAggregateSpan:
             ]
         )
 
-        result = await service.context_preparer.aggregate_context()
+        result = await service.context_preparer.aggregate_context(acting_user_id=None)
 
         assert "fragment1" in result
         spans = processing_span_exporter.get_finished_spans()
@@ -207,7 +207,7 @@ class TestContextAggregateSpan:
     ) -> None:
         service = _make_processing_service(context_providers=[])
 
-        result = await service.context_preparer.aggregate_context()
+        result = await service.context_preparer.aggregate_context(acting_user_id=None)
 
         assert not result
         spans = processing_span_exporter.get_finished_spans()
@@ -229,7 +229,7 @@ class TestContextAggregateSpan:
         ]
         service = _make_processing_service(context_providers=providers)
 
-        result = await service.context_preparer.aggregate_context()
+        result = await service.context_preparer.aggregate_context(acting_user_id=None)
 
         assert "a" in result
         assert "d" in result
@@ -248,7 +248,9 @@ class TestContextAggregateSpan:
         class FailingProvider:
             name = "failing"
 
-            async def get_context_fragments(self) -> list[str]:
+            async def get_context_fragments(
+                self, acting_user_id: str | None
+            ) -> list[str]:
                 raise RuntimeError("provider broke")
 
         service = _make_processing_service()
@@ -261,7 +263,7 @@ class TestContextAggregateSpan:
             RuntimeError,
             match="Context provider 'failing' failed to provide fragments",
         ):
-            await service.context_preparer.aggregate_context()
+            await service.context_preparer.aggregate_context(acting_user_id=None)
 
         spans = processing_span_exporter.get_finished_spans()
         agg_spans = [s for s in spans if s.name == "context.aggregate"]

@@ -29,9 +29,6 @@ from family_assistant.config_models import (
 from family_assistant.config_models import (  # Used at runtime
     CalendarConfig as PydanticCalendarConfig,
 )
-
-# Import the whole storage module for task queue functions etc.
-# --- NEW: Import ContextProvider and its implementations ---
 from family_assistant.context_providers import (
     CalendarContextProvider,
     HomeAssistantContextProvider,  # Added
@@ -56,6 +53,10 @@ from family_assistant.events.home_assistant_source import HomeAssistantSource
 from family_assistant.events.indexing_source import IndexingSource
 from family_assistant.events.processor import EventProcessor
 from family_assistant.events.webhook_source import WebhookEventSource
+
+# Import the whole storage module for task queue functions etc.
+# --- NEW: Import ContextProvider and its implementations ---
+from family_assistant.google_calendar import google_calendar_factory
 from family_assistant.home_assistant_shared import create_home_assistant_client
 from family_assistant.indexing.document_indexer import DocumentIndexer
 from family_assistant.indexing.email_indexer import EmailIndexer
@@ -162,6 +163,7 @@ from family_assistant.tools import (
     ToolPolicyDecision,
     ToolsProvider,
 )
+from family_assistant.tools.calendar import GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.worker import reconcile_stale_tasks
 from family_assistant.utils.logging_handler import setup_error_logging
@@ -1033,6 +1035,7 @@ class Assistant:
             self.config,
             auth_enabled=AUTH_ENABLED,
             tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+            shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
         )
         self.oauth_integration_states[GOOGLE_PROVIDER.name] = google_integration_state
         self.fastapi_app.state.oauth_integration_states = self.oauth_integration_states
@@ -1428,6 +1431,9 @@ class Assistant:
                 ),
                 timezone=ZoneInfo(profile_config.timezone),
                 prompts=profile_config.prompts,
+                google_calendar_for_user=google_calendar_factory(
+                    self.credential_resolvers, self.api_backend, self._database
+                ),
             ),
             KnownUsersContextProvider(
                 chat_id_to_name_map=profile_conf.chat_id_to_name_map,

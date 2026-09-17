@@ -90,8 +90,13 @@ class ContextPreparer:
             return preamble + "\n\n" + system_prompt
         return preamble
 
-    async def aggregate_context(self) -> str:
-        """Gathers context fragments from all registered providers."""
+    async def aggregate_context(self, acting_user_id: str | None) -> str:
+        """Gathers context fragments from all registered providers.
+
+        ``acting_user_id`` is the user the turn acts for, so providers holding
+        per-user data (a connected Google calendar) show that user's own; None
+        for a turn with no acting user.
+        """
         with tracer.start_as_current_span(
             "context.aggregate",
             attributes={
@@ -101,7 +106,9 @@ class ContextPreparer:
             all_fragments: list[str] = []
             for provider in self.context_providers:
                 try:
-                    fragments_output = await provider.get_context_fragments()
+                    fragments_output = await provider.get_context_fragments(
+                        acting_user_id
+                    )
                 except Exception as exc:
                     raise RuntimeError(
                         f"Context provider '{provider.name}' failed to provide fragments"
