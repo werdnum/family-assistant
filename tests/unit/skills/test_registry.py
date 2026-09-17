@@ -105,3 +105,22 @@ class TestNoteRegistry:
         result = registry.get_skill_by_name("Dup", NoteReadPolicy.UNRESTRICTED)
         assert result is not None
         assert result.description == "Second"
+
+    def test_required_labels_exclude_a_label_less_skill(self) -> None:
+        """A file skill carries no labels, so grants alone always admit it.
+
+        The read floor is the only thing that keeps a confined profile -- the
+        memory curator -- out of the skill catalogue.
+        """
+        registry = NoteRegistry([
+            _skill("Email Drafting"),
+            _skill("Memory Handbook", labels=frozenset({"memory"})),
+        ])
+        confined = NoteReadPolicy(
+            grants=frozenset({"memory"}), required_labels=frozenset({"memory"})
+        )
+
+        assert [s.name for s in registry.get_skill_catalog(confined)] == [
+            "Memory Handbook"
+        ]
+        assert registry.get_skill_by_name("Email Drafting", confined) is None
