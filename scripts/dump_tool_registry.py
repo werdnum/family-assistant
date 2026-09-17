@@ -69,6 +69,7 @@ from family_assistant.tools import (
     MCPToolsProvider,
     build_local_tool_descriptors,
 )
+from family_assistant.tools.calendar import GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.mcp import MCP_SERVER_STATUS_CONNECTED, MCPServerStatus
 from family_assistant.web.auth import AUTH_ENABLED
@@ -258,6 +259,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         config,
         auth_enabled=AUTH_ENABLED,
         tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
     )
     registrations = build_effective_local_tool_registrations(
         config, google_integration_state

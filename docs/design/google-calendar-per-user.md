@@ -47,12 +47,14 @@ calendar before it is answered. Events Google extracts from email are built from
 
 - **Tools.** `search_calendar_events` is already tagged untrusted, so Google results taint the turn
   as iCal results do. A calendar list that includes a calendar owned by another account taints the
-  turn, since its name is theirs, and a duplicate-detection warning quoting a Google event does too.
+  turn, since its name is theirs, and a duplicate-detection warning quoting a Google event does too,
+  as does a modify or delete confirming the title of an event the user did not create or accept.
 - **Context.** The per-turn context is untainted, like the CalDAV context it extends, so it shows
-  only events the user put there: ones they created or organise, ones added directly to their
-  calendar, and invitations they accepted. Unanswered or declined invitations and Gmail-extracted
-  events are left out and remain findable by search, where they carry taint. Tainting every turn of
-  every connected user instead would put the confirmation gates on everything that user does.
+  only events the user put there: ones they created or organise, and invitations they accepted.
+  Unanswered or declined invitations, invitations addressed to a group the user belongs to,
+  Gmail-extracted events, and events someone with edit access added under their own name are left
+  out and remain findable by search, where they carry taint. Tainting every turn of every connected
+  user instead would put the confirmation gates on everything that user does.
 - **Floor.** The integration's taint-floor startup check covered profiles allowing a Gmail/Drive
   tool. With calendar access configured the calendar tools reach Google data too, so profiles
   allowing them are checked as well. They stay registered whether or not Google is enabled: the

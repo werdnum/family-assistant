@@ -83,17 +83,19 @@ def is_user_vetted_event(item: GoogleJson) -> bool:
     """
     if item.get("eventType") == "fromGmail":
         return False
-    organizer = item.get("organizer")
-    if isinstance(organizer, dict) and organizer.get("self"):
-        return True
+    for role in ("organizer", "creator"):
+        person = item.get(role)
+        if isinstance(person, dict) and person.get("self"):
+            return True
     attendees = item.get("attendees")
     if isinstance(attendees, list):
         for attendee in attendees:
             if isinstance(attendee, dict) and attendee.get("self"):
                 return attendee.get("responseStatus") in _ACCEPTED_RESPONSES
-    # No self attendee: created directly on the calendar by the owner or by
-    # someone the owner granted edit access, not delivered as an invitation.
-    return True
+    # Neither the user's own event nor an invitation they answered: for example
+    # an invitation addressed to a group the user belongs to, which lists the
+    # group rather than the user among the attendees.
+    return False
 
 
 def _parse_event_time(
@@ -148,18 +150,31 @@ def _rfc3339(value: datetime) -> str:
     return value.isoformat()
 
 
-def build_event_time(value: str, *, all_day: bool, timezone: ZoneInfo) -> GoogleJson:
+def build_event_time(
+    value: str, *, all_day: bool, timezone: ZoneInfo, for_patch: bool = False
+) -> GoogleJson:
     """Build a Google ``start``/``end`` object from an ISO 8601 string.
 
     All-day values become ``{"date": ...}``; timed values without an offset are
-    read in the user's timezone, as the CalDAV tools do.
+    read in the user's timezone, as the CalDAV tools do. Timed values always
+    name the user's timezone, which Google requires to expand a recurrence.
+
+    ``for_patch`` clears the other representation explicitly: events.patch
+    merges nested objects, so switching an event between all-day and timed
+    would otherwise leave both ``date`` and ``dateTime`` set.
     """
     parsed = isoparse(value)
     if all_day:
-        return {"date": parsed.date().isoformat()}
+        result: GoogleJson = {"date": parsed.date().isoformat()}
+        if for_patch:
+            result |= {"dateTime": None, "timeZone": None}
+        return result
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone)
-    return {"dateTime": parsed.isoformat()}
+    result = {"dateTime": parsed.isoformat(), "timeZone": timezone.key}
+    if for_patch:
+        result["date"] = None
+    return result
 
 
 def iso_value_is_date_only(value: str) -> bool:

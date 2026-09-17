@@ -32,6 +32,7 @@ from family_assistant.google_calendar import (
     google_calendar_id_from_source_id,
     google_event_to_calendar_event,
     is_google_source_id,
+    is_user_vetted_event,
     iso_value_is_date_only,
 )
 from family_assistant.security.taint import (
@@ -157,6 +158,18 @@ async def _resolve_turn_sources(
             reason="Google calendar shared by another account named in calendar list.",
         )
     return _TurnCalendarSources(sources=sources + google_sources, google_client=client)
+
+
+def _taint_unless_user_vetted(
+    exec_context: ToolExecutionContext, item: dict[str, object]
+) -> None:
+    """Taint the turn when echoing an event's title that someone else wrote."""
+    if not is_user_vetted_event(item):
+        _record_external_calendar_taint(
+            exec_context,
+            source_id=f"google_event_{item.get('id', 'event')}",
+            reason="Google Calendar event title authored outside the household.",
+        )
 
 
 def _record_external_calendar_taint(
@@ -1175,7 +1188,10 @@ def _google_patch_body(
     for field, value in (("start", new_start_time), ("end", new_end_time)):
         if value:
             body[field] = build_event_time(
-                value, all_day=iso_value_is_date_only(value), timezone=local_tz
+                value,
+                all_day=iso_value_is_date_only(value),
+                timezone=local_tz,
+                for_patch=True,
             )
             changes.append(f"{field} time to {value}")
     if new_description is not None:
@@ -1280,6 +1296,7 @@ async def _modify_google_event(
 
     try:
         existing = await client.get_event(calendar_id, uid)
+        _taint_unless_user_vetted(exec_context, existing)
         original_summary = existing.get("summary") or "(No title)"
         if not body:
             return f"OK. Event '{original_summary}' checked (no changes made)."
@@ -1301,6 +1318,7 @@ async def _delete_google_event(
         return error or "Error: invalid Google calendar ID."
     try:
         existing = await client.get_event(calendar_id, uid)
+        _taint_unless_user_vetted(exec_context, existing)
         await client.delete_event(calendar_id, uid)
     except _GOOGLE_CALENDAR_ERRORS as exc:
         return f"Error: Failed to delete Google Calendar event. {exc}"
