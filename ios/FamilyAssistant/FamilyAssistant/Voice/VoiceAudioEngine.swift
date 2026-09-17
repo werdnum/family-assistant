@@ -421,6 +421,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
     /// Tear down the current graph (engine stopped first — manipulating nodes on
     /// a running engine can trap) and rebuild it from freshly-read formats.
     private func rebuildGraphAndRestart() throws {
+        discardQueuedPlaybackDucking()
         playerNode.stop()
         engine.stop()
         engine.inputNode.removeTap(onBus: 0)
@@ -472,9 +473,8 @@ final class VoiceAudioEngine: VoiceAudioIO {
         guard isRunning else { return }
         // Stopping clears all scheduled buffers; immediately restart so the next
         // assistant turn can play.
-        let token = tapState.withLock { $0.ducking.flushed() }
+        discardQueuedPlaybackDucking()
         playerNode.stop()
-        scheduleDuckingRelease(token: token)
         playerNode.play()
     }
 
@@ -484,6 +484,14 @@ final class VoiceAudioEngine: VoiceAudioIO {
 
     var isDucked: Bool {
         tapState.withLock { $0.ducking.isDucked }
+    }
+
+    /// Queued buffers are about to be dropped (flush, graph rebuild, or a
+    /// discarded player) and may never report finishing, so stop waiting on them
+    /// and release after the echo tail instead of staying ducked for good.
+    private func discardQueuedPlaybackDucking() {
+        let token = tapState.withLock { $0.ducking.flushed() }
+        scheduleDuckingRelease(token: token)
     }
 
     private func scheduleDuckingRelease(token: Int?) {
@@ -637,6 +645,7 @@ final class VoiceAudioEngine: VoiceAudioIO {
         onDiagnostic?("media_services_reset", [:], nil)
         do {
             removeObservers()
+            discardQueuedPlaybackDucking()
             engine = AVAudioEngine()
             playerNode = AVAudioPlayerNode()
             try configureAudioSession()
