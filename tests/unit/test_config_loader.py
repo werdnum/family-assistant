@@ -12,7 +12,10 @@ These tests verify the configuration loading hierarchy:
 
 from __future__ import annotations
 
+import ast
 import copy
+import functools
+import inspect
 import json
 import logging
 import os
@@ -25,6 +28,7 @@ import pytest
 import yaml
 from pydantic import SecretStr, ValidationError
 
+from family_assistant import config_loader
 from family_assistant.config_loader import (
     ENV_VAR_MAPPINGS,
     PROFILE_OVERRIDABLE_PROCESSING_KEYS,
@@ -67,6 +71,51 @@ from family_assistant.tools.policy import PolicyEngine, ToolPolicyDecision
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+@functools.cache
+def _env_vars_read_by_config_loader() -> frozenset[str]:
+    """Every environment variable name `config_loader` looks up.
+
+    The names are read out of the module source -- string literals and
+    module-level string constants passed to `os.getenv` / `os.environ.get`, or
+    tested with `in os.environ` -- plus the mapped ones, which are looked up
+    through a loop variable. Deriving them keeps a newly added lookup isolated
+    without anyone remembering to list it here.
+    """
+    names = {mapping.env_var for mapping in ENV_VAR_MAPPINGS}
+    for node in ast.walk(ast.parse(inspect.getsource(config_loader))):
+        if isinstance(node, ast.Call) and ast.unparse(node.func) in {
+            "os.getenv",
+            "os.environ.get",
+        }:
+            name_node = node.args[0] if node.args else None
+        elif isinstance(node, ast.Compare) and any(
+            ast.unparse(comparator) == "os.environ" for comparator in node.comparators
+        ):
+            name_node = node.left
+        else:
+            continue
+        if isinstance(name_node, ast.Constant) and isinstance(name_node.value, str):
+            names.add(name_node.value)
+        elif isinstance(name_node, ast.Name):
+            value = getattr(config_loader, name_node.id, None)
+            if isinstance(value, str):
+                names.add(value)
+    return frozenset(names)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_config_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove ambient configuration variables before each test.
+
+    `load_config` gives the environment the last word, so a variable exported by
+    the dev container (`DATABASE_URL`) or pulled from a `.env` file by an
+    import-time `load_dotenv()` in a dependency would override what a test
+    configures. Tests that exercise an override set it themselves.
+    """
+    for name in _env_vars_read_by_config_loader():
+        monkeypatch.delenv(name, raising=False)
 
 
 class TestDeepMergeDicts:
@@ -1689,25 +1738,12 @@ class TestLoadConfig:
         config_file = tmp_path / "nonexistent.yaml"
         prompts_file = tmp_path / "nonexistent_prompts.yaml"
 
-        # Clear relevant env vars
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         assert config.model == "gemini/gemini-3.8-flash"
         assert config.database_url == "sqlite+aiosqlite:///family_assistant.db"
@@ -1725,24 +1761,12 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "Test prompt"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         assert config.model == "defaults-model"
         assert config.server_url == "http://defaults.example.com"
@@ -1762,29 +1786,19 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "Test prompt"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         assert "embedding_dimensions" not in config.model_fields_set
         assert config.embedding_dimensions == 1536
 
-    def test_embedding_dimensions_env_in_fields_set(self, tmp_path: Path) -> None:
+    def test_embedding_dimensions_env_in_fields_set(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """An explicit EMBEDDING_DIMENSIONS env var marks the field as set."""
         defaults_file = tmp_path / "defaults.yaml"
         defaults_file.write_text(yaml.dump({}))
@@ -1792,25 +1806,14 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "Test prompt"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-        clean_env["EMBEDDING_DIMENSIONS"] = "256"
+        monkeypatch.setenv("EMBEDDING_DIMENSIONS", "256")
 
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         assert "embedding_dimensions" in config.model_fields_set
         assert config.embedding_dimensions == 256
@@ -1824,29 +1827,19 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "Test prompt"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         assert "embedding_dimensions" in config.model_fields_set
         assert config.embedding_dimensions == 768
 
-    def test_load_config_applies_user_identities_file(self, tmp_path: Path) -> None:
+    def test_load_config_applies_user_identities_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test loading user identity overlays from a configured file."""
         defaults_file = tmp_path / "defaults.yaml"
         defaults_file.write_text(yaml.dump({}))
@@ -1875,26 +1868,14 @@ class TestLoadConfig:
             })
         )
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-            USER_IDENTITIES_FILE_ENV_VAR,
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-        clean_env[USER_IDENTITIES_FILE_ENV_VAR] = str(identities_file)
+        monkeypatch.setenv(USER_IDENTITIES_FILE_ENV_VAR, str(identities_file))
 
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         assert len(config.users) == 1
         assert config.users[0].telegram.user_ids == {123}
@@ -1920,24 +1901,12 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "Test prompt"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         # config.yaml should override defaults.yaml for model
         assert config.model == "operator-model"
@@ -1946,31 +1915,22 @@ class TestLoadConfig:
         # database_url should come from defaults.yaml (not overridden)
         assert config.database_url == "sqlite:///defaults.db"
 
-    def test_env_vars_override_yaml(self, tmp_path: Path) -> None:
+    def test_env_vars_override_yaml(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Test that environment variables override YAML config."""
         config_file = tmp_path / "config.yaml"
         config_file.write_text(yaml.dump({"model": "yaml-model"}))
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-        clean_env["LLM_MODEL"] = "env-model"
+        monkeypatch.setenv("LLM_MODEL", "env-model")
 
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         assert config.model == "env-model"
 
@@ -2013,24 +1973,12 @@ class TestLoadConfig:
         )
         prompts_file = tmp_path / "nonexistent_prompts.yaml"
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         profile = config.service_profiles[0]
         assert profile.tools_policy is not None
@@ -2116,24 +2064,12 @@ class TestLoadConfig:
         )
         prompts_file = tmp_path / "nonexistent_prompts.yaml"
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         profile = config.service_profiles[0]
         assert profile.tools_policy is not None
@@ -2212,24 +2148,12 @@ class TestLoadConfig:
         )
         prompts_file = tmp_path / "nonexistent_prompts.yaml"
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         profile = config.service_profiles[0]
         assert profile.id == "custom_profile"
@@ -2316,23 +2240,11 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         profile_ids = {p.id for p in config.service_profiles}
         # test_profile from config.yaml is added alongside defaults
@@ -2379,24 +2291,12 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         assert len(config.service_profiles) == 1
         assert (
@@ -2428,24 +2328,12 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         profile = config.service_profiles[0]
         assert profile.processing_config.timezone == "Australia/Sydney"
@@ -2475,24 +2363,12 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         assert (
             config.service_profiles[0].processing_config.timezone == "America/New_York"
@@ -2520,24 +2396,12 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         profile_ids = {p.id for p in config.service_profiles}
         assert profile_ids == {"default_a", "default_b", "custom_c"}
@@ -2568,24 +2432,12 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         profile_ids = {p.id for p in config.service_profiles}
         assert profile_ids == {"shared", "other"}
@@ -2639,24 +2491,12 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         reminder = next(p for p in config.service_profiles if p.id == "reminder")
         # Operator override applied
@@ -2687,24 +2527,12 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         # Empty list triggers resolve_all_service_profiles to create a
         # single fallback profile, but the defaults are NOT preserved.
@@ -2718,21 +2546,7 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with (
-            mock.patch.dict(os.environ, clean_env, clear=True),
-            pytest.raises(ValidationError),
-        ):
+        with pytest.raises(ValidationError):
             load_config(
                 config_file_path=str(config_file),
                 prompts_file_path=str(prompts_file),
@@ -2765,24 +2579,12 @@ class TestLoadConfig:
         prompts_file = tmp_path / "prompts.yaml"
         prompts_file.write_text(yaml.dump({"system_prompt": "test"}))
 
-        env_to_clear = [m.env_var for m in ENV_VAR_MAPPINGS]
-        env_to_clear.extend([
-            "CALDAV_USERNAME",
-            "CALDAV_PASSWORD",
-            "CALDAV_CALENDAR_URLS",
-            "ICAL_URLS",
-            "MCP_CONFIG_PATH",
-            "INDEXING_PIPELINE_CONFIG_JSON",
-        ])
-        clean_env = {k: v for k, v in os.environ.items() if k not in env_to_clear}
-
-        with mock.patch.dict(os.environ, clean_env, clear=True):
-            config = load_config(
-                defaults_file_path=str(defaults_file),
-                config_file_path=str(config_file),
-                prompts_file_path=str(prompts_file),
-                load_dotenv_file=False,
-            )
+        config = load_config(
+            defaults_file_path=str(defaults_file),
+            config_file_path=str(config_file),
+            prompts_file_path=str(prompts_file),
+            load_dotenv_file=False,
+        )
 
         servers = config.mcp_config.mcpServers
         assert "time" in servers
