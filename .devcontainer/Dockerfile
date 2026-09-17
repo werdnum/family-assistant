@@ -14,7 +14,11 @@ ARG GH_TOKEN_VERSION=v0.0.0-20260325123437-08e7acb18e22
 ARG AST_GREP_VERSION=0.45.3
 ARG YQ_VERSION=v4.47.1
 ARG PLAYWRIGHT_VERSION=1.52.0
-ARG CODEX_VERSION=0.154.0
+
+# The agent CLIs are deliberately NOT pinned here. Pinning buys reproducible
+# test results for the toolchain above; for an agent it buys nothing and costs
+# a stale agent, because this image is refreshed by hand and nothing would
+# bump the pin. Claude Code self-updates past whatever the image ships anyway.
 
 # COPY --from cannot expand a build arg, but FROM can: name the stage here.
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
@@ -167,10 +171,9 @@ USER claude
 # Install Claude Code using native installer (recommended over deprecated npm install)
 RUN curl -fsSL https://claude.ai/install.sh | bash
 
-# Install development Node.js packages
-ARG CODEX_VERSION
+# Install development Node.js packages (see the ARG block: agents track latest)
 RUN --mount=type=cache,target=/home/claude/.npm,sharing=locked,uid=1001,gid=1001 \
-    npm install -g "@openai/codex@${CODEX_VERSION}"
+    npm install -g "@openai/codex@latest"
 
 # Install Antigravity CLI (agy) - installs to /home/claude/.local/bin/agy
 RUN curl -fsSL https://antigravity.google/cli/install.sh | bash

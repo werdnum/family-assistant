@@ -104,8 +104,10 @@ if [ "$HOME_IS_MOUNTED" = "true" ]; then
         installed_any=true
     fi
 
-    # Version pins live in .devcontainer/Dockerfile; keep them in step.
-    install_npm_tool codex "@openai/codex@0.154.0"
+    # Unpinned on purpose, like the image: agents track latest. This only runs
+    # when the binary is absent, so it never downgrades a newer one already in
+    # the mounted home.
+    install_npm_tool codex "@openai/codex@latest"
 
     if [ ! -x /home/claude/.deno/bin/deno ]; then
         echo "Installing deno..."
