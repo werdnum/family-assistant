@@ -3,6 +3,9 @@
 **What's here:** connecting your own Google account so the assistant can search and read your Gmail
 and Drive, what it can and can't do with them, and how to reconnect or disconnect.
 
+Connecting your Google account also gives the assistant your Google Calendar; what that does is
+covered in [calendar.md](calendar.md#your-own-google-calendar).
+
 The Google integration has to be enabled by your operator. Configuration for that side lives in
 [docs/operations/CONFIGURATION_REFERENCE.md](../operations/CONFIGURATION_REFERENCE.md).
 
@@ -67,14 +70,15 @@ any interface.
 but not Drive, say). That's fine — the assistant tells you if you try to use a feature whose
 permission you didn't grant, and Connected Accounts shows which permissions are missing and prompts
 you to reconnect. Draft creation and Drive writing each need their own permission; if you connected
-before those features existed, use **Reconnect** and approve the new permissions.
+before those features (or Google Calendar access) existed, use **Reconnect** and approve the new
+permissions.
 
 ## Reconnecting and disconnecting
 
 - **Reconnect** — replaces the existing connection with the new consent you give. A notification
   confirms which account is now linked.
-- **Disconnect** — removes the connection; the assistant loses access to your Gmail and Drive until
-  you reconnect.
+- **Disconnect** — removes the connection; the assistant loses access to your Gmail, Drive and
+  Google Calendar until you reconnect.
 
 ## "Needs re-authorization" notifications
 

@@ -59,8 +59,9 @@ explicitly, rather than growing machinery. Accepted simplifications are collecte
 - **Graduated taint tiers for Google content.** All Gmail/Drive content taints the turn at
   `unknown_external` in v1 (see [Taint](#taint)); authenticated-sender tier reduction is future
   work.
-- **Replacing CalDAV with per-user Google Calendar.** Natural follow-up once the connection
-  infrastructure exists, but out of scope.
+- **Replacing CalDAV with per-user Google Calendar.** Per-user Google Calendar was later added
+  *alongside* CalDAV rather than replacing it; see
+  [google-calendar-per-user.md](google-calendar-per-user.md).
 - **Cross-user sharing** ("check whether my partner got the school email"). v1 is strictly
   self-scoped; sharing grants are future work with their own consent design.
 - **Non-Google providers.** The storage and resolver are shaped so a second provider slots in
@@ -604,7 +605,6 @@ USER_GUIDE and prompt updates in the same PR — there is no trailing docs miles
   fold aggregates at the max tier. A reviewed sketch exists in this document's git history.
 - Ambient mailbox ingestion/indexing with visibility labels per owner (separate design, per the
   runtime taint doc's connector split).
-- Per-user Google Calendar via the same connections.
 - Cross-user sharing grants with explicit consent UX.
 - Split `artifact_write` into creation vs. destructive-mutation sink classes in the taint machinery,
   so the matrix can confirm deletes after untrusted content without confirming every note write.

@@ -60,6 +60,7 @@ from family_assistant.services.oauth_integration_state import (
 from family_assistant.storage import init_db
 from family_assistant.storage.database import Database
 from family_assistant.tools import LOCAL_TOOL_REGISTRATIONS
+from family_assistant.tools.calendar import GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.google_data import (
     GOOGLE_TOOL_REQUIRED_SCOPES,
     gmail_get_attachment_tool,
@@ -383,6 +384,7 @@ async def e2e(db_engine: AsyncEngine) -> AsyncGenerator[_E2EApp]:
         app.state.config,
         auth_enabled=True,
         tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
     )
     app.state.oauth_integration_states = {"google": state}
     app.state.notification_dispatcher = notifier

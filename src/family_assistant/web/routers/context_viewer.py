@@ -43,12 +43,14 @@ async def _render_context_page(
     templates: Jinja2Templates,
     processing_service: ProcessingService,
 ) -> HTMLResponse:
-    aggregated_context = await processing_service.context_preparer.aggregate_context()
+    aggregated_context = await processing_service.context_preparer.aggregate_context(
+        acting_user_id=None
+    )
 
     context_fragments = []
     for provider in processing_service.context_providers:
         try:
-            fragments = await provider.get_context_fragments()
+            fragments = await provider.get_context_fragments(acting_user_id=None)
             context_fragments.append({
                 "provider_name": provider.name,
                 "fragments": fragments if fragments else [],
@@ -129,12 +131,14 @@ async def _build_context_data(
     else:
         logger.info("Using default processing service")
 
-    aggregated_context = await target_service.context_preparer.aggregate_context()
+    aggregated_context = await target_service.context_preparer.aggregate_context(
+        acting_user_id=None
+    )
 
     context_data = []
     for provider in target_service.context_providers:
         try:
-            fragments = await provider.get_context_fragments()
+            fragments = await provider.get_context_fragments(acting_user_id=None)
             context_data.append({
                 "provider_name": provider.name,
                 "fragments": fragments if fragments else [],

@@ -22,6 +22,7 @@ from family_assistant.services.oauth_integration_state import (
     evaluate_oauth_integration_state,
 )
 from family_assistant.tools import ToolPolicyConfig
+from family_assistant.tools.calendar import GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
 
 GMAIL_SCOPE = GoogleScope.GMAIL_READONLY.value
@@ -145,6 +146,7 @@ def test_not_configured_when_all_fields_empty() -> None:
         config,
         auth_enabled=True,
         tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
     )
     assert state.enabled is False
     assert state.reason == "Google integration is not configured."
@@ -158,6 +160,7 @@ def test_missing_client_id_names_the_field() -> None:
         config,
         auth_enabled=True,
         tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
     )
     assert state.enabled is False
     assert "GOOGLE_OAUTH_CLIENT_ID" in (state.reason or "")
@@ -170,6 +173,7 @@ def test_missing_client_secret_names_the_field() -> None:
         config,
         auth_enabled=True,
         tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
     )
     assert state.enabled is False
     assert "GOOGLE_OAUTH_CLIENT_SECRET" in (state.reason or "")
@@ -182,6 +186,7 @@ def test_missing_encryption_key_names_the_field() -> None:
         config,
         auth_enabled=True,
         tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
     )
     assert state.enabled is False
     assert "CREDENTIAL_ENCRYPTION_KEY" in (state.reason or "")
@@ -194,6 +199,7 @@ def test_malformed_encryption_key_disables() -> None:
         config,
         auth_enabled=True,
         tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
     )
     assert state.enabled is False
     assert "Fernet" in (state.reason or "")
@@ -210,6 +216,7 @@ def test_unsupported_scope_disables_with_clear_error() -> None:
         config,
         auth_enabled=True,
         tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
     )
     assert state.enabled is False
     assert "gmail.send" in (state.reason or "")
@@ -224,6 +231,7 @@ def test_auth_disabled_refuses_even_when_fully_configured() -> None:
         config,
         auth_enabled=False,
         tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
     )
     assert state.enabled is False
     assert "web authentication" in (state.reason or "")
@@ -241,6 +249,7 @@ def test_empty_users_block_refuses_even_with_auth_enabled() -> None:
         config,
         auth_enabled=True,
         tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
     )
     assert state.enabled is False
     assert "users block" in (state.reason or "")
@@ -260,6 +269,7 @@ def test_floor_rejects_bare_adjudicate_in_default_matrix() -> None:
         config,
         auth_enabled=True,
         tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
     )
     assert state.enabled is False
     assert "adjudicate" in (state.reason or "")
@@ -277,6 +287,7 @@ def test_floor_accepts_adjudicate_with_confirm_operator_minimum() -> None:
         config,
         auth_enabled=True,
         tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
     )
     assert state.enabled is True
     assert state.reason is None
@@ -294,6 +305,7 @@ def test_floor_fails_when_mode_is_observe() -> None:
         config,
         auth_enabled=True,
         tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
     )
     assert state.enabled is False
     assert "taint_policy.mode" in (state.reason or "")
@@ -336,6 +348,7 @@ def test_floor_fails_on_full_matrix_replacement_dropping_read_broadening() -> No
         config,
         auth_enabled=True,
         tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
     )
     assert state.enabled is False
     assert "sensitive_read_broadening" in (state.reason or "")
@@ -353,6 +366,7 @@ def test_floor_skipped_and_waived_when_requirement_false_even_in_observe() -> No
         config,
         auth_enabled=True,
         tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
     )
     assert state.enabled is True
     assert state.taint_enforcement_waived is True
@@ -385,6 +399,7 @@ def test_floor_ignores_profiles_that_do_not_allow_google_tools() -> None:
         config,
         auth_enabled=True,
         tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
     )
     assert state.enabled is True
 
@@ -414,6 +429,7 @@ def test_floor_rejects_profile_taint_policy_that_relaxes_a_floor_sink() -> None:
         config,
         auth_enabled=True,
         tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
     )
     assert state.enabled is False
     assert "default_assistant" in (state.reason or "")
@@ -434,6 +450,7 @@ def test_enabled_tool_names_gmail_only() -> None:
         config,
         auth_enabled=True,
         tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
     )
     assert state.enabled is True
     assert state.enabled_tool_names == frozenset({
@@ -454,6 +471,7 @@ def test_enabled_tool_names_drive_metadata_only_has_search_not_get_file() -> Non
         config,
         auth_enabled=True,
         tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
     )
     assert state.enabled is True
     assert "drive_search" in state.enabled_tool_names
@@ -471,6 +489,7 @@ def test_enabled_tool_names_write_scopes_only() -> None:
         config,
         auth_enabled=True,
         tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
     )
     assert state.enabled_tool_names == frozenset({
         "gmail_create_draft",
@@ -489,6 +508,7 @@ def test_enabled_tool_names_full_scopes() -> None:
         config,
         auth_enabled=True,
         tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
     )
     assert state.enabled_tool_names == frozenset({
         "gmail_search",
@@ -497,3 +517,69 @@ def test_enabled_tool_names_full_scopes() -> None:
         "drive_search",
         "drive_get_file",
     })
+
+
+def _calendar_tools_only_policy() -> ToolPolicyConfig:
+    """A profile allowing the calendar tools but none of the Google tools."""
+    return ToolPolicyConfig.model_validate({
+        "default_decision": "deny",
+        "rules": [
+            {
+                "match": {"names": ["list_calendars", "search_calendar_events"]},
+                "decision": "allow",
+                "priority": 10,
+            }
+        ],
+    })
+
+
+def _weak_profile_taint() -> TaintPolicyConfig:
+    return TaintPolicyConfig.model_validate({
+        "mode": "enforce",
+        "matrix_overrides": {
+            "unknown_external": {"sensitive_read_broadening": "audit"}
+        },
+    })
+
+
+def _calendar_floor_config(scopes: list[str]) -> AppConfig:
+    return _app_config(
+        _google_config(scopes=scopes),
+        taint_policy=_enforce_taint_with_confirm_floor(),
+        profiles=[
+            _profile("default_assistant", tools_policy=_allow_google_policy()),
+            _profile(
+                "reminder",
+                tools_policy=_calendar_tools_only_policy(),
+                taint_policy=_weak_profile_taint(),
+            ),
+        ],
+    )
+
+
+def test_floor_covers_calendar_tool_profiles_when_calendar_scope_configured() -> None:
+    # With Google Calendar requested, the calendar tools read Google data, so a
+    # profile that allows only them is held to the floor too.
+    config = _calendar_floor_config([GMAIL_SCOPE, GoogleScope.CALENDAR_READONLY.value])
+    state = evaluate_oauth_integration_state(
+        GOOGLE_PROVIDER,
+        config,
+        auth_enabled=True,
+        tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
+    )
+    assert state.enabled is False
+    assert state.reason is not None
+    assert "reminder" in state.reason
+
+
+def test_floor_ignores_calendar_tool_profiles_without_calendar_scope() -> None:
+    config = _calendar_floor_config([GMAIL_SCOPE])
+    state = evaluate_oauth_integration_state(
+        GOOGLE_PROVIDER,
+        config,
+        auth_enabled=True,
+        tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
+    )
+    assert state.enabled is True

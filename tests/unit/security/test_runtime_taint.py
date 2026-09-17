@@ -2450,7 +2450,7 @@ async def test_prompt_included_note_surfaces_stored_provenance_taint(
 
     provider = NotesContextProvider(get_context, prompts={})
 
-    fragments = await provider.get_context_fragments()
+    fragments = await provider.get_context_fragments(acting_user_id=None)
     sources = await provider.get_context_taint_sources()
 
     assert any("Prompt external digest" in fragment for fragment in fragments)

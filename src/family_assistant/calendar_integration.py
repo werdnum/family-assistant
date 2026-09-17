@@ -33,14 +33,27 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class CalendarSource:
-    """Represents a resolved calendar source (CalDAV collection or iCal feed)."""
+    """A resolved calendar source: CalDAV collection, iCal feed, or Google calendar.
+
+    CalDAV and iCal sources come from deployment config. Google sources belong to
+    the acting user's connected account and are resolved per turn; their ``url``
+    is empty and ``google_calendar_id`` names the calendar instead.
+    """
 
     source_id: str
     name: str
-    kind: Literal["caldav", "ical"]
+    kind: Literal["caldav", "ical", "google"]
     url: str
     writable: bool
     is_default: bool = False
+    google_calendar_id: str | None = None
+    # Whether a search that names no calendars includes this one. Google
+    # calendars the user has hidden or deselected in Google Calendar are left
+    # out, like they are in Google's own UI.
+    searched_by_default: bool = True
+    # Whether the source's owner is the user (or the deployment). A calendar
+    # someone else shares carries names and events they authored.
+    owned: bool = True
 
 
 def _derive_slug_from_url(url: str) -> str | None:
@@ -190,6 +203,20 @@ def resolve_calendar_sources(
 
 
 # --- Helper Functions ---
+
+
+def event_sort_key(event: "CalendarEvent", timezone: ZoneInfo) -> datetime:
+    """Chronological sort key for an event: its start as an aware datetime.
+
+    All-day events sort at local midnight of their day; naive datetimes are read
+    in ``timezone``.
+    """
+    start_val = event["start"]
+    if isinstance(start_val, datetime):
+        if start_val.tzinfo is None:
+            return start_val.replace(tzinfo=timezone)
+        return start_val.astimezone(timezone)
+    return datetime.combine(start_val, time.min, tzinfo=timezone)
 
 
 def format_datetime_or_date(

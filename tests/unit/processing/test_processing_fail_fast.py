@@ -529,7 +529,7 @@ async def test_context_aggregate_context_raises_on_provider_failure() -> None:
     class BrokenProvider:
         name = "broken-provider"
 
-        async def get_context_fragments(self) -> list[str]:
+        async def get_context_fragments(self, acting_user_id: str | None) -> list[str]:
             raise RuntimeError("provider failed")
 
     config = ProcessingServiceConfig(
@@ -551,7 +551,7 @@ async def test_context_aggregate_context_raises_on_provider_failure() -> None:
         RuntimeError,
         match="Context provider 'broken-provider' failed to provide fragments",
     ):
-        await preparer.aggregate_context()
+        await preparer.aggregate_context(acting_user_id=None)
 
 
 @pytest.mark.no_db

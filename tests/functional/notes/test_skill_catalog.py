@@ -64,7 +64,7 @@ async def test_db_skill_appears_in_catalog_not_notes(
         prompts=TEST_PROMPTS,
     )
 
-    fragments = await provider.get_context_fragments()
+    fragments = await provider.get_context_fragments(acting_user_id=None)
 
     # Find the fragments
     notes_fragment = next((f for f in fragments if "Regular Note" in f), None)
@@ -113,7 +113,7 @@ async def test_db_skill_excluded_from_other_notes_list(
         prompts=TEST_PROMPTS,
     )
 
-    fragments = await provider.get_context_fragments()
+    fragments = await provider.get_context_fragments(acting_user_id=None)
 
     # Hidden regular note should appear in excluded list
     excluded_fragment = next(
@@ -156,7 +156,7 @@ async def test_file_skills_appear_in_catalog(
         note_registry=registry,
     )
 
-    fragments = await provider.get_context_fragments()
+    fragments = await provider.get_context_fragments(acting_user_id=None)
 
     catalog_fragment = next((f for f in fragments if "Available Skills" in f), None)
     assert catalog_fragment is not None
@@ -199,7 +199,7 @@ async def test_mixed_db_and_file_skills_in_catalog(
         note_registry=registry,
     )
 
-    fragments = await provider.get_context_fragments()
+    fragments = await provider.get_context_fragments(acting_user_id=None)
 
     catalog_fragment = next((f for f in fragments if "Available Skills" in f), None)
     assert catalog_fragment is not None
@@ -243,7 +243,7 @@ async def test_file_skill_visibility_filtering(
         visibility_grants=set(),
     )
 
-    fragments = await provider.get_context_fragments()
+    fragments = await provider.get_context_fragments(acting_user_id=None)
     catalog_fragment = next((f for f in fragments if "Available Skills" in f), None)
     assert catalog_fragment is not None
     assert "**Public Skill**" in catalog_fragment
@@ -257,7 +257,9 @@ async def test_file_skill_visibility_filtering(
         visibility_grants={"skill_internal"},
     )
 
-    fragments_with_grants = await provider_with_grants.get_context_fragments()
+    fragments_with_grants = await provider_with_grants.get_context_fragments(
+        acting_user_id=None
+    )
     catalog_fragment = next(
         (f for f in fragments_with_grants if "Available Skills" in f), None
     )
@@ -290,6 +292,6 @@ async def test_no_catalog_when_no_skills(
         prompts=TEST_PROMPTS,
     )
 
-    fragments = await provider.get_context_fragments()
+    fragments = await provider.get_context_fragments(acting_user_id=None)
     catalog_fragment = next((f for f in fragments if "Available Skills" in f), None)
     assert catalog_fragment is None

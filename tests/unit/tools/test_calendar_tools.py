@@ -895,6 +895,8 @@ async def test_search_calendar_events_chronological_sorting(
         search_start: datetime,
         search_end: datetime,
         sources: list[Any] | None = None,
+        google_client: object = None,
+        notes: list[str] | None = None,
     ) -> list[CalendarSearchResult]:
         # Return unordered list
         return [

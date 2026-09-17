@@ -74,7 +74,7 @@ async def test_notes_context_provider_respects_include_in_prompt(
     )
 
     # Get context fragments
-    fragments = await provider.get_context_fragments()
+    fragments = await provider.get_context_fragments(acting_user_id=None)
 
     # Should get 2 fragments: included notes and excluded notes list
     assert len(fragments) == 2
@@ -137,7 +137,7 @@ async def test_notes_context_provider_empty_when_all_excluded(
     )
 
     # Get context fragments
-    fragments = await provider.get_context_fragments()
+    fragments = await provider.get_context_fragments(acting_user_id=None)
 
     # Should get 2 fragments: "no notes" message and excluded notes list
     assert len(fragments) == 2
@@ -192,7 +192,7 @@ async def test_notes_context_provider_mixed_visibility(
     )
 
     # Get context fragments
-    fragments = await provider.get_context_fragments()
+    fragments = await provider.get_context_fragments(acting_user_id=None)
 
     # Should get 2 fragments: included notes and excluded notes list
     assert len(fragments) == 2
@@ -272,7 +272,7 @@ async def test_notes_context_provider_shows_excluded_notes_list(
     )
 
     # Get context fragments
-    fragments = await provider.get_context_fragments()
+    fragments = await provider.get_context_fragments(acting_user_id=None)
 
     # Should have 2 fragments: included notes and excluded notes list
     assert len(fragments) == 2
@@ -336,7 +336,7 @@ async def test_notes_context_provider_no_excluded_list_when_all_included(
     )
 
     # Get context fragments
-    fragments = await provider.get_context_fragments()
+    fragments = await provider.get_context_fragments(acting_user_id=None)
 
     # Should only have 1 fragment (included notes, no excluded list)
     assert len(fragments) == 1
@@ -421,7 +421,7 @@ async def test_notes_context_provider_with_attachments(
     )
 
     # Get context fragments
-    fragments = await provider.get_context_fragments()
+    fragments = await provider.get_context_fragments(acting_user_id=None)
 
     # Should have 1 fragment with both notes
     assert len(fragments) == 1
@@ -493,7 +493,7 @@ async def test_notes_context_provider_handles_missing_attachments(
     )
 
     # Get context fragments - should not raise an exception
-    fragments = await provider.get_context_fragments()
+    fragments = await provider.get_context_fragments(acting_user_id=None)
 
     # Should have 1 fragment with the note content
     assert len(fragments) == 1

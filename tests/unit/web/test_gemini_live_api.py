@@ -186,6 +186,66 @@ async def test_ephemeral_token_uses_confirmation_aware_tool_advertisement(
     assert tools_provider.calls == [False]
 
 
+class _RecordingContextProvider:
+    """Records the acting user each context request is made for."""
+
+    def __init__(self) -> None:
+        self.acting_user_ids: list[str | None] = []
+
+    @property
+    def name(self) -> str:
+        return "recording"
+
+    async def get_context_fragments(self, acting_user_id: str | None) -> list[str]:
+        self.acting_user_ids.append(acting_user_id)
+        return ["Upcoming: dentist"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.no_db
+async def test_ephemeral_token_builds_context_for_the_signed_in_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "test-api-key")
+    fake_google = cast("Any", types.ModuleType("google"))
+    fake_google.genai = types.SimpleNamespace(Client=_FakeGenAIClient)
+    monkeypatch.setitem(sys.modules, "google", fake_google)
+
+    context_provider = _RecordingContextProvider()
+    processing_service = ProcessingService(
+        llm_client=RuleBasedMockLLMClient(
+            rules=[],
+            default_response=LLMOutput(content="ok", tool_calls=None),
+        ),
+        tools_provider=VoiceModeStubToolsProvider(),
+        service_config=ProcessingServiceConfig(
+            prompts={"system_prompt": "You are a voice assistant."},
+            timezone=ZoneInfo("UTC"),
+            max_history_messages=5,
+            history_max_age_hours=1,
+            tools_config=ToolsConfig(),
+            delegation_security_level=DelegationSecurityLevel.CONFIRM,
+            id="voice-profile",
+            include_aggregated_context=True,
+        ),
+        context_providers=[context_provider],
+        server_url="http://testserver",
+        app_config=AppConfig(),
+    )
+    app = FastAPI()
+    app.include_router(gemini_live_router, prefix="/api")
+    app.state.processing_service = processing_service
+    app.state.config = AppConfig()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://testserver") as client:
+        response = await client.post("/api/gemini/ephemeral-token", json={})
+
+    assert response.status_code == 200
+    # Auth is disabled here, so the request resolves to the dev identity.
+    assert context_provider.acting_user_ids == ["test_user"]
+
+
 def _voice_processing_service(profile_id: str) -> ProcessingService:
     """A minimal live-capable service, identified only by its profile id."""
     return ProcessingService(

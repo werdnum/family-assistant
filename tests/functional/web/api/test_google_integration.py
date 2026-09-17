@@ -32,6 +32,7 @@ from family_assistant.storage.database import Database
 from family_assistant.storage.repositories.oauth_connections import (
     OAuthConnectionModel,
 )
+from family_assistant.tools.calendar import GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES
 from family_assistant.tools.google_data import GOOGLE_TOOL_REQUIRED_SCOPES
 from family_assistant.web.dependencies import get_current_session_user
 from family_assistant.web.routers.oauth_integration import (
@@ -183,6 +184,7 @@ def _install_integration_state(app: FastAPI) -> None:
         config,
         auth_enabled=auth_enabled,
         tool_required_scopes=GOOGLE_TOOL_REQUIRED_SCOPES,
+        shared_tool_required_scopes=GOOGLE_CALENDAR_TOOL_REQUIRED_SCOPES,
     )
     app.state.oauth_integration_states = {"google": state}
 
