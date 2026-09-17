@@ -85,6 +85,7 @@ final class ChatViewModel {
             }
         }
     }
+    @ObservationIgnored private var activeMessageLoads = 0
     var isLoadingProfiles = false
     var isStreaming = false
     var errorMessage: String?
@@ -1176,13 +1177,22 @@ final class ChatViewModel {
         guard let id = conversationID ?? self.conversationID else {
             return
         }
+        activeMessageLoads += 1
         isLoadingMessages = true
         // Reset on EVERY exit, including the stale-selection guards below: a
         // conversation switch during the await returns early, and a leaked
         // `isLoadingMessages` would permanently disable the composer on the thread
         // the user moved to. Reachable when a delayed advisory retry lands after a
-        // switch.
-        defer { isLoadingMessages = false }
+        // switch. Loads can overlap (a follow-stream catch-up alongside a resync
+        // or retry), and each replaces `messages` wholesale, so the flag clears
+        // only when the LAST one settles: a send started while another load is
+        // still in flight would have its optimistic bubbles replaced away.
+        defer {
+            activeMessageLoads -= 1
+            if activeMessageLoads == 0 {
+                isLoadingMessages = false
+            }
+        }
         do {
             let response = try await apiClient.getMessages(conversationID: id)
             // The user may have switched conversations during the network await;
