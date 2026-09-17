@@ -72,7 +72,19 @@ final class ChatViewModel {
     var draftAttachments: [ChatAttachment] = []
     var pendingConfirmations: [ChatPendingConfirmation] = []
     var isLoadingConversations = false
-    var isLoadingMessages = false
+    var isLoadingMessages = false {
+        // `sendDraft` refuses to send while messages load, so a follow-up steer
+        // that became ready during a load (e.g. a reattached turn retired while
+        // the follow stream's catch-up reload was in flight) must be drained
+        // once the load settles, or it strands with the composer already cleared.
+        didSet {
+            if oldValue, !isLoadingMessages, !queuedFollowUpSteers.isEmpty {
+                Task { [weak self] in
+                    await self?.sendNextQueuedFollowUpSteerIfReady()
+                }
+            }
+        }
+    }
     var isLoadingProfiles = false
     var isStreaming = false
     var errorMessage: String?
@@ -3207,7 +3219,7 @@ final class ChatViewModel {
     }
 
     private func sendNextQueuedFollowUpSteerIfReady() async {
-        guard !isStreaming, !queuedFollowUpSteers.isEmpty else {
+        guard !isStreaming, !isLoadingMessages, !queuedFollowUpSteers.isEmpty else {
             return
         }
         let followUp = queuedFollowUpSteers.removeFirst()
