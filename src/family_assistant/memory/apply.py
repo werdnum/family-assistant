@@ -646,6 +646,15 @@ async def _locate(
     )
 
 
+def _mentions_reference(text: str, message_id: int) -> bool:
+    """Whether ``text`` already cites exactly this message.
+
+    Bounded on digits at both ends: a plain substring test would read ``#123``
+    as a mention of ``#12`` and drop the suffix that carries the real evidence.
+    """
+    return re.search(rf"(?<!\d)#{message_id}(?!\d)", text) is not None
+
+
 def _with_refs(entry: str, message_ids: Sequence[int]) -> str:
     """Make sure an entry's own text carries the messages it cites.
 
@@ -656,7 +665,7 @@ def _with_refs(entry: str, message_ids: Sequence[int]) -> str:
     text = normalise_entry(entry)
     if not message_ids:
         return text
-    if all(f"#{message_id}" in text for message_id in message_ids):
+    if all(_mentions_reference(text, message_id) for message_id in message_ids):
         return text
     refs = ", ".join(f"#{message_id}" for message_id in sorted(set(message_ids)))
     return f"{text} (refs: {refs})"

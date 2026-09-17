@@ -490,6 +490,33 @@ async def test_a_rejected_list_reports_the_revision_that_survived_it(
 
 
 @pytest.mark.asyncio
+async def test_a_reference_is_not_satisfied_by_a_longer_number(
+    db_engine: AsyncEngine,
+) -> None:
+    """``#12`` is cited; an entry mentioning ``#123`` has not cited it."""
+    db = _db(db_engine)
+    ids = await _seed_turn(db, count=1)
+    cited = ids[0]
+
+    await _apply(
+        db,
+        [
+            MemoryEdit(
+                op=MemoryEditOp.ADD,
+                note_title="Sam",
+                entry=(
+                    f"Sam prefers the tram, which #{cited}0 and #1{cited} "
+                    "are not about."
+                ),
+                message_ids=[cited],
+            )
+        ],
+    )
+
+    assert f"(refs: #{cited})" in await _entries(db, "Sam")
+
+
+@pytest.mark.asyncio
 async def test_a_result_over_the_note_cap_is_refused(db_engine: AsyncEngine) -> None:
     db = _db(db_engine)
     ids = await _seed_turn(db, count=1)
