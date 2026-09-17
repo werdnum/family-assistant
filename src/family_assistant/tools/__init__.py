@@ -190,6 +190,10 @@ from family_assistant.tools.media_download import (
     MEDIA_DOWNLOAD_TOOLS_DEFINITION,
     download_media_tool,
 )
+from family_assistant.tools.memory import (
+    MEMORY_TOOLS_DEFINITION,
+    propose_memory_edits_tool,
+)
 from family_assistant.tools.metadata import (
     LocalToolMetadata,
     ToolDescriptor,
@@ -328,6 +332,7 @@ __all__ = [
     "LOCAL_TOOL_REGISTRATIONS",
     "MAX_POLICY_RULE_PRIORITY",
     "MEDIA_DOWNLOAD_TOOLS_DEFINITION",
+    "MEMORY_TOOLS_DEFINITION",
     "MOCK_IMAGE_TOOLS_DEFINITION",
     # MQTT tools
     "MQTT_TOOLS_DEFINITION",
@@ -476,6 +481,7 @@ __all__ = [
     "mock_camera_snapshot_tool",
     "modify_pending_callback_tool",
     "mqtt_publish_tool",
+    "propose_memory_edits_tool",
     "query_database",
     "query_recent_events_tool",
     "read_error_logs",
@@ -551,6 +557,7 @@ def _metadata(
 
 _LOCAL_TOOL_DEFINITIONS: list[ToolDefinition] = (
     NOTE_TOOLS_DEFINITION
+    + MEMORY_TOOLS_DEFINITION
     + SERVICE_TOOLS_DEFINITION
     + TASK_TOOLS_DEFINITION
     + DOCUMENT_TOOLS_DEFINITION
@@ -587,6 +594,7 @@ _LOCAL_TOOL_IMPLEMENTATIONS: dict[str, ToolImplementation] = {
     "get_note": get_note_tool,
     "list_notes": list_notes_tool,
     "delete_note": delete_note_tool,
+    "propose_memory_edits": propose_memory_edits_tool,
     "schedule_future_callback": schedule_future_callback_tool,
     "schedule_reminder": schedule_reminder_tool,
     "schedule_action": schedule_action_tool,
@@ -755,6 +763,13 @@ LOCAL_TOOL_METADATA_BY_NAME: dict[str, LocalToolMetadata] = {
     ),
     "list_notes": _metadata(
         ToolTag.READ_ONLY,
+        ToolTag.SENSITIVE_DATA,
+        ToolTag.NOTES,
+        ToolTag.OUTPUT_TRUSTED,
+    ),
+    "propose_memory_edits": _metadata(
+        ToolTag.STATE_CHANGING,
+        ToolTag.STATE_PERSISTING,
         ToolTag.SENSITIVE_DATA,
         ToolTag.NOTES,
         ToolTag.OUTPUT_TRUSTED,

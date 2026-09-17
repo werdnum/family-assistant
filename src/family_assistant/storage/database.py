@@ -67,6 +67,7 @@ if TYPE_CHECKING:
         ErrorLogsRepository,
         EventsRepository,
         IosPushTokenRepository,
+        MemoryChangeLogRepository,
         MemoryStoreRepository,
         MessageHistoryRepository,
         NotesRepository,
@@ -468,6 +469,15 @@ class DatabaseExecutor(ABC):
             cached = repository_class(self)  # type: ignore[call-arg] # every repository takes an executor
             self._repositories[repository_class] = cached
         return cached  # type: ignore[return-value] # keyed by its own class
+
+    @property
+    def memory_change_log(self) -> MemoryChangeLogRepository:
+        """Get the memory change log repository instance."""
+        from family_assistant.storage.repositories.memory_change_log import (  # noqa: PLC0415
+            MemoryChangeLogRepository,
+        )
+
+        return self._repository(MemoryChangeLogRepository)
 
     @property
     def memory_store(self) -> MemoryStoreRepository:

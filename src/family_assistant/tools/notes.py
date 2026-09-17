@@ -76,10 +76,15 @@ async def _load_note_attachment(
     )
 
 
-def _note_provenance_from_taint(
+def note_provenance_from_taint(
     exec_context: ToolExecutionContext,
 ) -> NoteProvenanceMetadata | None:
-    """Return durable provenance metadata for the current turn taint."""
+    """Return durable provenance metadata for the current turn taint.
+
+    Shared with the memory apply path, which stamps its note writes the same
+    way: the repository holds every memory write to the trusted pole, and it
+    can only do that from a stamp the writer supplied.
+    """
     if exec_context.taint_tracker is None:
         return None
     state = exec_context.taint_tracker.snapshot()
@@ -130,7 +135,7 @@ async def add_or_update_note_tool(
     # path is covered, not just this tool.
     write_policy = exec_context.note_write_policy()
 
-    provenance_metadata = _note_provenance_from_taint(exec_context)
+    provenance_metadata = note_provenance_from_taint(exec_context)
 
     # Validate attachment IDs if provided
     # None means "preserve existing", empty list means "clear all attachments"
@@ -189,7 +194,11 @@ NOTE_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "add_or_update_note",
             "description": (
-                "Add a new note or update an existing note with the given title. Use this to remember information provided by the user. "
+                "Add a new note or update an existing note with the given title. Use this for the user's own notes: "
+                "lists, reference material, documents, anything they asked you to write down as a note. "
+                "For the household's long-term memory — standing preferences, facts about people, decisions, routines, "
+                "and anything you are asked to remember or forget — use `propose_memory_edits` instead, which edits "
+                "memory entry by entry and keeps their evidence. "
                 "Notes can have attachments (images, documents) associated with them by providing attachment UUIDs. "
                 "Leave `include_in_prompt` at its default `false` unless the note is short, evergreen context that must load every "
                 "turn (see the parameter description). To create a reusable skill instead of a plain note, load the 'Skill Creation' "

@@ -34,8 +34,10 @@ from family_assistant.tools.types import ToolExecutionContext
 CORE_TITLE = MemoryLimits.DEFAULTS.core_note_title
 
 # Small enough to write an over-cap note inline, so the tests read as
-# statements about the rule rather than about a wall of text.
-TIGHT_LIMITS = MemoryLimits(core_note_max_chars=40, topic_note_max_chars=60)
+# statements about the rule rather than about a wall of text. The core note's
+# cap leaves room for the derived topic index these tests are not about, since
+# it is regenerated into the core note on every memory write.
+TIGHT_LIMITS = MemoryLimits(core_note_max_chars=300, topic_note_max_chars=60)
 
 
 def _db(engine: AsyncEngine, *, limits: MemoryLimits = TIGHT_LIMITS) -> Database:
@@ -205,8 +207,8 @@ async def test_over_cap_core_write_refused(db_engine: AsyncEngine) -> None:
     db = _db(db_engine)
     await _write_topic(db, "Sam", "- likes trams")
 
-    with pytest.raises(MemoryWriteError, match="over its 40-character limit"):
-        await _write_topic(db, CORE_TITLE, "x" * 41, include_in_prompt=True)
+    with pytest.raises(MemoryWriteError, match="over its 300-character limit"):
+        await _write_topic(db, CORE_TITLE, "x" * 301, include_in_prompt=True)
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.sql import functions as func
 
+from family_assistant.memory.index import TopicIndexEntry, regenerate_topic_index
 from family_assistant.memory.invariants import (
     MEMORY_LABEL,
     MemoryWriteError,
@@ -552,7 +553,10 @@ class NotesRepository(BaseRepository):
             existing_memory_labels = (
                 existing_note.visibility_labels if existing_note else []
             )
-            if is_memory_write(visibility_labels_to_use, existing_memory_labels):
+            memory_write = is_memory_write(
+                visibility_labels_to_use, existing_memory_labels
+            )
+            if memory_write:
                 await self._enforce_memory_write(
                     txn,
                     lookup_title=title,
@@ -631,30 +635,34 @@ class NotesRepository(BaseRepository):
                         f"PostgreSQL error in add_or_update({title}): {e}"
                     )
                     raise
+                if memory_write:
+                    await self.refresh_core_memory_index(txn, now=now)
                 return "Success"
 
             else:
                 # Fallback for SQLite and other dialects: Try INSERT, then UPDATE on IntegrityError.
+                insert_stmt = insert(notes_table).values(
+                    title=title,
+                    content=note_content,
+                    include_in_prompt=include_in_prompt,
+                    attachment_ids=attachment_ids_json,
+                    visibility_labels=visibility_labels_json,
+                    is_skill=is_skill,
+                    skill_name=skill_name,
+                    skill_description=skill_description,
+                    provenance_metadata_json=provenance_metadata_to_use,
+                    created_at=now,
+                    updated_at=now,
+                )
                 try:
                     # Attempt INSERT first
-                    insert_stmt = insert(notes_table).values(
-                        title=title,
-                        content=note_content,
-                        include_in_prompt=include_in_prompt,
-                        attachment_ids=attachment_ids_json,
-                        visibility_labels=visibility_labels_json,
-                        is_skill=is_skill,
-                        skill_name=skill_name,
-                        skill_description=skill_description,
-                        provenance_metadata_json=provenance_metadata_to_use,
-                        created_at=now,
-                        updated_at=now,
-                    )
                     await txn.execute(insert_stmt)
                     self._logger.info(f"Inserted new note: {title} (SQLite fallback)")
 
                     # Enqueue indexing task
                     await self._enqueue_indexing_task(txn, title)
+                    if memory_write:
+                        await self.refresh_core_memory_index(txn, now=now)
                     return "Success"
                 except SQLAlchemyError as e:
                     # Check specifically for unique constraint violation
@@ -705,6 +713,8 @@ class NotesRepository(BaseRepository):
 
                         # Enqueue indexing task
                         await self._enqueue_indexing_task(txn, title)
+                        if memory_write:
+                            await self.refresh_core_memory_index(txn, now=now)
                         return "Success"
                     else:
                         # Re-raise other SQLAlchemy errors
@@ -759,6 +769,74 @@ class NotesRepository(BaseRepository):
         )
         await txn.memory_store.bump_revision()
 
+    async def refresh_core_memory_index(
+        self, txn: DatabaseTransaction, *, now: datetime
+    ) -> bool:
+        """Regenerate the core memory note's derived topic index.
+
+        Runs after every write to any memory note -- the core note included,
+        renames and deletions included -- inside the same transaction, so a
+        pointer never outlives its topic or its title and no writer has to
+        remember to update it. Applied to the stored content rather than to the
+        submitted content, so a hand edit to the index section through the
+        notes UI is overwritten by the regenerated one.
+
+        This is itself a write to the core note, made as a plain UPDATE rather
+        than through :meth:`add_or_update`, so it neither recurses nor bumps
+        the store revision a second time for one logical change.
+
+        Returns:
+            Whether the core note's content changed.
+
+        Raises:
+            MemoryWriteError: if the regenerated core note would exceed its
+                cap, which means the author's part leaves no room for the
+                index.
+        """
+        limits = self._db.memory_limits
+        core_note_id = await txn.memory_store.get_core_note_id()
+        if core_note_id is None:
+            return False
+
+        core_row = await txn.fetch_one(
+            select(notes_table.c.title, notes_table.c.content).where(
+                notes_table.c.id == core_note_id
+            )
+        )
+        if core_row is None:
+            return False
+        core_content: str = core_row["content"]
+
+        topic_rows = await txn.fetch_all(
+            select(notes_table.c.title, notes_table.c.updated_at)
+            .where(notes_table.c.id != core_note_id)
+            .where(self._labels_superset_condition([MEMORY_LABEL]))
+        )
+        topics = [
+            TopicIndexEntry(title=row["title"], last_changed=row["updated_at"] or now)
+            for row in topic_rows
+        ]
+        regenerated = regenerate_topic_index(
+            core_content, topics, max_chars=limits.topic_index_max_chars
+        )
+        if regenerated == core_content:
+            return False
+        if len(regenerated) > limits.core_note_max_chars:
+            raise MemoryWriteError(
+                f"The core memory note would be {len(regenerated)} characters "
+                f"with its regenerated topic index, over its "
+                f"{limits.core_note_max_chars}-character limit. Condense its "
+                "entries, or move detail into a memory topic note."
+            )
+
+        await txn.execute(
+            update(notes_table)
+            .where(notes_table.c.id == core_note_id)
+            .values(content=regenerated, updated_at=now)
+        )
+        await self._enqueue_indexing_task(txn, core_row["title"])
+        return True
+
     async def delete(self, title: str) -> bool:
         """Deletes a note by title.
 
@@ -796,6 +874,7 @@ class NotesRepository(BaseRepository):
                 return False
             if is_memory_note:
                 await txn.memory_store.bump_revision()
+                await self.refresh_core_memory_index(txn, now=datetime.now(UTC))
             self._logger.info(f"Deleted note: {title}")
             return True
 
@@ -913,11 +992,13 @@ class NotesRepository(BaseRepository):
         visibility_labels_json = json.dumps(visibility_labels_to_use)
         is_skill, skill_name, skill_description = _detect_skill_metadata(content)
 
+        memory_write = is_memory_write(
+            visibility_labels_to_use, existing_note.visibility_labels
+        )
+
         async def _rename(txn: DatabaseTransaction) -> str:
             """Update the note and enqueue its indexing task as one unit."""
-            if is_memory_write(
-                visibility_labels_to_use, existing_note.visibility_labels
-            ):
+            if memory_write:
                 await self._enforce_memory_write(
                     txn,
                     lookup_title=original_title,
@@ -952,6 +1033,8 @@ class NotesRepository(BaseRepository):
                 )
             self._logger.info(f"Renamed note from '{original_title}' to '{new_title}'")
             await self._enqueue_indexing_task(txn, new_title)
+            if memory_write:
+                await self.refresh_core_memory_index(txn, now=datetime.now(UTC))
             return "Success"
 
         return await self._db.atomic(_rename)

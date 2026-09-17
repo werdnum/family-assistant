@@ -268,6 +268,7 @@ if TYPE_CHECKING:
     from family_assistant.interfaces import ChatInterface  # Import the new interface
     from family_assistant.llm import LLMInterface
     from family_assistant.llm.messages import LLMMessage
+    from family_assistant.memory.edits import EvidenceScope
     from family_assistant.processing import ProcessingService
     from family_assistant.security.definition_records import (
         DefinitionGateOutcome,
@@ -561,6 +562,22 @@ class ToolExecutionContext:
     required_note_visibility_labels: list[str] | None = None
     allowed_note_visibility_labels: list[str] | None = None
     allow_wake_llm: bool = True
+    memory_evidence_scope: EvidenceScope | None = None
+    """Which message rows a memory edit proposed in this turn may cite.
+
+    Set by a curator review to the stretch it was given. ``None`` in the
+    foreground, where the tool derives the scope from this context's own
+    ``turn_id`` -- a "remember this" cites the message in which the person
+    asked, and can cite nothing else.
+    """
+    memory_expected_revision: int | None = None
+    """The memory store revision the model's proposal was computed against.
+
+    Set by a curator review to the revision it read before the model call, so
+    an edit list is never committed against a store a person changed while the
+    review ran. ``None`` in the foreground, where the tool reads the current
+    revision itself immediately before applying.
+    """
     note_registry: NoteRegistry | None = None
     confirmation_result_waiters: ConfirmationResultWaiterRegistry | None = None
     confirmation_ui_managers: dict[str, ConfirmationUIManager] | None = None

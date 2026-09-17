@@ -809,6 +809,7 @@ default_profile_settings:
       - match:
           names:
             - "add_or_update_note"
+            - "propose_memory_edits"
             - "get_note"
             - "list_notes"
             - "delete_note"
@@ -1709,6 +1710,7 @@ service_profiles:
         - match:
             names:
               - "add_or_update_note"
+              - "propose_memory_edits"
               - "get_note"
               - "list_notes"
               - "delete_note"
