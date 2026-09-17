@@ -53,6 +53,7 @@ class GeminiLiveTranscriptionConfig(BaseModel):
 
     input_enabled: bool = True
     output_enabled: bool = True
+    language_codes: list[str] = []
 
 
 class GeminiLiveVADConfig(BaseModel):

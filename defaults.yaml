@@ -272,6 +272,10 @@ gemini_live_config:
     input_enabled: true
     # Enable output (assistant) transcription
     output_enabled: true
+    # BCP-47 codes for the language(s) the user speaks, e.g. ["en-AU"]. An empty
+    # list lets Gemini auto-detect, which misreads short or noisy phrases as
+    # another language. Sent by the native iOS app.
+    language_codes: ["en"]
   # Voice Activity Detection (VAD) configuration
   # Controls automatic speech detection and turn-taking
   vad:

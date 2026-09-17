@@ -247,7 +247,14 @@ async def _format_system_prompt(
 
     voice_instruction = (
         "[Voice Mode Active] You are currently in voice conversation mode. "
-        "Keep responses concise and conversational. Speak naturally as if talking to the user."
+        "Keep responses concise and conversational. Speak naturally as if talking to the user.\n"
+        "The user hears nothing while you look things up, and silence sounds like a "
+        "dropped call. Before you call a tool, briefly say what you are doing, such as "
+        '"Let me check the pool." If answering takes more than one tool call, give a '
+        "short update between steps. If the user asks whether you are still there while "
+        "you are working, tell them you are still on it rather than starting the lookup "
+        "again. Keep these updates to a few words, and never state a result, progress "
+        "or estimate you do not actually have."
     )
     guidance = turn_context_guidance(
         includes_aggregated_context=service_config.include_aggregated_context,
