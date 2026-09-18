@@ -69,9 +69,9 @@ also search semantically for fuzzy references. Results are scoped to your own hi
 The **History** page in the web interface shows the same conversations across Telegram, web, and
 email, with filtering.
 
-The search field above the chat list, in the iOS app and in the web chat sidebar, finds chats by what
-was said anywhere in them, not only by the last message. Type a few words — "passport renewal", or
-just the start of them, "passp ren" — and it lists every chat where all of those words appear
+The search field above the chat list, in the iOS app and in the web chat sidebar, finds chats by
+what was said anywhere in them, not only by the last message. Type a few words — "passport renewal",
+or just the start of them, "passp ren" — and it lists every chat where all of those words appear
 somewhere, with a snippet of where they matched.
 
 Semantic search over a conversation catches up a couple of minutes after the exchange finishes, so a
