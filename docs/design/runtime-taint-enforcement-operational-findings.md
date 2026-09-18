@@ -184,6 +184,11 @@ provenance rule because they are deployment-controlled files rather than databas
 
 ## Minimal prompt-admission design
 
+> **Superseded.** The read-time `blocked_by_taint` status and explicit-review readmission below are
+> replaced by [ambient-note-admission-at-write-time.md](ambient-note-admission-at-write-time.md),
+> which decides ambient eligibility at the write that produces the note. The problem statement in
+> Issue 3 still stands.
+
 ### Effective status
 
 Derive a regular note's user-visible prompt status without adding a database column:
