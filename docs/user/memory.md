@@ -70,8 +70,9 @@ Portugal trip?"
 ## Correcting and forgetting
 
 Correcting is editing. Memory notes are ordinary notes, so you can fix an entry's wording, or delete
-a line you do not want, straight from the Notes page. Your edit wins over anything the assistant is
-in the middle of deciding.
+a line you do not want, straight from the Notes page. A review that was running while you edited
+never overwrites your version: it starts again from what you saved. It can still learn the same
+thing afresh from the conversation it is reading; if it does, remove the entry again.
 
 Or tell it: "that's wrong, we switched to the later train" updates the entry, and "forget that Sam
 plays hockey" removes it.

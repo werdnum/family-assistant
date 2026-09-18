@@ -615,8 +615,9 @@ All three are resolved.
 - **`complex_tasks` contributes.** It carries `memory_read` and `memory_contribute` explicitly, both
   off like `default_assistant`'s, and flips with the default at milestone 7. A long investigation is
   where constraints, rejected options and open decisions actually get settled, which is most of what
-  memory is for; and a delegation from the assistant lands here mid-conversation, so learning from
-  one half of a conversation and not the other would be arbitrary.
+  memory is for. This covers top-level `/complex` conversations only: a delegation into the profile
+  runs in a subconversation, and subconversations never contribute; the delegating conversation,
+  which carries the delegated result, is what gets reviewed.
 - **The household-scope statement lives in the documentation only**, in `docs/user/memory.md` and in
   the configuration reference. A one-time chat notice on the first memory write is a per-deployment
   interruption that buys nothing the recent-changes view of milestone 5 does not buy better, in the

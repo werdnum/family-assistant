@@ -2077,11 +2077,12 @@ so a deployment opts in explicitly.
 the opt-in is visible where an operator reads rather than inherited from a code default. A
 deployment turns memory on for the household by setting **both** on those profiles: contributing
 requires reading. `complex_tasks` carries the settings rather than reading only, because a long
-investigation is where constraints, rejected options and open decisions actually get settled, and a
-delegation from the assistant lands there mid-conversation — learning from one half of a
-conversation and not the other would be arbitrary. The shipped default flips on at milestone 7 of
-[the design](../design/conversation-memory.md), once the evaluation and the user-facing controls
-exist to measure and correct what gets written.
+investigation is where constraints, rejected options and open decisions actually get settled. The
+setting covers top-level `/complex` conversations only: a delegation into `complex_tasks` runs in a
+subconversation, and subconversations never contribute, whatever the profile's settings — the
+delegating conversation is reviewed instead, and it carries the delegated result. The shipped
+default flips on at milestone 7 of [the design](../design/conversation-memory.md), once the
+evaluation and the user-facing controls exist to measure and correct what gets written.
 
 The `memory_curator` profile is the exception and is left alone: it reads memory because curating it
 is its whole job, and does not contribute, since its own subconversation is never reviewed.

@@ -123,7 +123,8 @@
 #   - id: "complex_tasks"
 #     processing_config:
 #       memory_read: true
-#       memory_contribute: true
+#       memory_contribute: true   # top-level /complex conversations only; a delegation
+#                                 # into the profile is a subconversation, never reviewed
 #
 # The store's bounds and the review cadence are deployment-wide. The values
 # below are the shipped defaults; override only what you need.

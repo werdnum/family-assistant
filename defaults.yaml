@@ -1815,9 +1815,10 @@ service_profiles:
       # default_assistant above). This profile carries the settings rather than
       # reading only, and flips with the default at milestone 7: a long
       # investigation is where constraints, rejected options and open decisions
-      # are actually settled, which is most of what memory is for, and a
-      # delegation from the assistant lands here mid-conversation -- learning
-      # from one half of a conversation and not the other would be arbitrary.
+      # are actually settled, which is most of what memory is for. Only
+      # top-level /complex conversations are reviewed: a delegation into this
+      # profile runs in a subconversation, and subconversations never
+      # contribute, whatever their profile's settings.
       memory_read: false
       memory_contribute: false
       prompts:
