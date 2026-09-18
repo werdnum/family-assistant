@@ -334,14 +334,34 @@ async def _check_evidence(
     evidence_scope: EvidenceScope,
     revision: int,
 ) -> None:
-    """Refuse the list if any edit cites a message outside the writer's scope.
+    """Refuse the list unless every citing edit rests on messages in scope.
 
-    One query for every cited id, because the answer is the same for all of
-    them: does this row exist, in this conversation, inside this stretch.
+    Two ways to fail, both refused here so no writer can reach the store
+    without evidence: a citing edit that names no message at all, and one that
+    names a message outside the scope. One query for every cited id, because
+    the answer is the same for all of them: does this row exist, in this
+    conversation, inside this stretch.
 
     Raises:
-        MemoryEditsRejected: naming each edit and the ids it may not cite.
+        MemoryEditsRejected: naming each edit and what is wrong with its
+            citations.
     """
+    uncited = tuple(
+        EditRejection(
+            index=index,
+            reason=(
+                f"'{edit.op}' must cite at least one message in 'message_ids', "
+                "and cites none. Cite a message you were shown."
+            ),
+        )
+        for index, edit in enumerate(edits)
+        if edit.op in CITING_OPS and not edit.message_ids
+    )
+    if uncited:
+        raise MemoryEditsRejected(
+            ApplyOutcome(applied=False, revision=revision, rejections=uncited)
+        )
+
     cited = {
         message_id
         for edit in edits

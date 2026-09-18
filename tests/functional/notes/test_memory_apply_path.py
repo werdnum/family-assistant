@@ -1107,6 +1107,95 @@ async def test_the_tool_applies_a_list_citing_the_current_turn(
 
 
 @pytest.mark.asyncio
+async def test_the_tool_cites_the_turns_own_request_when_no_ids_are_supplied(
+    db_engine: AsyncEngine,
+) -> None:
+    """The foreground case: the model is shown no ids, so it supplies none."""
+    db = _db(db_engine)
+    ids = await _seed_turn(db, count=1)
+
+    result = await propose_memory_edits_tool(
+        _tool_context(db),
+        edits=[
+            {
+                "op": "add",
+                "note_title": "Sam",
+                "entry": "Sam prefers the tram.",
+            }
+        ],
+    )
+
+    assert "Applied" in result.get_text()
+    assert f"Sam prefers the tram. (refs: #{ids[0]})" in await _entries(db, "Sam")
+
+
+@pytest.mark.asyncio
+async def test_the_tool_refuses_when_the_turn_has_no_request_to_cite(
+    db_engine: AsyncEngine,
+) -> None:
+    """No user row, no evidence -- and no invented id standing in for one."""
+    db = _db(db_engine)
+
+    result = await propose_memory_edits_tool(
+        _tool_context(db),
+        edits=[
+            {
+                "op": "add",
+                "note_title": "Sam",
+                "entry": "Sam prefers the tram.",
+            }
+        ],
+    )
+
+    assert "No memory edits were applied" in result.get_text()
+    assert (
+        await db.notes.get_by_title("Sam", read_policy=NoteReadPolicy.UNRESTRICTED)
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_curator_must_cite_the_stretch_it_was_shown(
+    db_engine: AsyncEngine,
+) -> None:
+    """Nothing is bound for a writer that was shown ids: it cites them itself."""
+    db = _db(db_engine)
+    reviewed = await _seed_turn(db, turn_id="reviewed-turn", count=2)
+    read_revision = await db.memory_store.get_revision()
+
+    result = await propose_memory_edits_tool(
+        _tool_context(
+            db,
+            turn_id="curator-run",
+            memory_review=_review_context(
+                EvidenceScope.for_stretch(
+                    interface_type="web",
+                    conversation_id=CONVERSATION,
+                    first_internal_id=reviewed[0],
+                    last_internal_id=reviewed[-1],
+                ),
+                read_revision,
+            ),
+        ),
+        edits=[
+            {
+                "op": "add",
+                "note_title": "Sam",
+                "entry": "Sam prefers the tram.",
+            }
+        ],
+    )
+
+    text = result.get_text()
+    assert "No memory edits were applied" in text
+    assert "must cite at least one message" in text
+    assert (
+        await db.notes.get_by_title("Sam", read_policy=NoteReadPolicy.UNRESTRICTED)
+        is None
+    )
+
+
+@pytest.mark.asyncio
 async def test_the_tool_result_text_carries_the_rejection_reasons(
     db_engine: AsyncEngine,
 ) -> None:
@@ -1221,7 +1310,13 @@ async def test_the_tool_refuses_a_malformed_proposal(db_engine: AsyncEngine) -> 
 
     result = await propose_memory_edits_tool(
         _tool_context(db),
-        edits=[{"op": "add", "note_title": "Sam", "entry": "no evidence"}],
+        edits=[
+            {
+                "op": "move",
+                "note_title": "Sam",
+                "target_text": "Sam prefers the tram.",
+            }
+        ],
     )
 
     assert "malformed" in result.get_text()

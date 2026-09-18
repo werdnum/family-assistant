@@ -18,12 +18,17 @@ from typing import TYPE_CHECKING, Any
 from pydantic import ValidationError
 
 from family_assistant.memory.actor import MemoryActor, MemoryActorKind
-from family_assistant.memory.edits import EvidenceScope, MemoryEditList
+from family_assistant.memory.edits import (
+    CITING_OPS,
+    EvidenceScope,
+    MemoryEdit,
+    MemoryEditList,
+)
 from family_assistant.tools.notes import note_provenance_from_taint
 from family_assistant.tools.types import ToolDefinition, ToolResult
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Sequence
 
     from family_assistant.memory.apply import ApplyOutcome
     from family_assistant.memory.review_context import MemoryReviewContext
@@ -76,9 +81,11 @@ MEMORY_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "- move: relocate an entry verbatim to another memory note, which is how you make "
                 "room in a full core note\n\n"
                 "Rules the apply path enforces, so plan for them:\n"
-                "- add, replace and remove must cite at least one message id in `message_ids`, and "
-                "every cited message must be one you were shown in this turn or review. A move "
-                "cites nothing: the entry keeps the references it already carries.\n"
+                "- Every entry rests on a message, and the evidence is recorded for you. Leave "
+                "`message_ids` out unless you were shown message ids to cite: when you are acting "
+                "on what somebody just asked you, the message they asked in is cited "
+                "automatically. Never invent an id. A move cites nothing either way: the entry "
+                "keeps the references it already carries.\n"
                 "- `target_text` must match exactly one existing entry in the named note, after "
                 "leading '- ' and surrounding whitespace are ignored. If it matches none or several, "
                 "the whole list is refused and the reply quotes the note's current entries — quote "
@@ -125,7 +132,7 @@ MEMORY_TOOLS_DEFINITION: list[ToolDefinition] = [
                                 "message_ids": {
                                     "type": "array",
                                     "items": {"type": "integer"},
-                                    "description": "The message ids this edit rests on. Required for 'add', 'replace' and 'remove'; must be empty for 'move'.",
+                                    "description": "The ids of the messages this edit rests on, for 'add', 'replace' and 'remove'. Supply them only when you were shown message ids; omit this field otherwise and the message being acted on is cited for you. Must be empty for 'move'.",
                                 },
                             },
                             "required": ["op", "note_title"],
@@ -187,6 +194,12 @@ async def propose_memory_edits_tool(
         )
 
     db_context = exec_context.db_context
+    if review is None:
+        bound = await _bind_turn_evidence(exec_context, proposal.edits)
+        if isinstance(bound, str):
+            return ToolResult(text=bound)
+        proposal = MemoryEditList(edits=bound)
+
     now = (
         exec_context.clock.now()
         if exec_context.clock is not None
@@ -236,6 +249,50 @@ def _record_progress(review: MemoryReviewContext, outcome: ApplyOutcome) -> None
         return
     review.progress.refused_proposals += 1
     review.progress.conflicted = outcome.conflict
+
+
+async def _bind_turn_evidence(
+    exec_context: ToolExecutionContext, edits: Sequence[MemoryEdit]
+) -> list[MemoryEdit] | str:
+    """Cite the message the person asked in, for edits that cite nothing.
+
+    A foreground assistant never sees a ``message_history.internal_id``: the
+    turn reaches it as prose, and only the review transcript renders ids. So
+    the citation is bound here from the turn the tool is running in rather than
+    asked of a model that could only guess at it. An id the model *did* supply
+    is left alone, and the apply path still holds it to the turn's scope.
+
+    Returns the edits to apply, or the refusal to hand back when the turn has
+    no user row to cite -- which is not a fact to paper over with an invented
+    id, so it is reported as the failure it is.
+    """
+
+    def _needs_binding(edit: MemoryEdit) -> bool:
+        return edit.op in CITING_OPS and not edit.message_ids
+
+    if not any(_needs_binding(edit) for edit in edits):
+        return list(edits)
+
+    turn_id = exec_context.turn_id
+    user_row = (
+        await exec_context.db_context.message_history.get_user_row_by_turn_id(turn_id)
+        if turn_id is not None
+        else None
+    )
+    if user_row is None:
+        return (
+            "No memory edits were applied: this turn has no recorded request to "
+            "cite as evidence, and every memory entry must rest on a message. "
+            "Ask the person to say what they want remembered in a message of "
+            "their own, and propose the edit from that."
+        )
+    internal_id = int(user_row["internal_id"])
+    return [
+        edit.model_copy(update={"message_ids": [internal_id]})
+        if _needs_binding(edit)
+        else edit
+        for edit in edits
+    ]
 
 
 def _resolve_scope(exec_context: ToolExecutionContext) -> EvidenceScope | None:

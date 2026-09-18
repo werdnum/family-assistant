@@ -11,6 +11,14 @@ scope its writer was given: the reviewed stretch for the curator, the current
 turn for a foreground "remember this". The scope is a value rather than a
 predicate so it can be carried on the execution context and rendered into an
 error a model can act on.
+
+*Who* fills in the citation differs by writer, which is why this model does not
+require it. The curator is shown a transcript with an id against every message,
+so it cites them itself and the apply path refuses a citing edit that names
+none. A foreground assistant is shown no ids at all -- the turn's messages
+reach it as prose -- so the tool binds the current turn's own user row before
+the apply path sees the list, rather than the prompt asking the model for an id
+it could only invent.
 """
 
 from __future__ import annotations
@@ -61,7 +69,12 @@ class MemoryEdit(BaseModel):
     destination_note_title: str | None = None
     """Where a ``move`` puts the entry."""
     message_ids: list[int] = Field(default_factory=list)
-    """``message_history.internal_id`` values this edit rests on."""
+    """``message_history.internal_id`` values this edit rests on.
+
+    Left empty by a writer that was never shown any ids; the memory tool binds
+    the current turn's user row in that case. A citing edit that still carries
+    none by the time it reaches the apply path is refused there.
+    """
 
     @model_validator(mode="after")
     def _check_fields_match_op(self) -> MemoryEdit:
@@ -92,13 +105,8 @@ class MemoryEdit(BaseModel):
                     "'move' cites nothing: the entry keeps the references it "
                     "already carries."
                 )
-        else:
-            if self.destination_note_title is not None:
-                raise ValueError(f"'{self.op}' does not take 'destination_note_title'.")
-            if not self.message_ids:
-                raise ValueError(
-                    f"'{self.op}' must cite at least one message in 'message_ids'."
-                )
+        elif self.destination_note_title is not None:
+            raise ValueError(f"'{self.op}' does not take 'destination_note_title'.")
         return self
 
 
