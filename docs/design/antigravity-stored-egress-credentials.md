@@ -85,19 +85,33 @@ person rather than as the App, which gives up precisely the scoping that
 [judge-gated-engineer-side-effects.md](judge-gated-engineer-side-effects.md) chose an installation
 token for. Trading the blast radius for someone else's refresh loop is the wrong side of that trade.
 
-So the App keeps minting, and we keep rotating. `bearer_token` is the type, and the `scheme` split
-the previous design already needed — REST takes `Bearer <token>`, git-over-HTTPS takes
-`Basic base64("x-access-token:<token>")` — survives it, but not for free. `prefix` prepends text to
-the stored value; it cannot encode it. A single credential holding the raw token would therefore
-render `Basic ghs_...` for the git rule, which is a 401.
+So the App keeps minting, and we keep rotating — for the credentials the store can actually carry,
+which is fewer than it first appears.
 
-**One mint, one stored credential per scheme.** A run's `github_app` credentials are minted once and
-stored as separate ids: the bearer rule holds the raw token, the basic rule holds
-`base64("x-access-token:<token>")` under `prefix: "Basic"`. The encoding stays ours, as it is today;
-what moves is only where the encoded value lands. Rotation writes every scheme's id from one mint,
-so the ids never hold *unrelated* tokens — but two `PATCH`es are two requests, and one can fail
-while the other lands. The residual that leaves is bounded rather than designed away; see
-"Deliberate simplifications".
+**The store emits `Authorization: Bearer <token>` and nothing else.** A `bearer_token` credential
+accepts `header_name` and `prefix` on create, but the egress proxy ignores both: a credential
+created with `header_name: "X-Custom-Hdr"` and `prefix: "Basic"` arrives at the destination as
+`authorization: "Bearer <token>"` (measured 2026-09-18; `prefix` is the control, having no alternate
+spelling to blame). So the store cannot express GitHub's git-over-HTTPS form,
+`Basic base64("x-access-token:<token>")`, and no arrangement of stored values fixes that — a
+pre-encoded value would simply arrive as `Bearer <base64…>`, the wrong scheme.
+
+**The scheme therefore decides the mechanism.** A credential goes to the store when both hold:
+
+1. its value expires, so it must change while a run is in flight; and
+2. the store can express its wire form — `Authorization: Bearer <token>`.
+
+`github_app` on `scheme: "bearer"` satisfies both: that is the REST rule (`api.github.com`), and it
+gains refresh. `scheme: "basic"` satisfies only the first, so the git rule (`github.com`) keeps the
+`transform` header it uses today and keeps the ~1h ceiling with it. Static credentials fail the
+first and stay on `transform` for the reasons above.
+
+This is a capability constraint rather than a preference, and it is worth retesting rather than
+designing around permanently: if GitHub's git-over-HTTPS endpoint accepts
+`Authorization: Bearer <installation-token>`, the git rule becomes a `bearer` rule and the ceiling
+disappears everywhere. That is one `git ls-remote` against a private repository with a real
+installation token — a check for a deployment that has one, not something this design should assume
+either way.
 
 ### Rule of Two
 
@@ -133,46 +147,48 @@ was — a fact worth writing into the operator documentation rather than leaving
 
 Each milestone stands alone and is verifiable without the next.
 
-1. **Confirm mid-run propagation.** Everything below rests on a stored credential's value reaching
-   an *already-running* interaction. This is asserted by the documented per-request resolution but
-   has **not been observed**; see "Unverified assumption". Outcome: a recorded run showing the
-   post-rotation value arriving at the sandbox's egress. If it does not propagate, the rest of this
-   document is void and the ceiling stands — stop here.
+1. ~~**Confirm mid-run propagation.**~~ **Done** — see "What was verified". A rotation mid-run
+   reached the running interaction, so the rest of this plan stands.
 2. **Credential store client.** Create, update and delete against the store, behind the same
    `AntigravityEgressError` contract the current resolver uses: a credential that cannot be
    established raises rather than resolving to a rule without one, because a sandbox that reaches a
    private repo unauthenticated fails as a 404 deep inside the agent. Verified by unit tests over a
    faked transport, and by the credential lifecycle against the live API.
-3. **Route minted credentials to the store.** A rule naming a minted kind carries a `credential` id
-   instead of a built header; a rule naming a static one is untouched, so `transform` stays for
-   exactly that case. Verified by the existing shipped-profile and egress tests, re-pointed — a
-   profile configuring no credential must still send no `network` block at all, which is what keeps
-   the shipped `coder` at [C].
+3. **Route qualifying credentials to the store.** A rule whose credential expires *and* whose wire
+   form is `Authorization: Bearer <token>` carries a `credential` id; every other rule keeps its
+   built header, so `transform` stays for the git and static cases. Verified by the existing
+   shipped-profile and egress tests, re-pointed — a profile configuring no credential must still
+   send no `network` block at all, which is what keeps the shipped `coder` at [C].
 4. **Rotation task.** Periodic mint-and-`PATCH` at a fraction of token life. Verified by a test that
    drives it on a fake `Clock` — the existing egress tests already establish that pattern, so expiry
    is exercised without sleeping.
 5. **Documentation.** `CONFIGURATION_REFERENCE.md` for the credential id and the API-project
    sensitivity above; a correction to the superseded paragraph in the previous design doc.
 
-## Unverified assumption
+## What was verified
 
-**A mid-run `PATCH` reaches a running interaction.** Partially probed against the live API on
-2026-09-18:
+**A mid-run `PATCH` reaches a running interaction.** Measured against the live API on 2026-09-18.
 
-- `antigravity-preview-09-2026` accepts a submit carrying an allowlist rule with a `credential` id.
-- `POST /credentials` creates a `bearer_token` credential; the response carries metadata only, never
-  the token.
-- `PATCH /credentials/{id}` replaces the token in place and advances `update_time`, touching no
-  interaction and no configuration.
-- `DELETE /credentials/{id}` removes it.
+A synchronous agent run polled a header-echoing endpoint five times, twenty seconds apart, through
+an allowlist rule bound to a stored credential. The credential was `PATCH`ed from one sentinel value
+to another 55 seconds in. The run's own transcript shows iterations 1-2 carrying the pre-rotation
+value and iterations 3-5 carrying the post-rotation one. Per-request resolution is therefore
+observed behaviour, not an inference from the documentation, and the ceiling this design exists to
+remove is genuinely removable.
 
-The step that could not be closed is the one that matters: the probe key creates interactions but
-`GET /interactions/{id}` answers `not_found` for them, fresh or otherwise, so the header the sandbox
-actually received after rotation was never read back. The experiment to finish, on a key that can
-read interactions: start a background run that polls a header-echoing endpoint on a sleep loop
-through an allowlist rule bound to a credential, `PATCH` the credential mid-run, and read the run's
-own output for the value it saw before and after. Milestone 1 is that experiment, and nothing should
-be built on the strength of the documentation alone.
+Also established in the same session:
+
+- `POST`, `PATCH` and `DELETE /credentials/{id}` all behave as documented; no endpoint ever returns
+  a stored value.
+- `header_name` and `prefix` are accepted on create and then ignored on the wire, which is what the
+  scheme rule above is built on.
+- A submit naming `antigravity-preview-09-2026` accepts an allowlist rule carrying a `credential`.
+
+One incidental finding, recorded because it shapes how this is testable: the probe key creates agent
+interactions but `GET /interactions/{id}` answers `not_found` for them, while a plain model
+interaction reads back normally. A **non-background** agent run sidesteps that entirely — its create
+response carries the whole step transcript — which is how the experiment above was run and how any
+future one should be.
 
 ## Deliberate simplifications
 
@@ -183,14 +199,12 @@ be built on the strength of the documentation alone.
 - **Rotation is unconditional.** It does not ask whether a run is in flight. Gating it on live runs
   would add exactly the state the design is trying not to grow, to save a token exchange that costs
   one HTTP round trip.
-- **Partial rotation is repaired by the next tick, not by a retry path.** Two ids mean two requests,
-  and nothing makes them atomic. A tick that updates one and not the other leaves the schemes
-  holding tokens of different ages — harmless while both are unexpired, since each is independently
-  valid. The next unconditional tick rewrites both from a fresh mint, so drift self-heals within one
-  interval, which is a fraction of token life. Sustained failure is not a new failure mode: it is
-  the "rotation stopped" case above, arriving as a visible 401 on whichever scheme went stale first.
-  Adding per-id retry, ordering or compensation would buy a narrower window at the cost of exactly
-  the lifecycle state this design refuses to grow.
+- **Rotation writes one id, so there is no drift to reconcile.** The scheme rule leaves exactly one
+  credential in the store — the bearer/REST one — so a tick is a single mint and a single `PATCH`.
+  An earlier draft put one credential per scheme in the store and had to account for two `PATCH`es
+  drifting apart; the capability constraint removed that case rather than requiring machinery for
+  it. A failed tick is repaired by the next one, within a fraction of token life, and sustained
+  failure is the "rotation stopped" case above arriving as a visible 401.
 - **No cleanup of orphaned ids.** A credential whose config stopped referencing it keeps being
   rotated until an operator deletes it. Reconciling the store against config is machinery for a rare
   case, and it is unnecessary *because* of the rule above: every stored value is a minted token that
