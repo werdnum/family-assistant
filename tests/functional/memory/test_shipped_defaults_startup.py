@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
+from fastapi import FastAPI
 
 from family_assistant.assistant import Assistant
 from family_assistant.config_loader import load_config
@@ -136,14 +137,36 @@ async def test_startup_schedules_the_review_sweep(
     """
     db = Database(db_engine)
 
-    # Calling the private method on purpose: it is the one `_setup_system_tasks`
+    # Calling the private method on purpose: it is the one `Assistant.run`
     # calls, so the assertion is about startup rather than about a stand-in.
-    await shipped_assistant._seed_memory_review_sweep(db)  # pylint: disable=protected-access
+    await shipped_assistant._seed_memory_review_sweep()  # pylint: disable=protected-access
 
     sweep = await _seeded_sweep(db)
     assert sweep is not None
     interval = shipped_assistant.config.memory_config.sweep_interval_minutes
     assert sweep["recurrence_rule"] == f"FREQ=MINUTELY;INTERVAL={interval}"
+
+
+@pytest.mark.asyncio
+async def test_startup_schedules_the_review_sweep_without_the_event_system(
+    shipped_assistant: Assistant, db_engine: AsyncEngine
+) -> None:
+    """The sweep is the task worker's work, not the event processor's.
+
+    `event_system.enabled: false` leaves `Assistant` with no event processor,
+    and the curator would otherwise never run on a deployment that has memory
+    fully on -- silently, since every memory setting still reads as enabled.
+    """
+    shipped_assistant.config.event_system.enabled = False
+    shipped_assistant.fastapi_app = FastAPI()
+    # Calling the private methods on purpose: they are the ones `Assistant.run`
+    # calls, so what is exercised is the guard startup actually has.
+    shipped_assistant._setup_event_system()  # pylint: disable=protected-access
+    assert shipped_assistant.event_processor is None
+
+    await shipped_assistant._run_startup_tasks()  # pylint: disable=protected-access
+
+    assert await _seeded_sweep(Database(db_engine)) is not None
 
 
 @pytest.mark.asyncio
@@ -189,8 +212,8 @@ async def test_turning_the_master_switch_off_schedules_no_sweep(
     shipped_assistant.config.memory_config.enabled = False
     db = Database(db_engine)
 
-    # Calling the private method on purpose: it is the one `_setup_system_tasks`
+    # Calling the private method on purpose: it is the one `Assistant.run`
     # calls, so the assertion is about startup rather than about a stand-in.
-    await shipped_assistant._seed_memory_review_sweep(db)  # pylint: disable=protected-access
+    await shipped_assistant._seed_memory_review_sweep()  # pylint: disable=protected-access
 
     assert await _seeded_sweep(db) is None

@@ -2191,17 +2191,7 @@ class Assistant:
             self._monitor_task_worker_health()
         )
 
-        # Start event processor if initialized
-        if self.event_processor:
-            self.event_processor_task = asyncio.create_task(
-                self.event_processor.start()
-            )
-            logger.info("Event processor started")
-
-            # Create system cleanup task
-            await self._setup_system_tasks()
-
-        await self._record_memory_enablement()
+        await self._run_startup_tasks()
 
         # Reconcile stale worker tasks asynchronously
         asyncio.create_task(self._reconcile_worker_tasks())
@@ -2215,6 +2205,26 @@ class Assistant:
             logger.info("Web server stopped.")
 
         # Final cleanup will be in stop_services, called from main's finally block.
+
+    async def _run_startup_tasks(self) -> None:
+        """Start the event processor and seed the work that startup schedules.
+
+        Called once the task worker pool is running, which is what every task
+        seeded here depends on. The event processor is optional -- a deployment
+        can turn the event system off -- so only the tasks that belong to it
+        sit behind that guard; the memory steps do not.
+        """
+        if self.event_processor:
+            self.event_processor_task = asyncio.create_task(
+                self.event_processor.start()
+            )
+            logger.info("Event processor started")
+
+            # Create system cleanup task
+            await self._setup_system_tasks()
+
+        await self._record_memory_enablement()
+        await self._seed_memory_review_sweep()
 
     def initiate_shutdown(self, signal_name: str) -> None:
         """Sets the shutdown event to begin graceful shutdown."""
@@ -2306,7 +2316,7 @@ class Assistant:
             now=datetime.now(UTC),
         )
 
-    async def _seed_memory_review_sweep(self, db_ctx: Database) -> None:
+    async def _seed_memory_review_sweep(self) -> None:
         """Schedule the recurring review sweep, when there is anything to sweep.
 
         Two conditions, and both are deliberate. The master switch is what a
@@ -2316,7 +2326,18 @@ class Assistant:
         return nothing. A sweep seeded by an earlier configuration and left
         behind by a later one is harmless: the handler reads the same two
         conditions and returns immediately.
+
+        Nothing else gates it. The sweep is run by the task worker pool, which
+        `run` always starts -- there is no configuration that leaves a
+        deployment without one -- so this is seeded from startup directly
+        rather than from `_setup_system_tasks`, which only runs when the event
+        system is enabled and would otherwise leave memory fully on with no
+        curator ever running.
         """
+        assert self.database_engine is not None, (
+            "Database engine must be initialized before seeding the review sweep"
+        )
+        db_ctx = Database(self.database_engine)
         settings = self.config.memory_config.to_review_settings()
         contributors = self._memory_contributing_profiles()
         if not settings.enabled or not contributors:
@@ -2509,8 +2530,6 @@ class Assistant:
                 # The enqueue upserts, so a failure here is a real one, and it
                 # leaves the reaper with no caller until the next restart.
                 logger.exception("Attachment cleanup task setup failed")
-
-            await self._seed_memory_review_sweep(db_ctx)
 
             if self.embedding_generator is None:
                 logger.info(
