@@ -484,7 +484,13 @@ async def _prepare_script_call(
     """
     if name != "execute_script":
         return arguments
-    unknown = arguments.keys() - {"script", "globals", "name", "parameters"}
+    unknown = arguments.keys() - {
+        "script",
+        "globals",
+        "name",
+        "parameters",
+        "script_bindings",
+    }
     if unknown:
         return ToolResult(text=f"Error: Unknown script arguments: {sorted(unknown)}")
     try:
@@ -509,7 +515,7 @@ async def _prepare_script_call(
     policy_context: dict[str, object] = {
         "tool_tags": {item.name: sorted(item.tags) for item in inventory},
         "runtime_controls": "Tool availability, hard denials, confirmation floors and resource limits remain enforced.",
-        "model_boundaries": "llm/llm_json and non-script_deterministic tools end inherited approval, including the caller continuation.",
+        "model_boundaries": "Hash-bound static child scripts share program approval. llm/llm_json, unbound scripts and other non-script_deterministic tools end inherited approval, including the caller continuation.",
         "resource_limits": {"max_execution_time_seconds": 600},
     }
     if policy is not None:
@@ -561,6 +567,17 @@ def _script_call_inherits(
     scope = context.script_execution
     if scope is None:
         return False
+    prepared = context.prepared_script
+    if (
+        descriptor.name == "execute_script"
+        and prepared is not None
+        and prepared.bound_child
+    ):
+        if scope.approved:
+            _approve_prepared_script(
+                context, "inherited", scope.invocation.review.review_id
+            )
+        return scope.approved
     if (
         ToolTag.SCRIPT_DETERMINISTIC not in descriptor.tags
         or descriptor.tags.intersection({ToolTag.CODE_EXECUTION, ToolTag.DELEGATION})
@@ -1299,13 +1316,13 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
             definition_gate_outcome=None,
             pending_definition_review=None,
         )
-        _script_call_inherits(descriptor, context, arguments)
         prepared = await _prepare_script_call(
             name, arguments, context, self._descriptor_provider, self._policy_engine
         )
         if isinstance(prepared, ToolResult):
             return prepared
         arguments = prepared
+        _script_call_inherits(descriptor, context, arguments)
 
         async def execute_authorized() -> str | ToolResult:
             return await self.wrapped_provider.execute_tool(
@@ -2195,13 +2212,13 @@ class TaintTrackingToolsProvider(ToolsProvider):
             definition_gate_outcome=None,
             pending_definition_review=None,
         )
-        _script_call_inherits(descriptor, context, arguments)
         prepared = await _prepare_script_call(
             name, arguments, context, self._descriptor_provider
         )
         if isinstance(prepared, ToolResult):
             return prepared
         arguments = prepared
+        _script_call_inherits(descriptor, context, arguments)
 
         async def execute_authorized() -> str | ToolResult:
             return await self.wrapped_provider.execute_tool(

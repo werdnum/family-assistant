@@ -528,12 +528,18 @@ validation, and runtime limits. Taint collection and result provenance also rema
 Observe-mode verdicts, permissive policy results, `in_script`, and a taint snapshot are not
 authorization.
 
-The boundary ends wherever new executable content or a new model decision begins. Saving a script or
-automation, persisting callback code, or creating another executable definition retains an
-independent definition gate. Nested scripts, delegated agents, callbacks, future automation runs,
-and `llm()` or `llm_json()` decisions keep their own enforcement and policy-required review before
-their later effects. Those independent reviews receive the enclosing program and parent decision as
-context, but cannot inherit its verdict or its provenance disposition.
+Statically named stored-script children are recursively resolved with their source, schema, content
+hash, and provenance. Those bound descendants are part of the reviewed program. Each child use
+verifies its binding against the loaded row; changed or missing dependencies require fresh review,
+including on durable confirmation replay. Scheduled firings use the same recursive closure when
+combining definition provenance.
+
+The boundary ends wherever unbound executable content or a new model decision begins. Saving a
+script or automation, persisting callback code, or creating another executable definition retains an
+independent definition gate. Unbound nested scripts, delegated agents, callbacks, future automation
+runs, and `llm()` or `llm_json()` decisions keep their own enforcement and policy-required review
+before their later effects. Those independent reviews receive the enclosing program and parent
+decision as context, but cannot inherit its verdict or its provenance disposition.
 
 This enrichment also matters when there is no outer review to inherit. A script admitted by static
 policy can read untrusted data before its first nested egress needs review. That nested review must

@@ -272,11 +272,14 @@ result = tools_execute_json("send_email", args_json)
 When a script needs approval, one approval can cover the script as a whole, including ordinary
 intermediate steps such as reading information and saving the requested result. The approval is for
 the exact source and inputs that were shown. If a saved script changes while an approval is pending,
-the approved run still uses the earlier source.
+the approved run still uses the earlier source. Calls to saved child scripts with literal names are
+included recursively in that review. If a child changes or disappears before it runs, prepare and
+approve the script again.
 
 Approval does not grant extra permissions: the tools a script can use and their normal safeguards
-still apply. Saving or running new code, creating future automation, and using a model to make a
-later decision each follow their own approval rules.
+still apply. Saving or running code outside that reviewed set, choosing a child dynamically,
+creating future automation, and using a model to make a later decision each follow their own
+approval rules.
 
 ### Attachment API
 

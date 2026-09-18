@@ -33,6 +33,10 @@ from family_assistant.security.definition_records import (
     resolve_definition_record,
     script_definition_content,
 )
+from family_assistant.security.script_closure import (
+    ScriptClosure,
+    resolve_script_closure,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Mapping
@@ -88,6 +92,18 @@ DefinitionRef = (
 )
 
 
+def _resolve_script_record(script: ScriptRow) -> DefinitionResolution:
+    return resolve_definition_record(
+        script.definition_record,
+        script_definition_content(
+            name=script.name,
+            description=script.description,
+            script_code=script.script_code,
+            parameters_schema=script.parameters_schema,
+        ),
+    )
+
+
 async def _resolve_one(db: Database, ref: DefinitionRef) -> DefinitionResolution:
     match ref:
         case ScheduleAutomationRef(automation_id=automation_id):
@@ -121,14 +137,14 @@ async def _resolve_one(db: Database, ref: DefinitionRef) -> DefinitionResolution
                 ),
             )
         case LoadedScriptRef(script=script):
-            return resolve_definition_record(
-                script.definition_record,
-                script_definition_content(
-                    name=script.name,
-                    description=script.description,
-                    script_code=script.script_code,
-                    parameters_schema=script.parameters_schema,
-                ),
+            closure = await resolve_script_closure(
+                db, script.script_code, loaded_root=script
+            )
+            root = _resolve_script_record(script)
+            return (
+                root.combine(closure.resolution)
+                if closure.resolution is not None
+                else root
             )
         case PayloadDefinitionRef(record=record, content=content):
             return resolve_definition_record(record, content)
@@ -137,18 +153,36 @@ async def _resolve_one(db: Database, ref: DefinitionRef) -> DefinitionResolution
 async def resolve_definition_closure(
     db: Database,
     refs: Iterable[DefinitionRef],
+    *,
+    script_closure: ScriptClosure | None = None,
 ) -> DefinitionResolution:
     """Resolve every artifact a firing executes or renders; the weakest governs.
 
     An empty closure is unresolved rather than trusted: a firing that can name
     no definition artifact has nothing whose authorship it could vouch for, and
     that is exactly the legacy case this design leaves fail-closed.
+
+    Supply a freshly resolved ``script_closure`` to reuse its static walk.
+    Loaded script refs resolve their own records without walking descendants
+    again; other ref types resolve normally. The caller must supply the closure
+    for the source this firing will execute.
+    An inline closure contributes descendants only, leaving root provenance to
+    the automation or payload ref. Empty inline closures contribute nothing.
     """
-    resolution: DefinitionResolution | None = None
+    resolution = script_closure.resolution if script_closure is not None else None
+    has_invoking_definition = False
     for ref in refs:
-        current = await _resolve_one(db, ref)
+        has_invoking_definition = True
+        if isinstance(ref, LoadedScriptRef) and script_closure is not None:
+            current = _resolve_script_record(ref.script)
+        else:
+            current = await _resolve_one(db, ref)
         resolution = current if resolution is None else resolution.combine(current)
-    return resolution if resolution is not None else UNRESOLVED_DEFINITION
+    return (
+        resolution
+        if has_invoking_definition and resolution is not None
+        else UNRESOLVED_DEFINITION
+    )
 
 
 async def attach_pending_verdict(

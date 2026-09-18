@@ -695,7 +695,8 @@ def assemble_tool_call_review_messages(
             "capabilities and policy: loops, data-dependent effects and destinations, "
             "model-produced results, and durable executable definitions. An allow "
             "authorizes covered deterministic operations even after new untrusted reads; "
-            "it does not bypass hard controls or approve new executable code or model "
+            "hash-bound statically named child scripts are included in that program. It "
+            "does not bypass hard controls or approve unbound executable code or model "
             "decisions. Enclosing programs explain intermediate steps, but are not "
             "independent approval of this call."
         )

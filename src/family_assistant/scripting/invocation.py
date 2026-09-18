@@ -16,8 +16,15 @@ from family_assistant.security.definition_records import (
     resolve_definition_record,
     script_definition_content,
 )
+from family_assistant.security.script_closure import (
+    ScriptBinding,
+    ScriptClosureError,
+    resolve_script_closure,
+)
 
 if TYPE_CHECKING:
+    from family_assistant.security.script_closure import ScriptClosure
+    from family_assistant.storage.repositories.scripts import ScriptRow
     from family_assistant.tools.types import ToolDefinition, ToolExecutionContext
 
 
@@ -28,6 +35,7 @@ class ScriptInvocationArguments(TypedDict, total=False):
     globals: dict[str, object] | None
     name: str | None
     parameters: dict[str, object] | None
+    script_bindings: list[dict[str, object]] | None
 
 
 class ScriptPreparationError(ValueError):
@@ -48,6 +56,7 @@ class ScriptReviewContext:
     external_functions: tuple[str, ...]
     stored_name: str | None = None
     definition: DefinitionResolution | None = None
+    script_bindings: tuple[dict[str, object], ...] = ()
     policy: dict[str, object] = field(default_factory=dict)
     decision: str = "unreviewed"
     review_id: str | None = None
@@ -69,10 +78,19 @@ class PreparedScriptInvocation:
     review: ScriptReviewContext
     globals: dict[str, object]
     approved: bool = False
+    bound_child: bool = False
 
     def arguments(self) -> dict[str, object]:
         """Return the inline payload used for review, confirmation and execution."""
-        return {"script": self.review.source, "globals": _copy_globals(self.globals)}
+        arguments: dict[str, object] = {
+            "script": self.review.source,
+            "globals": _copy_globals(self.globals),
+        }
+        if self.review.script_bindings:
+            arguments["script_bindings"] = copy.deepcopy(
+                list(self.review.script_bindings)
+            )
+        return arguments
 
 
 @dataclass
@@ -103,6 +121,29 @@ class ScriptExecutionScope:
         )
 
 
+async def _resolve_bound_closure(
+    context: ToolExecutionContext,
+    source: str,
+    row: ScriptRow | None,
+    supplied_bindings: list[dict[str, object]] | None,
+    bound_child: bool,
+) -> ScriptClosure:
+    closure = await resolve_script_closure(context.db_context, source, loaded_root=row)
+    if supplied_bindings is not None:
+        closure.verify_bindings(supplied_bindings)
+    if bound_child and context.script_execution is not None:
+        inherited_bindings = {
+            item["name"]: item
+            for item in context.script_execution.invocation.review.script_bindings
+        }
+        for binding in closure.bindings:
+            if inherited_bindings.get(binding.name) != binding.to_dict():
+                raise ScriptClosureError(
+                    f"Stored script '{binding.name}' changed since preparation; prepare and review again"
+                )
+    return closure
+
+
 async def prepare_script_invocation(
     context: ToolExecutionContext,
     script: str | None = None,
@@ -110,6 +151,7 @@ async def prepare_script_invocation(
     name: str | None = None,
     parameters: dict[str, object] | None = None,
     *,
+    script_bindings: list[dict[str, object]] | None = None,
     allow_external_script_apis: bool = True,
 ) -> PreparedScriptInvocation:
     """Resolve and validate without evaluating code or constructing external APIs."""
@@ -119,10 +161,29 @@ async def prepare_script_invocation(
         )
     inputs = _copy_globals(globals or {})
     definition = None
+    row = None
+    bound_child = False
     if name and not script:
         row = await context.db_context.scripts.get_by_name(name)
         if row is None:
             raise ScriptPreparationError(f"Script '{name}' not found", "not_found")
+        parent = context.script_execution
+        if parent is not None:
+            expected = next(
+                (
+                    binding
+                    for binding in parent.invocation.review.script_bindings
+                    if binding["name"] == name
+                ),
+                None,
+            )
+            if expected is not None:
+                if ScriptBinding.from_row(row).to_dict() != expected:
+                    raise ScriptPreparationError(
+                        f"Stored script '{name}' changed since preparation; prepare and review again",
+                        "stale_script_binding",
+                    )
+                bound_child = True
         script = row.script_code
         if row.parameters_schema:
             required = row.parameters_schema.get("required", [])
@@ -174,6 +235,18 @@ async def prepare_script_invocation(
         raise ScriptPreparationError(
             f"Script validation failed: {validation.error_message}"
         )
+    try:
+        closure = await _resolve_bound_closure(
+            context, script, row, script_bindings, bound_child
+        )
+    except ScriptClosureError as exc:
+        raise ScriptPreparationError(str(exc), "stale_script_binding") from exc
+    if closure.resolution is not None:
+        definition = (
+            closure.resolution
+            if definition is None
+            else definition.combine(closure.resolution)
+        )
     return PreparedScriptInvocation(
         review=ScriptReviewContext(
             source=script,
@@ -191,6 +264,8 @@ async def prepare_script_invocation(
             ]),
             stored_name=name,
             definition=definition,
+            script_bindings=tuple(binding.to_dict() for binding in closure.bindings),
         ),
         globals=inputs,
+        bound_child=bound_child,
     )

@@ -25,6 +25,10 @@ from family_assistant.processing.types import (
     ChatInteractionResult,
     ChatInteractionStatus,
 )
+from family_assistant.security.definition_records import (
+    definition_content_hash,
+    script_definition_content,
+)
 from family_assistant.security.taint import (
     SinkClass,
     SourceTrustTier,
@@ -2073,3 +2077,176 @@ async def test_context_failure_notifies_original_conversation_without_live_waite
     assert status == "failed"
     assert error is not None
     assert "secondary-profile" in error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dependency_mutation", ["changed", "deleted"])
+async def test_durable_script_confirmation_rejects_stale_named_dependency(
+    db_engine: AsyncEngine,
+    dependency_mutation: str,
+) -> None:
+    db = Database(engine=db_engine)
+    child_source = (
+        'add_or_update_note(title="Durable child effect", content="approved")'
+    )
+    await db.scripts.save(
+        name="durable-child",
+        description="Confirmed dependency",
+        script_code=child_source,
+        definition_taint_state=TurnTaintState.empty(),
+    )
+    registrations = [
+        registration
+        for registration in LOCAL_TOOL_REGISTRATIONS
+        if registration.name in {"execute_script", "add_or_update_note"}
+    ]
+    provider = PolicyEnforcingToolsProvider(
+        wrapped_provider=LocalToolsProvider(registrations=registrations),
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(
+                default_decision=ToolPolicyDecision.ALLOW,
+                rules=[
+                    PolicyRule(
+                        match=ToolMatcher(names=["execute_script"]),
+                        decision=ToolPolicyDecision.CONFIRM,
+                    )
+                ],
+            )
+        ),
+    )
+    context = ToolExecutionContext(
+        interface_type="web",
+        conversation_id="web-conversation-1",
+        user_name="Automation Owner",
+        user_id="user-1",
+        turn_id=None,
+        db_context=db,
+        processing_service=_processing_service(provider),
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        credential_resolvers=None,
+        api_backend=None,
+        timezone=ZoneInfo("UTC"),
+        tools_provider=provider,
+        processing_profile_id="test-profile",
+        request_confirmation_callback=build_deferred_confirmation_callback(
+            target_user_id="user-1",
+            source_prefix="Automation requested approval.",
+            missing_owner_message=lambda tool_name: (
+                f"No owner available for {tool_name}."
+            ),
+        ),
+    )
+    result = await provider.execute_tool(
+        "execute_script",
+        {"script": 'execute_script(name="durable-child")'},
+        context,
+        "durable-closure-call",
+    )
+    result_text = result.get_text() if isinstance(result, ToolResult) else result
+    assert "Waiting on the user to approve" in result_text
+    pending = await db.confirmation_requests.list_pending_for_user("user-1")
+    assert len(pending) == 1
+    request = pending[0]
+    expected_content = script_definition_content(
+        name="durable-child",
+        description="Confirmed dependency",
+        script_code=child_source,
+        parameters_schema=None,
+    )
+    assert request["tool_args_json"] == {
+        "script": 'execute_script(name="durable-child")',
+        "globals": {},
+        "script_bindings": [
+            {
+                **expected_content,
+                "content_hash": definition_content_hash(expected_content),
+            }
+        ],
+    }
+
+    assert await db.scripts.delete("durable-child")
+    if dependency_mutation == "changed":
+        await db.scripts.save(
+            name="durable-child",
+            description="Unapproved replacement",
+            script_code='add_or_update_note(title="Durable child effect", content="replacement")',
+            definition_taint_state=TurnTaintState.empty(),
+        )
+    task_id = await _approve_request(db_engine, str(request["id"]))
+    chat_interface = RecordingChatInterface()
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=_processing_service(provider),
+        chat_interface=chat_interface,
+        task_id=task_id,
+    )
+
+    assert (
+        await db.notes.get_by_title("Durable child effect", visibility_grants=None)
+        is None
+    )
+    assert len(chat_interface.messages) == 1
+    assert "durable-child" in chat_interface.messages[0][1]
+    assert "error" in chat_interface.messages[0][1].lower()
+
+
+@pytest.mark.asyncio
+async def test_old_script_confirmation_without_bindings_rejects_current_child(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(engine=db_engine)
+    await db.scripts.save(
+        name="child",
+        description="Valid dependency absent from the old approval",
+        script_code='add_or_update_note(title="Old approval effect", content="unexpected")',
+        definition_taint_state=TurnTaintState.empty(),
+    )
+    request_id = await _create_request(
+        db_engine,
+        source_message_internal_id=await _create_source_message(db_engine),
+        tool_name="execute_script",
+        tool_args={"script": 'execute_script(name="child")', "globals": {}},
+        confirmation_prompt="Run the parent script without dependency bindings",
+    )
+    provider = PolicyEnforcingToolsProvider(
+        wrapped_provider=LocalToolsProvider(
+            registrations=[
+                registration
+                for registration in LOCAL_TOOL_REGISTRATIONS
+                if registration.name in {"execute_script", "add_or_update_note"}
+            ]
+        ),
+        policy_engine=PolicyEngine.from_policy_config(
+            ToolPolicyConfig(
+                default_decision=ToolPolicyDecision.ALLOW,
+                rules=[
+                    PolicyRule(
+                        match=ToolMatcher(names=["execute_script"]),
+                        decision=ToolPolicyDecision.CONFIRM,
+                    )
+                ],
+            )
+        ),
+    )
+    task_id = await _approve_request(db_engine, request_id)
+    chat_interface = RecordingChatInterface()
+
+    await _run_worker_until_task_finishes(
+        db_engine,
+        processing_service=_processing_service(provider),
+        chat_interface=chat_interface,
+        task_id=task_id,
+    )
+
+    assert (
+        await db.notes.get_by_title("Old approval effect", visibility_grants=None)
+        is None
+    )
+    assert len(chat_interface.messages) == 1
+    assert "cancelled" in chat_interface.messages[0][1].lower()
+    assert "execute_script" in chat_interface.messages[0][1]
+    assert await _task_status(db_engine, task_id) == ("done", None)

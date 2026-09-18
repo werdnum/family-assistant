@@ -23,6 +23,7 @@ from family_assistant.llm import LLMOutput
 from family_assistant.llm.messages import UserMessage
 from family_assistant.security.definition_records import (
     CreationDisposition,
+    definition_content_hash,
     definition_record_from_row,
     script_definition_content,
     stamp_definition,
@@ -1328,3 +1329,236 @@ async def test_observe_verdict_does_not_authorize_nested_calls(
         "execute_script",
         "ordinary_effect",
     ]
+
+
+@pytest.mark.asyncio
+async def test_static_named_descendants_share_outer_review(
+    db_engine: AsyncEngine,
+) -> None:
+    reviewer = _RecordingReviewer(ToolCallReviewVerdict.ALLOW)
+    provider = _provider(
+        [
+            _real_registration("execute_script"),
+            _real_registration("add_or_update_note"),
+        ],
+        reviewer=reviewer,
+        rules=[_review_rule("execute_script", ToolPolicyDecision.REVIEW)],
+    )
+    context = _context(db_engine, provider)
+    child_source = 'execute_script(name="grandchild")'
+    grandchild_source = 'add_or_update_note(title="Closure effect", content="executed")'
+    for name, source in (("child", child_source), ("grandchild", grandchild_source)):
+        await context.db_context.scripts.save(
+            name=name,
+            description=f"Static dependency {name}",
+            script_code=source,
+            definition_taint_state=TurnTaintState.empty(),
+        )
+
+    await _execute_script(provider, context, script='execute_script(name="child")')
+
+    note = await context.db_context.notes.get_by_title(
+        "Closure effect", visibility_grants=None
+    )
+    assert note is not None
+    assert note.content == "executed"
+    assert len(reviewer.calls) == 1
+
+    reviewed_script = reviewer.calls[0].review_input.script
+    assert reviewed_script is not None
+    bindings = {binding["name"]: binding for binding in reviewed_script.script_bindings}
+    assert set(bindings) == {"child", "grandchild"}
+    for name, source in (("child", child_source), ("grandchild", grandchild_source)):
+        content = script_definition_content(
+            name=name,
+            description=f"Static dependency {name}",
+            script_code=source,
+            parameters_schema=None,
+        )
+        assert bindings[name] == {
+            **content,
+            "content_hash": definition_content_hash(content),
+        }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dependency", ["child", "grandchild"])
+async def test_static_dependency_changed_during_outer_review_cannot_run(
+    db_engine: AsyncEngine,
+    dependency: str,
+) -> None:
+    reviewer = _RecordingReviewer(ToolCallReviewVerdict.ALLOW, block_call=0)
+    provider = _provider(
+        [
+            _real_registration("execute_script"),
+            _real_registration("add_or_update_note"),
+        ],
+        reviewer=reviewer,
+        rules=[_review_rule("execute_script", ToolPolicyDecision.REVIEW)],
+    )
+    context = _context(db_engine, provider)
+    for name, source in (
+        (
+            "child",
+            'add_or_update_note(title="Child entry effect", content="unexpected")\nexecute_script(name="grandchild")',
+        ),
+        ("grandchild", 'add_or_update_note(title="Stale effect", content="original")'),
+    ):
+        await context.db_context.scripts.save(
+            name=name,
+            description=f"Static dependency {name}",
+            script_code=source,
+            definition_taint_state=TurnTaintState.empty(),
+        )
+    execution = asyncio.create_task(
+        _execute_script(provider, context, script='execute_script(name="child")')
+    )
+    await reviewer.entered.wait()
+    try:
+        assert await context.db_context.scripts.delete(dependency)
+        await context.db_context.scripts.save(
+            name=dependency,
+            description="Changed while review was pending",
+            script_code='add_or_update_note(title="Stale effect", content="replacement")',
+            definition_taint_state=TurnTaintState.empty(),
+        )
+    finally:
+        reviewer.release.set()
+    result = await execution
+
+    assert (
+        await context.db_context.notes.get_by_title(
+            "Stale effect", visibility_grants=None
+        )
+        is None
+    )
+    assert (
+        await context.db_context.notes.get_by_title(
+            "Child entry effect", visibility_grants=None
+        )
+        is None
+    )
+    assert len(reviewer.calls) == 1
+    assert isinstance(result, ToolResult)
+    assert "error" in result.get_text().lower()
+
+
+@pytest.mark.asyncio
+async def test_missing_static_dependency_fails_before_parent_effects(
+    db_engine: AsyncEngine,
+) -> None:
+    reviewer = _RecordingReviewer(ToolCallReviewVerdict.ALLOW)
+    provider = _provider(
+        [
+            _real_registration("execute_script"),
+            _real_registration("add_or_update_note"),
+        ],
+        reviewer=reviewer,
+        rules=[_review_rule("execute_script", ToolPolicyDecision.REVIEW)],
+    )
+    context = _context(db_engine, provider)
+
+    result = await _execute_script(
+        provider,
+        context,
+        script='add_or_update_note(title="Parent effect", content="unexpected")\nexecute_script(name="missing-child")',
+    )
+
+    assert (
+        await context.db_context.notes.get_by_title(
+            "Parent effect", visibility_grants=None
+        )
+        is None
+    )
+    assert reviewer.calls == []
+    assert isinstance(result, ToolResult)
+    assert "missing-child" in result.get_text()
+
+
+@pytest.mark.asyncio
+async def test_static_child_hard_deny_survives_parent_approval(
+    db_engine: AsyncEngine,
+) -> None:
+    reviewer = _RecordingReviewer(ToolCallReviewVerdict.ALLOW)
+    provider = _provider(
+        [
+            _real_registration("execute_script"),
+            _real_registration("add_or_update_note"),
+        ],
+        reviewer=reviewer,
+        rules=[
+            _review_rule("execute_script", ToolPolicyDecision.REVIEW),
+            PolicyRule(
+                match=ToolMatcher(
+                    names=["execute_script"], argument_equals={"name": "denied-child"}
+                ),
+                decision=ToolPolicyDecision.DENY,
+                priority=20,
+            ),
+        ],
+    )
+    context = _context(db_engine, provider)
+    await context.db_context.scripts.save(
+        name="denied-child",
+        description="Denied dependency",
+        script_code='add_or_update_note(title="Denied effect", content="unexpected")',
+        definition_taint_state=TurnTaintState.empty(),
+    )
+
+    result = await _execute_script(
+        provider, context, script='execute_script(name="denied-child")'
+    )
+
+    assert (
+        await context.db_context.notes.get_by_title(
+            "Denied effect", visibility_grants=None
+        )
+        is None
+    )
+    assert len(reviewer.calls) == 1
+    assert isinstance(result, ToolResult)
+    assert "denied" in result.get_text().lower()
+
+
+@pytest.mark.asyncio
+async def test_dynamic_named_child_requires_independent_review(
+    db_engine: AsyncEngine,
+) -> None:
+    reviewer = _RecordingReviewer(
+        ToolCallReviewVerdict.ALLOW, ToolCallReviewVerdict.ALLOW
+    )
+    provider = _provider(
+        [
+            _real_registration("execute_script"),
+            _real_registration("add_or_update_note"),
+        ],
+        reviewer=reviewer,
+        rules=[_review_rule("execute_script", ToolPolicyDecision.REVIEW)],
+    )
+    context = _context(db_engine, provider)
+    child_source = 'add_or_update_note(title="Dynamic effect", content="executed")'
+    await context.db_context.scripts.save(
+        name="dynamic-child",
+        description="Runtime selected dependency",
+        script_code=child_source,
+        definition_taint_state=TurnTaintState.empty(),
+    )
+
+    await _execute_script(
+        provider,
+        context,
+        script="execute_script(name=selected_name)",
+        globals={"selected_name": "dynamic-child"},
+    )
+
+    note = await context.db_context.notes.get_by_title(
+        "Dynamic effect", visibility_grants=None
+    )
+    assert note is not None
+    assert note.content == "executed"
+    assert [call.review_input.descriptor.name for call in reviewer.calls] == [
+        "execute_script",
+        "execute_script",
+    ]
+    assert reviewer.calls[1].review_input.script is not None
+    assert reviewer.calls[1].review_input.script.source == child_source

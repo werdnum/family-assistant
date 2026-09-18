@@ -144,6 +144,7 @@ async def execute_script_tool(
     name: str | None = None,
     # ast-grep-ignore: no-dict-any - arbitrary parameters passed as script globals
     parameters: dict[str, Any] | None = None,
+    script_bindings: list[dict[str, object]] | None = None,
     _allow_external_script_apis: bool = True,
 ) -> ToolResult:
     """
@@ -174,6 +175,7 @@ async def execute_script_tool(
                 globals,
                 name,
                 parameters,
+                script_bindings=script_bindings,
                 allow_external_script_apis=_allow_external_script_apis,
             )
         script = prepared.review.source
@@ -429,7 +431,8 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                 "Execute inline Python (`script`, optional `globals`) or a stored script "
                 "(`name`, optional `parameters`). Load `scripting.md` with "
                 "`get_user_documentation_content` before writing or debugging scripts. "
-                "Review and confirmation bind the resolved source and inputs. Approved "
+                "Review and confirmation bind source, inputs and statically named child scripts. "
+                "Changed child definitions require fresh review. Approved "
                 "deterministic operations share program approval; hard policy and confirmations "
                 "still apply. New code, model decisions, and executable definitions retain "
                 "independent gates. Enabled tools and script APIs are available as functions."
@@ -458,6 +461,14 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                         "description": (
                             "Stored script name. Use `list_scripts` to discover names; "
                             "omit `script` and pass arguments with `parameters`."
+                        ),
+                    },
+                    "script_bindings": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                        "description": (
+                            "Resolved child definitions bound to an approval. Omit when "
+                            "preparing a new invocation; the runtime supplies these."
                         ),
                     },
                     "parameters": {

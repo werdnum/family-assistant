@@ -50,11 +50,20 @@ merely because taint increased. Explicit hard taint restrictions still apply. Th
 assess how runtime data can influence effects; deterministic execution does not imply fixed or safe
 destinations.
 
-Approval ends at new executable code or a new model decision. Persistence of executable definitions
-retains its own gate, with the enclosing source and parent decision as context, so the write can be
-independently reviewed without borrowing the parent verdict. A nested script invocation receives its
-own source-aware review; delegated agents, model-driven tools, callbacks, and future automation runs
-do not inherit permission for their subsequent decisions. The approved script may initiate those
+Statically named stored-script calls are part of the reviewed program. Resolve their transitive
+closure recursively, retaining each definition's source, parameter schema, content hash, and
+provenance. Shared descendants and cycles are visited once. Scheduled firings use the same closure
+for their weakest-definition provenance. Missing dependencies fail closed before execution.
+Confirmations carry the resolved dependency content and hashes; a changed or deleted dependency
+requires fresh preparation and review. Child execution checks the binding before using the loaded
+source, so approval cannot silently follow a mutable name to different code.
+
+Approval ends at executable code outside this bound closure or a new model decision. Persistence of
+executable definitions retains its own gate, with the enclosing source and parent decision as
+context, so the write can be independently reviewed without borrowing the parent verdict. A
+statically bound child shares program approval; other nested script invocations receive their own
+source-aware review; delegated agents, model-driven tools, callbacks, and future automation runs do
+not inherit permission for their subsequent decisions. The approved script may initiate those
 operations subject to existing policy, but their execution retains its own enforcement. A model
 decision also ends inherited approval for the calling script's continuation. Any review still needed
 within a script should receive the enclosing source and parent decision as context, so it does not
@@ -98,10 +107,12 @@ cannot be justified from the available context can still require confirmation or
 
 The initial change targets explicit `execute_script` invocations. Other script entry points gain
 inherited authorization only when they pass through the same source-aware review boundary; merely
-using Monty confers no approval. No change to unrelated agent-review boundaries is proposed. Tool
-metadata explicitly identifies operations eligible to inherit deterministic execution approval;
-unclassified tools retain their own enriched gates. Missing metadata therefore adds review rather
-than silently widening approval.
+using Monty confers no approval. No change to unrelated agent-review boundaries is proposed. Static
+discovery recognizes literal stored-script names, rather than attempting to evaluate arbitrary
+expressions. Dynamically selected code retains its independent gate. Tool metadata explicitly
+identifies operations eligible to inherit deterministic execution approval; unclassified tools
+retain their own enriched gates. Missing metadata therefore adds review rather than silently
+widening approval.
 
 Confirmation replay is an inline invocation of the pinned program and must satisfy current policy
 for that invocation. It does not retain a permission that applies only to a live named lookup.
