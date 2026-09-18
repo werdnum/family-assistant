@@ -20,6 +20,7 @@ from family_assistant.storage.database import (
 )  # Add Database
 
 # Import the functions and classes we want to test
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.storage.vector import (
     Document,  # Import the protocol
     DocumentRecord,  # Import the ORM model for type hints if needed
@@ -189,6 +190,7 @@ async def test_vector_storage_basic_flow(pg_vector_db_engine: AsyncEngine) -> No
         semantic_query="dummy query text",  # Text isn't used directly, embedding is
         embedding_model=TEST_EMBEDDING_MODEL,
         limit=5,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
         # No filters needed for this basic test
     )
 

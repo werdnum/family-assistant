@@ -348,7 +348,7 @@ async def search_documents_tool(
         excluded_source_types=_SEARCH_DOCUMENTS_EXCLUDED_SOURCE_TYPES,
         embedding_types=embedding_types or [],  # Use empty list if None
         limit=limit,
-        visibility_grants=exec_context.visibility_grants,
+        read_policy=exec_context.note_read_policy(),
     )
 
     # 3. Execute the search
@@ -474,10 +474,9 @@ async def get_full_document_content_tool(
             logger.warning(f"Document ID {document_id} not found.")
             return f"Error: Document with ID {document_id} not found."
 
-        if exec_context.visibility_grants is not None:
-            labels = json.loads(doc_result["visibility_labels"] or "[]")
-            if not set(labels) <= exec_context.visibility_grants:
-                return f"Error: Document with ID {document_id} not found."
+        labels = json.loads(doc_result["visibility_labels"] or "[]")
+        if not exec_context.note_read_policy().admits_labels(labels):
+            return f"Error: Document with ID {document_id} not found."
 
         file_path = doc_result["file_path"]
         doc_metadata = _coerce_doc_metadata(doc_result.get("doc_metadata"))
@@ -674,10 +673,9 @@ async def reindex_email_tool(
     not_found_error = ToolResult(data={"error": f"Document {document_id} not found"})
     if not doc_row:
         return not_found_error
-    if exec_context.visibility_grants is not None:
-        labels = json.loads(doc_row["visibility_labels"] or "[]")
-        if not set(labels) <= exec_context.visibility_grants:
-            return not_found_error
+    labels = json.loads(doc_row["visibility_labels"] or "[]")
+    if not exec_context.note_read_policy().admits_labels(labels):
+        return not_found_error
     if doc_row["source_type"] != "email":
         return ToolResult(
             data={

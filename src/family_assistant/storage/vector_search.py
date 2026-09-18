@@ -2,15 +2,23 @@
 Defines the schema for vector search queries and implements the query logic.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from sqlalchemy.sql import text  # For executing raw SQL if needed
 
-from .database import DatabaseExecutor
+if TYPE_CHECKING:
+    from datetime import datetime
+
+    # Deferred: the repositories package reaches the tool layer, which imports
+    # this module, so resolving the policy type at runtime here would be a
+    # cycle. Only its three label sets are read, and those are plain data.
+    from .database import DatabaseExecutor
+    from .repositories.notes import NoteReadPolicy
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +61,18 @@ class VectorSearchQuery:
     metadata_filters: list[MetadataFilter] = field(
         default_factory=list
     )  # Changed to list
-    visibility_grants: set[str] | None = None
+
+    read_policy: NoteReadPolicy = field(kw_only=True)
+    """The visibility confinement this search runs under.
+
+    Required, and deliberately without a default: a search that forgot to say
+    whose reads it is performing would otherwise silently run unconfined. The
+    same object the notes repository takes, so one policy governs every
+    per-profile read of labelled content whether it lands in the notes table or
+    in the document index. Callers in the tool layer derive it from
+    ``ToolExecutionContext.note_read_policy()``; an admin surface that reads on
+    nobody's behalf passes ``NoteReadPolicy.UNRESTRICTED`` explicitly.
+    """
 
     # Control Parameters
     limit: int = 10
@@ -259,12 +278,34 @@ def _add_visibility_filter(
     params: dict[str, object],
     clauses: list[str],
 ) -> None:
-    if query.visibility_grants is None:
-        return
-    params["visibility_grants_json"] = json.dumps(sorted(query.visibility_grants))
-    clauses.append(
-        "CAST(d.visibility_labels AS jsonb) <@ CAST(:visibility_grants_json AS jsonb)"
-    )
+    """Constrain the search to the documents ``read_policy`` admits.
+
+    The three clauses of ``NotesRepository._apply_read_policy``, against the
+    documents table: grants keep a reader out of what it was not granted;
+    required labels keep it out of everything not labelled *for* it, which
+    grants cannot do because an unlabelled document is a subset of every grant
+    set; denied labels keep a reader with no grants at all out of a named
+    space, which grants cannot do because there is no list to omit from.
+    """
+    policy = query.read_policy
+    if policy.grants is not None:
+        params["visibility_grants_json"] = json.dumps(sorted(policy.grants))
+        clauses.append(
+            "CAST(d.visibility_labels AS jsonb) <@ "
+            "CAST(:visibility_grants_json AS jsonb)"
+        )
+    if policy.required_labels:
+        params["visibility_required_json"] = json.dumps(sorted(policy.required_labels))
+        clauses.append(
+            "CAST(d.visibility_labels AS jsonb) @> "
+            "CAST(:visibility_required_json AS jsonb)"
+        )
+    for index, label in enumerate(sorted(policy.denied_labels)):
+        param_name = f"visibility_denied_{index}_json"
+        params[param_name] = json.dumps([label])
+        clauses.append(
+            f"NOT (CAST(d.visibility_labels AS jsonb) @> CAST(:{param_name} AS jsonb))"
+        )
 
 
 def _build_document_filter_sql(

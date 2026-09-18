@@ -15,7 +15,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from family_assistant.embeddings import MockEmbeddingGenerator
+from family_assistant.memory.invariants import MEMORY_LABEL
 from family_assistant.storage.database import Database
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.storage.vector import add_document, add_embedding
 from family_assistant.storage.vector_search import VectorSearchQuery, query_vector_store
 from family_assistant.tools.documents import get_full_document_content_tool
@@ -157,7 +159,7 @@ async def test_search_filters_by_visibility_grants(
             semantic_query="content",
             keywords="content",
             embedding_model=embedder.model_name,
-            visibility_grants={"sensitive"},
+            read_policy=NoteReadPolicy(grants=frozenset({"sensitive"})),
         ),
         query_embedding=query_emb,
     )
@@ -173,7 +175,7 @@ async def test_search_filters_by_visibility_grants(
             semantic_query="content",
             keywords="content",
             embedding_model=embedder.model_name,
-            visibility_grants=set(),
+            read_policy=NoteReadPolicy(grants=frozenset()),
         ),
         query_embedding=query_emb,
     )
@@ -214,7 +216,7 @@ async def test_search_no_grants_returns_all(
             semantic_query="content",
             keywords="content",
             embedding_model=embedder.model_name,
-            visibility_grants=None,
+            read_policy=NoteReadPolicy(grants=None),
         ),
         query_embedding=query_emb,
     )
@@ -254,7 +256,7 @@ async def test_search_subset_semantics(
             semantic_query="content",
             keywords="content",
             embedding_model=embedder.model_name,
-            visibility_grants={"sensitive"},
+            read_policy=NoteReadPolicy(grants=frozenset({"sensitive"})),
         ),
         query_embedding=query_emb,
     )
@@ -269,7 +271,7 @@ async def test_search_subset_semantics(
             semantic_query="content",
             keywords="content",
             embedding_model=embedder.model_name,
-            visibility_grants={"sensitive", "private"},
+            read_policy=NoteReadPolicy(grants=frozenset({"sensitive", "private"})),
         ),
         query_embedding=query_emb,
     )
@@ -409,3 +411,167 @@ async def test_document_stores_visibility_labels(
     assert row2 is not None
     labels2 = json.loads(row2["visibility_labels"])
     assert labels2 == []
+
+
+# ---------------------------------------------------------------------------
+# Memory notes: reachable through the index only to profiles that read memory
+# ---------------------------------------------------------------------------
+
+
+def _profile_context(
+    db: Database, *, grants: set[str] | None, memory_read: bool
+) -> ToolExecutionContext:
+    """A context confined the way a profile's own configuration confines it."""
+    return ToolExecutionContext(
+        interface_type="test",
+        conversation_id="test",
+        user_name="tester",
+        turn_id=None,
+        db_context=db,
+        processing_service=None,
+        clock=None,
+        home_assistant_client=None,
+        event_sources=None,
+        attachment_registry=None,
+        camera_backend=None,
+        visibility_grants=grants,
+        timezone=ZoneInfo("UTC"),
+        credential_resolvers=None,
+        api_backend=None,
+        memory_read=memory_read,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_search_hides_memory_notes_from_a_profile_that_cannot_read_memory(
+    pg_vector_db_engine: AsyncEngine,
+    embedder: MockEmbeddingGenerator,
+) -> None:
+    """Grants alone never hide a memory note, whether unrestricted or explicit.
+
+    An unrestricted reader is subject to no subset check at all, and a reader
+    explicitly granted ``memory`` passes it. Only the denied-label ceiling that
+    ``memory_read: false`` becomes keeps either one out of the household's
+    memory, and it has to reach the document index as well as the notes table.
+    """
+    db = Database(engine=pg_vector_db_engine)
+    memory_id = await _add_doc_with_embedding(
+        db,
+        MockDoc("note", "mem_1", "Sam", visibility_labels=[MEMORY_LABEL]),
+        embedder,
+        "sensitive",
+        "Sam content worth remembering",
+    )
+    ordinary_id = await _add_doc_with_embedding(
+        db,
+        MockDoc("note", "ord_1", "Shopping", visibility_labels=[]),
+        embedder,
+        "public",
+        "Ordinary content",
+    )
+    query_emb = embedder.embedding_map["query"]
+
+    for grants in (None, {MEMORY_LABEL}):
+        results = await query_vector_store(
+            db,
+            VectorSearchQuery(
+                search_type="hybrid",
+                semantic_query="content",
+                keywords="content",
+                embedding_model=embedder.model_name,
+                read_policy=_profile_context(
+                    db, grants=grants, memory_read=False
+                ).note_read_policy(),
+            ),
+            query_embedding=query_emb,
+        )
+        doc_ids = {r["document_id"] for r in results}
+        assert memory_id not in doc_ids, f"memory note reachable with grants={grants}"
+        assert ordinary_id in doc_ids, "ordinary documents must be unaffected"
+
+
+@pytest.mark.asyncio
+@pytest.mark.postgres
+async def test_search_finds_a_memory_note_for_a_profile_that_reads_memory(
+    pg_vector_db_engine: AsyncEngine,
+    embedder: MockEmbeddingGenerator,
+) -> None:
+    """The other half: a topic note is meant to be reachable by search."""
+    db = Database(engine=pg_vector_db_engine)
+    memory_id = await _add_doc_with_embedding(
+        db,
+        MockDoc("note", "mem_2", "Sam", visibility_labels=[MEMORY_LABEL]),
+        embedder,
+        "sensitive",
+        "Sam content worth remembering",
+    )
+    query_emb = embedder.embedding_map["query"]
+
+    results = await query_vector_store(
+        db,
+        VectorSearchQuery(
+            search_type="hybrid",
+            semantic_query="content",
+            keywords="content",
+            embedding_model=embedder.model_name,
+            read_policy=_profile_context(
+                db, grants=None, memory_read=True
+            ).note_read_policy(),
+        ),
+        query_embedding=query_emb,
+    )
+    assert memory_id in {r["document_id"] for r in results}
+
+
+@pytest.mark.asyncio
+async def test_full_content_refuses_a_memory_note_to_a_non_reading_profile(
+    db_engine: AsyncEngine,
+) -> None:
+    """A document id is not a way around the ceiling either."""
+    db = Database(engine=db_engine)
+    doc_id = await add_document(
+        db, MockDoc("note", "mem_3", "Sam", visibility_labels=[MEMORY_LABEL])
+    )
+
+    result = await get_full_document_content_tool(
+        _profile_context(db, grants=None, memory_read=False), doc_id
+    )
+
+    assert isinstance(result, str)
+    assert "not found" in result
+
+
+@pytest.mark.asyncio
+async def test_full_content_allows_a_memory_note_to_a_reading_profile(
+    db_engine: AsyncEngine,
+) -> None:
+    db = Database(engine=db_engine)
+    doc_id = await add_document(
+        db, MockDoc("note", "mem_4", "Sam", visibility_labels=[MEMORY_LABEL])
+    )
+
+    result = await get_full_document_content_tool(
+        _profile_context(db, grants=None, memory_read=True), doc_id
+    )
+
+    assert isinstance(result, str)
+    assert "not found" not in result
+
+
+@pytest.mark.asyncio
+async def test_full_content_leaves_ordinary_documents_reachable(
+    db_engine: AsyncEngine,
+) -> None:
+    """The ceiling is one label, not a new floor under every read."""
+    db = Database(engine=db_engine)
+    doc_id = await add_document(
+        db, MockDoc("email", "ord_2", "Receipt", visibility_labels=None)
+    )
+
+    result = await get_full_document_content_tool(
+        _profile_context(db, grants=None, memory_read=False), doc_id
+    )
+
+    assert isinstance(result, str)
+    assert "not found" not in result

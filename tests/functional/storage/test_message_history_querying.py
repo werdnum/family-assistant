@@ -40,6 +40,7 @@ from family_assistant.storage.repositories.message_history import (
     MessageHistoryAccessDeniedError,
     MessageHistoryQuery,
 )
+from family_assistant.storage.repositories.notes import NoteReadPolicy
 from family_assistant.storage.repositories.tasks import TasksRepository
 from family_assistant.storage.tasks import TaskPriority, tasks_table
 from family_assistant.storage.vector import DocumentEmbeddingRecord, DocumentRecord
@@ -783,6 +784,7 @@ async def test_vector_search_excludes_message_history_without_source_acl(
         source_types=["message_history"],
         embedding_types=["message_turn"],
         limit=5,
+        read_policy=NoteReadPolicy.UNRESTRICTED,
     )
     results = await query_vector_store(
         db_context=db,

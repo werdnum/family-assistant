@@ -433,7 +433,7 @@ async def _semantic_message_history_rows(
         embedding_types=["message_turn"],
         metadata_filters=_message_history_metadata_filters(history_query),
         limit=max(min(history_query.limit, 100), 1),
-        visibility_grants=exec_context.visibility_grants,
+        read_policy=exec_context.note_read_policy(),
     )
     search_results = await query_vector_store(
         db_context=exec_context.db_context,
