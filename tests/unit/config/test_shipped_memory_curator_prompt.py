@@ -159,7 +159,7 @@ def test_the_assistant_is_told_how_to_reach_memory(assistant_prompt: str) -> Non
     """Conditional on the tool, because shipped profiles do not hold it yet."""
     assert "Household memory:" in assistant_prompt
     assert "If `propose_memory_edits` is among your tools" in assistant_prompt
-    assert "rather than `add_or_update_note`" in assistant_prompt
+    assert "rather than\n  `add_or_update_note`" in assistant_prompt
     assert "core memory note is in your context every turn" in assistant_prompt
 
 

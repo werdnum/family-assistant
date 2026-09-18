@@ -51,8 +51,8 @@ There is one memory, and it belongs to the household. Anything learned in a conv
 contributes to memory may surface later in any household member's conversation, whoever is speaking.
 Treat it as a shared notebook on the kitchen table, not a private one.
 
-Phone calls and iOS voice sessions are read-only: the assistant uses memory in them, but nothing
-said there is ever written into it.
+Phone calls and iOS voice sessions never write to memory: the assistant can use what it already
+knows there, but nothing said there is ever added.
 
 ## Seeing what it knows
 
