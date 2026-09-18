@@ -198,11 +198,6 @@ def sender_labeller(
     return label
 
 
-def default_sender_label(row: MessageHistoryRow) -> str:
-    """Who wrote a user row, where no name source is configured at all."""
-    return sender_labeller(lambda _user_id: None)(row)
-
-
 def _empty() -> RenderedStretch:
     return RenderedStretch(
         text="",

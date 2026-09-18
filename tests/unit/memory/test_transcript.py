@@ -15,7 +15,6 @@ from family_assistant.memory.transcript import (
     TRUNCATED_TURN_MARKER,
     UNFINISHED_TURN_MARKER,
     RenderedStretch,
-    default_sender_label,
     render_stretch,
     sender_labeller,
 )
@@ -76,7 +75,7 @@ def _render(
         rows,
         budget_chars=budget_chars,
         completed_turn_ids=completed,
-        sender_label=default_sender_label,
+        sender_label=sender_labeller(lambda _user_id: None),
     )
 
 
