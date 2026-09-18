@@ -50,13 +50,16 @@ defined by what the notes context provider renders, so anything the provider ren
 ambient material by construction and is covered without amending this rule. Eligibility is decided
 by the write that produces the note's current ambient material, and only there:
 
-- A write from a turn **below** `taint_policy.high_taint_tier` produces an eligible note. This is
-  every ordinary interactive write, and every write from an authenticated user through the web API,
-  which is user-authored by construction.
-- A write from a turn **at or above** the high tier produces an eligible note only if the write
-  passed the ambient-write gate described below. Otherwise the note is stored, searchable, and
-  readable by `get_note` exactly as today, but ineligible: it contributes nothing to any ambient
-  surface.
+- Every write of ambient material from a model turn crosses the ambient-write gate described below,
+  at every tier. **Eligibility is the gate's disposition**: a cell that lets the write execute —
+  `allow`, `audit`, or an admitting adjudication verdict — produces an eligible note; a denying
+  verdict, or the fallback when no verdict comes, produces an ineligible one. The shipped matrix
+  makes an ordinary interactive write (`trusted_user`) eligible without a judge, and puts the judge
+  on the tiers where machine or external content is in the turn.
+- A write that does not come from a model turn — an authenticated user through the web API, say —
+  supplies its decision from its own trust, as described under "Every write supplies the decision".
+- An ineligible note is stored, searchable, and readable by `get_note` exactly as today; it
+  contributes nothing to any ambient surface.
 
 Eligibility is a property of the note as written, in the same way `include_in_prompt` is: a later
 write re-decides it under its own turn's taint. A user who wants an ineligible note in context asks
@@ -66,12 +69,11 @@ eligible. There is no review queue, no attestation, and no readmission machinery
 
 ### The ambient-write gate
 
-A write that would leave a note eligible while the turn is at or above the high tier is an
-`ambient_prompt_write` sink — a new `SinkClass` beside `artifact_write`. It exists because the
-existing class is wrong for this write: `artifact_write` is `audit` at every tier, on the reasoning
-that persisted content is protected downstream by the provenance it carries. That reasoning holds
-for content the model must go and read back; it does not hold for content that will be in every
-future prompt unasked.
+A write of ambient material is an `ambient_prompt_write` sink — a new `SinkClass` beside
+`artifact_write`. It exists because the existing class is wrong for this write: `artifact_write` is
+`audit` at every tier, on the reasoning that persisted content is protected downstream by the
+provenance it carries. That reasoning holds for content the model must go and read back; it does not
+hold for content that will be in every future prompt unasked.
 
 The shipped cell values follow the existing lattice and the risk-adjudicated design:
 
@@ -140,22 +142,27 @@ excluded-titles catalog — filter on eligibility, in the repository, as they al
 may carry a bare count of ineligible notes so the model knows they exist; it must not carry their
 titles.
 
-### Non-LLM write paths
+### Every write supplies the decision
 
-The gate is a tool-dispatch mechanism, so writes that do not come through a tool need the
-eligibility decided by their own trust:
+The notes repository is the chokepoint: its write operation **requires** the eligibility decision,
+with no default, so a writer that does not supply one fails at the type checker rather than
+persisting a silent default. Writers that come through tool dispatch supply the gate's disposition;
+the rest supply a decision from their own trust:
 
+- **Note tools** (`create_note`, `update_note`) and **workspace import**, which is a tool call in a
+  model turn that derives ambient intent from file frontmatter, supply the gate's disposition.
 - **Web API** writes are made by an authenticated user and stamp trusted provenance and eligibility.
   Today they preserve whatever provenance the note already had, which leaves a user's own edit
   carrying a stale tainted stamp; that is corrected, and it is the deterministic way a user restores
   a note the gate refused.
 - **Memory apply** writes only from transcript chunks the review already rejected for external
-  taint, and stamps the (clean) reviewing turn's provenance; its notes are eligible by the ordinary
-  rule.
-- **Existing rows** get eligibility backfilled from their stored provenance: below the high tier is
-  eligible, at or above is not. The production notes whose stamp is poisoning every turn become
-  ineligible on upgrade and can be restored by editing them in the Notes UI; nothing about their
-  content or labels changes.
+  taint, and stamps the (clean) reviewing turn's provenance; its notes are eligible.
+- **Call transcripts** (the Asterisk route) are authored by whoever was on the call and are never
+  meant as ambient context; they are written ineligible.
+- **Existing rows** get eligibility backfilled from their stored provenance: below
+  `taint_policy.high_taint_tier` is eligible, at or above is not. The production notes whose stamp
+  is poisoning every turn become ineligible on upgrade and can be restored by editing them in the
+  Notes UI; nothing about their content or labels changes.
 
 ### Observe mode
 
@@ -183,15 +190,21 @@ enforcement would have removed.
 - **No cure for explicit reads.** An admitted note's stored taint is still merged by `get_note`.
   Curing it there would let one adjudicated write launder content into an unlimited number of later
   turns' egress; the ambient cure is bounded to "present in context", which is what was judged.
+- **Backfill admits existing rows below the high tier.** An existing row carries a tier but no gate
+  disposition, so the backfill cannot ask what a judge would have said; rows at `recognized_machine`
+  and below are admitted once, and any later write re-decides them under the full rule.
+- **Workspace file content is judged by the importing turn's taint.** The gate sees the turn, not
+  the provenance of the file a worker wrote; giving workspace files their own provenance is a
+  separate change.
 - **The web API is trusted without a gate.** It is authenticated, it is the user's own hands, and it
   is the only readmission path; gating it would recreate the review flow.
 
 ## Work plan
 
-1. **Eligibility storage and backfill.** Add the stored eligibility to notes, backfilled from
-   provenance as above; the three ambient repository reads filter on it. Verified by repository
-   tests that a high-tier note is absent from prompt notes, skills and excluded titles, and present
-   in `get_note`, `list_notes` and search.
+1. **Eligibility storage and backfill.** Add the stored eligibility to notes as a required write
+   parameter, backfilled from provenance as above; the three ambient repository reads filter on it.
+   Verified by repository tests that a high-tier note is absent from prompt notes, skills and
+   excluded titles, and present in `get_note`, `list_notes` and search.
 2. **Write-time decision.** Tool writes decide eligibility from the turn's taint and the gate's
    disposition; web API writes stamp trusted provenance and eligibility; memory apply passes
    through. Verified by tool tests covering each gated write shape, the ungated tainted create, and
@@ -200,7 +213,8 @@ enforcement would have removed.
    resolved for the gated write shapes (the update-of-a-prompt-included-note shape needs the
    existing row, so it is authorised inside the tool rather than at dispatch, through the same
    `authorize_taint_sink` path the profile-level sink check uses). Verified by policy tests for each
-   tier and mode, including the deny floor and an operator override to `confirm`.
+   tier and mode: an admitting verdict makes the note eligible, a denying verdict and the `deny`
+   fallback leave it ineligible, and an operator override of the fallback to `confirm` holds.
 4. **Context assembly.** The notes provider stops restoring provenance and reports only a count of
    ineligible notes. Verified by a functional test that a conversation with a poisoned prompt note
    starts at `trusted_user` after the note is ineligible, and by re-reading the taint-audit endpoint
