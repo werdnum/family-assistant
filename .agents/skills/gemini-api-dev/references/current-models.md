@@ -1,4 +1,4 @@
-<!-- Mirrored from https://ai.google.dev/gemini-api/docs/models.md.txt on 2026-09-08.
+<!-- Mirrored from https://ai.google.dev/gemini-api/docs/models.md.txt on 2026-09-18.
      Fetch that URL directly if this looks out of date. -->
 
 This guide introduces all the models available through the Gemini API.
@@ -11,7 +11,11 @@ This guide introduces all the models available through the Gemini API.
 
 [### Gemini 3.8 Flash
 Our most intelligent Flash model, engineered for long-horizon software engineering, autonomous agents, and complex enterprise workflows.
-New Stable](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash) [### Gemini 3.7 Flash
+New Stable](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash) [### Gemini 3.8 Live
+Default Live API model for most low-latency voice agent experiences without reasoning delays.
+New Stable](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-live) [### Gemini 3.8 Live Extended Thinking
+High-reasoning Live API model for voice interactions, recommended when higher background reasoning is required.
+New Stable](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-live-extended-thinking) [### Gemini 3.7 Flash
 Our previous-generation Flash model for complex coding, agentic workflows, and reliable multi-step execution.
 Stable](https://ai.google.dev/gemini-api/docs/models/gemini-3.7-flash) [### Gemini 3.6 Flash
 Our previous-generation Flash model, balancing speed and multimodal capabilities across general agentic and everyday tasks.
@@ -40,7 +44,7 @@ Frontier-class performance rivaling larger models at a fraction of the cost.
 Preview](https://ai.google.dev/gemini-api/docs/models/gemini-3-flash-preview) [### Gemini 3.5 Live Translate
 Low-latency, real-time speech to speech translation model that supports 70+ languages.
 New](https://ai.google.dev/gemini-api/docs/models/gemini-3.5-live-translate-preview) [### Gemini 3.1 Flash Live
-High-quality, low-latency Live API model for real-time dialogue and voice-first AI applications.
+Legacy Live API preview model. We recommend updating to Gemini 3.8 Live.
 New](https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-live-preview) [### Gemini 3.1 Flash TTS
 Powerful, low-latency speech generation.
 New](https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-tts-preview) [### Gemini Omni Flash
@@ -52,6 +56,8 @@ New](https://ai.google.dev/gemini-api/docs/models/gemini-omni-flash)
 | Model | Endpoint |
 |---|---|
 | [Gemini 3.8 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-flash) | ``` gemini-3.8-flash ``` |
+| [Gemini 3.8 Live](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-live) | ``` gemini-3.8-live ``` |
+| [Gemini 3.8 Live Extended Thinking](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-live-extended-thinking) | ``` gemini-3.8-live-extended-thinking ``` |
 | [Gemini 3.7 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.7-flash) | ``` gemini-3.7-flash ``` |
 | [Gemini 3.6 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.6-flash) | ``` gemini-3.6-flash ``` |
 | [Gemini 3.5 Flash](https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash) | ``` gemini-3.5-flash ``` |
@@ -96,7 +102,9 @@ New](https://ai.google.dev/gemini-api/docs/models/gemini-omni-flash)
 
 | Model | Description | Endpoint |
 |---|---|---|
-| [Gemini 3.1 Flash Live](https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-live-preview) | Our high-quality, low-latency audio-to-audio (A2A) model designed for real-time dialogue and voice-first AI applications. | ``` gemini-3.1-flash-live-preview ``` |
+| [Gemini 3.8 Live](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-live) | The default option for most low-latency voice agent experiences and real-time dialogue without reasoning delays. | ``` gemini-3.8-live ``` |
+| [Gemini 3.8 Live Extended Thinking](https://ai.google.dev/gemini-api/docs/models/gemini-3.8-live-extended-thinking) | Our high-reasoning audio-to-audio model, recommended when higher background reasoning is required during live interactions. | ``` gemini-3.8-live-extended-thinking ``` |
+| [Gemini 3.1 Flash Live](https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-live-preview) | Legacy audio-to-audio preview model. We recommend updating to Gemini 3.8 Live. | ``` gemini-3.1-flash-live-preview ``` |
 | [Gemini 3.1 Flash TTS](https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-tts-preview) | Powerful, low-latency speech generation, with natural outputs, steerable prompts, and new expressive audio tags for precise narration control. | ``` gemini-3.1-flash-tts-preview ``` |
 | [Gemini 3.5 Transcribe](https://ai.google.dev/gemini-api/docs/models/gemini-3.5-transcribe) | Low-latency speech-to-text model with utterance-based language detection, speaker diarization, word-level timestamps, and custom vocabulary biasing. | ``` gemini-3.5-transcribe gemini-3.5-transcribe-live ``` |
 | [Gemini 2.5 Flash Live](https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash-native-audio-preview-12-2025) | Our flagship Live API model for low-latency, bidirectional voice and video agents with native audio reasoning. | ``` gemini-2.5-flash-native-audio-preview-12-2025 ``` |
@@ -116,7 +124,7 @@ New](https://ai.google.dev/gemini-api/docs/models/gemini-omni-flash)
 | [Veo 3.1 Lite](https://ai.google.dev/gemini-api/docs/models/veo-3.1-lite-generate-preview) | High-efficiency, low-cost, developer-first video generation, editing, and cinematic control from the Veo 3.1 family. | ``` veo-3.1-lite-generate-preview ``` |
 | [Gemini Omni Flash](https://ai.google.dev/gemini-api/docs/models/gemini-omni-flash) | Fast video generation, editing, keyframe interpolation, and extension with native audio. | ``` gemini-omni-1.1-flash ``` |
 | [Nano Banana](https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash-image) | State-of-the-art native image generation and editing designed for fast, creative workflows. | ``` gemini-2.5-flash-image ``` |
-| [Imagen 4 (Deprecated)](https://ai.google.dev/gemini-api/docs/models/imagen) | Text-to-image model featuring fast and ultra-fast generation and exceptional clarity up to 2K resolution. | ``` imagen-4.0-generate ``` |
+| Imagen 4 (Shut down) | Text-to-image model featuring fast and ultra-fast generation (shut down). | ``` imagen-4.0-generate ``` |
 
 ## Music generation models
 

@@ -79,6 +79,15 @@ credentialed profile; one that prefers long runs should expect the agent to repo
 late in a very long task. This is a genuine trade rather than a bug to fix here — refreshing would
 need the API to accept a credential callback, which it does not.
 
+> **Still in force.** The Agent Credentials API, released with `antigravity-preview-09-2026`,
+> resolves a stored credential per request instead of freezing a header at submit, which makes this
+> ceiling *addressable* — but nothing here has changed yet. `AntigravityEgressResolver` still sends
+> a fixed `transform` header on every run, so the trade above and the `max_async_seconds` mitigation
+> it prescribes both still apply, and this paragraph stops being true only when that migration
+> ships. The proposal is
+> [antigravity-stored-egress-credentials.md](antigravity-stored-egress-credentials.md), whose first
+> milestone is an experiment that could sink it.
+
 **`scheme` exists because git and the REST API disagree.** GitHub's REST API takes
 `Authorization: Bearer <token>`. Git-over-HTTPS against `github.com` is authenticated as HTTP Basic
 with the username `x-access-token` and the token as the password. `scheme: "basic"` renders

@@ -322,7 +322,7 @@ supervision requirements based on input trust level:
    The profile therefore reaches no tools at all. Deliberately has no `retry_config`: falling back
    to a provider that cannot read the media would return a confident description of nothing.
 7. **Coder Profile [C]**: a coding agent — writes and runs code, works with files, reads the web —
-   on Google's Antigravity managed agent (`antigravity-preview-05-2026` reasoning with
+   on Google's Antigravity managed agent (`antigravity-preview-09-2026` reasoning with
    `gemini-3.8-flash`), in a Google-hosted throwaway sandbox. Used via `/coder` or delegation. It
    acts but reads nothing of the household's: no aggregated context, and the agent runs server-side
    with no FA tool surface, so it works only from the request text. As with `media_analyst`, a

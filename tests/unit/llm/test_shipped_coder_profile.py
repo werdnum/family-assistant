@@ -207,14 +207,14 @@ def test_antigravity_profile_with_retry_config_is_rejected() -> None:
         validate_antigravity_agent_config(
             "misconfigured",
             ProcessingConfig(
-                llm_model="antigravity-preview-05-2026",
+                llm_model="antigravity-preview-09-2026",
                 provider="google",
                 retry_config=RetryConfig(
-                    primary=RetryModelConfig(model="antigravity-preview-05-2026"),
+                    primary=RetryModelConfig(model="antigravity-preview-09-2026"),
                     fallback=RetryModelConfig(model="gemini-3.8-flash"),
                 ),
             ),
-            "antigravity-preview-05-2026",
+            "antigravity-preview-09-2026",
         )
 
 
@@ -231,7 +231,7 @@ def test_antigravity_named_only_inside_a_retry_chain_is_rejected() -> None:
             ProcessingConfig(
                 provider="google",
                 retry_config=RetryConfig(
-                    primary=RetryModelConfig(model="antigravity-preview-05-2026"),
+                    primary=RetryModelConfig(model="antigravity-preview-09-2026"),
                     fallback=RetryModelConfig(model="gemini-3.8-flash"),
                 ),
             ),
@@ -248,10 +248,10 @@ def test_antigravity_profile_on_a_non_google_provider_is_rejected(
         validate_antigravity_agent_config(
             "misconfigured",
             ProcessingConfig(
-                llm_model="antigravity-preview-05-2026",
+                llm_model="antigravity-preview-09-2026",
                 provider=provider,
             ),
-            "antigravity-preview-05-2026",
+            "antigravity-preview-09-2026",
         )
 
 
