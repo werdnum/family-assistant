@@ -33,9 +33,9 @@ the run is in flight. That is the whole of the opportunity, and the whole of the
 
 ## Decision
 
-Resolve egress credentials through the credential store rather than through `transform`, and keep
-the stored value fresh with a rotation task, so a run's GitHub access outlives the token it started
-on.
+Resolve *minted* egress credentials through the credential store rather than through `transform`,
+and keep the stored value fresh with a rotation task, so a run's GitHub access outlives the token it
+started on. Static credentials stay where they are.
 
 The **profile configuration does not change shape**.
 `credential: {type: "github_app", scheme: "basic"}` still names a kind rather than a value, and
@@ -45,12 +45,16 @@ header inside it.
 
 Three points carry the design.
 
-**The store is the only path.** The `transform` mechanism is removed rather than kept alongside —
-including for static `bearer` tokens, which fit a stored credential as readily as minted ones. Two
-mechanisms would mean two places a credential can come from, two expiry stories, and a per-rule
-choice nobody has a reason to make correctly. One path means the rotation task is the single thing
-that can be neglected, and neglecting it fails loudly (below) rather than quietly reverting some
-rules to a frozen header.
+**The store holds exactly what must outlive its submit.** That is the minted, expiring credentials —
+`github_app` today — and nothing else. A static `bearer` token keeps the `transform` path it uses
+now, because freezing a value at submit is only a problem for a value that expires, and a static
+token does not. Putting one in the store would buy nothing and cost a secret that persists at Google
+with no expiry of its own, where removing its rule from our config would not revoke it.
+
+The dividing line is a property rather than a list: **does this credential need to change while a
+run is in flight?** Minted tokens do and are stored; static ones do not and are not. That keeps the
+rule decidable at the point a credential kind is added, instead of depending on someone remembering
+which mechanism a new kind belongs to.
 
 **Rotation is a clock, not a lifecycle.** A periodic task mints a fresh installation token and
 `PATCH`es it over the stored credential. It does not track which runs are live, hold state about
@@ -139,10 +143,11 @@ Each milestone stands alone and is verifiable without the next.
    established raises rather than resolving to a rule without one, because a sandbox that reaches a
    private repo unauthenticated fails as a 404 deep inside the agent. Verified by unit tests over a
    faked transport, and by the credential lifecycle against the live API.
-3. **Swap the resolution path and delete `transform`.** Allowlist rules carry `credential` ids;
-   nothing builds headers any more. Verified by the existing shipped-profile and egress tests,
-   re-pointed — a profile configuring no credential must still send no `network` block at all, which
-   is what keeps the shipped `coder` at [C].
+3. **Route minted credentials to the store.** A rule naming a minted kind carries a `credential` id
+   instead of a built header; a rule naming a static one is untouched, so `transform` stays for
+   exactly that case. Verified by the existing shipped-profile and egress tests, re-pointed — a
+   profile configuring no credential must still send no `network` block at all, which is what keeps
+   the shipped `coder` at [C].
 4. **Rotation task.** Periodic mint-and-`PATCH` at a fraction of token life. Verified by a test that
    drives it on a fake `Clock` — the existing egress tests already establish that pattern, so expiry
    is exercised without sleeping.
@@ -188,7 +193,11 @@ be built on the strength of the documentation alone.
   the lifecycle state this design refuses to grow.
 - **No cleanup of orphaned ids.** A credential whose config stopped referencing it keeps being
   rotated until an operator deletes it. Reconciling the store against config is machinery for a rare
-  case; the credential is scoped and short-lived either way.
+  case, and it is unnecessary *because* of the rule above: every stored value is a minted token that
+  expires on its own, so an orphan stops being a credential within the hour once rotation stops
+  writing it. This bullet would not survive a static token in the store — an orphan would then stay
+  live indefinitely, and config removal would silently fail to revoke it. That is the failure the
+  store's scope is drawn to exclude, not one to add cleanup for.
 
 ## Non-goals
 
