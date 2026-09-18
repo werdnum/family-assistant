@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from family_assistant.security.taint import InMemoryTurnTaintTracker, TurnTaintState
 from family_assistant.storage.database import Database
 from family_assistant.tools.infrastructure import (
     CompositeToolsProvider,
@@ -634,6 +635,7 @@ class TestPolicyConfirmationFlow:
         class StubToolsProvider:
             def __init__(self) -> None:
                 self.calls: list[tuple[str, dict[str, object], str | None]] = []
+                self.execution_contexts: list[ToolExecutionContext] = []
                 self.descriptor = ToolDescriptor(
                     name="dangerous_tool",
                     definition={
@@ -665,6 +667,7 @@ class TestPolicyConfirmationFlow:
                 call_id: str | None = None,
             ) -> str:
                 self.calls.append((name, arguments, call_id))
+                self.execution_contexts.append(context)
                 return "executed"
 
             async def close(self) -> None:
@@ -729,6 +732,7 @@ class TestPolicyConfirmationFlow:
         )
 
         tool_args = {"title": "Hello"}
+        exec_context.taint_tracker = InMemoryTurnTaintTracker(TurnTaintState.empty())
         result = await provider.execute_tool(
             "dangerous_tool",
             tool_args,
@@ -741,7 +745,25 @@ class TestPolicyConfirmationFlow:
         assert captured["call_id"] == "call-explicit-123"
         assert captured["tool_args"] == tool_args
         assert captured["timeout_seconds"] == 42.0
-        assert captured["context"] is exec_context
+        callback_context = captured["context"]
+        assert isinstance(callback_context, ToolExecutionContext)
+        assert callback_context is not exec_context
+        assert len(wrapped_provider.execution_contexts) == 1
+        assert wrapped_provider.execution_contexts[0] is callback_context
+        assert callback_context.db_context is exec_context.db_context
+        assert callback_context.taint_tracker is exec_context.taint_tracker
+        assert (
+            callback_context.tool_call_review_state
+            is exec_context.tool_call_review_state
+        )
+        assert callback_context.request_confirmation_callback is confirmation_callback
+        assert callback_context.conversation_id == exec_context.conversation_id
+        assert callback_context.turn_id == exec_context.turn_id
+        assert callback_context.interface_type == exec_context.interface_type
+        assert captured["conversation_id"] == exec_context.conversation_id
+        assert captured["turn_id"] == exec_context.turn_id
+        assert captured["interface_type"] == exec_context.interface_type
+        assert exec_context.definition_gate_outcome is None
         assert wrapped_provider.calls == [
             ("dangerous_tool", tool_args, "call-explicit-123")
         ]
@@ -1002,6 +1024,7 @@ class TestPolicyEnforcingToolsProvider:
             def __init__(self, descriptor: ToolDescriptor) -> None:
                 self._descriptor = descriptor
                 self.calls: list[tuple[str, dict[str, object], str | None]] = []
+                self.execution_contexts: list[ToolExecutionContext] = []
 
             async def get_tool_definitions(self) -> list[ToolDefinition]:
                 return [self._descriptor.definition]
@@ -1022,6 +1045,7 @@ class TestPolicyEnforcingToolsProvider:
                 call_id: str | None = None,
             ) -> str:
                 self.calls.append((name, arguments, call_id))
+                self.execution_contexts.append(context)
                 return "executed"
 
             async def close(self) -> None:
@@ -1075,6 +1099,7 @@ class TestPolicyEnforcingToolsProvider:
         exec_context = self._make_context(
             request_confirmation_callback=confirmation_callback
         )
+        exec_context.taint_tracker = InMemoryTurnTaintTracker(TurnTaintState.empty())
         result = await provider.execute_tool(
             "delete_note",
             {"title": "hello"},
@@ -1086,7 +1111,25 @@ class TestPolicyEnforcingToolsProvider:
         assert captured["tool_name"] == "delete_note"
         assert captured["call_id"] == "call-explicit-123"
         assert captured["timeout_seconds"] == 42.0
-        assert captured["context"] is exec_context
+        callback_context = captured["context"]
+        assert isinstance(callback_context, ToolExecutionContext)
+        assert callback_context is not exec_context
+        assert len(wrapped_provider.execution_contexts) == 1
+        assert wrapped_provider.execution_contexts[0] is callback_context
+        assert callback_context.db_context is exec_context.db_context
+        assert callback_context.taint_tracker is exec_context.taint_tracker
+        assert (
+            callback_context.tool_call_review_state
+            is exec_context.tool_call_review_state
+        )
+        assert callback_context.request_confirmation_callback is confirmation_callback
+        assert callback_context.conversation_id == exec_context.conversation_id
+        assert callback_context.turn_id == exec_context.turn_id
+        assert callback_context.interface_type == exec_context.interface_type
+        assert captured["conversation_id"] == exec_context.conversation_id
+        assert captured["turn_id"] == exec_context.turn_id
+        assert captured["interface_type"] == exec_context.interface_type
+        assert exec_context.definition_gate_outcome is None
         assert wrapped_provider.calls == [
             ("delete_note", {"title": "hello"}, "call-explicit-123")
         ]
