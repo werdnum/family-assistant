@@ -509,6 +509,45 @@ as a second input contract on the shared reviewer — same verdict schema, same 
 config — is the point of having one component: the authenticated-site work configures a reviewer
 instead of building one.
 
+## Integration 4: script-execution review boundary
+
+The script boundary in [script-execution-review-boundary.md](script-execution-review-boundary.md)
+extends the review input with the resolved program: complete executable source, effective inputs,
+enabled capabilities, and stored-definition provenance. It is carried in the `.script` and
+`.enclosing_scripts` `ScriptReviewContext` fields. Inline code and stored definitions are both
+resolved and validated before adjudication, without executing them. The runtime then executes
+exactly that resolved payload. A durable human confirmation carries the resolved program itself,
+rather than only a stored-script name, so a later definition edit cannot substitute new code into an
+already-approved execution.
+
+One successful enforcing review or its resulting human confirmation creates an invocation-local
+authorization for deterministic internal operations. Tool dispatch and the brokered-HTTP named-sink
+gate consume that context to avoid repeating automatic intent adjudication. They continue to apply
+tool availability, access control, hard policy denials, mandatory confirmation floors, argument
+validation, and runtime limits. Taint collection and result provenance also remain live.
+Observe-mode verdicts, permissive policy results, `in_script`, and a taint snapshot are not
+authorization.
+
+Statically named stored-script children are recursively resolved with their source, schema, content
+hash, and provenance. Those bound descendants are part of the reviewed program. Each child use
+verifies its binding against the loaded row; changed or missing dependencies require fresh review,
+including on durable confirmation replay. Scheduled firings use the same recursive closure when
+combining definition provenance.
+
+The boundary ends wherever unbound executable content or a new model decision begins. Saving a
+script or automation, persisting callback code, or creating another executable definition retains an
+independent definition gate. Unbound nested scripts, delegated agents, callbacks, future automation
+runs, and `llm()` or `llm_json()` decisions keep their own enforcement and policy-required review
+before their later effects. Those independent reviews receive the enclosing program and parent
+decision as context, but cannot inherit its verdict or its provenance disposition.
+
+This enrichment also matters when there is no outer review to inherit. A script admitted by static
+policy can read untrusted data before its first nested egress needs review. That nested review must
+receive the same resolved program and originating request; otherwise it would judge a legitimate
+intermediate effect or an unsafe data-dependent destination without the context that explains it.
+The corresponding evaluation corpus includes both shapes: a requested multi-step planning script and
+a script that derives an authenticated external destination from runtime data.
+
 ## Configuration
 
 Implemented configuration:

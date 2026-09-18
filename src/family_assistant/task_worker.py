@@ -58,8 +58,16 @@ from family_assistant.scripting import (
     ScriptError,
     ScriptTimeoutError,
 )
-from family_assistant.scripting.apis.keychute import add_keychute_http_api
+from family_assistant.scripting.apis.keychute import (
+    add_keychute_http_api,
+    keychute_external_function_names,
+)
 from family_assistant.scripting.config import ScriptConfig
+from family_assistant.scripting.invocation import (
+    PreparedScriptInvocation,
+    ScriptExecutionScope,
+    ScriptReviewContext,
+)
 from family_assistant.security.definition_records import (
     UNRESOLVED_DEFINITION,
     DefinitionResolution,
@@ -74,6 +82,7 @@ from family_assistant.security.definition_resolution import (
     ScheduleAutomationRef,
     resolve_definition_closure,
 )
+from family_assistant.security.script_closure import resolve_script_closure
 from family_assistant.security.taint import (
     InMemoryTurnTaintTracker,
     SourceTrustTier,
@@ -6023,9 +6032,13 @@ async def handle_script_execution(
 
     # Resolved from the row already read above, so the provenance covers the
     # exact body about to run rather than whatever a second read would return.
+    script_closure = await resolve_script_closure(
+        exec_context.db_context, script_code, loaded_root=stored_script
+    )
     script_definition_resolution = await resolve_definition_closure(
         exec_context.db_context,
         _script_execution_definition_refs(payload, stored_script=stored_script),
+        script_closure=script_closure,
     )
 
     if listener_id:
@@ -6141,6 +6154,42 @@ async def handle_script_execution(
             if k not in script_globals:
                 script_globals[k] = v
 
+    scope = ScriptExecutionScope(
+        PreparedScriptInvocation(
+            review=ScriptReviewContext(
+                source=script_code,
+                inputs=dict(script_globals),
+                tools=tuple(await tools_provider.get_tool_definitions())
+                if tools_provider
+                else (),
+                external_functions=(
+                    "llm",
+                    "llm_json",
+                    "wake_llm",
+                    "json_*",
+                    "time_*",
+                    "base64_*",
+                    *(
+                        keychute_external_function_names(
+                            processing_service.app_config.keychute_config
+                            if processing_service is not None
+                            else None
+                        )
+                        or []
+                    ),
+                    *(["attachment_*"] if exec_context.attachment_registry else []),
+                ),
+                stored_name=script_name,
+                definition=script_definition_resolution,
+                script_bindings=tuple(
+                    binding.to_dict() for binding in script_closure.bindings
+                ),
+            ),
+            globals=dict(script_globals),
+        )
+    )
+    exec_context = replace(exec_context, script_execution=scope)
+
     if processing_service is not None:
         script_globals = add_keychute_http_api(
             script_globals,
@@ -6207,6 +6256,8 @@ async def handle_script_execution(
         )
         # Wrap in ScriptError for consistent handling
         raise ScriptError(f"Unexpected error: {e}") from e
+    finally:
+        scope.active = False
 
 
 def _tool_result_text(result: str | ToolResult) -> str:

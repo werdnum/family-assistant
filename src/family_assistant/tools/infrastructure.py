@@ -16,7 +16,7 @@ import re
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -35,6 +35,11 @@ from family_assistant.observability.metrics import (
     record_tool_call,
 )
 from family_assistant.scripting.apis.attachments import ScriptAttachment
+from family_assistant.scripting.invocation import (
+    ScriptInvocationArguments,
+    ScriptPreparationError,
+    prepare_script_invocation,
+)
 from family_assistant.security.definition_records import (
     CreationDisposition,
     DefinitionGateOutcome,
@@ -51,6 +56,7 @@ from family_assistant.security.taint import (
     TaintPolicyEvaluator,
     TaintPolicyMode,
     TaintPolicyOutcome,
+    TaintSource,
     TaintSourceType,
     TurnTaintState,
     derive_tool_result_taint_source,
@@ -462,9 +468,168 @@ class ToolsProvider(Protocol):
         ...
 
 
+async def _prepare_script_call(
+    name: str,
+    arguments: dict[str, object],
+    context: ToolExecutionContext,
+    descriptors: ToolDescriptorProvider,
+    policy: PolicyEngine | None = None,
+) -> dict[str, object] | ToolResult:
+    """Normalize only after original-argument policy, before any review or confirm.
+
+    Durable replay is deliberately an inline call under current policy; it does
+    not retain a named invocation's policy grants or look up that name again.
+    """
+    if name != "execute_script":
+        return arguments
+    unknown = arguments.keys() - {
+        "script",
+        "globals",
+        "name",
+        "parameters",
+        "script_bindings",
+    }
+    if unknown:
+        return ToolResult(text=f"Error: Unknown script arguments: {sorted(unknown)}")
+    try:
+        invocation = await prepare_script_invocation(
+            context, **cast("ScriptInvocationArguments", arguments)
+        )
+    except ScriptPreparationError as exc:
+        return ToolResult(
+            text=f"Error: {exc}",
+            data={"status": "error", "error_type": exc.error_type, "error": str(exc)},
+        )
+    inventory = await descriptors.get_tool_descriptors()
+    if policy is not None:
+        inventory = [
+            item
+            for item in inventory
+            if policy.evaluate_for_advertisement(
+                item, can_confirm=context.request_confirmation_callback is not None
+            ).decision
+            is not ToolPolicyDecision.DENY
+        ]
+    policy_context: dict[str, object] = {
+        "tool_tags": {item.name: sorted(item.tags) for item in inventory},
+        "runtime_controls": "Tool availability, hard denials, confirmation floors and resource limits remain enforced.",
+        "model_boundaries": "Hash-bound static child scripts share program approval. llm/llm_json, unbound scripts and other non-script_deterministic tools end inherited approval, including the caller continuation.",
+        "resource_limits": {"max_execution_time_seconds": 600},
+    }
+    if policy is not None:
+        policy_context["default_decision"] = policy.default_decision.value
+        policy_context["rules"] = [
+            {
+                "layer": item.layer,
+                "declaration_order": item.declaration_order,
+                "rule": item.rule.model_dump(mode="json"),
+            }
+            for item in policy.rules
+        ]
+    invocation.review = replace(
+        invocation.review,
+        tools=tuple(copy.deepcopy(item.definition) for item in inventory),
+        policy=policy_context,
+    )
+    context.prepared_script = invocation
+    definition = invocation.review.definition
+    if definition is not None and context.taint_tracker is not None:
+        if definition.taint_metadata is not None:
+            # Stored authorship is provenance, not a live profile authorization.
+            definition_state = replace(
+                TurnTaintState.from_metadata(definition.taint_metadata),
+                approved_sinks=frozenset(),
+            )
+            merge_taint_state_into_tracker(
+                context.taint_tracker,
+                definition_state,
+            )
+        context.taint_tracker.add_source(
+            TaintSource(
+                source_type=TaintSourceType.TOOL_OUTPUT,
+                source_id=f"script:{invocation.review.stored_name}",
+                tier=definition.tier,
+                labels=frozenset({"script_definition"}),
+                reason="Provenance of the exact loaded script definition.",
+            )
+        )
+        context.taint_policy_snapshot = None
+    return invocation.arguments()
+
+
+def _script_call_inherits(
+    descriptor: ToolDescriptor,
+    context: ToolExecutionContext,
+    arguments: Mapping[str, object],
+) -> bool:
+    scope = context.script_execution
+    if scope is None:
+        return False
+    prepared = context.prepared_script
+    if (
+        descriptor.name == "execute_script"
+        and prepared is not None
+        and prepared.bound_child
+    ):
+        if scope.approved:
+            _approve_prepared_script(
+                context, "inherited", scope.invocation.review.review_id
+            )
+        return scope.approved
+    if (
+        ToolTag.SCRIPT_DETERMINISTIC not in descriptor.tags
+        or descriptor.tags.intersection({ToolTag.CODE_EXECUTION, ToolTag.DELEGATION})
+        or resolve_tool_sink_class(descriptor, arguments) is SinkClass.SANDBOX_NETWORK
+        or not any(
+            item.get("function", {}).get("name") == descriptor.name
+            for item in scope.invocation.review.tools
+        )
+    ):
+        scope.revoke()
+        return False
+    return scope.approved
+
+
+def _approve_prepared_script(
+    context: ToolExecutionContext, decision: str, review_id: str | None = None
+) -> None:
+    if context.prepared_script is not None:
+        context.prepared_script.approved = True
+        context.prepared_script.review = replace(
+            context.prepared_script.review, decision=decision, review_id=review_id
+        )
+
+
+def _approve_confirmed_script(
+    context: ToolExecutionContext,
+    name: str,
+    arguments: Mapping[str, object],
+    call_id: str | None,
+) -> None:
+    authorization = context.tool_confirmation_authorization
+    if (
+        context.prepared_script is not None
+        and authorization is not None
+        and not authorization.consumed
+        and (
+            authorization.tool_name == name
+            and authorization.call_id == (call_id or "")
+            and authorization.tool_args == arguments
+        )
+    ):
+        authorization.consumed = True
+        _approve_prepared_script(context, "human_confirmed")
+
+
 type AuthorizedToolExecutor = Callable[[], Awaitable[str | ToolResult]]
 type PolicyExecutionCoordinator = Callable[
-    [ToolDescriptor, PolicyEvaluation, AuthorizedToolExecutor],
+    [
+        ToolDescriptor,
+        PolicyEvaluation,
+        AuthorizedToolExecutor,
+        dict[str, object],
+        ToolExecutionContext,
+    ],
     Awaitable[str | ToolResult],
 ]
 
@@ -1097,11 +1262,13 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
             _descriptor: ToolDescriptor,
             evaluation: PolicyEvaluation,
             execute_authorized: AuthorizedToolExecutor,
+            effective_arguments: dict[str, object],
+            execution_context: ToolExecutionContext,
         ) -> str | ToolResult:
             return await self._execute_default_policy_decision(
                 name=name,
-                arguments=arguments,
-                context=context,
+                arguments=effective_arguments,
+                context=execution_context,
                 call_id=call_id,
                 evaluation=evaluation,
                 execute_authorized=execute_authorized,
@@ -1141,12 +1308,28 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
             )
             raise ToolPolicyDeniedError(name, evaluation.reason or "denied by policy")
 
+        context = replace(
+            context,
+            prepared_script=None,
+            definition_gate_outcome=None,
+            pending_definition_review=None,
+        )
+        prepared = await _prepare_script_call(
+            name, arguments, context, self._descriptor_provider, self._policy_engine
+        )
+        if isinstance(prepared, ToolResult):
+            return prepared
+        arguments = prepared
+        _script_call_inherits(descriptor, context, arguments)
+
         async def execute_authorized() -> str | ToolResult:
             return await self.wrapped_provider.execute_tool(
                 name, arguments, context, call_id
             )
 
-        return await coordinator(descriptor, evaluation, execute_authorized)
+        return await coordinator(
+            descriptor, evaluation, execute_authorized, arguments, context
+        )
 
     async def _execute_default_policy_decision(
         self,
@@ -1160,10 +1343,12 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
         execute_authorized: AuthorizedToolExecutor,
     ) -> str | ToolResult:
         """Apply standalone confirmation semantics before authorized dispatch."""
-        if evaluation.decision in {
-            ToolPolicyDecision.CONFIRM,
-            ToolPolicyDecision.REVIEW,
-        }:
+        inherited = (
+            context.script_execution is not None and context.script_execution.approved
+        )
+        if evaluation.decision is ToolPolicyDecision.CONFIRM or (
+            evaluation.decision is ToolPolicyDecision.REVIEW and not inherited
+        ):
             # Refuse a confirm-gated call whose arguments no prompt could
             # describe faithfully, instead of rendering a misleading prompt.
             # Scoped to confirm-gated calls, so unconfirmed calls are never
@@ -1227,6 +1412,9 @@ class PolicyEnforcingToolsProvider(ToolsProvider):
                     f"Error during confirmation process for tool '{name}': {conf_err}"
                 )
 
+            _approve_prepared_script(context, "human_confirmed")
+
+        _approve_confirmed_script(context, name, arguments, call_id)
         return await execute_authorized()
 
     async def close(self) -> None:
@@ -1593,6 +1781,9 @@ class TaintTrackingToolsProvider(ToolsProvider):
         taint_policy: TaintPolicyConfig | None = None,
     ) -> None:
         """Apply runtime taint policy to an egress sink outside tool dispatch."""
+        scope = context.script_execution
+        if scope is not None and name != "keychute_http_request":
+            scope.revoke()
         if context.taint_tracker is None:
             return
 
@@ -1648,6 +1839,32 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 name,
                 f"{evaluation.reason}; redaction outcomes are not executable yet",
             )
+        if scope is not None and scope.approved and name == "keychute_http_request":
+            constraints = self._review_constraints(
+                taint_evaluation=evaluation,
+                static_evaluation=None,
+                include_observe_taint_constraints=False,
+            )
+            if constraints.available_verdicts == frozenset({
+                ToolCallReviewVerdict.DENY
+            }):
+                raise ToolPolicyDeniedError(
+                    name, "Inherited script approval cannot override the denial floor"
+                )
+            if ToolCallReviewVerdict.ALLOW not in constraints.available_verdicts:
+                await self._request_named_sink_confirmation(
+                    name=name,
+                    sink_class=sink_class,
+                    arguments=arguments,
+                    context=context,
+                    call_id=call_id,
+                    reason=evaluation.reason,
+                    state=state,
+                )
+            await self._record_script_inheritance(
+                context, name, call_id, state, sink_class
+            )
+            return
         profile_id = arguments.get("profile_id")
         carried_profile_approval = (
             _is_profile_sink(name, arguments)
@@ -1913,11 +2130,13 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 descriptor: ToolDescriptor,
                 static_evaluation: PolicyEvaluation,
                 execute_authorized: AuthorizedToolExecutor,
+                effective_arguments: dict[str, object],
+                execution_context: ToolExecutionContext,
             ) -> str | ToolResult:
                 return await self._authorize_and_execute_tool(
                     name=name,
-                    arguments=arguments,
-                    context=context,
+                    arguments=effective_arguments,
+                    context=execution_context,
                     call_id=call_id,
                     descriptor=descriptor,
                     static_evaluation=static_evaluation,
@@ -1935,6 +2154,20 @@ class TaintTrackingToolsProvider(ToolsProvider):
         descriptor = await self._descriptor_provider.get_tool_descriptor(name)
         if descriptor is None:
             raise ToolNotFoundError(name, type(self).__name__)
+
+        context = replace(
+            context,
+            prepared_script=None,
+            definition_gate_outcome=None,
+            pending_definition_review=None,
+        )
+        prepared = await _prepare_script_call(
+            name, arguments, context, self._descriptor_provider
+        )
+        if isinstance(prepared, ToolResult):
+            return prepared
+        arguments = prepared
+        _script_call_inherits(descriptor, context, arguments)
 
         async def execute_authorized() -> str | ToolResult:
             return await self.wrapped_provider.execute_tool(
@@ -2004,6 +2237,16 @@ class TaintTrackingToolsProvider(ToolsProvider):
     ) -> str | ToolResult:
         """Merge static and taint decisions, then invoke authorized dispatch once."""
 
+        inherited = _script_call_inherits(descriptor, context, arguments)
+        if context.prepared_script is not None:
+            review = context.prepared_script.review
+            context.prepared_script.review = replace(
+                review,
+                policy={
+                    **review.policy,
+                    "taint_policy": self._taint_policy_config.model_dump(mode="json"),
+                },
+            )
         state = TurnTaintState.empty()
         sink_class = resolve_tool_sink_class(
             descriptor, arguments, self._delegation_sink_classes
@@ -2095,6 +2338,21 @@ class TaintTrackingToolsProvider(ToolsProvider):
             )
         )
 
+        constraints = self._review_constraints(
+            taint_evaluation=evaluation,
+            static_evaluation=static_evaluation,
+            include_observe_taint_constraints=False,
+        )
+        if inherited and constraints.available_verdicts == frozenset({
+            ToolCallReviewVerdict.DENY
+        }):
+            raise ToolPolicyDeniedError(
+                name, "Inherited script approval cannot override the denial floor"
+            )
+        inherited_confirm = (
+            inherited
+            and ToolCallReviewVerdict.ALLOW not in constraints.available_verdicts
+        )
         review_result: ToolCallReviewResult | None = None
         inline_confirmation_authorization: ToolConfirmationAuthorization | None = None
         # How this call left its gates, for whichever executable-persistence
@@ -2102,7 +2360,11 @@ class TaintTrackingToolsProvider(ToolsProvider):
         # it; no tool maps verdicts to dispositions itself.
         definition_gate: DefinitionGateOutcome | None = None
         pending_definition_review: PendingDefinitionReview | None = None
-        if confined_exemption and evaluation is not None:
+        if inherited:
+            await self._record_script_inheritance(
+                context, name, call_id, state, sink_class
+            )
+        elif confined_exemption and evaluation is not None:
             await self._record_confined_exemption_audit(
                 descriptor=descriptor,
                 arguments=arguments,
@@ -2142,7 +2404,9 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 static_evaluation=static_evaluation,
                 pending=pending_definition_review,
             )
-        elif (static_review or taint_review) and _review_authorization_matches(
+        elif (
+            static_review or taint_review or context.prepared_script is not None
+        ) and _review_authorization_matches(
             context.tool_call_review_authorization,
             name=name,
             arguments=arguments,
@@ -2156,6 +2420,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 name,
                 call_id,
             )
+            _approve_prepared_script(context, "human_confirmed")
             definition_gate = DefinitionGateOutcome(
                 disposition=CreationDisposition.HUMAN_CONFIRMED,
                 gate=self._gate_provenance(
@@ -2176,6 +2441,18 @@ class TaintTrackingToolsProvider(ToolsProvider):
             )
 
         if review_result is not None:
+            if context.prepared_script is not None:
+                context.prepared_script.review = replace(
+                    context.prepared_script.review,
+                    decision=f"{review_result.verdict.value}:{review_result.status.value}",
+                    review_id=review_result.audit_event_id,
+                )
+            if (
+                review_result.verdict is ToolCallReviewVerdict.ALLOW
+                and review_result.status is ToolCallReviewStatus.MODEL_VERDICT
+                and not review_result.used_fallback
+            ):
+                _approve_prepared_script(context, "allow", review_result.audit_event_id)
             definition_gate = self._judge_gate_outcome(
                 review_result=review_result,
                 taint_review=taint_review,
@@ -2237,6 +2514,9 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 # The denial was escalated and a human approved the call anyway,
                 # rendering it in full. That is a sighted approval; the recorded
                 # denial it overrode is not what the write carries forward.
+                _approve_prepared_script(
+                    context, "human_confirmed", review_result.audit_event_id
+                )
                 definition_gate = DefinitionGateOutcome(
                     disposition=CreationDisposition.HUMAN_CONFIRMED,
                     gate=self._gate_provenance(
@@ -2288,6 +2568,9 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 # call and a human approved it, which is a sighted approval of
                 # the definition it writes -- the one thing a recorded
                 # ``confirm`` never was.
+                _approve_prepared_script(
+                    context, "human_confirmed", review_result.audit_event_id
+                )
                 definition_gate = DefinitionGateOutcome(
                     disposition=CreationDisposition.HUMAN_CONFIRMED,
                     gate=self._gate_provenance(
@@ -2309,11 +2592,15 @@ class TaintTrackingToolsProvider(ToolsProvider):
                 self._record_sink_approval(context, descriptor, sink_class, arguments)
 
         hard_confirm = (
-            static_evaluation is not None
-            and static_evaluation.decision is ToolPolicyDecision.CONFIRM
-        ) or (
-            evaluation is not None
-            and evaluation.effective_outcome is TaintPolicyOutcome.CONFIRM
+            inherited_confirm
+            or (
+                static_evaluation is not None
+                and static_evaluation.decision is ToolPolicyDecision.CONFIRM
+            )
+            or (
+                evaluation is not None
+                and evaluation.effective_outcome is TaintPolicyOutcome.CONFIRM
+            )
         )
         if hard_confirm and (
             review_result is None
@@ -2358,6 +2645,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
                         context.taint_tracker.snapshot().to_metadata()
                     )
                 return confirmation_result.result
+            _approve_prepared_script(context, "human_confirmed")
             definition_gate = DefinitionGateOutcome(
                 disposition=CreationDisposition.HUMAN_CONFIRMED,
                 gate=self._gate_provenance(
@@ -2376,6 +2664,7 @@ class TaintTrackingToolsProvider(ToolsProvider):
         if inline_confirmation_authorization is not None:
             context.tool_confirmation_authorization = inline_confirmation_authorization
         context.definition_gate_outcome = definition_gate
+        _approve_confirmed_script(context, name, arguments, call_id)
         try:
             result = await execute_authorized()
         except Exception:
@@ -2659,6 +2948,12 @@ class TaintTrackingToolsProvider(ToolsProvider):
             profile_guidance=self._profile_review_guidance,
             trigger=context.tool_call_review_trigger,
             destination_echo=destination_echo,
+            script=context.prepared_script.review
+            if context.prepared_script is not None
+            else None,
+            enclosing_scripts=context.script_execution.review_contexts()
+            if context.script_execution is not None
+            else (),
         )
         if self._tool_call_reviewer is None:
             delegating_reason = " ".join(
@@ -2804,6 +3099,30 @@ class TaintTrackingToolsProvider(ToolsProvider):
         except Exception:
             logger.exception("Detached tool-call shadow review failed")
 
+    async def _record_script_inheritance(
+        self,
+        context: ToolExecutionContext,
+        name: str,
+        call_id: str | None,
+        state: TurnTaintState,
+        sink_class: SinkClass,
+    ) -> None:
+        await self._record_taint_audit_event(
+            context=context,
+            event_type="script_inherited_authorization",
+            tool_name=name,
+            tool_call_id=call_id,
+            sink_class=sink_class.value,
+            state=state,
+            requested_outcome="adjudicate",
+            effective_outcome="allow",
+            mode=self._taint_evaluator.mode.value,
+            reason="Covered deterministic operation inherits the enclosing program's approval; runtime controls remain enforced.",
+            arguments_summary=None,
+            review_status="inherited_script_approval",
+            review_context={"script_authorization": "inherited"},
+        )
+
     async def _record_taint_audit_event(
         self,
         *,
@@ -2829,6 +3148,10 @@ class TaintTrackingToolsProvider(ToolsProvider):
         payload_context: TaintAuditReviewContext = (
             dict(review_context) if review_context is not None else {}  # type: ignore[assignment]
         )
+        if context.script_execution is not None:
+            payload_context["parent_script_review_id"] = (
+                context.script_execution.invocation.review.review_id
+            )
         payload_context["total_source_count"] = state.total_source_count
         payload_context["distinct_source_count"] = state.distinct_source_count
         payload_context["omitted_source_count"] = state.omitted_source_count

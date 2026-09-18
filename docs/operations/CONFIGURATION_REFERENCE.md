@@ -3182,6 +3182,12 @@ boundary, so the runtime taint policy can classify their tools correctly:
 Every configured entry should also declare `output_trusted` or `output_untrusted`. An exact
 `tool_metadata` entry **replaces** the tool's annotation-derived tags rather than adding to them.
 
+`script_deterministic` is an explicit opt-in for operations that do not execute new code, make a
+model decision, or create executable definitions. A reviewed script invocation may reuse its
+approval for a tagged operation, while tool availability, access control, hard policy controls,
+required confirmations, argument validation, and execution limits still apply. An untagged tool
+remains an independent review boundary.
+
 ### prompts.yaml
 
 LLM prompts with template variables. A profile's `system_prompt` may reference:

@@ -160,6 +160,8 @@ class TaintAuditArgumentsSummary(TypedDict):
 class TaintAuditReviewContext(TypedDict, total=False):
     """Audit-safe summary of the policy contexts delegated to a reviewer."""
 
+    parent_script_review_id: str | None
+    script_authorization: str
     delegating_contexts: list[str]
     allowed_verdicts: list[str]
     fallback_verdict: str

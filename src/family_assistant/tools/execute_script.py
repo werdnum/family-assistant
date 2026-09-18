@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from family_assistant.scripting.apis.attachments import ScriptAttachment
@@ -20,6 +21,11 @@ from family_assistant.scripting.errors import (
     ScriptExecutionError,
     ScriptSyntaxError,
     ScriptTimeoutError,
+)
+from family_assistant.scripting.invocation import (
+    ScriptExecutionScope,
+    ScriptPreparationError,
+    prepare_script_invocation,
 )
 from family_assistant.scripting.monty_engine import MontyEngine, ScriptOutputBuffer
 from family_assistant.tools.types import ToolAttachment, ToolDefinition, ToolResult
@@ -138,6 +144,7 @@ async def execute_script_tool(
     name: str | None = None,
     # ast-grep-ignore: no-dict-any - arbitrary parameters passed as script globals
     parameters: dict[str, Any] | None = None,
+    script_bindings: list[dict[str, object]] | None = None,
     _allow_external_script_apis: bool = True,
 ) -> ToolResult:
     """
@@ -160,66 +167,30 @@ async def execute_script_tool(
     async def _execute() -> ToolResult:
         nonlocal globals, script
 
-        # Reject ambiguous calls with both script and name
-        if name and script:
-            error_msg = "Provide either 'script' (inline) or 'name' (stored), not both"
-            return ToolResult(
-                text=f"Error: {error_msg}",
-                data={
-                    "status": "error",
-                    "error_type": "validation_error",
-                    "error": error_msg,
-                },
+        prepared = exec_context.prepared_script
+        if prepared is None:
+            prepared = await prepare_script_invocation(
+                exec_context,
+                script,
+                globals,
+                name,
+                parameters,
+                script_bindings=script_bindings,
+                allow_external_script_apis=_allow_external_script_apis,
             )
-
-        # Resolve stored script by name
-        if name and not script:
-            db = exec_context.db_context
-            stored_script = await db.scripts.get_by_name(name)
-            if stored_script is None:
-                return ToolResult(
-                    text=f"Error: Script '{name}' not found",
-                    data={
-                        "status": "error",
-                        "error_type": "not_found",
-                        "error": f"Script '{name}' not found",
-                    },
-                )
-            script = stored_script.script_code
-
-            # Validate parameters against schema
-            if stored_script.parameters_schema:
-                params = parameters or {}
-                required = stored_script.parameters_schema.get("required", [])
-                if not isinstance(required, list):
-                    required = []
-                for req in required:
-                    if req not in params:
-                        error_msg = f"Missing required parameter: {req}"
-                        return ToolResult(
-                            text=f"Error: {error_msg}",
-                            data={
-                                "status": "error",
-                                "error_type": "validation_error",
-                                "error": error_msg,
-                            },
-                        )
-
-            # Merge parameters into globals
-            if parameters:
-                globals = dict(globals or {})
-                globals.update(parameters)
-
-        if not script:
-            error_msg = "Either 'script' (inline code) or 'name' (stored script) must be provided"
-            return ToolResult(
-                text=f"Error: {error_msg}",
-                data={
-                    "status": "error",
-                    "error_type": "validation_error",
-                    "error": error_msg,
-                },
-            )
+        script = prepared.review.source
+        globals = dict(prepared.globals)
+        scope = ScriptExecutionScope(prepared, parent=exec_context.script_execution)
+        script_context = replace(
+            exec_context,
+            prepared_script=None,
+            script_execution=scope,
+            definition_gate_outcome=None,
+            pending_definition_review=None,
+            tool_call_review_authorization=None,
+            tool_confirmation_authorization=None,
+            taint_policy_snapshot=None,
+        )
 
         keychute_config = get_keychute_config(exec_context)
         if _allow_external_script_apis and keychute_config is not None:
@@ -227,7 +198,7 @@ async def execute_script_tool(
                 globals,
                 config=keychute_config,
                 script_source=script,
-                execution_context=exec_context,
+                execution_context=script_context,
             )
         # Create a configuration with reasonable defaults
         config = ScriptConfig(
@@ -261,52 +232,6 @@ async def execute_script_tool(
                 "This may happen when execute_script is called outside of normal processing flow."
             )
 
-        # Validate script before execution (lazy import to avoid circular dependency)
-        from family_assistant.scripting.validator import (  # noqa: PLC0415 - lazy import to break circular: scripting → tools → execute_script → scripting
-            ScriptValidator,
-        )
-
-        tool_definitions = None
-        if tools_provider:
-            tool_definitions = await tools_provider.get_tool_definitions()
-        # Split globals into non-callable inputs and callable external functions.
-        # MontyEngine exposes callable globals as external functions at runtime,
-        # so validation must treat them as functions, not plain variables.
-        input_names: list[str] | None = None
-        callable_names: list[str] | None = None
-        if globals:
-            input_names = [k for k, v in globals.items() if not callable(v)]
-            callable_names = [k for k, v in globals.items() if callable(v)]
-        has_attachment_registry = bool(exec_context.attachment_registry)
-        validation = ScriptValidator(tool_definitions=tool_definitions).validate(
-            script,
-            input_names=input_names,
-            extra_external_functions=callable_names,
-            include_tools_api=tools_provider is not None,
-            include_attachment_api=has_attachment_registry,
-        )
-        if not validation.is_valid:
-            first_error = validation.errors[0] if validation.errors else None
-            if first_error and first_error.message.startswith("Syntax error"):
-                error_msg = "Syntax error in script"
-                if first_error.line:
-                    error_msg += f" at line {first_error.line}"
-                error_msg += f": {first_error.message}"
-                error_type = "syntax_error"
-            else:
-                error_msg = f"Script validation failed: {validation.error_message}"
-                error_type = "validation_error"
-
-            logger.error(error_msg)
-            return ToolResult(
-                text=f"Error: {error_msg}",
-                data={
-                    "status": "error",
-                    "error_type": error_type,
-                    "error": error_msg,
-                },
-            )
-
         # Create the engine with the tools provider (may be None)
         engine = MontyEngine(
             tools_provider=tools_provider,
@@ -318,14 +243,15 @@ async def execute_script_tool(
         # context as in-script so tools that would otherwise defer their result to a
         # later conversation message (e.g. delegate_to_service's async handoff) run
         # synchronously and return their result to the script instead.
-        result = await engine.evaluate_async(
-            script=script,
-            globals_dict=globals,
-            execution_context=exec_context
-            if (tools_provider or exec_context.attachment_registry)
-            else None,  # Pass context if we have tools or attachment registry
-            output_buffer=output_buffer,
-        )
+        try:
+            result = await engine.evaluate_async(
+                script=script,
+                globals_dict=globals,
+                execution_context=script_context,
+                output_buffer=output_buffer,
+            )
+        finally:
+            scope.active = False
 
         # Extract attachment IDs from return value
         attachment_ids = _extract_attachment_ids_from_result(result)
@@ -438,6 +364,11 @@ async def execute_script_tool(
 
     try:
         return await _execute()
+    except ScriptPreparationError as e:
+        return ToolResult(
+            text=f"Error: {e}",
+            data={"status": "error", "error_type": e.error_type, "error": str(e)},
+        )
     except ScriptSyntaxError as e:
         error_msg = "Syntax error in script"
         if e.line:
@@ -497,13 +428,14 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
         "function": {
             "name": "execute_script",
             "description": (
-                "Execute an inline or stored Python script in a sandboxed environment. "
-                "Before writing or debugging a script, load `scripting.md` with "
-                "`get_user_documentation_content`; it documents the language constraints, "
-                "available APIs, brokered HTTP, attachments, and return values. Use `script` "
-                "with optional `globals` for inline code, or `name` with optional `parameters` "
-                "for a stored script. Enabled Family Assistant tools and configured script "
-                "APIs are available as functions."
+                "Execute inline Python (`script`, optional `globals`) or a stored script "
+                "(`name`, optional `parameters`). Load `scripting.md` with "
+                "`get_user_documentation_content` before writing or debugging scripts. "
+                "Review and confirmation bind source, inputs and statically named child scripts. "
+                "Changed child definitions require fresh review. Approved "
+                "deterministic operations share program approval; hard policy and confirmations "
+                "still apply. New code, model decisions, and executable definitions retain "
+                "independent gates. Enabled tools and script APIs are available as functions."
             ),
             "parameters": {
                 "type": "object",
@@ -529,6 +461,14 @@ SCRIPT_TOOLS_DEFINITION: list[ToolDefinition] = [
                         "description": (
                             "Stored script name. Use `list_scripts` to discover names; "
                             "omit `script` and pass arguments with `parameters`."
+                        ),
+                    },
+                    "script_bindings": {
+                        "type": "array",
+                        "items": {"type": "object"},
+                        "description": (
+                            "Resolved child definitions bound to an approval. Omit when "
+                            "preparing a new invocation; the runtime supplies these."
                         ),
                     },
                     "parameters": {

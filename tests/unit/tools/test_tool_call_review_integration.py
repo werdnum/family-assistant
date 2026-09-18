@@ -2631,8 +2631,10 @@ def _recording_provider(
     recorder = _GateOutcomeRecorder()
     context = _context(db_engine, state, confirmation=confirmation)
 
-    async def execute(**_kwargs: object) -> ToolResult:
-        recorder.outcomes.append(context.definition_gate_outcome)
+    async def execute(
+        exec_context: ToolExecutionContext, **_kwargs: object
+    ) -> ToolResult:
+        recorder.outcomes.append(exec_context.definition_gate_outcome)
         return ToolResult(text="executed")
 
     provider = _provider(
@@ -2857,9 +2859,11 @@ async def test_an_observe_shadow_review_leaves_its_writes_pending_then_attaches(
     context = _context(db_engine, _unknown_external_state())
     pending_seen: list[PendingDefinitionReview] = []
 
-    async def execute(**_kwargs: object) -> ToolResult:
-        recorder.outcomes.append(context.definition_gate_outcome)
-        outcome = context.definition_gate_outcome
+    async def execute(
+        exec_context: ToolExecutionContext, **_kwargs: object
+    ) -> ToolResult:
+        recorder.outcomes.append(exec_context.definition_gate_outcome)
+        outcome = exec_context.definition_gate_outcome
         assert outcome is not None and outcome.pending is not None
         # The verdict cannot have landed: the call is still running.
         assert not outcome.pending.settled.is_set()

@@ -270,6 +270,10 @@ if TYPE_CHECKING:
     from family_assistant.llm.messages import LLMMessage
     from family_assistant.memory.review_context import MemoryReviewContext
     from family_assistant.processing import ProcessingService
+    from family_assistant.scripting.invocation import (
+        PreparedScriptInvocation,
+        ScriptExecutionScope,
+    )
     from family_assistant.security.definition_records import (
         DefinitionGateOutcome,
         PendingDefinitionReview,
@@ -602,6 +606,8 @@ class ToolExecutionContext:
     (notably ``delegate_to_service``'s async handoff) must run synchronously and
     return their result directly so the script can use it.
     """
+    prepared_script: PreparedScriptInvocation | None = None
+    script_execution: ScriptExecutionScope | None = None
     taint_tracker: TurnTaintTracker | None = None
     taint_policy_snapshot: TurnTaintState | None = None
     tool_result_taint_metadata: dict[str, TaintMetadata] = field(default_factory=dict)
