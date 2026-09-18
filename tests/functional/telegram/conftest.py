@@ -3,6 +3,7 @@ from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, NamedTuple
 from unittest.mock import AsyncMock
 
+import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncEngine
 from telegram import Bot
@@ -49,10 +50,25 @@ class TelegramHandlerTestFixture(NamedTuple):
     telegram_client: "TelegramTestClient"  # For verifying bot responses
 
 
+@pytest.fixture
+# ast-grep-ignore: no-dict-any - config overrides mirror the raw AppConfig schema
+def telegram_config_overrides() -> dict[str, Any]:
+    """Top-level config keys a test file wants set differently.
+
+    Overridden by a test module that needs the assistant configured another way
+    -- ``users``, say, which is where a canonical user's display name lives.
+    Shallow: a key given here replaces the fixture's value for it outright,
+    which keeps the seam obvious rather than merging two shapes silently.
+    """
+    return {}
+
+
 @pytest_asyncio.fixture(scope="function")
 async def telegram_handler_fixture(
     db_engine: AsyncEngine,
     telegram_test_server_session: TelegramTestServer,
+    # ast-grep-ignore: no-dict-any - config overrides mirror the raw AppConfig schema
+    telegram_config_overrides: dict[str, Any],
 ) -> AsyncGenerator[TelegramHandlerTestFixture]:
     """
     Sets up the environment for testing TelegramUpdateHandler using the Assistant class.
@@ -140,6 +156,8 @@ async def telegram_handler_fixture(
         "willyweather_api_key": None,
         "willyweather_location_id": None,
     }
+
+    test_config.update(telegram_config_overrides)
 
     # 3. Instantiate Assistant with LLM Override and Database Engine
     assistant_app = Assistant(
